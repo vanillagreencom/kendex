@@ -338,9 +338,14 @@ def in_flight: held or (type == "object" and .status == "parked");'
 # `lanes state` and oversee-watch. LANES is the fleet state's `lanes` array, or
 # the state object holding it, and empty is no fleet. Non-zero where LANES is
 # not JSON.
-lane_running_record() { # LANES WINDOW HARNESS
-  jq -c --arg w "${2#*:}" --arg h "$3" "$LANE_RUNNING_JQ"'
+lane_running_record() { # LANES WINDOW HARNESS [session]
+  # Input routing must keep two explicitly named sessions distinct. The
+  # existing session-note readers retain their window-name lookup.
+  jq -c --arg w "$2" --arg h "$3" --arg scope "${4:-}" "$LANE_RUNNING_JQ"'
     (if type == "object" then .lanes // [] else . end)
-    | map(select(running and .harness == $h and ((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' \
+    | map(select(running and ($h == "" or .harness == $h)
+        and (if $scope == "session" and ($w | contains(":")) and ((.window // "") | contains(":"))
+             then .window == $w
+             else ((.window // "") | sub("^.*:"; "")) == ($w | sub("^.*:"; "")) end))) | first // empty' \
     <<<"$1" 2>/dev/null
 }

@@ -282,9 +282,9 @@ lib_control ctl-session-since lib/lane-context.sh '(.session_since | fromdateiso
 assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" null "$WT" true 1999-12-30T00:00:00Z 1999-01-01T00:00:00Z)" CC-1 "$WRITTEN")" session-record=stale "control: bound through launched_at, which a relaunch keeps, a relaunched lane reads the session the relaunch retired"
 lib_control ctl-default-account lib/lane-context.sh 'home="$(lane_context_caller_cfg copilot)"' 'home="$(printf "")"'
 assert_eq "$(lane_row "$(lanes running copilot null "$SESSION" "$WT")" CC-1 "$WRITTEN" "$ACCOUNT")" session-record=missing "control: without the default account a record naming none is read under no account"
-lib_control ctl-running lib/lane-claims.sh 'select(running and .harness == $h' 'select(.harness == $h'
+lib_control ctl-running lib/lane-claims.sh 'select(running and ($h == "" or .harness == $h)' 'select(($h == "" or .harness == $h)'
 assert_eq "$(lane_row "$(lanes stopped copilot "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the running test a stopped record is read as a lane"
-lib_control ctl-harness lib/lane-claims.sh 'running and .harness == $h and' 'running and'
+lib_control ctl-harness lib/lane-claims.sh 'running and ($h == "" or .harness == $h)' 'running'
 assert_eq "$(lane_row "$(lanes running pi "$ACCOUNT" "$SESSION" "$WT")" CC-1 "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the harness test a Pi lane's record is read as a Copilot lane"
 lib_control ctl-granted lib/copilot-session.sh '[ "$4" = true ] || return 0' ': || return 0'
 assert_eq "$(lane_row "$(lanes running copilot "$ACCOUNT" null "$TMP_ROOT" false)" CC-1 "$WRITTEN")" session-record=worktree-unmatched "control: without the grant test a lane launched without allow-all is looked up and reports a record reason"

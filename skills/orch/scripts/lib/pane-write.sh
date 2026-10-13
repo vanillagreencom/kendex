@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 #
-# The ONE writer into a tmux pane. Every keystroke orch sends, and every paste,
+# The ONE writer into a lane pane. Every keystroke orch sends, and every paste,
 # goes through pane_write: the launch lines open-terminal types into a window it
 # just opened, the successor line overseer-host-tmux's create types into the
 # window it opens, and what the overseer still has to type through
@@ -11,6 +11,7 @@
 # is how an overseer pasted `/exit` into itself; a write into a pane whose
 # process has changed lands its keystrokes in a process nobody meant. Both are refused here, before anything is typed.
 #
+# Hosted pane input uses lane-host send when the caller selects KIND host.
 # This is the whole of pane input, the capability a later thread API (turn
 # start, interrupt, stop) replaces: moving a caller onto that API removes its
 # call here, and nothing else in orch types into a pane.
@@ -24,6 +25,8 @@
 #   KIND    `window`: TARGET is a lane record's window, resolved through
 #           lane_pane_resolve. `pane`: TARGET is a pane id (%N) the caller
 #           proved, which is new-window's own -P output for a pane it opened.
+#           `host`: TARGET is the hosted item under ORCH_LANE_HOST, and EXPECT
+#           names its harness. The caller selected the provider's pane=verb.
 #   EXPECT  the process the pane must be running. `shell` is a shell in the
 #           foreground, what a window opened seconds ago holds: a name
 #           is_bare_shell knows, or the name of tmux's default-shell, read
@@ -82,7 +85,7 @@ pane_write_message() { # KEY FIELD=VALUE...
     key-invalid) printf '%s\n' "fix=press one of: $PANE_WRITE_KEYS" ;;
     file-unreadable) printf '%s\n' 'fix=write the input to a regular file first, with the harness file tool' ;;
     argument-invalid) printf '%s\n' 'fix=run pane-write --help' ;;
-    write-failed) printf '%s\n' 'fix=a tmux write failed after the checks passed and part of the input may have landed; read the pane before writing again' ;;
+    write-failed) printf '%s\n' 'fix=a pane write failed after the checks passed and part of the input may have landed; read the pane before writing again' ;;
     *) printf '%s\n' "fix=pane_write has no message for $key; this is a defect in lib/pane-write.sh" ;;
   esac
 }
@@ -200,8 +203,8 @@ pane_write_key() { # KEY
     || pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=send-keys "key=$1"
 }
 
-pane_write() { # KIND TARGET EXPECT ACTION VALUE
-  local kind="$1" target="$2" expect="$3" action="$4" value="$5" buffer
+pane_write_input() { # ACTION VALUE
+  local action="$1" value="$2"
   # The input is checked before the pane, so a malformed call is refused the
   # same way whatever the target.
   case "$action" in
@@ -214,7 +217,46 @@ pane_write() { # KIND TARGET EXPECT ACTION VALUE
     file) [[ -f "$value" && -r "$value" ]] || { pane_write_refuse 1 file-unreadable "file=$value"; return; } ;;
     *) pane_write_refuse 1 action-invalid "action=$action"; return ;;
   esac
+}
+
+pane_write() { # KIND TARGET EXPECT ACTION VALUE
+  local kind="$1" target="$2" expect="$3" action="$4" value="$5"
+  pane_write_input "$action" "$value" || return
+  if [[ "$kind" == host ]]; then
+    [[ -n "$target" ]] || { pane_write_refuse 1 pane-unresolved kind=host 'target='; return; }
+    [[ -n "$expect" ]] || { pane_write_refuse 1 expect-missing "item=$target"; return; }
+    local process_rc=0
+    pane_has_remote_harness "$SCRIPT_DIR/lane-host" "$target" "$expect" || process_rc=$?
+    case "$process_rc" in
+      0) ;;
+      1) pane_write_refuse 1 process-mismatch "item=$target" "expected=$expect" running=exited; return ;;
+      *) pane_write_refuse 1 pane-read-failed "item=$target" operation=status; return ;;
+    esac
+    if [[ "$action" == text ]]; then
+      # Provider input is a file contract. The scratch owner removes the file
+      # after the acknowledged delivery, including every failed send.
+      (
+        local input cleanup
+        input="$(mktemp)" || return 2
+        printf -v cleanup 'rm -f -- %q' "$input"
+        trap "$cleanup" EXIT
+        printf '%s' "$value" > "$input" || return 2
+        "$SCRIPT_DIR/lane-host" send --item "$target" --file "$input"
+      ) || { pane_write_refuse 2 write-failed "item=$target" step=send; return; }
+    else
+      "$SCRIPT_DIR/lane-host" send --item "$target" "--$action" "$value" \
+        || { pane_write_refuse 2 write-failed "item=$target" step=send; return; }
+    fi
+    return 0
+  fi
   pane_write_resolve "$kind" "$target" || return
+  pane_write_resolved "$expect" "$action" "$value"
+}
+
+# The CLI already resolved the local pane to find its hosted record. Reuse
+# that observation so the shell settle budget has the same first read.
+pane_write_resolved() { # EXPECT ACTION VALUE
+  local expect="$1" action="$2" value="$3" buffer
   pane_write_expect "$expect" || return
   if [[ "$action" == key ]]; then
     pane_write_key "$value"

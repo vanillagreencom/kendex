@@ -2829,9 +2829,11 @@ observe_lanes() {
   LANE_OBS=""
   LANE_TURNS=()
   LANE_ROWS=()
+  LANE_PANE_SOURCES=()
   # No early return for an empty fleet: the rows of the last lanes to leave
   # still end their walls and are pruned below.
   local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
+  local pane_mode capture_rc pane_host pane_item
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
   for lane in ${LANES[@]+"${LANES[@]}"}; do
     i=$((i + 1))
@@ -2863,10 +2865,28 @@ observe_lanes() {
     # -J joins what tmux wrapped, as open-terminal already reads a pane:
     # without it a narrow window puts `resets ...` on a line of its own, which
     # is not a banner line, and the reset disappears with the pane's width.
-    if ! tmux capture-pane -t "$target" -pJ >"$capture.$$.tmp" 2>"$errf"; then
+    hosted_lane_item "$lane"
+    pane_host="$HOSTED_HOST" pane_item="$LANE_ITEM" pane_mode=local
+    if [[ -n "$HOSTED_ROOT" ]]; then
+      if ! lane_pane_mode pane_mode "$pane_host"; then
+        LANE_PANE_SOURCES[$i]=unreadable
+        LANE_OBS+="$i"$'\t'"unreadable"$'\t\t\t\n'
+        continue
+      fi
+    else pane_item=""; fi
+    capture_rc=0
+    lane_pane_capture "$pane_mode" "$pane_host" "$pane_item" "$target" >"$capture.$$.tmp" 2>"$errf" || capture_rc=$?
+    if [[ "$capture_rc" -ne 0 ]]; then
       rm -f "$capture.$$.tmp"
+      if [[ "$pane_mode" == verb ]]; then
+        cat "$errf" >&2
+        LANE_PANE_SOURCES[$i]=unreadable
+        LANE_OBS+="$i"$'\t'"unreadable"$'\t\t\t\n'
+        continue
+      fi
       die pane-capture-failed "$(cat "$errf")" "lane=$lane"
     fi
+    [[ "$pane_mode" != verb ]] || LANE_PANE_SOURCES[$i]=provider
     mv "$capture.$$.tmp" "$capture" || die pane-publish-failed "" "lane=$lane"
     pid="${obs%%[[:blank:]]*}"
     cmd="${obs#*[[:blank:]]}"
@@ -3948,6 +3968,7 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     window=gone; pid=""; cmd=""; pane=""
+    if [[ "$(lane_obs_state "$LANE_OBS" "$i")" == unreadable ]]; then window=listed; fi
     if [[ "$(lane_obs_state "$LANE_OBS" "$i")" == ready ]]; then
       window=listed
       pid="$(lane_field "$LANE_OBS" "$i" 3)"
@@ -3968,7 +3989,7 @@ check_lanes() {
         || die state-invalid "" "item=$LANE_ITEM"
       [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"
     fi
-    ORCH_LANE_HOST="$HOSTED_HOST" lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" \
+    ORCH_LANE_HOST="$HOSTED_HOST" lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" "${LANE_PANE_SOURCES[$i]:-}" \
       || die limit-scan-failed "" "lane=$lane"
     # Provider failures stay unjudged; local probe failures still permit pane judgment.
     [[ -n "$hosted_item" || "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"

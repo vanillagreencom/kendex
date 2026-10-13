@@ -1,0 +1,1 @@
+- Hosted lane providers can run the harness without a local SSH viewer. Pane reads and input use provider verbs. A person can open the optional viewer when needed.

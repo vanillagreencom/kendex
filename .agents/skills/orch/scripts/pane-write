@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/pane-write.sh"
 usage() {
   cat <<'EOF'
 Usage: pane-write (--window WINDOW | --pane PANE) --expect PROCESS
-                  (--file PATH | --key KEY)
+                  (--file PATH | --key KEY) [--state-dir DIR]
 
 Type into one tmux pane, only after proving it is the pane meant and that it
 runs the process meant. Nothing is typed on a refusal.
@@ -31,6 +31,10 @@ runs the process meant. Nothing is typed on a refusal.
                    carries MainThread on Linux, which it matches too
   --file PATH      paste the file's bytes as one bracketed paste, then Enter
   --key KEY        press one key: Enter, Up, Down, C-c or a digit 0-9
+  --state-dir DIR  the fleet state directory that records the hosted lane
+
+A recorded hosted window with pane=verb sends input through the provider.
+--expect ssh uses the record's harness process for the remote check.
 
 Copy mode is cancelled before every keystroke.
 
@@ -39,7 +43,8 @@ Exit 0 wrote. Every other exit prints `pane-write: KEY FIELD=VALUE...` and a
 
 Exit 1 is a refusal, and nothing was typed:
 
-  pane-unresolved   the target is empty, or --pane is not a pane id
+  pane-unresolved   the target is empty, --pane is not a pane id, or a
+                    pane=verb host has no lane record naming this target
   pane-self         the target is the pane this command runs in ($TMUX_PANE)
   pane-missing      no pane on this server carries the target
   pane-ambiguous    two or more panes carry the window name
@@ -52,10 +57,10 @@ Exit 1 is a refusal, and nothing was typed:
   argument-invalid  an option is unknown, repeated or missing its value, or a
                     required option is absent
 
-Exit 2 is a tmux write that failed after the checks passed, so part of the
+Exit 2 is a pane write that failed after the checks passed, so part of the
 input may have landed; read the pane before writing again:
 
-  write-failed      step= names the tmux step that failed
+  write-failed      step= names the input step that failed
 EOF
 }
 
@@ -64,7 +69,7 @@ refuse_args() { # FIELD=VALUE
   exit 1
 }
 
-kind="" target="" expect="" action="" value="" expect_set=false
+kind="" target="" expect="" action="" value="" expect_set=false state_dir_set=false state_args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -78,6 +83,9 @@ while [[ $# -gt 0 ]]; do
     --file|--key)
       [[ -z "$action" && $# -ge 2 ]] || refuse_args "option=$1"
       action="${1#--}"; value="$2"; shift 2 ;;
+    --state-dir)
+      [[ "$state_dir_set" == false && $# -ge 2 && -n "$2" ]] || refuse_args "option=$1"
+      state_dir_set=true; state_args=(--state-dir "$2"); shift 2 ;;
     *) refuse_args "option=$1" ;;
   esac
 done
@@ -85,6 +93,48 @@ done
 [[ "$expect_set" == true ]] || refuse_args option=--expect
 [[ -n "$action" ]] || refuse_args option=--file
 
+# A recorded hosted window can be dormant. Resolve the local target first
+# to preserve the empty, self and ambiguous-window refusals before provider input.
+pane_write_input "$action" "$value" || exit $?
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+pane_write_resolve "$kind" "$target" || exit $?
+records="" record=""
+exists="$("$SCRIPT_DIR/workflow-state" ${state_args[@]+"${state_args[@]}"} exists --json oversee | jq -r '.exists')" \
+  || { pane_write_refuse 1 pane-read-failed "window=$target" operation=state; exit 1; }
+if [[ "$exists" == true ]]; then
+  lookup_window="$target"
+  if [[ "$kind" == pane ]]; then
+    lookup_window="$(tmux display-message -p -t "$PANE_WRITE_ID" '#{session_name}:#{window_name}')" \
+      || { pane_write_refuse 1 pane-read-failed "pane=$target" operation=display-message; exit 1; }
+  fi
+  records="$("$SCRIPT_DIR/workflow-state" ${state_args[@]+"${state_args[@]}"} get oversee '.lanes // []')" \
+    && record="$(lane_running_record "$records" "$lookup_window" "" session)" \
+    || { pane_write_refuse 1 pane-read-failed "window=$target" operation=state; exit 1; }
+fi
+if [[ -n "$record" ]]; then
+  host="$(jq -r '.host // "local"' <<<"$record")" \
+    || { pane_write_refuse 1 pane-read-failed "window=$target" operation=state-field field=host; exit 1; }
+  lane_pane_mode mode "$host" || exit 1
+  if [[ "$mode" == verb ]]; then
+    harness="$(jq -r '.harness // empty' <<<"$record")" \
+      || { pane_write_refuse 1 pane-read-failed "window=$target" operation=state-field field=harness; exit 1; }
+    [[ -n "$expect" ]] || { pane_write_refuse 1 expect-missing "window=$target"; exit 1; }
+    [[ "$expect" == ssh || "$expect" == "$harness" ]] \
+      || { pane_write_refuse 1 process-mismatch "window=$target" "expected=$expect" "running=$harness"; exit 1; }
+    target="$(jq -r '.item // empty' <<<"$record")" \
+      || { pane_write_refuse 1 pane-read-failed "window=$target" operation=state-field field=item; exit 1; }
+    kind=host expect="$harness"
+    export ORCH_LANE_HOST="$host"
+  fi
+else
+  selected_host="$("$SCRIPT_DIR/lane-host" resolve)" || exit 1
+  lane_pane_mode mode "$selected_host" || exit 1
+  [[ "$mode" != verb ]] || { pane_write_refuse 1 pane-unresolved kind=host "window=$target" item=; exit 1; }
+fi
 rc=0
-pane_write "$kind" "$target" "$expect" "$action" "$value" || rc=$?
+if [[ "$kind" == host ]]; then
+  pane_write "$kind" "$target" "$expect" "$action" "$value" || rc=$?
+else
+  pane_write_resolved "$expect" "$action" "$value" || rc=$?
+fi
 exit "$rc"

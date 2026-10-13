@@ -75,7 +75,8 @@ lane_capabilities_answer() { # LANE_HOST_CLI HOST [DIR]
 # OUT_VAR, the value LANE_CAPABILITIES gives KEY.
 lane_capability() { # OUT_VAR KEY
   local _lc_field _lc_fields=()
-  printf -v "$1" '%s' ""
+  if [[ "$2" == pane ]]; then printf -v "$1" '%s' local
+  else printf -v "$1" '%s' ""; fi
   IFS=$'\t' read -r -a _lc_fields <<<"$LANE_CAPABILITIES"
   for _lc_field in ${_lc_fields[@]+"${_lc_fields[@]}"}; do
     [[ "${_lc_field%%=*}" != "$2" ]] || printf -v "$1" '%s' "${_lc_field#*=}"

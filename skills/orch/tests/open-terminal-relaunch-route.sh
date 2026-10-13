@@ -438,7 +438,7 @@ run_ot codex - claude
 assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-stuck item=KEN-1 ') missing=$(said '^open-terminal: harness-screen-missing item=KEN-1 seconds=2')" \
   "rc=1 launched=0 stuck=0 missing=1" \
   "control: gating the brief on a local relaunch loses its brief failure, but shared readiness still refuses the shell"
-control capture 'capture-pane -pJ -t "$pane" 2>/dev/null)" || return 2' 'capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1'
+control capture 'launch_capture "$pane" 2>/dev/null)" || return 2' 'launch_capture "$pane" 2>/dev/null)" || return 1'
 RUN_ENV=("${CAPTURE_FAILS[@]}")
 run_ot claude "$HARNESS_SCREEN" claude
 RUN_ENV=()

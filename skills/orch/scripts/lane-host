@@ -5,7 +5,7 @@ set -euo pipefail
 
 case "${1:-}" in
   --help|-h|help)
-    printf '%s\n' 'Usage: lane-host resolve | capabilities | create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts [arguments]' \
+    printf '%s\n' 'Usage: lane-host resolve | capabilities | create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix [arguments]' \
       'ORCH_LANE_HOST: local (default), claude-cloud, or an executable script path.' \
       'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
       'capabilities prints the host kind'"'"'s one tab-separated key=value line (schemas/lane-host.md § Host kinds):' \
@@ -43,6 +43,7 @@ capability_values() { # KEY
     launch) echo 'window ssh cloud-session cloud-task' ;;
     channel) echo 'mailbox session task' ;;
     files) echo 'local verb none' ;;
+    pane) echo 'local verb' ;;
     status) echo 'pane verb task none' ;;
     stop) echo 'window verb none' ;;
     relaunch) echo 'resume fresh' ;;
@@ -86,17 +87,17 @@ capabilities_print() { # LINE
 
 case "$verb" in
   resolve) printf '%s\n' "$host"; exit 0 ;;
-  capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts) ;;
+  capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix) ;;
   *) printf 'lane-host: verb-invalid verb=%s\n' "$verb" >&2; exit 2 ;;
 esac
 # The kinds kendex owns, each running its harness CLI's own interface with no
 # provider between.
 case "$host:$verb" in
   local:capabilities)
-    capabilities_print $'kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane'
+    capabilities_print $'kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local'
     exit 0 ;;
   claude-cloud:capabilities)
-    capabilities_print $'kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff'
+    capabilities_print $'kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\tpane=local'
     exit 0 ;;
   local:*)
     printf 'lane-host: host-local verb=%s\n' "$verb" >&2

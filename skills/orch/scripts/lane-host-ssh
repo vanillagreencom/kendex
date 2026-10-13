@@ -26,7 +26,7 @@ STOP_BY_DIRECTORY = 76
 # The static host kind's capability line. lane-host answers it for a provider
 # that predates the verb, so this is its one spelling.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
-                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane"))
+                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local"))
 
 
 def notice(key, **values):

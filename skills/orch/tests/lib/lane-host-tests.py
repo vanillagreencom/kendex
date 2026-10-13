@@ -205,7 +205,8 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
             return proc
         rows = {"create": "long", "wait": "long", "start": "long", "close": "long",
                 "stop": "long", "stop-sandbox": "long", "read-many": "short", "cat": "short", "put": "short",
-                "append": "short", "touch": "short", "status": "short", "list": "short", "accounts": "short"}
+                "append": "short", "touch": "short", "status": "short", "list": "short", "accounts": "short",
+                "capture": "short", "send": "short", "viewer-prefix": "short"}
         # Discover the real dispatcher's admitted verbs, including a future
         # verb with no row. Resolve is local and capabilities is slot-free.
         declared = re.search(r'^  (capabilities\|[^)]+)\) ;;', self.script.read_text(), re.M)
@@ -333,9 +334,9 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
         result = self.run_host("status", "--item", "TEST-1", ORCH_LANE_HOST=str(missing))
         with self.assertRaises(AssertionError):
             self.assertEqual(result.returncode, 1)
-    LOCAL = b"kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n"
-    CLOUD = b"kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\n"
-    SSH = b"kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n"
+    LOCAL = b"kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local\n"
+    CLOUD = b"kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\tpane=local\n"
+    SSH = b"kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local\n"
 
     def capabilities_rows(self):
         """(name, env, exit, stdout, stderr) per declared line and refusal.
@@ -345,7 +346,13 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
         stub = {"ORCH_LANE_HOST": str(self.stub)}
         daytona = "lane-host-daytona: verb-unsupported verb=capabilities provider=daytona"
         declared = self.SSH.decode().strip().replace("pool=plan", "pool=cloud-credit")
-        return [("local", {}, 0, self.LOCAL, b""),
+        return [("provider-pane", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("pane=local", "pane=verb")}, 0,
+                 (declared.replace("pane=local", "pane=verb") + "\n").encode(), b""),
+                ("provider-legacy", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("\tpane=local", "")}, 0,
+                 (declared.replace("\tpane=local", "") + "\n").encode(), b""),
+                ("pane-invalid", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("pane=local", "pane=remote")},
+                 1, b"", b"lane-host: capability-invalid key=pane value=remote\n"),
+                ("local", {}, 0, self.LOCAL, b""),
                 ("claude-cloud", {"ORCH_LANE_HOST": "claude-cloud"}, 0, self.CLOUD, b""),
                 ("provider-declared", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared}, 0, (declared + "\n").encode(), b""),
                 ("provider-absent", {**stub, "LANE_HOST_STUB_NO_CAPABILITIES": "2"}, 0, self.SSH, b""),
@@ -425,13 +432,14 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
         self.assertEqual(self.run_host("--help").returncode, 0)
     def test_dispatch_protocol(self):
         original = self.script.read_text()
-        rule = "  capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts)"
+        rule = "  capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix)"
         self.assertEqual(original.count(rule), 1)
         protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)),
                     (("status", "--item", "TEST-1", "--harness", "claude"), (0, True)),
                     (("wait", "--item", "TEST-1"), (0, True)),
                     (("stop-sandbox", "--item", "TEST-1"), (0, True)),
                     (("start", "--item", "TEST-1"), (0, True)),
+                    (("viewer-prefix", "--item", "TEST-1"), (2, True)),
                     (("exec", "--item", "TEST-1", "--", "true"), (2, False))]
         def observed(args):
             before = (self.root / "calls").read_text() if (self.root / "calls").exists() else ""
@@ -449,7 +457,7 @@ class LaneHostCallersTests(unittest.TestCase):
     provider verb is a call outside the bound."""
     # A provider verb, or the caller's own argv forwarded whole, which is how
     # open-terminal's host_transport hands its verbs on.
-    VERB = re.compile(r"(?:capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|\$@)")
+    VERB = re.compile(r"(?:capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix|\$@)")
     # Keywords, `!`, environment assignments and optional argv prefixes, then
     # the command word and the word after it. A prefix is an array expanded
     # whole, `${X[@]+"${X[@]}"}` or `"${X[@]}"`, such as the github skill's

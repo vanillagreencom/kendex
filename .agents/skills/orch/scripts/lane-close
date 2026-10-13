@@ -1130,6 +1130,10 @@ log_send_cause() {
 # the kind refuses.
 lane_capabilities_read "$LANE_HOST" "${host:-local}" || { message host-capabilities-unread "item=$ITEM" "host=${host:-local}" >&2; exit 1; }
 lane_capability host_stop stop
+lane_capability host_pane pane
+hosted_item=""
+hosted_source=""
+[[ "$host_pane" != verb ]] || { hosted_item="$ITEM"; hosted_source=provider; }
 case "$host_stop" in
   window | verb) ;;
   none)
@@ -1210,9 +1214,9 @@ case "$pane_cmd" in
   claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;
 esac
 if [[ -n "$pane_id" ]]; then
-  pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
+  pane_screen="$(lane_pane_capture "$host_pane" "${host:-local}" "$hosted_item" "$pane_id" 2>/dev/null)" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
-  lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
+  ORCH_LANE_HOST="${host:-local}" lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" "" "" "$hosted_item" "$harness" "$hosted_source" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 else
   # A window gone with its work finished, a tmux restart or a reboot among the
@@ -1305,7 +1309,7 @@ else
 if [[ "$state" == walled ]]; then
   read_wall
   if [[ "$WALL_ACCOUNT" == room && -z "$WALL_RESETS" ]]; then
-    lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" room \
+    ORCH_LANE_HOST="${host:-local}" lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" room "" "$hosted_item" "$harness" "$hosted_source" \
       || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
   fi
 fi
@@ -1346,8 +1350,8 @@ pane_now_exited() {
     1) return 0 ;;
     *) return 2 ;;
   esac
-  screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || return 2
-  lane_state current_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$screen" || return 2
+  screen="$(lane_pane_capture "$host_pane" "${host:-local}" "$hosted_item" "$pane_id" 2>/dev/null)" || return 2
+  ORCH_LANE_HOST="${host:-local}" lane_state current_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$screen" "" "" "" "$hosted_item" "$harness" "$hosted_source" || return 2
   [[ "$current_state" == exited ]]
 }
 

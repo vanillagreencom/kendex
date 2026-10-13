@@ -144,6 +144,11 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     cloud-account-refused) text='The account check on the line above refused the pane after claude --cloud had created the session, which runs the item'"'"'s brief on the account the pane runs, the observed= value of a lane-mismatch line. session= names it, none where the item'"'"'s window showed no claude.ai session URL within ORCH_LANE_SSH_PROMPT_SECS or could not be read. Archive that session from the claude.ai sidebar of the account it runs on; the window is closed, which ends only its local client. Then before a second launch run worktree remove ID, then git push origin --delete BRANCH, the item branch, which worktree remove keeps.' ;;
     cloud-session-started) text='The cloud session started on the pushed item branch.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
+    host-exec-failed) text='The non-interactive SSH command failed to start the hosted harness.' ;;
+    host-viewer-invalid) text='The provider viewer command must be one nonempty line.' ;;
+    host-viewer-failed) text='The provider could not read its viewer command.' ;;
+    host-stop-failed) text='The provider could not stop the detached harness. The local window and lane record remain.' ;;
+    host-stop-state-invalid) text='The launch holds an invalid detached harness ownership state.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
     host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
     parked-record-failed) text='The parked item'"'"'s sandbox is up again, but its record could not be rewritten from parked to stopped, so it still reads parked over a running sandbox and nothing was created. Fix what workflow-state names above and relaunch the item again: the start is answered again for a sandbox already up.' ;;
@@ -405,9 +410,14 @@ Options:
                     workflow, so orch words the brief quotes are no tier.
                     A hosted launch needs tmux mode, a resolved --lane
                     and --harness claude, codex, pi or copilot. It creates no local worktree: `lane-host create`
-                    receives the lane's config dir as --account, the window
-                    types `ssh` to the returned target, waits for the remote
-                    prompt, then types the remote prefix running the harness
+                    receives the lane's config dir as --account. With
+                    pane=local, the window types ssh to the returned target,
+                    waits for the remote prompt and types the remote prefix.
+                    With pane=verb, non-interactive SSH runs the prefix in a
+                    detached sandbox session. Provider capture and send verbs
+                    serve the waits and input. The local window holds no SSH
+                    session. An optional viewer-prefix line is stored as its
+                    @lane-viewer-command option. Both routes run the harness
                     in the remote worktree, with no lane env prefix. A create
                     line carrying state=preparing is a host still preparing
                     the item it accepted. Under --state-dir the window and its
@@ -718,7 +728,7 @@ once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
 default 15, positive integer clamped to 120). A pane already running a turn
 counts as launched and is not typed into.
 
-A hosted lane's wait for the remote shell prompt is its own bound,
+A pane=local hosted lane's wait for the remote shell prompt is its own bound,
 $ORCH_LANE_SSH_PROMPT_SECS (default 60, positive integer clamped to 300),
 because it measures a route and another machine's login rather than a program
 starting here; a cloud session's wait for its URL spends the same bound, since

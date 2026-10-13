@@ -39,10 +39,11 @@ read_capabilities() { # [HOST]
 for row in success refused-2 refused-64 failure invalid; do
   rm -rf -- "$TMP_ROOT/state"
   : > "$TMP_ROOT/calls"
+  expected="$SSH"
   case "$row" in
     success) write_provider "$SSH" 0 $'provider: note=value\n\nnext=value\n'; want=0 ;;
-    refused-2) write_provider '' 2 ''; want=0 ;;
-    refused-64) write_provider '' 64 $'provider: verb-unsupported verb=capabilities\n'; want=0 ;;
+    refused-2) write_provider '' 2 ''; want=0; expected="$SSH"$'\tpane=local' ;;
+    refused-64) write_provider '' 64 $'provider: verb-unsupported verb=capabilities\n'; want=0; expected="$SSH"$'\tpane=local' ;;
     failure) write_provider '' 65 $'provider: failed=capabilities\n'; want=65 ;;
     invalid) write_provider "${SSH/park=none/park=invalid}" 0 ''; want=1 ;;
   esac
@@ -58,7 +59,7 @@ for row in success refused-2 refused-64 failure invalid; do
   assert_eq "$cmp_rc" 0 "$row: stderr bytes stay the same"
   wanted_calls=1; [[ "$want" -eq 0 ]] || wanted_calls=2
   assert_eq "$CALLS" "$wanted_calls" "$row: successful replies are reused and failed reads are retried"
-  [[ "$want" -ne 0 ]] || assert_eq "$(cat "$TMP_ROOT/out")" "$SSH" "$row: validated SSH reply"
+  [[ "$want" -ne 0 ]] || assert_eq "$(cat "$TMP_ROOT/out")" "$expected" "$row: validated SSH reply"
 done
 rm -rf -- "$TMP_ROOT/state"
 : > "$TMP_ROOT/calls"

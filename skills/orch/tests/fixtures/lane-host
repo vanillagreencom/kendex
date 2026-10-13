@@ -44,6 +44,24 @@ fi
 # _APPEND_DELAY holds append at its write, further down.
 # _CREATE_OWNED names the one item whose create exits 75, another session's.
 case "$1" in
+  capture)
+    [[ "${LANE_HOST_STUB_CAPTURE_STATUS:-0}" == 0 ]] || exit "$LANE_HOST_STUB_CAPTURE_STATUS"
+    cat -- "$LANE_HOST_STUB_CAPTURE_FILE"
+    exit 0 ;;
+  send)
+    [[ "${LANE_HOST_STUB_SEND_STATUS:-0}" == 0 ]] || exit "$LANE_HOST_STUB_SEND_STATUS"
+    if [[ "$4" == --file ]]; then
+      cat -- "$5" >> "$LANE_HOST_STUB_SENT_FILE"
+      [[ -z "${LANE_HOST_STUB_AFTER_FILE:-}" ]] || cp -- "$LANE_HOST_STUB_AFTER_FILE" "$LANE_HOST_STUB_CAPTURE_FILE"
+    elif [[ "$4" == --key ]]; then
+      printf '%s\n' "$5" >> "$LANE_HOST_STUB_SENT_FILE"
+      [[ -z "${LANE_HOST_STUB_AFTER_KEY:-}" ]] || cp -- "$LANE_HOST_STUB_AFTER_KEY" "$LANE_HOST_STUB_CAPTURE_FILE"
+    else exit 2; fi
+    exit 0 ;;
+  viewer-prefix)
+    [[ "${LANE_HOST_STUB_VIEWER_STATUS:-2}" == 0 ]] || exit "${LANE_HOST_STUB_VIEWER_STATUS:-2}"
+    printf '%s\n' "$LANE_HOST_STUB_VIEWER_LINE"
+    exit 0 ;;
   create) [[ "${LANE_HOST_STUB_CREATE_OWNED:-}" != "$3" ]] || exit 75 ;;
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
@@ -65,6 +83,8 @@ case "$1" in
       harness_state="$(cat -- "$LANE_HOST_STUB_HARNESS_STATE_FILE")" || exit $?; fi
     printf '%s\n' "$harness_state"
     exit 0 ;;
+  stop)
+    [[ "${LANE_HOST_STUB_STOP_STATUS:-0}" == 0 ]] || exit "$LANE_HOST_STUB_STOP_STATUS" ;;
   put)
     [[ "${LANE_HOST_STUB_PUT_STATUS:-0}" -eq 0 ]] \
       || { printf 'lane-host-fixture: put-failed path=%s\n' "$4" >&2; exit "$LANE_HOST_STUB_PUT_STATUS"; }

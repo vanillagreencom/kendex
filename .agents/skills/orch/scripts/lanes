@@ -339,19 +339,22 @@
 #          record's `window` carries is accepted too, and names that window
 #          under exactly that session. Pass the record's `window` as it stands:
 #          the whole name selects the pane, and its window part alone is the
-#          item the hosted probe below names. The lane's pane on this tmux server
-#          is the whole reading, so this answers exactly as oversee-watch does
+#          item the hosted probe below names. A hosted record declaring
+#          status=verb checks the remote harness first. Its pane=verb capture
+#          comes from the provider; other lanes keep the local pane reading.
+#          This answers exactly as oversee-watch does
 #          about the same lane, except for a window a running fleet lane
 #          record names as a Pi lane: that one is judged from the rows its
 #          lane-mail-check hook writes in its mailbox (lib/session-rows.sh),
 #          through its host where the record names one, and never from its
 #          pane, so a Pi lane with no row is `unjudged` and never `asking`;
 #          a fleet state whose records cannot be read refuses as
-#          `lanes: state-fleet`. The pane judge is the last-resort fallback
-#          for a window no such record names, whatever harness runs there.
+#          `lanes: state-fleet`. The local pane is the fallback for an
+#          unrecorded pane=local lane. An unrecorded pane=verb lane is
+#          unjudged because no record names its remote harness.
 #          A Copilot allow-all lane's record note is on stderr beside it
 #          (references/copilot-runtime.md).
-#          A name no pane on this server carries is
+#          A local name no pane on this server carries is
 #          `unjudged`: a window that closed and a name two windows share are
 #          the same silence from here. `gone` is the judge's answer for a
 #          window a caller has already found absent, which this verb never
@@ -4365,7 +4368,6 @@ case "$SUB" in
 		;;
 	state)
 		[[ -n "$LANE_ARG" ]] || die missing-value state
-		lane_pane_observe "$LANE_ARG"
 		# No /proc read: this script's vantage point is the tmux server, the
 		# same one oversee-watch reads, so the two cannot disagree. A caller
 		# that also holds the lane's worktree — `open-terminal --wake` — passes
@@ -4373,14 +4375,29 @@ case "$SUB" in
 		# A Pi lane is judged from the rows its own hook wrote, never its pane;
 		# the pane is read only for a window no running Pi record names.
 		state_rows_read "$LANE_ARG" || die state-fleet "$LANE_ARG"
+		state_record="$(lane_running_record "${STATE_RECORDS:-[]}" "$LANE_ARG" "" session)" || die state-fleet "$LANE_ARG"
+		state_host="$(jq -r '.host // "local"' <<<"${state_record:-null}")"
+		[[ -n "$state_record" ]] || state_host="${ORCH_LANE_HOST:-local}"
+		state_item="$(jq -r '.item // empty' <<<"${state_record:-null}")"
+		state_harness="$(jq -r '.harness // empty' <<<"${state_record:-null}")"
+		state_mode=local state_source="" state_status=pane
+		if [[ "$state_host" != local ]]; then
+			lane_pane_mode state_mode "$state_host" || state_mode=unreadable
+			lane_capability state_status status
+		fi
+		[[ "$state_status" == verb ]] || state_item=""
+		if [[ -z "$state_item" && "$state_mode" != local ]]; then
+			LANE_PANE_ID="" LANE_PANE_CMD="" LANE_PANE_PID="" LANE_PANE_SCREEN="" LANE_PANE_COUNT=0
+			state_source=unreadable
+		else lane_pane_observe "$LANE_ARG" "$state_host" "$state_item"; fi
 		# No pane on this server carries the name: nothing here sees the lane's
 		# harness, so its rows answer nothing either and the judge says unjudged.
-		[[ -n "$LANE_PANE_ID" ]] || STATE_ROWS=""
+		[[ -n "$LANE_PANE_ID" || "$state_mode" == verb && -n "$state_item" ]] || STATE_ROWS=""
 		[[ -z "$LANE_PANE_ID" ]] || { rec="$(lane_running_record "$STATE_RECORDS" "$LANE_ARG" copilot)" &&
 			lane_now; lane_context_copilot_note "$rec" "$LANE_NOW"; } || die state-fleet "$LANE_ARG"
 		[[ -z "$COPILOT_SESSION_NOTE" ]] || message copilot-note "$LANE_ARG" "$COPILOT_SESSION_NOTE" >&2
 		lane_state_rc=0
-		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" \
+		ORCH_LANE_HOST="$state_host" lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" "$state_item" "$state_harness" "$state_source" \
 			|| lane_state_rc=$?
 		[[ "$lane_state_rc" -ne 2 ]] || die lane-scan-failed "$LANE_ARG"
 		# A hosted lane's harness is on another machine, so `unjudged` here is

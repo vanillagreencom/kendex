@@ -119,11 +119,20 @@ if [[ "${1:-}" == capabilities ]]; then
   case "${ORCH_LANE_HOST:-local}" in
     local) printf 'kind=local\tstop=window\n' ;;
     claude-cloud) printf 'kind=claude-cloud\tstop=none\n' ;;
-    *) printf 'kind=ssh\tstop=verb\n' ;;
+    *) printf 'kind=ssh\tstop=verb\tpane=%s\n' "${LANE_CLOSE_HOST_PANE:-local}" ;;
   esac
   exit 0
 fi
 printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
+if [[ "$1" == capture ]]; then
+  [[ "${LANE_CLOSE_CAPTURE_STATUS:-0}" == 0 ]] || exit "$LANE_CLOSE_CAPTURE_STATUS"
+  cat "$LANE_CLOSE_PROVIDER_SCREEN"; exit 0
+fi
+if [[ "$1" == status ]]; then
+  [[ "$(cat "$LANE_CLOSE_PHASE")" == exited ]] && echo exited || echo running
+  exit 0
+fi
+
 # cat is the read of the item's worktree .git, which a merged lane's own
 # close-out removes: missing, the protocol's 2 that touch confirms, unless
 # LANE_CLOSE_HOST_GITFILE is standing, a linked worktree's line, failed, a
@@ -2430,6 +2439,23 @@ REAL_CLOSE="$(real_worktree_tree kept "$MUTANT")"
 cloud_branch_close kept "$REAL_CLOSE" "$TMP_ROOT/realwt-kept/skills/worktree/scripts/worktree"
 assert_eq "$CLOUD_BRANCH" 'rc=0 branch=kept worktree=removed status=done' \
   'control: a cloud close that removes the worktree outside the worktree skill keeps the item branch' "$TMP_ROOT/err"
+
+echo '=== provider pane close ==='
+PROVIDER_SCREEN="$TMP_ROOT/provider-screen"
+for row in 'verb|0|working|idle|1|running' 'verb|0|idle|working|0|done' 'local|0|working|idle|0|done' 'verb|2|working|idle|1|running' 'verb|7|working|idle|1|running'; do
+  IFS='|' read -r mode capture_status remote local_kind want_rc want_status <<< "$row"
+  write_state running codex /host; write_panes bash
+  if [[ "$local_kind" == idle ]]; then codex_screen; else working_screen; fi
+  if [[ "$remote" == working ]]; then printf '› task\n  press to interrupt\n' > "$PROVIDER_SCREEN"
+  else cp "$PANE_FIXTURES/codex-idle-after-turn.txt" "$PROVIDER_SCREEN"; fi
+  LANE_CLOSE_HOST_PANE="$mode" LANE_CLOSE_CAPTURE_STATUS="$capture_status" LANE_CLOSE_PROVIDER_SCREEN="$PROVIDER_SCREEN" run_close "$SCRIPT"
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" "rc=$want_rc status=$want_status" "close $mode capture=$capture_status remote=$remote local=$local_kind"
+done
+MUTANT="$(mutant provider-capture 'pane_screen="$(lane_pane_capture "$host_pane"' 'pane_screen="$(lane_pane_capture local')"
+write_state running codex /host; write_panes bash; codex_screen
+printf '› task\n  press to interrupt\n' > "$PROVIDER_SCREEN"
+LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_PROVIDER_SCREEN="$PROVIDER_SCREEN" run_close "$MUTANT"
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' 'control: local capture closes a working provider lane'
 
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"

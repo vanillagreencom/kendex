@@ -25,12 +25,31 @@ mkdir -p "$SOCK_DIR"
 tm() { env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 SHELL=/bin/sh TMUX_TMPDIR="$SOCK_DIR" "$REAL_TMUX" "$@"; }
 trap 'tm kill-server 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-# copy_scripts DIR — the entry point and the two libraries it sources, so a
+# copy_scripts DIR: the entry point and its local pane dependencies, so a
 # control plants its defect in a copy of its own.
 copy_scripts() {
   mkdir -p "$1/lib"
   cp "$SCRIPTS_DIR/pane-write" "$1/"
   cp "$SCRIPTS_DIR/lib/pane-write.sh" "$SCRIPTS_DIR/lib/lane-state.sh" "$1/lib/"
+  cp "$SCRIPTS_DIR/lib/lane-claims.sh" "$1/lib/"
+  cp "$SCRIPTS_DIR/lib/lane-capabilities.sh" "$1/lib/"
+  # Local-only fixtures have no fleet record to route through.
+  cat > "$1/workflow-state" <<'STATE'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == exists ]] || exit 2
+printf '{"exists":false}\n'
+STATE
+  cat > "$1/lane-host" <<'HOST'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  resolve) printf 'local\n' ;;
+  capabilities) printf 'pane=local\n' ;;
+  *) exit 2 ;;
+esac
+HOST
+  chmod +x "$1/workflow-state" "$1/lane-host"
 }
 REF="$TMP_ROOT/ref"
 copy_scripts "$REF"

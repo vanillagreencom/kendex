@@ -53,10 +53,10 @@ After a directive, wait for the watch's `directive-read` for its id: the lane's 
 **Pane paste.** Write harness input to a file with the harness file tool, then type it with the one pane writer. `[WINDOW]` is the lane record's `window`, and `[PROCESS]` is the record's `harness`, or `ssh` for a record carrying `host`:
 
 ```bash
-.agents/skills/orch/scripts/pane-write --window [WINDOW] --expect [PROCESS] --file [PATH]
+.agents/skills/orch/scripts/pane-write --window [WINDOW] --expect [PROCESS] --file [PATH] --state-dir [OVERSEE_STATE_DIR]
 ```
 
-It cancels copy mode, pastes the file and presses `Enter`. A dialog key takes `--key [KEY]` in place of `--file`. A refusal, exit 1, types nothing, and its `fix=` line names the remedy (`pane-write --help`). Exit 2, `write-failed`, may have typed part of the input: read the pane before a retry. Never paste a shell command into a lane pane. Stop a process inside a hosted sandbox through `lane-host stop --item [ITEM] --harness [HARNESS]`. Never type a process-name kill at a prompt that can belong to the control host.
+It sends input through the provider when the recorded host declares `pane=verb`, under [lane-host.md](../schemas/lane-host.md#provider-protocol). Otherwise it cancels local copy mode, pastes the file and presses `Enter`. A dialog key takes `--key [KEY]` in place of `--file`. A refusal, exit 1, types nothing, and its `fix=` line names the remedy (`pane-write --help`). Exit 2, `write-failed`, may have typed part of the input: read the pane before a retry. Never paste a shell command into a lane pane. Stop a process inside a hosted sandbox through `lane-host stop --item [ITEM] --harness [HARNESS]`. Never type a process-name kill at a prompt that can belong to the control host.
 
 A lane under a session limit still needs its one-line continuation nudge pasted into its pane at the reset through Pane paste above, since a walled harness runs no turn and so reads no mail; the launch brief and a harness dialog's answer reach a pane the same way, and nothing else does.
 
