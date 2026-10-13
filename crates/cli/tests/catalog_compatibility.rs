@@ -28,6 +28,34 @@ fn assert_refusal(output: &std::process::Output) {
     );
 }
 
+/// Executable registration is CLI bootstrap. Every other file and
+/// directory stays identical, including package and project state.
+#[allow(clippy::unwrap_used)]
+fn with_command_bootstrap(
+    env: &Env,
+    root: &std::path::Path,
+    mut expected: Vec<(String, Vec<u8>)>,
+) -> Vec<(String, Vec<u8>)> {
+    let bootstrap = env.installed_command_file();
+    let Ok(relative) = bootstrap.strip_prefix(root) else {
+        return expected;
+    };
+    let key = format!("file:{}", relative.display());
+    if !expected.iter().any(|(path, _)| path == &key) {
+        expected.push((key, fs::read(&bootstrap).unwrap()));
+    }
+    let mut parent = bootstrap.parent().unwrap();
+    while parent != root {
+        let key = format!("dir:{}", parent.strip_prefix(root).unwrap().display());
+        if !expected.iter().any(|(path, _)| path == &key) {
+            expected.push((key, Vec::new()));
+        }
+        parent = parent.parent().unwrap();
+    }
+    expected.sort();
+    expected
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn malformed_minima_emit_one_machine_read_refusal() {
@@ -115,26 +143,9 @@ fn incompatible_scope_stops_the_selected_command_before_any_install_write() {
                 .collect::<Vec<_>>(),
             [expected]
         );
-        // Executable registration is CLI bootstrap. Every other file and
-        // directory must stay identical, including package and project state.
-        let bootstrap = env.installed_command_file();
-        let mut expected = before;
-        expected.push((
-            format!("file:{}", bootstrap.strip_prefix(&home).unwrap().display()),
-            fs::read(&bootstrap).unwrap(),
-        ));
-        let mut parent = bootstrap.parent().unwrap();
-        while parent != home {
-            let key = format!("dir:{}", parent.strip_prefix(&home).unwrap().display());
-            if !expected.iter().any(|(path, _)| path == &key) {
-                expected.push((key, Vec::new()));
-            }
-            parent = parent.parent().unwrap();
-        }
-        expected.sort();
         assert_eq!(
             tree(&home),
-            expected,
+            with_command_bootstrap(&env, &home, before),
             "{} changed installed package or project state",
             args[0]
         );
@@ -460,7 +471,8 @@ fn source_changes_check_every_post_change_scope_before_install_writes() {
             );
         }
         let before_project = tree(&project);
-        let before_global = tree(env.global_manifest_file().parent().unwrap());
+        let global_root = env.global_manifest_file().parent().unwrap().to_path_buf();
+        let before_global = tree(&global_root);
         let target = if removes_gate {
             "cat"
         } else if action == "add" {
@@ -489,8 +501,8 @@ fn source_changes_check_every_post_change_scope_before_install_writes() {
             assert_refusal(&output);
             assert_eq!(tree(&project), before_project);
             assert_eq!(
-                tree(env.global_manifest_file().parent().unwrap()),
-                before_global
+                tree(&global_root),
+                with_command_bootstrap(&env, &global_root, before_global)
             );
         }
     }
