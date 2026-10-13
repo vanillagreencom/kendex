@@ -119,3 +119,17 @@ while IFS='|' read -r label extra; do
 done <<'ROWS'
 get with --bundle|--bundle
 ROWS
+
+# Session routing reads flat compact rows without issue descriptions.
+while IFS='|' read -r format check; do
+    rc=0
+    out=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CALLS="$TMP_ROOT/calls" \
+        LINEAR_API_KEY_OVERRIDE=test-key "$BASH" .agents/skills/linear/scripts/linear.sh \
+        issues bulk-get KEN-2 KEN-1 "--format=$format" 2>"$TMP_ROOT/err") || rc=$?
+    assert_eq "bulk-get $format succeeds" "$rc" 0
+    assert_jq "bulk-get $format returns its format" "$out" "$check"
+done <<'ROWS'
+safe|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and has("description"))
+compact|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and (has("description") or has("url") or has("created_at") or has("updated_at") | not))
+raw|.issues.nodes | map(.identifier) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state.name == "Todo" and has("description"))
+ROWS
