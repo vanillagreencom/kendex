@@ -24,7 +24,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
 
    No issue worktree means hand back. On conflicts, resolve every listed file, stage it, and run `worktree restack continue [ISSUE]` until complete. Never force-push over an unresolved base.
 
-   Then resolve validation for the restacked head before step 3 pushes it. Under `push-first`, a covered `ci` route records completed local edits with required CI pending and starts no local range command. Step 4's existing exact-head CI wait proves the published head. Where a run is made, the head that leaves step 3 is always a head a passing run recorded, or one the skip check below matched to a passing run, and step 3 holds that across its push. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
+   Then resolve validation for the restacked head before step 3 pushes it. Under `push-first`, a covered `ci` route records completed local edits with required CI pending and starts no local range command. Step 4's existing exact-head CI wait proves the published head. Required CI supplies the full record. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [WT_PATH]
@@ -47,7 +47,7 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH]
    ```
 
-   `validate-mode=ci` runs that command with `--validate-mode ci`, records its pending CI result through the existing `--record` owner, then goes to step 3 with no local range run or skip check. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` first asks whether the last passing run in the worktree already validated the restacked head:
+   `validate-mode=ci` runs that command with `--validate-mode ci`, records its pending CI result through the existing `--record` owner, then goes to step 3 with no local range run or skip check. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`: go to step 3 with no run. `validate-mode=range` first asks whether the restacked head can skip its range re-test. `dev-validate-run --help` owns candidate selection under `--last-pass`:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
