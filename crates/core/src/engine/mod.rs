@@ -825,8 +825,8 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
     Ok(report)
 }
 
-/// A multi-scope caller checks every selected reading before planning its
-/// first scope. The same held-manifest rule supplies the revisions to check.
+/// Check this scope's selected readings before planning. The held-manifest
+/// rule supplies the revisions to check.
 pub fn check_catalog_compatibility(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<()> {
     let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
         return Ok(());
