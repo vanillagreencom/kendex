@@ -252,6 +252,7 @@ environment_rows() {
 [2,"cat <<'EOF' | eval 'sh'\nprintenv\nEOF","piped-eval-stdin-heredoc-program"]
 [2,"bash -c ':; bash' <<'EOF'\nenv\nEOF","later-command-string-stdin-program"]
 [2,"bash wrapper.sh env NAME=value bash <<'EOF'\nenv\nEOF","wrapper-shell-stdin-heredoc-program"]
+[2,"if :; then nohup bash <<'EOF'\nenv\nEOF\nfi","conditional-wrapper-stdin-program"]
 [2,"cat <<'INPUT' | bash -c 'cat <<OUTPUT\n$(bash)\nOUTPUT'\nenv\nINPUT","nested-heredoc-expansion-inherits-input"]
 [2,"sh <<'EOF'\nprintenv\nEOF","sh-quoted-heredoc-program"]
 [2,"sh -s <<'EOF'\nenv\nEOF","sh-stdin-heredoc-program"]
@@ -904,6 +905,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "invocation-options" && $0 == "        if [ -z \"$options_ended\" ]; then" { swap("if [ -z \"$options_ended\" ]; then", "if [ -z \"$options_ended\" ] && [ -z \"$wants_string\" ]; then") }
       defect == "invocation-operand" { swap("*o* | *O*) cursor=$((cursor + 2))", "*o* | *O*) cursor=$((cursor + 1))") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
+      defect == "nested-stdin" { swap("[ -z \"$stdin_program\" ] || stage_stdin[stage]=1", "[ -z \"$stdin_program\" ] || :") }
       defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
@@ -972,6 +974,7 @@ invocation-options|FAIL environment: shell-command-string-option-operand-after-c
 invocation-operand|FAIL environment: shell-command-string-grouped-option-operand: exit=0 expected=2
 invocation-operand|FAIL environment: shell-command-string-positive-option-operand: exit=0 expected=2
 empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
+nested-stdin|FAIL environment: conditional-wrapper-stdin-program: exit=0 expected=2
 set-unknown|FAIL environment: set-unquoted-variable-can-disappear: exit=0 expected=2
 suffix-launcher|FAIL environment: wrapper-launcher: exit=2 expected=0
 suffix-launcher|FAIL environment: wrapper-launcher-redirect: exit=2 expected=0
