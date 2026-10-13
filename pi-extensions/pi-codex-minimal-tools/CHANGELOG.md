@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- OpenAI tool activation and background image commands discover models from Pi's registry. New or renamed models need no probe-list update. Reasoning requests use the model's declared thinking levels. Priority cost estimates use the same multiplier for every model.
+
 ### 2.1.4
 
 - Pi 1.0.0 parity: a replayed tool call keeps its item id only when the same model made it and the id matches the call type, `fc_` for a function call and `ctc_` for a grammar tool call. Before, a grammar tool call that another provider made replayed on `openai-codex` with an `fc_` id, and OpenAI refused the request with "Expected an ID that begins with 'ctc'".

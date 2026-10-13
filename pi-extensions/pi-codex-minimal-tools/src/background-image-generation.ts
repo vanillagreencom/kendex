@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-wor
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { type Component, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { supportsImageInput, type ModelLike } from "./capabilities.js";
+import { registryModels, type ModelRegistryLike } from "./activation.js";
 import { frameGlyphs, glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import {
@@ -22,7 +23,6 @@ const PANEL_TITLE_COLOR = "customMessageLabel";
 const PANEL_RULE_COLOR = "muted";
 const PANEL_CARD_PADDING_X = 1;
 const OPENAI_CODEX_PROVIDER = "openai-codex";
-const OPENAI_CODEX_MODEL_PROBE_IDS = ["gpt-6-astra", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
 
 interface ActiveImageJob {
 	controller: AbortController;
@@ -67,47 +67,13 @@ interface ImageGenerationErrorDetails {
 	referenceCount?: number;
 }
 
-interface ModelRegistryLike {
-	getAll?: () => unknown;
-	getAvailable?: () => unknown;
-	find?: (provider: string, id: string) => unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isModelLike(value: unknown): value is ModelLike {
-	return isRecord(value) && typeof value.provider === "string" && (typeof value.id === "string" || typeof value.name === "string");
-}
-
-function registryModels(registry: ModelRegistryLike | undefined): ModelLike[] {
-	if (!registry) return [];
-	for (const method of [registry.getAll, registry.getAvailable]) {
-		if (typeof method !== "function") continue;
-		try {
-			const value = method.call(registry);
-			if (Array.isArray(value)) return value.filter(isModelLike);
-		} catch {
-			// Try the next registry shape.
-		}
-	}
-	return [];
-}
-
 function isOpenAiCodexImageModel(model: ModelLike | undefined): boolean {
 	return model?.provider === OPENAI_CODEX_PROVIDER && supportsImageInput(model);
 }
 
 export function selectCodexImageModel(currentModel: ModelLike | undefined, registry: ModelRegistryLike | undefined): ModelLike | undefined {
 	if (isOpenAiCodexImageModel(currentModel)) return currentModel;
-	const discovered = registryModels(registry).find(isOpenAiCodexImageModel);
-	if (discovered) return discovered;
-	for (const id of OPENAI_CODEX_MODEL_PROBE_IDS) {
-		const candidate = registry?.find?.(OPENAI_CODEX_PROVIDER, id);
-		if (isModelLike(candidate) && isOpenAiCodexImageModel(candidate)) return candidate;
-	}
-	return undefined;
+	return registryModels(registry).find(isOpenAiCodexImageModel);
 }
 
 function tokenizeArgs(input: string): string[] {

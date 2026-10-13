@@ -478,29 +478,20 @@ function buildWebSocketHeaders(
 	return headers;
 }
 
-function clampReasoningEffort(modelId: string, effort: string): string {
-	const id = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
-	const gpt5MinorMatch = /^gpt-5\.(\d+)/.exec(id);
-	const gpt5Minor = gpt5MinorMatch ? Number.parseInt(gpt5MinorMatch[1], 10) : undefined;
-	if (gpt5Minor !== undefined && gpt5Minor >= 2 && effort === "minimal") return "low";
-	if (id === "gpt-5.1" && effort === "xhigh") return "high";
-	if (id === "gpt-5.1-codex-mini") return effort === "high" || effort === "xhigh" ? "high" : "medium";
-	return effort;
-}
-
-function getServiceTierCostMultiplier(model: Model<Api>, serviceTier: ServiceTier): number {
+function getServiceTierCostMultiplier(serviceTier: ServiceTier): number {
 	switch (serviceTier) {
 		case "flex":
 			return 0.5;
 		case "priority":
-			return model.id === "gpt-6-astra" ? 2.5 : 2;
+			// Pi's model registry provides no priority rate; use the generic tier rate.
+			return 2;
 		default:
 			return 1;
 	}
 }
 
-function applyServiceTierPricing(usage: AssistantMessage["usage"], serviceTier: ServiceTier, model: Model<Api>): void {
-	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
+function applyServiceTierPricing(usage: AssistantMessage["usage"], serviceTier: ServiceTier): void {
+	const multiplier = getServiceTierCostMultiplier(serviceTier);
 	if (multiplier === 1) return;
 	usage.cost.input *= multiplier;
 	usage.cost.output *= multiplier;
@@ -575,7 +566,7 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 	const effort = model.thinkingLevelMap?.[clampedReasoning] ?? clampedReasoning;
 	if (effort === null) return body;
 	body.reasoning = {
-		effort: clampReasoningEffort(model.id, effort),
+		effort,
 		summary: ((options as { reasoningSummary?: string } | undefined)?.reasoningSummary ?? "auto") as string,
 	};
 
@@ -1433,7 +1424,7 @@ async function processCapturedResponsesStream<TApi extends Api>(
 		serviceTier: (options as { serviceTier?: ServiceTier } | undefined)?.serviceTier,
 		grammarToolInputProperties,
 		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model as Model<Api>),
+		applyServiceTierPricing,
 	});
 }
 

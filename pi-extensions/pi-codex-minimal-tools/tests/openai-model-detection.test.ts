@@ -7,7 +7,9 @@ for (const row of [
 	{ name: "substring", ctx: { model: { provider: "notopenai", id: "claude" }, modelRegistry: { getAll: () => [] } }, expected: false },
 	{ name: "current", ctx: { model: { provider: "openai-codex", id: "gpt-6-astra" }, modelRegistry: { getAll: () => [] } }, expected: true },
 	{ name: "getAll", ctx: { modelRegistry: { getAll: () => [{ provider: "openai", id: "gpt-6-astra" }] } }, expected: true },
-	{ name: "find", ctx: { modelRegistry: { find: (provider: string, id: string) => provider === "openai" && id === "gpt-5.2" ? { provider, id } : undefined } }, expected: true },
+	{ name: "unseen registry id", ctx: { modelRegistry: { getAll: () => [{ provider: "openai", id: "registry-only-successor" }] } }, expected: true },
+	{ name: "available registry", ctx: { modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "registry-only-successor" }] } }, expected: true },
+	{ name: "empty registry", ctx: { modelRegistry: { getAll: () => [] } }, expected: false },
 ]) {
 	test(`OpenAI model detection: ${row.name}`, () => assert.equal(hasOpenAiModelsLoaded(row.ctx), row.expected));
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { rejectsMutation } from "./helpers/mutation.js";
 import codexMinimalTools from "../src/index.js";
 import { environment, world } from "./helpers/world.js";
 
@@ -30,7 +31,12 @@ async function emit(pi: ReturnType<typeof fakePi>, event: string, ctx: unknown):
 const openai = { provider: "openai-codex", id: "gpt-6-astra", input: ["text", "image"] };
 const anthropic = { provider: "anthropic", id: "claude", input: ["text"] };
 const packageNames = ["apply_patch", "image_generation", "view_image"];
+const unseen = { provider: "openai", id: "registry-only-successor", input: ["text", "image"] };
 for (const row of [
+	{
+		name: "unseen registry id", initial: ["read", "bash"],
+		steps: [{ event: "session_start", model: undefined, registry: [unseen], registered: packageNames, active: ["read", "bash"] }],
+	},
 	{
 		name: "deferred registration then model switch", initial: ["read", "bash"],
 		steps: [
@@ -51,9 +57,18 @@ for (const row of [
 		codexMinimalTools(pi as never);
 		assert.equal(pi.tools.length, 0);
 		for (const step of row.steps) {
-			await emit(pi, step.event, { cwd, model: step.model, modelRegistry: { getAll: () => step.registry } });
+			await emit(pi, step.event, { cwd, model: step.model, modelRegistry: { getAll: () => step.registry, find: (provider: string, id: string) => step.registry.find(model => model.provider === provider && model.id === id) } });
 			assert.deepEqual(pi.tools.map((tool) => tool.name).sort(), [...step.registered].sort());
 			assert.deepEqual([...pi.activeTools].sort(), [...step.active].sort());
 		}
 	});
 }
+
+test("unseen registry activation rejects the former fixed probe list", (t) => {
+	const needle = "return registryModels(ctx.modelRegistry).some(isOpenAiLoadedModel);";
+	// The fixture exposes find and getAll. Its only model is absent from the
+	// removed probe list, so using that list must fail the activation assertion.
+	const probeIds = ["gpt-6-astra", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
+	const replacement = `return ["openai-codex", "openai"].some(provider => ${JSON.stringify(probeIds)}.some(id => Boolean((ctx.modelRegistry as { find?: (provider: string, id: string) => unknown })?.find?.(provider, id))));`;
+	rejectsMutation(t, "src/activation.ts", needle, replacement, "tests/activation.test.ts", "^extension activation: unseen registry id$");
+});
