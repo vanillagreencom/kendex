@@ -281,6 +281,18 @@ environment_rows() {
 [2,"bash /dev/fd/3 3<<'EOF'\nenv\nEOF","shell-descriptor-script-program"]
 [2,"source /dev/stdin 3<<'EOF' 0<&3\nenv\nEOF","source-duplicated-heredoc-program"]
 [2,". /dev/fd/3 3<<'EOF'\nprintenv\nEOF","source-descriptor-script-program"]
+[2,"exec 3<<'EOF'\nenv\nEOF\nbash /dev/fd/3","carried-shell-descriptor-program"]
+[2,"exec 3<<'EOF'\nprintenv\nEOF\n. /dev/fd/3","carried-source-descriptor-program"]
+[2,"exec 3<<<'env'; bash /dev/fd/3","carried-here-string-descriptor-program"]
+[2,"exec 3<<'EOF'; bash /dev/fd/3\nenv\nEOF","carried-semicolon-descriptor-program"]
+[2,"exec 3<<<'env' && bash /dev/fd/3","carried-conditional-descriptor-program"]
+[2,"{ exec 3<<<'env'; bash /dev/fd/3; }","carried-grouped-descriptor-program"]
+[2,"command exec 3<<<'env'; source /dev/fd/3","carried-forwarded-descriptor-program"]
+[2,"builtin exec 3<<<'env'; . /dev/fd/3","carried-builtin-descriptor-program"]
+[2,"NAME=value exec 3<<<'env'; bash /dev/fd/3","carried-assignment-descriptor-program"]
+[2,"exec 3<<'EOF'\nprintenv NAME\nEOF\nbash /dev/fd/3","carried-named-read-retains-main-refusal"]
+[2,"exec 3<<'EOF'\nenv NAME=value command-name\nEOF\nbash /dev/fd/3","carried-launcher-retains-main-refusal"]
+[2,"exec 3<<'EOF'\n$'en\\166'\nEOF\nbash /dev/fd/3","carried-encoded-producer-retains-main-refusal"]
 [2,"bash -c 'bash 0<&0' <<'EOF'\nenv\nEOF","command-string-stdin-self-duplicate"]
 [2,"bash -c 'bash < /dev/stdin' <<'EOF'\nenv\nEOF","command-string-stdin-alias"]
 [2,"bash -c 'bash < /proc/self/fd/0' <<'EOF'\nenv\nEOF","command-string-proc-stdin-alias"]
@@ -290,6 +302,10 @@ environment_rows() {
 [2,"cat <<X | bash; env","unread-piped-heredoc-body"]
 [2,"bash <<EOF; printf 'line\nbreak'; env","unread-heredoc-quoted-newline"]
 [2,"bash <<EOF","unregistered-heredoc-final-word"]
+[2,"env\ncat << << X\nbody\nX","dump-before-unregistered-heredoc-redirect"]
+[2,"printenv\ncat <<- << X\nbody\nX","printenv-before-unregistered-heredoc-redirect"]
+[2,"{ env; }\ncat << << X\nbody\nX","grouped-dump-before-unregistered-heredoc"]
+[2,"bash -c 'env'\ncat << << X\nbody\nX","shell-string-before-unregistered-heredoc"]
 [2,"cat <<FIRST <<'SECOND'\n$(env >&2)\nFIRST\ndata\nSECOND","mixed-heredoc-expansion"]
 [2,"cat <<'FIRST' <<SECOND\ndata\nFIRST\n$(printenv >&2)\nSECOND","reversed-mixed-heredoc-expansion"]
 [2,"cat <<FIRST <<'SECOND'\n'$(env >&2)'\nFIRST\ndata\nSECOND","unquoted-heredoc-single-quotes-expand"]
@@ -309,6 +325,15 @@ environment_rows() {
 [2,"bash -c -o pipefail 'env'","shell-command-string-option-operand-after-c"]
 [2,"bash -ec -u 'env'","shell-command-string-grouped-options"]
 [2,"bash -co pipefail 'env'","shell-command-string-grouped-option-operand"]
+[2,"bash -coo errexit pipefail 'env'","shell-command-string-multiple-option-operands"]
+[2,"bash -coO pipefail extglob 'env'","shell-command-string-mixed-option-operands"]
+[2,"bash -c -oo errexit pipefail 'env'","shell-command-string-separate-multiple-operands"]
+[2,"command env NAME=value bash -coo errexit pipefail 'env'","forwarded-shell-multiple-option-operands"]
+[2,"bash wrapper.sh bash -coO pipefail extglob 'env'","suffix-shell-multiple-option-operands"]
+[2,"exec bash -coO pipefail extglob 'env'","exec-shell-multiple-option-operands"]
+[2,"bash -c \"bash -coo errexit pipefail 'env'\"","nested-shell-multiple-option-operands"]
+[2,"bash -coo errexit pipefail 'printenv NAME'","multiple-operands-named-read-retains-main-refusal"]
+[0,"bash -coo errexit pipefail 'printf done'","multiple-operands-without-known-read"]
 [2,"bash -c -eo pipefail 'env'","shell-command-string-grouped-operand-after-c"]
 [2,"bash -c +o pipefail 'env'","shell-command-string-positive-option-operand"]
 [2,"bash -c -O extglob 'env'","shell-command-string-shopt-operand-after-c"]
@@ -867,8 +892,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "heredoc-program" { swap("if [ -n \"${stage_stdin[$stage]}\" ]; then", "if false; then") }
       defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
-      defect == "body-registration" { swap("[ -z \"$heredoc_op\" ] || return 0", "[ -z \"$heredoc_op\" ] || :") }
-      defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]}") }
+      defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
+      defect == "persistent-input-cut" { swap("[ -z \"$data_source\" ] || { mode=dump-unknown; return; }", "[ -z \"$data_source\" ] || :") }
+      defect == "grouped-operands-cut" { swap("if environment_main_evidence \"${args[@]:pos}\"; then", "if false; then") }
+      defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
       defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
       defect == "heredoc-expansion" { swap("[ -n \"$quoted\" ] || heredoc_expand[doc]=1", "[ -n \"$quoted\" ] || :") }
       defect == "heredoc-expansion-quotes" && /environment_dump expansions conservative;/ { swap("environment_dump expansions conservative", "environment_dump shell conservative") }
@@ -877,7 +904,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "invocation-options" && $0 == "        if [ -z \"$options_ended\" ]; then" { swap("if [ -z \"$options_ended\" ]; then", "if [ -z \"$options_ended\" ] && [ -z \"$wants_string\" ]; then") }
       defect == "invocation-operand" { swap("*o* | *O*) cursor=$((cursor + 2))", "*o* | *O*) cursor=$((cursor + 1))") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
-      defect == "nested-stdin" { swap("[ -z \"$stdin_program\" ] || stage_stdin[stage]=1", "[ -z \"$stdin_program\" ] || :") }
       defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
@@ -929,8 +955,12 @@ delimiter-proof|FAIL environment: encoded-heredoc-delimiter: exit=0 expected=2
 heredoc-program|FAIL environment: bash-quoted-heredoc-program: exit=0 expected=2
 heredoc-pipe|FAIL environment: piped-heredoc-program: exit=0 expected=2
 body-evidence|FAIL environment: unread-shell-heredoc-body: exit=0 expected=2
-body-registration|FAIL environment: unregistered-heredoc-final-word: exit=0 expected=2
 descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
+persistent-input-cut|FAIL environment: carried-shell-descriptor-program: exit=0 expected=2
+persistent-input-cut|FAIL environment: carried-source-descriptor-program: exit=0 expected=2
+grouped-operands-cut|FAIL environment: shell-command-string-multiple-option-operands: exit=0 expected=2
+grouped-operands-cut|FAIL environment: shell-command-string-mixed-option-operands: exit=0 expected=2
+missing-identifier-cut|FAIL environment: dump-before-unregistered-heredoc-redirect: exit=0 expected=2
 body-separation|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
 heredoc-expansion|FAIL environment: mixed-heredoc-expansion: exit=0 expected=2
 heredoc-expansion-quotes|FAIL environment: unquoted-heredoc-single-quotes-expand: exit=0 expected=2
@@ -941,7 +971,6 @@ invocation-options|FAIL environment: shell-command-string-option-after-c: exit=0
 invocation-options|FAIL environment: shell-command-string-option-operand-after-c: exit=0 expected=2
 invocation-operand|FAIL environment: shell-command-string-grouped-option-operand: exit=0 expected=2
 invocation-operand|FAIL environment: shell-command-string-positive-option-operand: exit=0 expected=2
-nested-stdin|FAIL environment: exec-stdin-heredoc-program: exit=0 expected=2
 empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
 set-unknown|FAIL environment: set-unquoted-variable-can-disappear: exit=0 expected=2
 suffix-launcher|FAIL environment: wrapper-launcher: exit=2 expected=0
