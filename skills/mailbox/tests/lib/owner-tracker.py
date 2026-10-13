@@ -58,8 +58,8 @@ def run(source, scratch, bash):
             tracker.write_text(STUB)
             tracker.chmod(0o755)
             subprocess.run(["git", "init", "-q", str(root)], check=True)
-            for key in ("gc.auto", "maintenance.auto"):
-                subprocess.run(["git", "-C", str(root), "config", key, "false"], check=True)
+            for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
+                subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
             message = root / "question"
             message.write_text("Approve this change?\nMore detail.\n")
             env = {"PATH": os.environ["PATH"], "HOME": str(root),
