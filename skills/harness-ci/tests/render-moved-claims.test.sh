@@ -81,6 +81,10 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts control
     paired-addition)
       git -C "$repo" mv "$old" .agents/skills/spare/renamed.py
       printf 'replacement implementation\n' >"$repo/$new" ;;
+    legacy-copy)
+      cp "$repo/$spare" "$repo/.agents/skills/spare/renamed.py"
+      git -C "$repo" mv "$spare" "$new"
+      printf 'replacement implementation\n' >"$repo/$new" ;;
     unclaimed-rewritten)
       git -C "$repo" mv "$spare" .agents/skills/spare/renamed.py
       printf 'replacement implementation\n' >"$repo/.agents/skills/spare/renamed.py" ;;
@@ -90,8 +94,13 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts control
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$case"
   if [ "$change" = rewritten ]; then
+    git_statuses="$(git -C "$repo" diff --name-status --find-renames --diff-filter=ADR "$base" HEAD)" || exit 1
     assert_eq "$case: Git reports deletion plus addition" "$(printf 'A\t%s\nD\t%s' "$new" "$spare")" \
-      "$(git -C "$repo" diff --name-status --find-renames --diff-filter=ADR "$base" HEAD)"
+      "$git_statuses"
+  elif [ "$change" = legacy-copy ]; then
+    git_statuses="$(git -C "$repo" diff --name-status --find-renames --diff-filter=ADR "$base" HEAD)" || exit 1
+    assert_eq "$case: similarity pairs the deleted path with its copy" \
+      "$(printf 'A\t%s\nR100\t%s\t%s' "$new" "$spare" .agents/skills/spare/renamed.py)" "$git_statuses"
   fi
   run_action "$SANDBOX/action/classify" "$event"
   assert_eq "$case: lanes" "lanes=$expected_lanes" \
@@ -118,11 +127,14 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts control
         needle='        lanes=true lanes_cause=render-moved-claim'
         replacement='        lanes=false lanes_cause=render' ;;
       candidate-off)
-        needle='  if [ "$unmatched_deletion" = true ]; then'
+        needle='  if [ "$has_deletions" = true ]; then'
         replacement='  if false; then' ;;
       candidate-on)
-        needle='  if [ "$unmatched_deletion" = true ]; then'
+        needle='  if [ "$has_deletions" = true ]; then'
         replacement='  if true; then' ;;
+      similarity-on)
+        needle='    --name-status -z --no-renames --diff-filter=AD "$render_base" "$render_head" -- \'
+        replacement='    --name-status -z --find-renames --diff-filter=AD "$render_base" "$render_head" -- \' ;;
     esac
     NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
       hits++; print ENVIRON["REPLACEMENT"]; next
@@ -143,8 +155,10 @@ rename into claimed directory|pull_request|destination|true|lane_orch=false,lane
 rewritten move into claimed directory|pull_request|rewritten|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false|candidate-off|mailbox|false
 rewritten move in merge group|merge_group|rewritten|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false
 addition into claimed directory|pull_request|addition|false|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_other=false|candidate-on|mailbox|true
-addition beside a paired rename|pull_request|paired-addition|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_other=false
+addition beside a move|pull_request|paired-addition|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=true,lane_other=false
 rewritten unclaimed move|pull_request|unclaimed-rewritten|false|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_other=false
+rewritten move with a retained copy|pull_request|legacy-copy|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false|similarity-on|mailbox|false
+retained copy in merge group|merge_group|legacy-copy|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false
 ROWS
 require_rows render-moved-claims "$rows"
 report render-moved-claims

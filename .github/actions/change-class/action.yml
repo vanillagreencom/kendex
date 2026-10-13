@@ -121,9 +121,9 @@ outputs:
   lanes:
     description: >-
       true where the diff runs the workflow's lanes, false where it runs
-      none. A render runs lanes whose default-branch claims match a deleted
-      path, either detected rename end, or a possible added destination
-      beside an unmatched deletion. Other renders run none. A trivial class or
+      none. When any old path disappears in a render, it runs lanes whose
+      default-branch claims match a deleted or added path. This covers both
+      rename ends without content pairing. Other renders run none. A trivial class or
       docs_only=true on a non-render class runs none. A proof covering every
       lane the diff would run also runs none. What a lane condition
       and an aggregate's waiver read, with lane_verdicts as
