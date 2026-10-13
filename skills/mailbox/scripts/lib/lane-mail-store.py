@@ -152,7 +152,10 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30):
 
     while True:
         before = stamp()
-        if previous and previous["stamp"] == before and not writer():
+        # A missing tracker outcome can expire without a writer changing a file.
+        release_at = previous.get("release_at")
+        if (previous and previous["stamp"] == before and not writer()
+                and (release_at is None or time.time() < release_at)):
             break
         if time.monotonic() >= deadline:
             raise StoreRefusal("lock-failed", box)
@@ -187,15 +190,19 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30):
             | objects($box)[] | .line as $line | .envelope
             | . + {box: (if $b == 0 then "to-overseer" else "to-lane" end), line: $line, count: $box.count}
             | if $b == 1 then . + {mail_class: overseer_mail_class} else . end] as $rows
-          | {rows: $rows, directives: [$rows[] | select(.box == "to-lane" and mailbox_directive_receipt) | {line, id}]}
+          | {rows: [$rows[] | owner_tracker_snapshot($now)],
+             release_at: ([$rows[] | select(.tracker_pending == true) | owner_tracker_release_at
+                           | select(. > $now)] | min),
+             directives: [$rows[] | select(.box == "to-lane" and mailbox_directive_receipt) | {line, id}]}
         '''
-        result = subprocess.run(["jq", "-c", program], input=json.dumps(snapshots),
+        result = subprocess.run(["jq", "-c", "--argjson", "now", str(time.time()), program], input=json.dumps(snapshots),
                                 capture_output=True, text=True, check=True,
                                 timeout=max(0, deadline - time.monotonic()),
                                 env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ})
         projected = json.loads(result.stdout)
         previous.clear()
-        previous.update(stamp=before, rows=projected["rows"], directives=projected["directives"], count=snapshots[1]["count"])
+        previous.update(stamp=before, rows=projected["rows"], release_at=projected["release_at"],
+                        directives=projected["directives"], count=snapshots[1]["count"])
         break
     receipt = None
     if receipts:

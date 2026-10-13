@@ -49,7 +49,9 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
         'if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then lm_append_local "$TO_OVERSEER" "$POSTED_LINE"; fi'
       assertion='the real relay holds pending asks then posts the selected form once'
     else
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" '+ 300 <= $now' '+ 301 <= $now'
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/lane-mail-store.py" \
+        'and (release_at is None or time.time() < release_at)' \
+        'and (release_at is None or True or time.time() < release_at)'
       assertion='a missing outcome releases at the fixed bound and preserves later delivery'
     fi
     control_rc=0

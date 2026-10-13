@@ -410,8 +410,8 @@ Reads fold the outcome into that ask and clear tracker_pending before cursor fil
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. Closure still uses
 its issue to clean up partial tracker writes.
-The full events snapshot, which the Slack relay reads without --box or --after,
-holds pending tracker asks for 300 seconds from at. An outcome releases the ask.
+Full event snapshots, including the Slack relay's imported mailbox reader,
+hold pending tracker asks for 300 seconds from at. An outcome releases the ask.
 At that bound, a missing outcome releases the full question. Cursored events,
 pending and drain still include pending asks, so their cursors cannot lose a later outcome.
 Reads of legacy closing answers warn `lane-mail: legacy-close=<id>` on stderr.
@@ -1412,10 +1412,7 @@ lm_objects() { # FILE [BOX [AFTER]]
     | owner_tracker_record($posted)
     # Snapshot consumers reread every ask; cursor consumers must retain pending
     # asks at their original line. The bound releases interrupted tracker writes.
-    | if $snapshot then
-        select(.tracker_pending != true or ((.at | at_epoch) + 300 <= $now))
-        | del(.tracker_pending)
-      else . end
+    | if $snapshot then owner_tracker_snapshot($now) else . end
     | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end)

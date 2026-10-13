@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO / "skills/slack/scripts/lib"))
@@ -122,6 +123,11 @@ else exec '{shutil.which("date")}' "$@"; fi
                 write_binding(root, Binding("COWNER", "owner", str(at), [owner], {owner: "UOWNER"}))
                 relay = RootRelay(root, Settings("fixture", "fixture", [owner], 15, 7, "fixture"),
                                   Presence("", 600), api, lambda: int(clock.read_text()))
+                # Load the production imported reader, then replace only its
+                # clock. Parsing, projection and its cache remain production code.
+                relay.mail.events()
+                relay.mail.reader.__globals__["time"] = SimpleNamespace(
+                    time=lambda: int(clock.read_text()), monotonic=time.monotonic, sleep=time.sleep)
                 relay.poll("UBOT")
                 held = len(api.messages) == 0
                 message.write_text("Later notice.\n")
@@ -147,6 +153,9 @@ else exec '{shutil.which("date")}' "$@"; fi
                     writer.kill()
                     os.write(release_fd, b"release\n")
                     writer.communicate(timeout=10)
+                    unchanged = box.stat()
+                    cached_stamp = relay.mail.snapshots["stamp"]
+                    facts["bound"] &= relay.mail.snapshots["release_at"] == at + 300
                     clock.write_text(str(at + 299))
                     relay.poll("UBOT")
                     facts["bound"] &= len(api.messages) == 1
@@ -156,6 +165,13 @@ else exec '{shutil.which("date")}' "$@"; fi
                                        and "tracker_pending" not in released[0])
                     relay.poll("UBOT")
                     relay.poll("UBOT")
+                    imported = [e for e in relay.mail.events() if e["id"] == ask["id"]]
+                    current = box.stat()
+                    facts["bound"] &= (cached_stamp == relay.mail.snapshots["stamp"]
+                        and (unchanged.st_size, unchanged.st_mtime_ns, unchanged.st_ctime_ns)
+                        == (current.st_size, current.st_mtime_ns, current.st_ctime_ns)
+                        and len(imported) == 1 and imported[0]["tracker_posted"] is False
+                        and "tracker_pending" not in imported[0])
                     facts["bound"] &= len(api.messages) == 2 and "More detail." in api.messages[-1].get("markdown_text", "")
                     continue
                 os.write(release_fd, b"release\n")

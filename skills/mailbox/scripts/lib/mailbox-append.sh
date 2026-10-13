@@ -207,13 +207,17 @@ owner_tracker_unwritten() { # ISSUE CAUSE
 }
 
 # Both mailbox readers fold posting evidence before selecting asks or cursors.
-OWNER_TRACKER_JQ='def owner_tracker_record($outcomes):
+OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_tracker_record($outcomes):
   if .kind == "ask" and .to == "owner" and .issue != null then
     . as $ask | ([$outcomes[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
     | .tracker_posted = ($record.kind == "tracker-posted")
     | if $record != null then del(.tracker_pending) else . end
     | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
   else . end;
+def owner_tracker_release_at:
+  (.at | at_epoch) + 300;
+def owner_tracker_snapshot($now):
+  select(.tracker_pending != true or owner_tracker_release_at <= $now) | del(.tracker_pending);
 def owner_tracker_label($configured):
   .tracker_label // (if $configured != "" then $configured else error("owner-tracker-label-unavailable") end);
 def owner_tracker_open_labels($configured):
