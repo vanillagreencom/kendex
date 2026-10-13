@@ -4,6 +4,7 @@
 
 ### Unreleased
 
+- A managed Claude profile keeps `CLAUDE_CODE_OAUTH_TOKEN` when its config directory matches the launch account, including the default account. Other profiles discard the inherited token. Without a token, the child uses the profile folder login.
 - Claude Haiku 5.5 (`claude-haiku-5-5`) is selectable under the `pi-claude` provider, listed ahead of Haiku 4.5, with 1M context and 128k output.
 
 ### 4.1.0

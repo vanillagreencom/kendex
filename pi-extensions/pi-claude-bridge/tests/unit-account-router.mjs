@@ -14,6 +14,24 @@ import {
 
 
 describe("subscriberProfileEnv", () => {
+	it("keeps the launch account token and otherwise uses the profile login", () => {
+		const rows = [
+			["launch profile", "/profiles/max", "/profiles/max", "launch-token", "launch-token"],
+			["different profile", "/profiles/other", "/profiles/max", "launch-token", undefined],
+			["folder login fallback", "/profiles/max", "/profiles/max", undefined, undefined],
+			["default launch profile", undefined, undefined, "launch-token", "launch-token"],
+			["default after another launch profile", undefined, "/profiles/max", "launch-token", undefined],
+			["managed after default launch", "/profiles/max", undefined, "launch-token", undefined],
+		];
+		for (const [label, configDir, launchDir, token, expectedToken] of rows) {
+			const base = { CLAUDE_CONFIG_DIR: launchDir, CLAUDE_CODE_OAUTH_TOKEN: token };
+			const env = subscriberProfileEnv({ configDir }, base);
+			assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, expectedToken, label);
+			assert.equal(env.CLAUDE_CONFIG_DIR, configDir, label);
+			assert.deepEqual(base, { CLAUDE_CONFIG_DIR: launchDir, CLAUDE_CODE_OAUTH_TOKEN: token }, label);
+		}
+	});
+
 	it("selects the profile and removes each billing credential", () => {
 		const rows = [
 			["PATH", "/bin", "/bin"],
