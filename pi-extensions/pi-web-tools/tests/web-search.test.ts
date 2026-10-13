@@ -68,13 +68,15 @@ test("web_search renderer shows source URLs and hides content ids", () => {
 // The tool emits batch queries; Google's fake API returns an independent answer and grounding list for each one.
 for (const parallel of [false, true]) {
 	test(`Gemini batch retains each answer and source list${parallel ? " with parallel requests" : ""}`, { timeout: 10_000 }, async (t) => {
-		const requests: Array<{ query: string; dates: boolean[]; systemInstruction: unknown }> = [];
+		const requests: Array<{ query: string; dates: Array<{ direction: string; date: string }>; systemInstruction: unknown }> = [];
 		const release: Array<() => void> = [];
 		t.mock.method(globalThis, "fetch", async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
 			const body = JSON.parse(String(init?.body));
 			const prompt: string = body.contents[0].parts[0].text;
 			const query = prompt.split("\n")[0]!;
-			requests.push({ query, dates: ["2026-10-01", "2026-10-13"].map((date) => prompt.includes(date)), systemInstruction: body.systemInstruction });
+			// Gemini consumes date relations as prompt hints; the date alone does not define a bound.
+			const dates = [...prompt.matchAll(/\b(after|before)\s+(\d{4}-\d{2}-\d{2})\b/g)].map(([, direction, date]) => ({ direction: direction!, date: date! }));
+			requests.push({ query, dates, systemInstruction: body.systemInstruction });
 			if (parallel) await new Promise<void>((resolve) => release.push(resolve));
 			return Response.json({ candidates: [{ content: { parts: [{ text: `Answer ${query}` }] }, groundingMetadata: { groundingChunks: [{ web: { uri: `https://example.com/${query}`, title: query } }], groundingSupports: [{ segment: { endIndex: Buffer.byteLength(`Answer ${query}`) }, groundingChunkIndices: [0] }] } }] });
 		});
@@ -91,7 +93,7 @@ for (const parallel of [false, true]) {
 		const sections = text.startsWith("## ") ? text.split(/^## /m).slice(1) : [text];
 		assert.equal(sections.length, 2);
 		assert.deepEqual(sections.map((section) => ({ query: section.split("\n")[0], answer: section.match(/Answer \w+\[\d+\]/)?.[0], sources: [...section.matchAll(/https:\/\/example\.com\/\w+/g)].map((match) => match[0]) })), ["first", "second"].map((query) => ({ query, answer: `Answer ${query}[1]`, sources: [`https://example.com/${query}`] })));
-		assert.deepEqual(requests, ["first", "second"].map((query) => ({ query, dates: [true, true], systemInstruction: undefined })));
+		assert.deepEqual(requests, ["first", "second"].map((query) => ({ query, dates: [{ direction: "after", date: "2026-10-01" }, { direction: "before", date: "2026-10-13" }], systemInstruction: undefined })));
 		assert.deepEqual(result.details.results.map((source: { url?: string }) => source.url), ["https://example.com/first", "https://example.com/second"]);
 		assert.equal(detailsHold(result.details, "Answer first"), false);
 	});
