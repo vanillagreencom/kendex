@@ -22,7 +22,7 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 | Repeated lines | The last line starting with `validate:` owns the result |
 | Missing or malformed last line | The start's previewed `selection=all` or `selection=subset`; otherwise `selection=unreported`. No `lanes` field; does not change the run verdict |
 | `validate-mode` | Remains `full`, `range` or `ci`; names the invocation, not the lane selection |
-| Finding line | A line starting with the prefix the project declares in `DEV_VALIDATE_FINDING_PREFIX`, such as `guard: ` for a guard printing `guard: suite=…`; a project that declares none has no finding-free run. A run the bound ended whose log holds none refuted nothing: `--last-pass` passes over it, and a later run over no fewer paths does not run past the bound again (`dev-validate-run --help`) |
+| Finding line | A line starting with the prefix the project declares in `DEV_VALIDATE_FINDING_PREFIX`, such as `guard: ` for a guard printing `guard: suite=…`; a project that declares none has no finding-free run. A timeout or unavailable-host `no-verdict` run whose log holds none may supply its recorded tree through `--last-pass` to `restack-skip`, with `verdict=no-verdict`. This is not a passing verdict. Only a timeout run can answer a later run over no fewer paths without running past the bound again (`dev-validate-run --help`) |
 
 ## Round-closure mechanics
 

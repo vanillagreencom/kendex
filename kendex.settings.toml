@@ -310,9 +310,10 @@ DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; t
 # to that check.
 DEV_VALIDATE_CI_CONTEXT = "CI"
 
-# The prefix tools/guard prints each finding with. A run the bound ended whose
-# log holds no line starting with it refuted nothing, so dev-validate-run lets
-# it answer a later run over no fewer paths and --last-pass passes over it.
+# The prefix tools/guard prints each finding with. A finding-free timeout lets
+# dev-validate-run answer a later run over no fewer paths without running again.
+# Separately, --last-pass may supply a finding-free timeout or unavailable-host
+# no-verdict run's tree to restack-skip. Neither supplies a passing verdict.
 DEV_VALIDATE_FINDING_PREFIX = "guard: "
 
 # The bound on either run, in whole seconds. `tools/guard --full` takes well
