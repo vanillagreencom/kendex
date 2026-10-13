@@ -502,23 +502,26 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
 # ol_entry_permitted ENTRY — whether ol_walk may launch ENTRY, of harness
 # OL_HARNESS, under the posture its source allows, a skip notice queued in
 # OL_WALK_SKIPS where it may not. A first launch, OL_WALK_SOURCE_HARNESS empty,
-# needs the full-bypass word the harness row writes, and a row naming none,
-# pi's, has no unattended launch to open: entry-permission-unwritable. An
+# needs the full-bypass word the harness row writes. A lane preference walk
+# also accepts a declared no-word posture; overseer launches still skip it
+# as entry-permission-unwritable. An
 # entry of another harness than its source needs that word too, and the
 # source's posture to cross to it: OL_WALK_SOURCE_FLAGS held to exactly one
 # transferable posture (lib/lane-launch.sh §
 # launch_choice_permission_transferable), entry-permission-untransferable
 # where not; with OL_WALK_SOURCE_ROWS 1, a judgement handed no permission
 # words, the source row naming a transferable posture, and a skip says
-# nothing. So no posture crosses to or from pi, whose row names none. A
+# nothing. So no overseer posture crosses to or from pi. A
 # numeric entry of another harness than its source is skipped the same way,
 # with `model=` naming the caller's model: that model is spelled for the
 # source harness (copilot's `claude-opus-5.5` is claude's `claude-opus-5-5`),
 # and no table here translates one harness's spelling into another's.
 ol_entry_permitted() { # ENTRY
-  local tab=$'\t'
+  local tab=$'\t' row posture
+  row="$(launch_choice_row "$OL_HARNESS")"
+  IFS='|' read -r _ _ _ _ _ posture _ <<<"$row"
   if [[ -z "$OL_WALK_SOURCE_HARNESS" ]]; then
-    launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0
+    [[ "$posture" != no-word ]] && launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0
     OL_WALK_SKIPS+=("entry-permission-unwritable${tab}entry=$1${tab}harness=$OL_HARNESS")
     return 1
   fi
@@ -528,7 +531,11 @@ ol_entry_permitted() { # ENTRY
       || OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS${tab}model=${OL_MODEL:-none}")
     return 1
   fi
-  if launch_choice_permission_write "$OL_HARNESS" >/dev/null; then
+  if [[ "${PREFERENCE_ACTIVE:-false}" == true && "$posture" == no-word ]] \
+    && launch_choice_permission_transferable "$OL_WALK_SOURCE_HARNESS" "$OL_WALK_SOURCE_FLAGS"; then
+    return 0
+  fi
+  if [[ "$posture" != no-word ]] && launch_choice_permission_write "$OL_HARNESS" >/dev/null; then
     if (( OL_WALK_SOURCE_ROWS )); then
       [[ -z "$(launch_choice_transfer_permission_spellings "$OL_WALK_SOURCE_HARNESS")" ]] || return 0
     elif launch_choice_permission_transferable "$OL_WALK_SOURCE_HARNESS" "$OL_WALK_SOURCE_FLAGS"; then

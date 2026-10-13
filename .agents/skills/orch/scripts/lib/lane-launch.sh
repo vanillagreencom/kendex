@@ -158,7 +158,10 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 # posture an unattended launch accepts. The seventh is the subset whose full
 # bypass meaning can transfer between harnesses. Its first spelling is written;
 # a `FLAG=VALUE` spelling also accepts `FLAG VALUE` when a caller supplied it.
-# `-` says the harness launch form has no permission word in that set. The
+# `-` says the harness launch form has no permission word in that set.
+# `no-word` in the sixth field declares native tools with no approval gate;
+# the writer succeeds without a flag, while the transfer set stays empty.
+# Extensions can still ask for confirmation. The
 # eighth is the launch-only settings every command a launcher builds for that
 # harness carries, written as they stand, one `;`-separated run per setting, and
 # `-` where it has none. Codex
@@ -262,7 +265,7 @@ LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
   'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false;-c features.daemon_auto_start=false;--dangerously-bypass-hook-trust|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
-  'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
+  'pi|--model|--thinking|:|-|no-word|-|-|--exclude-tools question|-'
   'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3;--context long_context;--no-auto-update|--no-ask-user|-'
 )
 # The row for harness $1, empty where the table names no such harness.
@@ -308,13 +311,13 @@ launch_choice_effort_spellings() { # HARNESS
 }
 
 # The permission spellings an unattended launch on harness $1 accepts. Empty
-# where the row uses the `-` sentinel or the table names no such harness.
+# where the row uses `-` or `no-word`, or the table names no such harness.
 launch_choice_permission_spellings() { # HARNESS
   local row spellings
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
   IFS='|' read -r _ _ _ _ _ spellings _ _ <<<"$row"
-  [[ "$spellings" != - ]] || return 0
+  [[ "$spellings" != - && "$spellings" != no-word ]] || return 0
   printf '%s\n' "$spellings"
 }
 
@@ -564,10 +567,13 @@ launch_choice_write() { # HARNESS MODEL EFFORT
 
 # The permission words an unattended launch on HARNESS carries, quoted for the
 # shell command its caller is building. The first spelling in the row is the
-# written form. A row with no permission word and an unknown harness both
-# return status 1: neither can safely launch a named successor unattended.
+# written form. The no-word posture succeeds with empty output. A row with no
+# declared posture and an unknown harness return status 1.
 launch_choice_permission_write() { # HARNESS
-  local spellings word flag value
+  local row posture spellings word flag value
+  row="$(launch_choice_row "$1")"
+  IFS='|' read -r _ _ _ _ _ posture _ <<<"$row"
+  [[ "$posture" != no-word ]] || return 0
   spellings="$(launch_choice_transfer_permission_spellings "$1")"
   [[ -n "$spellings" ]] || return 1
   read -r word _ <<<"$spellings"

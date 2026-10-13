@@ -1,0 +1,1 @@
+- Lane preferences can select hosted Pi with Anthropic API credit and fall through to Claude when the credit is below the floor.

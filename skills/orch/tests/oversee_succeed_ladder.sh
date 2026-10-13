@@ -830,13 +830,12 @@ pi_skip_row
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launched claude | awk '{print $1}')" \
   "0|oversee-succeed: entry-permission-untransferable entry=pi:pi-claude/claude-opus-5-5:high source=claude target=pi|none|$H/.fclaude" \
   "a claude caller skips a pi entry no permission posture crosses to"
-# Its control: a walk that asks the source row alone chooses the pi entry and
-# then refuses, launching nothing.
+# Its control asks the source row alone and opens the forbidden Pi successor.
 PISKIPCTL="$(mutant_scripts piskipctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$PISKIPCTL/lib/overseer-launch.sh" '  if launch_choice_permission_write "$OL_HARNESS" >/dev/null; then' '  if true; then'
+mutate_file "$PISKIPCTL/lib/overseer-launch.sh" '  if [[ "$posture" != no-word ]] && launch_choice_permission_write "$OL_HARNESS" >/dev/null; then' '  if true; then'
 pi_skip_row "$PISKIPCTL/oversee-succeed"
-assert_eq "$RC|$(first_key)|$(launched pi)|$(launched claude)" "1|launch-choice-failed|none|none" \
-  "control: a walk that asks the source row alone chooses the pi entry and refuses"
+assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launched claude)" "0|none|$H/.eclaude pi-claude/claude-opus-5-5|none" \
+  "control: a walk that asks the source row alone launches the forbidden Pi successor"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

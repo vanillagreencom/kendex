@@ -450,6 +450,63 @@ api_launch_room() {
 }
 api_hosted_rows 150
 api_launch_room
+
+# The preference walk spends the hosted API grant before the local Claude
+# account. A restricted source posture must reach the fallback before flags
+# are built, since the shared builder refuses that cross-harness transfer.
+API_PREFERENCE="pi@$HOST_STUB:anthropic/claude-opus-5-5:high,claude:fable:high"
+printf '/orch start KEN-3801\nWorking (esc to interrupt)\nuser@lane:~$\n' > "$TMP_ROOT/api-preference-screen"
+API_PREFERENCE_ENV="$HARNESS_UP;OT_SCREEN_FILE=$TMP_ROOT/api-preference-screen;OT_SCREEN_ON=0;LANE_HOST_STUB_ACCOUNTS=$API_ROWS;ORCH_LANE_DIRS=$H/.eclaude;ORCH_LANE_CLOUD_CREDIT_FLOOR=5;ORCH_LANE_PREFERENCE=$API_PREFERENCE;LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane"$'\t'"remote-prefix=env PI_CODING_AGENT_DIR=/pi bash -lc"$'\t'"pi-root=/pi"
+api_preference_case() { # REMAINING FLAGS EXPECTED [PREFERENCE]
+  api_hosted_rows "$1"
+  run_ot "$API_PREFERENCE_ENV${2:+;flags=$2}${4:+;ORCH_LANE_PREFERENCE=$4}" --host local --harness claude --lane auto --repo o/r KEN-3801
+  printf '%s\n' "$OUT" > "$RUN/preference.out"
+  assert_eq "$(observe 'rc=0 cmd_lane=none claim_lanes=eclaude') hosted=$(typed 'env PI_CODING_AGENT_DIR=/pi bash -lc') pool=$(awk -F'\t' '{print $9}' "$RUN"/state/claims/*.claim 2>/dev/null) prompt=$(awk '$2 == "permission-prompt" {n++} END {print n+0}' <<<"$OUT")" \
+    "$3" 'the preference launches the eligible account with its spending pool' "$RUN/preference.out"
+}
+while IFS='|' read -r credit flags expected preference; do
+  api_preference_case "$credit" "$flags" "$expected" "$preference"
+done <<'ROWS'
+150|--dangerously-skip-permissions|rc=0 cmd_lane=none claim_lanes=eclaude hosted=1 pool=api-credit prompt=0
+4|--dangerously-skip-permissions|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0
+150|--permission-mode dontAsk|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0
+150||rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=1
+150|--dangerously-skip-permissions --permission-mode dontAsk|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0
+150|--dangerously-skip-permissions|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0|pi:1:high,claude:fable:high
+ROWS
+API_PREFERENCE_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-api-preference/orch lib/lane-launch.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-preference/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" \
+  'pi|--model|--thinking|:|-|no-word|-|-|--exclude-tools question|-' \
+  'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
+API_PREFERENCE_SAVED_FAIL="$FAIL"; FAIL=0
+api_preference_case 150 --dangerously-skip-permissions 'rc=0 cmd_lane=none claim_lanes=eclaude hosted=1 pool=api-credit prompt=0' > "$TMP_ROOT/api-preference-control.out"
+API_PREFERENCE_CONTROL="$FAIL"; FAIL="$API_PREFERENCE_SAVED_FAIL"
+assert_eq "$API_PREFERENCE_CONTROL" 1 'control: the former Pi posture fails the hosted launch assertion'
+assert_eq "$(awk '$2 == "entry-permission-untransferable" {for(i=3;i<=NF;i++) if($i ~ /^(entry|source|target)=/) printf "%s,", $i}' <<<"$OUT")" \
+  "entry=pi@$HOST_STUB:anthropic/claude-opus-5-5:high,source=claude,target=pi," 'control: the former posture records the typed permission skip'
+OPEN_TERMINAL="$API_PREFERENCE_SHIPPED"
+OPEN_TERMINAL="$(mutant_scripts ctl-api-preference-prompt/orch lib/lane-launch.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-preference-prompt/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" \
+  '  [[ "$spellings" != - && "$spellings" != no-word ]] || return 0' \
+  '  [[ "$spellings" != - ]] || return 0'
+API_PREFERENCE_SAVED_FAIL="$FAIL"; FAIL=0
+api_preference_case 150 --dangerously-skip-permissions 'rc=0 cmd_lane=none claim_lanes=eclaude hosted=1 pool=api-credit prompt=0' > "$TMP_ROOT/api-preference-prompt-control.out"
+API_PREFERENCE_CONTROL="$FAIL"; FAIL="$API_PREFERENCE_SAVED_FAIL"
+assert_eq "$API_PREFERENCE_CONTROL" 1 'control: treating no-word as a flag fails the prompt absence assertion'
+OPEN_TERMINAL="$API_PREFERENCE_SHIPPED"
+OPEN_TERMINAL="$(mutant_scripts ctl-api-preference-source/orch lib/overseer-launch.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-preference-source/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lib/overseer-launch.sh" \
+  '    && launch_choice_permission_transferable "$OL_WALK_SOURCE_HARNESS" "$OL_WALK_SOURCE_FLAGS"; then' \
+  '    && true; then'
+API_PREFERENCE_SAVED_FAIL="$FAIL"; FAIL=0
+api_preference_case 150 '--permission-mode dontAsk' 'rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0' > "$TMP_ROOT/api-preference-source-control.out"
+API_PREFERENCE_CONTROL="$FAIL"; FAIL="$API_PREFERENCE_SAVED_FAIL"
+assert_eq "$API_PREFERENCE_CONTROL" 1 'control: admitting a restricted source fails the fallback launch assertion'
+OPEN_TERMINAL="$API_PREFERENCE_SHIPPED"
 for lane in auto "$H/.eclaude"; do
   api_hosted_rows 5
   run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane "$lane" --repo o/r KEN-3747

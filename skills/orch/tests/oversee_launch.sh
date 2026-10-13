@@ -671,18 +671,20 @@ tm kill-window -t "$(recorded window)"
 # its pick and opens on the claude entry.
 pi_first_row() { # [OVERSEE_BIN]
   OVERSEE_BIN="${1:-}" LAUNCH_PREF='pi:openai/gpt-5:high,claude:fable:high' run_oversee -- launch --wait-secs 20
-}
-pi_first_row
-assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
+  assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
   "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|fable" \
   "a first launch skips a pi entry and opens on the claude entry after it"
+}
+pi_first_row
 tm kill-window -t "$(recorded window)"
-# Its control: a walk that chooses the pi entry refuses the whole launch.
+# Its control bypasses eligibility and must fail the same skip assertion.
 PIFIRSTCTL="$(mutant_scripts pifirstctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$PIFIRSTCTL/lib/overseer-launch.sh" '    launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0' '    return 0'
-pi_first_row "$PIFIRSTCTL/oversee"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|launch-choice-failed entry=pi:openai/gpt-5:high|0" \
-  "control: a first launch that chooses the pi entry refuses and opens nothing"
+mutate_file "$PIFIRSTCTL/lib/overseer-launch.sh" '    [[ "$posture" != no-word ]] && launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0' '    return 0'
+PIFIRST_SAVED_FAIL="$FAIL"; FAIL=0
+pi_first_row "$PIFIRSTCTL/oversee" > "$TMP_ROOT/pi-first-control.out"
+PIFIRST_CONTROL="$FAIL"; FAIL="$PIFIRST_SAVED_FAIL"
+assert_eq "$PIFIRST_CONTROL" 1 "control: bypassing eligibility fails the first-launch skip assertion"
+[[ "$RC" != 0 ]] || tm kill-window -t "$(recorded window)"
 
 # A first launch on a copilot entry: `lanes pick --harness copilot` judges a
 # Copilot account on its monthly pool, so the overseer opens on the account
