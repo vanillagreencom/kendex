@@ -562,6 +562,16 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)|$(identity)$(recorded se
   "register takes the identity its SessionStart row states and records the rows file"
 mv -- "$TMP_ROOT/state.before-row" "$FLEET_STATE"
 : > "$HAND_ROWS"
+jq '.overseer.session_id = "before-resume"' "$FLEET_STATE" > "$TMP_ROOT/bound-before-resume"
+mv -- "$TMP_ROOT/bound-before-resume" "$FLEET_STATE"
+run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
+assert_eq "$(recorded session_id)" none 'register in the same pane clears the native binding for a resumed session'
+BINDINGCTL="$(mutant_scripts bindingctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$BINDINGCTL/lib/overseer-launch.sh" 'del(.pending, .exit, .session_id)' 'del(.pending, .exit)'
+jq '.overseer.session_id = "before-resume"' "$FLEET_STATE" > "$TMP_ROOT/bound-before-resume"
+mv -- "$TMP_ROOT/bound-before-resume" "$FLEET_STATE"
+OVERSEE_BIN="$BINDINGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
+assert_eq "$(recorded session_id)" before-resume 'control: retaining the old native binding fails the register reset assertion'
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
 assert_eq "$RC|$(recorded generation)|$(recorded account)" \
   "0|3|$H/.claude" \

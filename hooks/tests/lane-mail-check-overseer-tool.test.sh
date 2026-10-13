@@ -195,7 +195,11 @@ told_rows() { # NAME [JUDGE]
   first="$(context_line) $(tool_record)"
   overseer_tool "$TRANSCRIPT" s2
   second="$(context_line)"
+  # Each native session is registered before its call. A child with another
+  # id now fails the identity gate before it can reach the gap rules.
+  bind_overseer claude "$OVERSEER_HOME_DIR" s1
   overseer_tool "$TRANSCRIPT"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s2
   overseer_tool "$TRANSCRIPT" s2
   third="$(context_line)"
   TOLD="first=$first second=$second third=$third"
@@ -264,6 +268,7 @@ mail_rides_rows() { # NAME [JUDGE]
   gap="$(context_line) note=$(tool_context | grep -cF 'Gap and note.') unread=$(tool_context | grep -c '^lane-mail-check: unread=1$')"
   append_transcript "$TRANSCRIPT" 600000
   peer_send 'Mark and note.'
+  bind_overseer claude "$OVERSEER_HOME_DIR" s1
   overseer_tool "$TRANSCRIPT"
   RIDES="gap=$gap mark=$(context_line) note=$(tool_context | grep -cF 'Mark and note.') unread=$(tool_context | grep -c '^lane-mail-check: unread=1$')"
 }

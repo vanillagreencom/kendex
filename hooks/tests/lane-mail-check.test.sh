@@ -1563,13 +1563,6 @@ assert_eq "$(text_reads "${RENDERS[@]}")" "0" \
 # lib/lane-mail-world.sh's; the tool-call judgement is
 # lane-mail-check-overseer-tool.test.sh's.
 
-# A turn end from a harness whose payload names no session, which is what sends
-# this hook to the pane key.
-stop_unnamed() { # [ENV=VAL...]
-  run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
-    '{stop_hook_active:false,transcript_path:$p}')" "$@"
-}
-
 overseer_transcript
 # The two commands an overseer's refusal names, counted in the stderr it wrote:
 # the succession is handed the reading this turn end took, as the judge was.
@@ -1613,24 +1606,6 @@ assert_eq "record=$(overseer_record_named) named=$(grep -cF -- '"session_id":"s1
   "record=1 named=1" "and the record it is told to write names this session"
 assert_eq "$(grep -cF -- "\"pane_key\":\"$OVERSEER_SERVER $OVERSEER_PANE\"" "$ERR_FILE")" "1" \
   "with the pane key beside it, for a harness that names no session" "$ERR_FILE"
-
-# Where the payload names no session the pane key answers, which tells a
-# successor in ANOTHER pane from the writer and is all that is available there.
-new_overseer overseer_unnamed_session
-judge_says "$CONTEXT_MARK_LINE"
-record_overseer_handoff "" "$OVERSEER_SERVER $OVERSEER_PANE"
-# shellcheck disable=SC2046
-stop_unnamed $(overseer_env)
-expect 0 - "a record carrying this session's own pane key ends the turn of a payload with no id"
-record_overseer_handoff "" "$OVERSEER_SERVER %4"
-# shellcheck disable=SC2046
-stop_unnamed $(overseer_env)
-# A payload naming no session also binds the transcript to nobody, so the read
-# is reported as unbound ahead of the mark, the judge is handed the install's
-# harness and no reading, and the mark it refuses on is the planted judge's own.
-assert_eq "RC=$RC first=$(first_line) mark=$(grep -c '^lane-mail-check: context=612000$' "$ERR_FILE") argv=$(judge_argv | tail -n 1) reason=$(grep -c 'binding-missing' "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT mark=1 argv=--check-marks --harness claude reason=1" \
-  "and one carrying another pane's key holds nobody: the unbound transcript is reported once, the judge handed the harness and no reading, and its mark refused" "$ERR_FILE"
 
 # The account mark is the judge's own, on the judge's own setting: this hook
 # reads neither, so the figure and the mark it names come off that one line.
@@ -1714,7 +1689,7 @@ new_overseer overseer_other_home
 startless_record "{\"server_start\":$OVERSEER_SERVER_START}"
 judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
+stop_at "$TRANSCRIPT" false $(overseer_env) "CLAUDE_CONFIG_DIR=$OFFLINE_HOME/.claude"
 assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) reason=$(grep -c 'home-mismatch' "$ERR_FILE") home=$(recorded_field home)" \
   "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=--check-marks --harness claude reason=1 home=$OFFLINE_HOME/.claude" \
   "a session whose own home is not the one its transcript sits under binds nothing, so the account mark decides" "$ERR_FILE"
@@ -1728,7 +1703,7 @@ variant no-gap-record -e '/^  \[ -z "\$READ_GAP" \] || overseer_gap_record "\$RE
 install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 rm -f -- "${LANE:?}/tmp/lane-mail/overseer/context.json"
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
+stop_at "$TRANSCRIPT" false $(overseer_env) "CLAUDE_CONFIG_DIR=$OFFLINE_HOME/.claude"
 assert_eq "$(gap_record)" "none" \
   "control: a hook that writes no gap record leaves an unowned turn end recording nothing"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -1826,6 +1801,7 @@ overseer_gap_word() { # NAME TRANSCRIPT_LINE|- [INSTALL_DIR]
   fi
   judge_says "$HEADROOM_MARK_LINE"
   if [ "${3:-}" = .github ]; then
+    (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee '.overseer.home = null' >/dev/null)
     # Copilot's own agentStop, the lead's: its transcript sits in the
     # directory named for the session, so the judge records the lead under
     # the world's Copilot home.
@@ -1916,7 +1892,7 @@ gap_unwritten() {
       '{server:$s,server_start:$start,pane:$p,window:"@7"}')" >/dev/null)
   judge_says "$HEADROOM_MARK_LINE"
   # shellcheck disable=SC2046
-  stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$FAIL_MV_BIN:$TMUX_BIN:$PATH"
+  stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$FAIL_MV_BIN:$TMUX_BIN:$PATH" "CLAUDE_CONFIG_DIR=$OFFLINE_HOME/.claude"
   printf 'key=%s cause=%s record=%s' \
     "$(grep -cFx -- "lane-mail-check: context-gap-unrecorded=$LANE/tmp/lane-mail/overseer/context.json" "$ERR_FILE")" \
     "$(grep -cFx 'fixture context write failed' "$ERR_FILE")" "$(gap_record)"
@@ -2063,7 +2039,7 @@ FAILWRITE
     chmod +x "$REAL_SUCCEED"
     # shellcheck disable=SC2046
     stop_at "$CODEX_TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
-      "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
+      "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" "CODEX_HOME=$CODEX_OVERSEER_HOME" \
       FIXTURE_TMUX_COMMAND=node "FIXTURE_REAL_MV=$REAL_MV" "FIXTURE_WRITE=$writer" ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1
     record=none
     [[ ! -f "$LANE/tmp/lane-mail/overseer/context.json" ]] || \
@@ -2308,7 +2284,7 @@ tool() { # ARM [COMMAND] [FIELD] — FIELD, agent_id or agent_type, marks a suba
   local judge="$CASE_HOOK"
   CASE_HOOK="$LANE/.claude/hooks/lane-mail-$1.sh"
   run_payload "$(jq -nc --arg n "$TOOL_NAME" --arg c "${2:-git status}" --arg f "${3:-}" \
-    '{tool_name: $n, tool_input: {command: $c}} + (if $f == "" then {} else {($f): "dev-1"} end)')"
+    '{session_id: "s1", tool_name: $n, tool_input: {command: $c}} + (if $f == "" then {} else {($f): "dev-1"} end)')"
   CASE_HOOK="$judge"
 }
 
@@ -3292,6 +3268,146 @@ new_plain_session() { # NAME
   unmark_lanes
   install_arms
 }
+
+# Native payloads carry the session id even when a child inherits the pane.
+identity_child() { # NAME HOME SESSION ARM [HOOK]
+  named_session "$1" "${5:-$HOOK}"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s1
+  mkdir -p "$LANE/tmp/lane-mail/overseer"
+  CALL_ENV=("${SESSION_ENV[@]}")
+  ARM_ARGS=(deliver)
+  run_payload '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"git status"}}'
+  ARM_ARGS=()
+  CALL_ENV=()
+  printf '%s\n' '{"session_id":"s1","tokens":1000}' > "$LANE/tmp/lane-mail/overseer/context.json"
+  printf '%s\n' 's1 previous-gap' > "$LANE/tmp/lane-mail/overseer/context-told"
+  peer_send 'Native session only.'
+  [ -n "$3" ] || bind_overseer claude "$OVERSEER_HOME_DIR" ""
+  local before state_before judged_before
+  judged_before=$(judge_calls)
+  before=$(overseer_snapshot)
+  state_before=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)
+  CALL_ENV=("${SESSION_ENV[@]}" "CLAUDE_CONFIG_DIR=$2")
+  ARM_ARGS=("$4")
+  run_payload "$(jq -nc --arg session "$3" '{session_id:$session,stop_hook_active:false,tool_name:"Bash",tool_input:{command:"git status"}}')"
+  ARM_ARGS=()
+  CALL_ENV=()
+  IDENTITY_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ] && echo same || echo changed) judged=$(( $(judge_calls) - judged_before ))"
+}
+for identity_case in home session missing; do
+  for identity_arm in deliver stop; do
+    identity_home=$OVERSEER_HOME_DIR identity_session=s1
+    case "$identity_case" in
+      home) identity_home="$TMP_ROOT/another-claude-home" ;;
+      session) identity_session=child ;;
+      missing) identity_session="" ;;
+    esac
+    identity_child "native_${identity_case}_${identity_arm}" "$identity_home" "$identity_session" "$identity_arm"
+    assert_eq "$IDENTITY_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
+      "$identity_arm: a Claude child with another $identity_case changes no mail, context, gap or fleet record"
+    assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
+      "lane-mail-check: session-unbound=${identity_session:-none} harness=claude home=$OVERSEER_HOME_DIR remedy=oversee register|1" \
+      "the child receives one diagnostic on stderr and no context"
+  done
+done
+for identity_case in home session missing; do
+  case "$identity_case" in
+    home)
+      mutant native-home-control -e '/^    || { \[ -n "\$OVERSEER_HOME" \]/d'
+      identity_home="$TMP_ROOT/another-claude-home" identity_session=s1 ;;
+    session)
+      mutant native-session-control -e '/^    || { \[ -n "\$RECORDED_SESSION" \]/d'
+      identity_home=$OVERSEER_HOME_DIR identity_session=child ;;
+    missing)
+      mutant native-missing-control -e 's@^    || \[ -z "\$SESSION" \]; then$@    || false; then@'
+      identity_home=$OVERSEER_HOME_DIR identity_session="" ;;
+  esac
+  identity_child "native_control_$identity_case" "$identity_home" "$identity_session" deliver "$MUTANT_PATH"
+  assert_eq "$([ "$IDENTITY_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
+    "control: dropping the $identity_case rule fails the unchanged-mail assertion"
+done
+
+named_session native_old_pane_child
+bind_overseer claude "$OVERSEER_HOME_DIR" successor
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee '.overseer.pane = "%4"' >/dev/null)
+mkdir -p "$LANE/tmp/lane-mail/overseer"
+printf '{"session_id":"s1","pane_key":"%s %s","tokens":1000}\n' "$OVERSEER_SERVER" "$OVERSEER_PANE" \
+  > "$LANE/tmp/lane-mail/overseer/context.json"
+peer_send 'Successor only.'
+old_pane_before=$(overseer_snapshot)
+CALL_ENV=("${SESSION_ENV[@]}")
+ARM_ARGS=(deliver)
+run_payload '{"session_id":"child","tool_name":"Bash","tool_input":{"command":"git status"}}'
+ARM_ARGS=()
+CALL_ENV=()
+assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unchanged=$([ "$old_pane_before" = "$(overseer_snapshot)" ] && echo yes || echo no)" \
+  'RC=0 stdout= stderr=- unchanged=yes' 'a child in the old overseer pane writes no lost-overseer gap and keeps unrelated-pane silence'
+mutant native-old-pane-control -e '/^    || { \[ -n "\$RECORDED_SESSION" \]/d'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+CALL_ENV=("${SESSION_ENV[@]}")
+ARM_ARGS=(deliver)
+run_payload '{"session_id":"child","tool_name":"Bash","tool_input":{"command":"git status"}}'
+ARM_ARGS=()
+CALL_ENV=()
+assert_eq "$([ "$old_pane_before" = "$(overseer_snapshot)" ] && echo yes || echo no)" no \
+  'control: skipping native identity in the old pane lets a child overwrite the lost-overseer gap'
+
+named_session native_pi_child
+bind_overseer pi "$OVERSEER_HOME_DIR" ""
+mkdir -p "$LANE/.pi/skills" "$LANE/tmp/lane-mail/overseer"
+ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
+ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
+install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+printf '%s\n' '{"session_id":"s1","tokens":1000}' > "$LANE/tmp/lane-mail/overseer/context.json"
+CALL_ENV=("${SESSION_ENV[@]}")
+ARM_ARGS=(deliver)
+run_payload '{"session_id":"s1","tool_name":"Bash","tool_input":{"command":"git status"}}'
+ARM_ARGS=()
+CALL_ENV=()
+assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer.session_id)" s1 \
+  'the native Pi session binds while its home remains unmeasured'
+peer_send 'Pi native session only.'
+pi_before=$(overseer_snapshot)
+CALL_ENV=("${SESSION_ENV[@]}")
+ARM_ARGS=(deliver)
+run_payload '{"session_id":"pi-child","tool_name":"Bash","tool_input":{"command":"git status"}}'
+ARM_ARGS=()
+CALL_ENV=()
+assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$pi_before" = "$(overseer_snapshot)" ] && echo yes || echo no) first=$(first_line)" \
+  "RC=0 stdout= unchanged=yes first=lane-mail-check: session-unbound=pi-child harness=pi home=$OVERSEER_HOME_DIR remedy=oversee register" \
+  'a Pi child with an unmeasured home and another native id changes no overseer mail or context'
+
+named_session native_bound
+mkdir -p "$LANE/tmp/lane-mail/overseer"
+overseer_transcript
+write_transcript "$TRANSCRIPT" 100000
+CALL_ENV=("${SESSION_ENV[@]}")
+ARM_ARGS=(deliver)
+run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Bash",tool_input:{command:"git status"}}')"
+ARM_ARGS=()
+CALL_ENV=()
+assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id')|$(jq -r '[.session_id,.tokens]|@csv' "$LANE/tmp/lane-mail/overseer/context.json")" \
+  's1|"s1",100000' 'the native session heals its binding and records its own reading'
+
+# Register is the existing recovery route for a native resume with another id.
+CALL_ENV=("${SESSION_ENV[@]}")
+ARM_ARGS=(start)
+run_payload '{"session_id":"resumed","source":"resume"}'
+ARM_ARGS=()
+(cd "$LANE" && env -u ORCH_STATE_DIR -u CODEX_HOME -u COPILOT_HOME \
+  "${SESSION_ENV[@]}" "HOME=$OFFLINE_HOME" "LANES_HOME=$OFFLINE_HOME" \
+  "$REPO_ROOT/skills/orch/scripts/oversee" register > "$TMP_ROOT/register.out" 2> "$TMP_ROOT/register.err")
+assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id // "none"')" none \
+  'register clears the binding from the previous native session'
+peer_send 'After native resume.'
+ARM_ARGS=(deliver)
+run_payload '{"session_id":"resumed","tool_name":"Bash","tool_input":{"command":"git status"}}'
+assert_eq "$(context_line)|$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer.session_id)" \
+  'PostToolUse lane-mail-check: unread=1|resumed' 'the resumed session binds and receives its waiting mail'
+run_payload '{"session_id":"resumed","tool_name":"Bash","tool_input":{"command":"git status"}}'
+assert_eq "$(context_line)" - 'the rebound native session receives its mail once'
+ARM_ARGS=()
+CALL_ENV=()
 
 named_session peer_named
 peer_send 'Your pin bump broke our build.'

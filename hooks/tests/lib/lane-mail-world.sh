@@ -386,6 +386,9 @@ case "$*" in
   *'#{start_time}'*)
     [ -n "${TMUX_SERVER_START:-}" ] || { echo "can't find pane" >&2; exit 1; }
     printf '%s %s\n' "$TMUX_SERVER_ID" "$TMUX_SERVER_START" ;;
+  *'#{window_id}'*) printf '%s\n' '@7' ;;
+  *'#{pane_current_path}'*) pwd -P ;;
+  *'#{pane_current_command}'*) printf '%s\n' claude ;;
   *) printf '%s\n' "$TMUX_SERVER_ID" ;;
 esac
 TMUXSTUB
@@ -414,7 +417,23 @@ record_overseer() { # PANE SERVER [HOME] [START]
 # The environment a session inside the overseer's own pane carries.
 overseer_env() { # [PANE]
   printf '%s\n' "PATH=$TMUX_BIN:$PATH" "TMUX=fake" "TMUX_PANE=${1:-$OVERSEER_PANE}" \
-    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START"
+    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "CLAUDE_CONFIG_DIR=$OVERSEER_HOME_DIR"
+}
+
+# Every persisted mailbox file, including its cursor, context and told gap.
+overseer_snapshot() {
+  local file
+  for file in "$LANE/tmp/lane-mail/overseer"/* "$LANE/tmp/lane-mail/overseer"/.[!.]*; do
+    [ -f "$file" ] || continue
+    printf '%s ' "${file##*/}"
+    cksum < "$file"
+  done
+}
+
+bind_overseer() { # HARNESS HOME SESSION
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee \
+    --arg harness "$1" --arg home "$2" --arg session "$3" \
+    '.overseer += {harness:$harness, home:$home, session_id:$session}' >/dev/null)
 }
 
 # `lane-mail peer send --repo` from another repository's checkout into the
@@ -589,7 +608,8 @@ wake_overseer() { # NAME HARNESS [HOOK]
   if [ "$2" = pi ]; then dir="$dir/kendex"; fi
   install_hook "${3:-$HOOK}" "$LANE/$dir/hooks/lane-mail-check.sh"
   CALL_ENV=("PATH=$TMUX_BIN:$PATH" TMUX=fake "TMUX_PANE=$OVERSEER_PANE"
-    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "HOME=$COP_HOME")
+    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "HOME=$COP_HOME"
+    "CLAUDE_CONFIG_DIR=$OVERSEER_HOME_DIR" "CODEX_HOME=$OVERSEER_HOME_DIR" "COPILOT_HOME=$COP_HOME")
 }
 
 # A refusal or passed wake warning has its key first on stderr.

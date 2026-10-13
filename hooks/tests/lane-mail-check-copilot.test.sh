@@ -609,11 +609,79 @@ new_copilot_named() { # NAME [JUDGE]
   unmark_lanes
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee '.overseer.home = null' >/dev/null)
 }
 # shellcheck disable=SC2207
 COP_OTHER_ENV=("HOME=$COP_HOME" $(overseer_env %3))
 # shellcheck disable=SC2207
 COP_NAMED_ENV=("HOME=$COP_HOME" $(overseer_env))
+# The prompt-mode child inherits the pane, both harness homes and its own
+# native payload id. It must leave every persisted overseer mailbox file alone.
+copilot_child() { # NAME ARM [HOOK] [RECORDED_HOME]
+  new_copilot_named "$1" "${3:-$HOOK}"
+  bind_overseer claude "${4:-$OVERSEER_HOME_DIR}" "${5:-parent}"
+  mkdir -p "$LANE/tmp/lane-mail/overseer"
+  printf '%s\n' '{"session_id":"parent","tokens":366308}' > "$LANE/tmp/lane-mail/overseer/context.json"
+  printf '%s\n' 'parent previous-gap' > "$LANE/tmp/lane-mail/overseer/context-told"
+  peer_send 'Parent only.'
+  local before
+  before=$(overseer_snapshot)
+  CALL_ENV=("${COP_NAMED_ENV[@]}" "COPILOT_HOME=$COP_HOME/.copilot")
+  case "$2" in
+    start) copilot_context start ;;
+    deliver) copilot_tool deliver ;;
+    stop) copilot_stop "$COP_TRANSCRIPT" ;;
+    usage)
+      ARM_ARGS=(usage)
+      run_payload '{"session_id":"s1","current_tokens":123442,"token_limit":1000000}'
+      ARM_ARGS=() ;;
+  esac
+  CALL_ENV=("HOME=$COP_HOME")
+  CHILD_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no)"
+}
+for child_arm in deliver stop usage start; do
+  copilot_child "native_copilot_$child_arm" "$child_arm"
+  assert_eq "$CHILD_RESULT" 'RC=0 stdout= unchanged=yes' \
+    "$child_arm: a Copilot child in the Claude pane receives no mail and writes no context or gap"
+  assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
+    "lane-mail-check: session-unbound=s1 harness=claude home=$OVERSEER_HOME_DIR remedy=oversee register|1" \
+    "the child receives one session diagnostic and no missing-reader notice for the Claude home"
+done
+# Today's hook admits the inherited pane. These rows use that complete hook,
+# preserving both defects rather than replacing the identity owner with a stub.
+mutant native-old-hook \
+  -e '/^  if { \[ -n "\$RECORDED_HARNESS" \]/,/^  fi$/d' \
+  -e 's@_ "\$SCRIPTS" "\$CALLER_HOME" 2>@_ "$SCRIPTS" "$OVERSEER_HOME" 2>@'
+OLD_HOOK=$MUTANT_PATH
+for child_arm in deliver usage start; do
+  copilot_child "native_old_$child_arm" "$child_arm" "$OLD_HOOK"
+  case "$child_arm" in
+    start)
+      assert_eq "$(stdout_field '.additionalContext' | grep -c '^lane-mail-check: context-reader=missing' || :)" 1 \
+        'control: the old start arm reports a missing reader under the Claude home' ;;
+    *)
+      assert_eq "$([ "$CHILD_RESULT" = 'RC=0 stdout= unchanged=yes' ] && echo accepted || echo rejected)" rejected \
+        "control: the old $child_arm arm fails the unchanged-mail assertion" ;;
+  esac
+done
+mutant native-harness-control -e 's/^  if { \[ -n "\$RECORDED_HARNESS" \].*$/  if false \\/'
+copilot_child native_harness_control usage "$MUTANT_PATH" "$COP_HOME/.copilot" s1
+assert_eq "$([ "$CHILD_RESULT" = 'RC=0 stdout= unchanged=yes' ] && echo accepted || echo rejected)" rejected \
+  'control: dropping the harness rule fails the unchanged-context assertion when homes match'
+
+new_copilot_named native_copilot_reader
+CALL_ENV=("${COP_NAMED_ENV[@]}" "COPILOT_HOME=$COP_HOME/.copilot")
+copilot_context start
+assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line)" 'RC=0 stdout= stderr=-' \
+  'the native Copilot start reads its installed reader from its own home'
+mutant native-reader-control -e 's@_ "\$SCRIPTS" "\$CALLER_HOME" 2>@_ "$SCRIPTS" "$CALLER_HOME/missing" 2>@'
+new_copilot_named native_copilot_reader_control "$MUTANT_PATH"
+CALL_ENV=("${COP_NAMED_ENV[@]}" "COPILOT_HOME=$COP_HOME/.copilot")
+copilot_context start
+assert_eq "$(stdout_field '.additionalContext' | grep -c '^lane-mail-check: context-reader=missing' || :)" 1 \
+  'control: checking another home reports its missing reader'
+CALL_ENV=("HOME=$COP_HOME")
+
 new_copilot_named copilot_overseer
 peer_send 'For the named session.'
 CALL_ENV=("${COP_OTHER_ENV[@]}")

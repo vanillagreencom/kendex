@@ -1,0 +1,1 @@
+- Record the overseer's native session ID. Clear its binding on a new launch or registration so a resumed session can receive its own mail.

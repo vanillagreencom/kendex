@@ -1138,7 +1138,9 @@ ol_record_get() {
 # `generation`: one more than
 # the prior record's, or 1 where none was recorded, and the prior's own where
 # the prior names this very session on this server, which is a registration
-# repeated and never a second session. On tmux the session is the pane, and
+# repeated and never a second session. Every write clears the native
+# `session_id` binding, so a register after a resume lets its next hook bind
+# the new id. On tmux the session is the pane, and
 # the object keeps `pane` as the spelling the turn-end hook and the watch
 # already read it under, and `session_rows` names the file that pane's own
 # event rows land in (lib/session-rows.sh), under the overseer mailbox of the
@@ -1188,7 +1190,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
             then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)} + {server_socket: $socket}
             else {session: $session} end)
          + (if $line == "" then {} else {launch_line: $line} end)) as $fresh
-      | (if $same then $p | del(.pending, .exit) else $identity | map_values(null) end) as $base
+      | (if $same then $p | del(.pending, .exit, .session_id) else $identity | map_values(null) end) as $base
       | {record: ($base + $fresh),
          retained: ($base | nonempty | with_entries(select(.key as $key | $fresh | has($key) | not)) | field_names),
          fresh: ($fresh | field_names)}' 2>"$DEP_ERR")" || return 1
@@ -1244,24 +1246,29 @@ ol_record_current() { # SERVER PANE
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
 }
 
-# ol_record_heal SERVER PANE START HARNESS HOME — the record naming the session
+# ol_record_heal SERVER PANE START HARNESS HOME SESSION_ID — the record naming the session
 # SERVER PANE on the server started at START, bound or unstarted (ol_owns),
 # given each fact it lacks and the session itself knows: START
 # as `server_start`, HARNESS as `harness`, and HOME, the directory the harness
-# variable of that session carries, as `home`. A fact the record already
-# names stays, and a record naming another session is left as it stands. The
+# variable of that session carries, as `home`, and its native SESSION_ID.
+# Recorded harness, readable home and session id must agree before healing.
+# A fact the record already names stays. The
 # lane-mail-check hook runs it from the overseer's own turn end and tool calls,
 # so a record that lost the facts the transcript binding reads is filled from
 # the session they describe instead of leaving its context unread. An empty
 # HARNESS or HOME writes nothing for that field. Returns 1 with the writer's
 # words in DEP_ERR.
-ol_record_heal() { # SERVER PANE START HARNESS HOME
+ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID
   "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
-    --arg harness "$4" --arg home "$5" "$OL_JQ_DEFS"'
-      if (.overseer | ol_owns($server; $start; $pane))
+    --arg harness "$4" --arg home "$5" --arg session "${6:-}" "$OL_JQ_DEFS"'
+      if (.overseer | ol_owns($server; $start; $pane)
+        and ((.harness // "") == "" or .harness == $harness)
+        and ((.home // "") == "" or $home == "" or .home == $home)
+        and ((.session_id // "") == "" or .session_id == $session))
       then .overseer |= (.server_start = ($start | tonumber)
         | if (.harness // "") == "" and $harness != "" then .harness = $harness else . end
-        | if (.home // "") == "" and $home != "" then .home = $home else . end)
+        | if (.home // "") == "" and $home != "" then .home = $home else . end
+        | if (.session_id // "") == "" and $session != "" then .session_id = $session else . end)
       else . end' >/dev/null 2>"$DEP_ERR"
 }
 
