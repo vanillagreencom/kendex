@@ -6,6 +6,16 @@ use crate::model::{HarnessId, ItemKind};
 
 #[derive(Debug, Error)]
 pub enum CoreError {
+    #[error("catalog-needs-engine min={min} engine={engine}")]
+    CatalogNeedsEngine { min: String, engine: &'static str },
+
+    #[error("catalog-min-invalid min={} engine={engine} reason={reason}", crate::names::shown(min).replace(' ', "\\u{20}"))]
+    CatalogMinInvalid {
+        min: String,
+        engine: &'static str,
+        reason: crate::source::CatalogMinReason,
+    },
+
     #[error("cannot locate the home directory on this system")]
     NoHomeDir,
 
@@ -758,6 +768,14 @@ pub enum CoreError {
 }
 
 impl CoreError {
+    /// Only engine compatibility failures stop otherwise independent sources.
+    pub fn is_catalog_compatibility(&self) -> bool {
+        matches!(
+            self,
+            Self::CatalogNeedsEngine { .. } | Self::CatalogMinInvalid { .. }
+        )
+    }
+
     pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         CoreError::Io {
             path: path.into(),

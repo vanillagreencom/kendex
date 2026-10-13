@@ -240,8 +240,10 @@ pub(crate) fn held_planning<'a>(
     options: &super::super::PlanOptions,
 ) -> Result<(std::borrow::Cow<'a, Manifest>, Option<HeldPins>)> {
     let (mut planning, mut pins) = planning_manifest(manifest, lock, options);
+    crate::source::check_catalog_compatibility(env, scope, &planning)?;
     if let Some(pins) = pins.as_mut() {
         release_unserved(env, options, planning.to_mut(), pins)?;
+        crate::source::check_catalog_compatibility(env, scope, &planning)?;
         // An add retains the installed packages instead of reconciling
         // them; its existing dependency refusal must still see their pins.
         let reconciles = options
@@ -253,6 +255,7 @@ pub(crate) fn held_planning<'a>(
                 let mut state = super::DesiredState::default();
                 let expanded =
                     super::super::expansion::expand(env, scope, &planning, Some(pins), &mut state);
+                state.refuse_catalog()?;
                 let owners = expanded.disagreeing_holds();
                 if owners.is_empty() {
                     break;

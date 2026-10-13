@@ -63,6 +63,11 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     for step in &steps {
         prevalidate(env, step)?;
     }
+    kendex_core::engine::check_catalog_compatibility(
+        env,
+        scope,
+        &kendex_core::engine::PlanOptions::locked(),
+    )?;
     // Prevalidation refuses a broken collection before the first
     // mutation, so a failure here is a repository that moved under the
     // run. The steps before it are installed either way, and the error is

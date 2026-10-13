@@ -624,6 +624,11 @@ impl Catalogs<'_> {
             .and_then(|sealed| Ok((source_config_for(&sealed, &ready.provenance)?, sealed)));
         let (config, sealed) = match opened {
             Ok(opened) => opened,
+            Err(problem) if problem.is_catalog_compatibility() => {
+                state.mark_incomplete();
+                state.catalog_refusal.get_or_insert(problem);
+                return None;
+            }
             // The removal pass reads the mark and stays quiet, because this
             // is the one place holding the error: the callers below get a
             // `None` that says only that nothing was derived, and a plan

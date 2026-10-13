@@ -31,7 +31,18 @@ pub fn run(env: &Env, args: ToggleArgs, enabled: bool) -> CliResult {
         .map(super::pin::parse_kind_or_plugin)
         .transpose()?;
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
-    for scope in resolve_scopes(env, filter)? {
+    let scopes = resolve_scopes(env, filter)?;
+    for scope in &scopes {
+        if let Err(error) = kendex_core::engine::check_catalog_compatibility(
+            env,
+            scope,
+            &kendex_core::engine::PlanOptions::locked(),
+        ) && error.is_catalog_compatibility()
+        {
+            return Err(error.into());
+        }
+    }
+    for scope in scopes {
         let report =
             kendex_core::engine::ops::toggle(env, &scope, &args.names, kind, enabled, None)?;
         print_report(env, &report, Listing::Every);

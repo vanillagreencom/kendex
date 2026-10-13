@@ -34,6 +34,17 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         return Ok(());
     }
     ui::intro("kendex remove");
+    let scopes = resolve_scopes(env, filter)?;
+    for scope in &scopes {
+        if let Err(error) = kendex_core::engine::check_catalog_compatibility(
+            env,
+            scope,
+            &kendex_core::engine::PlanOptions::current(),
+        ) && error.is_catalog_compatibility()
+        {
+            return Err(error.into());
+        }
+    }
     // Each scope's closing line is held until every scope is written and
     // the trash pass has run, so the pass's own line never lands under a
     // line the run already closed on. A scope that fails, or a cancel at
@@ -42,7 +53,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     // line, and the error leaves once that line is said.
     let mut closing: Vec<(Scope, usize)> = Vec::new();
     let mut stopped: Option<Box<dyn std::error::Error>> = None;
-    for scope in resolve_scopes(env, filter)? {
+    for scope in scopes {
         match remove_scope(env, &scope, &names, mode) {
             Ok(Some(applied)) => closing.push((scope, applied)),
             Ok(None) => {}

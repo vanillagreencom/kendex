@@ -7,6 +7,7 @@
 # this repo's own install state to a sibling kendex-local.toml, so nothing a
 # maintainer installs for local use lands in the published catalog.
 is_source_catalog = true
+min_kendex = "1.17.0"
 
 [marketplace]
 name = "kendex"

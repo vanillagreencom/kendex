@@ -6,10 +6,10 @@
 //! source unusable with a finding, because serving defaults instead would
 //! silently offer a different catalog than the author published.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
 
@@ -22,8 +22,8 @@ use super::plugin_registry::{self, CatalogFinding, Registry};
 pub(crate) mod agent_names;
 
 /// Source-side layout + mapping tables, read leniently — source catalogs are
-/// v1-format repos (no schema key) and stay valid forever. What is not
-/// lenient is the control file itself: see the module note.
+/// v1-format repos (no schema key). An optional engine minimum is strict;
+/// absent keys keep the existing reading contract.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SourceConfig {
     /// Resolved provenance, supplied by `source_config_for` for local lookup.
@@ -158,18 +158,120 @@ enum Control {
     Parsed { table: toml::Table },
 }
 
+/// The two malformed minimum contracts, separate from an older engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogMinReason {
+    ExpectedString,
+    InvalidSemver,
+}
+
+impl std::fmt::Display for CatalogMinReason {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(match self {
+            Self::ExpectedString => "expected-string",
+            Self::InvalidSemver => "invalid-semver",
+        })
+    }
+}
+
+fn minimum(control: &Control) -> Result<()> {
+    use crate::update_feed::{VersionRelation, precedence};
+
+    let Control::Parsed { table } = control else {
+        return Ok(());
+    };
+    let Some(value) = table.get("min_kendex") else {
+        return Ok(());
+    };
+    let engine = env!("CARGO_PKG_VERSION");
+    let min = value.as_str().ok_or_else(|| CoreError::CatalogMinInvalid {
+        min: match value {
+            toml::Value::String(_) => unreachable!("as_str accepts strings"),
+            toml::Value::Integer(_) => "integer",
+            toml::Value::Float(_) => "float",
+            toml::Value::Boolean(_) => "boolean",
+            toml::Value::Datetime(_) => "datetime",
+            toml::Value::Array(_) => "array",
+            toml::Value::Table(_) => "table",
+        }
+        .to_owned(),
+        engine,
+        reason: CatalogMinReason::ExpectedString,
+    })?;
+    let relation = precedence("catalog minimum", min, "engine", engine).map_err(|_| {
+        CoreError::CatalogMinInvalid {
+            min: min.to_owned(),
+            engine,
+            reason: CatalogMinReason::InvalidSemver,
+        }
+    })?;
+    match relation {
+        VersionRelation::Newer => Err(CoreError::CatalogNeedsEngine {
+            min: min.to_owned(),
+            engine,
+        }),
+        VersionRelation::Older | VersionRelation::Current => Ok(()),
+    }
+}
+
+/// Check the subscription resolutions and item/bundle pins before a scope
+/// renders. Other source failures remain the existing reader's decision.
+pub fn check_catalog_compatibility(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+) -> Result<()> {
+    let mut readings: BTreeSet<(&str, Option<&str>)> = manifest
+        .sources
+        .keys()
+        .map(|name| (name.as_str(), None))
+        .collect();
+    for kind in ItemKind::ALL {
+        readings.extend(
+            manifest
+                .declared(kind)
+                .values()
+                .map(|decl| (decl.source.as_str(), decl.rev.as_deref())),
+        );
+    }
+    readings.extend(
+        manifest
+            .bundles
+            .values()
+            .map(|decl| (decl.source.as_str(), decl.rev.as_deref())),
+    );
+    for (source, rev) in readings {
+        let Ok(super::SourceState::Ready(ready)) =
+            super::resolve_at(env, scope, source, manifest, rev)
+        else {
+            continue;
+        };
+        let verdict = SealedSource::open(&ready.root)
+            .and_then(|sealed| control_file(&sealed))
+            .and_then(|control| minimum(&control));
+        if let Err(error) = verdict
+            && error.is_catalog_compatibility()
+        {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 /// Read the catalog's layout and mapping tables — and, when neither a
 /// registry nor a control file declares the layout, run the search table.
 /// `display` names a one-skill repo whose SKILL.md does not name itself:
 /// pass the repository leaf, since the store directory is a commit id.
 pub fn source_config(sealed: &SealedSource, display: &str) -> Result<SourceConfig> {
+    let control = control_file(sealed)?;
+    minimum(&control)?;
     let mut config = SourceConfig {
         agent_dirs: vec!["agents".to_owned()],
         skill_dirs: vec!["skills".to_owned()],
         plugin_registry: plugin_registry::read(sealed)?,
         ..SourceConfig::default()
     };
-    match control_file(sealed)? {
+    match control {
         Control::None => {}
         Control::Broken { file, problem } => match config.plugin_registry.is_some() {
             // The registry outranks the control file, so its breakage is a

@@ -26,6 +26,7 @@ mod bot_instructions_refresh;
 mod browse_unreadable_lock;
 mod bundles;
 mod byte_faithful;
+mod catalog_compatibility;
 mod catalog_links;
 mod codex_mcp;
 mod collections;

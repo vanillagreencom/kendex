@@ -824,3 +824,15 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
     Ok(report)
 }
+
+/// A multi-scope caller checks every selected reading before planning its
+/// first scope. The same held-manifest rule supplies the revisions to check.
+pub fn check_catalog_compatibility(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<()> {
+    let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
+        return Ok(());
+    };
+    crate::source::check_catalog_compatibility(env, scope, &manifest)?;
+    let lock = crate::lock::load(&lock_path(env, scope))?;
+    desired::hold::held_planning(env, scope, &manifest, &lock, options)?;
+    Ok(())
+}

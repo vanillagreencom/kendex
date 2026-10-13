@@ -377,6 +377,8 @@ pub struct DesiredState {
     /// What one derived this pass is short through no choice of the
     /// person's, so no removal is decided on it.
     pub unreadable_catalogs: BTreeSet<String>,
+    /// Compatibility stops the whole plan; ordinary unreadable sources do not.
+    pub(super) catalog_refusal: Option<crate::error::CoreError>,
     /// Resolutions for item-level pins, keyed `(source, rev)` — kept apart
     /// from `sources` so the lock's per-source record never picks up a
     /// commit only one pinned item reads.
@@ -521,6 +523,13 @@ impl Withholding {
 }
 
 impl DesiredState {
+    pub(super) fn refuse_catalog(&mut self) -> Result<()> {
+        match self.catalog_refusal.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     pub(super) fn mark_incomplete(&mut self) {
         self.declaration_status = super::DeclarationStatus::Incomplete;
     }
@@ -777,6 +786,7 @@ fn compute(
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
+    state.refuse_catalog()?;
     state.selector_bases = selector_bases(&expansion, manifest, held);
     state.kept_members =
         super::bundles::kept_members(lock, manifest, &state.kept_bundles, &expansion);

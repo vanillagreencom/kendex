@@ -55,6 +55,8 @@ A release carries:
 
 ## Catalog compatibility
 
+When a pull request makes the catalog require new engine behavior, raise the source `kendex.toml` root `min_kendex` to that engine's next release version in the same pull request. Package content changes that use existing engine behavior leave the minimum unchanged and cause no engine release or skill version change. A minimum above the running engine refuses the entire selected command before rendering or install writes. Catalog download caches are excluded from that guarantee.
+
 `.github/workflows/catalog-check.yml` installs the latest released kendex and `tools/catalog-release-check` runs that engine's catalog check, then installs the catalog into an isolated project for all harnesses and runs the consumer's refresh and verify commands. Release an engine that supports a feature before merging catalog content that uses it; a binary built from the pull request does not satisfy this check.
 
 A catalog change must also settle in an existing install, not only a fresh one. The same check installs the catalog as the caller's base commit held it, every package declared, then refreshes that project to the change through the same source and verifies it. A dropped or renamed package that the released engine cannot retire fails it: keep the package, a stub is enough, or release the engine that retires it first. Only hooks have an engine retire route today, `RETIRED_HOOKS` in `crates/core/src/engine/desired.rs`; catalog-declared retirement for every kind is KEN-2998. A base commit whose catalog the released engine's catalog check refuses skips this part with `upgrade=skip cause=prior-uninstallable`.

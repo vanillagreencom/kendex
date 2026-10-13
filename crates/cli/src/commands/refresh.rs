@@ -318,20 +318,23 @@ impl PreparedScope {
     }
 }
 
-fn prepare_scope(
-    env: &Env,
-    scope: kendex_core::model::Scope,
-    catalog: Catalog,
-    takes: Takes,
-) -> PreparedScope {
-    let synced = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
+fn sync_scope(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::remote::Synced {
+    match kendex_core::engine::ops::manifest_for_reading(env, scope) {
         Ok(manifest) => {
-            let _reading =
-                ui::spinner(&format!("reading marketplaces for {}", scope_label(&scope)));
+            let _reading = ui::spinner(&format!("reading marketplaces for {}", scope_label(scope)));
             kendex_core::remote::sync_declared_sources(env, &manifest)
         }
         Err(_) => kendex_core::remote::Synced::default(),
-    };
+    }
+}
+
+fn prepare_scope(
+    env: &Env,
+    scope: kendex_core::model::Scope,
+    synced: kendex_core::remote::Synced,
+    catalog: Catalog,
+    takes: Takes,
+) -> Result<PreparedScope, Box<dyn std::error::Error>> {
     let options = PlanOptions {
         sweep_unneeded: true,
         overwrite_edited: takes.discard_edits,
@@ -345,18 +348,27 @@ fn prepare_scope(
     let planned = match report {
         Ok(mut report) => {
             synced.suppress_busy_pending(&mut report.notes);
-            super::update_pi::pending_settle(env, &scope, &options)
-                .map(|pending| (report, pending))
-                .map_err(|error| error.to_string())
+            match super::update_pi::pending_settle(env, &scope, &options) {
+                Ok(pending) => Ok((report, pending)),
+                Err(error)
+                    if error
+                        .downcast_ref::<kendex_core::error::CoreError>()
+                        .is_some_and(kendex_core::error::CoreError::is_catalog_compatibility) =>
+                {
+                    return Err(error);
+                }
+                Err(error) => Err(error.to_string()),
+            }
         }
+        Err(error) if error.is_catalog_compatibility() => return Err(error.into()),
         Err(error) => Err(error.to_string()),
     };
-    PreparedScope {
+    Ok(PreparedScope {
         scope,
         synced,
         options,
         planned,
-    }
+    })
 }
 
 fn prepare_scopes(
@@ -374,10 +386,21 @@ fn prepare_scopes(
     // so a run never installs into a folder it would then decline to
     // register. `project::register_target` owns the rule itself.
     let registering = super::project::target_registrable(env, target, &scopes)?;
+    // Fetching cache snapshots precedes the gate; rendering and install writes do not.
+    let synced: Vec<_> = scopes.iter().map(|scope| sync_scope(env, scope)).collect();
+    let options = catalog.plan_options();
+    for scope in &scopes {
+        if let Err(error) = kendex_core::engine::check_catalog_compatibility(env, scope, &options)
+            && error.is_catalog_compatibility()
+        {
+            return Err(error.into());
+        }
+    }
     let prepared: Vec<_> = scopes
         .into_iter()
-        .map(|scope| prepare_scope(env, scope, catalog, takes))
-        .collect();
+        .zip(synced)
+        .map(|(scope, synced)| prepare_scope(env, scope, synced, catalog, takes))
+        .collect::<Result<_, Box<dyn std::error::Error>>>()?;
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
     {

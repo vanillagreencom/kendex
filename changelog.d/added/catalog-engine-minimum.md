@@ -1,0 +1,1 @@
+- Catalogs can declare their minimum kendex version; an older engine refuses the selected run before rendering or installing packages.

@@ -246,6 +246,17 @@ pub fn run(
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let style = ui::style();
     let scopes = resolve_scopes(env, filter)?;
+    let options = match output.reading() {
+        Reading::Recorded => PlanOptions::locked(),
+        Reading::Current => PlanOptions::current(),
+    };
+    for scope in &scopes {
+        if let Err(error) = kendex_core::engine::check_catalog_compatibility(env, scope, &options)
+            && error.is_catalog_compatibility()
+        {
+            return Err(error.into());
+        }
+    }
     ui::stderr(
         &style.header(
             "verify",

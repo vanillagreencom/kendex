@@ -27,6 +27,7 @@ mod bookmark_cli;
 mod bot_instructions_render;
 mod bundles_cli;
 mod catalog_check;
+mod catalog_compatibility;
 mod cli;
 mod collection_cli;
 mod command_inside_the_app;

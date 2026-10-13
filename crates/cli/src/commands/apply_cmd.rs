@@ -211,6 +211,9 @@ fn plan_each(
     args: &ApplyArgs,
     options: &PlanOptions,
 ) -> Result<Vec<(Scope, EngineReport)>, Box<dyn std::error::Error>> {
+    for scope in &scopes {
+        kendex_core::engine::check_catalog_compatibility(env, scope, options)?;
+    }
     let mut planned = Vec::new();
     for scope in scopes {
         // Read the manifest as it sits on disk, through the same loader

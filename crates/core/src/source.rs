@@ -511,7 +511,10 @@ fn require_resolved(state: SourceState) -> Result<ResolvedSource> {
 mod config;
 pub(crate) use config::agent_names;
 pub(crate) use config::string_list;
-pub use config::{SourceConfig, find_item, list_items, source_config, source_config_for};
+pub use config::{
+    CatalogMinReason, SourceConfig, check_catalog_compatibility, find_item, list_items,
+    source_config, source_config_for,
+};
 
 #[cfg(test)]
 mod tests;
