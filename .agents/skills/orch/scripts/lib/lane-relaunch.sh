@@ -16,7 +16,7 @@
 # must refuse before stopping a lane. The host and tracker retain their existing
 # lane-record meanings, including null host meaning local.
 lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
-  local fields item harness flags refresh tracker repo
+  local fields item harness flags refresh tracker repo pane rc=0
   LANE_RECOVERY_CAUSE=permission-choice-unrecorded
   LANE_RECOVERY_ARGS=() LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
   fields="$(jq -er 'select((.recovery | type) == "object"
@@ -28,6 +28,16 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
   IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo <<<"$fields"
   LANE_RECOVERY_CAUSE=checkout-unavailable
   LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1
+  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_RECOVERY_HOST" "$LANE_RECOVERY_CWD" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    LANE_RECOVERY_CAUSE="host-capabilities-unavailable exit=$rc"
+    return "$rc"
+  fi
+  lane_capability pane pane
+  if [[ "$pane" == verb ]]; then
+    LANE_RECOVERY_CAUSE=relaunch-deferred:KEN-3996
+    return 1
+  fi
   LANE_RECOVERY_ARGS=("$4" --tmux --relaunch --continue-resume --harness "$harness" --lane "$2"
     --launch-flags "$flags" --state-dir "$3" --host "$LANE_RECOVERY_HOST" --tracker "$tracker")
   [[ -z "$repo" ]] || LANE_RECOVERY_ARGS+=(--repo "$repo")
