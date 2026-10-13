@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Widget lifecycle tests disable Bun's automatic peer downloads. A delayed package registry no longer makes these tests reject unrelated merge-queue changes. Each scenario keeps its own process and widget assertions.
+
 ### 2.2.0
 
 - Resource controls are on by default in `nice-ionice` mode: on Linux background tasks run under `nice` and `ionice` at lower CPU and disk priority, which cut Pi's 99th-percentile event-loop delay during a build from about 11 ms to 9 ms. Set `resourceControlEnabled` to `false` to turn them off. Pi looks up those helpers once per extension load, not before each spawn, and `nice-ionice` mode never probes user systemd. macOS has no `ionice`, so tasks there run at lower CPU priority only. On Windows, which has neither helper, a session warns once and spawns tasks unchanged.
