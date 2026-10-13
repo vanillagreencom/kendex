@@ -89,6 +89,31 @@ text() { # NAME CONTENT
 
 echo "=== lane-mail ==="
 
+root_subdir() {
+  lm ask --item KEN-1 --root tmp/lane-mail --file "$(text root 'Which checkout?')"
+  assert_eq "$RC=$ERR=$OUT" "2=lane-mail: root-not-checkout=tmp/lane-mail top=$LANE=" \
+    "a mailbox directory refuses as a checkout root"
+  assert_eq "$(wc -l < "$TMP_ROOT/err" | tr -d ' ')" 1 "the root refusal is one keyed line"
+  assert_eq "$([ -e "$LANE/tmp/lane-mail/tmp" ] && echo written || echo untouched)" untouched \
+    "a refused root writes no nested mailbox"
+}
+new_lane root_base
+git -C "$LANE" config gc.auto 0
+git -C "$LANE" config maintenance.auto false
+git -C "$LANE" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m root
+git -C "$LANE" worktree add -q -b root-lane "$TMP_ROOT/root-lane"
+LANE="$TMP_ROOT/root-lane"
+mkdir -p "$LANE/tmp/lane-mail"
+ln -s "$LANE" "$TMP_ROOT/root-link"
+root_subdir
+for root in "$LANE" "$TMP_ROOT/root-link" omitted; do
+  args=()
+  [ "$root" = omitted ] || args=(--root "$root")
+  lm ask --item KEN-1 ${args[@]+"${args[@]}"} --file "$(text root "Checkout $root?")"
+  assert_eq "$RC=$(jq -r 'select(.id == "'"${OUT#id=}"'") | .text' "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl")" \
+    "0=Checkout $root?" "$root: an ask lands in the worktree mailbox"
+done
+
 new_lane envelope
 lm ask --item KEN-1 --file "$(text q 'Cut the scanner?')" --options cut,keep
 assert_eq "$RC" "0" "ask exits 0"
@@ -1459,6 +1484,15 @@ done
 # above call directly. Each mutant is a private copy of one file beside links
 # to the shipped rest (lane-mail resolves its lock library, the transport and
 # the checkout judge beside itself), and removes one behaviour.
+
+mutant unchecked-root 'if [ -z "$top" ] || [ "$canonical" != "$top" ]; then' \
+  'if false && { [ -z "$top" ] || [ "$canonical" != "$top" ]; }; then'
+LANE="$TMP_ROOT/root-lane"
+ROOT_ASSERT_RC=0
+( FAIL=0; root_subdir; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/root-control.out" || ROOT_ASSERT_RC=$?
+assert_eq "$ROOT_ASSERT_RC" 1 "control: removing the checkout check fails the same refusal assertions"
+assert_eq "$(jq -r '.text' "$LANE/tmp/lane-mail/tmp/lane-mail/KEN-1/to-overseer.jsonl")" 'Which checkout?' \
+  "control: the old root behavior writes the question where no overseer reads"
 
 new_lane control_wait_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Read once?')"

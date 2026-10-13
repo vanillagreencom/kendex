@@ -1,0 +1,1 @@
+- Refuse a local mailbox root that is not a checkout's top-level directory, so questions cannot go to a mailbox the overseer does not read.
