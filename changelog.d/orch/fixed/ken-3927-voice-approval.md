@@ -1,0 +1,1 @@
+- Require the caller's on-screen Approve for destructive or money steps on a call.
