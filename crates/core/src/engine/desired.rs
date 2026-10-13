@@ -279,6 +279,8 @@ pub enum RefusalKind {
 
 #[derive(Debug, Default)]
 pub struct DesiredState {
+    pub(super) command_dependencies:
+        BTreeMap<String, Vec<super::deps::commands::CommandDependency>>,
     pub(super) agent_names: crate::source::agent_names::Uses,
     pub declaration_status: super::DeclarationStatus,
     pub items: Vec<Desired>,

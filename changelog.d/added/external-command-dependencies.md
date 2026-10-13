@@ -1,1 +1,1 @@
-- Skills can declare external commands with their purpose, minimum version and package names. Install and check report missing required commands and show notices for optional commands or unreadable versions.
+- Skills can declare external commands with their purpose, minimum version and package names. Install and check report missing required commands and show notices for optional commands or unreadable versions. Checks include in-place sources and existing copies without an install record.

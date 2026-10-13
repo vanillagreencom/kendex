@@ -66,6 +66,56 @@ fn command_lines(output: &Output) -> Vec<serde_json::Value> {
         .collect()
 }
 
+#[allow(clippy::unwrap_used)]
+fn assert_install_categories(home: &Path, project: &Path) {
+    let env = kendex_core::env::Env::fake(
+        home,
+        if cfg!(target_os = "macos") {
+            kendex_core::env::FakeOs::Mac
+        } else {
+            kendex_core::env::FakeOs::Linux
+        },
+    );
+    let scope = kendex_core::model::Scope::Project {
+        root: project.to_owned(),
+    };
+    let assessed = kendex_core::engine::ops::add(
+        &env,
+        &scope,
+        &kendex_core::engine::ops::AddRequest {
+            source: Some(home.join("catalog").to_str().unwrap().to_owned()),
+            skills: vec!["external".to_owned()],
+            harnesses: Some(vec![
+                kendex_core::model::HarnessId::Claude,
+                kendex_core::model::HarnessId::Codex,
+            ]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(assessed.warnings.len(), 1);
+    assert_eq!(
+        assessed.warnings[0].kind,
+        kendex_core::model::ItemKind::Skill
+    );
+    assert_eq!(assessed.warnings[0].name, "external");
+    for value in [
+        "command=kendex-fixture-missing-required",
+        "purpose=Render pages",
+        "brew=page-render-cli",
+        "npm=page-render",
+    ] {
+        assert!(assessed.warnings[0].message.contains(value));
+    }
+    let notices = assessed
+        .notes
+        .iter()
+        .filter(|note| note.starts_with("kendex-command-missing:"))
+        .collect::<Vec<_>>();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("command=kendex-fixture-missing-optional"));
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn install_and_check_report_required_and_optional_commands_once() {
@@ -82,6 +132,7 @@ fn install_and_check_report_required_and_optional_commands_once() {
         String::from_utf8_lossy(&installed.stderr)
     );
     assert!(project.join(".claude/skills/external/SKILL.md").is_file());
+    assert_install_categories(&home, &project);
     // The check JSON preserves the install's keyed command records.
     let diagnostic = String::from_utf8_lossy(&installed.stderr);
     assert_eq!(
@@ -178,7 +229,12 @@ fn version_floors_and_path_changes_use_live_command_answers() {
         let bin = home.join("bin");
         fs::create_dir_all(&bin).unwrap();
         let executable = bin.join("kendex-fixture-version");
-        fs::write(&executable, format!("#!/bin/sh\n{script}\n")).unwrap();
+        let arguments = if floor {
+            "[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] || exit 64\n"
+        } else {
+            ""
+        };
+        fs::write(&executable, format!("#!/bin/sh\n{arguments}{script}\n")).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(install(&home, &project, Some(&bin)).status.success());
         let checked = run(
@@ -220,4 +276,67 @@ fn version_floors_and_path_changes_use_live_command_answers() {
                 .starts_with("kendex-command-missing:")
         );
     }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_assesses_recorded_and_unrecorded_copies_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let declarations = "dependencies:\n  commands:\n    - command: kendex-fixture-counted-version\n      purpose: Render pages\n      floor: '2.0'\n";
+    let project = setup(&home, declarations);
+    crate::deps_cli::skill(&home, "unrecorded", declarations);
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let executable = bin.join("kendex-fixture-counted-version");
+    fs::write(&executable, "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] || exit 64\nprintf 'probe\\n' >> \"$0.probes\"\nprintf 'tool 1.0.0\\n'\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    let installed = run(
+        &home,
+        &project,
+        &[
+            "add",
+            home.join("catalog").to_str().unwrap(),
+            "--skill",
+            "external",
+            "--skill",
+            "unrecorded",
+            "--harness",
+            "claude,codex",
+            "-y",
+        ],
+        Some(&bin),
+    );
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let path = project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    lock["entries"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|_, entry| entry["name"] != "unrecorded");
+    fs::write(&path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();
+    let probes = executable.with_extension("probes");
+    fs::write(&probes, "").unwrap();
+    let checked = run(
+        &home,
+        &project,
+        &["check", "--scope", "project", "--json"],
+        Some(&bin),
+    );
+    assert_eq!(checked.status.code(), Some(1));
+    let lines = command_lines(&checked);
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().all(|line| line["class"] == "drift"));
+    assert_eq!(fs::read_to_string(&probes).unwrap().lines().count(), 2);
+    let recorded = kendex_core::lock::load(&path).unwrap();
+    assert!(
+        recorded
+            .entries
+            .values()
+            .any(|entry| entry.name == "unrecorded")
+    );
 }

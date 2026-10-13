@@ -321,6 +321,46 @@ fn check_reports_a_missing_pathless_in_place_source() {
     assert!(!text.contains("fix:"), "{text}");
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_reads_command_requirements_from_in_place_sources_without_owning_them() {
+    for harnesses in ["\"codex\"", "\"claude\", \"codex\""] {
+        let world = world();
+        set_manifest(&world, harnesses, true);
+        let skill = world.project.join(".agents/skills/deploy/SKILL.md");
+        let text = "---\nname: deploy\ndescription: ship it\ndependencies:\n  commands:\n    - command: kendex-fixture-inplace-absent\n      purpose: Ship the release\n---\nOwned source.\n";
+        fs::write(&skill, text).unwrap();
+        let plan = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
+        assert_eq!(plan.warnings.len(), 1);
+        apply::execute(&world.env, &plan.plan).unwrap();
+        let lock = kendex_core::lock::load(&world.project.join(".kendex-lock.json")).unwrap();
+        assert!(lock.entries.values().all(|entry| {
+            entry.emitted.as_ref().is_none_or(|artifact| {
+                !artifact.paths.contains(&skill.parent().unwrap().to_owned())
+            })
+        }));
+        let checked = drift::report::check(
+            &world.env,
+            std::slice::from_ref(&world.scope),
+            drift::copies::CheckMode::ReportOnly,
+        );
+        let lines = checked
+            .sections
+            .iter()
+            .filter(|section| section.title == "external commands")
+            .flat_map(|section| &section.lines)
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].class, drift::report::Class::Drift);
+        assert!(
+            lines[0]
+                .text
+                .contains("command=kendex-fixture-inplace-absent")
+        );
+        assert_eq!(fs::read_to_string(&skill).unwrap(), text);
+    }
+}
+
 /// A command read from the in-place catalog is still a generated install.
 /// Codex reads commands as skill trees, so apply must write that tree even
 /// though its destination is also the shared skill directory.

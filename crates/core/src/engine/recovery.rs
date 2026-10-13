@@ -14,7 +14,7 @@ use crate::model::Scope;
 
 use super::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, Occupied, PlanOptions,
-    Registrations, owned, plan_scope, targets,
+    Registrations, owned, targets,
 };
 
 /// A read-only audit and the ownership entries proven by current source and
@@ -47,7 +47,15 @@ pub fn audit_without_record(
         judge_pins,
         ..PlanOptions::current()
     };
-    let mut report = plan_scope(env, scope, manifest, &seed, &options)?;
+    let mut report = super::plan_scope_with_lock_base(
+        env,
+        scope,
+        manifest,
+        &seed,
+        &seed,
+        &options,
+        super::CommandAssessment::Report,
+    )?;
     let matching = proven_entries(
         &report,
         planned_record(&report).unwrap_or_else(|| seed.clone()),
@@ -173,7 +181,15 @@ pub fn compare_unmanaged_copies(
     occupied: &BTreeMap<String, Occupied>,
 ) -> Result<UnmanagedCopies> {
     let scope = &scope.canonical();
-    let report = plan_scope(env, scope, manifest, disk, &PlanOptions::current())?;
+    let report = super::plan_scope_with_lock_base(
+        env,
+        scope,
+        manifest,
+        disk,
+        disk,
+        &PlanOptions::current(),
+        super::CommandAssessment::Omit,
+    )?;
     let planned = planned_record(&report);
     // A pass that would rewrite the manifest — an agent's skill list
     // merged from upstream, a reserved name moved — records entries built

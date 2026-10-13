@@ -175,7 +175,34 @@ pub fn plan_scope(
     lock: &Lock,
     options: &PlanOptions,
 ) -> Result<EngineReport> {
-    plan_scope_with_lock_base(env, scope, declared, lock, lock, options)
+    plan_scope_with_lock_base(
+        env,
+        scope,
+        declared,
+        lock,
+        lock,
+        options,
+        CommandAssessment::Report,
+    )
+}
+
+enum CommandAssessment {
+    Report,
+    /// Copy comparison consumes rendered bytes, never host-tool findings.
+    Omit,
+}
+
+impl CommandAssessment {
+    fn apply(self, state: &mut desired::DesiredState) {
+        match self {
+            Self::Report => deps::commands::report(
+                &state.command_dependencies,
+                &mut state.notes,
+                &mut state.warnings,
+            ),
+            Self::Omit => {}
+        }
+    }
 }
 
 /// A sanctioned unsubscribe transfer changes the planning record before the
@@ -187,6 +214,7 @@ fn plan_scope_with_lock_base(
     lock: &Lock,
     lock_base: &Lock,
     options: &PlanOptions,
+    commands: CommandAssessment,
 ) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
@@ -196,6 +224,7 @@ fn plan_scope_with_lock_base(
     // update reads from a copy with every other follower pinned at its
     // installed commit — the pins steer this pass and never reach the file.
     let (manifest, mut state, held) = desired_pass(env, scope, declared, lock, options)?;
+    commands.apply(&mut state);
     if let Some(targets) = &options.update_only
         && targets.reach == Reach::Declared
     {
@@ -276,7 +305,6 @@ fn plan_scope_with_lock_base(
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
-    let wanted = wanted(&manifest, &state);
     plan_lock_write(env, scope, declared, lock_base, &new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &planned_shims, &drift, &trees, &mut ops)?;
     let planned = Planned {
@@ -295,7 +323,7 @@ fn plan_scope_with_lock_base(
         generated,
         edited,
         installations,
-        wanted,
+        wanted: wanted(&manifest, &state),
         readings,
         new_lock,
         held,

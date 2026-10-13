@@ -120,6 +120,29 @@ fn version_floors_compare_numbers_and_keep_unreadable_answers_as_notices() {
         ),
         ("1.2.0+publisher", "1.2.0+host", None),
         (
+            "4",
+            "GNU bash, version 3.2.57(1)-release (x86_64-apple-darwin)\nCopyright (C) 2007 Free Software Foundation",
+            Some(CommandProblem::VersionUnreadable),
+        ),
+        (
+            "5.30",
+            "This is perl 5, version 34, subversion 1 (v5.34.1)",
+            None,
+        ),
+        (
+            "2",
+            "tool 1.2.3, build 2022",
+            Some(CommandProblem::BelowFloor {
+                found: "1.2.3".into(),
+            }),
+        ),
+        (
+            "2",
+            "tool version unreadable\nCopyright 2022\nreference 9.0.0",
+            Some(CommandProblem::VersionUnreadable),
+        ),
+        ("2", "tool 2022", Some(CommandProblem::VersionUnreadable)),
+        (
             "1.2.0",
             "version unavailable",
             Some(CommandProblem::VersionUnreadable),

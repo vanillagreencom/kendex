@@ -246,9 +246,9 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     if trees[owner].is_some() {
         cross_read_note(ctx, method, state);
     }
-    // External commands belong to a usable installation. A dependency
-    // listing must not launch commands or probe a skill every tool refused.
-    command_findings(ctx, state, trees.iter().any(Option::is_some))?;
+    // Rendering collects requirements only. A copy comparison must not
+    // launch host commands while it proves the installed bytes.
+    collect_command_dependencies(ctx, state, trees.iter().any(Option::is_some))?;
     for (group, tree) in groups.iter().zip(trees) {
         if let Some(tree) = tree {
             push_installs(ctx, state, group, tree, enabled, method)?;
@@ -257,29 +257,18 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     Ok(())
 }
 
-fn command_findings(ctx: &ItemCtx, state: &mut DesiredState, written: bool) -> Result<()> {
+fn collect_command_dependencies(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    written: bool,
+) -> Result<()> {
     if !ctx.decl.enabled || !written {
         return Ok(());
     }
     let declared = super::deps::declared_dependencies(ctx.sealed, ItemKind::Skill, ctx.item_path)?;
-    for issue in super::deps::commands::check(&declared.commands, None) {
-        let message = issue.message(ctx.name);
-        if issue.is_notice() {
-            state.notes.push(message);
-        } else {
-            state.warnings.push(super::ItemWarning {
-                kind: ItemKind::Skill,
-                name: ctx.name.to_owned(),
-                harness: None,
-                message,
-                remediation: Some(format!(
-                    "make {} available on PATH",
-                    issue.dependency.command
-                )),
-                detail: None,
-            });
-        }
-    }
+    state
+        .command_dependencies
+        .insert(ctx.name.to_owned(), declared.commands);
     Ok(())
 }
 

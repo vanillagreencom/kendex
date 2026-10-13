@@ -200,6 +200,33 @@ pub(crate) fn check(
         .collect()
 }
 
+pub(crate) fn report(
+    declarations: &BTreeMap<String, Vec<CommandDependency>>,
+    notes: &mut Vec<String>,
+    warnings: &mut Vec<crate::engine::ItemWarning>,
+) {
+    for (skill, dependencies) in declarations {
+        for issue in check(dependencies, None) {
+            let message = issue.message(skill);
+            if issue.is_notice() {
+                notes.push(message);
+            } else {
+                warnings.push(crate::engine::ItemWarning {
+                    kind: crate::model::ItemKind::Skill,
+                    name: skill.clone(),
+                    harness: None,
+                    message,
+                    remediation: Some(format!(
+                        "make {} available on PATH",
+                        issue.dependency.command
+                    )),
+                    detail: None,
+                });
+            }
+        }
+    }
+}
+
 /// Other PATH probes only detect a fixed package manager or kendex itself.
 /// Publisher-declared names need the executable bit and Windows suffixes too.
 fn command_path(
@@ -299,7 +326,18 @@ fn version(text: &str) -> Option<CommandVersion> {
 }
 
 fn reported_version(output: &str) -> Option<CommandVersion> {
-    output.split_whitespace().find_map(version)
+    // Major-only floors are valid, but banner integers can be copyright
+    // years or subversion counters. Only dotted output tokens identify a
+    // command version. Later lines are commentary, not the version header.
+    output
+        .lines()
+        .next()?
+        .split_whitespace()
+        .filter(|token| token.contains('.'))
+        .find_map(|token| {
+            let token = token.trim_matches(|c| matches!(c, '(' | ')' | ',' | ';'));
+            version(token)
+        })
 }
 
 fn judge_version(floor: &str, found: Option<CommandVersion>) -> Option<CommandProblem> {

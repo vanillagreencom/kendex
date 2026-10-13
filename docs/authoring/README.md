@@ -112,7 +112,7 @@ A required skill or agent the catalog does not offer produces a warning with its
 
 Install and `kendex check` report a missing required command as a finding. A missing optional command is a notice. The skill still installs. Check reads the installed declaration and the current PATH. Disabled skills produce no command findings.
 
-`floor` is an optional minimum version. Use a numeric dotted version. Omitted components compare as zero. Additional components compare numerically, including browser versions. Pre-release and build suffixes follow semantic version rules. kendex asks the resolved command for `--version` only when a floor is declared. A readable version below the floor is a finding for a required command and a notice for an optional command. An unavailable or unreadable version is always a notice. Notices leave the check exit status unchanged.
+`floor` is an optional minimum version. Use a numeric dotted version. Omitted components compare as zero. Additional components compare numerically, including browser versions. Pre-release and build suffixes follow semantic version rules. kendex asks the resolved command for `--version` only when a floor is declared. It reads a dotted version from the first output line. A readable version below the floor is a finding for a required command and a notice for an optional command. An unavailable or unreadable version is always a notice. Notices leave the check exit status unchanged.
 
 ## Agent skills
 

@@ -129,9 +129,6 @@ pub(super) fn check_scope(
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
     ctx.lock_lines(&manifest, &lock, sections);
-    if let Ok(crate::lock::LockFile::Current(lock)) = &lock {
-        ctx.command_lines(lock, sections);
-    }
     let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
@@ -157,7 +154,23 @@ pub(super) fn check_scope(
         }
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
-    ctx.blocked_lines(manifest.current(), &lock, sections);
+    let empty = crate::lock::Lock::default();
+    let readable_lock = match &lock {
+        Ok(crate::lock::LockFile::Current(lock)) => Some(lock),
+        Ok(crate::lock::LockFile::Absent) => Some(&empty),
+        Err(_) => None,
+    };
+    let occupied = manifest
+        .current()
+        .zip(readable_lock)
+        .map(|(manifest, lock)| {
+            crate::engine::declared_over_existing_files(env, scope, manifest, lock)
+        })
+        .unwrap_or_default();
+    if let Some(lock) = readable_lock {
+        ctx.command_lines(manifest.current(), lock, &occupied, sections);
+    }
+    ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
     ctx.snapshot_lines(manifest.current(), sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
     ScopeOutcome {
@@ -258,24 +271,68 @@ impl ManifestRead {
 impl ScopeCheck<'_> {
     /// PATH is machine state, so saved source-comparison verdicts cannot
     /// answer this check. Read each installed skill's own declaration once.
-    fn command_lines(&self, lock: &crate::lock::Lock, sections: &mut Sections) {
+    fn command_lines(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        lock: &crate::lock::Lock,
+        occupied: &BTreeMap<String, crate::engine::Occupied>,
+        sections: &mut Sections,
+    ) {
         let mut seen = BTreeSet::new();
-        for entry in lock
+        let recorded = lock
             .entries
             .values()
             .filter(|entry| entry.kind == ItemKind::Skill && entry.enabled)
-        {
-            if seen.contains(&entry.name) {
+            .map(|entry| {
+                (
+                    entry.name.as_str(),
+                    entry.source.as_str(),
+                    entry
+                        .emitted
+                        .as_ref()
+                        .map(|artifact| artifact.paths.as_slice())
+                        .unwrap_or_default(),
+                )
+            });
+        let unrecorded = occupied
+            .values()
+            .filter(|copy| {
+                copy.kind == ItemKind::Skill
+                    && manifest.is_some_and(|manifest| {
+                        manifest
+                            .skills
+                            .get(&copy.name)
+                            .is_some_and(|decl| decl.enabled)
+                    })
+            })
+            .map(|copy| {
+                (
+                    copy.name.as_str(),
+                    copy.source.as_str(),
+                    copy.positions.as_slice(),
+                )
+            });
+        for (name, source, paths) in recorded.chain(unrecorded) {
+            if seen.contains(name) {
                 continue;
             }
-            let Some(artifact) = &entry.emitted else {
-                continue;
-            };
-            let Some(root) = artifact.paths.iter().find(|path| path.is_dir()) else {
+            let root = paths
+                .iter()
+                .find(|path| path.is_dir())
+                .cloned()
+                .or_else(|| {
+                    crate::engine::desired::in_place_source(
+                        self.env,
+                        self.scope,
+                        (ItemKind::Skill, source, name),
+                    )
+                    .filter(|path| path.is_dir())
+                });
+            let Some(root) = root else {
                 continue;
             };
             let declarations = (|| {
-                let sealed = crate::source_read::SealedSource::open(root)
+                let sealed = crate::source_read::SealedSource::open(&root)
                     .map_err(|error| error.to_string())?;
                 let text = sealed
                     .read_to_string(&sealed.root().join("SKILL.md"))
@@ -287,7 +344,7 @@ impl ScopeCheck<'_> {
             })();
             match declarations {
                 Ok(dependencies) => {
-                    seen.insert(entry.name.clone());
+                    seen.insert(name.to_owned());
                     for issue in
                         crate::engine::deps::commands::check(&dependencies, Some(self.deadline))
                     {
@@ -297,7 +354,7 @@ impl ScopeCheck<'_> {
                             } else {
                                 Class::Drift
                             },
-                            text: format!("{}{}", self.prefix, issue.message(&entry.name)).into(),
+                            text: format!("{}{}", self.prefix, issue.message(name)).into(),
                             remedy: None,
                             detail: None,
                         });
@@ -306,7 +363,7 @@ impl ScopeCheck<'_> {
                 Err(error) => sections.unknown.push(unknown(format!(
                     "{}skill '{}': command declarations unreadable: {}",
                     self.prefix,
-                    shown(&entry.name),
+                    shown(name),
                     shown(&error)
                 ))),
             }
@@ -738,6 +795,7 @@ impl ScopeCheck<'_> {
         &self,
         manifest: Option<&crate::manifest::Manifest>,
         lock: &crate::error::Result<crate::lock::LockFile>,
+        occupied: &BTreeMap<String, crate::engine::Occupied>,
         sections: &mut Sections,
     ) {
         let Some(manifest) = manifest else {
@@ -751,8 +809,6 @@ impl ScopeCheck<'_> {
             _ => return,
         };
         self.in_place_lines(manifest, lock, sections);
-        let occupied =
-            crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock);
         if occupied.is_empty() {
             return;
         }
@@ -761,7 +817,7 @@ impl ScopeCheck<'_> {
             self.scope,
             manifest,
             lock,
-            &occupied,
+            occupied,
             self.deadline,
             self.budget,
             self.mode,
@@ -780,7 +836,7 @@ impl ScopeCheck<'_> {
             crate::drift::copies::Settled::Overrun { budget } => {
                 sections.deep_pass_owed = true;
                 return self.unjudged(
-                    &occupied,
+                    occupied,
                     format!(
                         "{}files already where {} installs could not be compared with their source inside the {} s the session hook allows",
                         self.prefix,
@@ -792,7 +848,7 @@ impl ScopeCheck<'_> {
             }
             crate::drift::copies::Settled::Failed(error) => {
                 return self.unjudged(
-                    &occupied,
+                    occupied,
                     format!(
                         "{}files already where {} installs could not be compared with their source: {}",
                         self.prefix,
@@ -810,7 +866,7 @@ impl ScopeCheck<'_> {
                 shown(&error)
             )));
         }
-        for (key, install) in &occupied {
+        for (key, install) in occupied {
             match verdicts.get(key) {
                 // Its line is the unrecorded entry's, below, beside the
                 // entries a stat cannot see.
