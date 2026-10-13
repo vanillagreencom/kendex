@@ -30,7 +30,8 @@
 # so the item goes back to filing for a per-subsystem split. A body with a
 # Location but no paths, estimate or valid delta launches standard.
 # At least one of --production, --body, --floor and --base is required.
-# --repo (default .) is the checkout the classifier reads.
+# --repo (default .) is the judged checkout. HARNESS_CI_STANDARD_PATHS comes
+# from its main checkout's settings and floors matching paths at standard.
 #
 # A ceiling list or a classifier this script cannot read answers standard,
 # naming the cause, never a narrower class.
@@ -169,8 +170,11 @@ if [ -n "$production" ]; then
 fi
 
 if [ "${#paths[@]}" -gt 0 ]; then
-  if change_class_location_load; then
+  if change_class_location_load "$repo"; then
     for path in "${paths[@]}"; do
+      if change_class_path_match "$path" "$CHANGE_CLASS_STANDARD_PATHS"; then
+        consider standard "repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
+      fi
       change_class_path "$path" launch
       [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done
@@ -188,11 +192,14 @@ if [ -n "$base" ]; then
   range_paths="$scratch/paths"
   if ! git -C "$repo" diff --name-only -z --no-ext-diff --no-renames "$base...$head" -- >"$range_paths"; then
     consider standard branch-paths-unreadable
-  elif ! change_class_location_load; then
+  elif ! change_class_location_load "$repo"; then
     consider standard "$CHANGE_CLASS_CAUSE"
   else
     consider micro branch-paths
     while IFS= read -r -d '' path; do
+      if change_class_path_match "$path" "$CHANGE_CLASS_STANDARD_PATHS"; then
+        consider standard "repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
+      fi
       change_class_path "$path" launch
       [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done <"$range_paths"

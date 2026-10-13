@@ -28,9 +28,10 @@
 #   docs-reader-unreadable. Call it after change_class_read, which resolves the
 #   install.
 #
-# change_class_location_load loads harness-ci's shared path rules and the
-# narrow-change list. Returns 1 with CHANGE_CLASS_CAUSE on a missing library
-# or unreadable list. After loading, change_class_path PATH launch applies
+# change_class_location_load REPO loads harness-ci's shared path rules, the
+# narrow-change list and CHANGE_CLASS_STANDARD_PATHS from the main checkout.
+# Returns 1 with CHANGE_CLASS_CAUSE on unreadable rules or settings.
+# After loading, change_class_path PATH launch applies
 # the same path rules as branch classification, without proving a render.
 #
 # Both range readers append the called script's stderr to STDERR_FILE, and neither writes a
@@ -45,8 +46,8 @@ CHANGE_CLASS_QUEUE_ONLY=""
 CHANGE_CLASS_DOCS_ONLY=""
 CHANGE_CLASS_SCRIPTS=""
 
-change_class_location_load() {
-  local library="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/lib/change-class.sh"
+change_class_location_load() { # REPO
+  local library="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/lib/change-class.sh" root
   CHANGE_CLASS_CAUSE=classifier-path-rules-unreadable
   [ -r "$library" ] || return 1
   # shellcheck source=../../../harness-ci/scripts/lib/change-class.sh
@@ -55,6 +56,19 @@ change_class_location_load() {
     CHANGE_CLASS_CAUSE="$CHANGE_CLASS_PATH_CAUSE"
     return 1
   fi
+  CHANGE_CLASS_CAUSE=base-settings-unreadable
+  root="$("$CHANGE_CLASS_LIB_DIR/../git-context" common-root "$1")" || return 1
+  # The lane and its inherited settings cannot choose their own review depth.
+  CHANGE_CLASS_STANDARD_PATHS="$(
+    unset HARNESS_CI_STANDARD_PATHS
+    # shellcheck source=kendex-env.sh
+    . "$CHANGE_CLASS_LIB_DIR/kendex-env.sh" || exit 1
+    kendex_load_settings_file "$root/kendex.settings.toml" || exit 1
+    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1
+    globs=()
+    read -r -a globs <<<"${HARNESS_CI_STANDARD_PATHS:-}"
+    [ "${#globs[@]}" -eq 0 ] || printf '%s\n' "${globs[@]}"
+  )" || return 1
   CHANGE_CLASS_CAUSE=""
 }
 

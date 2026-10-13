@@ -21,13 +21,18 @@ source "$TEST_DIR/lib/assertions.sh"
 
 LAYOUT="$TMP_ROOT/layout"
 mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
-  "$LAYOUT/harness-ci/scripts/lib"
+  "$LAYOUT/harness-ci/scripts/lib" "$LAYOUT/mailbox/scripts/lib"
+cp "$ORCH_DIR/../mailbox/scripts/lib/common-root.sh" "$LAYOUT/mailbox/scripts/lib/"
+cp "$ORCH_DIR/scripts/git-context" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scripts/lib/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
-cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" \
+cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" "$ORCH_DIR/scripts/lib/kendex-env.sh" \
   "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
 TIER="$LAYOUT/orch/scripts/item-tier"
+git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 # Two layouts whose ceiling list item-tier cannot use: one without the file,
 # one without the small ceiling line.
@@ -97,6 +102,41 @@ for row in "${ROWS[@]}"; do
   # shellcheck disable=SC2086
   assert_eq "$(run_tier "$class" $args)" "$want" "$name"
 done
+
+# open-terminal records this machine-read cause with the launch tier.
+assert_standard_setting() {
+  local setting want
+  while IFS='|' read -r setting want; do
+    rm -f -- "$TMP_ROOT/kendex.settings.toml"
+    if [ "$setting" != unset ]; then
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = "%s"\n' "$setting" >"$TMP_ROOT/kendex.settings.toml"
+    fi
+    assert_eq "$(TIER_RAW=true run_tier - --production 1 --path src/main.rs)" \
+      "$want estimate=1 delta=- paths=1 rc=0" "repository standard paths: $setting"
+  done <<'ROWS'
+src/*.rs|tier=standard brief=start cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/main.rs glob=src/*.rs
+unset|tier=micro brief=micro cause=estimate-within-micro production=1
+|tier=micro brief=micro cause=estimate-within-micro production=1
+ROWS
+}
+assert_standard_setting
+cp -R "$LAYOUT" "$TMP_ROOT/no-standard-setting"
+awk '/^      if change_class_path_match "\$path" "\$CHANGE_CLASS_STANDARD_PATHS"; then$/ {hits++; print "      if false; then # " $0; next} {print} END {exit hits == 2 ? 0 : 3}' \
+  "$TIER" >"$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"
+if cmp -s "$TIER" "$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"; then
+  echo 'FAIL: standard paths control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = "src/*.rs"\n' >"$TMP_ROOT/kendex.settings.toml"
+assert_eq "$(run_tier - --production 1 --path src/main.rs)" \
+  "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: today's tier misses a repository standard path"
+if (PASS=0; FAIL=0; assert_standard_setting >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "control standard setting: the path assertion stays green"
+else
+  pass "control standard setting: the path assertion turns red"
+fi
+unset TIER_BIN
+rm -- "$TMP_ROOT/kendex.settings.toml"
 
 # The filer emits Location and Expected delta headers; launch passes the same
 # body file. Every body but no-location-body names a one-subsystem Location.
@@ -317,6 +357,38 @@ assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "branch growth does not replace the launch estimate"
 assert_eq "$(run_tier - --floor small --base "$BASE" --head HEAD --repo "$RANGE")" \
   "tier=small brief=small cause=floor class=small rc=0" "branch growth does not replace the recorded tier"
+# A linked lane changes its local setting; the base checkout still owns it.
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = "src/*.rs"\n' >"$RANGE/kendex.settings.toml"
+git -C "$RANGE" worktree add -q -b lane "$TMP_ROOT/lane"
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\n' >"$TMP_ROOT/lane/kendex.settings.toml"
+assert_base_checkout() {
+  local row input path_count args
+  for row in 'location|1' 'range|0'; do
+    IFS='|' read -r input path_count <<<"$row"
+    args=(--path src/main.rs)
+    [ "$input" != range ] || args=(--base "$BASE" --head HEAD)
+    assert_eq "$(TIER_RAW=true run_tier - --production 1 --repo "$TMP_ROOT/lane" "${args[@]}")" \
+      "tier=standard brief=start cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/main.rs glob=src/*.rs estimate=1 delta=- paths=$path_count rc=0" \
+      "a lane's $input reads standard paths from the base checkout"
+  done
+}
+assert_base_checkout
+cp -R "$LAYOUT" "$TMP_ROOT/lane-settings"
+awk '/^  root=.* common-root / {hits++; sub(/ common-root /, " repo-root ")} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$LAYOUT/orch/scripts/lib/change-class.sh" >"$TMP_ROOT/lane-settings/orch/scripts/lib/change-class.sh"
+if cmp -s "$LAYOUT/orch/scripts/lib/change-class.sh" "$TMP_ROOT/lane-settings/orch/scripts/lib/change-class.sh"; then
+  echo 'FAIL: base checkout control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/lane-settings/orch/scripts/item-tier"
+assert_eq "$(run_tier - --production 1 --path src/main.rs --repo "$TMP_ROOT/lane")" \
+  "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: lane settings can remove the standard floor"
+if (PASS=0; FAIL=0; assert_base_checkout >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "control base checkout: the base setting assertion stays green"
+else
+  pass "control base checkout: the base setting assertion turns red"
+fi
+unset TIER_BIN
+rm -- "$RANGE/kendex.settings.toml"
 printf '# Instructions\n' >"$RANGE/AGENTS.md"
 git -C "$RANGE" add -A
 git -C "$RANGE" commit -qm instructions
