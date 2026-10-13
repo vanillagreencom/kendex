@@ -19,11 +19,18 @@
     "appendSystem": "./instructions.md"
   },
   "scripts": {
-    "test": "bun test ./tests ./extensions/subagent/__tests__",
+    "test": "npm install --no-package-lock --ignore-scripts --no-audit --no-fund && bun test ./tests ./extensions/subagent/__tests__",
     "bench:popup": "bun ./tests/popup-layout.bench.ts",
     "bench:spawn": "bun ./tests/spawn.bench.ts",
     "postinstall": "node scripts/append-system.mjs install",
     "preuninstall": "node scripts/append-system.mjs remove"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
+    "typebox": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

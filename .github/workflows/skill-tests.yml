@@ -1362,9 +1362,7 @@ jobs:
         working-directory: pi-extensions/pi-nested-agents-md
         run: npm test
 
-      # Pi 0.84.x is the release the extensions are audited against, so the
-      # suites that assert 0.84 wire-format parity install that line rather
-      # than pi-qol's peer floor above.
+      # The package test command installs the development dependencies its manifest pins.
       # The suite's preload starts a tmux server of its own and fails the
       # run when it cannot, so the runner needs the tmux binary; the
       # GitHub image does not carry it. The whole directory is globbed, so
@@ -1374,7 +1372,6 @@ jobs:
         working-directory: pi-extensions/pi-agents-tmux
         run: |
           git fetch --no-tags --depth=1 origin "$(sed -n 's/^export const BENCHMARK_BASELINE = "\([0-9a-f]*\)";.*/\1/p' tests/browser-fixture.ts)"
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
           npm test
 
       # undici is pinned to the package's own declared range: installing it

@@ -69,7 +69,7 @@ function customCommand(log: string, stderr: string, exitCode: number): string {
 
 /** The `Stop` payload one `agent_before_settle` dispatch writes to a hook's stdin. */
 function stopPayload(stopHookActive: boolean): string {
-	return JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, session_id: SESSION_ID });
+	return JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, working_agents: 0, session_id: SESSION_ID });
 }
 
 /** The `StopFailure` payload an errored settle writes to a hook's stdin, over
@@ -191,7 +191,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
 			registerRendered(join(project, ".pi"), TOOL_RESULT_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
 			const listeners: { run: (ctx: Record<string, unknown>) => Promise<unknown>; payload: Record<string, unknown> }[] = [
-				{ run: (ctx) => installCarrier().handler(SETTLE_LISTENER)(boundary(), ctx), payload: { hook_event_name: "Stop", stop_hook_active: false } },
+				{ run: (ctx) => installCarrier().handler(SETTLE_LISTENER)(boundary(), ctx), payload: { hook_event_name: "Stop", stop_hook_active: false, working_agents: 0 } },
 				{
 					run: (ctx) => installCarrier().handler(TOOL_RESULT_LISTENER)(toolResultEvent("bash", { command: "ls" }, "ok"), ctx),
 					payload: { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_response: "ok" },
@@ -614,7 +614,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 					}
 					if (on) expect(JSON.parse(readLog(log))).toEqual(listener === SESSION_START_LISTENER
 						? { hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID }
-						: { hook_event_name: "Stop", stop_hook_active: false, session_id: SESSION_ID });
+						: { hook_event_name: "Stop", stop_hook_active: false, working_agents: 0, session_id: SESSION_ID });
 					else expect(readLog(log)).toBe("");
 				}
 			}
