@@ -69,6 +69,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// Older verification can reject a record carrying them because its
 /// serialization omits them. Refresh with a build that knows selectors
 /// records them again.
+///
+/// Version 11 also gained [`Lock::claude_project_default`] without a bump.
+/// Older writers drop its ownership and deletion record. After a user
+/// deletes the default and an older build writes the lock, a later build
+/// can insert `switchModelsOnFlag=true` again. This mixed-version loss is
+/// accepted rather than requiring lock recovery for the added default.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it

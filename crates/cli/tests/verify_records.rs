@@ -1748,6 +1748,153 @@ fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order(
     );
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn claude_scope_default_transitions_replay_without_changing_user_settings() {
+    let world = world();
+    let declared = format!(
+        "[sources.cat]\n{}\n[hooks.guard]\nsource = \"cat\"\n",
+        source_path(&world.catalog)
+    );
+    for (name, initial, change, legacy_missing, disable, expected) in [
+        ("owned-remove", None, None, false, true, None),
+        (
+            "preexisting-true",
+            Some(true),
+            None,
+            false,
+            true,
+            Some(true),
+        ),
+        (
+            "preexisting-false",
+            Some(false),
+            None,
+            false,
+            true,
+            Some(false),
+        ),
+        (
+            "released-false",
+            None,
+            Some(Some(false)),
+            false,
+            true,
+            Some(false),
+        ),
+        (
+            "released-true",
+            None,
+            Some(Some(true)),
+            false,
+            true,
+            Some(true),
+        ),
+        ("recorded-deletion", None, Some(None), false, true, None),
+        ("owned-active", None, None, false, false, Some(true)),
+        ("current-hook-insert", None, None, true, false, Some(true)),
+    ] {
+        let project =
+            claude_default_replay_base(&world, name, &declared, initial, change, legacy_missing);
+        let settings = project.join(".claude/settings.json");
+        let permissions = serde_json::json!({"allow": ["Read"]});
+        let mut user = serde_json::json!({"permissions": permissions});
+        if let Some(value) = initial {
+            user["switchModelsOnFlag"] = value.into();
+        }
+        let args: &[&str] = if disable {
+            &["disable", "guard", "--scope", "project", "-y", "--leave"]
+        } else {
+            &["apply", "-y", "--leave"]
+        };
+        let transition = kendex(&world.home, &project, args);
+        assert!(transition.status.success(), "{name}: {}", said(&transition));
+        let actual: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(actual["switchModelsOnFlag"].as_bool(), expected, "{name}");
+        assert_eq!(actual["permissions"], permissions, "{name}");
+        if disable {
+            let mut retained = user.clone();
+            retained
+                .as_object_mut()
+                .unwrap()
+                .shift_remove("switchModelsOnFlag");
+            if let Some(value) = expected {
+                retained["switchModelsOnFlag"] = value.into();
+            }
+            assert_eq!(actual, retained, "{name}");
+        }
+        let (output, document) =
+            verify_from(&world.home, &project, "project", Some("default-base"));
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        assert_eq!(
+            keys_positions(&document),
+            vec![(
+                "hook",
+                "guard",
+                ".claude/settings.json",
+                Some(Foreign::Unchanged)
+            )],
+            "{name}"
+        );
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn claude_default_replay_base(
+    world: &World,
+    name: &str,
+    declared: &str,
+    initial: Option<bool>,
+    change: Option<Option<bool>>,
+    legacy_missing: bool,
+) -> PathBuf {
+    let project = second_project(world, name, declared);
+    let settings = project.join(".claude/settings.json");
+    let mut user = serde_json::json!({"permissions": {"allow": ["Read"]}});
+    if let Some(value) = initial {
+        user["switchModelsOnFlag"] = value.into();
+    }
+    write(&settings, &format!("{user}\n"));
+    let install = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(install.status.success(), "{name}: {}", said(&install));
+    if let Some(value) = change {
+        // Release ownership before the base commit, including a true
+        // choice reached by changing the owned default to false first.
+        edit_json(&settings, |settings| {
+            settings["switchModelsOnFlag"] = false.into();
+        });
+        let release = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+        assert!(release.status.success(), "{name}: {}", said(&release));
+        edit_json(&settings, |settings| match value {
+            Some(value) => settings["switchModelsOnFlag"] = value.into(),
+            None => {
+                settings
+                    .as_object_mut()
+                    .unwrap()
+                    .shift_remove("switchModelsOnFlag");
+            }
+        });
+    }
+    if legacy_missing {
+        edit_json(&settings, |settings| {
+            settings
+                .as_object_mut()
+                .unwrap()
+                .shift_remove("switchModelsOnFlag");
+        });
+        edit_json(&project.join(RECORD), |record| {
+            record
+                .as_object_mut()
+                .unwrap()
+                .shift_remove("claudeProjectDefault");
+        });
+    }
+    commit(&project, "base settings and ownership");
+    git(&project, &["tag", "default-base"]);
+    project
+}
+
 /// A hook the catalog or the manifest moved to another event is one
 /// entry in its new place, not two: the pass that moved it retired the
 /// entry the record named before it registered the current one. Judged

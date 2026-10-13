@@ -821,7 +821,9 @@ fn history_problem(
 /// [`crate::engine::owned::installed`] names for taking it back out, in
 /// record key order, so a hook, server or plugin dropped since leaves the
 /// file the way the writer left it. A removal lands only in a file a
-/// registration or shim is judged in. The files are every `keys`
+/// registration or shim is judged in. The scope default transition follows
+/// those removals, using the base record's ownership and this pass's enabled
+/// installations through the planner's shared decision. The files are every `keys`
 /// position the pass prints: each registration's edit targets and each
 /// instruction shim that is an edit, read off the same standings `verify`
 /// prints rows for, so no position is printed as keys with nothing here
@@ -868,6 +870,19 @@ pub fn foreign_since(
         if let Some(edits) = by_file.get_mut(path) {
             edits.push(edit.clone());
         }
+    }
+    let ownership = match &record {
+        Some(BaseRecord::Held(lock)) => lock.claude_project_default,
+        Some(BaseRecord::Absent) | None => None,
+    };
+    if let Some((path, edit)) = crate::engine::claude_project_default_edit(
+        env,
+        &report.plan.scope,
+        ownership,
+        &report.record,
+    ) && let Some(edits) = by_file.get_mut(&path)
+    {
+        edits.push(edit);
     }
     by_file
         .into_iter()

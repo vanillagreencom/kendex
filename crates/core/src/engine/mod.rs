@@ -309,14 +309,29 @@ fn plan_claude_project_defaults(
     lock: &Lock,
     config_edits: &mut config_edits::ConfigEditPlan,
 ) {
+    if let Some((path, edit)) =
+        claude_project_default_edit(env, scope, lock.claude_project_default, lock)
+    {
+        config_edits.push(path, "Claude project defaults".into(), edit);
+    }
+}
+
+/// The scope default transition, with ownership from the document's record
+/// and enabled installations from the pass, shared by planning and replay.
+pub(crate) fn claude_project_default_edit(
+    env: &Env,
+    scope: &Scope,
+    ownership: Option<crate::lock::ClaudeProjectDefault>,
+    lock: &Lock,
+) -> Option<(std::path::PathBuf, crate::configedit::ConfigEdit)> {
     if !matches!(scope, Scope::Project { .. }) {
-        return;
+        return None;
     }
     let enabled = lock
         .entries
         .values()
         .any(|entry| entry.harness == HarnessId::Claude && entry.enabled);
-    let edit = match (lock.claude_project_default, enabled) {
+    let edit = match (ownership, enabled) {
         (None | Some(crate::lock::ClaudeProjectDefault::Owned), true) => {
             Some(crate::configedit::ConfigEdit::ClaudeProjectDefaults)
         }
@@ -325,14 +340,8 @@ fn plan_claude_project_defaults(
         }
         (None | Some(crate::lock::ClaudeProjectDefault::Released), false)
         | (Some(crate::lock::ClaudeProjectDefault::Released), true) => None,
-    };
-    if let Some(edit) = edit {
-        config_edits.push(
-            targets::claude_settings(env, scope),
-            "Claude project defaults".into(),
-            edit,
-        );
-    }
+    }?;
+    Some((targets::claude_settings(env, scope), edit))
 }
 
 /// What the passes of [`plan_scope`] planned, beside the desired state,
