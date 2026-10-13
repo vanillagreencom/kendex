@@ -1,9 +1,9 @@
-//! `kendex add https://kendex.ai/c/<id>` — one link, one preview, then:
+//! `kendex add https://kendex.ai/c/<id>`: one link, one preview, then:
 //! subscribe each repository the scope lacks (at the snapshot commit) and
 //! install every member. Existing subscriptions are reused only when
-//! their revision matches the snapshot; the steps refuse before anything
-//! changes otherwise. Core prepares and checks the whole collection before
-//! this command applies its single plan.
+//! their revision matches the snapshot. Core refuses a mismatch before
+//! anything changes and checks the whole collection before this command
+//! applies its single plan.
 
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
@@ -69,16 +69,13 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     }
     let mut closing = closing(vec![wrote]);
     let skipped = std::mem::take(&mut closing.skipped);
-    // A member skipped on conflict is not a step failure, and it is not
-    // installed either: the line would claim a member the ledger then
-    // names as skipped, terminal or not.
+    // A successful apply can skip a conflicting member. The success line
+    // must not claim that member installed when the ledger names it skipped.
     if failed.is_none() && skipped.is_empty() {
         say("collection installed — kendex recorded every member at its version");
     }
-    // The same close `add <package>` gives, over every step at once: a
-    // collection is one install, and a run that opened a frame has to end
-    // on what it wrote, skipped and flagged like any other. The parts are
-    // the ones each step already counted, never re-derived.
+    // The collection's single apply supplies the same ledger as an item
+    // add: what it wrote, skipped and flagged.
     let close = || {
         say_ledger(
             scope,
@@ -127,9 +124,8 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
 /// folder the app cannot see is what the registration exists to prevent. A
 /// run that wrote nothing installed into nowhere and registers nothing.
 ///
-/// What comes back is what the run reports — the step's failure first,
-/// then the account's — and, separately, a registry refusal to be said
-/// beside it rather than in place of it.
+/// The apply failure takes priority over a repository-effects failure.
+/// A registry refusal is reported beside that failure.
 type Refusal = Box<dyn std::error::Error>;
 
 fn finish<C: FnOnce()>(
@@ -158,7 +154,7 @@ fn finish<C: FnOnce()>(
 }
 
 /// What the run says at the end: the ledger's count, the collapsed
-/// repository-effects screen, and the rows each step could not settle.
+/// repository-effects screen, and the members the plan could not install.
 struct Closing {
     count: Option<usize>,
     pending: Vec<kendex_core::repo_effects::DeclaredEffects>,
@@ -172,7 +168,7 @@ struct Closing {
 fn closing(written: Vec<Written>) -> Closing {
     // One screen for the collection, and one question.
     //
-    // A package can arrive by more than one route in a single command — the
+    // A package can arrive by more than one route in a single command: the
     // repository that carries it, and a dependency of something else — and a
     // person should read what it does to their repository once. Collapsed by
     // name over the whole run's writes.
@@ -185,13 +181,9 @@ fn closing(written: Vec<Written>) -> Closing {
     }
     let pending: Vec<kendex_core::repo_effects::DeclaredEffects> =
         once.into_values().cloned().collect();
-    // Read off what the run applied, not off the member plans alone: a
-    // reused source whose member is already declared plans nothing and
-    // still writes — its subscription, or the pin that holds it at the
-    // snapshot — and a ledger deciding from the plan would call that run
-    // up to date over changes it had just made. `None` only where
-    // nothing was planned and nothing was written, the way `add` reads a
-    // scope that had nothing to do.
+    // Subscriptions and snapshot pins are part of the collection plan.
+    // Count applied operations and keep a planned apply that wrote nothing
+    // distinct from an empty plan.
     let count = wrote_count(
         written.iter().map(|step| step.applied).sum(),
         written.iter().any(|step| step.planned),
@@ -215,26 +207,21 @@ fn closing(written: Vec<Written>) -> Closing {
 
 /// Whether the run has a count to report, and what it is.
 ///
-/// `None` only where nothing was planned and nothing was written, which
-/// is how `add` reads a scope that had nothing to do. Read off the member
-/// plans alone it says "up to date" over a run that wrote: a reused
-/// source whose member is already declared plans nothing and still writes
-/// its subscription, or the pin holding it at the snapshot.
+/// An empty plan that wrote nothing has no count. A planned apply that
+/// wrote nothing reports zero. Applied operations always have a count.
 fn wrote_count(applied: usize, planned_anything: bool) -> Option<usize> {
     (applied > 0 || planned_anything).then_some(applied)
 }
 
-/// What one step wrote, and what it could not, gathered as it writes it.
-/// The collection's closing ledger and its repository-effects screen are
-/// the sum of these, so each step hands back the counts it already took
-/// rather than leaving them to be worked out again — and a step that
-/// fails hands back everything it had written before it did.
+/// The collection plan's findings and its apply count. A failed apply
+/// retains the findings for the ledger; only a completed apply supplies
+/// the count of written operations.
 #[derive(Default)]
 struct Written {
-    /// The repository effects this step's plan declared.
+    /// The repository effects the collection plan declared.
     effects: Vec<kendex_core::repo_effects::DeclaredEffects>,
-    /// Whether the step planned anything at all, which is the one thing
-    /// separating a silent run from one that wrote nothing.
+    /// Whether the collection plan contains operations, separating an
+    /// empty plan from an apply that wrote nothing.
     planned: bool,
     blocked: Vec<Blocked>,
     skipped: Vec<(kendex_core::model::ItemKind, String)>,
@@ -261,10 +248,8 @@ fn install_report(
 #[cfg(test)]
 mod tests {
     use super::{finish, wrote_count};
-    /// A run that wrote reports what it wrote, whatever the member plans
-    /// said. The pin and the subscription are writes the member plan
-    /// never carries, so a ledger deciding from that plan alone calls a
-    /// run that has just changed the scope up to date.
+    /// Applied operations have a count regardless of the planned flag.
+    /// An empty plan differs from a planned apply that wrote nothing.
     #[test]
     fn a_run_that_wrote_never_reads_as_up_to_date() {
         assert_eq!(wrote_count(2, false), Some(2));
@@ -285,7 +270,7 @@ mod tests {
     /// nothing was written.
     #[test]
     fn the_close_registers_wherever_packages_landed() {
-        // wrote, a step failed, the effects step's answer, the registry's;
+        // wrote, the apply failed, the effects answer, the registry's;
         // then what ran (closed, effects, registered), whether the run
         // came back ok, and whether a registry refusal was handed back to
         // be said beside it.
@@ -303,7 +288,7 @@ mod tests {
                 false,
             ),
             (
-                "step failed, wrote",
+                "apply failed, wrote",
                 true,
                 true,
                 true,
@@ -313,7 +298,7 @@ mod tests {
                 false,
             ),
             (
-                "step failed, wrote nothing",
+                "apply failed, wrote nothing",
                 false,
                 true,
                 true,

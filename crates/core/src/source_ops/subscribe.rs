@@ -47,7 +47,7 @@ pub fn subscribe(
     } = declared(env, scope, reference, alias)?;
     manifest.sources.insert(name.clone(), decl.clone());
     let mut report = persist_and_plan(env, scope, manifest)?;
-    announce_subscription(env, &mut report, scope, &name, &decl);
+    announce_subscriptions(env, &mut report, scope, [(name.as_str(), &decl)]);
     Ok(subscribed(report, name, decl, lead))
 }
 
@@ -75,7 +75,7 @@ pub fn subscribe_and_install(
     };
     let mut report =
         crate::engine::ops::add_seeded(env, scope, &request, Some((name.clone(), decl.clone())))?;
-    announce_subscription(env, &mut report, scope, &name, &decl);
+    announce_subscriptions(env, &mut report, scope, [(name.as_str(), &decl)]);
     Ok(subscribed(report, name, decl, lead))
 }
 
@@ -218,7 +218,7 @@ pub fn subscribe_project_to(
         .sources
         .insert(source_name.to_owned(), decl.clone());
     let mut report = persist_and_plan(env, &scope, manifest)?;
-    announce_subscription(env, &mut report, &scope, source_name, &decl);
+    announce_subscriptions(env, &mut report, &scope, [(source_name, &decl)]);
     Ok(report)
 }
 
@@ -282,7 +282,7 @@ pub fn install_project_carrying(
         &request,
         Some((source_name.to_owned(), decl.clone())),
     )?;
-    announce_subscription(env, &mut report, &scope, source_name, &decl);
+    announce_subscriptions(env, &mut report, &scope, [(source_name, &decl)]);
     Ok(report)
 }
 
@@ -430,22 +430,34 @@ fn normalize_tree(
     crate::source_ref::split_tree_ref(reference, &refs, ref_and_path)
 }
 
-/// The §4.1 preview line: every subscribe names its destination scope,
-/// manifest path, and the source's alias, repo, and revision — which
-/// scope a click mutates is never inferred from the page being looked at.
-pub(super) fn announce_subscription(
+/// Name every subscription in the shared manifest-write description and
+/// retain a note for each one. The scope and path identify the destination
+/// a user approves, including when several subscriptions share one write.
+pub(super) fn announce_subscriptions<'a>(
     env: &Env,
     report: &mut EngineReport,
     scope: &Scope,
-    name: &str,
-    decl: &SourceDecl,
+    subscriptions: impl IntoIterator<Item = (&'a str, &'a SourceDecl)>,
 ) {
-    let what = match (&decl.repo, &decl.rev) {
-        (Some(repo), Some(rev)) => format!("{repo} @ {rev}"),
-        (Some(repo), None) => repo.clone(),
-        (None, _) => decl.path.clone().unwrap_or_default(),
-    };
-    let said = format!("Subscribes {} to '{name}' ({what}) — ", scope.label());
+    let destinations: Vec<String> = subscriptions
+        .into_iter()
+        .map(|(name, decl)| {
+            let what = match (&decl.repo, &decl.rev) {
+                (Some(repo), Some(rev)) => format!("{repo} @ {rev}"),
+                (Some(repo), None) => repo.clone(),
+                (None, _) => decl.path.clone().unwrap_or_default(),
+            };
+            format!("'{name}' ({what})")
+        })
+        .collect();
+    if destinations.is_empty() {
+        return;
+    }
+    let said = format!(
+        "Subscribes {} to {}: ",
+        scope.label(),
+        destinations.join(", ")
+    );
     // The file is the op's to name, not this line's: the write goes where
     // the plan landed it, and a spelling derived again here would name
     // somewhere else the moment a directory on the way is a link.
@@ -453,13 +465,21 @@ pub(super) fn announce_subscription(
     for op in &mut report.plan.ops {
         if let crate::apply::Op::WriteManifest { .. } = &op.op {
             op.description = crate::apply::Description::around(said.clone(), "");
-            written = Some(op.line());
+            written = op
+                .description_parts()
+                .into_iter()
+                .find_map(|part| match part {
+                    crate::apply::DescriptionPart::Path(path) => Some(path),
+                    crate::apply::DescriptionPart::Text(_) => None,
+                });
         }
     }
     // No write, no landed place to name — the file the subscription would
     // go in is all there is to say, and nothing disagrees with it.
-    report.notes.push(
-        written
-            .unwrap_or_else(|| format!("{said}{}", manifest::manifest_path(env, scope).display())),
+    let path = written.unwrap_or_else(|| manifest::manifest_path(env, scope).display().to_string());
+    report.notes.extend(
+        destinations
+            .into_iter()
+            .map(|destination| format!("Subscribes {} to {destination}: {path}", scope.label())),
     );
 }

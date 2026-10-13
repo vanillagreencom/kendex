@@ -1,1 +1,1 @@
-- Collection installs replace members recorded below the catalog minimum in either repository order and refuse incompatible retained revisions before writing.
+- Collection installs replace members recorded below the catalog minimum in either repository order and refuse incompatible retained revisions before writing. Shared plan previews name every new subscription.

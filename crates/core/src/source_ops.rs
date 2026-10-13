@@ -232,7 +232,12 @@ impl PreparedSourceChange {
     pub fn plan(self, env: &Env) -> Result<EngineReport> {
         let mut report = persist_and_plan(env, &self.scope, self.manifest)?;
         if let Some((name, decl)) = self.subscription {
-            subscribe::announce_subscription(env, &mut report, &self.scope, &name, &decl);
+            subscribe::announce_subscriptions(
+                env,
+                &mut report,
+                &self.scope,
+                [(name.as_str(), &decl)],
+            );
         }
         Ok(report)
     }

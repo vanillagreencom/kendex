@@ -78,9 +78,14 @@ impl PreparedCollection {
     pub fn plan(self, env: &Env) -> Result<crate::engine::EngineReport> {
         self.check_catalog_compatibility(env)?;
         let mut report = self.addition.plan(env)?;
-        for (name, decl) in self.subscriptions {
-            super::subscribe::announce_subscription(env, &mut report, &self.scope, &name, &decl);
-        }
+        super::subscribe::announce_subscriptions(
+            env,
+            &mut report,
+            &self.scope,
+            self.subscriptions
+                .iter()
+                .map(|(name, decl)| (name.as_str(), decl)),
+        );
         Ok(report)
     }
 }
