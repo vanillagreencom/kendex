@@ -461,6 +461,10 @@ lane_capability HOST_KIND kind
 lane_capability HOST_LAUNCH launch
 lane_capability HOST_PANE pane
 host_launch_judge() {
+  if [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then
+    ot_message host-relaunch-deferred "host=$LANE_HOST" pane=verb follow-up=KEN-3996 >&2
+    return 1
+  fi
 case "$HOST_LAUNCH" in
   window | ssh) ;;
   cloud-session)
@@ -2362,14 +2366,6 @@ tmux_window_open() { # DIR TITLE
     ot_message tmux-failed "operation=show-options" "item=$title" >&2
     return 1
   fi
-  if [[ "${HOST_PANE:-local}" == verb && "$RELAUNCH" == true ]]; then
-    local prior_harness="$HARNESS"
-    if [[ "$FLEET" == true ]]; then
-      lane_record_read "$wt_id" harness || return 1
-      [[ "$LANE_RECORD_VALUE" == absent ]] || prior_harness="$LANE_RECORD_VALUE"
-    fi
-    host_pane_stop "$prior_harness" || return 1
-  fi
   [[ "${HOST_PANE:-local}" != verb ]] || window_args+=(-d)
   lane_launch_shell_argv "$pane_shell" "$pane_command"
   if ! spec=$(tmux new-window "${window_args[@]}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}' "${LANE_LAUNCH_SHELL_ARGV[@]}") || [[ -z "$spec" ]]; then
@@ -3137,8 +3133,6 @@ host_launch_resume() {
 }
 
 # Only a completed launch or confirmed cleanup can retire its checkpoint.
-# A selection checkpoint already owns a harness, including on a retry that
-# fails before its saved pane can be restored.
 host_launch_ready() { # completed|failed
   local outcome="$1" mail_root="$remote_path"
   case "$outcome" in
@@ -3151,9 +3145,7 @@ host_launch_ready() { # completed|failed
             # No untaken pane means the launch took before its record failed.
             [[ -n "$UNTAKEN_PANE" ]] || return 1
             host_pane_stop || return 1 ;;
-          unstarted)
-            # Early failures cannot discard a saved, already started selector.
-            [[ "$host_pending_step" != selection || -n "$UNTAKEN_PANE" ]] || return 1 ;;
+          unstarted) ;;
           *) ot_message host-stop-state-invalid "item=$item" "state=$HOST_PANE_LAUNCH" >&2; return 1 ;;
         esac
         if [[ -n "$UNTAKEN_PANE" ]]; then
@@ -3469,14 +3461,14 @@ launch_stop() {
 # the detached harness before a stopped record is written. The transport can
 # fail after the harness starts, so an attempted launch also needs this stop.
 host_pane_stop() {
-  local rc=0 stop_harness="${1:-$HARNESS}"
+  local rc=0
   case "${HOST_PANE_LAUNCH:-unstarted}" in
-    unstarted) [[ $# -gt 0 ]] || return 0 ;;
+    unstarted) return 0 ;;
     owned) ;;
     unjudged) return 1 ;;
     *) ot_message host-stop-state-invalid "item=$item" "state=$HOST_PANE_LAUNCH" >&2; return 1 ;;
   esac
-  host_transport stop --item "$wt_id" --harness "$stop_harness" || rc=$?
+  host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?
   if [[ "$rc" != 0 ]]; then
     HOST_PANE_LAUNCH=unjudged
     ot_message host-stop-failed "item=$item" "exit=$rc" >&2
@@ -3910,7 +3902,6 @@ for raw in "${ITEMS[@]}"; do
     LAUNCH_PANE="$host_pending_pane" LAUNCH_SERVER="$host_pending_server"
     [[ -z "$host_pending_session" ]] || LAUNCH_SESSION="$host_pending_session"
     LAUNCH_PREPARE="$host_pending_record"
-    [[ "${HOST_PANE:-local}" != verb || "$host_pending_step" != selection ]] || HOST_PANE_LAUNCH=owned
   fi
   # Judged before any record write: a preparing record already names this
   # launch's harness, and the switch is read against the one before it.

@@ -81,24 +81,16 @@ for row in 'delivered|0|0' 'composer|0|1' 'dialog|2|1'; do
 done
 
 cp "$READY" "$CURRENT"
-run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;OT_PANE_TEXT=Choose theme" \
-  --harness claude --lane "$H/.eclaude" --repo o/r --relaunch KEN-40
-launch_contract 'relaunch harness wait reads the provider composer'
-assert_eq "$(grep -c '^capture --item KEN-40 ' "$RUN/host.log" || true)" 1 'harness wait uses provider viewport'
-
-cp "$READY" "$CURRENT"
 run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_SENT_FILE=$TMP_ROOT/sent-refused;LANE_HOST_STUB_PROBE_STATUS=7" \
   --harness claude --lane "$H/.eclaude" --repo o/r KEN-40
 assert_eq "rc=$RC sends=$(grep -c '^send ' "$RUN/host.log" || true) local=$(local_input_count)" \
   'rc=1 sends=0 local=0' 'a failed process read refuses launch input'
 
-for row in 'first|SSH_FAIL=7|0|1|1' 'first|LANE_HOST_STUB_VIEWER_STATUS=7|0|1|1' 'first|LANE_HOST_STUB_CAPTURE_STATUS=7|0|1|1' 'first|LANE_HOST_STUB_CAPTURE_VIEWPORT_STATUS=7|0|1|1' 'relaunch|LANE_HOST_STUB_CAPTURE_VIEWPORT_STATUS=7|0|2|1' 'relaunch|LANE_HOST_STUB_VIEWER_STATUS=7|0|2|1' 'first|LANE_HOST_STUB_VIEWER_STATUS=7|7|1|0'; do
+for row in 'first|SSH_FAIL=7|0|1|1' 'first|LANE_HOST_STUB_VIEWER_STATUS=7|0|1|1' 'first|LANE_HOST_STUB_CAPTURE_STATUS=7|0|1|1' 'first|LANE_HOST_STUB_CAPTURE_VIEWPORT_STATUS=7|0|1|1' 'first|LANE_HOST_STUB_VIEWER_STATUS=7|7|1|0'; do
   IFS='|' read -r mode failure stop_status stops killed <<< "$row"
   cp "$READY" "$CURRENT"
-  failure_args=()
-  [[ "$mode" != relaunch ]] || failure_args+=(--relaunch)
   run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_STOP_STATUS=$stop_status;LANE_HOST_STUB_CAPTURE_ERROR=provider: capture-unreachable item=KEN-40;$failure" \
-    --harness claude --lane "$H/.eclaude" --repo o/r ${failure_args[@]+"${failure_args[@]}"} KEN-40
+    --harness claude --lane "$H/.eclaude" --repo o/r KEN-40
   failed_launch_contract "rc=1 local=0 stops=$stops killed=$killed" "the $mode failed attempt stops its detached harness: $failure"
   if [[ "$failure" == *CAPTURE* ]]; then
     assert_eq "$(grep -cFx "open-terminal: host-capture-failed operation=capture host=$HOST_STUB item=KEN-40 exit=7" <<<"$OUT" || true)" 1 'provider capture failures keep their operation and exit status'
@@ -130,29 +122,23 @@ OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
 CLEANUP_MUTANT="$(mutant_scripts detached-cleanup/orch open-terminal)/open-terminal"
 orch_fixture_shared_libs "$TMP_ROOT/detached-cleanup/orch"
 mutate_file "$CLEANUP_MUTANT" 'host_pane_stop() {' 'host_pane_stop() { return 0;'
-for row in 'relaunch|0|live|stopped|1' 'relaunch|7|live|running|0' 'relaunch|7|control|stopped|1' 'first|0|live|stopped|1' 'first|7|live|absent|0'; do
+for row in 'first|7|control|stopped|1' 'first|0|live|stopped|1' 'first|7|live|absent|0'; do
   IFS='|' read -r mode stop_status code status killed <<< "$row"
   fleet="$TMP_ROOT/cleanup-$mode-$stop_status-$code"
   ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$fleet" "$PWD"
-  record="$(jq -cn --arg host "$HOST_STUB" --arg account "$H/.eclaude" '{item:"KEN-40",window:"stub:KEN-40",host:$host,kind:"ssh",harness:"claude",account:$account,mail_root:"/srv/lane",status:"running",launched_at:"2026-10-01T00:00:00Z"}')"
-  launch_args=()
-  if [[ "$mode" == relaunch ]]; then
-    "$SCRIPTS_DIR/workflow-state" --state-dir "$fleet" set oversee lanes "[$record]" >/dev/null
-    launch_args+=(--relaunch)
-  fi
   printf 'Choose theme\n' > "$CURRENT"
   OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
   [[ "$code" != control ]] || OPEN_TERMINAL="$CLEANUP_MUTANT"
   run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_STOP_STATUS=$stop_status;LANE_HOST_STUB_SENT_FILE=$TMP_ROOT/sent-cleanup-$mode-$stop_status-$code" \
-    --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$fleet" ${launch_args[@]+"${launch_args[@]}"} KEN-40
+    --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$fleet" KEN-40
   got="rc=$RC status=$("$SCRIPTS_DIR/workflow-state" --state-dir "$fleet" get oversee '.lanes[0].status // "absent"') killed=$(grep -c '^kill-window ' "$RUN/tmux.log" || true)"
   assert_eq "$got" "rc=1 status=$status killed=$killed" "detached $code $mode stop=$stop_status"
   if [[ "$code" == control ]]; then
-    CONTROL_RED="$(FAIL=0; assert_eq "$got" 'rc=1 status=running killed=0' control >/dev/null; printf '%s' "$FAIL")"
+    CONTROL_RED="$(FAIL=0; assert_eq "$got" 'rc=1 status=absent killed=0' control >/dev/null; printf '%s' "$FAIL")"
     assert_eq "$CONTROL_RED" 1 'a failed provider stop cannot be hidden by closing its dormant local window'
   else
     assert_eq "$(grep -c '^stop --item KEN-40 --harness claude ' "$RUN/host.log" || true)" \
-      "$([[ "$stop_status" == 0 && "$mode" == relaunch ]] && echo 2 || echo 1)" 'detached cleanup stops each owned attempt through the provider'
+      1 'detached cleanup stops each owned attempt through the provider'
   fi
 done
 OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
@@ -215,262 +201,102 @@ for code in live control; do
 done
 OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
 
-# The capture fixture fills the short pool after verification. The next cat
-# is refused by the real dispatcher and drives host_launch_pending selection.
-SELECTION_PROVIDER="$TMP_ROOT/selection-provider"
-cat > "$SELECTION_PROVIDER" <<'SH'
+
+# --relaunch is an admitted recovery command, but provider-pane recovery is
+# deferred before create, prior stop, parked start or window replacement.
+# A saved lane window is the real list-windows producer for replacement.
+mutate_file "$OT_STUB_BIN/tmux" '    [[ " $* " == *'\'' -f '\''* ]] || echo "1" ;;' '    if [[ " $* " == *'\'' -f '\''* && "${OT_PRIOR_WINDOW:-}" == 1 ]]; then
+      printf "1 @1\\n"
+    elif [[ " $* " != *'\'' -f '\''* ]]; then echo "1"; fi ;;'
+CUT_MUTANT="$(mutant_scripts deferred-relaunch/orch open-terminal)/open-terminal"
+orch_fixture_shared_libs "$TMP_ROOT/deferred-relaunch/orch"
+mutate_file "$CUT_MUTANT" 'if [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then' 'if false && [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then'
+cut_contract() {
+  local provider_ops=0 window_ops=0
+  # The fixtures create each trace only when that tool is invoked.
+  [[ ! -f "$RUN/host.log" ]] || provider_ops="$(grep -cE '^(create|start|stop|capture|send) ' "$RUN/host.log" || true)"
+  [[ ! -f "$RUN/tmux.log" ]] || window_ops="$(grep -cE '^(new-window|kill-window|set-option|load-buffer|paste-buffer|send-keys) ' "$RUN/tmux.log" || true)"
+  assert_eq "$RC" 1 "$1 refuses automatic provider relaunch"
+  assert_eq "$(grep -cFx "open-terminal: host-relaunch-deferred host=$HOST_STUB pane=verb follow-up=KEN-3996" <<< "$OUT" || true)" 1 "$1 names the deferred recovery owner"
+  assert_eq "$provider_ops" 0 "$1 changes no provider harness or pane"
+  assert_eq "$window_ops" 0 "$1 preserves the existing window"
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" get "$cut_key" | jq -Sc .)" "$cut_saved" "$1 preserves the entire saved record"
+}
+for row in 'fleet|running|none|0' 'fleet|running|new-window|0' 'fleet|preparing|set-option|0' 'fleet|parked|none|7' 'launch-only|selection|none|0'; do
+  IFS='|' read -r scope prior operation stop_status <<< "$row"
+  cut_state="$TMP_ROOT/cut-$scope-$prior-$operation"
+  cut_args=()
+  if [[ "$scope" == fleet ]]; then
+    ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$cut_state" "$PWD"
+    cut_key=oversee; cut_args=(--state-dir "$cut_state")
+    cut_record="$(jq -cn --arg host "$HOST_STUB" --arg account "$H/.eclaude" --arg status "$prior" --arg line "$LANE_HOST_STUB_CREATE_LINE" '{item:"KEN-40",host:$host,kind:"ssh",account:$account,harness:"claude",window:"stub:KEN-40",mail_root:"/srv/lane",status:$status,session_id:"saved-session",model:"opus",effort:"high"} + (if $status == "preparing" then {prepare:{host:$host,line:$line,step:"marker",relaunch:true,account:("CLAUDE_CONFIG_DIR="+$account),harness:"claude",since:"2026-10-01T00:00:00Z"}} else {} end)')"
+    "$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" set oversee lanes "[$cut_record]" >/dev/null
+  else
+    cut_key=KEN-40
+    "$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" init KEN-40 >/dev/null
+    "$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" set KEN-40 host_launch "$(jq -cn --arg host "$HOST_STUB" --arg account "CLAUDE_CONFIG_DIR=$H/.eclaude" --arg line "$LANE_HOST_STUB_CREATE_LINE" '{status:"preparing",host:$host,account:$account,line:$line,step:"selection",relaunch:true,harness:"codex",model:"gpt-6-astra",effort:"high",pane:"%1",server:"saved-server",session:"stub",since:"2026-10-01T00:00:00Z"}')" >/dev/null
+  fi
+  cut_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" get "$cut_key" | jq -Sc .)"
+  OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
+  run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$cut_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$READY;LANE_HOST_STUB_STOP_STATUS=$stop_status;OT_TMUX_FAIL=$operation;OT_PRIOR_WINDOW=1" \
+    --harness claude --lane "$H/.eclaude" --repo o/r --relaunch ${cut_args[@]+"${cut_args[@]}"} KEN-40
+  cut_contract "$row"
+done
+# The existing selection checkpoint has its real relaunch=true producer.
+# For the mutation control, use the ordinary running row with no checkpoint,
+# so removing the refusal reaches actual replacement window setup.
+cut_state="$TMP_ROOT/cut-control"
+ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$cut_state" "$PWD"
+cut_key=oversee
+"$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" set oversee lanes "$(jq -cn --arg host "$HOST_STUB" '{item:"KEN-40",host:$host,harness:"claude",status:"running",window:"stub:KEN-40"} | [. ]')" >/dev/null
+cut_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" get oversee | jq -Sc .)"
+OPEN_TERMINAL="$CUT_MUTANT"
+run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$READY;OT_PRIOR_WINDOW=1" \
+  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$cut_state" --relaunch KEN-40
+assert_eq "$(grep -c '^new-window -k ' "$RUN/tmux.log" || true)" 1 'the cut mutant reaches replacement window setup'
+CONTROL_RC=0
+( FAIL=0; cut_contract control; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/cut-control.log" 2>&1 || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'the same refusal contract rejects automatic provider relaunch'
+OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
+
+# Fresh create responses can be saved before wait or marker completion.
+# This wrapper uses the real dispatcher's occupied pool slot producer.
+RETRY_PROVIDER="$TMP_ROOT/retry-provider"
+cat > "$RETRY_PROVIDER" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 rc=0
-"$OT_SELECTION_PROVIDER" "$@" || rc=$?
-if [[ "$1" == capture && "$rc" == 0 && "${OT_BUSY_AFTER_CAPTURE:-}" == 1 ]]; then
-  mkdir -p "$HOME/.cache/orch/lane-host-slots/short"
-  : > "$HOME/.cache/orch/lane-host-slots/short/slot.$OT_SLOT_OWNER"
-fi
-if [[ "$1" == stop && -n "${OT_POST_STOP_STATE:-}" ]]; then
-  printf '%s\n' "$OT_POST_STOP_STATE" > "$LANE_HOST_STUB_HARNESS_STATE_FILE"
+"$OT_RETRY_PROVIDER" "$@" || rc=$?
+if [[ "$1" == create && "$rc" == 0 && "${OT_BLOCK_AFTER_CREATE:-}" == 1 ]]; then
+  mkdir -p "${OT_BUSY_SLOT%/*}"
+  : > "$OT_BUSY_SLOT"
 fi
 exit "$rc"
 SH
-cat > "$OT_STUB_BIN/codex" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$@" >> "$OT_SELECTION_RUNS"
-SH
-chmod +x "$SELECTION_PROVIDER" "$OT_STUB_BIN/codex"
-mutate_file "$TMP_ROOT/provider-prefix" 'exec "$BASH" -c "$command"' 'if [[ -n "${OT_SELECTION_SCRIPTS:-}" ]]; then
-  mkdir -p "$LANE_HOST_STUB_DIR/srv/lane/.agents/skills/orch"
-  ln -s "$OT_SELECTION_SCRIPTS" "$LANE_HOST_STUB_DIR/srv/lane/.agents/skills/orch/scripts"
-fi
-exec "$BASH" -c "$command"'
-RETAIN_MUTANT="$(mutant_scripts selection-retirement/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/selection-retirement/orch"
-mutate_file "$RETAIN_MUTANT" 'host_pane_stop || return 1 ;;' 'host_pane_stop || true ;;'
-CONFIRM_MUTANT="$(mutant_scripts selection-confirmation/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/selection-confirmation/orch"
-mutate_file "$CONFIRM_MUTANT" 'host_pane_stop || return 1 ;;' ': ;; # host_pane_stop || return 1 ;;'
-HOST_LOSS_MUTANT="$(mutant_scripts selection-host-loss/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/selection-host-loss/orch"
-mutate_file "$HOST_LOSS_MUTANT" '(del(.prepare) | if .status == "preparing" then .status = "stopped" else . end)' \
-  '(del(.prepare, .host) | if .status == "preparing" then .status = "stopped" else . end)'
-mutate_file "$HOST_LOSS_MUTANT" '"$WORKFLOW_STATE" update "$wt_id" '\''del(.host_launch)'\'' >/dev/null' \
-  '"$WORKFLOW_STATE" update "$wt_id" '\''del(.host_launch, .issue_id)'\'' >/dev/null'
-
-selection_checkpoint() {
+chmod +x "$RETRY_PROVIDER"
+for row in 'launch-only|wait|preparing' 'launch-only|marker|ready' 'fleet|marker|ready'; do
+  IFS='|' read -r scope step state <<< "$row"
+  retry_state="$TMP_ROOT/fresh-$scope-$step"
+  retry_args=(); retry_key=KEN-40; retry_query=.host_launch
   if [[ "$scope" == fleet ]]; then
-    "$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get oversee '[.lanes[] | select(.item == "KEN-40") | .prepare] | first' | jq -Sc .
-  else
-    "$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get KEN-40 .host_launch | jq -Sc .
+    ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$retry_state" "$PWD"
+    retry_args=(--state-dir "$retry_state"); retry_key=oversee; retry_query='.lanes[0].prepare'
   fi
-}
-selection_contract() {
-  local expected_checkpoint="$saved_checkpoint" expected_status=preparing expected_killed=0 state=launch-only killed=0 windows=0
-  if [[ -f "$RUN/tmux.log" ]]; then
-    killed="$(grep -c '^kill-window ' "$RUN/tmux.log" || true)"
-    windows="$(grep -c '^new-window ' "$RUN/tmux.log" || true)"
-  fi
-  if [[ "$stop_status" == 0 ]]; then expected_checkpoint=null; expected_status=stopped; expected_killed=1; fi
-  [[ "$scope" != fleet ]] || state="$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get oversee '[.lanes[] | select(.item == "KEN-40") | .status] | first')"
-  assert_eq "$(selection_checkpoint)" "$expected_checkpoint" "$1 retains or retires the complete selection checkpoint"
-  local record_key=KEN-40 record_query='.' expected_record
-  [[ "$scope" != fleet ]] || { record_key=oversee; record_query='.lanes[] | select(.item == "KEN-40")'; }
-  if [[ "$stop_status" != 0 ]]; then
-    expected_record="$(jq -Sc "$record_query" <<< "$saved_record")"
-  elif [[ "$scope" == fleet ]]; then
-    # The completed cleanup retires prepare and sets stopped. Every other
-    # field remains the value saved before cleanup, including the host.
-    expected_record="$(jq -Sc '.lanes[] | select(.item == "KEN-40") | del(.prepare) | .status = "stopped"' <<< "$saved_record")"
-  else
-    expected_record="$(jq -Sc 'del(.host_launch)' <<< "$saved_record")"
-  fi
-  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get "$record_key" "$record_query" | jq -Sc .)" \
-    "$expected_record" "$1 keeps every remaining ownership field"
-  [[ "$scope" != fleet ]] || assert_eq "$state" "$expected_status" "$1 preserves fleet ownership until cleanup confirms exit"
-  assert_eq "rc=$RC killed=$killed stops=$(grep -c '^stop --item KEN-40 --harness codex ' "$RUN/host.log" || true) after=$(cat "$provider_state")" \
-    "rc=1 killed=$expected_killed stops=1 after=$post_state" "$1 follows confirmed provider stop before retirement"
-  assert_eq "$windows" 0 "$1 retries selection without a second harness launch"
-  assert_eq "$([[ -e "$RUN/host.log.ssh" ]] && echo 1 || echo 0)" 0 "$1 sends no second detached launch over SSH"
-}
-# Harness state is AFTER stop. Successful stop + live is unreachable:
-# schemas/lane-host.md requires stop to wait for the named processes to exit.
-# Those cells use the paired success/gone skip-confirmation controls.
-for row in 'ok|0|gone' 'ok|7|live' 'ok|7|gone' 'failed|0|gone' 'failed|7|live' 'failed|7|gone'; do
-  IFS='|' read -r read_state stop_status after_state <<< "$row"
-  post_state=running
-  [[ "$after_state" != gone ]] || post_state=exited
-  for scope in fleet launch-only; do
-    selection_state="$TMP_ROOT/selection-$read_state-$stop_status-$after_state-$scope"
-    mkdir -p "$selection_state"
-    if [[ "$scope" == fleet ]]; then ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$selection_state" "$PWD"; fi
-    provider_state="$selection_state/provider-state"
-    printf 'running\n' > "$provider_state"
-    slot_home="$selection_state/home"
-    slot_file="$slot_home/.cache/orch/lane-host-slots/short/slot.$$"
-    selection_runs="$selection_state/harness-runs"
-    selection_env="flags=-m gpt-6-astra -c model_reasoning_effort=high;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$SELECTION_PROVIDER;OT_SELECTION_PROVIDER=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$READY;OT_PANE_TEXT=Choose theme;ORCH_STATE_DIR=$selection_state;HOME=$slot_home;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;OT_SLOT_OWNER=$$;OT_SELECTION_SCRIPTS=$SCRIPTS_DIR;OT_SELECTION_RUNS=$selection_runs;LANE_HOST_STUB_HARNESS_STATE_FILE=$provider_state"
-    selection_args=()
-    [[ "$scope" != fleet ]] || selection_args=(--state-dir "$selection_state")
-    OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
-    run_ot "$selection_env;OT_BUSY_AFTER_CAPTURE=1" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
-    assert_eq "rc=$RC busy=$(grep -c '^lane-host: lane-host-busy .*verb=cat item=KEN-40' <<< "$OUT" || true)" 'rc=0 busy=1' "$scope selection checkpoint comes from a dispatcher refusal"
-    saved_checkpoint="$(selection_checkpoint)"
-    assert_eq "$(jq -r '[.step,.harness,.relaunch,.pane] | @tsv' <<< "$saved_checkpoint")" $'selection\tcodex\ttrue\t%1' "$scope saves the started selector identity"
-    saved_record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get "$([[ "$scope" == fleet ]] && echo oversee || echo KEN-40)")"
-    printf '%s\n' "$saved_record" > "$selection_state/saved-record"
-    printf '%s\n' "$selection_env" > "$selection_state/saved-env"
-    saved_panes="$RUN/panes"
-    printf '%s\n' "$saved_panes" > "$selection_state/saved-panes"
-    rm -f -- "${slot_file:?}"
-    retry_env="$selection_env;OT_TMUX_PANES=$saved_panes;LANE_HOST_STUB_SELECTION=pending;LANE_HOST_STUB_STOP_STATUS=$stop_status;OT_POST_STOP_STATE=$post_state"
-    [[ "$read_state" != failed ]] || retry_env+=";LANE_HOST_STUB_CAT_STATUS=7;LANE_HOST_STUB_CAT_PATH=/srv/lane/tmp/lane-mail/KEN-40/relaunch-selection"
-    for code in live control host-loss; do
-      [[ "$code" != host-loss || "$stop_status" == 0 ]] || continue
-      printf 'running\n' > "$provider_state"
-      "$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" update "$([[ "$scope" == fleet ]] && echo oversee || echo KEN-40)" '$record' --argjson record "$saved_record" >/dev/null
-      OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
-      if [[ "$code" == control ]]; then
-        OPEN_TERMINAL="$RETAIN_MUTANT"
-        [[ "$stop_status" != 0 ]] || OPEN_TERMINAL="$CONFIRM_MUTANT"
-      elif [[ "$code" == host-loss ]]; then OPEN_TERMINAL="$HOST_LOSS_MUTANT"
-      fi
-      run_ot "$retry_env" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
-      if [[ "$code" == live ]]; then
-        selection_contract "$scope $row"
-        assert_eq "$(grep -c '^open-terminal: relaunch-selection-failed item=KEN-40 operation=' <<< "$OUT" || true)" 1 "$scope $row reports the original selection failure"
-        [[ "$stop_status" == 0 ]] || assert_eq "$(grep -c '^open-terminal: host-stop-failed item=KEN-40 exit=7$' <<< "$OUT" || true)" 1 "$scope $row reports unconfirmed stop"
-      else
-        if [[ "$code" == host-loss ]]; then
-          # Prove the mutant completed cleanup; syntax or transport failure
-          # must not stand in for the unrelated-field deletion under test.
-          assert_eq "$(selection_checkpoint)" null "$scope $row host-loss control retired its checkpoint"
-          if [[ "$scope" == fleet ]]; then
-            assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get oversee '[.lanes[] | select(.item == "KEN-40") | [.status,has("host")]] | first | @tsv')" \
-              $'stopped\tfalse' "$scope $row host-loss control reached the stopped record"
-          else
-            assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get KEN-40 'has("issue_id")')" false "$scope $row control deleted the item identity after cleanup"
-          fi
-        fi
-        CONTROL_RC=0
-        ( FAIL=0; selection_contract control; [[ "$FAIL" == 0 ]] ) > "$selection_state/control-$code.log" 2>&1 || CONTROL_RC=$?
-        assert_eq "$CONTROL_RC" 1 "$scope $row $code rejects lost ownership or unconfirmed cleanup"
-      fi
-    done
-  done
+  retry_home="$retry_state/home"
+  retry_slot="$retry_home/.cache/orch/lane-host-slots"
+  [[ "$step" == wait ]] || retry_slot+=/short
+  retry_slot+="/slot.$$"
+  retry_line="$LANE_HOST_STUB_CREATE_LINE"
+  [[ "$state" != preparing ]] || retry_line+=$'	state=preparing'
+  retry_env="$CHOICE;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$retry_state;HOME=$retry_home;ORCH_LANE_HOST=$RETRY_PROVIDER;OT_RETRY_PROVIDER=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CREATE_LINE=$retry_line;LANE_HOST_STUB_CAPTURE_FILE=$DELIVERED;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=0;OT_BUSY_SLOT=$retry_slot"
+  run_ot "$retry_env;OT_BLOCK_AFTER_CREATE=1" --harness claude --lane "$H/.eclaude" --repo o/r ${retry_args[@]+"${retry_args[@]}"} KEN-40
+  assert_eq "$RC" 0 "$row saves an accepted fresh launch after dispatcher refusal"
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$retry_state" get "$retry_key" "$retry_query" | jq -r '[.step,.relaunch] | @tsv')" "$step"$'	false' "$row retains its fresh checkpoint producer"
+  rm -f -- "${retry_slot:?}"
+  run_ot "$retry_env" --harness claude --lane "$H/.eclaude" --repo o/r ${retry_args[@]+"${retry_args[@]}"} KEN-40
+  launch_contract "$row completes the fresh checkpoint"
+  assert_eq "$(grep -c '^create ' "$RUN/host.log" || true)" 0 "$row reuses its accepted sandbox"
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$retry_state" get "$retry_key" "$retry_query // null")" null "$row retires its completed checkpoint"
 done
-OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
-
-# Exercise the record dependency, not a stand-in for host_launch_ready.
-STATE_SCRIPTS="$(mutant_scripts finalization-state/orch open-terminal)"
-orch_fixture_shared_libs "$TMP_ROOT/finalization-state/orch"
-cp "$SCRIPTS_DIR/workflow-state" "$STATE_SCRIPTS/workflow-state-real"
-rm -- "${STATE_SCRIPTS:?}/workflow-state"
-cat > "$STATE_SCRIPTS/workflow-state" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-operation=other record='' prev=''
-for arg in "$@"; do
-  [[ "$prev" != rec ]] || record="$arg"
-  [[ "$arg" != update-report ]] || operation=record
-  [[ "$arg" != 'del(.host_launch)' && "$arg" != *'.prepare.line != null'* ]] || operation=checkpoint
-  prev="$arg"
-done
-if [[ "$operation" == record && -n "$record" ]]; then operation="$(jq -r .status <<< "$record")"; fi
-if [[ "$operation" == "${OT_STATE_FAIL:-never}" ]]; then
-  printf 'workflow-state: fixture-failed operation=%s\n' "$operation" >&2
-  exit 7
-fi
-exec "${0%/*}/workflow-state-real" "$@"
-SH
-chmod +x "$STATE_SCRIPTS/workflow-state"
-STATE_TAKEN_MUTANT="$(mutant_scripts state-taken-control/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/state-taken-control/orch"
-rm -- "${STATE_TAKEN_MUTANT%/*}/workflow-state"
-cp "$STATE_SCRIPTS/workflow-state" "$STATE_SCRIPTS/workflow-state-real" "${STATE_TAKEN_MUTANT%/*}/"
-mutate_file "$STATE_TAKEN_MUTANT" '[[ -n "$UNTAKEN_PANE" ]] || return 1' '[[ -n "$UNTAKEN_PANE" ]] || UNTAKEN_PANE="$LAUNCH_PANE"'
-SUCCESS_MUTANT="$(mutant_scripts selection-success-control/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/selection-success-control/orch"
-mutate_file "$SUCCESS_MUTANT" 'completed) ;;' 'completed) host_pane_stop || return 1 ;;'
-CLOSE_MUTANT="$(mutant_scripts selection-close-control/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/selection-close-control/orch"
-mutate_file "$CLOSE_MUTANT" $'tmux_window_close "$UNTAKEN_PANE" "$title" || return 1\n          if [[ "$FLEET" == true ]]; then' $'tmux_window_close "$UNTAKEN_PANE" "$title" || true\n          if [[ "$FLEET" == true ]]; then'
-STATE_CLEAR_MUTANT="$(mutant_scripts state-clear-control/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/state-clear-control/orch"
-rm -- "${STATE_CLEAR_MUTANT%/*}/workflow-state"
-cp "$STATE_SCRIPTS/workflow-state" "$STATE_SCRIPTS/workflow-state-real" "${STATE_CLEAR_MUTANT%/*}/"
-mutate_file "$STATE_CLEAR_MUTANT" '"$WORKFLOW_STATE" update "$wt_id" '\''del(.host_launch)'\'' >/dev/null' '"$WORKFLOW_STATE" update "$wt_id" '\''del(.host_launch)'\'' >/dev/null || true'
-
-REPLAY_MUTANT="$(mutant_scripts selection-replay-control/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/selection-replay-control/orch"
-mutate_file "$REPLAY_MUTANT" 'if [[ "$host_pending_step" == selection ]]; then' 'if false && [[ "$host_pending_step" == selection ]]; then'
-
-selection_effect_contract() {
-  local checkpoint="$saved_checkpoint" status=preparing stops=0 killed=0
-  case "$effect" in
-    success) checkpoint=null; status=running ;;
-    running) ;;
-    list-panes) stops=1 ;;
-    kill-window) stops=1; killed=1 ;;
-    stopped) stops=1; killed=1 ;;
-    checkpoint)
-      [[ "$scope" != fleet ]] || { status=stopped; stops=1; killed=1; } ;;
-  esac
-  assert_eq "$RC" "$expected_rc" "$scope $effect returns the dependency outcome"
-  assert_eq "$([[ -e "$RUN/host.log.ssh" ]] && echo 1 || echo 0)" 0 "$scope $effect completes the saved launch without another SSH execution"
-  assert_eq "$(selection_checkpoint)" "$checkpoint" "$scope $effect keeps the required checkpoint"
-  [[ "$scope" != fleet ]] || assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get oversee '[.lanes[] | select(.item == "KEN-40") | .status] | first')" "$status" "$scope $effect keeps the confirmed fleet state"
-  local got_killed=0
-  [[ ! -f "$RUN/tmux.log" ]] || got_killed="$(grep -c '^kill-window ' "$RUN/tmux.log" || true)"
-  assert_eq "stops=$(grep -c '^stop --item KEN-40 --harness codex ' "$RUN/host.log" || true) killed=$got_killed" "stops=$stops killed=$killed" "$scope $effect does not clean up a taken launch"
-}
-for scope in fleet launch-only; do
-  selection_state="$TMP_ROOT/selection-failed-7-gone-$scope"
-  provider_state="$selection_state/provider-state"
-  saved_record="$(cat "$selection_state/saved-record")"
-  selection_env="$(cat "$selection_state/saved-env")"
-  saved_panes="$(cat "$selection_state/saved-panes")"
-  saved_checkpoint="$(jq -Sc "$([[ "$scope" == fleet ]] && echo '.lanes[0].prepare' || echo '.host_launch')" <<< "$saved_record")"
-  selection_args=()
-  [[ "$scope" != fleet ]] || selection_args=(--state-dir "$selection_state")
-  for effect in success running list-panes kill-window stopped checkpoint; do
-    [[ "$effect" != running && "$effect" != stopped || "$scope" == fleet ]] || continue
-    expected_rc=1 effect_selection=pending effect_env=''
-    case "$effect" in
-      success) expected_rc=0; effect_selection=fresh ;;
-      running) effect_selection=fresh; effect_env=';OT_STATE_FAIL=running' ;;
-      list-panes|kill-window) effect_env=";OT_TMUX_FAIL=$effect" ;;
-      stopped) effect_env=';OT_STATE_FAIL=stopped' ;;
-      checkpoint)
-        effect_env=';OT_STATE_FAIL=checkpoint'
-        [[ "$scope" != launch-only ]] || effect_selection=fresh ;;
-    esac
-    for code in live control replay; do
-      [[ "$code" != replay || "$effect" == success ]] || continue
-      # The fleet stopped-write and subsequent checkpoint failure keep their
-      # existing record assertions. The table above supplies their stop control.
-      [[ "$code" != control || "$effect" != stopped && ! ( "$effect" == checkpoint && "$scope" == fleet ) ]] || continue
-      "$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" update "$([[ "$scope" == fleet ]] && echo oversee || echo KEN-40)" '$record' --argjson record "$saved_record" >/dev/null
-      OPEN_TERMINAL="$STATE_SCRIPTS/open-terminal"
-      if [[ "$code" == replay ]]; then OPEN_TERMINAL="$REPLAY_MUTANT"
-      elif [[ "$code" == control ]]; then
-        case "$effect" in
-          success) OPEN_TERMINAL="$SUCCESS_MUTANT" ;;
-          running) OPEN_TERMINAL="$STATE_TAKEN_MUTANT" ;;
-          list-panes|kill-window) OPEN_TERMINAL="$CLOSE_MUTANT" ;;
-          checkpoint) OPEN_TERMINAL="$STATE_CLEAR_MUTANT" ;;
-        esac
-      fi
-      run_ot "$selection_env;OT_TMUX_PANES=$saved_panes;LANE_HOST_STUB_SELECTION=$effect_selection;LANE_HOST_STUB_STOP_STATUS=0;OT_POST_STOP_STATE=exited$effect_env" \
-        --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
-      if [[ "$code" == live ]]; then selection_effect_contract
-      else
-        CONTROL_RC=0
-        ( FAIL=0; selection_effect_contract; [[ "$FAIL" == 0 ]] ) > "$selection_state/effect-$effect.control" 2>&1 || CONTROL_RC=$?
-        assert_eq "$CONTROL_RC" 1 "$scope $effect rejects a broken finalization rule"
-      fi
-    done
-  done
-done
-OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
-
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
