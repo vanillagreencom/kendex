@@ -525,7 +525,7 @@ fn a_remove_commits_the_deletion_of_a_render_the_person_edited() {
 /// `remove --commit` over the shared settings file a committed hook added
 /// its key to beside the person's own. Where the person's key stays, the
 /// removal edits the file from a clean state and the commit carries it.
-/// Where the person took their key out, removing the last hook empties
+/// Where the person took their key and the default out, removing the last hook empties
 /// the file and the removal deletes it: that deletion carries the person's
 /// change, though the committed inventory names the file, so the commit
 /// leaves it out and names it.
@@ -564,6 +564,11 @@ fn a_remove_commits_a_shared_file_it_edits_and_leaves_out_one_the_person_emptied
                 serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
             assert!(
                 held.as_object_mut().unwrap().remove("mine").is_some(),
+                "{held}"
+            );
+            assert_eq!(
+                held.as_object_mut().unwrap().remove("switchModelsOnFlag"),
+                Some(serde_json::json!(true)),
                 "{held}"
             );
             fs::write(&settings, serde_json::to_string_pretty(&held).unwrap()).unwrap();
@@ -612,8 +617,8 @@ enum RecordAtHead {
     OlderFormat,
 }
 
-/// A remove left uncommitted takes away the shared settings file the
-/// committed hook was the last key in. The passive reading after it, which
+/// The person deletes a shared settings file before an uncommitted remove.
+/// The passive reading after it, which
 /// no action reads for, still finds the file in the committed inventory,
 /// but a shared file's deletion is never kendex's whole: it is not among
 /// the files a commit or a restore takes whole. Where the record at `HEAD`
@@ -676,6 +681,7 @@ fn a_passive_reading_keeps_a_deleted_shared_file_out_of_the_renders() {
             }
         }
 
+        fs::remove_file(project.join(SETTINGS)).unwrap();
         let remove = kendex(&home, &project, &["remove", "--no-sweep", "guard"]);
         assert!(remove.status.success(), "{record:?}: {}", said(&remove));
         assert!(

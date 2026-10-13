@@ -266,7 +266,7 @@ fn existing_selections_and_local_settings_remain_user_owned() {
             let original = if owner == "kendex" {
                 "{\"model\":\"opus\"}\n"
             } else {
-                "{\"outputStyle\":\"Explanatory\",\"model\":\"opus\"}\n"
+                "{\"outputStyle\":\"Explanatory\",\"model\":\"opus\",\"switchModelsOnFlag\":false}\n"
             };
             fs::write(&selected, original).unwrap();
             fs::write(&append, "Personal instructions.\n").unwrap();
@@ -337,7 +337,7 @@ fn selection_acquisition_follows_enable_and_composed_replacement() {
                 } else {
                     settings.clone()
                 };
-                let user = "{\"outputStyle\":\"Learning\",\"model\":\"opus\"}\n";
+                let user = "{\"outputStyle\":\"Learning\",\"model\":\"opus\",\"switchModelsOnFlag\":false}\n";
                 if owner != "kendex" {
                     fs::write(&selected, user).unwrap();
                 } else {

@@ -34,13 +34,17 @@ fn another_writers_key_order_is_kept_and_is_not_drift() {
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     fs::write(
         settings(&f),
-        "{\n  \"model\": \"opus\",\n  \"cleanupPeriodDays\": 30\n}\n",
+        "{\n  \"model\": \"opus\",\n  \"cleanupPeriodDays\": 30,\n  \"switchModelsOnFlag\": false\n}\n",
     )
     .unwrap();
     apply_now(&f);
     let mut written = json(&settings(&f));
     let keys: Vec<&String> = written.as_object().unwrap().keys().collect();
-    assert_eq!(keys, ["model", "cleanupPeriodDays", "hooks"]);
+    assert_eq!(
+        keys,
+        ["model", "cleanupPeriodDays", "switchModelsOnFlag", "hooks"]
+    );
+    assert_eq!(written["switchModelsOnFlag"], false);
 
     written["alwaysThinkingEnabled"] = Value::Bool(true);
     fs::write(
