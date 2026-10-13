@@ -351,6 +351,15 @@ fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
         return Ok(Standing::Refused(Finding::Incomplete));
     }
     crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?;
+    verify_records(env, root)
+}
+
+/// Read the completed refresh's record and compare it with ordinary
+/// verification. Both the repository proof and its controls use this phase.
+fn verify_records(env: &Env, root: &Path) -> Result<Standing, String> {
+    let scope = Scope::Project {
+        root: root.to_path_buf(),
+    };
     let lock = record(env, root)?;
     let verified = plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
         .map_err(|error| error.to_string())?;
@@ -450,6 +459,41 @@ impl RefreshFixture {
         source,
     )).expect("the declaration writes");
     }
+}
+
+/// The lock writer records why an installation exists. A lost reason can
+/// leave every installed byte current, so drift alone cannot prove agreement.
+#[test]
+fn changed_record_metadata_is_unsettled_without_disk_drift() {
+    let f = RefreshFixture::new();
+    assert_eq!(
+        refresh_and_verify(&f.env, &f.project),
+        Ok(Standing::Current)
+    );
+    let scope = Scope::Project {
+        root: f.project.clone(),
+    };
+    let key = "hook:probe:codex";
+    let mut lock = record(&f.env, &f.project).expect("the refreshed record reads");
+    let entry = lock.entries.get_mut(key).expect("the hook is recorded");
+    assert!(!entry.reasons.is_empty());
+    entry.reasons.clear();
+    crate::lock::save(&lock_path(&f.env, &scope), &lock).expect("the changed record writes");
+
+    let verified = plan_apply(&f.env, &scope, &crate::attest::Reading::Current.plan_options())
+        .expect("the clean installed copies verify");
+    assert_eq!(verified.declaration_status, DeclarationStatus::Complete);
+    assert!(verified.drift.is_empty(), "{:?}", verified.drift);
+    assert_eq!(
+        verify_records(&f.env, &f.project),
+        Ok(Standing::Refused(Finding::Unsettled {
+            entries: BTreeSet::from([key.to_owned()]),
+        }))
+    );
+    assert_eq!(
+        refresh_and_verify(&f.env, &f.project),
+        Ok(Standing::Current)
+    );
 }
 
 /// A catalog change can exclude a tool while a repository sync updates its
