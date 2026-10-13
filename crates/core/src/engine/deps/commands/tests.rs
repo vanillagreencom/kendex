@@ -126,8 +126,15 @@ fn version_floors_compare_numbers_and_keep_unreadable_answers_as_notices() {
         ),
         (
             "5.30",
-            "This is perl 5, version 34, subversion 1 (v5.34.1)",
+            "\nThis is perl 5, version 34, subversion 1 (v5.34.1)",
             None,
+        ),
+        (
+            "5.40",
+            "\n\nThis is perl 5, version 38, subversion 2 (v5.38.2)\nCopyright 2023",
+            Some(CommandProblem::BelowFloor {
+                found: "5.38.2".into(),
+            }),
         ),
         (
             "2",

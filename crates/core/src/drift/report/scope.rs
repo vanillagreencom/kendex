@@ -155,21 +155,17 @@ pub(super) fn check_scope(
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
     let empty = crate::lock::Lock::default();
-    let readable_lock = match &lock {
-        Ok(crate::lock::LockFile::Current(lock)) => Some(lock),
-        Ok(crate::lock::LockFile::Absent) => Some(&empty),
-        Err(_) => None,
+    let record_view = match &lock {
+        Ok(crate::lock::LockFile::Current(lock)) => lock,
+        Ok(crate::lock::LockFile::Absent) | Err(_) => &empty,
     };
     let occupied = manifest
         .current()
-        .zip(readable_lock)
-        .map(|(manifest, lock)| {
-            crate::engine::declared_over_existing_files(env, scope, manifest, lock)
+        .map(|manifest| {
+            crate::engine::declared_over_existing_files(env, scope, manifest, record_view)
         })
         .unwrap_or_default();
-    if let Some(lock) = readable_lock {
-        ctx.command_lines(manifest.current(), lock, &occupied, sections);
-    }
+    ctx.command_lines(manifest.current(), record_view, &occupied, sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
     ctx.snapshot_lines(manifest.current(), sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
@@ -312,10 +308,24 @@ impl ScopeCheck<'_> {
                     copy.positions.as_slice(),
                 )
             });
-        for (name, source, paths) in recorded.chain(unrecorded) {
-            if seen.contains(name) {
-                continue;
-            }
+        let native = manifest
+            .into_iter()
+            .flat_map(|manifest| &manifest.skills)
+            .filter(|(name, decl)| {
+                decl.enabled
+                    && !lock
+                        .entries
+                        .values()
+                        .any(|entry| entry.kind == ItemKind::Skill && entry.name == **name)
+            })
+            .map(|(name, decl)| {
+                (
+                    name.as_str(),
+                    decl.source.as_str(),
+                    &[] as &[std::path::PathBuf],
+                )
+            });
+        for (name, source, paths) in recorded.chain(unrecorded).chain(native) {
             let root = paths
                 .iter()
                 .find(|path| path.is_dir())
@@ -331,42 +341,50 @@ impl ScopeCheck<'_> {
             let Some(root) = root else {
                 continue;
             };
-            let declarations = (|| {
-                let sealed = crate::source_read::SealedSource::open(&root)
-                    .map_err(|error| error.to_string())?;
-                let text = sealed
-                    .read_to_string(&sealed.root().join("SKILL.md"))
-                    .map_err(|error| error.to_string())?;
-                let (yaml, _) = crate::frontmatter::split(&text)?;
-                let parsed = crate::frontmatter::parse_tolerant(yaml)?;
-                crate::engine::deps::commands::declared(&parsed.map)
-                    .map_err(|problem| format!("row={} field={}", problem.row, problem.field))
-            })();
-            match declarations {
-                Ok(dependencies) => {
-                    seen.insert(name.to_owned());
-                    for issue in
-                        crate::engine::deps::commands::check(&dependencies, Some(self.deadline))
-                    {
-                        sections.commands.push(Line {
-                            class: if issue.is_notice() {
-                                Class::Notice
-                            } else {
-                                Class::Drift
-                            },
-                            text: format!("{}{}", self.prefix, issue.message(name)).into(),
-                            remedy: None,
-                            detail: None,
-                        });
-                    }
-                }
-                Err(error) => sections.unknown.push(unknown(format!(
-                    "{}skill '{}': command declarations unreadable: {}",
-                    self.prefix,
-                    shown(name),
-                    shown(&error)
-                ))),
+            // A selected source has one read result. A second harness cannot
+            // replace its unreadable declaration with a different answer.
+            if !seen.insert(name.to_owned()) {
+                continue;
             }
+            self.command_source_lines(name, &root, sections);
+        }
+    }
+
+    fn command_source_lines(&self, name: &str, root: &std::path::Path, sections: &mut Sections) {
+        let declarations = (|| {
+            let sealed =
+                crate::source_read::SealedSource::open(root).map_err(|error| error.to_string())?;
+            let text = sealed
+                .read_to_string(&sealed.root().join("SKILL.md"))
+                .map_err(|error| error.to_string())?;
+            let (yaml, _) = crate::frontmatter::split(&text)?;
+            let parsed = crate::frontmatter::parse_tolerant(yaml)?;
+            crate::engine::deps::commands::declared(&parsed.map)
+                .map_err(|problem| format!("row={} field={}", problem.row, problem.field))
+        })();
+        match declarations {
+            Ok(dependencies) => {
+                for issue in
+                    crate::engine::deps::commands::check(&dependencies, Some(self.deadline))
+                {
+                    sections.commands.push(Line {
+                        class: if issue.is_notice() {
+                            Class::Notice
+                        } else {
+                            Class::Drift
+                        },
+                        text: format!("{}{}", self.prefix, issue.message(name)).into(),
+                        remedy: None,
+                        detail: None,
+                    });
+                }
+            }
+            Err(error) => sections.unknown.push(unknown(format!(
+                "{}skill '{}': command declarations unreadable: {}",
+                self.prefix,
+                shown(name),
+                shown(&error)
+            ))),
         }
     }
 

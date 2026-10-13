@@ -328,10 +328,10 @@ fn version(text: &str) -> Option<CommandVersion> {
 fn reported_version(output: &str) -> Option<CommandVersion> {
     // Major-only floors are valid, but banner integers can be copyright
     // years or subversion counters. Only dotted output tokens identify a
-    // command version. Later lines are commentary, not the version header.
+    // command version. Later non-empty lines are commentary, not the version header.
     output
         .lines()
-        .next()?
+        .find(|line| !line.trim().is_empty())?
         .split_whitespace()
         .filter(|token| token.contains('.'))
         .find_map(|token| {

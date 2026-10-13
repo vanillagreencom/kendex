@@ -340,3 +340,236 @@ fn check_assesses_recorded_and_unrecorded_copies_once() {
             .any(|entry| entry.name == "unrecorded")
     );
 }
+
+#[allow(clippy::unwrap_used)]
+fn command_source_fixture(home: &Path) -> (PathBuf, PathBuf) {
+    let project = setup(
+        home,
+        "dependencies:\n  commands:\n    - command: kendex-fixture-source-missing\n      purpose: Render pages\n    - command: kendex-fixture-source-version\n      purpose: Read pages\n      floor: '2.0'\n",
+    );
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let executable = bin.join("kendex-fixture-source-version");
+    fs::write(&executable, "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] || exit 64\nprintf 'probe\\n' >> \"$0.probes\"\nprintf 'tool 1.0.0\\n'\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = run(
+        home,
+        &project,
+        &[
+            "add",
+            home.join("catalog").to_str().unwrap(),
+            "--skill",
+            "external",
+            "--harness",
+            "claude,codex",
+            "--method",
+            "copy",
+            "-y",
+        ],
+        Some(&bin),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::write(executable.with_extension("probes"), "").unwrap();
+    (project, bin)
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_command_source_result(
+    home: &Path,
+    project: &Path,
+    bin: &Path,
+    present: bool,
+    unreadable: bool,
+) {
+    let path = project.join(".kendex-lock.json");
+    let before = fs::read(&path).ok();
+    let checked = run(
+        home,
+        project,
+        &["check", "--scope", "project", "--json", "--report-only"],
+        Some(bin),
+    );
+    let lines = command_lines(&checked);
+    assert_eq!(lines.len(), if present { 2 } else { 0 });
+    assert!(lines.iter().all(|line| line["class"] == "drift"));
+    if present {
+        assert!(lines.iter().any(|line| {
+            line["text"]
+                .as_str()
+                .unwrap()
+                .contains("command=kendex-fixture-source-missing")
+        }));
+    }
+    let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
+    let unknown = report["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["lines"].as_array().unwrap())
+        .filter(|line| line["class"] == "unknown")
+        .count();
+    assert_eq!(unknown, usize::from(unreadable));
+    if unreadable {
+        assert_eq!(report["status"], "unknown");
+    }
+    let probes = fs::read_to_string(bin.join("kendex-fixture-source-version.probes")).unwrap();
+    assert_eq!(probes.lines().count(), usize::from(present));
+    assert_eq!(fs::read(&path).ok(), before);
+}
+
+#[allow(clippy::unwrap_used)]
+fn command_source_cell(form: &str, record: &str) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (project, bin) = command_source_fixture(&home);
+    let path = project.join(".kendex-lock.json");
+    if form == "occupied" {
+        let mut lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        lock["entries"] = serde_json::json!({});
+        fs::write(&path, serde_json::to_vec(&lock).unwrap()).unwrap();
+    } else if form == "absent" {
+        let lock = kendex_core::lock::load(&path).unwrap();
+        for output in lock
+            .entries
+            .values()
+            .filter_map(|entry| entry.emitted.as_ref())
+            .flat_map(|artifact| &artifact.paths)
+        {
+            if output.is_dir() {
+                fs::remove_dir_all(output).unwrap();
+            }
+        }
+    } else {
+        assert_eq!(form, "owned");
+    }
+    match record {
+        "current" => {}
+        "absent" => fs::remove_file(&path).unwrap(),
+        "unreadable" => fs::write(&path, b"invalid record").unwrap(),
+        _ => panic!("unknown fixture record state"),
+    }
+    assert_command_source_result(
+        &home,
+        &project,
+        &bin,
+        form != "absent",
+        record == "unreadable",
+    );
+}
+
+macro_rules! command_source_cells {
+    ($($name:ident => ($form:literal, $record:literal)),+ $(,)?) => { $(
+        #[test]
+        fn $name() { command_source_cell($form, $record); }
+    )+ };
+}
+command_source_cells! {
+    owned_current => ("owned", "current"),
+    owned_absent => ("owned", "absent"),
+    owned_unreadable => ("owned", "unreadable"),
+    occupied_current => ("occupied", "current"),
+    occupied_absent => ("occupied", "absent"),
+    occupied_unreadable => ("occupied", "unreadable"),
+    absent_current => ("absent", "current"),
+    absent_absent => ("absent", "absent"),
+    absent_unreadable => ("absent", "unreadable"),
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn selected_command_source_read_failure_stays_unknown_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (project, bin) = command_source_fixture(&home);
+    // Claude sorts first. Its unreadable live declaration must not be replaced
+    // by the valid Codex copy's answer for the same skill.
+    fs::remove_file(project.join(".claude/skills/external/SKILL.md")).unwrap();
+    let checked = run(
+        &home,
+        &project,
+        &["check", "--scope", "project", "--json", "--report-only"],
+        Some(&bin),
+    );
+    assert!(command_lines(&checked).is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
+    assert_eq!(report["status"], "unknown");
+    assert_eq!(
+        report["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["lines"].as_array().unwrap())
+            .filter(|line| line["class"] == "unknown")
+            .count(),
+        1
+    );
+    assert!(
+        fs::read_to_string(bin.join("kendex-fixture-source-version.probes"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn occupied_command_sources_obey_declaration_enablement() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (project, bin) = command_source_fixture(&home);
+    let path = project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let source = lock["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()["source"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    lock["entries"] = serde_json::json!({});
+    fs::write(path, serde_json::to_vec(&lock).unwrap()).unwrap();
+    let path = project.join("kendex.toml");
+    let mut manifest: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut declaration = toml::map::Map::new();
+    declaration.insert("source".into(), toml::Value::String(source));
+    declaration.insert("enabled".into(), toml::Value::Boolean(false));
+    declaration.insert("method".into(), toml::Value::String("copy".into()));
+    declaration.insert(
+        "harnesses".into(),
+        toml::Value::Array(vec![
+            toml::Value::String("claude".into()),
+            toml::Value::String("codex".into()),
+        ]),
+    );
+    let mut skills = toml::map::Map::new();
+    skills.insert("external".into(), toml::Value::Table(declaration));
+    manifest
+        .as_table_mut()
+        .unwrap()
+        .insert("skills".into(), toml::Value::Table(skills));
+    fs::write(&path, toml::to_string(&manifest).unwrap()).unwrap();
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let manifest = kendex_core::manifest::load_current(&path).unwrap().unwrap();
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert!(kendex_core::engine::declared_over_existing_files(&env, &scope, &manifest, &lock).values().any(|copy| copy.kind == kendex_core::model::ItemKind::Skill && copy.name == "external"));
+    assert_command_source_result(&home, &project, &bin, false, false);
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn recorded_command_sources_survive_an_unreadable_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (project, bin) = command_source_fixture(&home);
+    fs::write(project.join("kendex.toml"), b"[invalid manifest").unwrap();
+    assert_command_source_result(&home, &project, &bin, true, true);
+}

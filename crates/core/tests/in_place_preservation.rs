@@ -358,6 +358,44 @@ fn check_reads_command_requirements_from_in_place_sources_without_owning_them() 
                 .contains("command=kendex-fixture-inplace-absent")
         );
         assert_eq!(fs::read_to_string(&skill).unwrap(), text);
+        // The record describes installed enablement until apply.
+        set_manifest(&world, harnesses, false);
+        let active = drift::report::check(
+            &world.env,
+            std::slice::from_ref(&world.scope),
+            drift::copies::CheckMode::ReportOnly,
+        );
+        assert_eq!(
+            active
+                .sections
+                .iter()
+                .filter(|section| section.title == "external commands")
+                .flat_map(|section| &section.lines)
+                .count(),
+            1
+        );
+        set_manifest(&world, harnesses, true);
+        let link = world.project.join(".claude/skills/deploy");
+        if link.is_symlink() {
+            fs::remove_file(&link).unwrap();
+        }
+        let mut disabled = lock;
+        for entry in disabled.entries.values_mut() {
+            entry.enabled = false;
+        }
+        kendex_core::lock::save(&world.project.join(".kendex-lock.json"), &disabled).unwrap();
+        let inactive = drift::report::check(
+            &world.env,
+            std::slice::from_ref(&world.scope),
+            drift::copies::CheckMode::ReportOnly,
+        );
+        assert!(
+            inactive
+                .sections
+                .iter()
+                .filter(|section| section.title == "external commands")
+                .all(|section| section.lines.is_empty())
+        );
     }
 }
 
@@ -417,4 +455,84 @@ fn an_inaccessible_harness_parent_is_could_not_check() {
     let parent = world.project.join(".claude");
     fs::create_dir_all(&parent).unwrap();
     assert_unreadable_parent_is_unknown(&world, &parent);
+}
+
+#[allow(clippy::unwrap_used)]
+fn native_command_case(record: &str) {
+    for harnesses in ["\"codex\"", "\"claude\", \"codex\""] {
+        let world = world();
+        set_manifest(&world, harnesses, true);
+        let source = world.project.join(".agents/skills/deploy");
+        fs::write(source.join("SKILL.md"), "---\nname: deploy\ndescription: ship it\ndependencies:\n  commands:\n    - command: kendex-fixture-inplace-absent\n      purpose: Ship the release\n---\nOwned source.\n").unwrap();
+        let before = tree_bytes(&source);
+        let path = world.project.join(".kendex-lock.json");
+        match record {
+            "current" => {
+                let lock = kendex_core::lock::Lock {
+                    version: kendex_core::lock::LOCK_VERSION,
+                    ..Default::default()
+                };
+                fs::write(&path, serde_json::to_vec(&lock).unwrap()).unwrap();
+            }
+            "absent" => {}
+            "unreadable" => fs::write(&path, b"invalid record").unwrap(),
+            _ => panic!("unknown fixture record state"),
+        }
+        let record_before = fs::read(&path).ok();
+        let checked = drift::report::check(
+            &world.env,
+            std::slice::from_ref(&world.scope),
+            drift::copies::CheckMode::ReportOnly,
+        );
+        let lines = checked
+            .sections
+            .iter()
+            .filter(|section| section.title == "external commands")
+            .flat_map(|section| &section.lines)
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].class, drift::report::Class::Drift);
+        assert!(
+            lines[0]
+                .text
+                .contains("command=kendex-fixture-inplace-absent")
+        );
+        assert_eq!(
+            checked
+                .sections
+                .iter()
+                .flat_map(|section| &section.lines)
+                .filter(|line| line.class == drift::report::Class::Unknown)
+                .count(),
+            usize::from(record == "unreadable")
+        );
+        assert_eq!(tree_bytes(&source), before);
+        assert_eq!(fs::read(&path).ok(), record_before);
+        // Declaration enablement controls a native source without a record row.
+        set_manifest(&world, harnesses, false);
+        let disabled = drift::report::check(
+            &world.env,
+            std::slice::from_ref(&world.scope),
+            drift::copies::CheckMode::ReportOnly,
+        );
+        assert!(
+            disabled
+                .sections
+                .iter()
+                .filter(|section| section.title == "external commands")
+                .all(|section| section.lines.is_empty())
+        );
+    }
+}
+
+macro_rules! native_command_cells {
+    ($($name:ident => $record:literal),+ $(,)?) => { $(
+        #[test]
+        fn $name() { native_command_case($record); }
+    )+ };
+}
+native_command_cells! {
+    native_current => "current",
+    native_absent => "absent",
+    native_unreadable => "unreadable",
 }
