@@ -96,7 +96,7 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   supplied as paginated workflow history by the API, or filtered and capped
 #   by run list. main-push-pages.<SLUG>.json overrides the API page array;
 #   main-push.<SLUG>.err fails the history read and run list;
-#   main-push-list.<SLUG>.err overrides only the run-list error.
+#   main-push-history.<SLUG>.err fails only the history API read.
 #   main-jobs.<RUN>.json supplies jobs,
 #   main-jobs.<RUN>.err fails that read. main-log.<RUN>.txt and .err supply
 #   or fail the failed-step log of a main-push run.
@@ -166,7 +166,6 @@ case "${1:-} ${2:-}" in
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
     if [[ "$verb" == list && "$workflow" == skill-tests.yml ]]; then
       src="$STUB_DIR/main-push.$slug"
-      [[ ! -f "$STUB_DIR/main-push-list.$slug.err" ]] || { cat "$STUB_DIR/main-push-list.$slug.err" >&2; exit 1; }
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       if [[ -f "$src.json" ]]; then
         jq -c --arg branch "$branch" --arg event "$event" --arg status "$status" --argjson limit "$limit" '
@@ -206,6 +205,7 @@ case "${1:-} ${2:-}" in
       repo="${path#repos/}"; repo="${repo%/actions/workflows/*}"
       slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
       src="$STUB_DIR/main-push.$slug"
+      [[ ! -f "$STUB_DIR/main-push-history.$slug.err" ]] || { cat "$STUB_DIR/main-push-history.$slug.err" >&2; exit 1; }
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       if [[ -f "$STUB_DIR/main-push-pages.$slug.json" ]]; then
         cat "$STUB_DIR/main-push-pages.$slug.json"

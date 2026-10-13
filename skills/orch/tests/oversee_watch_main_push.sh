@@ -133,13 +133,11 @@ done
 
 # gh's rewritten 404 alone does not prove that the workflow is absent.
 for row in \
-  "absent|rewritten|{\"workflows\":[]}|0|$EVENT" \
-  "api-absent|api|{\"workflows\":[]}|0|$EVENT" \
-  'api-permission-unread|api|{"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
-  'present-unread|rewritten|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
-  'workflow-list-unread|rewritten|denied|1|' \
-  'workflow-list-invalid|rewritten|{}|1|'; do
-  IFS='|' read -r name error_form workflows notices restored <<<"$row"
+  "absent|{\"workflows\":[]}|0|$EVENT" \
+  'present-unread|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
+  'workflow-list-unread|denied|1|' \
+  'workflow-list-invalid|{}|1|'; do
+  IFS='|' read -r name workflows notices restored <<<"$row"
   new_case "$name"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
   jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
@@ -147,10 +145,6 @@ for row in \
   main_watch
   assert_eq "$MAIN_EVENTS" "$EVENT" "$name seeds incident" "$STUB_DIR/err"
   printf 'HTTP 404: workflow skill-tests.yml not found on the default branch (https://api.github.com/repos/owner/repo/actions/workflows/skill-tests.yml)\n' > "$STUB_DIR/main-push.owner_repo.err"
-  if [[ "$error_form" == api ]]; then
-    cp "$STUB_DIR/main-push.owner_repo.err" "$STUB_DIR/main-push-list.owner_repo.err"
-    printf 'gh: Not Found (HTTP 404)\n' >"$STUB_DIR/main-push.owner_repo.err"
-  fi
   if [[ "$workflows" == denied ]]; then
     printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/workflows.owner_repo.err"
   else
@@ -161,7 +155,6 @@ for row in \
   main_watch
   assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=" "$name repeated pass" "$STUB_DIR/err"
   rm -- "$STUB_DIR/main-push.owner_repo.err"
-  rm -f -- "${STUB_DIR:?}/main-push-list.owner_repo.err"
   main_watch
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$restored" "$name restoration" "$STUB_DIR/err"
 done
@@ -255,30 +248,45 @@ for row in \
   assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$name" "$STUB_DIR/err"
 done
 
-# GitHub supplies total_count on each page. A truncated response or an
-# overlapping page must leave both the warning and failure records intact.
-# The complete two-page response includes a newer failure and older warning.
-for shape in complete truncated overlapping; do
+# GitHub starts new workflows while history pages are read. Counts can
+# change and page boundaries can overlap. Budget history must stay retryable
+# while the independent current-main read reports failures and recovery.
+PAGE_FAILURE="EVENT main-push-failing owner/repo workflow=skill-tests.yml run=203 jobs=[\"Red job\"] cause=$CAUSE"
+for shape in complete truncated overlapping unread; do
   new_case "main_push_budget_pages_$shape"
   jq -cn '[{total_count:2,workflow_runs:[{id:203,head_branch:"main",event:"push",status:"completed",conclusion:"failure",run_attempt:1,updated_at:"2026-10-08T08:00:00Z"}]},{total_count:2,workflow_runs:[{id:202,head_branch:"main",event:"push",status:"completed",conclusion:"success",run_attempt:2,updated_at:"2026-10-08T08:00:00Z"}]}]' >"$STUB_DIR/main-push-pages.owner_repo.json"
   case "$shape" in
     truncated) jq 'map(.total_count=3)' "$STUB_DIR/main-push-pages.owner_repo.json" >"$STUB_DIR/pages.tmp"; mv "$STUB_DIR/pages.tmp" "$STUB_DIR/main-push-pages.owner_repo.json" ;;
     overlapping) jq '.[0].workflow_runs[0] = .[1].workflow_runs[0]' "$STUB_DIR/main-push-pages.owner_repo.json" >"$STUB_DIR/pages.tmp"; mv "$STUB_DIR/pages.tmp" "$STUB_DIR/main-push-pages.owner_repo.json" ;;
+    unread) printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-push-history.owner_repo.err" ;;
   esac
   printf '::warning::%s\n::warning::%s\n' "$BUDGET" "$BUDGET_JOB" >"$STUB_DIR/main-log.202.txt"
   printf '{"jobs":[{"name":"Red job","conclusion":"failure"}]}\n' >"$STUB_DIR/main-jobs.203.json"
   printf '%s\n' "$CAUSE" >"$STUB_DIR/main-log.203.txt"
-  main_watch
-  notices=1 reads='' expected=''
-  if [[ "$shape" == complete ]]; then
-    notices=0 reads=202
-    expected="$BUDGET_EVENT"$'\n'"EVENT main-push-failing owner/repo workflow=skill-tests.yml run=203 jobs=[\"Red job\"] cause=$CAUSE"
+  for row in "first-failure|failure|$PAGE_FAILURE" 'same-failure|failure|' 'recovered|success|' "failure-after-recovery|failure|$PAGE_FAILURE"; do
+    IFS='|' read -r name conclusion expected <<<"$row"
+    jq -cn --arg conclusion "$conclusion" '[{databaseId:203,headBranch:"main",event:"push",status:"completed",conclusion:$conclusion}]' >"$STUB_DIR/main-push.owner_repo.json"
+    main_watch
+    notices=1 reads=''
+    if [[ "$shape" == complete ]]; then
+      notices=0
+      if [[ "$name" == first-failure ]]; then reads=202; expected="$BUDGET_EVENT"$'\n'"$expected"; fi
+    fi
+    assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$shape history $name" "$STUB_DIR/err"
+    assert_eq "$(awk '/^run list .* --branch main --event push --status completed --limit 1 --json databaseId,conclusion$/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")" 1 'failure judgment has its own latest-main read'
+    assert_eq "$(awk '/^api --paginate repos\/owner\/repo\/actions\/workflows\/skill-tests.yml\/runs\?per_page=100 --slurp$/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")" 1 'history read has no search filters or result limit'
+  done
+  if [[ "$shape" != complete ]]; then
+    # Restoring history must report its previously unread warning without
+    # repeating the unchanged current failure event.
+    rm -f -- "${STUB_DIR:?}/main-push-history.owner_repo.err" "${STUB_DIR:?}/main-push-pages.owner_repo.json"
+    printf '[{"databaseId":203,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"},{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
+    main_watch
+    assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=0 reads=202 events=$BUDGET_EVENT" "$shape history recovers without repeating failure" "$STUB_DIR/err"
   fi
-  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$shape history pages" "$STUB_DIR/err"
-  assert_eq "$(awk '/^api --paginate repos\/owner\/repo\/actions\/workflows\/skill-tests.yml\/runs\?per_page=100 --slurp$/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")" 1 'history read has no search filters or result limit'
 done
 
-for rule in annotation dedup quiet-cache attempt-cache completion-cache unread evidence history page-count page-identity; do
+for rule in annotation dedup quiet-cache attempt-cache completion-cache unread evidence history page-count page-identity history-failure; do
   MUTANT="$(mutant_scripts "budget-control-$rule/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/budget-control-$rule/github"
   case "$rule" in
@@ -292,6 +300,7 @@ for rule in annotation dedup quiet-cache attempt-cache completion-cache unread e
     history) mutate_file "$MUTANT" "jq -r '.[] | select(.conclusion == \"success\")" "jq -r '.[:1][] | select(.conclusion == \"success\")" ;;
     page-count) mutate_file "$MUTANT" 'any($pages[]; .total_count != ($all | length))' 'false' ;;
     page-identity) mutate_file "$MUTANT" '($all | map(.id) | unique | length) != ($all | length)' 'false' ;;
+    history-failure) mutate_file "$MUTANT" "      runs='[]'" '      continue' ;;
   esac
   new_case "main_push_budget_control_$rule"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
@@ -312,6 +321,12 @@ for rule in annotation dedup quiet-cache attempt-cache completion-cache unread e
     page-count | page-identity)
       jq -cn --arg rule "$rule" '[{total_count:3,workflow_runs:[{id:202,head_branch:"main",event:"push",status:"completed",conclusion:"success",run_attempt:2,updated_at:"2026-10-08T08:00:00Z"}]}] | if $rule=="page-identity" then .[0].total_count=2 | .[0].workflow_runs += .[0].workflow_runs else . end' >"$STUB_DIR/main-push-pages.owner_repo.json"
       expected='' notices=1 reads='' ;;
+    history-failure)
+      printf '[{"databaseId":203,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
+      printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-push-history.owner_repo.err"
+      printf '{"jobs":[{"name":"Red job","conclusion":"failure"}]}\n' >"$STUB_DIR/main-jobs.203.json"
+      printf '%s\n' "$CAUSE" >"$STUB_DIR/main-log.203.txt"
+      expected="$PAGE_FAILURE" notices=1 reads='' ;;
   esac
   WATCH_BIN="$MUTANT" main_watch
   CONTROL_RC=0

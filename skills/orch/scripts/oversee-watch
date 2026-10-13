@@ -1862,9 +1862,31 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 }
 
 check_main_push() {
-  local repo runs greens run conclusion attempt completed identity jobs log cause failures key prior changed rc
+  local repo latest runs greens run conclusion attempt completed identity jobs log cause failures key prior changed rc
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err"
   for repo in "${REPOS[@]}"; do
+    # Current failure judgment has its own small read. New workflow runs can
+    # move archive pages while they are read; rejecting that budget history
+    # must not suppress the independently read latest main failure.
+    rc=0
+    latest="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event push \
+      --status completed --limit 1 --json databaseId,conclusion 2>"$errf")" || rc=$?
+    if (( rc == 0 )); then
+      latest="$(jq -er '
+        if type == "array" and length <= 1 and all(.[];
+          (.databaseId | type) == "number" and (.conclusion | type) == "string") then
+          if length == 0 then "none|" else "\(.[0].databaseId)|\(.[0].conclusion)" end
+        else error("invalid completed main-push runs") end' <<<"$latest" 2>"$errf")" || rc=$?
+    fi
+    if (( rc != 0 )); then
+      if workflow_absent "$repo" skill-tests.yml "$errf"; then
+        rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
+          || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+        continue
+      fi
+      ow_message main-push-unread "repo=$repo" "read=runs" "exit=$rc" >&2
+      continue
+    fi
     rc=0
     # Search filters cap GitHub history at 1,000 runs. Read every page and
     # select locally so late completions and unread older logs stay eligible.
@@ -1888,20 +1910,8 @@ check_main_push() {
         end' <<<"$runs" 2>"$errf")" || rc=$?
     fi
     if (( rc != 0 )); then
-      # gh api has a raw 404. The existing run-list producer supplies the
-      # rewritten workflow error that workflow_absent requires before its
-      # complete workflow-list proof. A permission 404 still proves nothing.
-      if grep -qxF 'gh: Not Found (HTTP 404)' "$errf"; then
-        gh run list --repo "$repo" --workflow skill-tests.yml --limit 1 \
-          --json databaseId >/dev/null 2>"$errf" || :
-      fi
-      if workflow_absent "$repo" skill-tests.yml "$errf"; then
-        rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
-          || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-        continue
-      fi
-      ow_message main-push-unread "repo=$repo" "read=runs" "exit=$rc" >&2
-      continue
+      ow_message main-push-unread "repo=$repo" "read=history" "exit=$rc" >&2
+      runs='[]'
     fi
     greens="$(jq -r '.[] | select(.conclusion == "success") | "\(.id)|\(.run_attempt)|\(.updated_at)"' <<<"$runs")" \
       || die state-read-failed "" "repo=$repo" "row=main-push-budget"
@@ -1937,9 +1947,7 @@ check_main_push() {
           || die state-read-failed "" "repo=$repo" "row=main-push-budget"
       fi
     done <<<"$greens"
-    runs="$(jq -r 'if length == 0 then "none|" else "\(.[0].id)|\(.[0].conclusion)" end' <<<"$runs")" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-    IFS='|' read -r run conclusion <<<"$runs"
+    IFS='|' read -r run conclusion <<<"$latest"
     if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
       rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
         || die state-read-failed "" "repo=$repo" "row=main-push-failing"
