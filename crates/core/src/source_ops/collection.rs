@@ -130,10 +130,13 @@ pub fn prepare_collection(
             commands: step.commands.clone(),
             mcp_servers: step.mcp_servers.clone(),
             output_styles: step.output_styles.clone(),
-            hold: matches!(step.action, SourceAction::Reuse { .. }) && step.commit.is_some(),
             ..Default::default()
         };
-        addition.include(env, &request, seed, step.commit.as_deref())?;
+        let member_hold_at = match &step.action {
+            SourceAction::Reuse { .. } => step.commit.as_deref(),
+            SourceAction::Subscribe { .. } => None,
+        };
+        addition.include(env, &request, seed, step.commit.as_deref(), member_hold_at)?;
     }
     let prepared = PreparedCollection {
         scope: scope.clone(),

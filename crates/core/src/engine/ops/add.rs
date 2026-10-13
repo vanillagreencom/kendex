@@ -123,7 +123,7 @@ pub fn add_seeded(
         });
     }
     let mut prepared = PreparedAddition::new(env, scope)?;
-    prepared.include(env, request, seed, None)?;
+    prepared.include(env, request, seed, None, None)?;
     prepared.plan(env)
 }
 
@@ -166,6 +166,7 @@ impl PreparedAddition {
         request: &AddRequest,
         seed: Option<(String, crate::manifest::SourceDecl)>,
         revision: Option<&str>,
+        member_hold_at: Option<&str>,
     ) -> Result<()> {
         let scope = &self.scope;
         let manifest = &mut self.manifest;
@@ -218,6 +219,7 @@ impl PreparedAddition {
                 notes,
                 &mut optional_offers,
                 revision,
+                member_hold_at,
             )?);
         }
         // A choice naming an optional dependency nothing offers is an error
@@ -328,6 +330,7 @@ fn add_from(
     notes: &mut Vec<String>,
     optional_offers: &mut Vec<(String, String)>,
     revision: Option<&str>,
+    member_hold_at: Option<&str>,
 ) -> Result<BTreeSet<Held>> {
     let ready = source::require_ready_at(env, scope, source_name, manifest, revision)?;
     let hold_at = hold_commit(request, source_name, &ready)?;
@@ -416,6 +419,14 @@ fn add_from(
         (ItemKind::OutputStyle, output_styles),
     ] {
         for name in names {
+            // Collections freeze their explicit members. Automatic agent
+            // skills keep their revision choices; direct add --hold still
+            // freezes the complete request expansion through hold_at.
+            let hold_at = if kind == ItemKind::Skill && !wanted.skills.contains(&name) {
+                hold_at
+            } else {
+                member_hold_at.or(hold_at)
+            };
             declare(
                 env,
                 scope,

@@ -425,3 +425,177 @@ fn collection_replacements_and_retained_readings_are_checked_before_installation
         }
     }
 }
+
+struct AgentCollectionFixture {
+    _tmp: tempfile::TempDir,
+    env: Env,
+    scope: Scope,
+    repo: String,
+    first: String,
+    snapshot: String,
+}
+
+#[allow(clippy::unwrap_used)]
+fn agent_collection_fixture(held: bool) -> AgentCollectionFixture {
+    use kendex_core::{apply, engine, remote};
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let catalog = home.join("catalog");
+    replacement_catalog(&catalog, &["automatic", "fresh"]);
+    let first = test_util::git(&catalog, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(
+        catalog.join("agents/rust.md"),
+        "---\nname: rust\ndescription: fixture\nrole: engineer\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        catalog.join("kendex.toml"),
+        "min_kendex = '0.0.0'\n[role-skills]\nengineer = ['automatic', 'fresh']\n",
+    )
+    .unwrap();
+    test_util::git(&catalog, &["add", "-A"]);
+    test_util::git(&catalog, &["commit", "-q", "-m", "agent snapshot"]);
+    let snapshot = test_util::git(&catalog, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    let repo = format!("file://{}", catalog.display());
+    let project = home.join("consumer");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let pin = if held {
+        format!("rev = '{first}'\n")
+    } else {
+        String::new()
+    };
+    fs::write(project.join("kendex.toml"), format!(
+        "schema = 7\n[sources.cat]\nrepo = '{repo}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.automatic]\nsource = 'cat'\n{pin}")).unwrap();
+    let scope = Scope::Project { root: project };
+    remote::sync(&env, &repo, Some(&first)).unwrap();
+    remote::sync(&env, &repo, None).unwrap();
+    let installed = engine::plan_apply(&env, &scope, &engine::PlanOptions::current()).unwrap();
+    apply::execute(&env, &installed.plan).unwrap();
+    AgentCollectionFixture {
+        _tmp: tmp,
+        env,
+        scope,
+        repo,
+        first,
+        snapshot,
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_agent_collection_holds(
+    fixture: &AgentCollectionFixture,
+    automatic_rev: Option<&str>,
+    fresh_rev: Option<&str>,
+) {
+    use kendex_core::{lock, manifest};
+    let after = manifest::load_current(&manifest::manifest_path(&fixture.env, &fixture.scope))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.agents["rust"].rev.as_deref(),
+        Some(fixture.snapshot.as_str())
+    );
+    assert_eq!(after.skills["automatic"].rev.as_deref(), automatic_rev);
+    assert_eq!(after.skills["fresh"].rev.as_deref(), fresh_rev);
+    let record = lock::load(&lock::lock_path(&fixture.env, &fixture.scope)).unwrap();
+    for (kind, name, commit) in [
+        (ItemKind::Agent, "rust", fixture.snapshot.as_str()),
+        (
+            ItemKind::Skill,
+            "automatic",
+            automatic_rev.unwrap_or(fixture.snapshot.as_str()),
+        ),
+        (ItemKind::Skill, "fresh", fixture.snapshot.as_str()),
+    ] {
+        assert_eq!(
+            record
+                .entries
+                .values()
+                .find(|entry| entry.kind == kind && entry.name == name)
+                .unwrap()
+                .source_commit
+                .as_deref(),
+            Some(commit)
+        );
+    }
+}
+
+/// A collection names an agent but expands its role skills automatically.
+/// Only named members gain snapshot holds. A direct add --hold freezes its
+/// automatic expansion too, including a skill already held elsewhere.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn collection_member_holds_preserve_automatic_skill_revision_choices() {
+    use kendex_core::{apply, engine, source_ops};
+
+    for (direct_hold, held, explicit_skill) in [
+        (false, false, false),
+        (false, true, false),
+        (false, true, true),
+        (true, false, false),
+        (true, true, false),
+    ] {
+        let fixture = agent_collection_fixture(held);
+        let AgentCollectionFixture {
+            env,
+            scope,
+            repo,
+            first,
+            snapshot,
+            ..
+        } = &fixture;
+
+        let report = if direct_hold {
+            engine::ops::add(
+                env,
+                scope,
+                &engine::ops::AddRequest {
+                    source: Some("cat".to_owned()),
+                    agents: vec!["rust".to_owned()],
+                    hold: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        } else {
+            let mut members = vec![CollectionMember {
+                repo: repo.clone(),
+                kind: ItemKind::Agent,
+                name: "rust".to_owned(),
+                commit: Some(snapshot.clone()),
+            }];
+            if explicit_skill {
+                members.push(member(repo, "automatic", Some(snapshot)));
+            }
+            let collection = Collection {
+                id: "i".to_owned(),
+                name: "agent".to_owned(),
+                members,
+            };
+            let steps = collection_steps(env, scope, &collection).unwrap();
+            source_ops::prepare_collection(env, scope, &steps)
+                .unwrap()
+                .plan(env)
+                .unwrap()
+        };
+        apply::execute(env, &report.plan).unwrap();
+        let automatic_rev = if direct_hold || explicit_skill {
+            Some(snapshot.as_str())
+        } else if held {
+            Some(first.as_str())
+        } else {
+            None
+        };
+        assert_agent_collection_holds(
+            &fixture,
+            automatic_rev,
+            direct_hold.then_some(snapshot.as_str()),
+        );
+    }
+}
