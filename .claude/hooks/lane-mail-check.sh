@@ -663,23 +663,6 @@ done
 # the substitution holds them and the refusal replays them under the keyed line.
 INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 
-# One read of the payload: the turn-end retry flag, whether the payload names
-# a subagent, the transcript the harness records this session in, the id it
-# names this session by, the tool a call about to run names, and the context
-# window carried by Pi. A subagent's call carries agent_id on one harness and
-# agent_type on another; the lane lead's carries neither. Copilot spells the
-# transcript and the session in camelCase under the event name kendex
-# registers, so those two are read in both spellings, the snake_case one
-# first. Its hooks reference spells the agentStop retry flag
-# `stop_hook_active` all the same, and `question_tool` names no Copilot tool,
-# so the flag and `tool_name` are read in the one spelling. Last, whether
-# Copilot made the call, read from the call and never from the install: both
-# payload formats its reference gives carry `timestamp`, and its own camelCase
-# one names the session `sessionId`; no Claude, Codex or Pi payload carries
-# either. Last the `trigger` a Copilot preCompact payload names, manual or
-# auto, in the one spelling both its formats share, and the `cwd` the
-# extension's usage payload names the session's directory by, read for that
-# arm alone, and before it the `kendex_ack` the Pi wake's run sets to `caller`.
 # TAB separators preserve transcript spaces.
 READ=$(jq -r --arg arm "$ARM" '
   def str(f): if f == null then "" elif (f | type) == "string" then f else error("not a string") end;
