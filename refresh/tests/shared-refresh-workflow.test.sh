@@ -327,7 +327,7 @@ kendex-install: version=$1 commit=$A" ] || return 1
   fi
   [ "$(cat "$TMP/installs")" = "--version $1 --cli-only|unset|unset" ] &&
     [ "$(cat "$TMP/github-path")" = "$TMP/home/.local/bin" ] &&
-    [ "$(cat "$TMP/github-env")" = "KENDEX_CATALOG_REV=$1" ]
+    [ "$(cat "$TMP/github-env")" = 'KENDEX_CATALOG_REV=main' ]
 }
 
 # Refusal: one keyed record and, before the installer, no install.
@@ -369,7 +369,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 body = path.read_text()
-write = "printf 'KENDEX_CATALOG_REV=%s\\n' \"$tag\" >>\"$GITHUB_ENV\"\n"
+write = "printf 'KENDEX_CATALOG_REV=%s\\n' main >>\"$GITHUB_ENV\"\n"
 check = '[ "$installed" = "kendex ${tag#v}" ] ||\n'
 assert body.count(write) == body.count(check) == 1
 changed = body.replace(write, '').replace(check, write + check)
@@ -377,7 +377,7 @@ assert changed != body
 Path(sys.argv[2]).write_text(changed)
 CATALOG_CONTROL
 run_install "$TMP/early-catalog-rev" refs/tags/v1 "$A\trefs/tags/v1.7.0\n" 1.6.0
-if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/github-env")" = 'KENDEX_CATALOG_REV=v1.7.0' ] &&
+if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/github-env")" = 'KENDEX_CATALOG_REV=main' ] &&
     ! install_refused engine-version 'kendex 1.6.0' 1; then
   ok 'control: writing the catalog revision before the engine check turns its failure row red'
 else bad 'catalog revision ordering control' "$OUT"; fi
@@ -396,10 +396,15 @@ PY
   run_install "$TMP/mutant" "$ref" "$tags" "$installed" "${tags_exit:-0}" "${install_exit:-0}"
   IFS=: read -r kind first second third <<<"$expected"
   if [ "$kind" = ok ]; then
-    if ! install_matches "$first" "$second"; then ok "control: $rule"; else bad "control missed: $rule" "$OUT"; fi
+    if [ "$rule" = 'old workflow holds compatible packages' ]; then
+      if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/github-env")" = 'KENDEX_CATALOG_REV=v1.7.0' ] &&
+          ! install_matches "$first" "$second"; then ok "control: $rule"
+      else bad "control missed: $rule" "$OUT"; fi
+    elif ! install_matches "$first" "$second"; then ok "control: $rule"; else bad "control missed: $rule" "$OUT"; fi
   elif ! install_refused "$first" "$second" "$third"; then ok "control: $rule"
   else bad "control missed: $rule" "$OUT"; fi
 done <<ROWS
+old workflow holds compatible packages~printf 'KENDEX_CATALOG_REV=%s\\n' main >>"\$GITHUB_ENV"~printf 'KENDEX_CATALOG_REV=%s\\n' "\$tag" >>"\$GITHUB_ENV"~refs/tags/v1~$A\trefs/tags/v1.7.0\n~1.7.0~ok:v1.7.0:
 engine version~[ "\$installed" = "kendex \${tag#v}" ] ||~true ||~refs/tags/v1~$A\trefs/tags/v1.7.0\n~1.6.0~refused:engine-version:kendex 1.6.0:1
 runtime commit differs~[ "\$count" -eq 1 ] ||~true ||~refs/tags/v1~$B\trefs/tags/v1.6.0\n~1.6.0~refused:release-tags:0:0
 two stable tags~[ "\$count" -eq 1 ] ||~true ||~refs/tags/v1~$A\trefs/tags/v1.7.0\n$A\trefs/tags/v1.7.1\n~1.7.1~refused:release-tags:2:0

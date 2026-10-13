@@ -20,8 +20,8 @@ cd "$ROOT"
 : "${GH_REPO:?GH_REPO names the running repository}"
 : "${GH_TOKEN:?GH_TOKEN must be the repository-scoped app installation token}"
 : "${REFRESH_APP_SLUG:?REFRESH_APP_SLUG names that app}"
-# The shared workflow supplies the tag only after it verifies the installed engine.
-: "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the installed release tag}"
+# The shared workflow selects main only after it verifies the released engine.
+: "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the default catalog revision}"
 export KENDEX_CATALOG_REV
 if ! clean="$(git status --porcelain)"; then
   printf 'refresh-error=read value=clean\n' >&2
@@ -148,10 +148,28 @@ refresh_status=0
 # it, so it is passed where the installed kendex lists it; 1.12.0 drops the
 # probe.
 refresh_help="$(kendex help refresh 2>/dev/null || true)"
+refresh_args=(refresh --scope project --yes --leave)
 case "$refresh_help" in
-  *--prune*) refresh_output="$(kendex refresh --scope project --yes --leave --prune 2>&1)" || refresh_status=$? ;;
-  *) refresh_output="$(kendex refresh --scope project --yes --leave 2>&1)" || refresh_status=$? ;;
+  *--prune*) refresh_args+=(--prune) ;;
 esac
+refresh_output="$(kendex "${refresh_args[@]}" 2>&1)" || refresh_status=$?
+catalog_report=""
+# The engine owns both compatibility and the lock's recorded-commit floor.
+# Its refusal precedes package writes. A release retry keeps that floor and
+# explicit revisions; it must not turn any other failure into a fallback.
+catalog_pattern='^Error: catalog-needs-engine min=([^[:space:]]+) engine=([^[:space:]]+)$'
+if [ "$refresh_status" -ne 0 ] && [ "$KENDEX_CATALOG_REV" = main ]; then
+  while IFS= read -r line; do
+    [[ "$line" =~ $catalog_pattern ]] || continue
+    KENDEX_CATALOG_REV="v${BASH_REMATCH[2]}"
+    printf -v catalog_held 'catalog-held min=%s engine=%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    printf '%s\n' "$catalog_held"
+    printf -v catalog_report 'Packages wait for a CLI release and the v1 move: `%s`. This refresh selected the release catalog `%s`. Declared revisions and the lock record still take precedence.' "$catalog_held" "$KENDEX_CATALOG_REV"
+    refresh_status=0
+    refresh_output="$(kendex "${refresh_args[@]}" 2>&1)" || refresh_status=$?
+    break
+  done <<<"$refresh_output"
+fi
 printf '%s\n' "$refresh_output"
 if [ "$refresh_status" -ne 0 ]; then
   printf 'refresh-error=refresh value=%s\n' "$refresh_status" >&2
@@ -361,6 +379,7 @@ if git diff --cached --quiet; then
   fi
   printf 'refresh-state=current pr=none class=none\n'
   printf '%s\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   # A run with no render change opens no pull request; its settings report
   # still reaches the run summary.
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
@@ -410,6 +429,9 @@ fi
 report_settings
 merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
+if [ -n "$catalog_report" ]; then
+  printf -v body '%s\n\n%s\n' "$body" "$catalog_report"
+fi
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
 fi

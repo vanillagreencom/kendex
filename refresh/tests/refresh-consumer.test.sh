@@ -186,6 +186,14 @@ printf '%s\n' "$*" >>"$TEST_STATE/kendex"
 case "$1" in
   --version) printf 'kendex 7.8.9 (release-build)\n'; exit "${TEST_VERSION_EXIT:-0}" ;;
   refresh)
+    if [ "${KENDEX_CATALOG_REV:-}" = main ] && [ -f "$TEST_STATE/catalog-main-error" ]; then
+      cat "$TEST_STATE/catalog-main-error"
+      exit 1
+    fi
+    if [ "${KENDEX_CATALOG_REV:-}" = v7.8.9 ] && [ -f "$TEST_STATE/catalog-release-error" ]; then
+      cat "$TEST_STATE/catalog-release-error"
+      exit 1
+    fi
     : >"$TEST_STATE/refreshed"
     [ -z "${TEST_REFRESH_SAID:-}" ] || printf '%s\n' "$TEST_REFRESH_SAID"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
@@ -402,7 +410,7 @@ git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
 
-# The shared workflow produces the release tag. An absent tag must stop
+# The shared workflow produces the selector. An absent selector must stop
 # before the first engine call, or this run would render the default branch.
 mkdir -p "$TMP/catalog-control"
 cp -RL "$repo/refresh" "$repo/skills" "$TMP/catalog-control/"
@@ -411,7 +419,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
-line = ': "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the installed release tag}"'
+line = ': "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the default catalog revision}"'
 assert s.count(line) == 1
 changed = s.replace(line, ': # ' + line)
 assert changed != s
@@ -446,6 +454,102 @@ an absent catalog revision stops before any kendex call||no|absent
 control: dropping the revision requirement runs refresh without its tag||yes|control
 CATALOG_ROWS
 runner="$catalog_runner"
+reset_default
+
+# The engine produces these refusals before writes. This tests the runner's
+# use of that existing gate, not a second comparison of minimum versions.
+catalog_refresh_matches() { # EXPECTED
+  local calls
+  calls="$(sed -n '/^refresh /p' "$TMP/state/catalog-revs")"
+  case "$1" in
+    main)
+      [ "$RC" -eq 0 ] && [ "$calls" = 'refresh --scope project --yes --leave|main' ] &&
+        ! grep -q '^catalog-held ' <<<"$OUT" ;;
+    release)
+      [ "$RC" -eq 0 ] && [ "$calls" = $'refresh --scope project --yes --leave|main\nrefresh --scope project --yes --leave|v7.8.9' ] &&
+        [ "$(grep -c '^catalog-held ' <<<"$OUT")" -eq 1 ] &&
+        grep -qxF 'catalog-held min=7.9.0 engine=7.8.9' <<<"$OUT" &&
+        grep -qF 'catalog-held min=7.9.0 engine=7.8.9' "$TMP/state/body" ;;
+    refused)
+      [ "$RC" -eq 1 ] && [ "$calls" = 'refresh --scope project --yes --leave|main' ] &&
+        ! grep -q '^catalog-held ' <<<"$OUT" &&
+        ! grep -qE '^(apply --scope|verify )' "$TMP/state/kendex" ;;
+    release-refused)
+      [ "$RC" -eq 1 ] && [ "$calls" = $'refresh --scope project --yes --leave|main\nrefresh --scope project --yes --leave|v7.8.9' ] &&
+        grep -qxF 'refresh-error=refresh value=1' <<<"$OUT" &&
+        ! grep -qE '^(apply --scope|verify )' "$TMP/state/kendex" ;;
+    selected-refused)
+      [ "$RC" -eq 1 ] && [ "$calls" = 'refresh --scope project --yes --leave|v7.8.9' ] &&
+        ! grep -q '^catalog-held ' <<<"$OUT" &&
+        ! grep -qE '^(apply --scope|verify )' "$TMP/state/kendex" ;;
+    *) return 2 ;;
+  esac
+}
+while IFS='|' read -r name main_error release_error revision expected; do
+  reset_default
+  : >"$TMP/state/catalog-revs"
+  : >"$TMP/state/kendex"
+  rm -f -- "$TMP/state/catalog-main-error" "$TMP/state/catalog-release-error"
+  [ -z "$main_error" ] || printf '%s\n' "$main_error" >"$TMP/state/catalog-main-error"
+  [ -z "$release_error" ] || printf '%s\n' "$release_error" >"$TMP/state/catalog-release-error"
+  CATALOG_REV="$revision"
+  run_refresh catalog-update pass render
+  unset CATALOG_REV
+  if catalog_refresh_matches "$expected"; then ok "$name"; else bad "$name" "$OUT"; fi
+done <<'MINIMUM_ROWS'
+main at or below the engine version stays selected|||main|main
+main above the engine selects the release and explains the hold|Error: catalog-needs-engine min=7.9.0 engine=7.8.9||main|release
+a malformed minimum stops without fallback|Error: catalog-min-invalid min=integer engine=7.8.9 reason=expected-string||main|refused
+another refresh failure stops without fallback|Error: source-read-failed||main|refused
+a release retry that still refuses stops before apply or verify|Error: catalog-needs-engine min=7.9.0 engine=7.8.9|Error: catalog-needs-engine min=7.9.0 engine=7.8.9|main|release-refused
+an already selected release refusal is not retried||Error: catalog-needs-engine min=7.9.0 engine=7.8.9|v7.8.9|selected-refused
+MINIMUM_ROWS
+mkdir -p "$TMP/catalog-fallback-control"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/catalog-fallback-control/"
+for mutation in disabled unrelated release-selector; do
+  reset_default
+  runner="$TMP/catalog-fallback-control/refresh/refresh-consumer.sh"
+  cp "$catalog_runner" "$runner"
+  python3 - "$runner" "$mutation" <<'FALLBACK_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+text = path.read_text()
+old = 'if [ "$refresh_status" -ne 0 ] && [ "$KENDEX_CATALOG_REV" = main ]; then'
+replacement = {'disabled': 'if false; then # ' + old,
+               'release-selector': 'if [ "$refresh_status" -ne 0 ]; then # ' + old}
+if sys.argv[2] == 'unrelated':
+    old = "catalog_pattern='^Error: catalog-needs-engine min=([^[:space:]]+) engine=([^[:space:]]+)$'"
+    new = "catalog_pattern='^Error: source-read-(failed)()$' # " + old
+else:
+    new = replacement[sys.argv[2]]
+assert text.count(old) == 1
+changed = text.replace(old, new)
+assert changed != text
+path.write_text(changed)
+FALLBACK_CONTROL
+  : >"$TMP/state/catalog-revs"
+  : >"$TMP/state/kendex"
+  rm -f -- "$TMP/state/catalog-main-error" "$TMP/state/catalog-release-error"
+  CATALOG_REV=main
+  expected=release
+  case "$mutation" in
+    disabled) printf 'Error: catalog-needs-engine min=7.9.0 engine=7.8.9\n' >"$TMP/state/catalog-main-error" ;;
+    unrelated) printf 'Error: source-read-failed\n' >"$TMP/state/catalog-main-error"; expected=refused ;;
+    release-selector)
+      CATALOG_REV=v7.8.9 expected=selected-refused
+      printf 'Error: catalog-needs-engine min=7.9.0 engine=7.8.9\n' >"$TMP/state/catalog-release-error" ;;
+  esac
+  run_refresh catalog-update pass render
+  unset CATALOG_REV
+  if ! catalog_refresh_matches "$expected"; then ok "control: $mutation turns the catalog row red"
+  else bad "catalog fallback control: $mutation" "$OUT"; fi
+done
+runner="$catalog_runner"
+rm -f -- "$TMP/state/catalog-main-error" "$TMP/state/catalog-release-error"
+git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
+: >"$TMP/state/pr"
+: >"$TMP/state/creates"
 reset_default
 
 run_refresh current pass render
