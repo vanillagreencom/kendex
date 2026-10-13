@@ -88,6 +88,14 @@ struct ScopePlan {
 pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     let settings = settings::load(env)?;
     let scopes = resolve_scopes(env, filter)?;
+    for scope in &scopes {
+        if let Err(error) =
+            kendex_core::engine::check_catalog_compatibility(env, scope, &PlanOptions::current())
+            && error.is_catalog_compatibility()
+        {
+            return Err(error.into());
+        }
+    }
     let _guards = (!check)
         .then(|| kendex_core::apply::lock_scopes_for_write(env, &scopes))
         .transpose()?;
@@ -275,10 +283,10 @@ fn settleable(
             continue;
         }
         // Nothing installs a retired package again (`Resolved::Retired`).
-        let Ok(pi_ext::Resolved::Ships(package)) =
-            pi_ext::resolve_declared(env, scope, &manifest, name, decl)
-        else {
-            continue;
+        let package = match pi_ext::resolve_declared(env, scope, &manifest, name, decl) {
+            Ok(pi_ext::Resolved::Ships(package)) => package,
+            Err(error) if error.is_catalog_compatibility() => return Err(error.into()),
+            Ok(pi_ext::Resolved::Retired { .. }) | Err(_) => continue,
         };
         let existing = lock.entries.get(&key);
         let basis = match existing {
@@ -362,7 +370,7 @@ fn plan_scope(
     loaded_with: &[PathBuf],
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
-    let (declared, sources) = declared_sources(env, scope, &mut notes);
+    let (declared, sources) = declared_sources(env, scope, &mut notes)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
 
@@ -459,21 +467,21 @@ fn plan_scope(
 
 /// Every declared Pi extension by name, and each one whose source
 /// resolved. An unreadable source becomes a note so the rest of the scope
-/// still updates; the name list keeps it, for the checks that read what
-/// sits on disk whatever the source says.
+/// still updates, except for a catalog compatibility refusal. The name list
+/// keeps it, for the checks that read what sits on disk whatever the source says.
 fn declared_sources(
     env: &Env,
     scope: &Scope,
     notes: &mut Vec<(String, String)>,
-) -> (Vec<String>, BTreeMap<String, pi_ext::DeclaredPackage>) {
+) -> kendex_core::error::Result<(Vec<String>, BTreeMap<String, pi_ext::DeclaredPackage>)> {
     let mut found = BTreeMap::new();
     let path = manifest::manifest_path(env, scope);
     let manifest = match manifest::load(&path) {
         Ok(ManifestFile::Current(manifest)) => manifest,
-        Ok(_) => return (Vec::new(), found),
+        Ok(_) => return Ok((Vec::new(), found)),
         Err(error) => {
             notes.push(("manifest".to_owned(), error.to_string()));
-            return (Vec::new(), found);
+            return Ok((Vec::new(), found));
         }
     };
     for (name, decl) in &manifest.pi_extensions {
@@ -483,10 +491,11 @@ fn declared_sources(
             }
             // Nothing installs a retired package again.
             Ok(pi_ext::Resolved::Retired { .. }) => {}
+            Err(error) if error.is_catalog_compatibility() => return Err(error),
             Err(error) => notes.push((name.clone(), error.to_string())),
         }
     }
-    (manifest.pi_extensions.keys().cloned().collect(), found)
+    Ok((manifest.pi_extensions.keys().cloned().collect(), found))
 }
 
 fn installed_version(root: &Path, name: &str) -> Option<String> {
@@ -770,6 +779,34 @@ fn record_pi_installs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn catalog_compatibility_failures_are_not_advisory_notes() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&temp);
+        let env = Env::host_rooted(&home);
+        let project = home.join("consumer");
+        let catalog = home.join("catalog");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        std::fs::write(catalog.join("kendex.toml"), "min_kendex = '999999.0.0'\n").unwrap();
+        std::fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 7\n[sources.cat]\n{}\n[pi-extensions.fixture]\nsource = 'cat'\n",
+                crate::test_util::source_path(&catalog)
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project { root: project };
+        let mut notes = Vec::new();
+        assert!(matches!(
+            declared_sources(&env, &scope, &mut notes),
+            Err(kendex_core::error::CoreError::CatalogNeedsEngine { .. })
+        ));
+        assert!(notes.is_empty());
+    }
 
     /// Catalog declarations produce missing, recorded stale, and current copies.
     #[test]

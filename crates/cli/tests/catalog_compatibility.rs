@@ -56,6 +56,7 @@ fn incompatible_scope_stops_the_selected_command_before_any_install_write() {
         &["disable", "good", "--scope", "all", "-y", "--leave"],
         &["remove", "good", "--scope", "all", "--leave"],
         &["verify", "--scope", "all"],
+        &["update-pi", "--scope", "all"],
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
