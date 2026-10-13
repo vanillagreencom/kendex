@@ -1,6 +1,7 @@
 """Exercise cache freshness through the production account reader."""
 
 import collections
+import copy
 import datetime
 import json
 import os
@@ -27,7 +28,7 @@ subprocess.run([bash, "-c", 'source "$1"; virtual_clock_bash_env "$2"', "_",
                 str(Path(__file__).with_name("virtual-clock.sh")), str(clock_env)], check=True)
 clock_env.write_text("source " + shlex.quote(str(world.trace)) + "\n" + clock_env.read_text())
 env = {"ORCH_LANE_HOST": "local", "BASH_ENV": str(clock_env), "STUB_CLOCK": str(world.clock),
-       "ORCH_LANES_CLAUDE_CLIENT_ID": "fixture-client"}
+       "ORCH_LANES_CLAUDE_CLIENT_ID": "fixture-client", "TMPDIR": root}
 args = ["list", "--local", "--json"]
 
 
@@ -133,7 +134,7 @@ print("normalized: discovery=pass")
 # The claims reader advances the fixture clock after startup and before the
 # normalized batch. A controlled advance reaches the same elapsed boundary
 # without depending on the runner's wall time.
-time_control = mutate("startup-clock-control", 'local now="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" target=', 'local now="$RUN_NOW" target=')
+time_control = mutate("startup-clock-control", 'local now="$LANE_NOW" target=', 'local now="$RUN_NOW" target=')
 tmux_wrapper = world.bin / "tmux"
 tmux_body = tmux_wrapper.read_text()
 tmux_wrapper.write_text(tmux_body.replace("set -euo pipefail\n", '''set -euo pipefail
@@ -385,3 +386,314 @@ finally:
             started[0].kill()
             started[0].wait(timeout=5)
 print("normalized: concurrent=pass fetches=one-per-account")
+
+
+# Cache consumption and sample writes own observation time. The elected
+# readers use acknowledged order, and the provider preserves real elapsed time.
+def await_marker(path, child):
+    end = time.monotonic() + 20
+    while not path.exists():
+        assert child[0].poll() is None and time.monotonic() < end, "unacknowledged stage: " + path.name
+        time.sleep(0.01)
+
+
+def election(directory, script, kind):
+    w = World(directory, script, bash)
+    w.reset(home_count=1, providers=int(kind == "provider"), claims=0)
+    settings = {"ORCH_LANE_HOST": str(w.provider) if kind == "provider" else "local",
+                "ORCH_LANE_EXCLUDE": "", "ORCH_LANE_RETIRE": "", "TMPDIR": str(w.root)}
+    if kind == "provider":
+        w.trace.write_text(w.trace.read_text().replace("unset SECONDS; SECONDS=0\n", "", 1))
+        date = shlex.quote(shutil.which("date"))
+        (w.bin / "date").write_text("#!" + bash + '\nprintf "%s\\n" "${BASHPID:-$$}" >> "$COST_COUNTER"\nprintf "%s date\\n" "${BASHPID:-$$}" >> "$COST_TOOLS"\nexec ' + date + ' "$@"\n')
+    else:
+        clock_env = w.root / "election-clock.env"
+        subprocess.run([bash, "-c", 'source "$1"; virtual_clock_bash_env "$2"', "_",
+                        str(Path(__file__).with_name("virtual-clock.sh")), str(clock_env)], check=True)
+        clock_env.write_text("source " + shlex.quote(str(w.trace)) + "\n" + clock_env.read_text())
+        settings.update(BASH_ENV=str(clock_env), STUB_CLOCK=str(w.clock))
+    gate = w.root / "election-gate"
+    gate.mkdir()
+    settings["ELECTION_GATE"] = str(gate)
+    mkdir = w.bin / "mkdir"
+    text = mkdir.read_text().replace("set -euo pipefail\n", '''set -euo pipefail
+if [[ "${ELECTION_ROLE:-}" == B ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == "$OVERSEE_WATCH_STATE_DIR/usage" && ! -e "$ELECTION_GATE/B.paused" ]]; then
+      : > "$ELECTION_GATE/B.paused"
+      until [[ -e "$ELECTION_GATE/B.release" ]]; do sleep 0.01; done
+    fi
+  done
+fi
+''', 1)
+    mkdir.write_text(text)
+    flock = w.bin / "flock"
+    assert flock.exists(), "the election fixture needs the real file-lock implementation"
+    flock.write_text(flock.read_text().replace("set -euo pipefail\n", 'set -euo pipefail\n[[ "${ELECTION_ROLE:-}" != B ]] || : > "$ELECTION_GATE/B.at-lock"\n', 1))
+    endpoint = w.provider if kind == "provider" else w.fetch
+    text = endpoint.read_text()
+    gate_body = '''if [[ "${ELECTION_ROLE:-}" == A ]]; then
+  : > "$ELECTION_GATE/A.endpoint"
+  until [[ -e "$ELECTION_GATE/A.release" ]]; do sleep 0.01; done
+fi
+'''
+    if kind == "provider":
+        text = text.replace("accounts) printf", "accounts) " + gate_body + "printf", 1)
+    else:
+        text = text.replace("set -euo pipefail\n", "set -euo pipefail\n" + gate_body, 1)
+    endpoint.write_text(text)
+    mv = w.bin / "mv"
+    text = mv.read_text()
+    real_mv = shlex.quote(shutil.which("mv"))
+    text = text.replace("exec " + real_mv + ' "$@"', real_mv + ''' "$@"
+for target in "$@"; do :; done
+if [[ "${ELECTION_ROLE:-}" == A && "$target" == "$OVERSEE_WATCH_STATE_DIR/usage/"*.json ]]; then
+  : > "$ELECTION_GATE/A.saved"
+  until [[ -e "$ELECTION_GATE/A.writer-release" ]]; do sleep 0.01; done
+fi''', 1)
+    mv.write_text(text)
+    entry = ["host-accounts", "--json"] if kind == "provider" else ["list", "--local", "--json"]
+    a = b = None
+    try:
+        b = w.start(entry, overrides={**settings, "ELECTION_ROLE": "B"})
+        await_marker(gate / "B.paused", b)
+        if kind == "provider":
+            start = int(time.time())
+            while int(time.time()) <= start + 1:
+                time.sleep(0.01)
+        else:
+            w.clock.write_text(str(int(w.clock.read_text()) + 2) + "\n")
+        a = w.start(entry, overrides={**settings, "ELECTION_ROLE": "A"})
+        await_marker(gate / "A.endpoint", a)
+        (gate / "B.release").touch()
+        await_marker(gate / "B.at-lock", b)
+        assert b[0].poll() is None, "the waiting reader escaped the held lock"
+        (gate / "A.release").touch()
+        await_marker(gate / "A.saved", a)
+        cache = next((w.state / "usage").glob(("host-accounts" if kind == "provider" else "claude") + "-*.json"))
+        winner = json.loads(cache.read_text())
+        (gate / "A.writer-release").touch()
+        left, right = w.finish(a), w.finish(b)
+        final = json.loads(cache.read_text())
+        calls = (w.root / "fetch.log").read_text().splitlines()
+        result = {"kind": kind, "a_exit": left["exit"], "b_exit": right["exit"],
+                  "outputs_equal": left["stdout"] == right["stdout"],
+                  "stderr_empty": not left["stderr"] and not right["stderr"],
+                  "fetches": len(calls), "winner_sample": winner["fetched_at"],
+                  "final_sample": final["fetched_at"], "record_unchanged": final == winner}
+        assert left["exit"] == right["exit"] == 0 and result["outputs_equal"] and result["stderr_empty"], result
+        return result
+    finally:
+        for name in ("B.release", "A.release", "A.writer-release"):
+            (gate / name).touch()
+        for child in (a, b):
+            if child and child[0].poll() is None:
+                os.killpg(child[0].pid, signal.SIGTERM)
+                try:
+                    child[0].wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child[0].pid, signal.SIGKILL)
+                    child[0].wait(timeout=5)
+
+
+def normalize_sample(directory, script, retained, replace_before_bind=False):
+    w = World(directory, script, bash)
+    w.reset(home_count=1, providers=0, claims=0)
+    clock_env = w.root / "sample-clock.env"
+    subprocess.run([bash, "-c", 'source "$1"; virtual_clock_bash_env "$2"', "_",
+                    str(Path(__file__).with_name("virtual-clock.sh")), str(clock_env)], check=True)
+    clock_env.write_text("source " + shlex.quote(str(w.trace)) + "\n" + clock_env.read_text())
+    settings = {"ORCH_LANE_HOST": "local", "BASH_ENV": str(clock_env), "STUB_CLOCK": str(w.clock), "TMPDIR": str(w.root)}
+    entry = ["list", "--local", "--json"]
+    warmed = w.run(entry, overrides=settings)
+    assert warmed["exit"] == 0
+    cache = next((w.state / "usage").glob("claude-*.json"))
+    record = json.loads(cache.read_text())
+    current = record["fetched_at"] - 100
+    record["fetched_at"] = current + 10 if retained else current
+    if retained:
+        record["usage_fetched_at"] = current
+    record["sample_claims"] = 2
+    prior_body = copy.deepcopy(record["usage"])
+    prior_body["five_hour"]["utilization"] = 2
+    record["prior"] = {"fetched_at": current - 60, "usage": prior_body}
+    record.pop("normalized")
+    cache.write_text(json.dumps(record))
+    w.clock.write_text(str(int(w.clock.read_text()) + 10) + "\n")
+    (w.root / "fetch.log").write_text("")
+    expected = record
+    started = None
+    if replace_before_bind:
+        gate = w.root / "sample-bind"
+        gate.mkdir()
+        settings["SAMPLE_BIND"] = str(gate)
+        trap_text = '''trap 'if [[ "$BASH_COMMAND" == write_usage_cache\\ *normalize-only && ! -e "$SAMPLE_BIND/ready" ]]; then
+  : > "$SAMPLE_BIND/ready"
+  until [[ -e "$SAMPLE_BIND/release" ]]; do sleep 0.01; done
+fi
+if [['''
+        clock_env.write_text(clock_env.read_text().replace("trap 'if [[", trap_text, 1))
+        started = w.start(entry, overrides=settings)
+        try:
+            await_marker(gate / "ready", started)
+            expected = copy.deepcopy(record)
+            expected["usage"]["five_hour"]["utilization"] = 22
+            expected["fetched_at"] += 20
+            if retained:
+                expected["usage_fetched_at"] += 20
+            expected["sample_claims"] = 3
+            pending = w.root / "bound-record.json"
+            pending.write_text(json.dumps(expected))
+            pending.replace(cache)
+            (gate / "release").touch()
+            result = w.finish(started)
+        finally:
+            (gate / "release").touch()
+            if started[0].poll() is None:
+                os.killpg(started[0].pid, signal.SIGTERM)
+                try:
+                    started[0].wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(started[0].pid, signal.SIGKILL)
+                    started[0].wait(timeout=5)
+    else:
+        result = w.run(entry, overrides=settings)
+    after = json.loads(cache.read_text())
+    effective = expected.get("usage_fetched_at", expected["fetched_at"])
+    outer_unchanged = {k: v for k, v in after.items() if k != "normalized"} == expected
+    normalized_at = after.get("normalized", {}).get("fetched_at")
+    normalized_prior = after.get("normalized", {}).get("prior_at")
+    normalized_pct = after.get("normalized", {}).get("account", {}).get("buckets", {}).get("session_5h_pct")
+    answer_pct = json.loads(result["stdout"])[0]["session_5h_pct"] if result["exit"] == 0 else None
+    fetches = (w.root / "fetch.log").read_text().splitlines()
+    expected_pct = expected["usage"]["five_hour"]["utilization"]
+    passed = (result["exit"] == 0 and not fetches and outer_unchanged and normalized_at == effective
+              and normalized_prior == expected["prior"]["fetched_at"]
+              and normalized_pct == expected_pct and answer_pct == expected_pct)
+    return {"retained": retained, "replacement": replace_before_bind, "pass": passed,
+            "outer_unchanged": outer_unchanged, "effective_sample": effective, "normalized_sample": normalized_at,
+            "prior_sample": normalized_prior, "normalized_pct": normalized_pct, "answer_pct": answer_pct, "fetches": len(fetches)}
+
+
+
+def assert_elected_once(result):
+    assert result["fetches"] == 1 and result["record_unchanged"] and result["final_sample"] == result["winner_sample"], result
+
+
+for kind in ("provider", "local"):
+    result = election(Path(root) / (kind + "-election"), lanes, kind)
+    assert_elected_once(result)
+    print("normalized: elected-" + kind + "=pass " + json.dumps(result), flush=True)
+
+# Reintroduce a stale boundary observation without changing its caller or lock.
+read_clock_control = mutate("read-clock-control", '\tlane_now; observed="$LANE_NOW"\n\toutput="$(jq -er --arg h "$1"', '\tlane_now; observed="$LANE_NOW"\n\t[[ "$1" != host-accounts ]] || observed="$RUN_NOW"\n\toutput="$(jq -er --arg h "$1"')
+result = election(Path(root) / "provider-election-control", read_clock_control, "provider")
+try:
+    assert_elected_once(result)
+except AssertionError:
+    print("normalized: elected-provider control=red " + json.dumps(result), flush=True)
+else:
+    raise AssertionError("the elected refresher assertion accepted its stale-clock defect")
+
+# The optional reviewed script is the exact-round must-fail control, rather
+# than a hand-written alternate reader. Its local election remains protected.
+if len(sys.argv) > 4 and sys.argv[4]:
+    base_script = sys.argv[4]
+    result = election(Path(root) / "provider-election-base", base_script, "provider")
+    try:
+        assert_elected_once(result)
+    except AssertionError:
+        print("normalized: elected-provider base=red " + json.dumps(result), flush=True)
+    else:
+        raise AssertionError("the reviewed provider accepted the required election invariant")
+    result = election(Path(root) / "local-election-base", base_script, "local")
+    assert_elected_once(result)
+    print("normalized: elected-local base=pass " + json.dumps(result), flush=True)
+
+# Migration preserves all stored sample fields, even when observation advances
+# and a different record is bound at the existing writer's entry.
+for retained in (False, True):
+    for replacement in (False, True):
+        result = normalize_sample(Path(root) / ("historical-" + str(retained) + "-" + str(replacement)), lanes, retained, replacement)
+        assert result["pass"], result
+        print("normalized: historical-sample=pass " + json.dumps(result), flush=True)
+
+date_control = mutate("historical-date-control", '\t\tUSAGE_WRITTEN_AT="$sample_at"', '\t\tlane_now; USAGE_WRITTEN_AT="$LANE_NOW"')
+result = normalize_sample(Path(root) / "historical-date-control-case", date_control, True)
+assert not result["pass"] and result["outer_unchanged"], "the historical sample assertion accepted current observation time"
+print("normalized: historical sample-time control=red " + json.dumps(result), flush=True)
+
+body_control = mutate("historical-body-control", '\t\tbody="$retained_body"', '\t\tbody="$raw"')
+result = normalize_sample(Path(root) / "historical-body-control-case", body_control, True, True)
+assert not result["pass"] and result["outer_unchanged"], "the historical body assertion accepted an older caller-held answer"
+print("normalized: historical bound-body control=red " + json.dumps(result), flush=True)
+
+# Answers can advance time after their caller started. Fresh samples and
+# refusals use that answer time; retained usage and prior samples stay put.
+def assert_answer_sample(after, before, observed, kind):
+    assert after["fetched_at"] == observed, ("the answer kept its caller's earlier timestamp", kind, after["fetched_at"])
+    if kind in ("refusal", "token"):
+        assert after["usage"] == before["usage"] and after["usage_fetched_at"] == before["fetched_at"], "a refusal redated its retained usage"
+        assert after["normalized"]["fetched_at"] == before["fetched_at"], "a refusal refreshed its normalized usage sample"
+        assert after["normalized"]["prior_at"] is None and "prior" not in after, "refusal prior-removal changed"
+        assert after["refusal"]["expires_at"] == observed + 300, "the refusal window started before the answer"
+        assert after["refusal"]["endpoint"] == ("token" if kind == "token" else "usage")
+    else:
+        assert after["normalized"]["fetched_at"] == observed, "a fresh normalized sample has a different time"
+        assert after["prior"] == {"fetched_at": before["fetched_at"], "usage": before["usage"]}, "a fresh answer redated its displaced sample"
+    if kind == "absent":
+        assert after["usage"]["status"] == 2, "the absent-verb answer was not recorded"
+
+
+fresh_time_control = mutate("fresh-time-control", '\telse\n\t\tlane_now; USAGE_WRITTEN_AT="$LANE_NOW"\n\tfi\n\tif jq -nc', '\telse\n\t\tlane_now; USAGE_WRITTEN_AT="$RUN_NOW"\n\tfi\n\tif jq -nc')
+refusal_time_control = mutate("refusal-time-control", '\tlane_now; observed="$LANE_NOW"\n\tif jq -nc --arg h "$1"', '\tlane_now; observed="$RUN_NOW"\n\tif jq -nc --arg h "$1"')
+fetch_body = world.fetch.read_text()
+provider_body = world.provider.read_text()
+try:
+    for kind, script, should_accept in [(kind, lanes, True) for kind in ("local", "provider", "absent", "refusal", "token")] + [("provider", fresh_time_control, False), ("token", refusal_time_control, False)]:
+        world.reset(home_count=1, providers=int(kind in ("provider", "absent")), claims=0)
+        world.fetch.write_text(fetch_body)
+        world.provider.write_text(provider_body)
+        settings = {**env, "ORCH_LANE_HOST": str(world.provider) if kind in ("provider", "absent") else "local"}
+        entry = ["host-accounts", "--json"] if kind in ("provider", "absent") else ["list", "--local", "--json"]
+        assert world.run(entry, script, settings)["exit"] == 0, "the delayed-answer fixture did not warm"
+        cache = next((world.state / "usage").glob(("host-accounts" if kind in ("provider", "absent") else "claude") + "-*.json"))
+        before = json.loads(cache.read_text())
+        observed = int(world.clock.read_text()) + 4
+        settings["ANSWER_CLOCK"] = str(observed)
+        advance = 'printf "%s\\n" "$ANSWER_CLOCK" > "$COST_CLOCK"; '
+        if kind in ("provider", "absent"):
+            action = advance if kind == "provider" else advance + 'printf "%s\\n" provider >> "$FETCH_LOG"; exit 2 ;;\n  unused) '
+            world.provider.write_text(provider_body.replace("accounts) printf", "accounts) " + action + "printf", 1))
+        elif kind == "token":
+            credentials = world.home / ".aclaude/.credentials.json"
+            login = json.loads(credentials.read_text())
+            login["claudeAiOauth"]["expiresAt"] = int(world.clock.read_text()) * 1000 - 1
+            credentials.write_text(json.dumps(login))
+            token_endpoint = world.root / "token-refusal"
+            token_endpoint.write_text("#!" + bash + '\nset -euo pipefail\n' + advance + 'printf "%s\\n" 401 \'{\"error\":\"denied\"}\'\n')
+            token_endpoint.chmod(0o755)
+            settings["ORCH_LANES_TOKEN_CMD"] = str(token_endpoint)
+        else:
+            world.fetch.write_text(fetch_body.replace("set -euo pipefail\n", "set -euo pipefail\n" + advance + "\n", 1))
+            if kind == "refusal":
+                settings["FETCH_STATUS"] = "429"
+        (world.root / "fetch.log").write_text("")
+        result = world.run(entry + ["--no-cache"], script, settings)
+        assert result["exit"] == (2 if kind == "absent" else 0), (kind, result)
+        if kind == "absent":
+            assert not result["stdout"] and not result["stderr"], "the absent verb changed its public output"
+        after = json.loads(cache.read_text())
+        if should_accept:
+            assert_answer_sample(after, before, observed, kind)
+        else:
+            try:
+                assert_answer_sample(after, before, observed, kind)
+            except AssertionError:
+                print("normalized: delayed-" + kind + "-sample control=red", flush=True)
+                continue
+            raise AssertionError("the answer-time assertion accepted its stale observation defect")
+        print("normalized: delayed-" + kind + "-sample=pass", flush=True)
+finally:
+    world.fetch.write_text(fetch_body)
+    world.provider.write_text(provider_body)

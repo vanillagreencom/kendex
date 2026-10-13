@@ -329,7 +329,7 @@ assert_eq "$(provider_calls)" "$((calls + 1))" 'a retirement date that arrives a
 # argv: `check` takes one directory, and --harness names the record's harness.
 # The state dir is named apart from every mutant, which mutant_scripts clears.
 READER_DISPATCH='[[ -n "$LANE_ARG" ]] || die missing-value check'
-READER_BODY='prune_usage_cache() { :; }; validate_lane_settings; read_usage_cache "$HARNESS" "$LANE_ARG" "$(date +%s)" ""; exit $?'
+READER_BODY='prune_usage_cache() { :; }; validate_lane_settings; read_usage_cache "$HARNESS" "$LANE_ARG" ""; exit $?'
 state="$TMP_ROOT/reader-state"
 cache_run "$state" ORCH_LANE_EXCLUDE= list --json --no-cache > "$TMP_ROOT/out"
 reader_dir="$(mutant_scripts reader lanes)"

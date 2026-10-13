@@ -1541,7 +1541,7 @@ measure_lane() {
 		printf '%s\n' "${NORMALIZED_ROWS[normalized_i]}"
 		return 0
 	done
-	now_s="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
+	lane_now; now_s="$LANE_NOW"
 
 	# Before the credentials path is even composed: a retired account is read
 	# no more than an excluded one.
@@ -1608,7 +1608,7 @@ measure_lane() {
 		# is never measured as `ok`. A Copilot lane states no expiry and never gets
 		# here.
 		if token_expired "$expires_ms" "$now_s"; then
-			if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
+			if refusal="$(read_usage_refusal "$harness" "$dir" token)"; then
 				emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
 				return
 			fi
@@ -1626,7 +1626,7 @@ measure_lane() {
 				# raised on its own posted nothing, so there is nothing to stop a
 				# later caller from posting.
 				[[ -z "$code" ]] ||
-					write_usage_refusal "$harness" "$dir" "$now_s" token "$status" "$code" "$detail" "$retry" || true
+					write_usage_refusal "$harness" "$dir" token "$status" "$code" "$detail" "$retry" || true
 				emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}'
 				return
 			fi
@@ -1637,24 +1637,17 @@ measure_lane() {
 
 	fi
 
-	# Read BEFORE the host-wide lock, so a lane its record can answer never
-	# waits behind another caller's refresh: `pick --lane` runs under a caller's
-	# own ceiling, and a warm figure or a live refusal has nothing to wait for.
-	# Only a lane the record cannot answer takes the lock, and
-	# refresh_lane_usage reads the record again inside it. The clock is read
-	# advanced first: a renewal above can have waited on the credentials lock while
-	# the peer holding it measured this lane, and the record that peer wrote
-	# would read as stamped in the future against the clock this function
-	# started with.
+	# Read before the host-wide lock. A warm figure or refusal does not wait
+	# behind another caller's refresh. Cache boundaries observe time themselves
+	# after renewal or lock waits, including the locked second read.
 	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null" sample_claims=1
-	now_s="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
 	# store_usage_refusal keeps the prior figure beside a failed renewal.
 	# A cache-only reader must answer that live refusal before the figure.
-	if [[ "$CACHE_ONLY" == true ]] && refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
+	if [[ "$CACHE_ONLY" == true ]] && refusal="$(read_usage_refusal "$harness" "$dir" token)"; then
 		emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
 		return
 	fi
-	if ! usage_from_record "$now_s"; then
+	if ! usage_from_record; then
 		if [[ "$CACHE_ONLY" == true ]]; then
 			status=unreachable
 			detail="usage cache miss within $(usage_serve_max_age)s serve age (--cache-only)"
@@ -1699,25 +1692,25 @@ measure_lane() {
 # refused, nor the last figure a 429 is answered from. The flag is the path
 # most able to multiply a burst, since declining the cache is what puts every
 # caller back on the endpoint at once.
-usage_from_record() { # NOW
+usage_from_record() {
 	local refusal=""
 	if [[ "$CACHE_ONLY" == true ]]; then
-		refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || refusal=""
+		refusal="$(read_usage_refusal "$harness" "$dir" usage)" || refusal=""
 	fi
 	usage_serve_max_age silent
-	if [[ "$USE_CACHE" == "true" && -z "$refusal" ]] && read_usage_cache "$harness" "$dir" "$1" "$USAGE_SERVE_MAX_AGE" silent; then
+	if [[ "$USE_CACHE" == "true" && -z "$refusal" ]] && read_usage_cache "$harness" "$dir" "$USAGE_SERVE_MAX_AGE" silent; then
 		[[ "$USAGE_CACHE_LEGACY" != true || "$CACHE_ONLY" == true || "$refreshed" == true || "${CURRENT_USAGE_LOCKED:-false}" == true ]] || return 1
 		return 0
 	fi
 	if [[ "$CACHE_ONLY" != true ]]; then
-		refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || return 1
+		refusal="$(read_usage_refusal "$harness" "$dir" usage)" || return 1
 	fi
 	[[ -n "$refusal" ]] || return 1
 	IFS=$'\t' read -r status detail age < <(
 		jq -r '[.refusal.status, .refusal.detail, (.age | tostring)] | @tsv' <<<"$refusal"
 	)
 	[[ "$status" != "rate_limited" ]] ||
-		serve_refused_usage "$harness" "$dir" "$1" "$detail; these are the last figures it gave" || true
+		serve_refused_usage "$harness" "$dir" "$detail; these are the last figures it gave" || true
 	return 0
 }
 
@@ -1728,16 +1721,18 @@ usage_from_record() { # NOW
 # `dir`, `token` and `account_id`. An empty `raw` on return is a lane no figure
 # answers.
 #
-# The run epoch advances by Bash elapsed seconds here and after each answer: a caller that waited for the lock would otherwise judge the
-# holder's new record as stamped in the future, and a window counted from
-# before a slow request can have closed by the time that request's refusal
-# arrives.
+# The record boundaries observe time after waits and answers. A waiting
+# reader can reuse the winner's sample, and a refusal starts at its answer.
 refresh_lane_usage() {
-	local answer window at CURRENT_USAGE_LOCKED=true
+	local answer window CURRENT_USAGE_LOCKED=true
 	# The second read, inside the lock: a caller that waited takes the figure or
 	# the refusal the holder brought back instead of posting its own request.
-	if usage_from_record "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"; then
-		[[ "$USAGE_CACHE_LEGACY" != true ]] || write_usage_cache "$harness" "$dir" "$current_at" "$raw" normalize-only || true
+	if usage_from_record; then
+		if [[ "$USAGE_CACHE_LEGACY" == true ]] && write_usage_cache "$harness" "$dir" "" normalize-only; then
+			raw="$USAGE_WRITTEN_BODY" current_at="$USAGE_WRITTEN_AT"
+			prior_at="$USAGE_PRIOR_AT" prior_raw="$USAGE_PRIOR_RAW" sample_claims="$USAGE_SAMPLE_CLAIMS"
+			lane_now; age=$((LANE_NOW - current_at))
+		fi
 		return
 	fi
 	if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
@@ -1751,11 +1746,11 @@ refresh_lane_usage() {
 		# resolves: the row served below is one caller's answer, and the record
 		# is what keeps every other caller on this host off the endpoint until
 		# the window passes.
-		record_usage_refusal "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
+		record_usage_refusal
 		# A cached figure seconds old is a better answer than no answer, and no
 		# rate limit is a reason to wall a launch on an account the host has a
 		# reading of.
-		serve_refused_usage "$harness" "$dir" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" "$detail; these are the last figures it gave" && return
+		serve_refused_usage "$harness" "$dir" "$detail; these are the last figures it gave" && return
 		# Nothing usable is cached, so there is no figure to stand in. One
 		# retry, because a first refusal with nothing behind it leaves every
 		# caller with nothing to decide on. It waits the window or
@@ -1777,7 +1772,7 @@ refresh_lane_usage() {
 	# 429 `rate_limited`, and any other code `refused`, a reading of the
 	# credential the request went through that a read never made cannot claim.
 	if [[ -n "$HTTP_CODE" && "$HTTP_CODE" != 2?? ]]; then
-		record_usage_refusal "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
+		record_usage_refusal
 		return
 	fi
 	if [[ -z "$HTTP_BODY" ]]; then
@@ -1799,21 +1794,20 @@ refresh_lane_usage() {
 	# figure, so this run reports what it measured either way. The write
 	# replaces the whole record, so a refusal on record is spent the moment the
 	# endpoint answers again. The figure it displaces is this sample's prior.
-	at="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
-	current_at="$at"
-	write_usage_cache "$harness" "$dir" "$at" "$raw" || true
+	write_usage_cache "$harness" "$dir" "$raw" || true
+	current_at="$USAGE_WRITTEN_AT"
 	prior_at="${USAGE_PRIOR_AT:-}"; prior_raw="${USAGE_PRIOR_RAW:-}"
 	sample_claims="${USAGE_SAMPLE_CLAIMS:-1}"
 }
 
-# Records the refusal the last split_http_answer read, at epoch $1, and sets
+# Records the refusal the last split_http_answer read at current time and sets
 # measure_lane's `status` and `detail` to it. Every usage refusal goes through
 # here, a cold lane's retry included, so one line judges what each code means
 # and the window each is recorded for.
-record_usage_refusal() { # NOW
+record_usage_refusal() {
 	status="$(http_refusal_status "$HTTP_CODE" refused)"
 	detail="usage query refused with HTTP $HTTP_CODE"
-	write_usage_refusal "$harness" "$dir" "$1" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true
+	write_usage_refusal "$harness" "$dir" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true
 }
 
 # Serves the last figure the host holds for a rate-limited lane, into
@@ -1831,10 +1825,10 @@ record_usage_refusal() { # NOW
 # them. usage_from_record and refresh_lane_usage are its callers, and the values
 # are measure_lane's locals, reached through their frames by bash's dynamic
 # scope: neither may declare them, or the writes stop at its frame.
-serve_refused_usage() { # HARNESS DIR NOW DETAIL
-	read_usage_cache "$1" "$2" "$3" "$SESSION_WINDOW_S" silent || return 1
+serve_refused_usage() { # HARNESS DIR DETAIL
+	read_usage_cache "$1" "$2" "$SESSION_WINDOW_S" silent || return 1
 	status="rate_limited"
-	detail="$4"
+	detail="$3"
 }
 
 # ── Usage cache ──────────────────────────────────────────────────────────────
@@ -1964,7 +1958,7 @@ prune_usage_cache() {
 }
 
 # Prints `{fetched_at, age, usage, prior}` for a cached body of harness $1 and
-# dir $2 at epoch $3 whose age is under $4 seconds; an EMPTY $4 accepts any
+# dir $2 at current time whose age is under $3 seconds; an EMPTY $3 accepts any
 # age. `fetched_at` and `age` are the figure's own. Fails on a miss: an
 # unreadable or malformed record, one naming another lane, one holding no
 # figure, one stamped in the future, and a consumed bucket whose reset arrived.
@@ -1975,8 +1969,8 @@ prune_usage_cache() {
 # there is. Whether --no-cache forbids the read is likewise the caller's: it
 # declines a figure it could refresh, not the figure that stands in for one the
 # endpoint refused.
-read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S [SILENT]
-	local file output cached expired="" buckets legacy creds starting_age="${age:-null}"
+read_usage_cache() { # HARNESS DIR MAX_AGE_S [SILENT]
+	local file output cached expired="" buckets legacy creds observed starting_age="${age:-null}"
 	usage_cache_file "$1" "$2" silent
 	file="$USAGE_CACHE_FILE"
 	[[ -f "$file" ]] || return 1
@@ -1987,8 +1981,9 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S [SILENT]
 		# Its credentials are already validated. Other login changes miss here.
 		[[ "$CACHE_ONLY" == true || "${refreshed:-false}" == true || ! "$creds" -nt "$file" ]] || return 1
 	fi
+	lane_now; observed="$LANE_NOW"
 	output="$(jq -er --arg h "$1" --arg d "$2" --arg policy "$USAGE_POLICY" --arg host "${ORCH_LANE_HOST:-local}" \
-		--argjson now "$3" --argjson max "${4:-null}" "$LANE_MODEL_JQ$USAGE_POLICY_JQ$USAGE_RESET_JQ"'
+		--argjson now "$observed" --argjson max "${3:-null}" "$LANE_MODEL_JQ$USAGE_POLICY_JQ$USAGE_RESET_JQ"'
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
 		       and ($at | type) == "number" and (.usage | type) == "object")
@@ -2016,9 +2011,13 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S [SILENT]
 		else
 			buckets="$(parse_usage_body "$1" unrounded <<<"$raw")" || return 1
 		fi
-		expired="$(jq -sr --argjson now "$3" "$LANE_MODEL_JQ$USAGE_RESET_JQ"'
-			[.[] | usage_consumed_reset($now)]
-			| first // empty' <<<"$buckets")" || return 1
+		lane_now; observed="$LANE_NOW"
+		age=$((observed - current_at))
+		[[ "$age" -ge 0 && ( -z "${3:-}" || "$age" -lt "$3" ) ]] || return 1
+		output="$(jq -sr --argjson now "$observed" --argjson record "$cached" "$LANE_MODEL_JQ$USAGE_RESET_JQ"'
+			([.[] | usage_consumed_reset($now)] | first // ""),
+			($record + {age: ($now - $record.fetched_at)} | tojson)' <<<"$buckets")" || return 1
+		{ IFS= read -r expired; IFS= read -r cached; } <<<"$output"
 	fi
 	if [[ -n "$expired" ]]; then
 		message usage-cache-reset "$2" "$expired" >&2
@@ -2026,7 +2025,7 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S [SILENT]
 		return 1
 	fi
 	USAGE_CACHE_RECORD="$cached" USAGE_CACHE_LEGACY="$legacy"
-	[[ "${5:-}" == silent ]] || printf '%s\n' "$cached"
+	[[ "${4:-}" == silent ]] || printf '%s\n' "$cached"
 }
 
 # The age a cached figure is served within: the TTL, or the caller's own pass
@@ -2049,30 +2048,45 @@ usage_serve_max_age() {
 
 # Renamed into place only once complete, so a concurrent reader never parses
 # half a record.
-write_usage_cache() {
-	local file tmp prior=null sample_claims=1 normalized=null parsed prior_fields ems="${expires_ms:-0}" rms="${refresh_expiry:-0}" write_mode="${5:-refresh}" existing_record=null
-	if [[ "$1" != host-accounts && "$LANE_CLAIMS_RC" == 0 ]]; then
-		account_claims "$2" "$1" '' silent || return 1
-		sample_claims="$ACCOUNT_CLAIMS"
-	fi
-	USAGE_SAMPLE_CLAIMS="$sample_claims"
+write_usage_cache() { # HARNESS DIR [USAGE [MODE]]
+	local file tmp prior=null sample_claims=1 normalized=null parsed bound_fields sample_at="" retained_body=""
+	local ems="${expires_ms:-0}" rms="${refresh_expiry:-0}" write_mode="${4:-refresh}" body="${3:-}" existing_record=null
+	lane_now; USAGE_WRITTEN_AT="$LANE_NOW"
+	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
 	usage_cache_file "$1" "$2" silent
 	file="$USAGE_CACHE_FILE"
-	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
+	# Historical normalization may rewrite only the record bound under this lock.
+	[[ "$write_mode" != normalize-only || "$USAGE_REFRESH_LOCK_HELD" == true ]] || return 1
 	if [[ -f "$file" ]] && usage_cache_permitted "$file" "$1"; then
-		prior_fields="$(jq -er --arg h "$1" --arg d "$2" --arg mode "$write_mode" '
+		existing_record="$(<"$file")"
+		bound_fields="$(jq -er --arg h "$1" --arg d "$2" --arg mode "$write_mode" '
 			(.usage_fetched_at // .fetched_at) as $at
 			| select(.harness == $h and .config_dir == $d
 			       and ($at | type) == "number" and (.usage | type) == "object")
-			| (if $mode == "normalize-only" then .prior // null else {fetched_at: $at, usage} end)
-			| select(type == "object") | tojson, .fetched_at, (.usage | tojson)' "$file" 2>/dev/null)" || prior_fields=""
-		if [[ -n "$prior_fields" ]]; then
-			{ IFS= read -r prior; IFS= read -r USAGE_PRIOR_AT; IFS= read -r USAGE_PRIOR_RAW; } <<<"$prior_fields"
+			| . as $record
+			| (if $mode == "normalize-only" then .prior // null else {fetched_at: $at, usage} end) as $p
+			| $at, ($record.usage | tojson), ($p | tojson), ($p.fetched_at // ""),
+			  (if ($p.usage | type) == "object" then ($p.usage | tojson) else "" end),
+			  ($record.sample_claims // 1)' <<<"$existing_record" 2>/dev/null)" || bound_fields=""
+		if [[ -n "$bound_fields" ]]; then
+			{ IFS= read -r sample_at; IFS= read -r retained_body; IFS= read -r prior;
+			  IFS= read -r USAGE_PRIOR_AT; IFS= read -r USAGE_PRIOR_RAW; IFS= read -r sample_claims; } <<<"$bound_fields"
 		fi
 	fi
-	[[ "$write_mode" != normalize-only ]] || existing_record="$(<"$file")"
+	if [[ "$write_mode" == normalize-only ]]; then
+		[[ -n "$sample_at" ]] || return 1
+		body="$retained_body"
+	else
+		sample_claims=1
+		if [[ "$1" != host-accounts && "$LANE_CLAIMS_RC" == 0 ]]; then
+			account_claims "$2" "$1" '' silent || return 1
+			sample_claims="$ACCOUNT_CLAIMS"
+		fi
+	fi
+	USAGE_SAMPLE_CLAIMS="$sample_claims"
+	USAGE_WRITTEN_BODY="$body"
 	if [[ "$1" != host-accounts ]]; then
-		parsed="$(parse_usage_samples "$1" "$4" "${USAGE_PRIOR_RAW:-null}")" || return 1
+		parsed="$(parse_usage_samples "$1" "$body" "${USAGE_PRIOR_RAW:-null}")" || return 1
 		[[ "$ems" =~ ^[0-9]+$ ]] || ems=0
 		[[ "$rms" =~ ^[0-9]+$ ]] || rms=0
 		normalized="$(jq -nc --arg h "$1" --arg d "$2" --arg status "${status:-ok}" --arg detail "${detail:-}" \
@@ -2083,40 +2097,47 @@ write_usage_cache() {
 			  prior_buckets: $parsed.prior_buckets, expires_ms: $ems, refresh_expires_ms: $rms}}')" || return 1
 	else
 		local host_rows
-		host_rows="$(jq -r '.rows // ""' <<<"$4")" || return 1
+		host_rows="$(jq -r '.rows // ""' <<<"$body")" || return 1
 		normalized="$(host_account_rows "$host_rows" all normalized)" || return 1
 	fi
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
+	if [[ "$write_mode" == normalize-only ]]; then
+		USAGE_WRITTEN_AT="$sample_at"
+	else
+		lane_now; USAGE_WRITTEN_AT="$LANE_NOW"
+	fi
 	if jq -nc "${USAGE_POLICY_ARGS[@]}" --arg host "${ORCH_LANE_HOST:-local}" --argjson normalized "$normalized" \
 		--arg mode "$write_mode" --argjson existing "$existing_record" \
-		--arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" --argjson claims "$sample_claims" \
+		--arg h "$1" --arg d "$2" --argjson now "$USAGE_WRITTEN_AT" --argjson u "$body" --argjson p "$prior" --argjson claims "$sample_claims" \
 		'(if $mode == "normalize-only" then $existing
 		  else {harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p, sample_claims: $claims} end)
-		+ {normalized: ($normalized + {host: $host, policy: $policy, fetched_at: $now, prior_at: ($p.fetched_at // null)})}
+		+ {normalized: ($normalized + {host: $host, policy: $policy, fetched_at: $now, prior_at: ($p.fetched_at // null)}
+		    + (if $mode == "normalize-only" and $existing.refusal != null then {refusal: $existing.refusal} else {} end))}
 		+ (if $h == "host-accounts" then {policy: $policy} else {} end)' >"$tmp" \
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
 	fi
-	rm -f -- "$tmp"
+	rm -f -- "${tmp:?}"
 	return 1
 }
 
-# Prints `{age, refusal}` for a live recorded refusal of endpoint $4 on the lane
-# of harness $1 and dir $2 at epoch $3; fails on a miss, a refusal of the other
+# Prints `{age, refusal}` for a live recorded refusal of endpoint $3 on the lane
+# of harness $1 and dir $2 at current time; fails on a miss, a refusal of the other
 # endpoint, a malformed record and one stamped in the future.
 #
 # --no-cache does NOT reach this. It declines a cached FIGURE, and an operator
 # asking for a fresh reading must not be the one caller on the host that posts
 # again what the endpoint has already refused.
 read_usage_refusal() {
-	local file creds
+	local file creds observed
 	usage_cache_file "$1" "$2" silent
 	file="$USAGE_CACHE_FILE"
 	[[ -f "$file" ]] || return 1
 	case "$1" in claude) creds="$2/.credentials.json" ;; codex) creds="$2/auth.json" ;; *) creds="$2/config.json" ;; esac
 	[[ "$CACHE_ONLY" == true || "${refreshed:-false}" == true || ! "$creds" -nt "$file" ]] || return 1
-	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" '
+	lane_now; observed="$LANE_NOW"
+	jq -ce --arg h "$1" --arg d "$2" --argjson now "$observed" --arg ep "$3" '
 		select(.harness == $h and .config_dir == $d
 		       and (.fetched_at | type) == "number"
 		       and (.refusal | type) == "object"
@@ -2138,7 +2159,7 @@ read_usage_refusal() {
 # A record that could not be written leaves every caller on the host posting
 # again each pass, which is what the window exists to stop, so that failure is a
 # `refusal-unrecorded` notice on stderr. The lane is still reported.
-write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
+write_usage_refusal() { # HARNESS DIR ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
 	store_usage_refusal "$@" && return 0
 	message refusal-unrecorded "$USAGE_CACHE_DIR" >&2
 	return 1
@@ -2147,9 +2168,9 @@ write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 # Writes the refusal over the lane's record, keeping the figure the record held
 # for this lane, under its own stamp, beside it: `kept` is that figure as
 # `{usage, usage_fetched_at}`, or `{}` where there is none.
-store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
-	local file tmp window kept="" parsed ems="${expires_ms:-0}" rms="${refresh_expiry:-0}"
-	window="$(usage_refusal_window "${8:-}")"
+store_usage_refusal() { # HARNESS DIR ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
+	local file tmp window kept="" parsed observed ems="${expires_ms:-0}" rms="${refresh_expiry:-0}"
+	window="$(usage_refusal_window "${7:-}")"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	[[ ! -f "$file" ]] || kept="$(jq -c --arg h "$1" --arg d "$2" '
@@ -2168,11 +2189,12 @@ store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 	[[ "$ems" =~ ^[0-9]+$ ]] || ems=0
 	[[ "$rms" =~ ^[0-9]+$ ]] || rms=0
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
-	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" \
-		--arg status "$5" --arg code "$6" --arg detail "$7" \
+	lane_now; observed="$LANE_NOW"
+	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$observed" --arg ep "$3" \
+		--arg status "$4" --arg code "$5" --arg detail "$6" \
 		--arg policy "$USAGE_POLICY" --arg host "${ORCH_LANE_HOST:-local}" --arg plan "${plan:-}" \
 		--argjson reading "$parsed" --argjson ems "$ems" --argjson rms "$rms" \
-		--argjson until "$(( $3 + window ))" --argjson kept "$kept" \
+		--argjson until "$(( observed + window ))" --argjson kept "$kept" \
 		'($kept | del(.normalized)) + {harness: $h, config_dir: $d, fetched_at: $now,
 		  refusal: {endpoint: $ep, status: $status,
 		            code: (if $code == "" then null else $code end),
@@ -2224,7 +2246,9 @@ usage_refusal_window() { # RETRY_AFTER
 # The take arms orch_take_lock's EXIT trap in this shell, so measure_lane only
 # ever runs in a subshell: a pipeline stage in collect_lanes and a command
 # substitution in cmd_pick_lane.
+USAGE_REFRESH_LOCK_HELD=false
 usage_lock_take() {
+	USAGE_REFRESH_LOCK_HELD=false
 	local lock="$USAGE_CACHE_DIR/.usage-refresh.lock"
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null
 	if ! exec 8>"$lock"; then
@@ -2234,12 +2258,15 @@ usage_lock_take() {
 	if ! orch_take_lock 8 "$lock" "$USAGE_LOCK_WAIT_S"; then
 		message usage-lock-timeout "$lock" "$USAGE_LOCK_WAIT_S" >&2
 		exec 8>&-
+	else
+		USAGE_REFRESH_LOCK_HELD=true
 	fi
 }
 
 # Closing the descriptor releases a flock; orch_release_lock removes the mkdir
 # mutex where flock is absent and is a no-op where this run holds none.
 usage_lock_release() {
+	USAGE_REFRESH_LOCK_HELD=false
 	exec 8>&-
 	orch_release_lock
 }
@@ -2348,7 +2375,8 @@ renew_token() { # HARNESS DIR CREDS
 	lock="$dir/.lanes-refresh.lock"
 	exec 9>"$lock" || { token_refusal error '' '' "the lock file $lock could not be opened"; return 1; }
 	orch_take_lock 9 "$lock" 30 || { token_refusal unreachable '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
-	if ! token_expired "$(token_expiry_ms "$harness" "$creds")" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" \
+	lane_now
+	if ! token_expired "$(token_expiry_ms "$harness" "$creds")" "$LANE_NOW" \
 		&& at="$(access_token "$harness" "$creds")" && [[ -n "$at" ]]; then
 		printf '%s' "$at"
 	else
@@ -2422,7 +2450,8 @@ refresh_claude_token() { # DIR CREDS
 	# through the check that closes it.
 	expires_in=$(jq -r 'try (.expires_in // empty) catch empty' <<<"$HTTP_BODY")
 	[[ "$expires_in" =~ ^[0-9]+$ && "$expires_in" -gt 0 ]] || { token_refusal expired "$HTTP_CODE" "$HTTP_RETRY" 'the token endpoint returned no usable expires_in'; return 1; }
-	new_exp=$(( ($((RUN_NOW + SECONDS - RUN_STARTED_SECONDS)) + expires_in) * 1000 ))
+	lane_now
+	new_exp=$(( (LANE_NOW + expires_in) * 1000 ))
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$HTTP_BODY")
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
@@ -2503,7 +2532,8 @@ refresh_codex_token() { # DIR AUTH_JSON
 			waited=$((waited + 1))
 		done
 	} | (cd -- "$dir" && CODEX_HOME="$dir" codex app-server; : >"$run/exited") >"$run/answer" 2>"$run/stderr" 9>&-
-	token_expired "$(token_expiry_ms codex "$creds")" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" && refusal="$(codex_renew_refusal "$dir" "$run")"
+	lane_now
+	token_expired "$(token_expiry_ms codex "$creds")" "$LANE_NOW" && refusal="$(codex_renew_refusal "$dir" "$run")"
 	rm -rf -- "$run"
 	[[ -z "$refusal" ]] || { printf '%s' "$refusal"; return 1; }
 	at="$(access_token codex "$creds")"
@@ -3051,7 +3081,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 # status is the one host_account_records passes on: 0 answered, 2 verb absent,
 # 1 failed.
 host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status back
-	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait discovered cache_phase host_locked=false
+	local host="$1" rc=0 rows err cached record="" record_rc=0 busy_wait discovered cache_phase host_locked=false
 	local -a bound=()
 	# Read through the same cache every usage figure in this script uses, keyed on
 	# the PROVIDER rather than on a harness and a config dir, since one answer
@@ -3062,9 +3092,8 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 	# because which accounts a host holds decides a gate rather than reporting a
 	# figure. `pick` reads through the cache, since what it takes from the answer
 	# is usage windows, read on the TTL every window has.
-	now_s="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" || { message host-accounts-unreadable "$host" clock >&2; return 1; }
 	for cache_phase in fast locked; do
-	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache host-accounts "$host" "$now_s" "$(usage_serve_max_age)")"; then
+	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache host-accounts "$host" "$(usage_serve_max_age)")"; then
 		# ONE read of the record, status on its first line and the rows after it:
 		# a listing the overseer runs every cycle pays for each process it starts,
 		# and two reads of one string is one process more than the answer needs.
@@ -3151,7 +3180,7 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 		# implement it will answer the same way all window, while a failure is the
 		# transient one of the two and must not be replayed for the rest of it.
 		[[ "$rc" -ne 2 ]] || {
-			write_usage_cache host-accounts "$host" "$now_s" '{"status":2,"rows":""}' || true
+			write_usage_cache host-accounts "$host" '{"status":2,"rows":""}' || true
 			usage_lock_release
 			return 2
 		}
@@ -3168,7 +3197,7 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 	# Row callers can still use an answer the cache record could not carry.
 	# Record callers need discovery too and refuse that failure below. A failed
 	# cache write costs the next run a call, never a wrong answer.
-	[[ "$record_rc" -ne 0 ]] || write_usage_cache host-accounts "$host" "$now_s" "$record" || true
+	[[ "$record_rc" -ne 0 ]] || write_usage_cache host-accounts "$host" "$record" || true
 	usage_lock_release
 	if [[ "${2:-}" == record ]]; then
 		[[ "$record_rc" -eq 0 ]] || return 1
@@ -4020,6 +4049,9 @@ SECONDS=0
 RUN_STARTED_SECONDS=$SECONDS
 RUN_NOW="$(date +%s)" || die time-failed
 [[ "$RUN_NOW" =~ ^[0-9]+$ && "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die time-failed
+# Observation time is current; stored sample and prior times stay historical.
+lane_now() { LANE_NOW=$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS)); }
+
 # The policy a provider record is stamped with and judged under: the UTC day
 # a retirement date is measured against and every LANE_POLICY_SETTINGS entry,
 # as `<name>=<value>` lines. A provider record holds the rows that policy
@@ -4042,7 +4074,8 @@ NORMALIZED_HOST_READY=false NORMALIZED_HOST_USAGE="" NORMALIZED_HOST_STATUS=0 NO
 NORMALIZED_AT=-1 NORMALIZED_TARGET="" NORMALIZED_FAILED=false
 # Reuse a complete batch within one epoch. A later consumer rechecks expiry.
 load_normalized() { # [NAMED_DIR]
-	local now="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" target="${1:-}" rc
+	lane_now
+	local now="$LANE_NOW" target="${1:-}" rc
 	[[ "$NORMALIZED_AT" != "$now" || "$NORMALIZED_TARGET" != "$target" ]] || return 0
 	decode_normalized "$target" || { rc=$?; NORMALIZED_FAILED=true; message account-read-failed normalized "$rc" >&2; return 1; }
 	NORMALIZED_AT="$now" NORMALIZED_TARGET="$target"
@@ -4241,7 +4274,7 @@ case "$SUB" in
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not
 		# say. The projection rides beside it for a reader weighing the claims.
-		now="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" || exit 1
+		lane_now; now="$LANE_NOW"
 		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" --argjson now "$now" "$LANE_MODEL_JQ"'
 			map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
@@ -4344,7 +4377,7 @@ case "$SUB" in
 		# harness, so its rows answer nothing either and the judge says unjudged.
 		[[ -n "$LANE_PANE_ID" ]] || STATE_ROWS=""
 		[[ -z "$LANE_PANE_ID" ]] || { rec="$(lane_running_record "$STATE_RECORDS" "$LANE_ARG" copilot)" &&
-			lane_context_copilot_note "$rec" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"; } || die state-fleet "$LANE_ARG"
+			lane_now; lane_context_copilot_note "$rec" "$LANE_NOW"; } || die state-fleet "$LANE_ARG"
 		[[ -z "$COPILOT_SESSION_NOTE" ]] || message copilot-note "$LANE_ARG" "$COPILOT_SESSION_NOTE" >&2
 		lane_state_rc=0
 		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" \
