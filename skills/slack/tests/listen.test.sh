@@ -68,7 +68,7 @@ sk_poll "$BARE"
 assert_eq "$RC=$ERR1" "2=slack: root-unbound=$BARE" "a root with no binding is refused"
 mkdir -p "$SK_TMP/noorch" && git -C "$SK_TMP/noorch" init -q
 sk_poll "$SK_TMP/noorch"
-assert_eq "$RC=$ERR1" "2=slack: orch-missing=$SK_TMP/noorch" "a root with no lane-mail is refused"
+assert_eq "$RC=$ERR1" "2=slack: root-unbound=$SK_TMP/noorch" "a root with no binding is refused before root construction"
 sk_run -- listen --once
 assert_eq "$RC=${ERR1%%=*}" "2=slack: usage" "listen with no --root is a usage refusal"
 
@@ -298,7 +298,7 @@ assert_eq "$GAP_ID_JOURNAL" "$GAP_ID_BEFORE" "the replayed delivery is journaled
 # --- a second relay on the same checkout is refused ------------------------------------
 sk_relay_start "$ROOT"
 sk_poll "$ROOT"
-assert_eq "$RC=${ERR1%% pid=*}" "2=slack: relay-running=$ROOT" "a second relay on the checkout is refused by the lock"
+assert_eq "$RC=${ERR1%% pid=*}" "1=slack: relay-running=$ROOT" "a held checkout lock skips that root's poll"
 sk_relay_stop
 
 # --- reconnect catch-up does not re-read a thread past SLACK_THREAD_DAYS ---------------
@@ -863,7 +863,7 @@ assert_eq "$RC" "0" "control: the lock no longer exclusive, a second relay runs"
 sk_relay_stop
 sk_bin_reset
 
-sk_mutant shared relay.py 'if other != root\.path:' 'if other != root.path and False:'
+sk_mutant shared relay.py 'if bound == channel and other != path:' 'if bound == channel and other != path and False:'
 sk_run -- listen --root "$PAIR_A" --root "$PAIR_B" --once
 assert_eq "$RC" "0" "control: the one-channel rule gone, both roots poll one channel"
 sk_bin_reset

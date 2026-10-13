@@ -1,0 +1,1 @@
+- A root that the Slack relay cannot start or poll skips that poll. Other roots continue. The failed root retries each later poll and recovers without a restart.

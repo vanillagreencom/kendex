@@ -1090,20 +1090,15 @@ class Relay:
         self.api = api
         self.clock = clock
         self.sleep = sleep
-        self.roots = [RootRelay(root, settings, load_presence(root), api, clock) for root in roots]
+        self.paths = roots
+        self.roots: List[RootRelay] = []
+        self.by_channel: Dict[str, RootRelay] = {}
+        self.root_errors: Dict[Path, str] = {}
+        self.channels: Dict[Path, str] = {}
         # Two roots on one channel would each deliver every owner message
         # into their own mailbox and both post there.
-        first: Dict[str, Path] = {}
-        for root in self.roots:
-            other = first.setdefault(root.channel, root.path)
-            if other != root.path:
-                raise Refusal(
-                    "channel-shared", f"{root.channel} roots={other},{root.path} fix=run `slack setup --name NAME` in one of them"
-                )
-        self.by_channel = {root.channel: root for root in self.roots}
-        for root in self.roots:
-            root.lock.acquire()
-            root.prepare_hold()
+        for path in roots:
+            self.claim_channel(path, read_binding(path).channel)
         self.bot_user = str(api.get("auth.test")["user_id"])
         self.socket: Optional[WebSocket] = None
         # `connected`, `reconnecting` while the relay tries to open a
@@ -1118,6 +1113,35 @@ class Relay:
         self.incoming: queue.Queue = queue.Queue()
         self.stop_reader = threading.Event()
         self.reader: Optional[threading.Thread] = None
+        for path in self.paths:
+            self.start_root(path)
+
+    def claim_channel(self, path: Path, channel: str) -> None:
+        for other, bound in self.channels.items():
+            if bound == channel and other != path:
+                raise Refusal(
+                    "channel-shared", f"{channel} roots={other},{path} fix=run `slack setup --name NAME` in one of them"
+                )
+        self.channels[path] = channel
+
+    def start_root(self, path: Path) -> bool:
+        root = None
+        try:
+            root = RootRelay(path, self.settings, load_presence(path), self.api, self.clock)
+            self.claim_channel(path, root.channel)
+            root.lock.acquire()
+            root.prepare_hold()
+            if self.socket is not None:
+                root.journal.append(t="connect", at=self.since)
+        except Refusal as err:
+            if root is not None:
+                root.hold_lock.release()
+                root.lock.release()
+            self.root_failed(path, err)
+            return False
+        self.roots.append(root)
+        self.by_channel[root.channel] = root
+        return True
 
     def poll_once(self) -> bool:
         """One poll of every root; False when any root's poll was refused
@@ -1125,11 +1149,16 @@ class Relay:
         code_error = self.read_code()
         clean = code_error == ""
         today = datetime.datetime.fromtimestamp(self.clock(), datetime.timezone.utc).date().isoformat()
+        active = {root.path for root in self.roots}
+        for path in self.paths:
+            if path not in active and not self.start_root(path):
+                clean = False
         for root in self.roots:
             try:
                 root.compact_daily(today)
                 root.poll(self.bot_user)
                 root.record_status(code_error == "", code_error, self.code, self.connection, self.since, self.connection_error)
+                self.root_errors.pop(root.path, None)
             except Exception as err:
                 self.root_failed(root, err)
                 clean = False
@@ -1141,7 +1170,7 @@ class Relay:
         file keeps the running code and returns its keyed refusal for the
         status record."""
         try:
-            reading = fingerprint(root.path for root in self.roots)
+            reading = fingerprint(self.paths)
         except Refusal as err:
             print_refusal(err)
             return f"{err.key}={err.value}"
@@ -1149,29 +1178,33 @@ class Relay:
         self.reading = reading
         return ""
 
-    def root_failed(self, root: RootRelay, err: Exception) -> None:
+    def root_failed(self, root: Union[Path, RootRelay], err: Exception) -> None:
         """Record one root's failure without letting its status write stop
         other roots. A dead token still stops the shared relay."""
-        if isinstance(err, Refusal) and err.key == "slack-auth-failed":
+        if isinstance(err, Refusal) and err.key in ("slack-auth-failed", "root-unbound", "binding-invalid", "channel-shared"):
             raise err
+        path = root if isinstance(root, Path) else root.path
         error = f"{err.key}={err.value}" if isinstance(err, Refusal) else f"{type(err).__name__}: {err}"
         status_error = ""
         try:
-            root.record_status(False, error, self.code, self.connection, self.since, self.connection_error)
+            if isinstance(root, RootRelay):
+                root.record_status(False, error, self.code, self.connection, self.since, self.connection_error)
         except Exception as status_err:
             # A broken root can also refuse its status write. Keep the
             # primary diagnostic and continue serving the other roots.
             status_error = f" status={type(status_err).__name__}: {status_err}"
-        failure = Refusal(err.key, f"{err.value} root={root.path}{status_error}") if isinstance(err, Refusal) else Refusal(
-            "root-poll-failed", f"{root.path} cause={error}{status_error}"
-        )
-        print_refusal(failure)
+        if self.root_errors.get(path) != error:
+            failure = Refusal(err.key, f"{err.value} root={path}{status_error}") if isinstance(err, Refusal) else Refusal(
+                "root-poll-failed", f"{path} cause={error}{status_error}"
+            )
+            print(keyed(failure.key, failure.value), file=sys.stderr, flush=True)
+            self.root_errors[path] = error
 
     def run(self, once: bool) -> int:
         """`--once` is one poll of every root with no connection, its
         catch-up included; otherwise the connection loop, which a dead token
         or a settled code update alone ends."""
-        print(keyed("listening", f"{len(self.roots)} poll_seconds={self.settings.poll_seconds}"), flush=True)
+        print(keyed("listening", f"{len(self.paths)} poll_seconds={self.settings.poll_seconds}"), flush=True)
         if once:
             return 0 if self.poll_once() else 1
         app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
