@@ -100,6 +100,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### jarvis
 
+- Continuing sessions update handoff state when it changes and reconcile it before transfer. Handoffs identify task and result locations. Changed state commits at scheduled reports by default. Finding dispositions stay on tracker items.
 - Wait for attached agent returns before succession and read existing child output before repeating work after an emergency handoff.
 - Jarvis reaches the agent in each of your kendex projects through that repository's mailbox: its setup check lists the reachable and unreachable repositories, it offers the mailbox install where one is missing, and until then it answers from the agent's session transcript, labelled as such.
 - Keep send results separate from output filters, read totals and ages from their source records, and remove sign-in query strings before logging browser tabs.
