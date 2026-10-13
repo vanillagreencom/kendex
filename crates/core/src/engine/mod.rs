@@ -322,9 +322,10 @@ fn plan_claude_project_defaults(
 }
 
 /// The scope default transition, with ownership from the document's record
-/// and enabled settings registrations from the pass, shared by planning and
-/// replay. File and tree installations alone provide no shared settings
-/// position for verification, so they do not seed the default.
+/// and surviving installations, shared by planning and replay. New insertion
+/// needs a settings registration because file and tree installs alone have
+/// no shared settings position. Owned defaults retain their lock-based
+/// lifetime even when this pass does not rebuild a surviving registration.
 pub(crate) fn claude_project_default_edit(
     env: &Env,
     scope: &Scope,
@@ -336,22 +337,29 @@ pub(crate) fn claude_project_default_edit(
         return None;
     }
     let settings = targets::claude_settings(env, scope);
-    let enabled = registrations.iter().any(|(key, edits)| {
-        lock.entries
-            .get(key)
-            .is_some_and(|entry| entry.harness == HarnessId::Claude && entry.enabled)
-            && edits.iter().any(|(path, _)| path == &settings)
-    });
-    let edit = match (ownership, enabled) {
-        (None | Some(crate::lock::ClaudeProjectDefault::Owned), true) => {
-            Some(crate::configedit::ConfigEdit::ClaudeProjectDefaults)
+    let edit = match ownership {
+        None => registrations
+            .iter()
+            .any(|(key, edits)| {
+                lock.entries
+                    .get(key)
+                    .is_some_and(|entry| entry.harness == HarnessId::Claude && entry.enabled)
+                    && edits.iter().any(|(path, _)| path == &settings)
+            })
+            .then_some(crate::configedit::ConfigEdit::ClaudeProjectDefaults)?,
+        Some(crate::lock::ClaudeProjectDefault::Owned) => {
+            if lock
+                .entries
+                .values()
+                .any(|entry| entry.harness == HarnessId::Claude && entry.enabled)
+            {
+                crate::configedit::ConfigEdit::ClaudeProjectDefaults
+            } else {
+                crate::configedit::ConfigEdit::RemoveClaudeProjectDefaults
+            }
         }
-        (Some(crate::lock::ClaudeProjectDefault::Owned), false) => {
-            Some(crate::configedit::ConfigEdit::RemoveClaudeProjectDefaults)
-        }
-        (None | Some(crate::lock::ClaudeProjectDefault::Released), false)
-        | (Some(crate::lock::ClaudeProjectDefault::Released), true) => None,
-    }?;
+        Some(crate::lock::ClaudeProjectDefault::Released) => return None,
+    };
     Some((settings, edit))
 }
 

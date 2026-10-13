@@ -822,8 +822,8 @@ fn history_problem(
 /// record key order, so a hook, server or plugin dropped since leaves the
 /// file the way the writer left it. A removal lands only in a file a
 /// registration or shim is judged in. The scope default transition follows
-/// those removals, using the base record's ownership and this pass's enabled
-/// settings registrations through the planner's shared decision. The writer's
+/// those removals, using the base record's ownership and this pass's lock and
+/// registrations through the planner's shared decision. The writer's
 /// [`crate::engine::config_edits::ConfigEditPlan::compose`] then orders and
 /// transforms those edits against the base text, including ownership release
 /// for a value the person changed or deleted before that revision. Replay
