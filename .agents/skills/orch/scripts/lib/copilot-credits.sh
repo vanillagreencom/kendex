@@ -74,13 +74,13 @@
 # `token_based_billing`, and `quota_reset_date_utc` the reset. Its
 # `credits_used` is not the pool github.com shows, so the used count is the
 # grant less `remaining`, the figure the share is judged from. An answer lacking `remaining` or `entitlement` as numbers, or with an
-# entitlement of zero, measures nothing. The used share is rounded UP, so a
+# entitlement of zero, measures nothing unless it says unlimited. The used share is rounded UP, so a
 # pool one credit short of its grant never reads as having more; a pool at or
 # past its grant is 100, walled at every threshold whatever overage it
 # permits, since no paid overage is authorised; one reporting more remaining
-# than it was granted is 0. Only a boolean `unlimited: true` is unlimited, a
-# pool at 0 percent used whatever the counts say; a zero, a failed read and a
-# missing or mistyped field never are.
+# than it was granted is 0. A boolean `unlimited: true` with a positive
+# entitlement is a pool at 0 percent used; without that entitlement it is
+# spent. A failed read and a missing or mistyped unlimited field never are unlimited.
 #
 # Sourced, never run.
 
@@ -209,11 +209,12 @@ CURLCFG
 copilot_credits_parse() {
   jq -c '
     ((.quota_snapshots.premium_interactions | objects) // {}) as $q
-    | ($q.unlimited == true) as $unlimited
     | (($q.remaining | numbers) // null) as $remaining
     | (($q.entitlement | numbers) // null) as $granted
+    | ($q.unlimited == true and $granted != null and $granted > 0) as $unlimited
     | ($remaining != null and $granted != null and $granted > 0) as $counted
     | (if $unlimited then 0
+       elif $q.unlimited == true then 100
        elif ($counted | not) then null
        elif $remaining <= 0 then 100
        else ((($granted - $remaining) * 100 / $granted) | ceil | if . < 0 then 0 else . end)

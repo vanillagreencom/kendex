@@ -84,7 +84,7 @@ copilot_account 1copilot "$(pool 1000000 900000 '{"credits_used":318085}')"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
 # Equal resets keep the chooser row focused on unlimited room, not its bonus.
-copilot_account 4copilot '{"quota_reset_date_utc":"2099-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true,"credits_used":42}}}'
+copilot_account 4copilot '{"quota_reset_date_utc":"2099-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true,"entitlement":1000,"credits_used":42}}}'
 copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100,"credits_used":7}}}'
 copilot_account 6copilot "$(pool 0 0)"
 copilot_account 7copilot '{"quota_snapshots":{"premium_interactions":{"entitlement":"1000000","remaining":900000}}}'
@@ -96,6 +96,8 @@ copilot_account 12copilot "$(pool 1000000 900000 '{"credits_used":0}')"
 copilot_account 13copilot "$(pool 1000000 900000 '{"credits_used":"318085"}')"
 copilot_account 14copilot "$(pool 1000000 900000)"
 printf '403\n' > "$FIXTURE_DIR/.14copilot.status"
+copilot_account 15copilot "$(pool 0 0 '{"unlimited":true,"quota_remaining":0,"credits_used":1054584}')"
+copilot_account 16copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":true,"remaining":0,"overage_permitted":true}}}'
 mkdir -p "$H/.0copilot/session-state"
 run_lanes list --harness all --local --json
 while IFS='|' read -r label alias field want; do
@@ -115,6 +117,8 @@ raw month consumption needs no measured pool|5copilot|[.credits_used, .status, .
 a pool at zero is spent whatever overage it permits|2copilot|[.monthly_pct, .headroom_pct, .credits.overage_permitted]|[100,0,true]
 one credit left rounds up to a spent share|3copilot|.monthly_pct|100
 an explicit unlimited seat is a monthly pool at 0 percent used|4copilot|[.status, .unlimited, .monthly_pct, .headroom_pct, .binding_bucket, .credits.unit, .credits.unlimited]|["ok",true,0,100,"monthly","AIC",true]
+an unlimited answer with zero entitlement is spent even with paid overage|15copilot|[.monthly_pct, .unlimited]|[100,false]
+an unlimited answer with no entitlement is spent|16copilot|[.monthly_pct, .unlimited]|[100,false]
 an unlimited that is not the boolean true measures nothing|5copilot|[.status, .unlimited, .headroom_pct]|["no_usage_data",false,null]
 an entitlement of zero measures nothing|6copilot|[.status, .headroom_pct, .credits]|["no_usage_data",null,null]
 an entitlement of another type measures nothing|7copilot|[.status, .headroom_pct]|["no_usage_data",null]
@@ -155,6 +159,8 @@ done <<ROWS
 the unlimited seat is picked over one with less room, handed back under COPILOT_HOME|pick --harness copilot --exclude-lane $H/.10copilot|rc=0 out=COPILOT_HOME=$H/.4copilot key=none
 a named account at zero is walled even under a bound of 100, its line naming no Codex credits|pick --lane $H/.2copilot --harness copilot --max-pct 100|rc=3 out= key=pick-lane-walled,lane=$H/.2copilot,wall=100,bucket=monthly,max-pct=100,projected-headroom=0
 a named unlimited seat is room for any model|pick --lane $H/.4copilot --harness copilot --model claude-opus-5 --binding-floor|rc=0 out=COPILOT_HOME=$H/.4copilot key=none
+a named unlimited answer with zero entitlement is walled|pick --lane $H/.15copilot --harness copilot|rc=3 out= key=pick-lane-walled,lane=$H/.15copilot,wall=100,bucket=monthly,max-pct=95,projected-headroom=0
+a named unlimited answer with no entitlement is walled|pick --lane $H/.16copilot --harness copilot|rc=3 out= key=pick-lane-walled,lane=$H/.16copilot,wall=100,bucket=monthly,max-pct=95,projected-headroom=0
 a named account with room clears the default bound|pick --lane $H/.1copilot --harness copilot --model claude-opus-5|rc=0 out=COPILOT_HOME=$H/.1copilot key=none
 a named account whose answer measured nothing is unmeasured|pick --lane $H/.5copilot --harness copilot|rc=5 out= key=pick-lane-unmeasured,lane=$H/.5copilot,model=none
 ROWS
@@ -442,7 +448,7 @@ new_home control
 copilot_account 1copilot "$(pool 1000000 900000 '{"credits_used":318085}')"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
-copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100}}}'
+copilot_account 5copilot "$(pool 1000 0 '{"unlimited":"true"}')"
 copilot_account 6copilot "$(pool 0 0)"
 copilot_account 9copilot "$(pool 1000 -500)"
 copilot_account 10copilot "$(pool 1000 1200)"
@@ -456,8 +462,20 @@ lanes_control ctl-clamp lib/copilot-credits.sh '| ceil | if . < 0 then 0 else . 
 control_row 10copilot .monthly_pct -20 "control: without the clamp more remaining than granted reads a negative share"
 lanes_control ctl-ceil lib/copilot-credits.sh '* 100 / $granted) | ceil |' '* 100 / $granted) | floor |'
 control_row 3copilot .monthly_pct 99 "control: rounded down, one credit left reads as room"
-lanes_control ctl-unlimited lib/copilot-credits.sh '| ($q.unlimited == true) as $unlimited' '| ($q.unlimited | . == true or . == "true") as $unlimited'
+lanes_control ctl-unlimited lib/copilot-credits.sh '| ($q.unlimited == true and $granted != null and $granted > 0) as $unlimited' '| (($q.unlimited | . == true or . == "true") and $granted != null and $granted > 0) as $unlimited'
 control_row 5copilot .headroom_pct 100 "control: an unlimited read loosely takes a string for a measured unlimited seat"
+lanes_control ctl-unlimited-entitlement lib/copilot-credits.sh '| ($q.unlimited == true and $granted != null and $granted > 0) as $unlimited' '| ($q.unlimited == true) as $unlimited'
+copilot_account 15copilot "$(pool 0 0 '{"unlimited":true,"quota_remaining":0,"credits_used":1054584}')"
+control_row 15copilot '[.monthly_pct, .unlimited]' '[0,true]' "control: the base rule reads a zero grant as free room"
+entitlement_control_rc=0
+(
+  FAIL=0
+  assert_eq "$(record 15copilot '[.monthly_pct, .unlimited]')" '[100,false]' "an unlimited answer with zero entitlement is spent even with paid overage"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/unlimited-entitlement-control.log" 2>&1 || entitlement_control_rc=$?
+assert_eq "$entitlement_control_rc" 1 "control: the zero entitlement row rejects the base unlimited rule"
+lanes_control ctl-unlimited-spent lib/copilot-credits.sh '       elif $q.unlimited == true then 100' '       elif $q.unlimited == true then null'
+control_row 15copilot '[.monthly_pct, .unlimited]' '[null,false]' "control: without the spent share a zero grant is unmeasured"
 lanes_control ctl-limit lib/copilot-credits.sh '($remaining != null and $granted != null and $granted > 0) as $counted' '($remaining != null and $granted != null) as $counted'
 control_row 6copilot '[.status, .monthly_pct]' '["ok",100]' "control: without the entitlement bound a zero grant reads as a measured pool"
 lanes_control ctl-used lib/copilot-credits.sh 'used: ($granted - $remaining),' 'used: (($q.credits_used | numbers) // null),'
@@ -478,7 +496,7 @@ run_lanes pick --lane "$H/.2copilot" --harness copilot --max-pct 100
 assert_eq "rc=$RC key=$(pick_key)" "rc=3 key=pick-lane-walled,lane=$H/.2copilot,wall=100,bucket=monthly,max-pct=100,projected-headroom=0,credits=none,credit-floor=5000" \
   "control: without the harness test a walled Copilot account names a Codex balance of none"
 lanes_control ctl-unlimited-zero lib/copilot-credits.sh '    | (if $unlimited then 0' '    | (if $unlimited then null'
-copilot_account 4copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
+copilot_account 4copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":true,"entitlement":1000}}}'
 run_lanes pick --lane "$H/.4copilot" --harness copilot --model claude-opus-5
 assert_eq "rc=$RC" rc=5 "control: an unlimited seat read with no share is unmeasured for a named model"
 lanes_control ctl-month-burn lib/lane-model.sh '   elif .binding_bucket == "monthly" then $burn_default * 5 / 720' '   elif false then 0'
