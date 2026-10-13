@@ -114,6 +114,15 @@ A relative file path starts at its root; ~ expands to the home directory.
 While its file is younger than its age bound, --status shows held-by=jarvis.
 A root naming no file has no hold. README.md defines the Jarvis session hold and resume.
 
+Stalled-worker diagnostic on stderr, exit 2:
+  worker-stalled=STAGE age=SECONDS bound=SECONDS
+    STAGE names the worker operation that stopped making progress.
+    age is seconds since startup or the last completed poll, connect
+    attempt, API operation or copied download chunk.
+    bound is SLACK_POLL_SECONDS plus
+    RECONNECT_BOUND_SECONDS. The failed exit lets a service configured
+    with Restart=on-failure restart the relay.
+
 Non-fatal diagnostics on stderr:
   setting-renamed old=KEY new=KEY
     A retired presence key supplies the value; the new key is unset.
@@ -132,7 +141,8 @@ Non-fatal diagnostics on stderr:
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
     " compacted, installed, enabled, active, restarted, listening, connected,"
     " reconnected, reloading, slack-relay, ts on stdout; tracker-links-unavailable is a non-fatal"
-    " notice on stderr; refusals on stderr with exit 2: python3 and"
+    " notice on stderr; worker-stalled is on stderr with exit 2;"
+    " refusals on stderr with exit 2: python3 and"
     " settings-unreadable from the launcher before Python starts, then "
     + ", ".join(EXPLAIN) + ".",
     width=78, break_on_hyphens=False,
