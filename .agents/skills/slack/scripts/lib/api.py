@@ -70,6 +70,7 @@ class Slack:
         sleep: Callable[[float], None] = time.sleep,
         token_name: str = "SLACK_BOT_TOKEN",
         scope: str = "",
+        progress: Callable = lambda stage, done=False: None,
     ) -> None:
         self.token = token
         # The setting a refused token is named by in the refusal's fix=.
@@ -82,6 +83,7 @@ class Slack:
         self.base_url = base_url.rstrip("/")
         self.clock = clock
         self.sleep = sleep
+        self.progress = progress
         self.calls: Deque[float] = deque()
 
     def calls_last_minute(self) -> int:
@@ -95,6 +97,7 @@ class Slack:
         whole by default. `HTTPError` is the caller's to judge; a network
         failure takes its key by the rule above."""
         self.calls.append(self.clock())
+        self.progress("api:" + label)
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
                 return read(resp)
@@ -104,6 +107,8 @@ class Slack:
             raise Refusal("slack-unreachable", f"{label} ({err.reason})") from err
         except (OSError, http.client.HTTPException) as err:
             raise Refusal("slack-response-lost", f"{label} ({err})") from err
+        finally:
+            self.progress("api:" + label, True)
 
     def _request(self, req: urllib.request.Request, method: str, retries: int) -> Dict:
         for attempt in range(retries + 1):
@@ -174,11 +179,13 @@ class Slack:
             copied = 0
             try:
                 while True:
+                    self.progress("download")
                     chunk = resp.read(COPY_BYTES)
                     if not chunk:
                         break
                     out.write(chunk)
                     copied += len(chunk)
+                    self.progress("download", True)
             except http.client.HTTPException as err:
                 raise Refusal("file-not-fetched", f"download ({err})") from err
             if declared is not None and declared.strip().isdigit() and copied != int(declared):

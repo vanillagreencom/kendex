@@ -175,6 +175,7 @@ def listen(roots: List[Path], settings: Settings, api: Slack, once: bool) -> int
 
     def work() -> None:
         try:
+            api.progress = progress
             relay = Relay(roots, settings, api)
             relay.progress = progress
             result = relay.run(once)
@@ -1257,7 +1258,8 @@ class Relay:
             result = 0 if self.poll_once() else 1
             self.progress("poll", True)
             return result
-        app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
+        app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write",
+                        progress=self.progress)
         next_poll = retry_at = self.clock()
         delay = RETRY_FIRST_SECONDS
         try:
@@ -1365,6 +1367,7 @@ class Relay:
         the network refused it; a token no retry mends stops the relay."""
         try:
             url = str(app_api.post("apps.connections.open")["url"])
+            self.progress("connect")
             socket = WebSocket.connect(url, IDLE_SECONDS)
         except Refusal as err:
             if err.key == "slack-auth-failed":
