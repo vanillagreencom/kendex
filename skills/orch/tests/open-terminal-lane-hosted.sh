@@ -464,16 +464,17 @@ api_preference_case() { # REMAINING FLAGS EXPECTED [PREFERENCE]
   assert_eq "$(observe 'rc=0 cmd_lane=none claim_lanes=eclaude') hosted=$(typed 'env PI_CODING_AGENT_DIR=/pi bash -lc') pool=$(awk -F'\t' '{print $9}' "$RUN"/state/claims/*.claim 2>/dev/null) prompt=$(awk '$2 == "permission-prompt" {n++} END {print n+0}' <<<"$OUT")" \
     "$3" 'the preference launches the eligible account with its spending pool' "$RUN/preference.out"
 }
+printf '%s\n' \
+  '150|--dangerously-skip-permissions|rc=0 cmd_lane=none claim_lanes=eclaude hosted=1 pool=api-credit prompt=0' \
+  '4|--dangerously-skip-permissions|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0' \
+  '150|--permission-mode dontAsk|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0' \
+  '150||rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=1' \
+  '150|--dangerously-skip-permissions --permission-mode dontAsk|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0' \
+  '150|--dangerously-skip-permissions|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0|pi:1:high,claude:fable:high' \
+  > "$TMP_ROOT/api-preference-rows"
 while IFS='|' read -r credit flags expected preference; do
   api_preference_case "$credit" "$flags" "$expected" "$preference"
-done <<'ROWS'
-150|--dangerously-skip-permissions|rc=0 cmd_lane=none claim_lanes=eclaude hosted=1 pool=api-credit prompt=0
-4|--dangerously-skip-permissions|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0
-150|--permission-mode dontAsk|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0
-150||rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=1
-150|--dangerously-skip-permissions --permission-mode dontAsk|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0
-150|--dangerously-skip-permissions|rc=0 cmd_lane=eclaude claim_lanes=eclaude hosted=0 pool=plan prompt=0|pi:1:high,claude:fable:high
-ROWS
+done < "$TMP_ROOT/api-preference-rows"
 API_PREFERENCE_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-api-preference/orch lib/lane-launch.sh)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-api-preference/orch"
