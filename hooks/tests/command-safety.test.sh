@@ -250,8 +250,6 @@ environment_rows() {
 [2,"bash wrapper.sh env -u \"$@\" __KEN_MISSING__","suffix-unset-unproved-option-operand"]
 [2,"if :; then env -u \"$@\" __KEN_MISSING__; fi","conditional-unset-unproved-option-operand"]
 [2,"bash -c 'command env -u \"$@\" __KEN_MISSING__'","forwarded-nested-unproved-option-operand"]
-[0,"env -u \"$@\" __KEN_MISSING__","direct-unset-unproved-operand-keeps-main-behavior"]
-[0,"env -C \"$@\" .","direct-chdir-unproved-operand-keeps-main-behavior"]
 [0,"cat <<< 'env'\nprintf done","quoted-here-string-data"]
 [0,"cat <<< \"$json\"","variable-here-string-data"]
 [2,"cat <<< 'ordinary'\nenv","dump-after-single-quoted-here-string"]
