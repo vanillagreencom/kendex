@@ -986,9 +986,10 @@ check "with the step that globs a package deleted, no suite of it is unclaimed" 
 
 # Dedicated owners disappear independently. Their declarations and the
 # generic rest invocation must not answer the claims search themselves.
-for package in slack review-gate orch; do
+for package in github slack review-gate orch; do
   owner=""
   case "$package" in
+    github) owner="- name: GitHub suites" ;;
     slack) owner="- name: Slack suites" ;;
     review-gate) owner="- name: review-gate suites" ;;
   esac
@@ -1259,7 +1260,11 @@ while IFS='|' read -r shard step battery stem; do
       index($0, "- name: " step) { active = 1 }
       active && substr($0, 1, 8) == "      - " && !index($0, "- name: " step) { active = 0 }
       active && index($0, "bash skills/orch/tests/run-all.sh --battery " battery) {
-        if (fault == "omitted") sub("--battery " battery, "--battery " battery " !=" stem)
+        if (fault == "omitted") {
+          # Runner options precede filters in a one-line invocation.
+          if ($0 ~ /^ *run: /) $0 = $0 " !=" stem
+          else sub("--battery " battery, "--battery " battery " !=" stem)
+        }
         else if ($0 ~ /^ *run: /) {
           sub(/run: /, "run: |\n          ")
           $0 = $0 "\n          bash skills/orch/tests/run-all.sh --battery " battery " =" stem
@@ -1310,6 +1315,7 @@ while IFS='|' read -r shard step battery stem; do
   done
   check "must-fail: a pooled assertion fails its owning step: $step $battery" failed "$result"
 done <<'POOLED'
+orch-rest|GitHub suites|skills/github/tests|check-review-replies-threads.test
 mailbox|Mailbox suites|skills/mailbox/tests|alone
 review-gate|review-gate suites|skills/review-gate/tests|validate-standard.test
 refresh|refresh suites|refresh/tests|refresh-report.test
@@ -1326,12 +1332,12 @@ worktree|worktree suites|skills/worktree/tests|worktree_output_prune
 worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
 POOLED
 
-unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<tab>path` the selection misses
-  local job_set="$1" shard path out="$TMP/owner-selection"
+unselected_owners() { # <ci-job-set> <owners file> [repository] ; `shard<tab>path` the selection misses
+  local job_set="$1" repository="${3:-$ROOT}" shard path out="$TMP/owner-selection"
   while IFS=$'\t' read -r shard path; do
     : > "$out"
-    ( cd "$ROOT" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
-      GITHUB_OUTPUT="$out" "$job_set" ) 2>/dev/null ||
+    ( cd "$repository" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
+      GITHUB_OUTPUT="$out" "$job_set" --event-parity ) 2>/dev/null ||
       { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; continue; }
     grep -qF "\"$shard\"" "$out" || printf '%s\t%s\n' "$shard" "$path"
   done < "$2"
@@ -1346,6 +1352,42 @@ owner_shards="$(cut -f1 "$OWNERS" | sort -u)"
 check "a suite is read for every shard the matrix declares" "$declared_shards" "$owner_shards"
 check "ci-job-set selects the shard running each suite for a diff to that suite" \
   "" "$(unselected_owners "$JOB_SET" "$OWNERS")"
+
+# Workflow claims and dependency searches are separate evidence. A
+# minimal repository prevents orch's GitHub dependency from hiding a broken
+# direct package mapping in the selector control.
+for major in 4 3; do
+  suite_owners "$WORKFLOW" files "$major" > "$TMP/github-platform-owners"
+  check "GitHub suites belong only to orch-rest under Bash $major" \
+    "$(sed -n 's%^skills/github/tests/%orch-rest\tskills/github/tests/%p' "$UNIV")" \
+    "$(awk -F '\t' '$2 ~ /^skills\/github\/tests\// {print}' "$TMP/github-platform-owners" | sort)"
+done
+GITHUB_SELECT="$(mktemp -d)" || { bad "GitHub selector scratch allocation failed"; exit 1; }
+[[ -d "$GITHUB_SELECT" && ! -L "$GITHUB_SELECT" ]] || exit 1
+GITHUB_SELECT="$(cd -- "$GITHUB_SELECT" && pwd -P)"
+trap 'rm -rf -- "${TMP:?}" "${GITHUB_SELECT:?}"' EXIT
+mkdir -p "$GITHUB_SELECT/tools/lib" "$GITHUB_SELECT/skills/github/tests"
+cp "$PART/tools/rust-reads" "$GITHUB_SELECT/tools/rust-reads"
+cp "$ROOT/tools/lib/skill-requirements.awk" "$GITHUB_SELECT/tools/lib/skill-requirements.awk"
+cp "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set"
+printf '#!/usr/bin/env bash\n' > "$GITHUB_SELECT/skills/github/tests/pr-view.test.sh"
+git -C "$GITHUB_SELECT" init -q
+git -C "$GITHUB_SELECT" add skills/github/tests/pr-view.test.sh
+printf 'orch-rest\tskills/github/tests/pr-view.test.sh\n' > "$TMP/github-selection-owner"
+check "a direct GitHub suite selects orch-rest with pull-request and merge-group parity" \
+  "" "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT")"
+if grep -qF '"rest"' "$TMP/owner-selection"; then
+  bad "the isolated GitHub package still selects rest"
+else
+  ok "the isolated GitHub package leaves rest unselected"
+fi
+awk '$0 == "    skills/github) want_shard orch-rest ;;" {
+       $0 = "    skills/github) if false; then want_shard orch-rest; else want_shard rest; fi ;;"; n++
+     } {print} END {exit n != 1}' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set" ||
+  { bad "GitHub mapping control changed other than one row"; exit 1; }
+check "must-fail: routing GitHub back to rest names its unselected orch-rest suite" \
+  "$(cat "$TMP/github-selection-owner")" \
+  "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT")"
 
 # Must-fail: removing Slack's package row leaves its shard standing down on
 # a Slack diff, and the suite its selection misses is named. The edit reaches

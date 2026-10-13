@@ -858,6 +858,10 @@ jobs:
         if: matrix.shard == 'orch-rest'
         run: bash skills/orch/tests/run-all.sh --shard orch-rest
 
+      - name: GitHub suites
+        if: matrix.shard == 'orch-rest'
+        run: bash skills/orch/tests/run-all.sh --battery skills/github/tests --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test
+
 
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the
@@ -1280,7 +1284,7 @@ jobs:
             case "$x" in
               orch) needle="run: bash skills/$x/tests/run-all.sh" ;;
               review-gate) needle="skills/$x/tests/*.test.sh" ;;
-              slack | mailbox) needle="--battery skills/$x/tests" ;;
+              github | slack | mailbox) needle="--battery skills/$x/tests" ;;
               commit-guards | linear | bot-instructions | preflight | worktree)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;

@@ -393,6 +393,7 @@ want_shard() { # SHARD...
 want_package() { # PACKAGE
   case "$1" in
     skills/orch) want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest ;;
+    skills/github) want_shard orch-rest ;;
     skills/review-gate | refresh) want_shard review-gate refresh ;;
     skills/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;
     skills/linear) want_shard linear linear-controls-a linear-controls-b ;;
