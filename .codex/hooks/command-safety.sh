@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. A reserved word in shell-head position ends ordinary selection. The complete unsupported suffix receives conservative known-dump detection and no filter permission. Exec and builtin use the same conservative policy. Command-like data in those contexts can refuse. Pathname basenames, ordinary arguments and argv arrays do not establish reserved-word syntax. The check executes no submitted text. Env launchers and set operands use the same producer decision in command and suffix positions. Quote exclusion requires an argument role. Quoted file-writing heredoc bodies remain data. Recognized shells, eval and source commands receive conservative checks of all supplied literal input, including piped bodies and non-stdin descriptors. Script operands, replacement redirects and unused bodies do not grant permission. Supported shell invocation options precede executable string selection. Unproved grouped operands retain main's conservative known-read refusal. Unproved executable contexts refuse supplied literal bodies, including persistent descriptors. A heredoc redirect without a proved body identifier refuses. A registered heredoc must have a proven body before the check reads it. Unquoted heredoc substitutions remain executable. Here-strings do not establish a heredoc body. Undecoded escaped delimiters refuse conservatively. Set allowance requires a literal option or operand. Unproved evaluator input retains main's known-read detection across its complete joined text. Suffix and nested env options require literal option operands. Direct-head selection keeps main's existing behavior for unproved operands. Process substitutions, shell programs, transformed pipes and env split strings have no general interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. A reserved word in shell-head position ends ordinary selection. The complete unsupported suffix receives conservative known-dump detection and no filter permission. Exec and builtin use the same conservative policy. Command-like data in those contexts can refuse. Pathname basenames, ordinary arguments and argv arrays do not establish reserved-word syntax. The check executes no submitted text. Env launchers and set operands use the same producer decision in command and suffix positions. Quote exclusion requires an argument role. Quoted file-writing heredoc bodies remain data outside pipeline contexts. Registered heredoc input in a pipeline retains main's conservative known-read refusal across the complete command and inherited heredoc input. Normalized literal input without heredoc-origin evidence cannot activate that cut. Here-string input keeps its existing execution and shared pipe-transfer checks. Recognized shells, eval and source commands receive conservative checks of supplied literal input, including non-stdin descriptors. Script operands, replacement redirects and unused bodies do not grant permission. Supported shell invocation options precede executable string selection. Unproved grouped operands retain main's conservative known-read refusal. Unproved executable contexts refuse supplied literal bodies, including persistent descriptors. A heredoc redirect without a proved body identifier refuses. A registered heredoc must have a proven body before the check reads it. Unquoted heredoc substitutions remain executable. Here-strings do not establish a heredoc body. Undecoded escaped delimiters refuse conservatively. Set allowance requires a literal option or operand. Unproved evaluator input retains main's known-read detection across its complete joined text. Suffix and nested env options require literal option operands. Direct-head selection keeps main's existing behavior for unproved operands. Process substitutions, shell programs, transformed pipes and env split strings have no general interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -305,7 +305,7 @@ environment_program_text() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd target proc output input_redirect input_escaped pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source=""
+  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
   local unsupported="" scan candidate boundary limit producer_end code incoming_sources=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
@@ -314,6 +314,8 @@ environment_dump() { # command kind; arguments are already decoded data
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() executable_texts=() executable_stages=()
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=()
+  # Only a forwarded body can inherit its caller's registered heredoc origin.
+  [ "$#" -ge 3 ] || heredoc_input=""
   [ "${2:-}" != conservative ] || compound=1
   if [ "$1" = argv ]; then
     tokens=(${command_argv[@]+"${command_argv[@]}"})
@@ -484,15 +486,20 @@ environment_dump() { # command kind; arguments are already decoded data
     n=${#literal_inputs[@]}; literal_inputs[n]=${!doc}
     incoming_sources="$incoming_sources $n"
   done
+  [ "${#heredocs[@]}" -eq 0 ] || heredoc_input=1
   n=${#tokens[@]}
   for ((i=0; i<=n; i++)); do
     if [ "$i" -lt "$n" ]; then
       [ "${kinds[$i]}" = operator ] || continue
+      [ "${tokens[$i]}" != '|' ] || pipeline=1
       case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
     fi
     starts[stage]=$start; ends[stage]=$i
     separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
   done
+  # Heredoc input in a pipeline has no body-data permission. Main's known-read
+  # evidence covers the whole context without inferring its receiving path.
+  if [ -n "$pipeline" ] && [ -n "$heredoc_input" ] && environment_main_evidence "$command_text" "${@:3}"; then return 0; fi
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); arg_roles=()
     proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""

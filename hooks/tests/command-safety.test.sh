@@ -276,6 +276,17 @@ environment_rows() {
 [2,"env NAME=value bash <<'EOF'\nenv\nEOF","env-heredoc-program"]
 [2,"sudo -u NAME sh <<'EOF'\nprintenv\nEOF","sudo-heredoc-program"]
 [2,"cat <<'EOF' | bash\nenv\nEOF","piped-heredoc-program"]
+[2, "cat <<'EOF' \u007c& bash\nenv\nEOF", "copilot-merged-pipe-heredoc-program"]
+[2, "cat <<'EOF' \u007c& bash\nenv\nEOF", "copilot-inline-merged-pipe-heredoc-program"]
+[2, "{ cat <<'EOF' \u007c& command env NAME=value bash; }\nenv\nEOF", "grouped-merged-piped-heredoc-program"]
+[2, "cat <<'EOF' \u007c& cat | sh -s\nprintenv\nEOF", "indirect-merged-piped-heredoc-program"]
+[2, "cat <<'EOF' | cat\nenv\nEOF", "pipeline-heredoc-data-retains-main-refusal"]
+[2, "bash -c 'cat | cat' <<'EOF'\nenv\nEOF", "inherited-pipeline-heredoc-retains-main-refusal"]
+[2, "bash -c 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "inherited-merged-pipeline-heredoc-retains-main-refusal"]
+[2, "eval 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "eval-inherited-pipeline-heredoc-retains-main-refusal"]
+[0, "cat <<'EOF' | bash\nprintf done\nEOF", "pipeline-heredoc-without-known-read"]
+[0, "cat <<'EOF' \u007c& bash\nprintf done\nEOF", "merged-pipeline-heredoc-without-known-read"]
+[0, "cat <<'EOF' '\u007c&' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF", "quoted-operator-with-heredoc-remains-data"]
 [2,"cat <<'EOF' | cat | sh -s\nprintenv\nEOF","indirect-piped-heredoc-program"]
 [2,"{ cat <<'EOF' | command env NAME=value bash; }\nenv\nEOF","grouped-piped-heredoc-program"]
 [2,"source /dev/stdin <<'EOF'\nenv\nEOF","sourced-heredoc-program"]
@@ -905,9 +916,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "here-string" { swap("then c=\047<<<\047", "then c=\047<<\047") }
       defect == "delimiter-proof" { swap("[ \"$kind\" != ansi-escaped ] || return 0", "[ \"$kind\" != ansi-escaped ] || return 1") }
       defect == "heredoc-program" { swap("if [ -n \"${stage_stdin[$stage]}\" ]; then", "if false; then") }
-      defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
       defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
+      defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
+      defect == "heredoc-pipeline-cut" { swap("environment_main_evidence \"$command_text\" \"${@:3}\"", "false") }
       defect == "persistent-input-cut" { swap("[ -z \"$data_source\" ] || { mode=dump-unknown; return; }", "[ -z \"$data_source\" ] || :") }
       defect == "grouped-operands-cut" { swap("if environment_main_evidence \"${args[@]:pos}\"; then", "if false; then") }
       defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
@@ -972,9 +984,11 @@ syntax-routing|FAIL environment: brace-conservative-filter: exit=0 expected=2
 here-string|FAIL environment: quoted-here-string-data: exit=2 expected=0
 delimiter-proof|FAIL environment: encoded-heredoc-delimiter: exit=0 expected=2
 heredoc-program|FAIL environment: bash-quoted-heredoc-program: exit=0 expected=2
-heredoc-pipe|FAIL environment: piped-heredoc-program: exit=0 expected=2
 body-evidence|FAIL environment: unread-shell-heredoc-body: exit=0 expected=2
 descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
+heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
+heredoc-pipeline-cut|FAIL environment: copilot-merged-pipe-heredoc-program: exit=0 expected=2
+heredoc-pipeline-cut|FAIL environment: pipeline-heredoc-data-retains-main-refusal: exit=0 expected=2
 persistent-input-cut|FAIL environment: carried-shell-descriptor-program: exit=0 expected=2
 persistent-input-cut|FAIL environment: carried-source-descriptor-program: exit=0 expected=2
 grouped-operands-cut|FAIL environment: shell-command-string-multiple-option-operands: exit=0 expected=2
