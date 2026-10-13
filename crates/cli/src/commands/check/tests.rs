@@ -392,3 +392,33 @@ fn an_explicit_check_draws_every_item_while_the_session_hook_stays_bounded() {
     assert!(explicit.contains("item-11"), "{explicit}");
     assert!(!explicit.contains("more — see:"), "{explicit}");
 }
+
+#[test]
+fn informational_notices_are_visible_in_each_report_mode_and_exit_clean() {
+    let mut report = clean();
+    report.sections.push(section(
+        "external commands",
+        vec![line(Class::Notice, "fixture-command-notice", None)],
+    ));
+    assert_eq!(Class::Notice.status(), CheckStatus::Clean);
+    assert_eq!(report.status.exit_code(), 0);
+    for verbosity in [Verbosity::Default, Verbosity::Verbose] {
+        let page = page(&report, verbosity);
+        assert_eq!(page.sections[0].items[0].class, Class::Notice);
+        assert_eq!(
+            page.sections[0].items[0].text.as_str(),
+            "fixture-command-notice"
+        );
+        assert!(render_plain(&report, verbosity).contains("fixture-command-notice"));
+        assert!(
+            screen(&plain(), &report, "fixture", verbosity)
+                .report
+                .iter()
+                .any(|line| line.contains("fixture-command-notice"))
+        );
+        assert_eq!(
+            verdict(&report, &page, verbosity).map(|(status, _)| status),
+            Some(crate::ui::Status::Notice)
+        );
+    }
+}

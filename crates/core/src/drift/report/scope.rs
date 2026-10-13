@@ -129,6 +129,9 @@ pub(super) fn check_scope(
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
     ctx.lock_lines(&manifest, &lock, sections);
+    if let Ok(crate::lock::LockFile::Current(lock)) = &lock {
+        ctx.command_lines(lock, sections);
+    }
     let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
@@ -253,6 +256,63 @@ impl ManifestRead {
 }
 
 impl ScopeCheck<'_> {
+    /// PATH is machine state, so saved source-comparison verdicts cannot
+    /// answer this check. Read each installed skill's own declaration once.
+    fn command_lines(&self, lock: &crate::lock::Lock, sections: &mut Sections) {
+        let mut seen = BTreeSet::new();
+        for entry in lock
+            .entries
+            .values()
+            .filter(|entry| entry.kind == ItemKind::Skill && entry.enabled)
+        {
+            if seen.contains(&entry.name) {
+                continue;
+            }
+            let Some(artifact) = &entry.emitted else {
+                continue;
+            };
+            let Some(root) = artifact.paths.iter().find(|path| path.is_dir()) else {
+                continue;
+            };
+            let declarations = (|| {
+                let sealed = crate::source_read::SealedSource::open(root)
+                    .map_err(|error| error.to_string())?;
+                let text = sealed
+                    .read_to_string(&sealed.root().join("SKILL.md"))
+                    .map_err(|error| error.to_string())?;
+                let (yaml, _) = crate::frontmatter::split(&text)?;
+                let parsed = crate::frontmatter::parse_tolerant(yaml)?;
+                crate::engine::deps::commands::declared(&parsed.map)
+                    .map_err(|problem| format!("row={} field={}", problem.row, problem.field))
+            })();
+            match declarations {
+                Ok(dependencies) => {
+                    seen.insert(entry.name.clone());
+                    for issue in
+                        crate::engine::deps::commands::check(&dependencies, Some(self.deadline))
+                    {
+                        sections.commands.push(Line {
+                            class: if issue.is_notice() {
+                                Class::Notice
+                            } else {
+                                Class::Drift
+                            },
+                            text: format!("{}{}", self.prefix, issue.message(&entry.name)).into(),
+                            remedy: None,
+                            detail: None,
+                        });
+                    }
+                }
+                Err(error) => sections.unknown.push(unknown(format!(
+                    "{}skill '{}': command declarations unreadable: {}",
+                    self.prefix,
+                    shown(&entry.name),
+                    shown(&error)
+                ))),
+            }
+        }
+    }
+
     /// The manifest: parse failures — a v1 file among them — are
     /// could-not-check, and the one hard failure this check has always had
     /// — an agent referencing an undeclared skill — stays one.

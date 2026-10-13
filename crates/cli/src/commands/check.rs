@@ -160,7 +160,7 @@ fn spans(sentence: &Sentence) -> Vec<Span<'_>> {
 fn status(class: Class) -> Status {
     match class {
         Class::Drift => Status::Decision,
-        Class::Unevaluated | Class::Settling => Status::Notice,
+        Class::Unevaluated | Class::Settling | Class::Notice => Status::Notice,
         Class::Unknown => Status::Failed,
     }
 }
@@ -197,9 +197,20 @@ fn verdict(checked: &CheckReport, page: &Page, verbosity: Verbosity) -> Option<(
         .sections
         .iter()
         .flat_map(|section| &section.items)
-        .filter(|item| item.class != Class::Settling)
+        .filter(|item| !matches!(item.class, Class::Settling | Class::Notice))
         .collect();
     if items.is_empty() {
+        if checked
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .any(|line| line.class == Class::Notice)
+        {
+            return Some((
+                Status::Notice,
+                "external command notices are listed above".to_owned(),
+            ));
+        }
         let settling = checked
             .sections
             .iter()

@@ -44,6 +44,15 @@ pub(super) fn findings(
         Err(finding) => return vec![finding],
     };
     let mut findings = Vec::new();
+    if let Err(problem) = crate::engine::deps::commands::declared(&map) {
+        findings.push(Finding::breakage(
+            format!(
+                "kendex-command-declaration-invalid: skill={} row={} field={}\nSKILL.md has an invalid external command declaration",
+                crate::names::shown(declared), problem.row, problem.field,
+            ),
+            format!("set dependencies.commands row {} field {} in {declared}'s SKILL.md", problem.row, problem.field),
+        ));
+    }
     let in_file = map
         .get("name")
         .and_then(Value::as_str)

@@ -18,6 +18,8 @@ use super::desired::{DesiredState, Withholding};
 use super::desired_kinds::{NotWritten, manifest_refusal, not_written, pin_answers};
 use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 
+pub(crate) mod commands;
+
 /// One item's declared dependencies. Names are as the author wrote them.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Dependencies {
@@ -26,6 +28,7 @@ pub(crate) struct Dependencies {
     pub(crate) required_skills: Vec<String>,
     pub(crate) required_agents: Vec<String>,
     pub(crate) requires_on: Option<Vec<String>>,
+    pub(crate) commands: Vec<commands::CommandDependency>,
 }
 
 /// Each supported edge: the declaring kind and its dependency kind.
@@ -60,6 +63,7 @@ pub(crate) fn declared_dependencies(
                     required_skills: hook.requires_skills,
                     required_agents: Vec::new(),
                     requires_on: hook.requires_on,
+                    commands: Vec::new(),
                 })
                 .unwrap_or_default()
         }),
@@ -94,6 +98,7 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
         required_skills: Vec::new(),
         required_agents: map.string_list("agents").unwrap_or_default(),
         requires_on: None,
+        commands: commands::declared(&parsed.map).unwrap_or_default(),
     }
 }
 

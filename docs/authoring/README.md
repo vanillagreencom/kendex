@@ -91,11 +91,28 @@ dependencies:
   required: [shared-skill]
   optional: [extra-skill]
   agents: [helper]
+  commands:
+    - command: agent-browser
+      purpose: Browser automation
+      floor: "0.1.0"
+      packages:
+        npm: agent-browser
+    - command: op
+      purpose: Read credentials from 1Password
+      optional: true
+      packages:
+        brew: 1password-cli
 ```
 
 Refresh reads the dependency lists again. A removed skill's dependencies leave with `remove --sweep` when no other item needs them. An agent also added by name stays. Derived dependencies do not become explicit choices in the consumer manifest. A skill with no `agents` list keeps its existing behavior. Older kendex builds ignore that key.
 
 A required skill or agent the catalog does not offer produces a warning with its name and a remedy. The parent skill still installs.
+
+`dependencies.commands` lists external commands the skill uses. Each row needs a `command` name found on PATH and a `purpose`. `optional` defaults to `false`. `packages` maps package manager names to package names. kendex reports these names and installs no system tools. An invalid row refuses the skill and names its row and field.
+
+Install and `kendex check` report a missing required command as a finding. A missing optional command is a notice. The skill still installs. Check reads the installed declaration and the current PATH. Disabled skills produce no command findings.
+
+`floor` is an optional minimum version. Use a numeric dotted version. Omitted components compare as zero. Additional components compare numerically, including browser versions. Pre-release and build suffixes follow semantic version rules. kendex asks the resolved command for `--version` only when a floor is declared. A readable version below the floor is a finding for a required command and a notice for an optional command. An unavailable or unreadable version is always a notice. Notices leave the check exit status unchanged.
 
 ## Agent skills
 

@@ -1,5 +1,5 @@
 //! The session-start check: classification over the snapshot, stamps, lock
-//! and manifest — cheap reads only — rendered inside hard budgets with a
+//! and manifest, plus installed command declarations, rendered inside hard budgets with a
 //! closed remedy vocabulary.
 //!
 //! One state the cheap reads cannot judge: a declaration whose position
@@ -24,6 +24,9 @@
 //! is offered as the fix; the one that only prints is offered as what to
 //! see next, because a line an agent runs and meets again next session is
 //! worse than no remedy at all.
+//!
+//! External command availability is checked live. A declared version floor
+//! probes only the resolved host command's --version, within the same deadline.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -64,6 +67,8 @@ impl CheckStatus {
 #[serde(rename_all = "kebab-case")]
 pub enum Class {
     Drift,
+    /// Information that needs no action and leaves the exit status clean.
+    Notice,
     /// The source comparison is missing or outdated, or no deep pass has
     /// run yet. The next background refresh settles it.
     Unevaluated,
@@ -81,7 +86,7 @@ impl Class {
         match self {
             Class::Drift | Class::Unevaluated => CheckStatus::Drift,
             Class::Unknown => CheckStatus::Unknown,
-            Class::Settling => CheckStatus::Clean,
+            Class::Settling | Class::Notice => CheckStatus::Clean,
         }
     }
 }
@@ -483,6 +488,7 @@ enum ManifestState {
 }
 
 struct Sections {
+    commands: Vec<Line>,
     stale: Vec<Line>,
     edited: Vec<Line>,
     removed: Vec<Line>,
@@ -509,6 +515,7 @@ impl Sections {
     /// Every line pushed so far, across the sections holding them.
     fn lines(&self) -> impl Iterator<Item = &Line> {
         [
+            &self.commands,
             &self.stale,
             &self.edited,
             &self.removed,
@@ -537,6 +544,7 @@ impl Sections {
 
     fn new() -> Sections {
         Sections {
+            commands: Vec::new(),
             stale: Vec::new(),
             edited: Vec::new(),
             removed: Vec::new(),
@@ -562,6 +570,7 @@ impl Sections {
         project_target: Option<ProjectTarget>,
     ) -> CheckReport {
         let sections: Vec<Section> = [
+            ("external commands", self.commands),
             ("stale", self.stale),
             ("edited by hand", self.edited),
             ("gone from their source", self.removed),

@@ -23,6 +23,16 @@ pub enum ScriptEnvironment {
 }
 
 impl Hardened {
+    /// The host executable resolved from a skill's PATH declaration. The
+    /// catalog supplies no arguments or working directory; stdin stays closed.
+    pub(crate) fn command_version(program: &Path) -> Hardened {
+        let mut hardened = Hardened::spawning(program.as_os_str(), owned(&["--version"]));
+        hardened.scrub_git_redirects();
+        // Version output is metadata, bounded like the frontmatter that
+        // requested it so an uncooperative command cannot fill memory.
+        hardened.max_output(64 * 1024)
+    }
+
     /// Documented stdio app-server RPC, with the target account's inherited auth.
     /// Model discovery starts no thread, turn, login or account probe.
     pub fn codex_app_server(cwd: &Path) -> Hardened {
