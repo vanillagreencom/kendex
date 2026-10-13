@@ -248,8 +248,9 @@ assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" \
   "$(skip_line "$TMP_ROOT/no-verdict" version-only pkg/CHANGELOG.md,pkg/package.json)" \
   "a version-only restack with a finding-free bound-ended range run still skips"
 nv_control_dir="$(mutant_scripts no-verdict-red dev-validate-run)" || exit 1
+nv_red_control_dir="$nv_control_dir"
 mutate_file "$nv_control_dir/dev-validate-run" \
-  $'    if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then\n      continue\n    fi\n' ''
+  'if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' 'if [[ "$verdict" != pass ]]; then'
 assert_eq "$(ask "$nv_control_dir/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
   "control: with every no-verdict run read as red the restack re-tests"
 nv_control_dir="$(mutant_scripts no-verdict-prefix dev-validate-run)" || exit 1
@@ -264,6 +265,33 @@ printf 'finding-prefix=guard: \n' >> "$nv_dir/start"
 printf 'guard: suite=skills/p/tests/a.sh\n' >> "$nv_dir/log"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
   "a range run the bound ended whose log holds a finding line re-tests"
+
+echo "=== the newest no-verdict tree uses the pass conflict and union rules ==="
+nv_main_control="$(mutant_scripts no-verdict-main dev-validate-run)" || exit 1
+mutate_file "$nv_main_control/dev-validate-run" \
+  'if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' \
+  $'if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then continue; fi\n    if [[ "$verdict" != pass ]]; then'
+for row in 'clean|no-conflict|none' 'package|version-only|pkg/CHANGELOG.md,pkg/package.json' 'code|retest|code.sh'; do
+  IFS='|' read -r name condition paths <<<"$row"
+  wt="$TMP_ROOT/newest-$name"
+  cp -a -- "$TMP_ROOT/$name" "$wt"
+  for start_file in "$wt"/tmp/dev-validate-*/start; do
+    nv_dir="${start_file%/start}"
+    sed -i.bak '/^start=/d; /^finding-prefix=/d' "$start_file"
+    printf 'start=2999999999\nfinding-prefix=guard: \n' >> "$start_file"
+    printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$nv_dir/exit"
+  done
+  want="$(skip_line "$wt" "$condition" "$paths")"
+  [[ "$condition" != retest ]] || want="restack=retest cause=path-unconflicted path=$paths rc=1"
+  assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$wt")" "$want" "no-verdict tree: $name"
+  assert_eq "$(ask "$nv_main_control/restack-skip" "$wt")" "restack=retest cause=no-passing-run rc=1" \
+    "control: current main discards the only reusable run: $name"
+  assert_eq "$(ask "$nv_red_control_dir/restack-skip" "$wt")" "restack=retest cause=newer-red rc=1" \
+    "control: reading no-verdict as red rejects the reusable tree: $name"
+  printf 'guard: suite=tests/a.sh\n' >> "$nv_dir/log"
+  assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$wt")" "restack=retest cause=newer-red rc=1" \
+    "one failed lane rejects the same restack: $name"
+done
 
 echo "=== controls: each rule, removed, lets its row skip ==="
 # control NAME FILE OLD NEW ROW — ROW's answer under copies of the scripts with
@@ -316,7 +344,7 @@ assert_eq "$(control no-conflict-kind restack-skip 'CONFLICT*) retest conflict-k
 assert_eq "$(control no-mode restack-skip '          *) retest conflict-kind "path=$path" "run-dir=$run_dir" ;;' '          *) ;;' symlink)" \
   "$(version_only symlink changelog.d/fixed/link.md)" \
   "control: with no regular-file mode rule a symlink conflict skips"
-assert_eq "$(control no-newer-red dev-validate-run '    if [[ "$verdict" != pass ]]; then' $'    if [[ "$verdict" != pass ]]; then\n      continue' newer-red)" \
+assert_eq "$(control no-newer-red dev-validate-run '    if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' $'    if [[ "$verdict" != pass ]]; then\n      continue' newer-red)" \
   "$(version_only newer-red pkg/CHANGELOG.md,pkg/package.json)" \
   "control: with no newer-red rule in dev-validate-run a failed head skips"
 

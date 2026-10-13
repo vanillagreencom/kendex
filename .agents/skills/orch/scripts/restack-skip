@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # restack-skip — say whether a restacked head needs its range re-test, or
-# whether the last passing validation run already covers it.
+# whether the last reusable validation run already covers it.
 #
 # The cost this removes: two lanes that change one package each raise its
 # version and add changelog entries, so the second to merge restacks over
 # those lines and then re-validates code no line of which moved.
 #
-# The comparison is the tree the last passing run validated, merged with the
+# The comparison is the tree the last reusable run recorded, merged with the
 # base's new commits, against the restacked HEAD's tree. The run is the one
 # `dev-validate-run --last-pass` names in the worktree; the merge is
 # `git merge-tree --write-tree` of the new base and a commit of that tree on
@@ -49,10 +49,10 @@
 #   restack=retest cause=CAUSE [path=P] [run-dir=DIR]                                                           exit 1
 # paths= names the files the merge left conflicted, none for no-conflict.
 # Causes:
-#   no-passing-run    the worktree holds no passing run with a recorded tree
-#   newer-red         a run newer than the last pass did not pass; run-dir=
-#                     names it. A run the bound ended whose log holds no
-#                     finding line is not one: it refuted nothing, as
+#   no-passing-run    the worktree holds no reusable run with a recorded tree
+#   newer-red         a newer run failed or has unreadable evidence; run-dir=
+#                     names it. A no-verdict run whose log holds no finding
+#                     line reuses its recorded tree with the same rules, as
 #                     `dev-validate-run --help` states under --last-pass
 #   base-unreadable   REF names no commit
 #   head-unreadable   the worktree has no HEAD commit
@@ -124,17 +124,18 @@ cd -- "$worktree"
 
 last_rc=0
 last="$("$SCRIPT_DIR/dev-validate-run" --last-pass --worktree "$worktree" 2>/dev/null)" || last_rc=$?
-run_dir="" validated_head="" validated_tree="" red=false
+run_dir="" validated_head="" validated_tree="" verdict=pass
 read -r -a fields <<<"$last"
 for field in ${fields[@]+"${fields[@]}"}; do
   case "$field" in
-    last-pass=red) red=true ;;
+    last-pass=red) verdict=FAILING ;;
+    verdict=no-verdict) verdict=no-verdict ;;
     run-dir=*) run_dir="${field#*=}" ;;
     head=*) validated_head="${field#*=}" ;;
     tree=*) validated_tree="${field#*=}" ;;
   esac
 done
-[[ "$red" == false || -z "$run_dir" ]] || retest newer-red "run-dir=$run_dir"
+[[ "$verdict" != FAILING || -z "$run_dir" ]] || retest newer-red "run-dir=$run_dir"
 [[ "$last_rc" == 0 && -n "$run_dir" && -n "$validated_head" && -n "$validated_tree" ]] || retest no-passing-run
 new_base="$(git rev-parse --verify -q "$base^{commit}")" || retest base-unreadable "run-dir=$run_dir"
 head="$(git rev-parse --verify -q 'HEAD^{commit}')" || retest head-unreadable "run-dir=$run_dir"

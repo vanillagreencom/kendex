@@ -103,13 +103,13 @@
 #       selection and applies the same ci resolution as a real range start.
 #   dev-validate-run --last-pass --worktree PATH
 #       Print the newest run in that worktree that ran a full or range command
-#       to a pass and whose start records both the HEAD and the tree it
+#       to a pass or a finding-free no-verdict and whose start records the HEAD and tree it
 #       validated, read-only. restack-skip compares a restacked head with
 #       that tree. A ci run ran nothing and is never one. Exit 1 where the
 #       worktree has none, or where a later full or range run did not pass,
 #       an unfinished one included: that run is named as red. A later run the
-#       bound ended whose log holds no finding line is neither: it refuted
-#       nothing, so the pass before it still stands.
+#       bound ended whose log holds no finding line supplies its own tree
+#       with verdict=no-verdict. Missing snapshot or order fields leave the prior pass standing.
 #   dev-validate-run --live --worktree PATH
 #       Print the run still going in that worktree, read-only and starting
 #       nothing: the run a start there would refuse as run-live, judged the
@@ -281,7 +281,7 @@
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|pending|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [tree=SHA] [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME] [ci-fallback=CAUSE] [ci-event=merge_group]   (--record)
 #   validate-mode=full|range|ci                                               (--resolve-mode)
-#   run-dir=… head=SHA tree=SHA                                               (--last-pass)
+#   run-dir=… head=SHA tree=SHA [verdict=no-verdict]                           (--last-pass)
 #   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
 #   run-dir=… pid=N                                                           (--live)
 #   live=none                                                                 (--live, exit 1)
@@ -322,7 +322,7 @@
 #
 # Exit: 0 the command passed, a ci run left its validation to the pull request
 # CI, --stop left nothing running, --live found a run going, or --last-pass
-# found a pass; 1 it failed, the bound ended it, it was lost, or the cap elapsed
+# found a reusable tree; 1 it failed, the bound ended it, it was lost, or the cap elapsed
 # with no verdict, a host check could not run, a --stop could not end a run,
 # --live found no run going, or --last-pass found no pass that still speaks for the worktree; 2 usage or
 # configuration error, or a start refused as
@@ -1226,7 +1226,7 @@ fi
 # The recorded start second orders runs. A full or range run after that pass that did
 # not pass, one unfinished or whose sentinel cannot be read included, is red:
 # the newest pass no longer speaks for the worktree. A no-verdict run whose
-# log holds no finding line is passed over.
+# log holds no finding line supplies its recorded tree with verdict=no-verdict.
 if [[ "$mode" == last-pass ]]; then
   worktree="$(cd "$worktree" && pwd)"
   found=""
@@ -1243,12 +1243,8 @@ if [[ "$mode" == last-pass ]]; then
     if [[ -s "$run_dir/exit" ]]; then
       verdict="$(read_sentinel 2>/dev/null; printf '%s' "$SENTINEL_VERDICT")" || verdict=unreadable
     fi
-    # A timeout or host no-verdict with no finding refuted nothing.
-    if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then
-      continue
-    fi
     started="$(start_field "$start_file" start)"
-    if [[ "$verdict" != pass ]]; then
+    if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then
       if [[ ! "$started" =~ ^[0-9]+$ ]]; then
         order_unknown=true red="$run_dir"
       elif (( 10#$started > red_start )); then
@@ -1264,6 +1260,7 @@ if [[ "$mode" == last-pass ]]; then
     [[ "$started" =~ ^[0-9]+$ ]] || continue
     if (( 10#$started > found_start )); then
       found="run-dir=$run_dir head=$pass_head tree=$pass_tree"
+      [[ "$verdict" != no-verdict ]] || found="$found verdict=no-verdict"
       found_start=$(( 10#$started ))
     fi
   done

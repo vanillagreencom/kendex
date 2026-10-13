@@ -2291,7 +2291,7 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=1 validate=FAILING" "the
 LAST_RED_WANT="last-pass=red run-dir=$last_red_dir rc=1"
 run_script "$RUN" --last-pass --worktree "$proj_last"
 assert_eq "$OUT rc=$RC" "$LAST_RED_WANT" "a failing run after the pass names that run as red" "$ERR"
-mutant mutant-last-pass-red '    if [[ "$verdict" != pass ]]; then' $'    if [[ "$verdict" != pass ]]; then\n      continue'
+mutant mutant-last-pass-red '    if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' $'    if [[ "$verdict" != pass ]]; then\n      continue'
 run_script "$MUTANT" --last-pass --worktree "$proj_last"
 assert_eq "$OUT rc=$RC" "$LAST_PASS_WANT" "control: a read that passes over a red run names the pass before it"
 proj_last_head="$(make_mode_proj proj-last-head "")"
@@ -2872,18 +2872,26 @@ plant_run "$proj_last_nv" 29990101T000000Z-1 full docs/a.md 20
 run_script "$RUN" --last-pass --worktree "$proj_last_nv"
 assert_eq "${OUT%% *} rc=$RC" "run-dir=$last_nv_pass rc=0" \
   "--last-pass passes over a later no-verdict run whose log holds no finding line" "$ERR"
-mutant mutant-last-pass-nv $'    if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then\n      continue\n    fi\n' ''
+mutant mutant-last-pass-nv 'if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' 'if [[ "$verdict" != pass ]]; then'
 run_script "$MUTANT" --last-pass --worktree "$proj_last_nv"
 assert_eq "$OUT rc=$RC" "last-pass=red run-dir=$proj_last_nv/tmp/dev-validate-29990101T000000Z-1 rc=1" \
   "control: a read that counts every no-verdict run as red names it"
+last_nv="$proj_last_nv/tmp/dev-validate-29990101T000000Z-1"
+printf 'head=%s\ntree=%s\nstart=2999999999\n' \
+  "$(start_line "$last_nv_pass" head)" "$(start_line "$last_nv_pass" tree)" > "$TMP_ROOT/nv-fields"
+sed -i.bak '/^head=/d; /^tree=/d; /^start=/d' "$last_nv/start"
+cat "$TMP_ROOT/nv-fields" >> "$last_nv/start"
+run_script "$RUN" --last-pass --worktree "$proj_last_nv"
+assert_eq "$OUT rc=$RC" "run-dir=$last_nv head=$(start_line "$last_nv_pass" head) tree=$(start_line "$last_nv_pass" tree) verdict=no-verdict rc=0" \
+  "--last-pass names the newest finding-free no-verdict tree separately from a pass" "$ERR"
 printf 'echo: suite=tests/a.sh\n' >> "$proj_last_nv/tmp/dev-validate-29990101T000000Z-1/log"
 run_script "$RUN" --last-pass --worktree "$proj_last_nv"
 assert_eq "$OUT rc=$RC" "last-pass=red run-dir=$proj_last_nv/tmp/dev-validate-29990101T000000Z-1 rc=1" \
   "a later no-verdict run whose log holds a finding line is red" "$ERR"
 mutant mutant-last-pass-finding '  (( rc != 1 ))' '  false'
 run_script "$MUTANT" --last-pass --worktree "$proj_last_nv"
-assert_eq "${OUT%% *} rc=$RC" "run-dir=$last_nv_pass rc=0" \
-  "control: a finding reader that finds nothing passes over the red run"
+assert_eq "${OUT%% *} rc=$RC" "run-dir=$last_nv rc=0" \
+  "control: a finding reader that finds nothing reuses the red run"
 # A run that recorded no finding prefix declared no way to tell a finding, so
 # --last-pass names it red.
 proj_last_np="$(make_mode_proj proj-last-np "")"
