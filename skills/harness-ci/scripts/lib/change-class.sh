@@ -124,6 +124,7 @@ opencode.jsonc'
 # supplies the class and harness-only's paths, outside list and range log in
 # WORK. Results are lanes, lanes_cause and the lane_* arrays used by CI proof.
 # No CI proof is read here. The action applies its proof after this decision.
+# Refusals pass cause= fields to the caller's die formatter.
 change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
   local queue_only="$6" work="$7" lanes_from="$8" declaration="" lanes_root="" judged_root=""
@@ -136,19 +137,19 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM
 # can produce. Publishing the families empty there would select the lanes a
 # narrow class runs on nothing at all.
 if [ ! -s "${work:?}/paths" ] && [ "$class" != standard ]; then
-  die "class-without-paths class=$class" \
+  die "cause=class-without-paths class=$class" \
     "a narrow class arrived with no changed path, which no classifier emits"
 fi
 
 declaration=""
 if [ -n "$lanes_from" ]; then
   lanes_root="$(cd "$lanes_from" 2>/dev/null && pwd -P)" ||
-    die "lanes-from-unreadable root=$lanes_from" \
+    die "cause=lanes-from-unreadable root=$lanes_from" \
       "the lanes-from checkout is not a directory"
   judged_root="$(cd "$REPO" 2>/dev/null && pwd -P)" ||
-    die "repo-unreadable repo=$REPO" "the repo checkout is not a directory"
+    die "cause=repo-unreadable repo=$REPO" "the repo checkout is not a directory"
   [ "$lanes_root" != "$judged_root" ] ||
-    die "lanes-from-judged-tree root=$lanes_from" \
+    die "cause=lanes-from-judged-tree root=$lanes_from" \
       "lanes-from names the tree under judgement, whose author could stand a lane down"
   declaration="$lanes_root/.github/ci-lanes.conf"
 fi
@@ -167,7 +168,7 @@ outside_docs() { # PATH — 0 outside the docs set, 1 inside it
   case "$status" in
     0) return 0 ;;
     1) return 1 ;;
-    *) die "outside-list-unreadable status=$status" \
+    *) die "cause=outside-list-unreadable status=$status" \
       "could not read the paths harness-only placed outside the docs set" ;;
   esac
 }
@@ -238,17 +239,17 @@ if [ "$lane_state" = read ] && [ "$class" = render ]; then
   # The classifier's reader owns the event range. Its resolved endpoints
   # keep this status read on that range, including a moving PR base.
   render_base="$(sed -n 's/^base-rev: //p' "${work:?}/class-log")" ||
-    die render-range-unreadable "could not read the render base revision"
+    die "cause=render-range-unreadable" "could not read the render base revision"
   render_head="$(sed -n 's/^head-rev: //p' "${work:?}/class-log")" ||
-    die render-range-unreadable "could not read the render head revision"
+    die "cause=render-range-unreadable" "could not read the render head revision"
   [ -n "$render_base" ] && [ -n "$render_head" ] ||
-    die render-range-unreadable "the render classifier supplied no resolved range"
+    die "cause=render-range-unreadable" "the render classifier supplied no resolved range"
   git -C "$REPO" diff --no-ext-diff --no-textconv \
     --name-status -z --no-renames --diff-filter=AD "$render_base" "$render_head" -- \
-    >"${work:?}/moved" || die render-moves-unreadable "could not read render additions and deletions"
+    >"${work:?}/moved" || die "cause=render-moves-unreadable" "could not read render additions and deletions"
   moved_paths=() added_paths=() has_deletions=false
   while IFS= read -r -d '' status <&3; do
-    IFS= read -r -d '' path <&3 || die render-moves-unreadable "a moved path is absent"
+    IFS= read -r -d '' path <&3 || die "cause=render-moves-unreadable" "a moved path is absent"
     case "$status" in
       A) added_paths+=("$path") ;;
       D) has_deletions=true; moved_paths+=("$path") ;;

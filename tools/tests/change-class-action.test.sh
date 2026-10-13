@@ -843,6 +843,16 @@ ROW_CLASSIFIER=""
 
 # --- 5b. Declaration changes ------------------------------------------------
 
+# Imported refusals already carry cause=. The action's formatter must emit
+# its existing machine field once, as the judged-tree refusal above reads it.
+plant classify \
+  'printf '\''change-class-action: wiring-error: cause=%s\n'\'' "${1#cause=}" >&2' \
+  'printf '\''change-class-action: wiring-error: cause=%s\n'\'' "$1" >&2'
+status="$(run "$PLANTED" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
+check 'must-fail: the action normalizes the imported cause field' \
+  "2 cause=lanes-from-judged-tree root=$TMP/subject" "$status $(refusal)"
+ROW_CLASSIFIER=""
+
 declare_lanes added-glob 'check:event-uniform src/* Cargo.toml tests/*
 tmux:event-uniform tmux/* fixtures/*
 docs-build docs/*

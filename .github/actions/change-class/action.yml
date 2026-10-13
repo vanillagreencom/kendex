@@ -121,11 +121,17 @@ outputs:
   lanes:
     description: >-
       true where the diff runs the workflow's lanes, false where it runs
-      none. When any old path disappears in a render, it runs lanes whose
-      default-branch claims match a deleted or added path. This covers both
+      none. The installed scripts/lib/change-class.sh owns the shared rules.
+      With that producer available, a render runs lanes whose
+      default-branch claims reach a deleted path or an added path beside a deletion.
+      This covers both
       rename ends without content pairing. Other renders run none. A trivial class or
-      docs_only=true on a non-render class runs none. A proof covering every
-      lane the diff would run also runs none. What a lane condition
+      docs_only=true on a non-render class runs none. Valid proof reuse can
+      stand down every lane under the Proof reuse contract. When the selected classifier
+      lacks the shared producer, the action first sets lanes=true with
+      lanes_cause=lane-producer-unavailable and empty lane_verdicts, regardless
+      of the class or docs verdict. Valid proof reuse still applies afterward.
+      What a lane condition
       and an aggregate's waiver read, with lane_verdicts as
       skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
       A failed step publishes none, and a lane condition that runs the lanes
@@ -136,7 +142,9 @@ outputs:
     description: >-
       Why lanes answered as it did: render, trivial, docs-only or
       proof-reused where lanes is false; render-moved-claim for a claimed
-      moved-file candidate in a render; the class otherwise.
+      moved-file candidate in a render; lane-producer-unavailable when the
+      selected classifier lacks the shared producer and no proof stands down
+      all lanes; the class otherwise.
     value: ${{ steps.classify.outputs.lanes_cause }}
   proof_reuse:
     description: >-
@@ -194,7 +202,8 @@ outputs:
       lanes on a valid declaration comparison. This is the union of lane names.
       Other paths use default-branch claims, as
       skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
-      Empty where no base declaration was read. A workflow republishes the lines as
+      Empty where no base declaration was read or the selected classifier lacks
+      the shared lane producer. A workflow republishes the lines as
       step outputs of its own, since a composite action publishes only the
       outputs it declares.
     value: ${{ steps.classify.outputs.lane_verdicts }}

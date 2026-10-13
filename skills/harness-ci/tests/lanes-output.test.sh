@@ -95,4 +95,39 @@ NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "      :"; next }
 run_local "$SANDBOX/control/harness-ci/scripts/change-class" "$SANDBOX/default" true
 assert_eq 'must-fail: base output contract omits the local lane answer' "" \
   "$(lane_answer "$SANDBOX/local-output")"
+
+# Local callers read the structured cause field, not the explanation. Both
+# checkout refusals are reachable from --lanes-from on the public command.
+# The control restores the bare field that the action formatter accepts.
+cp "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class"
+library="$SANDBOX/control/harness-ci/scripts/lib/change-class.sh"
+needle='    die "cause=lanes-from-judged-tree root=$lanes_from" \'
+NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] {
+    hits++; sub(/cause=/, ""); print; next
+  } { print } END { if (hits != 1) exit 2 }' \
+  "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
+! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
+rows=0
+while IFS='|' read -r name declaration expected command; do
+  rows=$((rows + 1))
+  classifier="$CHANGE_CLASS"
+  [ "$command" != control ] || classifier="$SANDBOX/control/harness-ci/scripts/change-class"
+  status=0
+  run_local "$classifier" "$declaration" true || status=$?
+  assert_eq "$name: lane checkout refusal exits 2" 2 "$status"
+  assert_eq "$name: structured local cause" "$expected" \
+    "$(sed -n 's/^wiring-error: cause=\([^ ]*\).*/\1/p' "$SANDBOX/local-stderr")"
+  if [ "$command" = control ]; then
+    assert_eq "$name: reaches the planted lane refusal" \
+      "wiring-error: lanes-from-judged-tree root=$declaration" \
+      "$(sed -n '/^wiring-error:/p' "$SANDBOX/local-stderr")"
+  fi
+  assert_eq "$name: refusal publishes no class" "" "$(cat "$SANDBOX/local-stdout")"
+  assert_eq "$name: refusal publishes no lane outputs" "" "$(cat "$SANDBOX/local-output")"
+done <<ROWS
+judged checkout|$repo|lanes-from-judged-tree|production
+absent checkout|$SANDBOX/missing-checkout|lanes-from-unreadable|production
+must-fail bare cause control|$repo||control
+ROWS
+require_rows local-lane-refusals "$rows"
 report lanes-output

@@ -208,7 +208,7 @@
 set -euo pipefail
 
 die() { # CAUSE MESSAGE
-  printf 'change-class-action: wiring-error: cause=%s\n' "$1" >&2
+  printf 'change-class-action: wiring-error: cause=%s\n' "${1#cause=}" >&2
   printf 'change-class-action: %s\n' "$2" >&2
   exit 2
 }
