@@ -595,6 +595,29 @@ while read -r name source caller control; do
   if [ "$control" = mutant ]; then
     sk_mutant no-poll-presence relay.py 'presence = load_presence\(self.path\)' 'presence = self.presence'
   fi
+  if [ "$control:$caller" = real:none ]; then
+    sk_copy "resume-$name"
+    # Pause the real refused poll before it records its completion time.
+    # Removal then precedes that old reading's status write on every run.
+    python3 - "${SK_BIN%/*}/lib/relay.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+needle = '        delivered = max(self.state.delivered, key=float, default="")'
+assert text.count(needle) == 1
+barrier = '''        arm = self.path / "tmp/resume-arm"
+        if not ok and "setting-invalid" in error and arm.exists():
+            arm.unlink()
+            (self.path / "tmp/resume-entered").touch()
+            while not (self.path / "tmp/resume-release").exists():
+                time.sleep(0.01)
+'''
+path.write_text(text.replace(needle, barrier + needle))
+PY
+    [ "$?" -eq 0 ] || exit 1
+  fi
   case "$caller" in
     empty) sk_relay_start "$R" --root "$S" SLACK_JARVIS_SESSION_FILE= ;;
     *) sk_relay_start "$R" --root "$S" ;;
@@ -632,6 +655,12 @@ while read -r name source caller control; do
       assert_has "$(jq -r .last_error "$R/tmp/slack/status.json")" "setting-invalid=SLACK_JARVIS_SESSION_MAX_AGE=invalid root=$R" \
         "$name: the refused reading names its root"
       row "$S"; assert_eq "$(field "$LINE" state)" ok "$name: a refused reading leaves its peer ok"
+      touch "$R/tmp/resume-arm" || exit 1
+      TRIES=0
+      while [ ! -f "$R/tmp/resume-entered" ] && [ "$TRIES" -lt 100 ]; do
+        TRIES=$((TRIES + 1)); sleep 0.1
+      done
+      [ -f "$R/tmp/resume-entered" ] || { bad "refused poll did not reach the resume barrier" "$R"; exit 1; }
       case "$source" in
         toml) rm -- "$R/kendex.settings.toml" ;;
         local) rm -- "$R/.kendex/settings.toml" ;;
@@ -639,6 +668,7 @@ while read -r name source caller control; do
         named) printf 'SLACK_JARVIS_SESSION_FILE=\n' > "$R/private.env" ;;
       esac
       AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
+      touch "$R/tmp/resume-release" || exit 1
       # A refused poll can finish after removal. Its timestamp does not
       # acknowledge the new setting; wait for a successful, unheld poll.
       polled_after "$R" "$AFTER" true || exit 1
