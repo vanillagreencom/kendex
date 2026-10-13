@@ -1,0 +1,1 @@
+- CI runs each lane that claims a file a proved render deletes or renames. In-place renders keep their existing skip.

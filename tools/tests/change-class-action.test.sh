@@ -113,6 +113,7 @@ cat >"$STUBS/skills/harness-ci/scripts/change-class" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'change-class %s\n' "$*" >>"$STUB_LOG"
+printf 'base-rev: %s\nhead-rev: %s\n' "$STUB_BASE_REV" "$STUB_HEAD_REV" >&2
 [ "${STUB_CLASS_EXIT:-0}" -eq 0 ] || exit "$STUB_CLASS_EXIT"
 [ -z "${GITHUB_OUTPUT:-}" ] ||
   printf 'change_class=%s\nqueue_only=%s\n' "$STUB_CLASS" "${STUB_QUEUE:-false}" >>"$GITHUB_OUTPUT"
@@ -283,6 +284,7 @@ run_in_place() { # SCRIPT [NAME=VALUE]...
   (cd "$CWD" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMP" \
     CLASSIFIER="${ROW_CLASSIFIER:-$STUBS}" EVENT=pull_request BASE=b0 HEAD=h1 REPO="$TMP/subject" \
     GITHUB_OUTPUT="$OUT" STUB_LOG="$LOG" STUB_CLASS=standard STUB_DOCS=false \
+    STUB_BASE_REV="$JUDGED_READER" STUB_HEAD_REV="$JUDGED_NO_READER" \
     "$@" bash "$script" >"$TMP/stdout" 2>"$TMP/err") || status=$?
   printf '%s' "$status"
 }
@@ -388,13 +390,13 @@ check "an empty base is not passed as a flag" \
 # prints `standard` there instead. The render row, whose stub says render,
 # must see the difference.
 mutant="$CONTROL_ROOT/classify"
-needle='"$("$SCRIPTS/change-class" "${args[@]}")"'
+needle='"$SCRIPTS/change-class" "${args[@]}"'
 [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
   { echo "the change-class call is no longer one line in $CLASSIFY" >&2; exit 1; }
 NEEDLE="$needle" awk '
   { i = index($0, ENVIRON["NEEDLE"]) }
   i > 0 {
-    $0 = substr($0, 1, i - 1) "\"$(printf '"'"'change_class=standard\\n'"'"' | tee -a \"$GITHUB_OUTPUT\")\"" substr($0, i + length(ENVIRON["NEEDLE"]))
+    $0 = substr($0, 1, i - 1) "printf '"'"'change_class=standard\\n'"'"' | tee -a \"$GITHUB_OUTPUT\"" substr($0, i + length(ENVIRON["NEEDLE"]))
   }
   { print }
 ' "$CLASSIFY" >"$mutant"

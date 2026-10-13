@@ -81,11 +81,14 @@
 #                      event and paths out of it to re-derive what that run
 #                      ran, as kendex's tools/ci-job-set does.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
-#                      false on `render`, on `trivial`, on docs_only=true
+#                      false on `render` unless a deleted path or either
+#                      rename end matches a default-branch lane claim;
+#                      false on `trivial`, on docs_only=true
 #                      whatever the class, and where a proof covers every
 #                      lane the diff would run; true on every other diff.
 #   lanes_cause        why: render, trivial, docs-only or proof-reused where
-#                      lanes=false, and the class where lanes=true.
+#                      lanes=false; render-moved-claim for a claimed render
+#                      deletion or rename; the class otherwise.
 #   lane_verdicts      one `lane_<name>=true|false` line per default-branch
 #                      lane, in base order, with head-only lanes appended in
 #                      head order on a valid declaration comparison. This is
@@ -98,13 +101,15 @@
 #                      so the artifact's member is `record`, the name
 #                      `proof` reads.
 #
-# lanes is made from the two verdicts above and the proof, never from the
-# paths. A workflow forwards it rather than spelling a class, so a change to
+# lanes uses the two verdicts above, moved render claims and the proof.
+# A workflow forwards it rather than spelling a class, so a change to
 # which diffs run the lanes reaches every consumer with no workflow edit.
 #
 # A lane verdict uses default-branch claims except for the declaration path,
 # whose comparison follows wiring.md § Per-lane verdicts. In this order:
-# false wherever lanes is false; then true for every lane where the
+# false wherever lanes is false; then, on render, true only for lanes whose
+# default-branch claim matches a deleted path or either rename end, with
+# cause=render-moved-claim and its path and glob; then true for every lane where the
 # declaration comparison failed; then, on a pull request,
 # false with the cause queue-deferred for a lane the declaration marks
 # `:queue` and one of its own globs reaches, where this run's change-class
@@ -258,10 +263,12 @@ args=(--event "$EVENT" --head "$HEAD" --repo "$REPO")
 # The verdict. `change-class` appends `change_class=` to GITHUB_OUTPUT on its
 # own and prints that same line, and nothing else, on stdout, which is where
 # it is read back. Any other exit is a wiring error that carries no verdict.
-verdict="$("$SCRIPTS/change-class" "${args[@]}")" || {
+verdict="$("$SCRIPTS/change-class" "${args[@]}" 2>"${work:?}/class-log")" || {
   status=$?
+  cat -- "${work:?}/class-log" >&2
   die "classifier-failed status=$status" "change-class exited $status"
 }
+cat -- "${work:?}/class-log" >&2
 case "$verdict" in
   change_class=render | change_class=trivial | change_class=micro | \
     change_class=small | change_class=standard) class="${verdict#change_class=}" ;;
@@ -423,10 +430,43 @@ declaration_delta() {
 base_lane_count="$lane_count"
 lane_hits=()
 lane_changed=()
+render_hits=()
+if [ "$lane_state" = read ] && [ "$class" = render ]; then
+  # The classifier's reader owns the event range. Its resolved endpoints
+  # keep this status read on that range, including a moving PR base.
+  render_base="$(sed -n 's/^base-rev: //p' "${work:?}/class-log")" ||
+    die render-range-unreadable "could not read the render base revision"
+  render_head="$(sed -n 's/^head-rev: //p' "${work:?}/class-log")" ||
+    die render-range-unreadable "could not read the render head revision"
+  [ -n "$render_base" ] && [ -n "$render_head" ] ||
+    die render-range-unreadable "the render classifier supplied no resolved range"
+  git -C "$REPO" -c diff.renameLimit=0 diff --no-ext-diff --no-textconv --find-renames \
+    --name-status -z --diff-filter=DR "$render_base" "$render_head" -- \
+    >"${work:?}/moved" || die render-moves-unreadable "could not read render deletions and renames"
+  while IFS= read -r -d '' status <&3; do
+    IFS= read -r -d '' path <&3 || die render-moves-unreadable "a moved path is absent"
+    moved_paths=("$path")
+    case "$status" in
+      R*)
+        IFS= read -r -d '' path <&3 || die render-moves-unreadable "a rename destination is absent"
+        moved_paths+=("$path") ;;
+    esac
+    for path in "${moved_paths[@]}"; do
+      index=0
+      while [ "$index" -lt "$lane_count" ]; do
+        if ci_lanes_claims "$index" "$path" && [ -z "${render_hits[$index]:-}" ]; then
+          render_hits[$index]="path=$path glob=$LANE_GLOB_HIT"
+          lanes=true lanes_cause=render-moved-claim
+        fi
+        index=$((index + 1))
+      done
+    done
+  done 3<"${work:?}/moved"
+fi
 declaration_comparison=not-needed
 no_changed_paths=false
 unclaimed_path=""
-if [ "$lane_state" = read ] && [ "$lanes" = true ]; then
+if [ "$lane_state" = read ] && [ "$lanes" = true ] && [ "$class" != render ]; then
   index=0
   while [ "$index" -lt "$lane_count" ]; do
     lane_hits[$index]="" lane_changed[$index]=false
@@ -506,6 +546,12 @@ index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$lanes" = false ]; then
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
+  elif [ "$class" = render ]; then
+    if [ -n "${render_hits[$index]:-}" ]; then
+      lane_values[$index]=true lane_causes[$index]="cause=render-moved-claim ${render_hits[$index]}"
+    else
+      lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
+    fi
   elif [ "$declaration_comparison" = unreadable ]; then
     lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
   elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then
