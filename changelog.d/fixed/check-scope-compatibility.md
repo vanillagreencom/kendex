@@ -1,0 +1,1 @@
+- Manual and session checks leave every selected scope's install record unchanged when any selected catalog requires a newer kendex version.

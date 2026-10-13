@@ -686,12 +686,13 @@ fn unknown(text: impl Into<Sentence>) -> Line {
     }
 }
 
-/// The check itself: reads the manifest, the lock, the drift snapshot and
+/// The check itself: reads every selected catalog's compatibility verdict
+/// before settlement, then reads the manifest, the lock, the drift snapshot and
 /// the fetch stamps, stats what the lock says should be on disk, and for
 /// a scope declaring Pi packages lists the `extensions/` of the two roots
 /// Pi loads together with the `package.json` of what sits there and of
 /// each managed copy under `packages/`, and nothing else — no source
-/// trees, no module files, no hashing, no per-package subprocesses —
+/// trees beyond their compatibility controls, no module files, no hashing, no per-package subprocesses —
 /// until a declaration sits on files no record accounts for, which is
 /// the one state it plans the scope to judge, inside the session hook's
 /// budget. `mode` says whether that plan may write a project's committed
@@ -740,6 +741,21 @@ fn check_within_and_refusals(
     let now = crate::clock::unix_now();
     let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
+    // Manual and session checks can settle a global record. A later
+    // scope's catalog refusal must therefore stop every settlement.
+    let mut settlement_allowed = true;
+    for scope in scopes {
+        if let Err(error) = crate::engine::check_catalog_compatibility(
+            env,
+            &scope.canonical(),
+            &crate::engine::PlanOptions::current(),
+        ) && error.is_catalog_compatibility()
+        {
+            settlement_allowed = false;
+            refusal(&error);
+            sections.unknown.push(unknown(error.to_string()));
+        }
+    }
     // The global manifest, read once for the whole report: every project
     // scope judges its own Pi declarations against it, and a read per
     // scope would report one unreadable file once per scope and count it
@@ -789,6 +805,7 @@ fn check_within_and_refusals(
             deadline,
             budget,
             mode,
+            settlement_allowed,
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
             global_manifest: global_manifest.as_ref(),

@@ -234,6 +234,8 @@ pub(super) struct ScopeCheck<'a> {
     pub(super) budget: std::time::Duration,
     /// Whether the check may write a project's committed install record.
     pub(super) mode: crate::drift::copies::CheckMode,
+    /// No selected scope refused catalog compatibility.
+    pub(super) settlement_allowed: bool,
     /// Where the scope's Pi packages install and the root Pi loads beside
     /// it in this session, resolved once for every Pi line; the settings
     /// read that failed when it did not resolve.
@@ -831,6 +833,12 @@ impl ScopeCheck<'_> {
         };
         self.in_place_lines(manifest, lock, sections);
         if occupied.is_empty() {
+            return;
+        }
+        if !self.settlement_allowed {
+            for install in occupied.values() {
+                self.blocked_line(install, sections);
+            }
             return;
         }
         let (verdicts, record_failed, unrecorded) = match crate::drift::copies::settle(

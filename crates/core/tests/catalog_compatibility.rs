@@ -16,6 +16,89 @@ use crate::test_util::{rooted, source_path};
 
 const FUTURE: &str = "999999.0.0";
 
+/// Manual checks and session checks share the report's settlement boundary.
+/// Session checks can still write the global record.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_reads_every_scope_minimum_before_settling_any_record() {
+    use kendex_core::drift::copies::CheckMode;
+    use kendex_core::drift::report::{CheckStatus, check_with_refusals};
+
+    for (first_global, mode, incompatible) in [
+        (true, CheckMode::Settle, true),
+        (true, CheckMode::ReportOnly, true),
+        (false, CheckMode::Settle, true),
+        (false, CheckMode::ReportOnly, true),
+        (true, CheckMode::Settle, false),
+        (true, CheckMode::ReportOnly, false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("consumer");
+        fs::create_dir_all(&project).unwrap();
+        let project_scope = Scope::Project { root: project };
+        let scopes = if first_global {
+            [Scope::Global, project_scope]
+        } else {
+            [project_scope, Scope::Global]
+        };
+        let mut catalogs = Vec::new();
+        let mut records = Vec::new();
+        for (index, scope) in scopes.iter().enumerate() {
+            let catalog = home.join(format!("catalog-{index}"));
+            fs::create_dir_all(catalog.join("skills/scout")).unwrap();
+            fs::write(catalog.join("kendex.toml"), "min_kendex = '0.0.0'\n").unwrap();
+            fs::write(
+                catalog.join("skills/scout/SKILL.md"),
+                "---\nname: scout\ndescription: fixture\n---\nBody.\n",
+            )
+            .unwrap();
+            let path = kendex_core::manifest::manifest_path(&env, scope);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, format!(
+                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.scout]\nsource = 'cat'\n",
+                source_path(&catalog))).unwrap();
+            let plan = plan_apply(&env, scope, &PlanOptions::current()).unwrap();
+            apply::execute(&env, &plan.plan).unwrap();
+            // A clone can hold rendered files without their install rows.
+            let record = kendex_core::lock::lock_path(&env, scope);
+            kendex_core::lock::save(&record, &kendex_core::lock::Lock::default()).unwrap();
+            records.push((record.clone(), fs::read(record).unwrap()));
+            catalogs.push(catalog);
+        }
+        if incompatible {
+            fs::write(
+                catalogs[1].join("kendex.toml"),
+                format!("min_kendex = '{FUTURE}'\n"),
+            )
+            .unwrap();
+        }
+        let mut needs_engine = false;
+        let report = check_with_refusals(&env, &scopes, mode, |error| {
+            needs_engine |= matches!(error,
+                CoreError::CatalogNeedsEngine { min, engine }
+                    if min == FUTURE && *engine == env!("CARGO_PKG_VERSION"));
+        });
+        for (scope, (record, before)) in scopes.iter().zip(records) {
+            let withheld = incompatible
+                || (mode == CheckMode::ReportOnly && matches!(scope, Scope::Project { .. }));
+            assert_eq!(fs::read(&record).unwrap() == before, withheld);
+            assert_eq!(
+                kendex_core::lock::load(&record)
+                    .unwrap()
+                    .entries
+                    .contains_key("skill:scout:claude"),
+                !withheld
+            );
+        }
+        assert_eq!(needs_engine, incompatible);
+        if incompatible {
+            assert_eq!(report.status, CheckStatus::Unknown);
+        }
+    }
+}
+
 enum Verdict {
     Compatible,
     NeedsEngine,
