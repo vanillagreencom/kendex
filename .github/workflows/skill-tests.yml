@@ -288,6 +288,7 @@ jobs:
       # run here rather than on every call the suites make.
       - id: select
         env:
+          RUSTUP_TOOLCHAIN: stable
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
           DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
