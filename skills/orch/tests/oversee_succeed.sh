@@ -360,6 +360,8 @@ run_succeed() {
 
 # stage_usage_pair ROW CURRENT PRIOR GAP — write the cache record the row will
 # read, then make its displaced sample explicit. PRIOR=none leaves one sample.
+# Derive the gap from the stored sample, not another wall-clock reading: lanes
+# adds rounded SECONDS to its start epoch, which can lead date by a second.
 stage_usage_pair() {
   local row="$1" current="$2" prior="$3" gap="$4" state="$TMP_ROOT/state-$1" f now
   rm -rf -- "${state:?}"
@@ -369,9 +371,9 @@ stage_usage_pair() {
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     "$SRC_DIR/lanes" list --harness claude --json --no-cache >/dev/null)
   [[ "$prior" != none ]] || return 0
-  now="$(date +%s)"
   for f in "$state"/usage/*.json; do
     [[ "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+    now="$(jq -er '.fetched_at' "$f")" || exit 1
     jq --argjson at "$((now - gap))" --argjson usage "$(claude_usage "$prior" 20 5 Opus)" \
       '.prior = {fetched_at: $at, usage: $usage}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     return 0
@@ -1776,6 +1778,17 @@ WALL_MINUTES=30 run_succeed knownrate '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude" \
   "a known harness with no context line still fires the rate trigger"
+
+# A one-second excess in the sample gap rounds the projected wall up to 31.
+# This reproduces the slow-runner fixture's missed rate mark without a sleep.
+for f in "$TMP_ROOT/state-knownrate"/usage/*.json; do
+  [[ "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+  jq '.prior.fetched_at -= 1' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+done
+WALL_MINUTES=30 run_succeed knownrate '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  '0|oversee-succeed: account-below-mark headroom=60' \
+  'control: an extra sample-gap second misses the no-context rate mark'
 
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
