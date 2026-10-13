@@ -388,17 +388,20 @@ session_rows_turn_open() { # FILE
   [ "$(jq -r '.event // ""' <<<"$SESSION_ROW")" = Stop ]
 }
 
-# session_rows_lane_write BOX HARNESS EVENT [TRANSCRIPT] — one row for the lane
+# session_rows_lane_write BOX HARNESS EVENT [TRANSCRIPT] [PAYLOAD] — one row for the lane
 # whose mailbox directory is BOX: `Stop` at a turn end, carrying the
 # `stopReason` of the turn's last assistant message in TRANSCRIPT, Pi's
 # `message` record (`AssistantMessage`, @earendil-works/pi-ai), and its
 # `errorMessage` as `message` where that reason is `error`; `PreToolUse` at a
-# tool call, written only over a Stop row or an empty file. Nothing is written,
+# tool call, written only over a Stop row or an empty file. Stop retains
+# PAYLOAD's working_agents count, or null when the carrier could not read it.
+# Nothing is written,
 # with exit 0, where BOX is not there, or for a PreToolUse a turn already
 # opened. Exit 1 where jq could not build the row, mailbox_append_locked's own
 # 2 and 3 for the write and the lock. The cause is on stderr.
-session_rows_lane_write() { # BOX HARNESS EVENT [TRANSCRIPT]
-  local file="$1/$SESSION_ROWS_LANE" end='{}' row rc=0
+session_rows_lane_write() { # BOX HARNESS EVENT [TRANSCRIPT] [PAYLOAD]
+  local file="$1/$SESSION_ROWS_LANE" end='{}' row rc=0 payload="${5:-}"
+  [ -n "$payload" ] || payload='{}'
   [ -d "$1" ] || return 0
   if [ "$3" = Stop ] && [ -n "${4:-}" ] && [ -f "$4" ]; then
     end="$(tail -c "$SESSION_ROWS_TRANSCRIPT_TAIL" -- "$4" | jq -Rnc '
@@ -408,7 +411,10 @@ session_rows_lane_write() { # BOX HARNESS EVENT [TRANSCRIPT]
       | with_entries(select(.value | type == "string"))')" || return 1
   fi
   row="$(jq -c --arg event "$3" --arg harness "$2" --argjson at "$(date +%s)" \
-    '{at: $at, event: $event, harness: $harness} + .' <<<"$end")" || return 1
+    --argjson payload "$payload" '
+    {at: $at, event: $event, harness: $harness} + .
+    + (if $event == "Stop" and ($payload | has("working_agents"))
+       then {working_agents: $payload.working_agents} else {} end)' <<<"$end")" || return 1
   if [ "$3" = Stop ]; then
     printf '%s\n' "$row" | mailbox_append_locked "$file" "$SESSION_ROWS_WAIT"
     return
@@ -421,18 +427,28 @@ session_rows_lane_write() { # BOX HARNESS EVENT [TRANSCRIPT]
 
 # session_rows_lane_verdict FILE — what a Pi lane's last row says of it, into
 # SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
-#   none     no row: the lane has emitted nothing a reader can judge
-#   working  a PreToolUse row, a turn started after the last turn end
+#   none     no row, or an unread working-agent count
+#   working  a PreToolUse row, or a Stop whose background agents still work
 #   walled   a Stop row whose turn ended on an error lib/lane-state.sh §
 #            lane_limit_banner reads as the account's limit
-#   idle     any other Stop row
+#   idle     any other Stop row with a known or absent count
 # Exit 2 where the file could not be read, or its last row names an event no
-# writer above writes; the verdict is then `none` and says nothing.
+# writer above writes or an unread count; the verdict is then `none`.
 session_rows_lane_verdict() { # FILE
-  local fields banner
+  local fields banner has_count
   SESSION_ROWS_VERDICT=none
   session_rows_last "$1" || return 2
   [ -n "$SESSION_ROW" ] || return 0
+  has_count="$(jq -r '.event == "Stop" and has("working_agents")' <<<"$SESSION_ROW")" || return 2
+  if [ "$has_count" = true ]; then
+    # Null is the carrier's failed task read, never evidence of an idle lane.
+    fields="$(jq -r '.working_agents | if type == "number" and . >= 0 and floor == . then . else "unknown" end' <<<"$SESSION_ROW")" || return 2
+    [ "$fields" != unknown ] || return 2
+    if [ "$fields" -gt 0 ]; then
+      SESSION_ROWS_VERDICT=working
+      return 0
+    fi
+  fi
   fields="$(jq -r '"\(.event // "")\t\(.stop_reason // "")"' <<<"$SESSION_ROW")" || return 2
   case "$fields" in
     PreToolUse$'\t'*) SESSION_ROWS_VERDICT=working ;;

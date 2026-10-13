@@ -368,6 +368,23 @@ export default function piHooks(pi: ExtensionAPI): void {
 			if (ctx.hasUI) ctx.ui.notify(content, "warning");
 		};
 
+		// pi-agents-tmux owns the task records. Its exported stats bridge reads
+		// this session's registry, including child changes made while the lead idles.
+		let workingAgents: number | null = 0;
+		const tasks = (globalThis as Record<symbol, unknown>)[Symbol.for("kendex.pi.agents")];
+		if (tasks !== undefined) {
+			try {
+				if (!tasks || typeof tasks !== "object" || !("workingCount" in tasks) || typeof tasks.workingCount !== "function") {
+					throw new Error("pi-agents-tmux has no workingCount interface; update pi-agents-tmux");
+				}
+				const count = tasks.workingCount as (ctx: ExtensionContext) => Promise<number>;
+				workingAgents = await count(ctx);
+			} catch (error) {
+				workingAgents = null;
+				tellPerson(ctx, false)(`hook-agents-unread=Stop\n${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+
 		// `Stop` and `TaskCompleted` take no matcher on Claude Code either, so
 		// every registration on this listener covers the response. The payload
 		// is Claude Code's, `stop_hook_active` included, and it is true exactly
@@ -380,7 +397,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const run = await runListener(
 			TURN_END_LISTENER,
 			undefined,
-			() => JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
+			() => JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, working_agents: workingAgents, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
 			ctx,
 			cfg,
 			project,

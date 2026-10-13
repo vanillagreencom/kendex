@@ -1091,6 +1091,13 @@ pi_stop() { # [EXTRA_FIELDS_JSON]
   run_payload "$(jq -nc --arg p "$PI_TURN" --argjson extra "$extra" \
     '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000} + $extra')"
 }
+pi_working_count() {
+  local count
+  for count in 1 0; do
+    pi_stop "{\"working_agents\":$count}"
+    assert_eq "$(tail -n 1 "$PI_ROWS" | jq -r '.working_agents')" "$count" "a Pi Stop keeps working-agent count $count"
+  done
+}
 
 new_pi_lane pi_rows KEN-95
 usage_line pi 1000 > "$PI_TURN"
@@ -1099,6 +1106,12 @@ pi_tool
 pi_stop
 assert_eq "RC=$RC rows=$(pi_rows)" "RC=0 rows=PreToolUse:: Stop:stop:" \
   "a Pi lane writes one PreToolUse row for its turn's tool calls and a Stop row at its end"
+pi_working_count
+# Keep the following error-row checks on their original event history.
+usage_line pi 1000 > "$PI_TURN"
+rm -f -- "$PI_ROWS"
+pi_tool
+pi_stop
 jq -nc '{type:"message",message:{role:"assistant",model:"m",stopReason:"error",
   errorMessage:"429 You have hit your usage limit for this period"}}' >> "$PI_TURN"
 pi_stop
@@ -3624,6 +3637,12 @@ new_pi_lane control_pi_rows KEN-96 "$MUTANT_PATH"
 pi_tool
 pi_stop
 assert_eq "rows=$(pi_rows)" "rows=-" "control: without the lane row call a Pi lane writes no row"
+mutant no-working-payload -e 's/^  \[ "\$ROW_EVENT" != Stop \] || ROW_PAYLOAD=\$INPUT$/  [ "$ROW_EVENT" != Stop ] || ROW_PAYLOAD="{}" # $INPUT/'
+new_pi_lane control_pi_count KEN-96 "$MUTANT_PATH"
+CONTROL_COUNT_LOG="$(PASS=0 FAIL=0; pi_working_count; [ "$FAIL" -eq 0 ])" && CONTROL_COUNT_RC=0 || CONTROL_COUNT_RC=$?
+assert_eq "$CONTROL_COUNT_RC" 1 'control: the payload assertions fail when lane_row loses the working count'
+assert_eq "$(grep -Fxc '  FAIL  a Pi Stop keeps working-agent count 1' <<<"$CONTROL_COUNT_LOG" || true)" 1 \
+  'control: the missing payload reaches the working-agent count assertion'
 # Without the moved root a pool account's Pi install writes no row: the FLT-400
 # silence the moved root closes.
 mutant no-moved-pi-root -e 's@^  \[ -z "\$PI_HOOK_DIR" \] || \[ "\$PI_HOOK_DIR" != "\$THIS_HOOK_DIR" \] || HARNESS=pi$@  :@'

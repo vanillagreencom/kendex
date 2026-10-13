@@ -3177,14 +3177,16 @@ lane_row() {
   # that under `harness-unlisted`, once its mailbox has had its say.
   [ "$HARNESS" = pi ] || return 0
   lane_launched || return 0
+  ROW_PAYLOAD='{}'
+  [ "$ROW_EVENT" != Stop ] || ROW_PAYLOAD=$INPUT
   if [ ! -e "$SCRIPTS/lib/session-rows.sh" ]; then
     message lane-rows-skipped "$SCRIPTS/lib/session-rows.sh"
     return 0
   fi
   if ! "$BASH" -euo pipefail -c '
       . "$1/../../mailbox/scripts/lib/file-lock.sh" && . "$1/../../mailbox/scripts/lib/mailbox-append.sh" &&
-      . "$1/lib/session-rows.sh" && session_rows_lane_write "$2" pi "$3" "$4"' \
-    _ "$SCRIPTS" "$MAIL_ROOT/$ITEM" "$ROW_EVENT" "$TRANSCRIPT" 2>"$WORK_DIR/row.err"; then
+      . "$1/lib/session-rows.sh" && session_rows_lane_write "$2" pi "$3" "$4" "$5"' \
+    _ "$SCRIPTS" "$MAIL_ROOT/$ITEM" "$ROW_EVENT" "$TRANSCRIPT" "$ROW_PAYLOAD" 2>"$WORK_DIR/row.err"; then
     message lane-rows-unwritten "$MAIL_ROOT/$ITEM" "$(cat -- "$WORK_DIR/row.err")"
   fi
   return 0

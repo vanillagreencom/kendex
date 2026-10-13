@@ -704,6 +704,10 @@ export default function (pi: ExtensionAPI) {
 		list() {
 			return Object.values(dashboardState.items).map(toStatsItem);
 		},
+		async workingCount(ctx) {
+			const records = await readTaskRegistry(runtimeDirForContext(ctx), true);
+			return Object.values(records).filter((record) => taskStatus(record.status).phase === "working").length;
+		},
 	};
 	(globalThis as unknown as Record<PropertyKey, unknown>)[STATS_BRIDGE_SYMBOL] = statsBridge;
 

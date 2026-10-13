@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import type { TruncationResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, TruncationResult } from "@earendil-works/pi-coding-agent";
 import type { AgentScope } from "./agents.js";
 import type { SessionBudgetGuard } from "./sessions.js";
 
@@ -52,6 +52,8 @@ export interface SubagentStatsItem {
 export interface SubagentStatsBridge {
 	getByPaneId(paneId: string): SubagentStatsItem | undefined;
 	list(): SubagentStatsItem[];
+	/** pi-hooks reads the session's persisted tasks at Stop, independent of dashboard retention. */
+	workingCount(ctx: ExtensionContext): Promise<number>;
 }
 
 export const AGENT_ASCII_COLOR_SEQUENCE: AgentAsciiColor[] = ["magenta", "green", "blue", "cyan", "yellow", "red"];

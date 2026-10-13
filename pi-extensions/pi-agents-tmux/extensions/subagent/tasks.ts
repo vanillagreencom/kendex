@@ -93,15 +93,18 @@ export async function updatePaneRegistry(
 	return registry;
 }
 
-export async function readTaskRegistry(runtimeRoot: string): Promise<PaneTaskRegistry> {
+export async function readTaskRegistry(runtimeRoot: string, requireReadable = false): Promise<PaneTaskRegistry> {
 	try {
 		const content = await fs.promises.readFile(taskRegistryPath(runtimeRoot), "utf-8");
 		const parsed = JSON.parse(content);
 		if (Array.isArray(parsed)) {
 			return Object.fromEntries(parsed.filter((record) => record?.taskId).map((record) => [record.taskId, record])) as PaneTaskRegistry;
 		}
+		if (requireReadable && (!parsed || typeof parsed !== "object")) throw new TypeError("Task registry is not an object");
 		return parsed && typeof parsed === "object" ? (parsed as PaneTaskRegistry) : {};
-	} catch {
+	} catch (error) {
+		// The Stop reader cannot report a failed registry read as no working agents.
+		if (requireReadable && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		return {};
 	}
 }
