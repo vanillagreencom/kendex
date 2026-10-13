@@ -190,12 +190,13 @@ CONTROL_RC=0
 assert_eq "watch=$MAIN_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' 'control rejects raw diagnostics in failure identity' "$STUB_DIR/err"
 
 # The removed budget reader must make no workflow-history or full-log read.
-# The round base is a control that still makes the historical API request.
-for code in current base; do
+# A private current-watch mutation makes the forbidden history request.
+for code in current mutant; do
   TARGET="$(mutant_scripts "main-push-cut-$code/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-push-cut-$code/github"
-  if [[ "$code" == base ]]; then
-    git -C "$REPO_ROOT" show 1617a2815c94c78a5ec477456fb7fe0a19e9c05e:skills/orch/scripts/oversee-watch >"$TARGET"
+  if [[ "$code" == mutant ]]; then
+    mutate_file "$TARGET" $'    IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
+      $'    gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n    IFS=\'|\' read -r run conclusion <<<"$runs"\n'
   fi
   new_case "main_push_cut_$code"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
@@ -206,7 +207,7 @@ for code in current base; do
   else
     CONTROL_RC=0
     ( assert_eq "rc=$MAIN_RC reads=$READS events=$MAIN_EVENTS" 'rc=0 reads=0 events=' 'cut budget-read oracle'; [[ "$FAIL" -eq 0 ]] ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
-    assert_eq "watch=$MAIN_RC reads=$READS oracle=$CONTROL_RC" 'watch=0 reads=1 oracle=1' 'uncut round base fails the budget-read oracle' "$STUB_DIR/err"
+    assert_eq "watch=$MAIN_RC reads=$READS oracle=$CONTROL_RC" 'watch=0 reads=1 oracle=1' 'restored history read fails the budget-read oracle' "$STUB_DIR/err"
   fi
 done
 
