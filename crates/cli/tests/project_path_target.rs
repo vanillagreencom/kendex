@@ -210,24 +210,12 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// The registry as the settings file holds it — what a second program,
-/// the app included, sees after a run here.
-#[allow(clippy::unwrap_used)]
+/// The registry the app reads, including machine state and legacy files.
+#[allow(clippy::expect_used)]
 fn registered(home: &Path) -> Vec<PathBuf> {
-    let path = kendex_core::env::Env::host_rooted(home).settings_file();
-    let Ok(text) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let document: toml::Table = text.parse().unwrap();
-    let Some(projects) = document.get("projects") else {
-        return Vec::new();
-    };
-    projects
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| PathBuf::from(entry.as_str().unwrap()))
-        .collect()
+    kendex_core::settings::load(&kendex_core::env::Env::host_rooted(home))
+        .expect("fixture settings load")
+        .projects
 }
 
 /// One tool on the machine and a catalog offering one skill, plus an

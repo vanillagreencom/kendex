@@ -2,8 +2,8 @@
 //! draws its Projects page from.
 //!
 //! The whole point is what a *second* program sees: the app reads the
-//! machine-local settings file, so these run the real binary and then read
-//! that file, rather than asking the CLI what it thinks it did.
+//! combined app settings, so these run the real binary and then use that
+//! reader, rather than asking the CLI what it thinks it did.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -46,31 +46,18 @@ fn run(home: &Path, cwd: &Path, args: &[&str]) -> String {
     said(&output)
 }
 
-/// Where the app looks for the project list, read off `Env` rather than
-/// composed here: the platform decides the directory, and a fixture that
-/// spelled it itself would be asking a different file than the binary
-/// wrote.
+/// The preferences path for lock-refusal fixtures and config-root checks.
+/// Env decides its platform directory.
 fn settings_file(home: &Path) -> PathBuf {
     kendex_core::env::Env::host_rooted(home).settings_file()
 }
 
-/// The registry as the settings file holds it. An absent file is an empty
-/// registry, which is the state a machine starts in.
-#[allow(clippy::unwrap_used)]
+/// The registry the app reads, including machine state and legacy files.
+#[allow(clippy::expect_used)]
 fn registered(home: &Path) -> Vec<PathBuf> {
-    let Ok(text) = fs::read_to_string(settings_file(home)) else {
-        return Vec::new();
-    };
-    let document: toml::Table = text.parse().unwrap();
-    let Some(projects) = document.get("projects") else {
-        return Vec::new();
-    };
-    projects
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| PathBuf::from(entry.as_str().unwrap()))
-        .collect()
+    kendex_core::settings::load(&kendex_core::env::Env::host_rooted(home))
+        .expect("fixture settings load")
+        .projects
 }
 
 #[allow(clippy::unwrap_used)]
