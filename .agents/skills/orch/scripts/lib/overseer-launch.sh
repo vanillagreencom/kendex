@@ -726,7 +726,11 @@ OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_unstarted($server; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
     and .server_start == null;
-  def ol_owns($server; $start; $session): ol_names($server; $start; $session) or ol_unstarted($server; $session);'
+  def ol_owns($server; $start; $session): ol_names($server; $start; $session) or ol_unstarted($server; $session);
+  def ol_native_match($harness; $home; $session): $session != ""
+    and ((.harness // "") == "" or .harness == $harness)
+    and ((.home // "") == "" or $home == "" or .home == $home)
+    and ((.session_id // "") == "" or .session_id == $session);'
 
 # ol_session_start SERVER SESSION — the start ol_names judges SESSION on
 # SERVER by: tmux_server_start's for a pane. Returns 1, printing nothing, where
@@ -1251,7 +1255,8 @@ ol_record_current() { # SERVER PANE
 # given each fact it lacks and the session itself knows: START
 # as `server_start`, HARNESS as `harness`, and HOME, the directory the harness
 # variable of that session carries, as `home`, and its native SESSION_ID.
-# Recorded harness, readable home and session id must agree before healing.
+# ol_native_match owns the recorded harness, readable home and native id rule.
+# A missing native id or a record that no longer matches refuses the update.
 # A fact the record already names stays. The
 # lane-mail-check hook runs it from the overseer's own turn end and tool calls,
 # so a record that lost the facts the transcript binding reads is filled from
@@ -1261,15 +1266,12 @@ ol_record_current() { # SERVER PANE
 ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID
   "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
     --arg harness "$4" --arg home "$5" --arg session "${6:-}" "$OL_JQ_DEFS"'
-      if (.overseer | ol_owns($server; $start; $pane)
-        and ((.harness // "") == "" or .harness == $harness)
-        and ((.home // "") == "" or $home == "" or .home == $home)
-        and ((.session_id // "") == "" or .session_id == $session))
+      if (.overseer | ol_owns($server; $start; $pane) and ol_native_match($harness; $home; $session))
       then .overseer |= (.server_start = ($start | tonumber)
         | if (.harness // "") == "" and $harness != "" then .harness = $harness else . end
         | if (.home // "") == "" and $home != "" then .home = $home else . end
         | if (.session_id // "") == "" and $session != "" then .session_id = $session else . end)
-      else . end' >/dev/null 2>"$DEP_ERR"
+      else error("overseer-native-unbound") end' >/dev/null 2>"$DEP_ERR"
 }
 
 # ol_record_exit_clear SERVER PANE — the record's `exit` member dropped where

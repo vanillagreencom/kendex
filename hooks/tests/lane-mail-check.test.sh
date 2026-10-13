@@ -1744,18 +1744,12 @@ variant no-heal -e 's/^  \[ "\$NEED_HEAL" -eq 1 \] || return 0$/  return 0/'
 lost_identity control_lost_identity_heal "$VARIANT_PATH"
 assert_eq "$LOST" "RC=0 first=lane-mail-check: transcript-unowned=$TRANSCRIPT record=null home-unnamed start=none home=none harness=none" \
   "control: a hook that heals nothing leaves the lost overseer's transcript unbound and its context mark judged by nothing"
-# A heal whose write fails still binds this run to the home the session's own
-# environment names: the failure is reported under its own key, the reading is
-# taken and the context mark judged, and the record waits for the next run.
+# The first native binding is required. A failed writer leaves the session
+# unbound, with no reading or mark judgement.
 lost_identity overseer_lost_unhealed "$HOOK" update-fails
-assert_eq "$LOST unhealed=$(grep -c "^lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE\$" "$ERR_FILE") mark=$(grep -c "^lane-mail-check: context=${OVERSEER_CONTEXT%%:*}\$" "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE record=${OVERSEER_CONTEXT%%:*} null start=none home=none harness=none unhealed=1 mark=1" \
-  "a heal whose write fails is reported, and the run still binds the transcript to the session's own home and judges the mark" "$ERR_FILE"
-# The home dropped with the failed write: the transcript binds to nothing.
-variant unhealed-unbound -e 's/^    message record-unhealed "\$CALLER_KEY" "\$(cat -- "\$WORK_DIR\/heal.err")"$/&\n    HEAL_HOME=""/'
-lost_identity control_lost_unhealed "$VARIANT_PATH" update-fails
-assert_eq "${LOST#* record=}" "null home-unnamed start=none home=none harness=none" \
-  "control: a hook that drops the home with a failed heal leaves the transcript unbound and the mark judged by nothing"
+assert_eq "$LOST unhealed=$(grep -c "^lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE\$" "$ERR_FILE") mark=$(grep -c "^lane-mail-check: context=${OVERSEER_CONTEXT%%:*}\$" "$ERR_FILE" || :) judged=$(judge_calls)" \
+  "RC=0 first=lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE record=none start=none home=none harness=none unhealed=1 mark=0 judged=0" \
+  "a failed required heal leaves the native session unbound and judges no mark" "$ERR_FILE"
 # A Pi install states no transcript shape, so its overseer binds nothing and
 # reads the payload's own window as a Pi lane does; nothing is reported.
 new_overseer overseer_pi
@@ -2910,6 +2904,7 @@ assert_eq "unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")
 # fleet checkout is then held at its own turn end on marks nobody set for it.
 mutant any-session-overseer -e '/^   (if ol_names(/s@\$pane)@(.pane // ""))@'
 new_overseer control_any_session
+bind_overseer claude "$OVERSEER_HOME_DIR" s1
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
@@ -3270,8 +3265,12 @@ new_plain_session() { # NAME
 }
 
 # Native payloads carry the session id even when a child inherits the pane.
-identity_child() { # NAME HOME SESSION ARM [HOOK]
+identity_child() { # NAME HOME SESSION ARM [HOOK] [NATIVE_LIB]
   named_session "$1" "${5:-$HOOK}"
+  if [ -n "${6:-}" ]; then
+    hole_install lib/overseer-launch.sh "$LANE/.claude/skills/orch/scripts"
+    cp -- "$6" "$LANE/.claude/skills/orch/scripts/lib/overseer-launch.sh"
+  fi
   bind_overseer claude "$OVERSEER_HOME_DIR" s1
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   CALL_ENV=("${SESSION_ENV[@]}")
@@ -3294,6 +3293,41 @@ identity_child() { # NAME HOME SESSION ARM [HOOK]
   CALL_ENV=()
   IDENTITY_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ] && echo same || echo changed) judged=$(( $(judge_calls) - judged_before ))"
 }
+# A failed first binding cannot let either the parent or its child read mail.
+binding_failed() { # NAME ARM [HOOK]
+  named_session "$1" "${3:-$HOOK}"
+  bind_overseer claude "$OVERSEER_HOME_DIR" ""
+  mkdir -p "$LANE/tmp/lane-mail/overseer"
+  printf '%s\n' '{"session_id":"s1","tokens":1000}' > "$LANE/tmp/lane-mail/overseer/context.json"
+  printf '%s\n' 's1 previous-gap' > "$LANE/tmp/lane-mail/overseer/context-told"
+  peer_send 'Wait for the binding.'
+  state_stub update-fails
+  local before state_before failed_session
+  before=$(overseer_snapshot)
+  state_before=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)
+  BINDING_RESULT=unchanged
+  for failed_session in s1 child; do
+    CALL_ENV=("${SESSION_ENV[@]}")
+    ARM_ARGS=("$2")
+    run_payload "$(jq -nc --arg session "$failed_session" '{session_id:$session,stop_hook_active:false,tool_name:"Bash",tool_input:{command:"git status"}}')"
+    ARM_ARGS=()
+    CALL_ENV=()
+    if [ "$before" != "$(overseer_snapshot)" ] || [ -s "$TMP_ROOT/stdout" ] || [ "$(judge_calls)" != 0 ] \
+      || [ "$state_before" != "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ]; then
+      BINDING_RESULT=changed
+    fi
+    assert_eq "RC=$RC failed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE" || :) cause=$(grep -c 'workflow-state: lock-failed lock-file=x' "$ERR_FILE" || :)" \
+      'RC=0 failed=1 cause=1' "$failed_session: a failed binding retains its writer error"
+  done
+}
+for failed_arm in deliver stop; do
+  binding_failed "native_binding_failed_$failed_arm" "$failed_arm"
+  assert_eq "$BINDING_RESULT" unchanged "$failed_arm: failed parent and child bindings change no mail, cursor, context, gaps or marks"
+done
+mutant native-binding-fail-open -e '/^    message record-unhealed /{n;s/^    return 1$/    return 0/;}'
+binding_failed native_binding_control deliver "$MUTANT_PATH"
+assert_eq "$BINDING_RESULT" changed 'control: accepting a failed binding breaks the unchanged-record assertion'
+
 for identity_case in home session missing; do
   for identity_arm in deliver stop; do
     identity_home=$OVERSEER_HOME_DIR identity_session=s1
@@ -3313,16 +3347,16 @@ done
 for identity_case in home session missing; do
   case "$identity_case" in
     home)
-      mutant native-home-control -e '/^    || { \[ -n "\$OVERSEER_HOME" \]/d'
+      wake_mutant native-home-control '    and ((.home // "") == "" or $home == "" or .home == $home)' '    and true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
       identity_home="$TMP_ROOT/another-claude-home" identity_session=s1 ;;
     session)
-      mutant native-session-control -e '/^    || { \[ -n "\$RECORDED_SESSION" \]/d'
+      wake_mutant native-session-control "    and ((.session_id // \"\") == \"\" or .session_id == \$session);'" "    and true;'" "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
       identity_home=$OVERSEER_HOME_DIR identity_session=child ;;
     missing)
-      mutant native-missing-control -e 's@^    || \[ -z "\$SESSION" \]; then$@    || false; then@'
+      wake_mutant native-missing-control '  def ol_native_match($harness; $home; $session): $session != ""' '  def ol_native_match($harness; $home; $session): true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
       identity_home=$OVERSEER_HOME_DIR identity_session="" ;;
   esac
-  identity_child "native_control_$identity_case" "$identity_home" "$identity_session" deliver "$MUTANT_PATH"
+  identity_child "native_control_$identity_case" "$identity_home" "$identity_session" deliver "$HOOK" "$MUTANT_PATH"
   assert_eq "$([ "$IDENTITY_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
     "control: dropping the $identity_case rule fails the unchanged-mail assertion"
 done
@@ -3342,8 +3376,9 @@ ARM_ARGS=()
 CALL_ENV=()
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unchanged=$([ "$old_pane_before" = "$(overseer_snapshot)" ] && echo yes || echo no)" \
   'RC=0 stdout= stderr=- unchanged=yes' 'a child in the old overseer pane writes no lost-overseer gap and keeps unrelated-pane silence'
-mutant native-old-pane-control -e '/^    || { \[ -n "\$RECORDED_SESSION" \]/d'
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+wake_mutant native-old-pane-control "    and ((.session_id // \"\") == \"\" or .session_id == \$session);'" "    and true;'" "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
+hole_install lib/overseer-launch.sh "$LANE/.claude/skills/orch/scripts"
+cp -- "$MUTANT_PATH" "$LANE/.claude/skills/orch/scripts/lib/overseer-launch.sh"
 CALL_ENV=("${SESSION_ENV[@]}")
 ARM_ARGS=(deliver)
 run_payload '{"session_id":"child","tool_name":"Bash","tool_input":{"command":"git status"}}'
@@ -3494,7 +3529,8 @@ bound_session peer_startless none
 peer_send 'Sent to no start.'
 stop "${SESSION_ENV[@]}"
 expect 2 "lane-mail-check: unread=1" "a record carrying no start names the session in its pane"
-bound_session peer_start_unread none
+bound_session peer_start_unread "$OVERSEER_SERVER_START"
+bind_overseer claude "$OVERSEER_HOME_DIR" s1
 peer_send 'Start unread.'
 stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
 expect 0 - "a session whose server start tmux cannot read is handed nothing"
@@ -3637,14 +3673,16 @@ expect 2 "lane-mail-check: unread=1" \
 # handed the recorded pid and pane id is handed the gone server's note.
 mutant pair-only -e '/^   (if ol_names(/s@\$start;@(.server_start | tostring);@'
 bound_session control_peer_reused "$EARLIER_START" "$MUTANT_PATH"
+bind_overseer claude "$OVERSEER_HOME_DIR" s1
 peer_send 'Taken by a later server.'
 stop "${SESSION_ENV[@]}"
 expect 2 "lane-mail-check: unread=1" \
   "control: without the start test a later server's session in the recorded pane id is handed the note"
-# With an unread start read on, a startless record names a session whose
-# server nothing could read.
-mutant start-unread-names -e '/^      start=\$(tmux_server_start /s@)$@ || :)@'
-bound_session control_peer_start_unread none "$MUTANT_PATH"
+# A completed native binding isolates the current-server read from healing.
+# Substituting the recorded start for a failed tmux read admits that caller.
+wake_mutant start-unread-names '      start=$(tmux_server_start "$2" "${key%% *}")' "      start=$OVERSEER_SERVER_START"
+bound_session control_peer_start_unread "$OVERSEER_SERVER_START" "$MUTANT_PATH"
+bind_overseer claude "$OVERSEER_HOME_DIR" s1
 peer_send 'Unread start taken.'
 stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
 assert_eq "RC=$RC unread=$(overseer_unread 'Unread start taken.')" "RC=2 unread=0" \

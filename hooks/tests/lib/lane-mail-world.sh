@@ -322,21 +322,26 @@ plant_install() { # [SKIP]
 # The orch install the lane renders under .agents, which the hook finds from
 # any hook directory in the lane, made a copy with SKIP left out: a script, or
 # a library under lib/.
-hole_install() { # SKIP
-  local dir="$LANE/.agents/skills/orch/scripts" entry
-  rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
+hole_install() { # SKIP [SCRIPTS_DIR]
+  local dir="${2:-$LANE/.agents/skills/orch/scripts}" entry
+  if [ -L "$dir" ]; then
+    rm -f -- "$dir"
+    mkdir -p "$dir"
+    case "$1" in lib/*) plant_siblings "$dir" lib ;; *) plant_siblings "$dir" "$1" ;; esac
+  fi
   mkdir -p "$dir"
   case "$1" in
     lib/*)
-      plant_siblings "$dir" lib
+      [ ! -L "$dir/lib" ] || rm -f -- "$dir/lib"
       mkdir -p "$dir/lib"
       for entry in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
         [ "lib/${entry##*/}" != "$1" ] || continue
         ln -s -f -n "$entry" "$dir/lib/${entry##*/}"
       done
       ;;
-    *) plant_siblings "$dir" "$1" ;;
+    *) ;;
   esac
+  rm -f -- "$dir/$1"
 }
 
 # The repository's own reader: it touches MARKER, so a run of it is visible.
@@ -483,9 +488,11 @@ variant() { # NAME SED-ARGUMENT...
 # hook's ceiling. Its own behaviour is oversee_succeed.sh's subject.
 JUDGE_DIR="$TMP_ROOT/judge"
 mkdir -p "$JUDGE_DIR"
-plant_judge() {
-  plant_install oversee-succeed
-  cat > "$LANE/.claude/skills/orch/scripts/oversee-succeed" <<JUDGE
+plant_judge() { # [SCRIPTS_DIR]
+  local scripts="${1:-$LANE/.claude/skills/orch/scripts}"
+  [ -n "${1:-}" ] || plant_install oversee-succeed
+  rm -f -- "$scripts/oversee-succeed"
+  cat > "$scripts/oversee-succeed" <<JUDGE
 #!/bin/sh
 printf '%s\n' "\$*" >> "$JUDGE_DIR/args"
 # stdout is handed away before the wait: the hook reads this in a command
@@ -496,7 +503,7 @@ printf '%s\n' "\$*" >> "$JUDGE_DIR/args"
 [ ! -f "$JUDGE_DIR/out" ] || cat "$JUDGE_DIR/out"
 exit "\$(cat "$JUDGE_DIR/rc" 2>/dev/null || echo 0)"
 JUDGE
-  chmod +x "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+  chmod +x "$scripts/oversee-succeed"
   rm -f -- "${JUDGE_DIR:?}/args" "${JUDGE_DIR:?}/out" "${JUDGE_DIR:?}/err" \
     "${JUDGE_DIR:?}/rc" "${JUDGE_DIR:?}/hang"
 }
@@ -566,18 +573,17 @@ start_wake_watch() { # repeat|single [CWD]
     > "${WAKE_STATE%/*}/oversee-watch.pid"
 }
 
-# A literal one-line substitution for wake controls. It retains the message
-# and changes the action, so a control cannot pass by deleting its subject.
-wake_mutant() { # NAME OLD NEW
-  local count line
-  [ ! -L "$HOOK" ] || { echo "wake-mutant: source=symlink" >&2; exit 1; }
-  count=$(grep -Fxc -- "$2" "$HOOK") || { echo "wake-mutant: match=missing" >&2; exit 1; }
+# Matching a whole source line keeps a control from changing another rule.
+wake_mutant() { # NAME OLD NEW [SOURCE]
+  local count line source="${4:-$HOOK}"
+  [ ! -L "$source" ] || { echo "wake-mutant: source=symlink" >&2; exit 1; }
+  count=$(grep -Fxc -- "$2" "$source") || { echo "wake-mutant: match=missing" >&2; exit 1; }
   [ "$count" -eq 1 ] || { echo "wake-mutant: match=$count" >&2; exit 1; }
   MUTANT_PATH="$TMP_ROOT/$1.sh"
   while IFS= read -r line; do
     if [ "$line" = "$2" ]; then printf '%s\n' "$3"; else printf '%s\n' "$line"; fi
-  done < "$HOOK" > "$MUTANT_PATH"
-  cmp -s -- "$HOOK" "$MUTANT_PATH" && { echo "wake-mutant: changed=no" >&2; exit 1; }
+  done < "$source" > "$MUTANT_PATH"
+  cmp -s -- "$source" "$MUTANT_PATH" && { echo "wake-mutant: changed=no" >&2; exit 1; }
   return 0
 }
 

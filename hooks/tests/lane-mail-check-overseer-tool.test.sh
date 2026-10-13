@@ -388,10 +388,10 @@ once_rows() { # NAME [JUDGE]
   state_stub update-fails
   peer_send 'Asked once.'
   overseer_tool "$TRANSCRIPT"
-  ONCE="unhealed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE") context=$(context_line) note=$(tool_context | grep -cF 'Asked once.')"
+  ONCE="unhealed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE") context=$(context_line) note=$(tool_context | grep -cF 'Asked once.' || :)"
 }
 once_rows overseer_tool_once
-assert_eq "$ONCE" "unhealed=1 context=PostToolUse lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE note=1" \
+assert_eq "$ONCE" "unhealed=1 context=- note=0" \
   "a call that reads the overseer mailbox identifies the overseer once, and a failed heal is reported once" "$ERR_FILE"
 variant identify-each-ask -e 's/^  if \[ -z "\$IDENTIFIED" \]; then$/  if true; then/'
 once_rows control_overseer_tool_once "$VARIANT_PATH"
