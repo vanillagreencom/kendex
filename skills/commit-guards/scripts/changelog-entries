@@ -75,7 +75,6 @@ usage() {
   cat <<'EOF'
 usage: changelog-entries [--collate | --staged | --base REF | --against REF]
        changelog-entries --release REF
-       changelog-entries --collated REF
        changelog-entries --classify PATH...
        changelog-entries --unversion < FILE
 
@@ -122,11 +121,6 @@ The release caller must set COMMIT_GUARDS_CHANGELOG_COLLATE=1. It refuses,
 writing nothing, when the index or working tree has staged, unstaged or non-ignored untracked changes.
 Collate before changing release files; commit or restore pending edits first.
 The record is replaced whole or not at all.
-
---collated REF verifies that the committed collation snapshot contains no
-pending fragment. It uses the same fragment scope as --collate and writes
-nothing. The release workflow checks its release pull request's head with
-this mode. --release checks whether later fragments fit the installed version.
 
 --release REF validates the selected merged release tree in a private index.
 It reads tracked policy from that selected tree before discovering fragments.
@@ -179,7 +173,6 @@ EOF
 }
 
 COLLATE=0
-COLLATED_REF=""
 CLASSIFY=0
 CLASSIFY_PATHS=()
 UNVERSION=0
@@ -193,11 +186,6 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     --collate) COLLATE=1 ;;
-    --collated)
-      [ $# -ge 2 ] && [ -n "$2" ] || gg_fail argument-missing --collated "--collated requires a commit ref"
-      shift
-      COLLATED_REF="$1"
-      ;;
     --classify)
       shift
       [ $# -ge 1 ] || gg_fail argument-missing --classify "--classify requires at least one path"
@@ -221,7 +209,6 @@ done
 [ "$SCOPE_FLAGS" -le 1 ] && { [ "$COLLATE" -eq 0 ] || [ "$SCOPE_FLAGS" -eq 0 ]; } \
   && { [ "$CLASSIFY" -eq 0 ] || [ $((SCOPE_FLAGS + COLLATE)) -eq 0 ]; } \
   && { [ "$UNVERSION" -eq 0 ] || [ $((SCOPE_FLAGS + COLLATE + CLASSIFY)) -eq 0 ]; } \
-  && { [ -z "$COLLATED_REF" ] || [ $((SCOPE_FLAGS + COLLATE + CLASSIFY + UNVERSION)) -eq 0 ]; } \
   || gg_fail scope-conflict "$SCOPE_FLAGS:$COLLATE:$CLASSIFY:$UNVERSION" "Use one scope, --collate, --classify or --unversion, not two."
 
 if [ "$UNVERSION" -eq 1 ]; then
@@ -319,26 +306,16 @@ refuse() { # KEY VALUE EXPLANATION [REMEDY]
 # them is a violation here.
 # ls-files -s emits one record per STAGE for an unmerged path, so the walk
 # below would read rival blobs as separate files.
-if [ -n "$COLLATED_REF" ]; then
-  collation_commit="$(git rev-parse --verify --end-of-options "${COLLATED_REF}^{commit}" 2>"$GG_TMP/dependency.err")" \
-    || gg_fail_cause collate-ref "$COLLATED_REF" "$GG_TMP/dependency.err" "Could not resolve the collation snapshot."
-  COLLATED_REF="$collation_commit"
-  git ls-tree -rz "$COLLATED_REF" >"$GG_TMP/files.z" 2>"$GG_TMP/dependency.err" \
-    || gg_fail_cause collate-tree "$COLLATED_REF" "$GG_TMP/dependency.err" "Could not read the collation snapshot."
-else
-  gg_require_merged_index
-  git ls-files -sz >"$GG_TMP/files.z" 2>"$GG_TMP/dependency.err" \
-    || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "git ls-files failed"
-  gg_package_files
-fi
+gg_require_merged_index
+git ls-files -sz >"$GG_TMP/files.z" 2>"$GG_TMP/dependency.err" \
+  || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "git ls-files failed"
+gg_package_files
 
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>".
   f="${rec#*"$GG_TAB"}"
   mode="${rec%% *}"
   rest="${rec#* }"
-  # ls-tree carries the object type before its SHA; ls-files carries the stage after it.
-  [ -z "$COLLATED_REF" ] || rest="${rest#* }"
   sha="${rest%% *}"
   if [ -n "$RECORD" ] && [ "$f" = "$RECORD" ]; then
     RECORD_SHA="$sha"
@@ -377,10 +354,6 @@ while IFS= read -r -d '' rec; do
     done
     [ "$under" -eq 1 ] || continue
     refuse fragment-stray "$(gg_shown "$f")" "is in the fragment tree but is not a fragment" "a fragment matches one of: $PATTERNS_SHOWN"
-    continue
-  fi
-  if [ -n "$COLLATED_REF" ]; then
-    refuse collate-pending "$(gg_shown "$f")" "The collation snapshot still holds this fragment."
     continue
   fi
   case "$mode" in
@@ -435,12 +408,6 @@ while IFS= read -r -d '' rec; do
   GG_ENTRY_SOURCE="$(gg_shown "$f")" LC_ALL=C awk -v entry_query=1 -v whole_entry=1 -v entry_section="$sec" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >>"$GG_TMP/fragment-entries" \
     || gg_fail breaking-read "$(gg_shown "$f")" "Could not read the release entry."
 done <"$GG_TMP/files.z"
-
-if [ -n "$COLLATED_REF" ]; then
-  [ "$violations" -eq 0 ] || exit 1
-  gg_message collated "$COLLATED_REF" "The collation snapshot has no pending fragments."
-  exit 0
-fi
 
 read_version() { # SHA PATH -> version, refusing unreadable or malformed manifests
   gg_read_blob "$1" "$2" version

@@ -308,8 +308,8 @@ jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT
         if selected.status.success() {
             let old_flow = mutant(
                 script,
-                "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
-                "fragments=$(git ls-tree -r --name-only \"$source_commit\" -- changelog.d)\n[ \"$fragments\" = changelog.d/README.md ]",
+                "git ls-tree -r --name-only \"$collation_commit\" -- changelog.d",
+                "git ls-tree -r --name-only \"$source_commit\" -- changelog.d",
             );
             assert!(!self.shell(&old_flow, &environment).status.success());
             api_shim(
@@ -545,7 +545,7 @@ fn source_admission_selects_only_reviewed_main_commits() {
 }
 
 #[test]
-fn release_fragments_are_read_from_the_selected_commit() {
+fn the_collation_head_check_admits_later_main_fragments() {
     let fixture = Fixture::new();
     let script = selection_script();
     let run = fixture.shell(
@@ -1258,8 +1258,8 @@ fn source_admission_controls_reach_each_independent_rule() {
         ),
         (
             "fragment state",
-            "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
-            ": \"$collation_commit\"",
+            "if [ \"$fragments\" != changelog.d/README.md ]; then",
+            "if false; then",
             "workflow_dispatch",
             "refs/heads/main",
             "v5.1.0",
@@ -1271,6 +1271,14 @@ fn source_admission_controls_reach_each_independent_rule() {
             !good.status.success(),
             "{rule} failed to refuse the planted input"
         );
+        if rule == "fragment state" {
+            let diagnostic = format!("::error::release-source: fragments={commit}");
+            assert!(
+                String::from_utf8_lossy(&good.stdout)
+                    .lines()
+                    .any(|line| line == diagnostic)
+            );
+        }
         let changed = mutant(&script, original, replacement);
         let bad = select(&fixture, &changed, event, run_ref, tag, commit);
         assert!(
@@ -1343,7 +1351,7 @@ fn an_unreadable_fragment_tree_refuses_the_release_source() {
     fixture.shim(
         "git",
         &format!(
-            "[ \"$1:${{2:-}}\" != ls-tree:-rz ] || exit 1\nexec '{}' \"$@\"",
+            "[ \"$1:${{2:-}}\" != ls-tree:-r ] || exit 1\nexec '{}' \"$@\"",
             real_git.trim()
         ),
     );
@@ -1360,8 +1368,8 @@ fn an_unreadable_fragment_tree_refuses_the_release_source() {
     assert!(fixture.outputs().is_empty());
     let changed = mutant(
         &script,
-        "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
-        ": \"$collation_commit\"",
+        "fragments=$(git ls-tree -r --name-only \"$collation_commit\" -- changelog.d)",
+        "fragments=changelog.d/README.md # git ls-tree -r --name-only \"$collation_commit\" -- changelog.d",
     );
     assert!(
         select(

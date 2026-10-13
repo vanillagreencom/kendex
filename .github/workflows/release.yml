@@ -127,7 +127,12 @@ jobs:
               # A squash merge does not retain the PR head in main's ancestry.
               git fetch --no-tags origin "refs/pull/$REQUESTED_PR/head"
               git rev-parse --verify --end-of-options "${collation_commit}^{commit}" > /dev/null
-              skills/commit-guards/scripts/changelog-entries --collated "$collation_commit"
+              fragments=$(git ls-tree -r --name-only "$collation_commit" -- changelog.d)
+              if [ "$fragments" != changelog.d/README.md ]; then
+                echo "::error::release-source: fragments=$collation_commit"
+                echo "The collation head must contain only changelog.d/README.md under changelog.d."
+                exit 1
+              fi
               skills/commit-guards/scripts/changelog-entries --release "$source_commit"
               release_tag="$REQUESTED_TAG"
               ;;
