@@ -1,5 +1,9 @@
 """Contract rows use real tmux and the real identity carrier, with CLI fixtures."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout, redirect_stderr
+import io
+import runpy
+from unittest.mock import patch
 import hashlib
 import json
 import os
@@ -62,8 +66,19 @@ def validate(output, code, verb, duplicate_boot=False):
     return answer
 
 
+class BootReceiptScenario:
+    # The specified receipt producer owns applicability for its contract rows
+    # and every mutation of that scenario.
+    applicable = Path("/proc/sys/kernel/random/boot_id").is_file()
+    controls = (
+        ("boot receipt", "jarvis/scripts/lib/session.py", 'if boot and record and record.get("boot") == boot:', 'if False:', "test_off_and_boot_receipt"),
+        ("boot refusal receipt", "jarvis/scripts/lib/session.py", 'if boot:\n                    record["boot"] = boot\n                if args.origin == "app-on":', 'if False:\n                    record["boot"] = boot\n                if args.origin == "app-on":', "test_off_and_boot_receipt"),
+    )
+
+
 class SessionContract(unittest.TestCase):
     def setUp(self):
+        self.owned_workers = []
         self.scratch = tempfile.TemporaryDirectory()
         self.root = Path(self.scratch.name).resolve()
         self.home = self.root / "home"
@@ -95,6 +110,13 @@ class SessionContract(unittest.TestCase):
                 self.call("stop")
                 self.wait("off" if json.loads(self.record.read_text()).get("app_off") else "stopped")
         finally:
+            for worker in self.owned_workers:
+                worker.terminate()
+                try:
+                    worker.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    worker.kill()
+                    worker.wait(timeout=5)
             subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
             self.scratch.cleanup()
 
@@ -107,7 +129,24 @@ class SessionContract(unittest.TestCase):
         if kwargs.get("brief"):
             argv += ["--brief-file", str(kwargs["brief"])]
         start = time.monotonic()
-        result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
+        if kwargs.get("own_worker"):
+            # The real public owner runs here so its detached worker remains
+            # our child until wait. Observe the real constructor only.
+            real_popen = subprocess.Popen
+            def observe_child(*arguments, **options):
+                child = real_popen(*arguments, **options)
+                if options.get("start_new_session"):
+                    self.owned_workers.append(child)
+                return child
+            output, errors = io.StringIO(), io.StringIO()
+            with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True), \
+                    patch.object(sys, "argv", argv), patch.object(subprocess, "Popen", observe_child), \
+                    redirect_stdout(output), redirect_stderr(errors):
+                runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+                code = runtime["main"]()
+            result = subprocess.CompletedProcess(argv, code, output.getvalue(), errors.getvalue())
+        else:
+            result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
         self.assertLess(time.monotonic() - start, 60)
         return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
 
@@ -269,6 +308,13 @@ class SessionContract(unittest.TestCase):
                 validate(json.dumps(answer | patch) + "\n", 0, "status")
 
     def test_off_and_boot_receipt(self):
+        from session_controls import applicable_controls
+        for available in (False, True):
+            with self.subTest(boot_producer=available), patch.object(BootReceiptScenario, "applicable", available):
+                names = {row[0] for row in applicable_controls(BootReceiptScenario)}
+                for name, *_ in BootReceiptScenario.controls:
+                    self.assertEqual(name in names, available)
+                self.assertTrue({"app Off", "app On", "app On state"} <= names)
         # A desktop with no selected app still has the lock/runtime tools.
         tool_bin = self.root / "tools"
         tool_bin.mkdir()
@@ -278,7 +324,7 @@ class SessionContract(unittest.TestCase):
                 (tool_bin / tool).symlink_to(found)
         missing = self.env | {"PATH": str(tool_bin)}
         # The Linux boot producer is absent on macOS. Off/app-on is universal.
-        origins = (["boot"] if Path("/proc/sys/kernel/random/boot_id").is_file() else []) + ["app-on"]
+        origins = (["boot"] if BootReceiptScenario.applicable else []) + ["app-on"]
         for origin in origins:
             with self.subTest(origin=origin):
                 if origin == "app-on":
@@ -298,7 +344,7 @@ class SessionContract(unittest.TestCase):
                     self.assertEqual(self.call("status")[0]["state"], "stopped")
                     self.call("start")
                     self.wait(reason="resumed")
-        if Path("/proc/sys/kernel/random/boot_id").is_file():
+        if BootReceiptScenario.applicable:
             # A new login handles boot once, whether the session lives or ends.
             self.env["XDG_SESSION_ID"] = "second-fixture-login"
             self.call("start", origin="boot")
@@ -409,27 +455,17 @@ class SessionContract(unittest.TestCase):
         # The FIFO holds the native identity producer while the fixture ends
         # its own worker. A subsequent Start must acquire a new live worker.
         os.mkfifo(self.gate)
-        self.call("start")
-        deadline = time.monotonic() + 10
-        while not self.rows.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertTrue(self.rows.exists())
-        worker = json.loads(self.record.read_text())["worker"]
-        # The worker belongs to this fixture and is still held by the FIFO.
-        identity = subprocess.run([self.env["JARVIS_TEST_BASH"],
-            str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "worker-live",
-            str(worker["pid"]), worker["started_at"]], env=self.env, capture_output=True)
-        self.assertEqual(identity.returncode, 0)
-        os.kill(worker["pid"], signal.SIGTERM)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            result = subprocess.run([self.env["JARVIS_TEST_BASH"],
-                str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "worker-live",
-                str(worker["pid"]), worker["started_at"]], env=self.env, capture_output=True)
-            if result.returncode == 1:
-                break
-            time.sleep(0.05)
-        self.assertEqual(result.returncode, 1)
+        self.call("start", own_worker=True)
+        self.await_launches(1)
+        self.assertEqual(len(self.owned_workers), 1)
+        handle = self.owned_workers[0]
+        original_record = json.loads(self.record.read_text())
+        worker = original_record["worker"]
+        self.assertEqual(worker["pid"], handle.pid)
+        self.assertEqual(self.call("status")[0]["state"], "starting")
+        # This unreaped child cannot share its PID with a later process.
+        handle.terminate()
+        self.assertEqual(handle.wait(timeout=10), -signal.SIGTERM)
         terminal = self.call("status")[0]["terminal"]
         flag = self.refuse_teardown()
         retained, _ = self.call("start")
@@ -438,14 +474,21 @@ class SessionContract(unittest.TestCase):
         self.assertNotIn("worker", json.loads(self.record.read_text()))
         flag.unlink()
         self.assertEqual(self.call("start")[0]["state"], "starting")
-        replacement = json.loads(self.record.read_text())["worker"]
+        self.await_launches(2)
+        replacement_record = json.loads(self.record.read_text())
+        replacement = replacement_record["worker"]
         self.assertNotEqual(replacement, worker)
+        replacement_terminal = self.call("status")[0]["terminal"]
+        self.assertIsNotNone(replacement_terminal)
+        self.assertEqual(replacement_terminal, replacement_record["terminal"])
+        self.assertEqual(replacement_record["pending"]["generation"], replacement_record["generation"])
+        self.assertNotEqual(replacement_record["pending"]["generation"], original_record["pending"]["generation"])
         flag.touch()
         self.assertEqual(self.call("stop", origin="app-off")[0]["state"], "stopping")
         result = self.await_worker_result()
         answer, _ = self.call("status")
         self.assertEqual((answer["state"], answer["reason"], answer["terminal"]),
-                         ("starting", "launching", result["terminal"]))
+                         ("starting", "launching", replacement_terminal))
         self.assertTrue(result["app_off"])
         self.assertEqual(self.call("start")[0]["reason"], "app-off")
         flag.unlink()
