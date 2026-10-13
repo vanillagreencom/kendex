@@ -1445,7 +1445,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
   local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" status="${7:-running}" rec host="" account="" surface=gui report record_repo
   local running_at="" record_model
-  record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" resolved)" || return 1
+  record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" launch)" || return 1
   [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"

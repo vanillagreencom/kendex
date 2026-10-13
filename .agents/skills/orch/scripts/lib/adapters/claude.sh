@@ -45,10 +45,10 @@ lane_adapter_claude_window() { # MODEL
 # Aliases use their launch-time family override. Explicit versions retain all
 # their version fields. The recorded form never resolves a historical family
 # alias through the current environment.
-lane_adapter_claude_model_id() { # MODEL [resolved|recorded]
+lane_adapter_claude_model_id() { # MODEL [launch|resolved|recorded]
   local model fallback="" provider_unknown=false provider_flag
   model="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" || return 1
-  case "${2:-}" in resolved | recorded) model=${model%\[1m\]} ;; esac
+  case "${2:-}" in launch | resolved | recorded) model=${model%\[1m\]} ;; esac
   # Historical records cannot recover the environment that resolved an alias.
   # Only launch writers may consult family overrides.
   if [[ "${2:-}" == recorded ]]; then
@@ -74,11 +74,19 @@ lane_adapter_claude_model_id() { # MODEL [resolved|recorded]
       model=$fallback
     fi
   fi
-  # PostModelSwitch supplies a canonical id. Unresolved launch aliases and
-  # provider-selected defaults cannot establish equality with that id.
-  if [[ "${2:-}" == resolved || "${2:-}" == recorded ]]; then
-    case "$model" in claude-*[0-9]*) ;; *) return 0 ;; esac
-    [[ "$model" != *[[:space:]]* ]] || return 0
+  # PostModelSwitch.to_model is the event target model ID. These strict forms
+  # normalize supported Claude IDs and version spellings. An unresolved
+  # alias cannot establish equality. A launch record retains its actual word
+  # when unresolved, so ordinary recovery still has the launch evidence.
+  if [[ "${2:-}" == launch || "${2:-}" == resolved || "${2:-}" == recorded ]]; then
+    case "$model" in
+      claude-*[0-9]*) [[ "$model" != *[[:space:]]* ]] || model="" ;;
+      *) model="" ;;
+    esac
+    if [[ -z "$model" ]]; then
+      [[ "${2:-}" == launch ]] || return 0
+      model=${1:-}
+    fi
   elif [[ -z "$model" ]]; then
     model=${1:-}
   fi

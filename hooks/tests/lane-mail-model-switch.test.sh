@@ -6,8 +6,10 @@ set -euo pipefail
 . "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh"
 COMPANION="${COMPANION_UNDER_TEST:-$REPO_ROOT/hooks/lane-mail-model-switch.sh}"
 OWNED_CHILD=""
+OWNED_SOCKET=""
 cleanup_model_world() {
   if [[ -n "$OWNED_CHILD" ]]; then kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; fi
+  [[ -z "$OWNED_SOCKET" ]] || tmux -S "$OWNED_SOCKET" kill-server 2>/dev/null || :
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup_model_world EXIT
@@ -39,15 +41,16 @@ LAUNCH
   "$S/workflow-state" --state-dir "$LANE/tmp" init oversee >/dev/null
   record=$(jq -nc --arg item KEN-3916 --arg model "$2" --arg cwd "$LANE" \
     --arg pid "$OWNED_CHILD" --arg start "$START" --arg account "$OFFLINE_HOME" \
-    --arg broken "${3:-}" '{item:$item,harness:"claude",session_id:"s1",model:$model,
+    --arg broken "${3:-}" --argjson server "$OVERSEER_SERVER" '{item:$item,harness:"claude",session_id:"s1",model:$model,
       effort:"high",account:$account,status:"running",tracker:"linear",launched_at:"launch-a",
-      launch:{pid:$pid,start:$start},recovery:(if $broken == "broken" then null else
+      launch:{pid:$pid,start:$start,pane:"%1",server:$server},recovery:(if $broken == "broken" then null else
       {cwd:$cwd,flags:"--dangerously-skip-permissions --model claude-opus-4-8 --effort high",refresh:false,session:"model-test"} end)}')
   "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
   CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" ANTHROPIC_BASE_URL= \
     ANTHROPIC_DEFAULT_FABLE_MODEL= ANTHROPIC_DEFAULT_OPUS_MODEL= ANTHROPIC_DEFAULT_SONNET_MODEL= ANTHROPIC_DEFAULT_HAIKU_MODEL= \
     CLAUDE_CODE_USE_BEDROCK= CLAUDE_CODE_USE_VERTEX= CLAUDE_CODE_USE_FOUNDRY= CLAUDE_CODE_USE_MANTLE= \
-    CLAUDE_CODE_USE_ANTHROPIC_AWS= CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=)
+    CLAUDE_CODE_USE_ANTHROPIC_AWS= CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST= \
+    "PATH=$TMUX_BIN:$PATH" TMUX=fake TMUX_PANE=%1 "TMUX_SERVER_ID=$OVERSEER_SERVER")
 }
 event() { # MODEL [EXTRA JSON]
   run_payload "$(jq -nc --arg m "$1" --argjson extra "${2:-null}" \
@@ -102,6 +105,64 @@ assert_eq "$(cat "$TMP_ROOT/stdout")" '' 'missing fleet record reports once'
 assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'unavailable launch evidence changes no process'
 kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 
+echo '=== unavailable dependency and association evidence ==='
+# The GUI producer records no launch process or native session on first open.
+# A missing adapter is an installed dependency failure, not a model match.
+for fault in gui gui-session adapter; do
+  model_world "unavailable-$fault" claude-fable-5-1
+  if [[ "$fault" == gui || "$fault" == gui-session ]]; then
+    "$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
+      '.lanes[0].session_id=(if $fault=="gui" then null else "s1" end)
+       | .lanes[0].launch=null | .lanes[0].surface="gui"' --arg fault "$fault" >/dev/null
+    cause=launch-unbound
+  else
+    rm -- "$S/lib/adapters/claude.sh"
+    cause=adapter-unread
+  fi
+  "$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
+  before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+  event claude-opus-4-8
+  assert_eq "$(jq -r '.model_checks.s1.cause' "$LANE/tmp/workflow-state-KEN-3916.json")" "$cause" "$fault persists unavailable evidence"
+  assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|split("\n")[0]' "$TMP_ROOT/stdout")" "lane-mail-check: model-unavailable=$cause" "$fault delivers the notice to the model"
+  if [[ "$fault" == adapter ]]; then
+    assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|contains("adapters/claude.sh")' "$TMP_ROOT/stdout")" true 'adapter failure keeps its dependency cause below the key'
+  fi
+  event claude-opus-4-8
+  assert_eq "$(cat "$TMP_ROOT/stdout")" '' "$fault delivers its notice once"
+  assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "$fault leaves launch evidence unknown"
+  assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$fault takes no unverified stop"
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+done
+
+if [[ -z "${MODEL_CONTROL:-}" ]]; then
+  model_world fleet-lock claude-fable-5-1
+  mkfifo "$LANE/tmp/release-lock"
+  "$BASH" -euo pipefail -c '
+    . "$1/lib/file-lock.sh"
+    orch_take_lock 200 "$2.lock" 10
+    printf held > "$3"
+    read -r release < "$4"
+  ' _ "$S" "$LANE/tmp/workflow-state-oversee.json" "$LANE/tmp/lock-held" "$LANE/tmp/release-lock" \
+    200>"$LANE/tmp/workflow-state-oversee.json.lock" &
+  locker=$!
+  while [[ ! -f "$LANE/tmp/lock-held" ]]; do sleep 0.05; done
+  for delivery in first duplicate; do
+    event claude-opus-4-8
+    if [[ "$delivery" == first ]]; then
+      assert_eq "$(jq -r '.model_checks.s1.cause' "$LANE/tmp/workflow-state-KEN-3916.json")" record-unwritten 'a held fleet lock persists unavailable in item state'
+      assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|split("\n")[0]' "$TMP_ROOT/stdout")" 'lane-mail-check: model-unavailable=record-unwritten' 'a held fleet lock delivers model context'
+      assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|contains("workflow-state: lock-failed")' "$TMP_ROOT/stdout")" true 'fleet write failure keeps its dependency cause below the key'
+    else
+      assert_eq "$(cat "$TMP_ROOT/stdout")" '' 'a held fleet lock reports once'
+    fi
+  done
+  printf 'release\n' > "$LANE/tmp/release-lock"
+  wait "$locker"
+  assert_eq "$(switch_count)" 0 'an unwritten fleet record takes no recovery action'
+  assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'an unwritten record keeps the unclaimed process'
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+fi
+
 echo '=== recovery stops before preparation ==='
 for preparation in complete broken; do
   model_world "$preparation" claude-fable-5-1 "$preparation"
@@ -110,7 +171,8 @@ for preparation in complete broken; do
   "$S/workflow-state" --state-dir "$LANE/tmp" update KEN-3916 '.dev_round="unfinished"' >/dev/null
   "$S/workflow-state" --state-dir "$LANE/tmp" update KEN-3916 \
     '.child_sessions={runtime:{status:"active",agent_id:"a1"},retired:{status:"closed",agent_id:"a2"}}' >/dev/null
-  "$S/workflow-state" --state-dir "$LANE/tmp" set KEN-3916 handoff '{"remaining":["old"]}' >/dev/null
+  "$S/workflow-state" --state-dir "$LANE/tmp" set KEN-3916 handoff \
+    '{"remaining":["old"],"merged":["landed"],"open_pr":42,"traps":["standing trap"]}' >/dev/null
   transcript="$LANE/tmp/parent.jsonl"
   mkdir -p "$LANE/tmp/parent/subagents"
   : > "$transcript"
@@ -144,9 +206,11 @@ for preparation in complete broken; do
     assert_eq "$(jq -c '.fleet_log[]|select(.kind=="model-switched")|[.session_id,.launched,.observed,(.at|type)]' "$LANE/tmp/workflow-state-oversee.json")" \
       '["s1","claude-fable-5-1","claude-opus-4-8","string"]' "$preparation switch has launch, observation and writer time"
     assert_eq "$(jq -r '.dev_round' "$LANE/tmp/workflow-state-KEN-3916.json")" unfinished "$preparation keeps unfinished round"
-    assert_eq "$(jq -r '.handoff.traps[0]|contains("attached-agent=a1")' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation records unfinished agent"
-    assert_eq "$(jq -r --arg p "$LANE/tmp/parent/subagents/agent-a1.jsonl" '.handoff.traps[0]|contains("output="+$p)' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation keeps known agent output"
-    assert_eq "$(jq -r '.handoff.traps[0]|contains("attached-agent=a2")' "$LANE/tmp/workflow-state-KEN-3916.json")" false "$preparation omits retired agent"
+    assert_eq "$(jq -c '.handoff | [.remaining,.merged,.open_pr,(.traps|index("standing trap")!=null)]' "$LANE/tmp/workflow-state-KEN-3916.json")" \
+      '[["old"],["landed"],42,true]' "$preparation retains standing handoff work"
+    assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=a1"))' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation records unfinished agent"
+    assert_eq "$(jq -r --arg p "$LANE/tmp/parent/subagents/agent-a1.jsonl" '.handoff.traps|any(contains("output="+$p))' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation keeps known agent output"
+    assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=a2"))' "$LANE/tmp/workflow-state-KEN-3916.json")" false "$preparation omits retired agent"
     assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped "$preparation remains recoverable"
     if [[ "$preparation" == complete ]]; then
       # Native resume can retain s1. A later process must get its own action
@@ -183,15 +247,17 @@ for preparation in complete broken; do
 done
 
 echo '=== delayed recovery keeps replacements ==='
-model_world retired-callback claude-fable-5-1
-CALL_ENV+=("PATH=$TMUX_BIN:$PATH" TMUX=fake "TMUX_PANE=%old" "TMUX_SERVER_ID=$OVERSEER_SERVER")
-"$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
-  '.lanes[0].launch.pane="%replacement" | .lanes[0].launch.server=$server' --arg server "$OVERSEER_SERVER" >/dev/null
-before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
-event claude-opus-4-8
-assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" 'a retired callback cannot borrow a resumed session ID'
-assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'a retired callback leaves the replacement running'
-kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+for retired in pane server; do
+  model_world "retired-$retired" claude-fable-5-1
+  "$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
+    'if $retired == "pane" then .lanes[0].launch.pane="%replacement"
+     else .lanes[0].launch.server=7001 end' --arg retired "$retired" >/dev/null
+  before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+  event claude-opus-4-8
+  assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "a retired $retired callback cannot borrow a resumed session ID"
+  assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "a retired $retired callback leaves the replacement running"
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+done
 
 model_world replaced-before-write claude-fable-5-1
 mv -- "$S/workflow-state" "$S/workflow-state.real"
@@ -238,7 +304,7 @@ kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNE
 
 if [[ -z "${MODEL_CONTROL:-}" ]]; then
   echo '=== must-fail controls ==='
-  for rule in baseline comparison duplicate history callback claim roster unavailable; do
+  for rule in baseline comparison duplicate history callback claim roster unavailable server standing unbound notice; do
     control="$TMP_ROOT/control-$rule.sh"
     if [[ "$rule" == baseline ]]; then
       git -C "$REPO_ROOT" show b510440e4273d1cd168f381eb3d5b8d8a6aa693e:hooks/lane-mail-check.sh > "$control"
@@ -252,7 +318,11 @@ old, new = {
     "comparison": ('elif [ "$launch_id" = "$observed_id" ]; then return 0', 'elif false; then return 0'),
     "duplicate": ('elif $current.model_check.session_id == $session', 'elif false and $current.model_check.session_id == $session'),
     "history": ('and $current.model_check.launch_identity == $identity', 'and true'),
-    "callback": ('.launch.pane == $pane and .launch.server == $server', 'true'),
+    "callback": ('.launch.pane == $pane and (.launch.server | tostring) == $server', 'true'),
+    "server": ('(.launch.server | tostring) == $server', '.launch.server == $server'),
+    "standing": ('$prior // {merged:', '{merged:'),
+    "unbound": ('unbound) model_unavailable_notice launch-unbound "$observed"; return 0 ;;', 'unbound) return 0 ;;'),
+    "notice": ('model_unavailable_notice adapter-unread "$observed" "$(cat -- "$WORK_DIR/model.err")"; return 0', 'message model-unavailable adapter-unread; return 0'),
     "claim": ('or $current.launch != $record.launch or $current.launched_at != $record.launched_at', 'or $current.launch != $record.launch or false'),
     "roster": ('(.child_sessions // {}) as $children', '{} as $children'),
     "unavailable": ('if .model_checks[$session] != null then', 'if false then'),

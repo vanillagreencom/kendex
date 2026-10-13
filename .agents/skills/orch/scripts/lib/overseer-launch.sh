@@ -744,7 +744,8 @@ ol_session_start() { # SERVER SESSION
 # ol_identity HARNESS ACCOUNT HOME MODEL EFFORT CWD — the launch identity into
 # OL_IDENTITY as the JSON object the record carries, null for each field the
 # launch does not know. MODEL uses the launch-choice resolver at this launch.
-# An unresolved alias records null, so a later check cannot treat it as a match.
+# An unresolved model keeps its launch word for ordinary recovery. A model
+# switch check still requires a supported identity and reports it unavailable.
 # ACCOUNT is the account folder a lane pick names and HOME the directory the
 # harness variable carries: the same folder for claude,
 # and for codex a private CODEX_HOME built under the account where folder
@@ -753,7 +754,7 @@ ol_session_start() { # SERVER SESSION
 OL_IDENTITY=""
 ol_identity() { # HARNESS ACCOUNT HOME MODEL EFFORT CWD
   local model
-  model="$(launch_choice_model_id "$1" "$4" resolved)" || return 1
+  model="$(launch_choice_model_id "$1" "$4" launch)" || return 1
   OL_IDENTITY="$(jq -cn --arg harness "$1" --arg account "$2" --arg home "$3" \
     --arg model "$model" --arg effort "$5" --arg cwd "$6" \
     "$OL_JQ_DEFS"' $ARGS.named | ol_identity | map_values(if . == "" then null else . end)' 2>"$DEP_ERR")"

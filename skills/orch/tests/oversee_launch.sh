@@ -374,14 +374,14 @@ run_oversee -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
 assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
   "a first launch from outside tmux opens the overseer at the base index and records it"
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded server_start)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
+  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server and its start, pane, window, account, line and generation"
 WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
-assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|" \
+assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|claude-fable-5-1|high|$WORK_REAL|" \
   "the session record carries the launch identity the command was built with"
 assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
   "oversee: overseer-launch form=prefix lane=$H/.claude trust=account-config session=%N window=@N server=$SOCKET" \
@@ -600,7 +600,7 @@ tm kill-window -t "$(recorded window)"
 # launcher that stops reading the setting fails one side.
 run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
 assert_eq "$RC|$(recorded_argv)" \
-  "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$BRIEF;" \
+  "0|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;$BYPASS;$COMPACT;$BRIEF;" \
   "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
 tm kill-window -t "$(recorded window)"
 
@@ -618,7 +618,7 @@ tm kill-window -t "$(recorded window)"
 pi_first_row() { # [OVERSEE_BIN]
   OVERSEE_BIN="${1:-}" LAUNCH_PREF='pi:openai/gpt-5:high,claude:fable:high' run_oversee -- launch --wait-secs 20
   assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
-  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|fable" \
+  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|claude-fable-5-1" \
   "a first launch skips a pi entry and opens on the claude entry after it"
 }
 pi_first_row

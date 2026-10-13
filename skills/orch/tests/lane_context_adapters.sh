@@ -139,6 +139,9 @@ sonnet|claude-sonnet-4-6||recorded
 fable|||recorded
 fable-5-1||claude-fable-5-1|recorded
 claude-opus-4-8-20261001||claude-opus-4-8-20261001|recorded
+opusplan||opusplan|launch
+MyProviderModel||MyProviderModel|launch
+fable-5-1[1m]||claude-fable-5-1|launch
 ROWS
 while IFS='|' read -r selector value model pin want; do
   got="$(env "$selector=$value" ANTHROPIC_DEFAULT_FABLE_MODEL="$pin" "$BASH" -euo pipefail -c \
@@ -516,11 +519,11 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'resolved identity sonnet pin=claude-sonnet-4-6'
   control version-identity adapters/claude.sh 'printf '\''%s\n'\'' "$model"' 'printf '\''%s\n'\'' "${model%-20261001}"' \
     'resolved identity claude-opus-4-8-20261001 pin='
-  control unresolved-model adapters/claude.sh 'case "$model" in claude-*[0-9]*) ;; *) return 0 ;; esac' ':' \
+  control unresolved-model adapters/claude.sh '      *) model="" ;;' '      *) : ;;' \
     'resolved identity best pin='
   control version-spelling adapters/claude.sh 'model="claude-$model"' ':' \
     'resolved identity fable-5-1 pin='
-  control capacity-spelling adapters/claude.sh 'case "${2:-}" in resolved | recorded) model=${model%\[1m\]} ;; esac' ':' \
+  control capacity-spelling adapters/claude.sh 'case "${2:-}" in launch | resolved | recorded) model=${model%\[1m\]} ;; esac' ':' \
     'resolved identity claude-fable-5-1[1m] pin='
   control recorded-alias adapters/claude.sh 'if [[ "${2:-}" == recorded ]]; then' 'if false; then' \
     'recorded identity sonnet pin=claude-sonnet-4-6'

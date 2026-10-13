@@ -428,12 +428,12 @@ table \
 claude_usage 10 20 94 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 NAMED_PREFERENCE='ORCH_LANE_PREFERENCE=claude:fable:high,claude:opus:high;cmd=claude;ORCH_LANE_BURN_PCT_PER_HOUR=50'
 table \
-  "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work KEN-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
-  "a preference skips the model its live claim projects past the wall|$NAMED_PREFERENCE;prep=claude_claim|--harness claude --lane $H/.claude KEN-1644|rc=0 launched=1 cmd_lane=claude cmd_model=opus" \
+  "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work KEN-1643|rc=0 launched=1 cmd_lane=claude cmd_model=claude-fable-5-1" \
+  "a preference skips the model its live claim projects past the wall|$NAMED_PREFERENCE;prep=claude_claim|--harness claude --lane $H/.claude KEN-1644|rc=0 launched=1 cmd_lane=claude cmd_model=claude-opus-5-5" \
   "a preference checks an excluded alias before a same-named directory|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;ORCH_LANE_EXCLUDE=claude;cwd=$COLLIDE|--harness claude --lane work KEN-1645|rc=1 launched=nolog refused=lane=work"
 pi_control ctl-preference-projected open-terminal 'preference_pick_args=(--lane "$lane_dir" --projected)' 'preference_pick_args=(--lane "$lane_dir")' \
   "$NAMED_PREFERENCE;prep=claude_claim" --harness claude --lane "$H/.claude" KEN-1644
-assert_eq "$(observe "rc=0 launched=1 cmd_model=fable")" "rc=0 launched=1 cmd_model=fable" \
+assert_eq "$(observe "rc=0 launched=1 cmd_model=claude-fable-5-1")" "rc=0 launched=1 cmd_model=claude-fable-5-1" \
   "control: without projected use the preference launches the walled first model"
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 

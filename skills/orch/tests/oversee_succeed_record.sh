@@ -219,9 +219,12 @@ for row in \
   'claude|fable|||"claude-fable-5-1"' \
   'claude|opus|||"claude-opus-5-5"' \
   'claude|fable-5-1|||"claude-fable-5-1"' \
+  'claude|fable-5-1[1m]|||"claude-fable-5-1"' \
+  'claude|opusplan|||"opusplan"' \
+  'claude|MyProviderModel|||"MyProviderModel"' \
   'claude|claude-opus-5|||"claude-opus-5"' \
   'claude|fable|claude-opus-5-5||"claude-opus-5-5"' \
-  'claude|fable||1|null' \
+  'claude|fable||1|"fable"' \
   'claude|fable|claude-opus-5-5|1|"claude-opus-5-5"' \
   'codex|gpt-5|||"gpt-5"' \
   ; do
@@ -232,7 +235,7 @@ for row in \
 done
 IDENTITY_CTL="$(mutant_scripts identityctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$IDENTITY_CTL/lib/overseer-launch.sh" \
-  '  model="$(launch_choice_model_id "$1" "$4" resolved)" || return 1' \
+  '  model="$(launch_choice_model_id "$1" "$4" launch)" || return 1' \
   '  model="$4"'
 identity_row "$IDENTITY_CTL" claude fable "" ""
 identity_control_rc=0
@@ -828,9 +831,9 @@ assert_eq "$RC|$CALLER_LISTED" "1|1" \
 # --- fixed original-model recovery ---------------------------------------
 # The hook writes model_check before detached dispatch. The production
 # launcher owns claiming, termination, replay, verification and rollback.
-recovery_row() { # SCRIPTS_DIR success|dialog|missing-model
-  local dir="$1" outcome="$2" original extra
-  rm -f -- "$TMP_ROOT/verify-dialog" "$TMP_ROOT/harness-args"
+recovery_row() { # SCRIPTS_DIR success|dialog|missing-model [CALLBACK_HOOK]
+  local dir="$1" outcome="$2" original extra callback_hook="${3:-}" deadline
+  rm -f -- "$TMP_ROOT/verify-dialog" "$TMP_ROOT/harness-args" "$TMP_ROOT/work/tmp/model-recovery.log"
   new_caller claude
   state "$(record "$CALLER_PANE" "$H/.eclaude" claude-fable-5-1 "$PENDING")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
@@ -844,20 +847,80 @@ recovery_row() { # SCRIPTS_DIR success|dialog|missing-model
   state "$(record "$CALLER_PANE" "$H/.eclaude" claude-fable-5-1 "$extra")"
   ORIGINAL_LINE="$original" ORIGINAL_PANE="$CALLER_PANE"
   [[ "$outcome" != dialog ]] || touch "$TMP_ROOT/verify-dialog"
-  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:claude-fable-5-2:low SUCCESSION_SETTING=off \
-    run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --model-recovery-pane "$ORIGINAL_PANE" \
-      --expected-session switched-session --wait-secs 2 --harness codex -- --model opus --effort low
+  if [[ -n "$callback_hook" ]]; then
+    # Use the shipped launch record writer and installed callback boundary.
+    # The hook owns comparison and dispatch; succession owns stop and replay.
+    git -C "$TMP_ROOT/work" init -q
+    git -C "$TMP_ROOT/work" config gc.auto 0
+    git -C "$TMP_ROOT/work" config maintenance.auto false
+    git -C "$TMP_ROOT/work" symbolic-ref HEAD refs/heads/main
+    mkdir -p "$TMP_ROOT/work/.claude/hooks" "$TMP_ROOT/work/.agents/skills/orch" \
+      "$TMP_ROOT/work/.agents/skills/mailbox" "$MAILBOX_DIR"
+    ln -sfn "$dir" "$TMP_ROOT/work/.agents/skills/orch/scripts"
+    ln -sfn "$SRC_DIR/../../mailbox/scripts" "$TMP_ROOT/work/.agents/skills/mailbox/scripts"
+    cp "$callback_hook" "$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
+    cp "$SRC_DIR/../../../hooks/lane-mail-model-switch.sh" "$TMP_ROOT/work/.claude/hooks/lane-mail-model-switch.sh"
+    chmod +x "$TMP_ROOT/work/.claude/hooks/"*.sh
+    (cd "$TMP_ROOT/work" && env TMUX="$TMUX_ADDR" "$BASH" -euo pipefail -c '
+      SCRIPT_DIR="$1" DEP_ERR="$2"
+      . "$SCRIPT_DIR/lib/lane-launch.sh"
+      . "$SCRIPT_DIR/lib/lane-context.sh"
+      . "$SCRIPT_DIR/lib/overseer-launch.sh"
+      OL_PRIOR=null
+      ol_identity claude "$3" "$3" fable-5-1 high "$PWD"
+      ol_record_write tmux "$4" "$5" "$6" "$OL_IDENTITY" "$7"
+    ' _ "$dir" "$TMP_ROOT/writer.err" "$H/.eclaude" "$ORIGINAL_PANE" \
+      "$(tm display-message -p -t "$ORIGINAL_PANE" '#{window_id}')" "$SERVER_PID" "$original")
+    BEFORE_CALLBACK="$(jq -c . "$FLEET_STATE")"
+    for observed in claude-fable-5-1 claude-opus-4-8; do
+      RC=0
+      printf '%s\n' "{\"hook_event_name\":\"PostModelSwitch\",\"session_id\":\"switched-session\",\"to_model\":\"$observed\"}" |
+        (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$ORIGINAL_PANE" \
+          CLAUDE_PROJECT_DIR="$TMP_ROOT/work" CLAUDE_CONFIG_DIR="$H/.eclaude" \
+          ORCH_OVERSEER_SUCCESSION=off ORCH_OVERSEER_PREFERENCE=claude:claude-fable-5-2:low \
+          "$BASH" "$TMP_ROOT/work/.claude/hooks/lane-mail-model-switch.sh") > "$TMP_ROOT/callback.out" 2> "$TMP_ROOT/err" || RC=$?
+      if [[ "$observed" == claude-fable-5-1 ]]; then
+        assert_eq "$(jq -c . "$FLEET_STATE")" "$BEFORE_CALLBACK" 'matching callback keeps the production overseer record unchanged'
+      fi
+    done
+    deadline=$((SECONDS + 15))
+    while [[ "$SECONDS" -lt "$deadline" ]] && ! grep -q '^oversee-succeed: successor-working ' "$TMP_ROOT/work/tmp/model-recovery.log" 2>/dev/null; do sleep 0.05; done
+    assert_eq "$(jq '[.fleet_log[]?|select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'the overseer callback writes one switch row'
+    assert_eq "$(jq -r '.handoff.written_at|type' "$FLEET_STATE")" string 'a fresh emergency handoff keeps the handoff writer timestamp'
+  else
+    SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:claude-fable-5-2:low SUCCESSION_SETTING=off \
+      run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --model-recovery-pane "$ORIGINAL_PANE" \
+        --expected-session switched-session --wait-secs 2 --harness codex -- --model opus --effort low
+  fi
   RECOVERY_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
   ORIGINAL_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$ORIGINAL_PANE" || true)"
 }
 RECOVERY_DIR="$(mutant_scripts recoveryrow)" || exit 1
-recovery_row "$RECOVERY_DIR" success
+recovery_row "$RECOVERY_DIR" success "$SRC_DIR/../../../hooks/lane-mail-check.sh"
 assert_eq "$RC|$ORIGINAL_LISTED|$(jq -r '.overseer | [.harness, .account, .model, .effort, .launch_line] | join("|")' "$FLEET_STATE")" \
   "0|0|claude|$H/.eclaude|claude-fable-5-1|high|$ORIGINAL_LINE" \
   "model recovery stops the predecessor and replays its recorded account, model, effort and permission words with succession off" "$TMP_ROOT/err"
 assert_eq "$(cat -- "$TMP_ROOT/harness-args")" \
   "-n overseer --model fable-5-1 --effort high $PLAIN_LEAD $BYPASS $BRIEF|$H/.eclaude" \
   "the actual successor receives the original launch arguments despite conflicting preferences, pending identity and caller flags"
+DISPATCH_CTL="$TMP_ROOT/dispatch-control.sh"
+cp "$SRC_DIR/../../../hooks/lane-mail-check.sh" "$DISPATCH_CTL"
+mutate_file "$DISPATCH_CTL" \
+  '"$SCRIPTS/oversee-succeed" --model-recovery-pane "${CALLER_KEY#* }" --expected-session "$SESSION"' \
+  'true --model-recovery-pane "${CALLER_KEY#* }" --expected-session "$SESSION"'
+control_rc=0
+(
+  FAIL=0
+  recovery_row "$RECOVERY_DIR" success "$DISPATCH_CTL"
+  assert_eq "$ORIGINAL_LISTED|$(cat "$TMP_ROOT/harness-args" 2>/dev/null || true)" \
+    "0|-n overseer --model fable-5-1 --effort high $PLAIN_LEAD $BYPASS $BRIEF|$H/.eclaude" \
+    'the callback ends the predecessor and replays the recorded model within this turn'
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/dispatch-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc|$(grep -c '^  FAIL ' "$TMP_ROOT/dispatch-control.out" || true)" \
+  '1|1' 'control: removing only callback dispatch fails the ordinary stop and replay assertion' "$TMP_ROOT/dispatch-control.out"
+# The control replaced the live row. Restore the production callback row.
+recovery_row "$RECOVERY_DIR" success "$SRC_DIR/../../../hooks/lane-mail-check.sh"
 BEFORE_DUPLICATE="$(jq -c .overseer "$FLEET_STATE")"
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --model-recovery-pane "$ORIGINAL_PANE" --expected-session switched-session
 assert_eq "$RC|$(jq -c .overseer "$FLEET_STATE")|$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$RECOVERY_PANE" || true)" \
