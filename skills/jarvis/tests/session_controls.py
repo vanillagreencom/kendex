@@ -35,6 +35,8 @@ CONTROLS = [
     ("stop request identity", "jarvis/scripts/lib/session.py", 'record["generation"] += 1', 'record["generation"] += 0', "test_cancelled_replacement_keeps_the_live_owner"),
     ("stop failure result", "jarvis/scripts/lib/session.py", 'if live:\n                    record = self.retain_live(record, live)', 'if live:\n                    if verb == "stop":\n                        return\n                    record = self.retain_live(record, live)', "test_cancelled_replacement_keeps_the_live_owner"),
     ("replacement cancellation", "jarvis/scripts/lib/session.py", 'dict(predecessor, generation=record["generation"] + 1, intent=', 'dict(predecessor, generation=record["generation"], intent=', "test_cancelled_replacement_keeps_the_live_owner"),
+    ("confirmed cancellation", "jarvis/scripts/lib/session.py", 'predecessor["state"] == "running" and predecessor["harness"]', 'True and predecessor["harness"]', "test_cancelled_replacement_keeps_the_live_owner"),
+    ("Stop intent before probe", "jarvis/scripts/lib/session.py", 'self.write(record)\n            if self.terminal(record) or self.terminal(record.get("predecessor"))', 'if False:\n                self.write(record)\n            if self.terminal(record) or self.terminal(record.get("predecessor"))', "test_off_and_boot_receipt"),
     ("boot scenario applicability", "jarvis/tests/session_controls.py", 'if boot_scenario.applicable:\n        controls.extend(boot_scenario.controls)', 'if True:\n        controls.extend(boot_scenario.controls)', "test_off_and_boot_receipt"),
 ]
 

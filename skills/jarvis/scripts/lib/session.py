@@ -299,7 +299,7 @@ class Session:
             predecessor = record if self.terminal(record) else (record.get("predecessor") if record else None)
             if predecessor and not self.terminal(predecessor):
                 predecessor = None
-            if predecessor is not record and predecessor and predecessor["harness"] == args.harness and predecessor["account"] == account:
+            if predecessor is not record and predecessor and predecessor["state"] == "running" and predecessor["harness"] == args.harness and predecessor["account"] == account:
                 # Requests advance generation. A cancelled replacement keeps
                 # the live session's binding in pending.generation.
                 restored = dict(predecessor, generation=record["generation"] + 1, intent="start", app_off=False,
@@ -346,7 +346,8 @@ class Session:
             record = self.read()
             if not record:
                 record = {"v": 1, "home": self.home, "harness": None, "account": None, "origin": None,
-                          "boot": None, "generation": 0, "terminal": None}
+                          "boot": None, "generation": 0, "terminal": None,
+                          "state": "stopped", "reason": "never-started", "detail": ""}
             # Each request owns its generation. Native terminal ownership
             # stays bound to pending.generation until that controller ends.
             record["generation"] += 1
@@ -355,6 +356,7 @@ class Session:
                 record["controller_state"] = record["state"]
             record["intent"] = "stop"
             record["app_off"] = origin == "app-off" or record.get("app_off", False)
+            self.write(record)
             if self.terminal(record) or self.terminal(record.get("predecessor")) or record.get("state") == "starting":
                 record.update(state="stopping", reason="stop-requested", detail="")
                 self.write(record)

@@ -351,6 +351,26 @@ class SessionContract(unittest.TestCase):
                     self.assertEqual(self.call("status")[0]["state"], "stopped")
                     self.call("start")
                     self.wait(reason="resumed")
+        # A desktop can lose its tmux client while the server stays live.
+        before_stop = json.loads(self.record.read_text())
+        (tool_bin / "tmux").unlink()
+        for client_available, state, reason, code in ((False, "blocked", "tmux-missing", 1),
+                                                    (True, "stopping", "stop-requested", 0)):
+            with self.subTest(stop_client=client_available):
+                answer, actual_code = self.call("stop", origin="app-off", env=self.env if client_available else missing)
+                self.assertEqual((answer["state"], answer["reason"], actual_code), (state, reason, code))
+                saved = json.loads(self.record.read_text())
+                self.assertTrue(saved["app_off"])
+                self.assertEqual(saved["intent"], "stop")
+                if not client_available:
+                    self.assertEqual(saved["state"], before_stop["state"])
+                    self.assertEqual(saved["terminal"], before_stop["terminal"])
+                    self.assertEqual(saved["pending"], before_stop["pending"])
+                    self.assertEqual(self.call("status")[0]["terminal"], before_stop["terminal"])
+                self.assertEqual(self.call("start")[0]["reason"], "app-off")
+        self.wait("off")
+        self.call("start", origin="app-on")
+        self.wait(reason="resumed")
         if BootReceiptScenario.applicable:
             # A new login handles boot once, whether the session lives or ends.
             self.env["XDG_SESSION_ID"] = "second-fixture-login"
@@ -573,72 +593,106 @@ class SessionContract(unittest.TestCase):
                 self.assertRegex(result.stderr, r"^jarvis-session: [a-z-]+=[a-z-]+\n$")
 
     def test_cancelled_replacement_keeps_the_live_owner(self):
-        self.call("start")
-        first = self.wait()
-        account = self.root / "pending-account"
-        account.mkdir()
-        (account / ".claude.json").write_text('{"fixture":"hold-preparation"}')
-        acknowledgement = self.root / "prepare-ack"
-        gate = self.root / "prepare-gate"
-        os.mkfifo(gate)
-        jq = shutil.which("jq")
-        wrapper = self.root / "bin/jq"
-        wrapper.write_text("#!/usr/bin/env python3\nimport sys, subprocess\nfrom pathlib import Path\n"
-            + "data=sys.stdin.read()\nack=Path(" + repr(str(acknowledgement)) + ")\n"
-            + "if 'hold-preparation' in data and not ack.exists():\n ack.write_text('ready\\n')\n"
-            + " with Path(" + repr(str(gate)) + ").open() as stream: stream.read(1)\n"
-            + "result=subprocess.run([" + repr(jq) + ", *sys.argv[1:]], input=data, text=True, capture_output=True)\n"
-            + "sys.stdout.write(result.stdout)\nsys.stderr.write(result.stderr)\nsys.exit(result.returncode)\n")
-        wrapper.chmod(0o755)
-        self.call("start", account=account)
-        self.await_rows(acknowledgement, 1)
-        generation = json.loads(self.record.read_text())["generation"]
-        answer, _ = self.call("start")
-        self.assertEqual(answer["reason"], "existing")
-        self.assertEqual(answer["terminal"], first["terminal"])
-        with gate.open("w") as stream:
-            stream.write("1")
-        log = self.record.parent / "session.log"
-        deadline = time.monotonic() + 10
-        marker = "jarvis-session: worker=cancelled generation=" + str(generation)
-        while marker not in log.read_text().splitlines() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertIn(marker, log.read_text().splitlines())
-        self.assertEqual(self.call("status")[0]["state"], "running")
-        self.assertEqual(len(self.started()), 1)
-        # The native account config emits an explicit trust refusal.
-        (account / ".claude.json").write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
-        self.call("start", account=account)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            record = json.loads(self.record.read_text())
-            if record["state"] == "running":
-                break
-            time.sleep(0.05)
-        answer, _ = self.call("status")
-        self.assertEqual((answer["state"], answer["account"], answer["terminal"]),
-                         ("running", str(self.account), first["terminal"]))
-        self.assertEqual(record["generation"], generation + 2)
-        self.assertEqual(len(self.started()), 1)
-        flag = self.refuse_teardown()
-        before_stop = json.loads(self.record.read_text())
-        origins = ("manual", "app-off")
-        with ThreadPoolExecutor() as executor:
-            answers = list(executor.map(lambda origin: self.call("stop", origin=origin), origins))
-        self.assertTrue(all(code == 0 and answer["state"] == "stopping" for answer, code in answers))
-        record = self.await_worker_result()
-        self.assertEqual(record["generation"], before_stop["generation"] + len(origins))
-        self.assertEqual(record["pending"]["generation"], before_stop["pending"]["generation"])
-        answer, _ = self.call("status")
-        self.assertEqual((answer["state"], answer["reason"], answer["terminal"]),
-                         ("running", "existing", first["terminal"]))
-        self.assertTrue(record["app_off"])
-        self.assertEqual(record["history"]["pending"]["native_session_id"], self.started()[0]["id"])
-        self.assertEqual(self.call("start")[0]["reason"], "app-off")
-        flag.unlink()
-        self.call("stop")
-        self.wait("off")
-        self.assertEqual(json.loads(self.record.read_text())["generation"], record["generation"] + 1)
+        for phase in ("pending", "running"):
+            with self.subTest(predecessor_state=phase):
+                launches = len(self.started()) if self.rows.exists() else 0
+                if phase == "pending":
+                    os.mkfifo(self.gate)
+                self.call("start")
+                self.await_launches(launches + 1)
+                first = self.call("status")[0] if phase == "pending" else self.wait()
+                original = json.loads(self.record.read_text())
+                account = self.root / ("pending-account-" + phase)
+                account.mkdir()
+                (account / ".claude.json").write_text('{"fixture":"hold-preparation"}')
+                acknowledgement = self.root / ("prepare-ack-" + phase)
+                gate = self.root / ("prepare-gate-" + phase)
+                os.mkfifo(gate)
+                jq = shutil.which("jq")
+                wrapper = self.root / "bin/jq"
+                wrapper.write_text("#!/usr/bin/env python3\nimport sys, subprocess\nfrom pathlib import Path\n"
+                    + "data=sys.stdin.read()\nack=Path(" + repr(str(acknowledgement)) + ")\n"
+                    + "if 'hold-preparation' in data and not ack.exists():\n ack.write_text('ready\\n')\n"
+                    + " with Path(" + repr(str(gate)) + ").open() as stream: stream.read(1)\n"
+                    + "result=subprocess.run([" + repr(jq) + ", *sys.argv[1:]], input=data, text=True, capture_output=True)\n"
+                    + "sys.stdout.write(result.stdout)\nsys.stderr.write(result.stderr)\nsys.exit(result.returncode)\n")
+                wrapper.chmod(0o755)
+                self.call("start", account=account)
+                self.await_rows(acknowledgement, 1)
+                replacement = json.loads(self.record.read_text())
+                generation = replacement["generation"]
+                try:
+                    answer, code = self.call("start")
+                    restored = json.loads(self.record.read_text())
+                    self.assertEqual(restored["generation"], generation + 1)
+                    if phase == "pending":
+                        self.assertEqual((answer["state"], answer["reason"], code), ("starting", "launching", 0))
+                        self.assertNotEqual(restored["worker"], original["worker"])
+                        self.assertNotEqual(restored["worker"], replacement["worker"])
+                    else:
+                        self.assertEqual((answer["state"], answer["reason"], code), ("running", "existing", 0))
+                        self.assertEqual(answer["terminal"], first["terminal"])
+                finally:
+                    # Preparation acknowledged its held reader. Release it
+                    # even when a planted cancellation defect fails the row.
+                    with gate.open("w") as stream:
+                        stream.write("1")
+                log = self.record.parent / "session.log"
+                deadline = time.monotonic() + 10
+                marker = "jarvis-session: worker=cancelled generation=" + str(generation)
+                while marker not in log.read_text().splitlines() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertIn(marker, log.read_text().splitlines())
+                if phase == "pending":
+                    self.await_launches(launches + 2)
+                    current = json.loads(self.record.read_text())
+                    self.assertEqual(current["pending"]["generation"], current["generation"])
+                    self.assertNotEqual(current["pending"]["generation"], original["pending"]["generation"])
+                    self.assertEqual(self.call("status")[0]["state"], "starting")
+                    with self.gate.open("w") as stream:
+                        stream.write("1")
+                    first = self.wait()
+                    self.assertEqual(first["account"], str(self.account))
+                    self.assertEqual(len(self.started()), launches + 2)
+                    self.gate.unlink()
+                    self.call("stop")
+                    self.wait("stopped")
+                    continue
+                self.assertEqual(self.call("status")[0]["state"], "running")
+                self.assertEqual(len(self.started()), launches + 1)
+                # The native account config emits an explicit trust refusal.
+                (account / ".claude.json").write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
+                self.call("start", account=account)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    record = json.loads(self.record.read_text())
+                    if record["state"] == "running":
+                        break
+                    time.sleep(0.05)
+                answer, _ = self.call("status")
+                self.assertEqual((answer["state"], answer["account"], answer["terminal"]),
+                                 ("running", str(self.account), first["terminal"]))
+                self.assertEqual(record["generation"], generation + 2)
+                self.assertEqual(len(self.started()), launches + 1)
+                flag = self.refuse_teardown()
+                before_stop = json.loads(self.record.read_text())
+                origins = ("manual", "app-off")
+                with ThreadPoolExecutor() as executor:
+                    answers = list(executor.map(lambda origin: self.call("stop", origin=origin), origins))
+                self.assertTrue(all(code == 0 and answer["state"] == "stopping" for answer, code in answers))
+                record = self.await_worker_result()
+                self.assertEqual(record["generation"], before_stop["generation"] + len(origins))
+                self.assertEqual(record["pending"]["generation"], before_stop["pending"]["generation"])
+                answer, _ = self.call("status")
+                self.assertEqual((answer["state"], answer["reason"], answer["terminal"]),
+                                 ("running", "existing", first["terminal"]))
+                self.assertTrue(record["app_off"])
+                self.assertEqual(record["history"]["pending"]["native_session_id"], original["pending"]["native_session_id"])
+                self.assertEqual(self.call("start")[0]["reason"], "app-off")
+                flag.unlink()
+                self.call("stop")
+                self.wait("off")
+                self.assertEqual(json.loads(self.record.read_text())["generation"], record["generation"] + 1)
 
 
 if __name__ == "__main__":
