@@ -310,7 +310,7 @@ fi
 outcome_dependencies() {
   local tool resolved git_tool=""
   mkdir -p "$TMP_ROOT/outcome-bin"
-  for tool in git grep cp cmp mkdir mktemp mv rm chmod; do
+  for tool in git grep cp cmp mkdir mktemp mv rm; do
     resolved="$(command -v "$tool")" || return 1
     [[ "$tool" != git ]] || git_tool="$resolved"
     printf '#!%s\nREAL_TOOL=%q\nTOOL=%q\n' "$BASH" "$resolved" "$tool" >"$TMP_ROOT/outcome-bin/$tool"
@@ -325,7 +325,6 @@ case "${WT_EXCLUDE_FAULT:-}:$TOOL" in
   temporary-file:mktemp) [[ "${1:-}" == "$WT_EXCLUDE_FILE.wt-tmp.XXXXXX" ]] && match=true ;;
   replacement:mv) [[ "${3:-}" == "$WT_EXCLUDE_FILE" ]] && match=true ;;
   cleanup:rm) [[ "${3:-}" == "$WT_EXCLUDE_FILE.wt-tmp."* ]] && match=true ;;
-  initial-permissions:chmod) [[ "${1:-}" == =rw && "${3:-}" == "$WT_EXCLUDE_FILE.wt-tmp."* ]] && match=true ;;
 esac
 if [[ "$match" == true ]]; then
   printf '%s\n' "$TOOL" >>"$WT_EXCLUDE_TRACE"
@@ -356,6 +355,10 @@ git() {
   command "$REAL_GIT" "$@"
 }
 printf() {
+  if [[ "${WT_EXCLUDE_FAULT:-}" == initial-content && "${1:-}" == '%s' && "${2:-}" == *"/$WT_EXCLUDE_PATH"* ]]; then
+    builtin printf '%s\n' printf >>"$WT_EXCLUDE_TRACE"
+    return 2
+  fi
   if [[ ( "${WT_EXCLUDE_FAULT:-}" == content || "${WT_EXCLUDE_FAULT:-}" == content-after-copy ) && "${1:-}" == '%s' && "${2:-}" == *"/$WT_EXCLUDE_PATH"* ]]; then
     if [[ "$WT_EXCLUDE_FAULT" == content-after-copy ]]; then
       WT_EXCLUDE_CONTENT_WRITES=$((WT_EXCLUDE_CONTENT_WRITES + 1))
@@ -425,7 +428,7 @@ outcome_case() {
     missing) rm -f "$MAIN/.git/info/exclude" ;;
     *) echo "unknown writer outcome: $outcome" >&2; exit 2 ;;
   esac
-  if [[ "$fault" == initial-permissions ]]; then rm -f "$MAIN/.git/info/exclude"; fi
+  if [[ "$fault" == initial-content ]]; then rm -f "$MAIN/.git/info/exclude"; fi
   if [[ "$route" == repair-links && "$caller" == symlink && "$outcome" == unchanged ]]; then
     must ln -s "$MAIN/runtime" "$WT/runtime"
   fi
@@ -433,10 +436,13 @@ outcome_case() {
   : >"$ROOT/dependency-trace"
   if [[ "$outcome" == failed ]]; then expected=1; fi
   case "$fault" in lookup|filter|inspection|comparison) error_kind=read ;; esac
-  case "$fault" in lookup) operation=git-common-directory ;; inspection) operation=entry-inspection ;; initial-permissions) operation=permissions ;; content-after-copy) operation=content ;; esac
+  case "$fault" in lookup) operation=git-common-directory ;; inspection) operation=entry-inspection ;; initial-content|content-after-copy) operation=content ;; esac
   local -a args=("$route" "$WT")
   if [[ "$route" == create ]]; then args=(create new-outcome); fi
-  (cd "$MAIN" && PATH="$TMP_ROOT/outcome-bin:$PATH" BASH_ENV="$TMP_ROOT/outcome-bash-env" \
+  (cd "$MAIN" &&
+    if [[ "$outcome" == missing || "$fault" == initial-content ]]; then umask 027; fi
+    if [[ "$outcome" == missing ]]; then export POSIXLY_CORRECT=1; fi
+    PATH="$TMP_ROOT/outcome-bin:$PATH" BASH_ENV="$TMP_ROOT/outcome-bash-env" \
     WT_EXCLUDE_FAULT="$fault" WT_EXCLUDE_TREE="$WT" WT_EXCLUDE_PATH="$failed_path" \
     WT_EXCLUDE_FILE="$MAIN/.git/info/exclude" WT_EXCLUDE_TRACE="$ROOT/dependency-trace" \
     "$WORKTREE_SCRIPT" "${args[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
@@ -457,8 +463,9 @@ outcome_case() {
     fi
     # Cleanup can fail after a completed replacement; other failures keep the
     # original rule. Git itself proves an existing bare rule stays effective.
-    if [[ "$fault" == initial-permissions ]]; then
-      assert_eq "$(test -e "$MAIN/.git/info/exclude" && printf present || printf absent)" absent "$caller $route $fault: no incomplete first write"
+    if [[ "$fault" == initial-content ]]; then
+      excluded="$(grep -xF -- "/$failed_path" "$MAIN/.git/info/exclude" 2>/dev/null)" || true
+      assert_eq "$excluded" '' "$caller $route $fault: no completed first write"
     elif [[ "$fault" != cleanup ]]; then
       excluded="$(grep -xF -- "$failed_path" "$MAIN/.git/info/exclude")" || true
       assert_eq "$excluded" "$failed_path" "$caller $route $fault: existing rule retained"
@@ -476,6 +483,9 @@ outcome_case() {
     fi
     excluded="$(grep -xF -- "/$failed_path" "$MAIN/.git/info/exclude")" || true
     assert_eq "$excluded" "/$failed_path" "$caller $route $outcome: anchored result"
+    if [[ "$outcome" == missing ]]; then
+      assert_eq "$(find "$MAIN/.git/info/exclude" -perm 0640 -print)" "$MAIN/.git/info/exclude" "$caller $route $outcome: caller creation mask"
+    fi
   fi
 }
 
@@ -499,7 +509,7 @@ ignore-copy|fix-links|unchanged|permissions
 mkdir|fix-links|unchanged|permissions
 copy|fix-links|unchanged|permissions
 relative|fix-links|unchanged|permissions
-symlink|fix-links|missing|-
+symlink|fix-links|missing|first-write
 symlink|create|written|-
 symlink|repair-links|written|-
 symlink|repair-links|unchanged|lookup'
@@ -516,7 +526,7 @@ symlink|repair-links|unchanged|lookup'
 ignore-copy|repair-links|failed|filter
 child-link|repair-links|failed|permissions
 materialized|repair-links|failed|permissions'
-  for fault in lookup inspection comparison directory temporary-file content content-after-copy replacement cleanup initial-permissions; do
+  for fault in lookup inspection comparison directory temporary-file content content-after-copy replacement cleanup initial-content; do
     OUTCOMES+=$'\n'"symlink|fix-links|failed|$fault"
   done
   while IFS='|' read -r caller route outcome fault; do
@@ -544,7 +554,8 @@ content-second
 permissions-status
 replacement
 cleanup
-initial-permissions
+initial-content
+first-write
 callers'
 fi
 if [[ -n "$CONTROLS" ]]; then
@@ -612,14 +623,19 @@ if [[ -n "$CONTROLS" ]]; then
         new='      if [[ "$result" -eq 0 ]]; then result=0; failure=write; operation=cleanup; fi'
         select_fault=cleanup
         ;;
-      initial-permissions)
-        old='    chmod '\''=rw'\'' -- "$tmp" 2>/dev/null || return 1'
-        new='    chmod '\''=rw'\'' -- "$tmp" 2>/dev/null'
-        select_fault=initial-permissions
+      initial-content)
+        old='    printf '\''%s'\'' "$filtered" 2>/dev/null >> "$info_exclude" || return 1'
+        new='    printf '\''%s'\'' "$filtered" 2>/dev/null >> "$info_exclude"'
+        select_fault=initial-content
+        ;;
+      first-write)
+        old='    printf '\''%s'\'' "$filtered" 2>/dev/null >> "$info_exclude" || return 1'
+        new='    printf '\''%s'\'' "$filtered" 2>/dev/null >> /dev/null || return 1'
+        select_fault=first-write
         ;;
       callers) expected_matches=5; select_fault='permissions filter' ;;
     esac
-    if [[ -n "${WORKTREE_EXCLUDE_SELECT_FAULT:-}" && "$matrix_only" == 1 ]]; then
+    if [[ -n "${WORKTREE_EXCLUDE_SELECT_FAULT:-}" ]]; then
       selected=false
       for fault in $select_fault; do
         if [[ " $WORKTREE_EXCLUDE_SELECT_FAULT " == *" $fault "* ]]; then selected=true; fi

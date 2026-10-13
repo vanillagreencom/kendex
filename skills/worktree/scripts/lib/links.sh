@@ -124,6 +124,11 @@ exclude_from_worktree_index() (
 
   failure=write; operation=directory
   mkdir -p -- "${info_exclude%/*}" 2>/dev/null || return 1
+  if [[ "$exists" == false ]]; then
+    operation=content
+    printf '%s' "$filtered" 2>/dev/null >> "$info_exclude" || return 1
+    return 0
+  fi
   operation=temporary-file
   candidate="$(mktemp "$info_exclude.wt-tmp.XXXXXX" 2>/dev/null)" || return 1
   tmp="$candidate"
@@ -139,10 +144,6 @@ exclude_from_worktree_index() (
     cp -p -- "$info_exclude" "$tmp" 2>/dev/null || return 1
     operation=content
     printf '%s' "$filtered" 2>/dev/null > "$tmp" || return 1
-  else
-    # A first write uses the caller's creation mask, as a regular file does.
-    operation=permissions
-    chmod '=rw' -- "$tmp" 2>/dev/null || return 1
   fi
   operation=replacement
   mv -- "$tmp" "$info_exclude" 2>/dev/null || return 1
