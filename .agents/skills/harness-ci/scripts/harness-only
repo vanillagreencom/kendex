@@ -11,8 +11,8 @@
 # the existing size rules without render verification.
 # `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
 # `--mode render-candidate` permits new head-owned paths and the adopted refresh
-# caller without an inventory entry to gate render-proof prerequisites. It
-# never authorizes a CI skip.
+# caller and bot-instructions outputs without an inventory entry to gate
+# render-proof prerequisites. It never authorizes a CI skip.
 # Caller contract: ../SKILL.md § Shared refresh caller ownership.
 #
 # Usage:
@@ -98,7 +98,8 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
   --mode    harness (default): accept generated harness files.
             docs: accept docs/, changelog.d/, and root .md or .markdown files.
             render-candidate: permit new head-owned paths and the adopted
-            refresh caller without an inventory entry for prerequisites only.
+            refresh caller and bot-instructions outputs without an inventory
+            entry for prerequisites only.
             No CI skip is authorized; change-class must prove render.
             Caller contract: ../SKILL.md, Shared refresh caller ownership.
   --event   pull_request | merge_group | push. Any other event answers false.
@@ -489,8 +490,12 @@ if [ "$classification" != render-candidate ]; then
 fi
 while IFS= read -r path; do
   [ -n "$path" ] || continue
-  if [ "$classification" = render-candidate ] && [ "$path" = "$HARNESS_CI_REFRESH_CALLER" ]; then
-    continue
+  if [ "$classification" = render-candidate ]; then
+    # Bot-instructions restricts configured code_review_path to this tree.
+    # These paths buy proof setup only; change-class still proves ownership.
+    case "$path" in
+      "$HARNESS_CI_REFRESH_CALLER" | .github/copilot-instructions.md | .github/instructions/*) continue ;;
+    esac
   fi
   seen=false
   for endpoint in "$base" "$head"; do
