@@ -499,7 +499,7 @@ run_ot STUB_LANES_REPO_UNSET=true -- "${CLOUD[@]}" CC-30
 assert_eq "rc=$RC refused=$(grep -cxF "lanes: cloud-repo-unset account=$LANE_DIR repo=owner/repo" <<<"$ERR" || true) made=$(made) claude=$(typed 1)" \
   "rc=1 refused=1 made=no claude=none" "the launcher preserves the repository refusal and starts nothing" "$TMP_ROOT/err"
 CTRL="$(mutant_scripts mutant-named-cloud-repo open-terminal)" || exit 1
-mutate_file "$CTRL/open-terminal" '7) return 1 ;;' '7) : ;;'
+mutate_file "$CTRL/open-terminal" $'\n    7) return 1 ;;\n' $'\n    7) : ;;\n'
 run_ot SCRIPT="$CTRL/open-terminal" STUB_LANES_REPO_UNSET=true -- "${CLOUD[@]}" CC-31
 assert_eq "rc=$RC made=$(made) claude=$(typed 1)" \
   "rc=0 made=yes claude=ran" "control: ignoring the repository refusal launches the cloud session" "$TMP_ROOT/err"
