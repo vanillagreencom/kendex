@@ -53590,6 +53590,7 @@ function subscriberProfileEnv(profile, base = process.env) {
     "AWS_BEARER_TOKEN_BEDROCK"
   ]);
   for (const key of Object.keys(env)) {
+    if (key === "CLAUDE_CODE_OAUTH_TOKEN" && profile.configDir === base.CLAUDE_CONFIG_DIR) continue;
     if (directOverrides.has(key) || key.startsWith("CLAUDE_CODE_USE_")) delete env[key];
   }
   if (profile.configDir) env.CLAUDE_CONFIG_DIR = profile.configDir;
