@@ -6,7 +6,7 @@
 #                [--output FILE] [--lanes-from DIR] [--covers-all-lanes BOOL]
 #
 # --output appends lanes=true|false and lanes_cause beside the class and queue
-# verdicts. The lane rules are references/wiring.md § Per-lane verdicts.
+# verdicts. The lane rules are ../references/wiring.md § Per-lane verdicts.
 # --lanes-from names a separate trusted checkout with .github/ci-lanes.conf;
 # empty by default, so no lane is declared. --covers-all-lanes defaults to
 # false, matching the action. It describes workflow coverage for CI proof;
