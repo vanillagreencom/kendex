@@ -973,6 +973,10 @@ ROWS
 # Only this suite's fake search needs the shared OR query. Keep unrelated
 # rows in the input, so restoring the broad search reaches the real cap.
 mutate_file "$TMP_ROOT/bin/gh" '--arg key "$key"' '--arg key "$key" --arg search "$search"'
+mutate_file "$TMP_ROOT/bin/gh" '# newest-created first, like gh:' 'if ! jq -en --arg search "$search" '\''($search | length) <= 256 and ($search | [scan("\\b(AND|OR|NOT)\\b")] | length) <= 5'\'' >/dev/null; then
+        echo "query-limit repo=$repo" >&2; exit 22
+      fi
+      # newest-created first, like gh:'
 mutate_file "$TMP_ROOT/bin/gh" '| (.headRepositoryOwner //= {login: $owner})' '| select(($search | contains(" OR ") | not) or
       (. as $pr | any(($search | [scan("head:([A-Za-z0-9_-]+)")[]])[]; . == $pr.headRefName) or
         any(($search | [scan("\"([^\"]+)\"")[]])[]; . as $key |
@@ -995,12 +999,12 @@ while IFS='|' read -r name branch title body; do
   MUTANT_WATCH="$(mutant_scripts "scoped-control-$name/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-  mutate_verifying "$MUTANT_WATCH" 'search="${floor:+merged:>=$floor }${7:+($7) in:title,body}"' 'search="${floor:+merged:>=$floor}"'
+  mutate_verifying "$MUTANT_WATCH" 'IFS=$'\''\t'\'' read -ra searches <<<"${7:-${floor:+merged:>=$floor}}"' 'searches=("${floor:+merged:>=$floor}")'
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
   assert_eq "rc=$RC key=$(grep -cxF 'oversee-watch: merged-search-truncated repo=owner/repo item=KEN-1 limit=1000' "$ERR" || true)" 'rc=2 key=1' "$name: broad-search control refuses at the cap" "$ERR"
 done <<'ROWS'
 branch|ken-1|feature|
-title|cloud/session|Fix KEN-1|
+title|cloud/session|fix(KEN-1): feature|
 body|cloud/session|feature|Closes KEN-1
 ROWS
 
@@ -1070,10 +1074,10 @@ WORK_BASE="$WORK"
 WORK_ROWS='merge_one|1|KEN-30=t|6
 merge_boxes|1|KEN-30=t,t,t,t|6
 merge_issues|1|KEN-30=t KEN-31=t KEN-32=t|18
-release_one|1|KEN-30=r|10
-release_boxes|1|KEN-30=r,r,r|12
-release_candidates|5|KEN-30=r|10
-mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|27'
+release_one|1|KEN-30=r|11
+release_boxes|1|KEN-30=r,r,r|13
+release_candidates|5|KEN-30=r|11
+mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|28'
 while IFS='|' read -r name candidates issues want; do
   # shellcheck disable=SC2086 # ISSUES is a word list of ID=BOXES specs.
   work_world "work_$name" "$candidates" $issues
@@ -1090,11 +1094,11 @@ shared_reads_world() {
   mv -- "$STUB_DIR/shared-reads.json" "$STUB_DIR/tracker.out"
 }
 shared_reads_contract() {
-  local count="${1:-1}"
+  local count="${1:-1}" batches="${2:-4}"
   assert_eq "$RC" 0 'the shared repository reads complete verification' "$ERR"
-  assert_eq "$(grep -c '^pr list .*--state merged' "$STUB_DIR/gh.calls" || true)" "$count" 'Verifying items share one merged pull request read per repository' "$ERR"
+  assert_eq "$(grep -c '^pr list .*--state merged' "$STUB_DIR/gh.calls" || true)" "$((count * batches))" 'Verifying items share each bounded merged batch per repository' "$ERR"
   assert_eq "$(grep -c '^release list ' "$STUB_DIR/gh.calls" || true)" "$count" 'release boxes share one release read per repository' "$ERR"
-  assert_eq "$(grep -c -- '--search merged:>=2026-09-01T00:00:00Z' "$STUB_DIR/gh.calls" || true)" "$count" 'each repository read includes the oldest Verifying creation floor' "$ERR"
+  assert_eq "$(grep -c -- '--search merged:>=2026-09-01T00:00:00Z' "$STUB_DIR/gh.calls" || true)" "$((count * batches))" 'each repository batch includes the oldest Verifying creation floor' "$ERR"
 }
 shared_reads_world verifying_shared_reads
 watch_pass -- --state "$STUB_DIR/state.json"
@@ -1115,9 +1119,32 @@ cp "$STUB_DIR/compare.owner_repo_compare_111111111111111111111111111111111111111
 watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
 shared_reads_contract 2
 for repo in owner/repo owner/other; do
-  assert_eq "$(grep -c "^pr list --repo $repo .*--state merged" "$STUB_DIR/gh.calls" || true)" 1 "$repo has one merged pull request read" "$ERR"
+  assert_eq "$(grep -c "^pr list --repo $repo .*--state merged" "$STUB_DIR/gh.calls" || true)" 4 "$repo shares its merged pull request batches" "$ERR"
   assert_eq "$(grep -c "^release list --repo $repo " "$STUB_DIR/gh.calls" || true)" 1 "$repo has one release read" "$ERR"
 done
+while IFS='|' read -r prefix batches from to; do
+  shared_reads_world "verifying_query_limits_$batches"
+  jq --arg prefix "$prefix" '[range(70) as $n | .[0] |
+    .id = ($prefix + "-" + (($n + 4000) | tostring))]' "$STUB_DIR/tracker.out" >"$STUB_DIR/query-items.json"
+  mv -- "$STUB_DIR/query-items.json" "$STUB_DIR/tracker.out"
+  jq '[.[] | {number: (.id[-4:] | tonumber), headRefName: (.id | ascii_downcase), title: .id,
+    mergedAt: "2026-10-01T00:00:00Z", mergeCommit: {oid: "1111111111111111111111111111111111111111"}}]' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/merged.json"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 0 "$prefix: seventy keys stay inside query limits" "$ERR"
+  assert_eq "$(grep -c '^pr list .*--state merged' "$STUB_DIR/gh.calls" || true)" "$batches" "$prefix: each bounded batch is read once" "$ERR"
+  assert_eq "$(verification_lines | wc -l | tr -d ' ')" 70 "$prefix: every item receives its merge result" "$ERR"
+  MUTANT_DIR="$TMP_ROOT/query-limit-control-$batches"
+  MUTANT_WATCH="$(mutant_scripts "query-limit-control-$batches/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  mutate_verifying "$MUTANT_WATCH" "$from" "$to"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC key=$(grep -c '^query-limit repo=owner/repo$' "$ERR" || true)" 'rc=2 key=1' "$prefix: unbounded-query control is refused" "$ERR"
+done <<'ROWS'
+KEN|24|>= 3|>= 1000
+TEAM-ABCDEFGHIJKLMNOPQRSTUVWX|35|> 256|> 100000
+ROWS
 MUTANT_DIR="$TMP_ROOT/shared-reads-base"
 MUTANT_WATCH="$(mutant_scripts shared-reads-base/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"

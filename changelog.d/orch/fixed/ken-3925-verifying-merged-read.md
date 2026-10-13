@@ -1,1 +1,1 @@
-- Keep Verifying checks running when unrelated merged pull requests exceed the search limit. Share one search for the Verifying item keys and branches per repository and pass.
+- Keep Verifying checks running when unrelated merged pull requests exceed the search limit. Share searches for bounded batches of Verifying item keys and branches per repository and pass.

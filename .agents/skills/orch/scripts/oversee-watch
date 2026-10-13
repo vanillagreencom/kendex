@@ -1522,9 +1522,17 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [I
   if [[ -n "${6:-}" ]]; then
     local read_file="$6/${repo//\//%}.merged"
     if [[ ! -f "$read_file" ]]; then
-      search="${floor:+merged:>=$floor }${7:+($7) in:title,body}"
-      gh pr list --repo "$repo" --search "$search" --limit "$MERGED_SEARCH_PAGE" --state merged --json "$fields" >"$read_file" 2>"$errf" \
-        || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
+      local -a searches=()
+      IFS=$'\t' read -ra searches <<<"${7:-${floor:+merged:>=$floor}}"
+      for search in "${searches[@]}"; do
+        gh pr list --repo "$repo" --search "$search" --limit "$MERGED_SEARCH_PAGE" --state merged --json "$fields" >>"$read_file" 2>"$errf" \
+          || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
+      done
+      if ! named="$(jq -cs --argjson cap "$MERGED_SEARCH_PAGE" 'if any(.[]; length >= $cap) then null else add // [] end' "$read_file" 2>"$errf")"; then
+        die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
+      fi
+      [[ "$named" != null ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
+      printf '%s\n' "$named" >"$read_file" || die state-write-failed "" "path=$read_file"
     fi
     named="$(cat "$read_file")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
     list='[]'
@@ -1540,7 +1548,7 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [I
     || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
   fi
   rows="$(jq length <<<"$named" 2>"$errf")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
-  [[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
+  [[ -n "${6:-}" || "$rows" -lt "$MERGED_SEARCH_PAGE" ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
   if ! MERGED_ITEM_ROWS="$(jq -cs --arg item "$item" --arg owner "${repo%%/*}" --argjson pr "$pr" --argjson since "$since" \
     "$LANE_MERGED_JQ"' add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
     | lane_merged($item; $owner; $pr; $since)' \
@@ -4551,11 +4559,18 @@ verifying_read() { # SAFE_ITEMS
   # separator in an ID, and tojson keeps the row on one line.
   # An issue cannot merge before its creation. Missing creation evidence
   # leaves the repository read unbounded rather than hiding an older merge.
-  rows="$(jq -r 'map(select(.state == "verifying"))
-    | (map(try (.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null)
-       | if length > 0 and all(.[]; . != null) then min | todateiso8601 else "" end),
-      (map("(head:" + (.id | ascii_downcase) + " OR " + (.id | tojson) + ")") | join(" OR ")),
-      (.[] | "\(.id)\u001f\(tojson)")' <<<"$1")" \
+  rows="$(jq -r 'map(select(.state == "verifying")) as $items
+    | ($items | map(try (.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null)
+       | if length > 0 and all(.[]; . != null) then min | todateiso8601 else "" end) as $floor
+    | (if $floor == "" then "" else "merged:>=" + $floor + " " end) as $prefix
+    | def query: $prefix + "(" + join(" OR ") + ") in:title,body";
+      $floor,
+      (reduce $items[] as $row ([[]];
+        ("(head:" + ($row.id | ascii_downcase) + " OR " + ($row.id | tojson) + ")") as $term
+        | if (.[-1] | length) >= 3 or (.[-1] + [$term] | query | length) > 256
+          then . + [[$term]] else .[-1] += [$term] end)
+       | map(select(length > 0) | query) | join("\t")),
+      ($items[] | "\(.id)\u001f\(tojson)")' <<<"$1")" \
     || die tracker-list-invalid "" "team=$LINEAR_TEAM"
   floor="${rows%%$'\n'*}"
   if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
