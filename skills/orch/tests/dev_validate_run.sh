@@ -270,6 +270,83 @@ SH
     done
   done
 
+  # The shipped watch wrappers must partition the base suites, including
+  # callers that use an exact family filter or an independent battery.
+  while IFS='|' read -r split_family split_mode split_parts split_one; do
+    split_fixture="$(split_world "$split_family")"
+    rm -- "$split_fixture/dev_validate_run_selection.sh"
+    cp "$TEST_DIR/${split_family}_"*.sh "$split_fixture/"
+    printf '#!/usr/bin/env bash\nprintf '\''split-row=%s:%%s\\n'\'' "${1:-none}"\n' \
+      "$split_family" > "$split_fixture/$split_family.sh"
+    cp "$SPLIT_RUNNER/unrelated.sh" "$split_fixture/"
+    split_external_fixture="$TMP_ROOT/split-external-$split_family"
+    mkdir -p "$split_external_fixture"
+    cp "$split_fixture/"*.sh "$split_external_fixture/"
+    ln -s "$TEST_DIR/lib" "$split_external_fixture/lib"
+    split_wrapped="$(tr ',' '\n' <<<"$split_parts" | sed "s/^/split-row=$split_family:/")"
+    split_full="$(printf '%s\n' "split-row=$split_family:$split_mode" "$split_wrapped" | LC_ALL=C sort)"
+    split_external="$(printf '%s\n' "split-row=$split_family:none" "$split_wrapped" | LC_ALL=C sort)"
+    for split_variant in shipped alias-removed dispatch-wrong; do
+      split_dir="$split_fixture"
+      if [[ "$split_variant" != shipped ]]; then
+        split_dir="$(split_world "$split_family-$split_variant")"
+        rm -- "$split_dir/dev_validate_run_selection.sh"
+        cp "$split_fixture/"*.sh "$split_dir/"
+        if [[ "$split_variant" == alias-removed ]]; then
+          mutate_file "$split_dir/run-all.sh" \
+            "${split_family}_*:=$split_family" "__removed__:=$split_family"
+        else
+          mutate_file "$split_dir/run-all.sh" "suite_args+=($split_mode)" "suite_args+=($split_one)"
+        fi
+      fi
+      while IFS='|' read -r split_scope split_filter split_expected; do
+        case "$split_variant:$split_scope:$split_filter" in
+          shipped:*|alias-removed:canonical:="${split_family}"|alias-removed:canonical:!="${split_family}"|dispatch-wrong:canonical:all) ;;
+          *) continue ;;
+        esac
+        split_args=()
+        [[ "$split_scope" != external ]] || split_args+=(--battery "$split_external_fixture")
+        [[ "$split_filter" == all ]] || split_args+=("$split_filter")
+        split_rows "$split_dir" ${split_args[@]+"${split_args[@]}"}
+        case "$split_expected" in
+          full) split_want="$split_full" ;;
+          all) split_want="$split_full"$'\n''split-row=unrelated:none' ;;
+          unrelated) split_want='split-row=unrelated:none' ;;
+          one) split_want="split-row=$split_family:$split_one" ;;
+          external-all) split_want="$split_external"$'\n''split-row=unrelated:none' ;;
+          external-full) split_want="$split_external" ;;
+          external-base) split_want="split-row=$split_family:none" ;;
+          external-reject) split_want="$split_wrapped"$'\n''split-row=unrelated:none' ;;
+        esac
+        split_want="$(LC_ALL=C sort <<<"$split_want")"
+        assert_eq "$RC" 0 "watch split: $split_family $split_variant $split_scope $split_filter runs its fixtures" "$ERR"
+        if [[ "$split_variant" == shipped ]]; then
+          assert_eq "$SPLIT_ROWS" "$split_want" "watch split: $split_family $split_scope $split_filter runs each intended mode once"
+        else
+          split_oracle_rc=0
+          ( assert_eq "$SPLIT_ROWS" "$split_want" 'watch partition oracle'; [ "$FAIL" -eq 0 ] ) \
+            > "$split_dir/oracle.out" || split_oracle_rc=$?
+          assert_eq "$split_oracle_rc" 1 "watch split: $split_family $split_variant $split_filter turns the partition assertion red"
+        fi
+      done <<ROWS
+canonical|all|all
+canonical|=$split_family|full
+canonical|!=$split_family|unrelated
+canonical|$split_family|full
+canonical|!$split_family|unrelated
+canonical|=${split_family}_$split_one|one
+external|all|external-all
+external|=$split_family|external-base
+external|!=$split_family|external-reject
+external|$split_family|external-full
+external|!$split_family|unrelated
+ROWS
+    done
+  done <<'ROWS'
+oversee_watch_owed|development|membership,shared,release,bulk|bulk
+oversee_watch_mail|delivery|cadence,failures,hosted,local,process,tracker,tracker_close,tracker_controls|tracker_close
+ROWS
+
   SPLIT_UNAVAILABLE="$(split_world unavailable)"
   cp "$TEST_DIR/dev_validate_run.sh" "$SPLIT_UNAVAILABLE/dev_validate_run.sh"
   for split_variant in shipped unavailable-success; do

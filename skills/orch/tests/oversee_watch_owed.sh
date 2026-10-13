@@ -985,9 +985,11 @@ done <<'ROWS'
 read|fail|pr-list-failed repo=owner/repo state=merged branch=ken-1
 page|page|merged-search-truncated repo=owner/repo item=KEN-1 limit=1000
 ROWS
+fi
 
 # Only this suite's fake search needs the shared OR query. Keep unrelated
 # rows in the input, so restoring the broad search reaches the real cap.
+if [[ "$PART" == all || "$PART" == release || "$PART" == bulk ]]; then
 mutate_file "$TMP_ROOT/bin/gh" '--arg key "$key"' '--arg key "$key" --arg search "$search"'
 mutate_file "$TMP_ROOT/bin/gh" '# newest-created first, like gh:' 'if ! jq -en --arg search "$search" '\''($search | length) <= 256 and ($search | [scan("\\b(AND|OR|NOT)\\b")] | length) <= 5'\'' >/dev/null; then
         echo "query-limit repo=$repo" >&2; exit 22
@@ -998,6 +1000,9 @@ mutate_file "$TMP_ROOT/bin/gh" '| (.headRepositoryOwner //= {login: $owner})' '|
         any(($search | [scan("\"([^\"]+)\"")[]])[]; . as $key |
           (($pr.title // "") + " " + ($pr.body // "") | contains($key)))))
     | (.headRepositoryOwner //= {login: $owner})'
+fi
+
+if [[ "$PART" == all || "$PART" == release ]]; then
 while IFS='|' read -r name branch title body; do
   release_world "release_shared_over_page_$name"
   fleet '[]'
