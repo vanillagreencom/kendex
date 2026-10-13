@@ -48,6 +48,7 @@ ROOT=""
 MAIN=""
 WT=""
 ENTRY=""
+CHECK_PERMISSIONS=false
 
 make_repo() {
   mkdir -p "$MAIN"
@@ -113,6 +114,12 @@ step() {
     foreign-patterns)
       printf '%s\n' '**/.claude/*' 'nested/runtime/ignored' '/runtime/cache' '!runtime/sub/' >>"$MAIN/.git/info/exclude"
       ;;
+    shared-exclude)
+      must chmod 664 "$MAIN/.git/info/exclude"
+      mkdir -p "$MAIN/.claude"
+      printf 'private\n' >"$MAIN/.claude/private-note"
+      CHECK_PERMISSIONS=true
+      ;;
     # A file under the entry becomes tracked, or the tracked file stops being.
     track:*)
       printf 'now-tracked\n' >"$MAIN/${1#track:}"
@@ -149,6 +156,7 @@ build() {
   MAIN="$ROOT/main"
   WT=""
   ENTRY=""
+  CHECK_PERMISSIONS=false
   mkdir -p "$ROOT"
   for word in "$@"; do
     step "$word"
@@ -202,6 +210,11 @@ run() {
   read -r -a argv <<<"${1//<wt>/$WT}"
   if [[ "${argv[0]}" == create ]]; then WT="$ROOT/trees/${argv[1]}"; fi
   (cd "$MAIN" && LC_ALL=C "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  if [[ "$CHECK_PERMISSIONS" == true ]]; then
+    local shared_mode
+    shared_mode="$(find "$MAIN/.git/info/exclude" -perm 0664 -print)"
+    printf 'shared-mode=%s ' "${shared_mode:+preserved}"
+  fi
   if [[ -d "$MAIN/nested/runtime" ]]; then
     local repo fresh_status staged root_ignored root_staged
     for repo in "$MAIN" "$WT"; do
@@ -252,6 +265,7 @@ a root runtime link leaves new files in a nested tracked namesake visible and st
 fix-links removes duplicate bare lines from a legacy-only exclude file|repo runtime-entry create:legacy-check legacy-lines|fix-links <wt>|0|restored:legacy-check|-|exclude=/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
 fix-links migrates bare lines and preserves other patterns while nested files stay stageable|repo runtime-entry nested-entry create:legacy-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:legacy-check|-|exclude=**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/,/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
 fix-links migrates a tracked entry and keeps the negation last|repo tracked-entry create:legacy-check legacy-lines foreign-line|fix-links <wt>|0|restored:legacy-check|-|exclude=**/.claude/*,/harness,!/harness/ main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+fix-links keeps shared exclusion permissions and foreign rules|repo runtime-entry create:shared-check foreign-line shared-exclude|fix-links <wt>|0|restored:shared-check|-|exclude=/runtime,**/.claude/* main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
 '
 
 echo "=== the exclude entry of a configured symlink path ==="
@@ -272,6 +286,7 @@ while IFS= read -r row; do
     continue
   fi
   prefix=""
+  if [[ "$CHECK_PERMISSIONS" == true ]]; then prefix='shared-mode=preserved '; fi
   if [[ -d "$MAIN/nested/runtime" ]]; then
     prefix='nested-status=?? nested/runtime/new.md staged=nested/runtime/new.md root-ignored=0 root-staged=- '
     prefix="$prefix$prefix"
@@ -284,7 +299,8 @@ done <<<"$ROWS"
 # The child suite uses its own repositories and skips this control loop.
 if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 ]]; then
   CONTROLS='anchor
-migration'
+migration
+permissions'
   while IFS= read -r control; do
     case "$control" in
       anchor)
@@ -294,6 +310,10 @@ migration'
       migration)
         old='      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" > "$tmp" || rc=$?'
         new='      grep -vxF -e "$negation" -- "$info_exclude" > "$tmp" || rc=$?'
+        ;;
+      permissions)
+        old='      cp -p -- "$info_exclude" "$tmp" || exit 1'
+        new='      cp -- "$info_exclude" "$tmp" || exit 1'
         ;;
     esac
     scripts="$TMP_ROOT/control-$control"

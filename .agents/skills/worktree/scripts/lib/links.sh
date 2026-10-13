@@ -92,6 +92,8 @@ exclude_from_worktree_index() {
       local tmp rc=0
       tmp="$(mktemp "$info_exclude.wt-tmp.XXXXXX")" || exit 1
       trap 'rm -f -- "$tmp"' EXIT
+      # Shared repositories need the replacement to keep the original access.
+      cp -p -- "$info_exclude" "$tmp" || exit 1
       grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" > "$tmp" || rc=$?
       [[ "$rc" -le 1 ]] || exit "$rc"
       mv -- "$tmp" "$info_exclude"
