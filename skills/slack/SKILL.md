@@ -1,7 +1,7 @@
 ---
 name: slack
 description: "Load to bind an overseer's mailbox to a private Slack channel, run or check the relay, or post an alert or a file to Slack."
-summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, through lane-mail alone: setup, listen, post, compact and install."
+summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, reads through the mailbox store and writes through lane-mail: setup, listen, post, compact and install."
 license: MIT
 user-invocable: true
 dependencies:
@@ -17,7 +17,7 @@ tags: [orchestration]
 
 # Slack
 
-The relay between one checkout's overseer mailbox and one private Slack channel. Every mailbox read and write goes through that checkout's `lane-mail`; the relay keeps its own record under `tmp/slack/`.
+The relay between one checkout's overseer mailbox and one private Slack channel. Mailbox reads use that checkout's mailbox store inside the relay process. Writes use its `lane-mail`. The relay keeps its own record under `tmp/slack/`.
 
 ```bash
 .agents/skills/slack/scripts/slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
@@ -34,11 +34,11 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 - A root is a checkout with the orch skill installed. A relay serves every root it is given, and one relay serves one checkout, held by an OS lock.
 - One relay per Slack app. Slack sends each owner message to one of an app's open Socket Mode connections, so a second relay on the same app takes part of the first one's messages, and each waits for the first relay's next reconnect. Each machine runs its own app and one relay over every root on it.
-- The relay never reads or writes a mailbox file itself. An owner's words land through `lane-mail send --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#constraints).
+- The mailbox package owns mailbox reads, numbering and cursors. The relay reuses its store. An owner's words land through `lane-mail send --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#constraints).
 - A delivery prints `delivered` with its Slack ts, mailbox id and `path=live|catch-up`. Eyes failures print a keyed cause and retry on the next poll; `already_reacted` settles the mark.
 - Owner answers, question closure and ruling notices follow [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
-- A package update reaches a running relay by itself: each poll fingerprints its code, and a change that holds for two polls re-executes the relay in the same process, which reads its settings again. The reload waits while the relay reconnects or holds a refused live delivery. `listen --status` shows the running code as `code=`.
+- A package update reaches a running relay by itself: each poll fingerprints its code and the bound roots' mailbox reader definitions, and a change that holds for two polls re-executes the relay in the same process, which reads its settings again. The reload waits while the relay reconnects or holds a refused live delivery. `listen --status` shows the running code as `code=`.
 - A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing either token, restart the relay.
 - A threaded directive's parent carries every owner and app thread message its reader generation has not received: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers). Read the full thread only when needed with `slack thread TS [--limit N]`.
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.

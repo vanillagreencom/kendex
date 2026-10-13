@@ -1,0 +1,1 @@
+- Read bound mailboxes inside the Slack relay process, so idle polls start no lane-mail processes.

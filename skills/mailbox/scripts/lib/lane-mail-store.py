@@ -7,15 +7,19 @@ original logical lines; subsequent appends continue after the logical count.
 """
 
 import json
+import errno
 import os
 from pathlib import Path
 import sys
 import subprocess
 import tempfile
+import time
 
 
 # The shared class and timestamp definitions come from mailbox-append.sh.
-READ_JQ = r'''
+OBJECTS_JQ = r'''
+def mailbox_directive_receipt:
+  .kind == "directive" and ((.id | type) == "string") and (.id | test("^[A-Za-z0-9._-]+$"));
 def objects($box):
   [$box.raw[] | (fromjson? // empty) | objects] as $all
   | [$all[] | select(.kind == "tracker-posted")] as $posted
@@ -24,6 +28,8 @@ def objects($box):
       | select(.kind != "tracker-posted")
       | owner_tracker_record($posted)
       | {line: $box.numbers[$i], envelope: .}];
+'''
+READ_JQ = OBJECTS_JQ + r'''
 . as $in | objects(.lane) as $lane | objects(.over) as $over
 | [$lane[].envelope | select(.kind == "answer") | .re // empty] as $answered
 | [$lane[].envelope | select(overseer_mail_class == "close") | .re] as $closed
@@ -53,8 +59,7 @@ def objects($box):
           ((.deadline // "" | at_epoch) as $d | $d != null and $d <= now))) | tojson]
       + (if $in.receipts then
           ["receipts cursor=\($in.receipt) count=\($in.lane.count) first=\($in.lane.first)"]
-          + [$lane[] | .envelope as $e | select($e.kind == "directive")
-              | select(($e.id | type) == "string" and ($e.id | test("^[A-Za-z0-9._-]+$")))
+          + [$lane[] | .envelope as $e | select($e | mailbox_directive_receipt)
               | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"]
         elif $in.directives then [$lane[] | select(.line > $seen and .envelope.kind == "directive") | .envelope | tojson]
         else [] end)), cursor: null, lowered: null, clamped: null}
@@ -67,6 +72,139 @@ def objects($box):
       + [$over[].envelope | select(mailbox_legacy_close) | .id]
     end else [] end)}
 '''
+
+
+class StoreRefusal(ValueError):
+    def __init__(self, key, path):
+        self.key, self.path = key, path
+        super().__init__(f"lane-mail: {key}={path}")
+
+
+def validate_mailbox(box):
+    """The path rule shared by lane-mail and in-process mailbox readers."""
+    for path in (box.parent, box, box / "to-overseer.jsonl", box / "to-lane.jsonl",
+                 box / "to-overseer.jsonl.numbering", box / "to-lane.jsonl.numbering",
+                 box / "to-lane.cursor", box / "to-lane.cursor.lock", box / "to-lane.watch"):
+        directory = path in (box.parent, box)
+        if path.is_symlink() or path.exists() and not (path.is_dir() if directory else path.is_file()):
+            raise StoreRefusal("mailbox-unsafe", path)
+
+
+def read_cursor(box, enabled=True):
+    cursor = box / "to-lane.cursor"
+    absent = not cursor.exists()
+    value = (cursor.read_bytes().split(b"\n", 1)[0].decode(errors="replace")
+             if enabled and not absent else "")
+    if value and (not value.isascii() or not value.isdecimal()):
+        raise StoreRefusal("cursor-invalid", cursor)
+    return value, int(value or "0"), absent
+
+
+def validate_and_lock_pair(box, paths):
+    """Keep locks on the shell's inherited descriptors after this helper exits."""
+    import fcntl
+    validate_mailbox(box)
+    for fd, path in zip((8, 9), paths):
+        if not path.is_file():
+            continue
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EAGAIN) or time.monotonic() >= deadline:
+                    raise StoreRefusal("lock-failed", path) from error
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
+
+def receipt_cursor(box, value, seen, absent, count):
+    if seen > 0 and count == 0 or absent and (box / "to-lane.cursor.lock").exists():
+        return "missed"
+    return str(count) if seen > count else value or "0"
+
+
+def read_events(box, jq_defs, previous, receipts=False, timeout=30):
+    """Cache numbered snapshots; read cursor changes without launching lane-mail.
+
+    flock writers hold the file inode. Directory-mutex writers on macOS
+    publish their mutex before changing bytes or numbering. A read is usable
+    only with unchanged stamps and no such writer during the snapshot.
+    """
+    import fcntl
+    validate_mailbox(box)
+    paths = [box / name for name in ("to-overseer.jsonl", "to-lane.jsonl")]
+    deadline = time.monotonic() + timeout
+
+    def stamp():
+        result = []
+        for path in paths:
+            for member in (path, Path(str(path) + ".numbering")):
+                try:
+                    info = member.stat()
+                    result.append((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+                except FileNotFoundError:
+                    result.append(None)
+        return tuple(result)
+
+    def writer():
+        return any(Path(str(path) + ".d").exists() for path in paths)
+
+    while True:
+        before = stamp()
+        if previous and previous["stamp"] == before and not writer():
+            break
+        if time.monotonic() >= deadline:
+            raise StoreRefusal("lock-failed", box)
+        if writer():
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+            continue
+        snapshots = []
+        retry = False
+        for path in paths:
+            try:
+                with path.open("rb") as stream:
+                    try:
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    except OSError as error:
+                        if error.errno not in (errno.EACCES, errno.EAGAIN):
+                            raise
+                        retry = True
+                        break
+                    snapshots.append(read_snapshot(stream.fileno(), path))
+            except FileNotFoundError:
+                snapshots.append({"raw": [], "numbers": [], "count": 0, "first": ""})
+            except (OSError, ValueError, KeyError, TypeError):
+                if writer() or before != stamp():
+                    retry = True
+                    break
+                raise
+        if retry or writer() or before != stamp():
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+            continue
+        program = jq_defs + OBJECTS_JQ + r'''
+          . as $in | [range(0; 2) as $b | $in[$b] as $box
+            | objects($box)[] | .line as $line | .envelope
+            | . + {box: (if $b == 0 then "to-overseer" else "to-lane" end), line: $line, count: $box.count}
+            | if $b == 1 then . + {mail_class: overseer_mail_class} else . end] as $rows
+          | {rows: $rows, directives: [$rows[] | select(.box == "to-lane" and mailbox_directive_receipt) | {line, id}]}
+        '''
+        result = subprocess.run(["jq", "-c", program], input=json.dumps(snapshots),
+                                capture_output=True, text=True, check=True,
+                                timeout=max(0, deadline - time.monotonic()),
+                                env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ})
+        projected = json.loads(result.stdout)
+        previous.clear()
+        previous.update(stamp=before, rows=projected["rows"], directives=projected["directives"], count=snapshots[1]["count"])
+        break
+    receipt = None
+    if receipts:
+        value, seen, absent = read_cursor(box)
+        cursor = receipt_cursor(box, value, seen, absent, previous["count"])
+        count = 0 if cursor == "missed" else int(cursor)
+        read = {row["id"] for row in previous["directives"] if row["line"] <= count}
+        receipt = count, read
+    return [dict(row) for row in previous["rows"]], receipt
 
 
 def read_snapshot(fd, path):
@@ -96,13 +234,11 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
     cursor = box / "to-lane.cursor"
     directives = verb == "pending" and not to and due == "0"
     reads_cursor = verb == "inbox" or directives or receipts == "1"
-    absent = not cursor.exists()
-    value = (cursor.read_bytes().split(b"\n", 1)[0].decode(errors="replace")
-             if reads_cursor and not absent else "")
-    if value and (not value.isascii() or not value.isdecimal()):
-        print(f"error\x1fcursor-invalid\x1f{cursor}\x1f")
+    try:
+        value, seen, absent = read_cursor(box, reads_cursor)
+    except StoreRefusal as error:
+        print(f"error\x1f{error.key}\x1f{error.path}\x1f")
         return
-    seen = int(value or "0")
     if verb == "inbox" and not value:
         try:
             cursor_put(cursor, 0)
@@ -118,9 +254,7 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
     lane = read_snapshot(9, box / "to-lane.jsonl")
     over = (read_snapshot(8, box / "to-overseer.jsonl") if verb != "inbox" else
             {"raw": [], "numbers": [], "count": 0, "first": ""})
-    receipt = str(lane["count"]) if seen > lane["count"] else value or "0"
-    if seen > 0 and lane["count"] == 0 or absent and (box / "to-lane.cursor.lock").exists():
-        receipt = "missed"
+    receipt = receipt_cursor(box, value, seen, absent, lane["count"])
     if verb == "pending" and directives and receipt == "missed":
         print(f"error\x1fmail-read-failed\x1f{item}\x1fcursor=missed")
         return
@@ -297,7 +431,17 @@ def rewrite(fd, path, dest, name):
 def main():
     """Run the operation selected by lane-mail, reporting filesystem failures."""
     op = sys.argv[1]
-    if op == "snapshot":
+    if op == "plain":
+        try:
+            validate_mailbox(Path(sys.argv[2]))
+        except StoreRefusal as error:
+            print(error.path)
+    elif op == "plain-lock":
+        try:
+            validate_and_lock_pair(Path(sys.argv[2]), [Path(path) for path in sys.argv[3:5]])
+        except StoreRefusal as error:
+            print(f"{error.key}\x1f{error.path}")
+    elif op == "snapshot":
         snapshot(int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
     elif op == "read":
         try:

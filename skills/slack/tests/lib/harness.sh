@@ -195,17 +195,60 @@ entry.write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec env PATH=' + shle
 entry.chmod(0o755)
 PY
   [ "$?" -eq 0 ] || exit 1
+  sk_store_fixture "$1" ""
 }
-# sk_event_filter ROOT JQ — a lane-mail producer with changed event fields.
-sk_event_filter() {
-  rm -- "$1/.agents/skills/mailbox/scripts"
-  mkdir -p "$1/.agents/skills/mailbox/scripts"
-  python3 - "$1/.agents/skills/mailbox/scripts/lane-mail" "$SK_LANE_MAIL" "$2" <<'PY'
+# sk_store_fixture ROOT BODY: change the mailbox store dependency in this root.
+sk_store_fixture() {
+  python3 - "$1" "$SK_ROOT/skills/mailbox/scripts/lib" "$2" <<'PY'
 import pathlib, shlex, sys
-path, mail, expression = pathlib.Path(sys.argv[1]), shlex.quote(sys.argv[2]), shlex.quote(sys.argv[3])
-path.write_text(f'#!/usr/bin/env bash\nset -o pipefail\nif [ "$1" = events ]; then\n  {mail} "$@" | jq -c {expression}\nelse\n  exec {mail} "$@"\nfi\n')
-path.chmod(0o755)
+root, library, body = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+scripts = root / ".agents/skills/mailbox/scripts"
+if scripts.is_symlink():
+    scripts.unlink()
+    scripts.mkdir()
+    entry = scripts / "lane-mail"
+    entry.write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec ' + shlex.quote(str(library.parent / 'lane-mail')) + ' "$@"\n')
+    entry.chmod(0o755)
+lib = scripts / "lib"
+lib.mkdir(exist_ok=True)
+for path in library.iterdir():
+    if path.name != "lane-mail-store.py" and not (lib / path.name).exists():
+        (lib / path.name).symlink_to(path)
+source = library / "lane-mail-store.py"
+(lib / source.name).write_text(
+    "import runpy\nglobals().update(runpy.run_path(" + repr(str(source)) + "))\n"
+    "_read_events = read_events\n" + body + "\n")
 PY
+  [ "$?" -eq 0 ] || exit 1
+}
+
+sk_store_mutant() { # ROOT PATTERN REPLACEMENT: mutate the dependency copy.
+  sk_store_fixture "$1" ""
+  python3 - "$SK_ROOT/skills/mailbox/scripts/lib/lane-mail-store.py" \
+    "$1/.agents/skills/mailbox/scripts/lib/lane-mail-store.py" "$2" "$3" <<'PY'
+import pathlib, sys
+source, target, pattern, replacement = sys.argv[1:]
+text = pathlib.Path(source).read_text()
+assert text.count(pattern) == 1 and pattern != replacement
+pathlib.Path(target).write_text(text.replace(pattern, replacement))
+PY
+  [ "$?" -eq 0 ] || exit 1
+}
+
+# sk_event_filter ROOT JQ: the mailbox store produces changed event fields.
+sk_event_filter() {
+  local body
+  body="$(python3 - "$2" <<'PY'
+import sys
+print('def read_events(box, jq_defs, previous, receipts=False, timeout=30):\n'
+      '    rows, receipt = _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)\n'
+      '    changed = subprocess.run(["jq", "-c", ' + repr(sys.argv[1]) + '],\n'
+      '        input="".join(json.dumps(row) + "\\n" for row in rows),\n'
+      '        capture_output=True, text=True, check=True)\n'
+      '    return [json.loads(raw) for raw in changed.stdout.splitlines()], receipt')
+PY
+  )" || exit 1
+  sk_store_fixture "$1" "$body"
 }
 sk_journal() { printf '%s/tmp/slack/journal.jsonl' "$1"; } # ROOT
 # sk_legacy_warnings ROOT EXPECTED: read older lane-mail events twice in one process;

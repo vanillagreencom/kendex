@@ -894,7 +894,7 @@ lm_existing_lock() { # FD PATH COMMAND...
 # flock locks belong to the inherited descriptors, so one read scope can hold
 # the pair. The directory-mutex fallback retains its separate cleanup scopes.
 lm_read_pair() { # OVERSEER_FILE LANE_FILE COMMAND...
-  local over="$1" lane="$2" fd path
+  local over="$1" lane="$2" fd path result key value
   shift 2
   if ! command -v flock >/dev/null 2>&1; then
     lm_existing_lock 8 "$over" lm_existing_lock 9 "$lane" "$@"
@@ -903,12 +903,16 @@ lm_read_pair() { # OVERSEER_FILE LANE_FILE COMMAND...
   for fd in 8 9; do
     path="$over"; [ "$fd" -ne 9 ] || path="$lane"
     if [ -f "$path" ]; then
-      eval "exec $fd<\"\$path\"" 2>/dev/null || refuse file-unreadable "$path"
-      orch_take_lock "$fd" "$path" 30 || refuse lock-failed "$path"
+      eval "exec $fd<\"\$path\"" 2>/dev/null || { lm_plain; refuse file-unreadable "$path"; }
     else
       eval "exec $fd</dev/null" || refuse file-unreadable /dev/null
     fi
   done
+  result="$(python3 "$SCRIPT_DIR/lib/lane-mail-store.py" plain-lock "$BOX" "$over" "$lane")" || refuse file-unreadable "$BOX"
+  if [ -n "$result" ]; then
+    IFS=$'\x1f' read -r key value <<<"$result"
+    refuse "$key" "$value"
+  fi
   "$@"
 }
 
@@ -1189,14 +1193,18 @@ lm_box "$ROOT"
 # tmp/lane-mail down: tmp itself may be a link a worktree setup makes. A hosted
 # mailbox is judged by its provider behind `lane-host cat` and `append`.
 lm_plain() {
-  local path kind
-  for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$TO_OVERSEER.numbering" "$TO_LANE.numbering" "$CURSOR" "$CURSOR.lock" "$WATCH_FILE"; do
-    kind=-f
-    case "$path" in "$MAIL_ROOT/tmp/lane-mail" | "$BOX") kind=-d ;; esac
-    { [ ! -L "$path" ] && { [ ! -e "$path" ] || test "$kind" "$path"; }; } || refuse mailbox-unsafe "$path"
-  done
+  local unsafe
+  command -v python3 >/dev/null 2>&1 || refuse command-missing python3
+  unsafe="$(python3 "$SCRIPT_DIR/lib/lane-mail-store.py" plain "$BOX")" || refuse file-unreadable "$BOX"
+  [ -z "$unsafe" ] || refuse mailbox-unsafe "$unsafe"
 }
-[ "$HOST" -eq 1 ] || lm_plain
+# The read-only fast path validates in the same helper that takes its inode
+# locks. Inbox still validates before creating or opening its cursor lock.
+if [ "$HOST" -eq 0 ]; then
+  if [ "$FAST_READ" -ne 1 ] || [ "$VERB" = inbox ] || ! command -v flock >/dev/null 2>&1; then
+    lm_plain
+  fi
+fi
 
 # Two directories for one lane differing only in case are two mailboxes on a
 # case-sensitive disk: the lane's asks are never seen and the overseer's

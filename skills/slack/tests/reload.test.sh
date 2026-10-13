@@ -37,7 +37,9 @@ SK_RELAY_POLL=none
 # lib/*.py in byte order, hashed here and not by the package
 code_of() {
   local scripts="${SK_BIN%/*}"
-  (export LC_ALL=C; cat -- "$scripts/slack" "$scripts"/lib/*.py) \
+  (export LC_ALL=C; cat -- "$scripts/slack" "$scripts"/lib/*.py \
+    "$ROOT/.agents/skills/mailbox/scripts/lib/lane-mail-store.py" \
+    "$ROOT/.agents/skills/mailbox/scripts/lib/mailbox-append.sh") \
     | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])'
 }
 row() { sk_run -- listen --status --root "$ROOT"; LINE="$OUT"; }
@@ -67,30 +69,38 @@ fresh() {
   mkdir -p "$ROOT/.agents/skills/mailbox/scripts"
 }
 # mailer — ROOT's lane-mail for the package copy in use: `send` refused while
-# tmp/send-refused stands. While tmp/race holds a count, each `events` call,
+# tmp/send-refused stands. While tmp/race holds a count, each store events read,
 # one per poll, raises it: the first appends an update to relay.py, which the
 # next poll reads and the one after settles, and the third holds that
 # settling poll after writing tmp/held.
 mailer() {
+  local hook
   cat > "$ROOT/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
   send) [ ! -e "$ROOT/tmp/send-refused" ] || { echo 'lane-mail: send-refused' >&2; exit 2; } ;;
-  events)
-    if [ -e "$ROOT/tmp/race" ]; then
-      n=\$((\$(cat "$ROOT/tmp/race") + 1))
-      printf '%s\n' "\$n" > "$ROOT/tmp/race"
-      [ "\$n" != 1 ] || printf '# update\n' >> "${SK_BIN%/*}/lib/relay.py"
-      if [ "\$n" = 3 ]; then
-        rm -- "$ROOT/tmp/race"
-        touch "$ROOT/tmp/held"
-        sleep 3 # Real wait: the reply arrives while the settling poll runs.
-      fi
-    fi ;;
 esac
 exec "$SK_LANE_MAIL" "\$@"
 EOF
   chmod +x "$ROOT/.agents/skills/mailbox/scripts/lane-mail"
+  hook="$(python3 - "${SK_BIN%/*}/lib/relay.py" <<'PY'
+import sys
+print('''def read_events(box, jq_defs, previous, receipts=False, timeout=30):
+    marker = box.parent.parent / "race"
+    if marker.exists() and not receipts:
+        count = int(marker.read_text()) + 1
+        marker.write_text(str(count) + "\\n")
+        if count == 1:
+            with Path(''' + repr(sys.argv[1]) + ''').open("a") as stream:
+                stream.write("# update\\n")
+        if count == 3:
+            marker.unlink()
+            (box.parent.parent / "held").touch()
+            time.sleep(3)
+    return _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)''')
+PY
+  )" || exit 1
+  sk_store_fixture "$ROOT" "$hook"
 }
 # held — a reply under OLD whose delivery lane-mail refuses; RT is its ts
 held() {
@@ -167,6 +177,31 @@ row_until state ok 20
 assert_eq "$(field "$LINE" state)=$(field "$LINE" code)=$(reloads)" "ok=$C1=1" \
   "once the file reads again the relay is ok on the same code"
 sk_relay_stop
+
+# --- a mailbox-only update reaches the imported reader through the same reload ---
+for mode in production untracked; do
+  fresh "mailbox-update-$mode"
+  if [ "$mode" = production ]; then
+    sk_copy "mailbox-update-$mode"
+  else
+    sk_mutant mailbox-untracked relay.py 'for root in sorted\(roots\):' 'for root in []:'
+  fi
+  mailer
+  start
+  PID="$(pid)"
+  printf '# mailbox update\n' >> "$ROOT/.agents/skills/mailbox/scripts/lib/lane-mail-store.py"
+  C1="$(code_of)"
+  WAIT=20
+  [ "$mode" != untracked ] || WAIT=6
+  row_until code "$C1" "$WAIT"
+  if [ "$mode" = production ]; then
+    assert_eq "$(field "$LINE" code)=$(pid)=$(reloads)" "$C1=$PID=1" 'a mailbox-only update reloads the imported reader in the same process'
+  else
+    sk_assert_red "$(field "$LINE" code)=$(pid)=$(reloads)" "$C1=$PID=1" 'control: omitting the mailbox sources fails the same reload assertion'
+    assert_eq "$(reloads)" 0 'control: the running reader stays unchanged after the mailbox update'
+  fi
+  sk_relay_stop
+done
 
 # --- a held reply defers the reload on its open connection --------------------------
 fresh deferred

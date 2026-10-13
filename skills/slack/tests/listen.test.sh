@@ -725,16 +725,10 @@ done 3<<<"$(stop_rows)"
 
 # --- a receipts read lane-mail refuses: printed, the mark waits, the poll goes on -------
 MU="$(sk_new_root mu)"
-rm -- "${MU:?}/.agents/skills/mailbox/scripts"
-mkdir -p "$MU/.agents/skills/mailbox/scripts"
-cat > "$MU/.agents/skills/mailbox/scripts/lane-mail" <<EOF
-#!/usr/bin/env bash
-if [ -e "$MU/tmp/drain-refused" ]; then
-  case " \$* " in *" --receipts "*) echo 'lane-mail: drain-refused' >&2; exit 2 ;; esac
-fi
-exec "$SK_LANE_MAIL" "\$@"
-EOF
-chmod +x "$MU/.agents/skills/mailbox/scripts/lane-mail"
+sk_store_fixture "$MU" 'def read_events(box, jq_defs, previous, receipts=False, timeout=30):
+    if receipts and (box.parent.parent / "drain-refused").exists():
+        raise OSError("lane-mail: drain-refused")
+    return _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)'
 sk_bind "$MU"
 MU_CH="$(sk_channel "$MU")"
 MU1="$(swap_due "$MU" "$MU_CH" 'read me')"

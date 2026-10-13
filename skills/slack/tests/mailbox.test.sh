@@ -8,30 +8,9 @@ set -uo pipefail
 sk_fake_start --page 2
 echo "=== slack mailbox events ==="
 
-# A hung lane-mail producer must fail its poll, not hold it indefinitely.
-for variant in normal no-timeout; do
-  HUNG="$(sk_new_root "timeout-$variant")"
-  sk_bind "$HUNG"
-  sk_poll "$HUNG"
-  rm -- "${HUNG:?}/.agents/skills/mailbox/scripts"
-  mkdir -p "$HUNG/.agents/skills/mailbox/scripts"
-  printf '#!/usr/bin/env python3\nimport time\ntime.sleep(31)\n' > "$HUNG/.agents/skills/mailbox/scripts/lane-mail"
-  chmod +x "$HUNG/.agents/skills/mailbox/scripts/lane-mail"
-  if [ "$variant" = no-timeout ]; then
-    sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS\)' 'timeout=None)'
-  fi
-  sk_poll "$HUNG" # Real wait: crosses the production subprocess timeout.
-  if [ "$variant" = normal ]; then
-    assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=events root=$HUNG" 'hung lane-mail fails the poll with its named timeout'
-  else
-    sk_assert_red "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=events root=$HUNG" 'control: removing timeout keeps the hung poll green'
-  fi
-  sk_bin_reset
-done
-
 # A real send stalls in jq under orch's directory mutex. Only the existing
 # lock owner's TERM/EXIT handlers may release it before the next delivery.
-for variant in normal hard-kill; do
+for variant in normal hard-kill no-timeout; do
   LOCKED="$(sk_new_root "mutex-timeout-$variant")"
   sk_bind "$LOCKED"
   sk_poll "$LOCKED"
@@ -40,8 +19,15 @@ for variant in normal hard-kill; do
   sk_stall_delivery "$LOCKED"
   if [ "$variant" = hard-kill ]; then
     sk_mutant mail-hard-kill mailbox.py '\(signal.SIGTERM, signal.SIGKILL\)' '(signal.SIGKILL,)'
+  elif [ "$variant" = no-timeout ]; then
+    sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS\)' 'timeout=None)'
   fi
   sk_poll "$LOCKED" # Real wait: timeout after the shipped send holds its mutex.
+  if [ "$variant" = no-timeout ]; then
+    sk_assert_red "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=send root=$LOCKED" 'control: removing the bound lets the stalled send finish'
+    sk_bin_reset
+    continue
+  fi
   assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=send root=$LOCKED" "$variant: stalled send keeps its named timeout"
   assert_eq "$(cat "$LOCKED/tmp/scan-locked")" "locked" "$variant: the guard reached the real directory mutex without flock"
   MUTEX="$(sk_box "$LOCKED")/to-lane.jsonl.d"
@@ -84,6 +70,7 @@ entry = scripts / "lane-mail"
 entry.write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec env PATH=' + shlex.quote(str(fault.parent)) + ':"$PATH" ' + mail + ' "$@"\n')
 entry.chmod(0o755)
 PY
+sk_store_fixture "$SCAN" ""
 SCAN_REPLY="$(sk_inject "$SCAN_CH" U001 b "$SCAN_TS")"
 sk_poll "$SCAN"
 assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=lane-mail: mail-read-failed=overseer" "a failed closure scan stops owner delivery"
@@ -172,15 +159,12 @@ WARNINGS="$(sk_legacy_warnings "$LEGACY" "$LEGACY_WARNINGS")" || RC=$?
 assert_eq "$RC=$WARNINGS" "0=$LEGACY_WARNINGS" "control: the hidden help key leaves legacy envelope diagnostics unchanged"
 sk_bin_reset
 
-# A corrupt UTF-8 subprocess response is a root read error, not an envelope
-# field. The healthy root must post even when the first root cannot decode it.
+# A mailbox store import can fail outside envelope validation. The healthy
+# root must post even when the first root's dependency raises an exception.
 BROKEN="$(sk_new_root broken-events)"
 sk_bind "$BROKEN"
 sk_poll "$BROKEN"
-rm -- "$BROKEN/.agents/skills/mailbox/scripts"
-mkdir -p "$BROKEN/.agents/skills/mailbox/scripts"
-printf '#!/usr/bin/env bash\nprintf "\\377\\n"\n' > "$BROKEN/.agents/skills/mailbox/scripts/lane-mail"
-chmod +x "$BROKEN/.agents/skills/mailbox/scripts/lane-mail"
+sk_store_fixture "$BROKEN" 'raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")'
 rm -- "$BROKEN/tmp/slack/status.json"
 mkdir "$BROKEN/tmp/slack/status.json"
 sk_lm "$HEALTHY" notice --item overseer --to owner --file "$(sk_text root-error 'Healthy after root error.')" >/dev/null
@@ -241,7 +225,7 @@ sk_poll "$SK_TMP/field-bad-text"
 assert_eq "$RC" "1" "control: accepting a malformed text type again fails the poll"
 sk_bin_reset
 
-sk_mutant field-date mailbox.py 'except ValueError:\n                            self.bad_field\(envelope.get\("id"\), field\)\n                            invalid = True' 'except ValueError:\n                            self.bad_field(envelope.get("id"), field)\n                            invalid = False'
+sk_mutant field-date mailbox.py 'except ValueError:\n                        self.bad_field\(envelope.get\("id"\), field\)\n                        invalid = True' 'except ValueError:\n                        self.bad_field(envelope.get("id"), field)\n                        invalid = False'
 sk_poll "$SK_TMP/field-bad-at"
 assert_eq "$RC" "1" "control: accepting a malformed timestamp again fails the poll"
 sk_bin_reset

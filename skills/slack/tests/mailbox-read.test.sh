@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Surface: mailbox store snapshots. Inputs: skills/mailbox/scripts/**,
+# skills/slack/scripts/lib/mailbox.py and skills/slack/tests/lib/**.
+# The unchanged CLI is the output oracle, including complete rows, tracker
+# confirmation, logical numbering after compaction and appended tails.
+set -uo pipefail
+. "$(dirname "$0")/lib/harness.sh"
+
+ROOT="$(sk_new_root store-reader)"
+PROBE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$ROOT" || PROBE_RC=$?
+assert_eq "$PROBE_RC" 0 'in-process reader preserves the CLI output and cursor contract'
+
+CONTROL="$(sk_new_root store-numbering-control)"
+sk_store_fixture "$CONTROL" 'def read_events(box, jq_defs, previous, receipts=False, timeout=30):
+    rows, receipt = _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)
+    if Path(str(box / "to-overseer.jsonl") + ".numbering").exists():
+        rows = [dict(row, line=index + 1) for index, row in enumerate(rows)]
+    return rows, receipt'
+PROBE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$CONTROL" \
+  >"$SK_TMP/numbering-control.log" 2>&1 || PROBE_RC=$?
+sk_assert_red "$PROBE_RC" 0 'control: physical numbering fails the same output-equivalence assertion'
+
+while IFS='|' read -r name pattern replacement; do
+  CONTROL="$(sk_new_root "store-$name-control")"
+  sk_store_mutant "$CONTROL" "$pattern" "$replacement"
+  PROBE_RC=0
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$CONTROL" \
+    >"$SK_TMP/$name-control.log" 2>&1 || PROBE_RC=$?
+  sk_assert_red "$PROBE_RC" 0 "$name: removing the reader rule fails the same probe"
+done <<'ROWS'
+cache|previous["stamp"] == before|True
+safety|if path.is_symlink() or path.exists() and not (path.is_dir() if directory else path.is_file()):|if False:
+stability|if retry or writer() or before != stamp():|if retry or writer():
+deadline|if time.monotonic() >= deadline:|if False:
+pair-lock|fcntl.flock(fd, fcntl.LOCK_EX|None # fcntl.flock(fd, fcntl.LOCK_EX
+pair-bound|or time.monotonic() >= deadline|or False
+ROWS
+
+sk_summary

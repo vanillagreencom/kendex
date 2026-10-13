@@ -1,0 +1,1 @@
+- Share mailbox path checks, cursor reads and numbered snapshots with the Slack relay.

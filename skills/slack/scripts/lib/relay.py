@@ -100,7 +100,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
 from api import RETRIES, Slack
-from mailbox import LANE_MAIL_TIMEOUT_SECONDS, LaneMail
+from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail
 from markup import Verbatim, outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
@@ -208,14 +208,23 @@ def local_time(at: str) -> str:
     return f"<!date^{int(at_epoch(at))}^{{date_short_pretty}} at {{time}}|{at}>"
 
 
-def fingerprint() -> str:
+def fingerprint(roots: Iterable[Path] = ()) -> str:
     """Which code a relay runs: 12 hex characters of one sha256 over the
-    launcher and every lib/*.py, files in sorted order."""
+    launcher, every lib/*.py and each root's mailbox reader definitions."""
     digest = hashlib.sha256()
     path = SCRIPTS / "lib"
     try:
         for path in [LAUNCHER, *sorted(p for p in (SCRIPTS / "lib").iterdir() if p.suffix == ".py")]:
             digest.update(path.read_bytes())
+        for root in sorted(roots):
+            for relative in MAILBOX_READ_FILES:
+                path = root / relative
+                try:
+                    digest.update(path.read_bytes())
+                except FileNotFoundError:
+                    # LaneMail refuses a missing reader for its own root.
+                    # Its absence must still participate in reload detection.
+                    digest.update(b"missing")
     except OSError as err:
         raise Refusal("code-unreadable", f"{path} ({err.strerror})") from err
     return digest.hexdigest()[:12]
@@ -1074,7 +1083,7 @@ class Relay:
         # The code this image runs, read before anything else so that the
         # window between the imports and the reading stays short; `reading`
         # is the last poll's reading of the code on disk.
-        self.code = fingerprint()
+        self.code = fingerprint(roots)
         self.reading = self.code
         self.settled = False
         self.settings = settings
@@ -1132,7 +1141,7 @@ class Relay:
         file keeps the running code and returns its keyed refusal for the
         status record."""
         try:
-            reading = fingerprint()
+            reading = fingerprint(root.path for root in self.roots)
         except Refusal as err:
             print_refusal(err)
             return f"{err.key}={err.value}"
