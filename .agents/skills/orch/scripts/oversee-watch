@@ -1514,7 +1514,7 @@ MERGED_SEARCH_PAGE=1000
 # One merged-PR reader owns lookup and lane_merged evaluation. Verification
 # uses its mergedAt for the publication floor and its merge commit for containment.
 MERGED_ITEM_ROWS=""
-merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR]
+merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [ITEM_SEARCH]
   local item="$1" repo="$2" pr="$3" since="${4:-null}" floor="${5:-}"
   local branch list named search rows errf="$WORK_DIR/merged.err"
   local fields=number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body
@@ -1522,7 +1522,8 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR]
   if [[ -n "${6:-}" ]]; then
     local read_file="$6/${repo//\//%}.merged"
     if [[ ! -f "$read_file" ]]; then
-      gh pr list --repo "$repo" --search "${floor:+merged:>=$floor}" --limit "$MERGED_SEARCH_PAGE" --state merged --json "$fields" >"$read_file" 2>"$errf" \
+      search="${floor:+merged:>=$floor }${7:+($7) in:title,body}"
+      gh pr list --repo "$repo" --search "$search" --limit "$MERGED_SEARCH_PAGE" --state merged --json "$fields" >"$read_file" 2>"$errf" \
         || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
     fi
     named="$(cat "$read_file")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
@@ -4544,7 +4545,7 @@ owed_accounts() { # HOST
 # lane filtering. Deadlines remain per box in the issue description.
 verifying_read() { # SAFE_ITEMS
   local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
-  local rows row id boxes merged merged_repos merged_rows repo out lines due line prior key rc floor read_dir
+  local rows row id boxes merged merged_repos merged_rows repo out lines due line prior key rc floor read_dir search
   local state="${PW_SEEN[0]}" errf="$WORK_DIR/verifying.err"
   # One record per issue, its ID then the row: owed_read admits no unit
   # separator in an ID, and tojson keeps the row on one line.
@@ -4553,9 +4554,12 @@ verifying_read() { # SAFE_ITEMS
   rows="$(jq -r 'map(select(.state == "verifying"))
     | (map(try (.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null)
        | if length > 0 and all(.[]; . != null) then min | todateiso8601 else "" end),
+      (map("(head:" + (.id | ascii_downcase) + " OR " + (.id | tojson) + ")") | join(" OR ")),
       (.[] | "\(.id)\u001f\(tojson)")' <<<"$1")" \
     || die tracker-list-invalid "" "team=$LINEAR_TEAM"
   floor="${rows%%$'\n'*}"
+  if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
+  search="${rows%%$'\n'*}"
   if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
   # Rebuild the due set after the complete inventory, including valid items
   # after a checklist that Linear accepted but the box parser cannot read.
@@ -4582,7 +4586,7 @@ verifying_read() { # SAFE_ITEMS
     if [[ "$boxes" == *'"trigger_kind":"release"'* ]]; then
       merged_rows=""
       for repo in "${REPOS[@]}"; do
-        merged_item_read "$id" "$repo" null null "$floor" "$read_dir"
+        merged_item_read "$id" "$repo" null null "$floor" "$read_dir" "$search"
         merged_rows+="${merged_rows:+,}$MERGED_ITEM_ROWS"
       done
       # The latest merge across repositories, then each repository's own.
