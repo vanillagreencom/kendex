@@ -832,6 +832,20 @@ environment_rows() {
 [0,"env bash --version","main-forwarded-shell-prefix"]
 [0,"NAME=env time printf ok","main-assignment-before-reserved-head"]
 [0,"cat <<'DATA'\nprintf env\nDATA","main-nonreader-body-argument"]
+[2,"exec >receipt; declare","r12-exec-list-unnamed-declaration"]
+[2,"builtin :; declare","r12-builtin-list-unnamed-declaration"]
+[2,"command exec >receipt; declare","r12-command-exec-list-unnamed-declaration"]
+[2,"exec >receipt; printf %s env","r12-exec-list-nonreader-argument"]
+[2,"builtin :; printf %s env","r12-builtin-list-nonreader-argument"]
+[2,"{ cat <<'DOC'\nprintf '%s\\n' env\nDOC\n}","r12-brace-stdout-body-main-refusal"]
+[2,"{ bash <<'DOC'\nprintf '%s\\n' env\nDOC\n}","r12-brace-shell-body-main-refusal"]
+[2,"{ bash <<'DOC'\ndeclare\nDOC\n}","r12-brace-shell-declaration-body-main-refusal"]
+[2,"{ bash <<'DOC'\ntypeset\nDOC\n}","r12-brace-shell-typeset-body-main-refusal"]
+[2,"if :; then bash <<'DOC'\ndeclare\nDOC\nfi","r12-if-shell-declaration-body-main-refusal"]
+[2,"time bash <<'DOC'\ndeclare\nDOC","r12-time-shell-declaration-body-main-refusal"]
+[2,"bash <<'DOC'; builtin :\ndeclare\nDOC\n","r12-body-after-later-header-wrapper"]
+[0,"bash <<'DOC'\ndeclare\nDOC\nbuiltin :\n","r12-body-before-later-wrapper"]
+[2,"bash <<EOF; script.sh","unread-shell-heredoc-body-without-marker"]
 ENVIRONMENT_ROWS
   ) || exit 1
   while IFS=$'\t' read -r expected command_json label world; do
@@ -913,13 +927,17 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     planted=$defect
     mutant="$scratch/environment-$defect.sh"
     awk -v defect="$defect" '
+      /^environment_main_command\(\)/ { main_classifier=1 }
+      main_classifier { print; if ($0 == "}") main_classifier=0; next }
       function swap(from, to, at) {
         at = index($0, from)
         if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ }
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
-      defect == "main-body-cut" && $0 == "      if environment_dump shell conservative; then return 0; fi" { swap("if environment_dump shell conservative; then return 0; fi", "if false; then return 0; fi") }
+      defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
+      defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
+      defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
         block = $0; getline; block = block "\n" $0; getline; block = block "\n" $0; changed++; next
       }
@@ -994,6 +1012,19 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     fi
   done <<'ENVIRONMENT_CONTROLS'
 no-check|FAIL environment: incident: exit=0 expected=2
+exec-context|FAIL environment: r12-exec-list-unnamed-declaration: exit=0 expected=2
+exec-context|FAIL environment: r12-builtin-list-unnamed-declaration: exit=0 expected=2
+exec-context|FAIL environment: r12-command-exec-list-unnamed-declaration: exit=0 expected=2
+exec-context|FAIL environment: r12-exec-list-nonreader-argument: exit=0 expected=2
+exec-context|FAIL environment: r12-builtin-list-nonreader-argument: exit=0 expected=2
+main-command-cut|FAIL environment: r12-body-after-later-header-wrapper: exit=0 expected=2
+flat-main-command|FAIL environment: r12-body-before-later-wrapper: exit=2 expected=0
+main-evidence-cut|FAIL environment: r12-brace-stdout-body-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: r12-brace-shell-body-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: r12-brace-shell-declaration-body-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: r12-brace-shell-typeset-body-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: r12-if-shell-declaration-body-main-refusal: exit=0 expected=2
+main-evidence-cut|FAIL environment: r12-time-shell-declaration-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: wrapper-quoted-unproved-operand-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: wrapper-unterminated-quote-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: receipt-without-status-write-main-refusal: exit=0 expected=2
@@ -1009,7 +1040,7 @@ no-check|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 
 no-check|FAIL environment: unregistered-heredoc-final-word: exit=0 expected=2
 no-check|FAIL environment: unquoted-heredoc-single-quotes-expand: exit=0 expected=2
 main-evidence-cut|FAIL environment: eval-quoted-argument-data: exit=0 expected=2
-main-body-cut|FAIL environment: escaped-heredoc-delimiter: exit=0 expected=2
+main-command-cut|FAIL environment: escaped-heredoc-delimiter: exit=0 expected=2
 main-evidence-cut|FAIL environment: syntax-assignment-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: syntax-function-name: exit=0 expected=2
 main-evidence-cut|FAIL environment: syntax-coproc-name: exit=0 expected=2
@@ -1022,7 +1053,7 @@ main-evidence-cut|FAIL environment: conservative-sudo-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-group-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: split-string-named-read: exit=0 expected=2
 main-evidence-cut|FAIL environment: split-string-quoted-data: exit=0 expected=2
-main-body-cut|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
+main-command-cut|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
 main-evidence-cut|FAIL environment: wrapper-empty-launcher: exit=0 expected=2
 late-check|FAIL environment: explicit-policy-off: exit=0 expected=2
 unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
@@ -1040,8 +1071,8 @@ unproved-records|FAIL environment: strings-conversion-cannot-repair-records: exi
 syntax-routing|FAIL environment: brace-conservative-filter: exit=0 expected=2
 here-string|FAIL environment: quoted-here-string-data: exit=2 expected=0
 delimiter-proof|FAIL environment: encoded-heredoc-delimiter: exit=0 expected=2
-heredoc-program|FAIL environment: bash-quoted-heredoc-program: exit=0 expected=2
-body-evidence|FAIL environment: unread-shell-heredoc-body: exit=0 expected=2
+heredoc-program|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
+body-evidence|FAIL environment: unread-shell-heredoc-body-without-marker: exit=0 expected=2
 descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
 heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
 missing-identifier-cut|FAIL environment: dump-before-unregistered-heredoc-redirect: exit=0 expected=2
