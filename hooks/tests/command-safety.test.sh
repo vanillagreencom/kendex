@@ -331,6 +331,53 @@ environment_rows() {
 [0,"env -i NAME=value git status","empty-launcher"]
 [0,"env -- git status","launcher-options-end"]
 [0,"env -u env git status","launcher-option-value"]
+[0,"bash wrapper.sh env NAME=value OTHER=value command-name args","wrapper-launcher"]
+[0,"bash wrapper.sh env NAME=value OTHER=value command-name args > out","wrapper-launcher-redirect"]
+[0,"env -u NAME -u OTHER command-name args","unset-launcher"]
+[0,"bash wrapper.sh env -u NAME -u OTHER command-name args","wrapper-unset-launcher"]
+[0,"bash wrapper.sh env -u env -u set command-name args > out","wrapper-unset-producer-operands"]
+[0,"bash wrapper.sh env -i NAME=value command-name","wrapper-empty-launcher"]
+[0,"bash wrapper.sh env --unset=NAME NAME=value command-name","wrapper-inline-unset-launcher"]
+[0,"bash wrapper.sh env -- NAME=value command-name","wrapper-options-end-launcher"]
+[2,"bash wrapper.sh env","wrapper-bare-env"]
+[2,"bash wrapper.sh env > out","wrapper-bare-env-redirect"]
+[2,"bash wrapper.sh env NAME=value","wrapper-assignment-only"]
+[2,"env -u NAME","unset-without-program"]
+[2,"bash wrapper.sh env -u NAME -u OTHER > out","wrapper-unset-without-program"]
+[2,"bash wrapper.sh env --unset=NAME","wrapper-inline-unset-without-program"]
+[2,"bash wrapper.sh env -0","wrapper-null-env"]
+[2,"bash wrapper.sh env --null","wrapper-long-null-env"]
+[2,"bash wrapper.sh env NAME=value printenv","wrapper-launcher-dump"]
+[2,"bash wrapper.sh env NAME=value env","wrapper-launcher-env-chain"]
+[0,"bash wrapper.sh 'env NAME=value command-name args'","wrapper-quoted-launcher-data"]
+[0,"bash wrapper.sh \"env -u NAME -u OTHER command-name args\"","wrapper-quoted-unset-data"]
+[0,"bash wrapper.sh 'env'","wrapper-quoted-bare-env-data"]
+[0,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
+[0,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
+[0,"bash wrapper.sh set -euo pipefail","wrapper-set-strict"]
+[0,"bash wrapper.sh set +x","wrapper-set-option-off"]
+[0,"bash wrapper.sh set -- args","wrapper-set-operands"]
+[0,"bash wrapper.sh set -- env printenv set","wrapper-set-producer-operands"]
+[0,"bash wrapper.sh printenv env set","wrapper-named-producer-operands"]
+[0,"set \"$NAME\"","set-variable-operand"]
+[0,"bash wrapper.sh 'set -euo pipefail'","wrapper-quoted-set-data"]
+[0,"{ printf '%s\\n' start > receipt; set -o pipefail; command-name args | tee -a receipt; printf 'exit=%s\\n' \"$?\" >> receipt; }","strict-set-receipt"]
+[2,"set > out","bare-set-redirect"]
+[2,"bash wrapper.sh set","wrapper-bare-set"]
+[2,"bash wrapper.sh set > out","wrapper-bare-set-redirect"]
+[0,"cat <<'EOF' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF","quoted-heredoc-script"]
+[0,"cat <<\"EOF\" > script.py\nset -euo pipefail\nenv -u NAME -u OTHER command-name\n$(env)\nEOF","double-quoted-heredoc-data"]
+[0,"cat <<\\EOF\nenv\nEOF","escaped-heredoc-delimiter"]
+[0,"cat <<E'OF'\nenv\nEOF","split-quoted-heredoc-delimiter"]
+[0,"cat <<-'EOF'\n\tenv\n\tEOF","tab-stripped-quoted-heredoc"]
+[0,"cat <<'FIRST' <<'SECOND'\nenv\nFIRST\nset\nSECOND","multiple-quoted-heredocs"]
+[2,"cat <<'EOF' > out\nenv NAME=value command-name\nEOF\nenv","dump-after-quoted-heredoc"]
+[2,"cat <<'EOF'\nset -euo pipefail\nEOF\nset > out","set-after-quoted-heredoc"]
+[2,"cat <<'EOF'\nEOF-not-the-delimiter\nenv\nEOF\nprintenv","heredoc-delimiter-exact-match"]
+[2,"{ bash wrapper.sh env NAME=value command-name; printf '%s' env; }","launcher-before-later-suffix-dump"]
+[2,"{ bash wrapper.sh env NAME=value command-name | printf '%s' env; }","launcher-before-later-suffix-pipe-dump"]
+[2,"bash wrapper.sh 'env NAME=value command-name' \"$(env)\"","quoted-wrapper-substitution-dump"]
+[2,"{ \"env\"; }","suffix-quoted-command-head"]
 [0,"export NAME=value","export-assignment"]
 [0,"export -p NAME","export-named"]
 [0,"declare -p NAME","declare-named"]
@@ -688,11 +735,17 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
       }
       defect == "unproved-records" { swap("unrouted | dump-unknown) return 0 ;;", "unrouted) return 0 ;; dump-unknown) continue ;;") }
-      defect == "shell-prefix" { swap("if [[ $opaque =~ $opaque_re ]]; then", "if [ -z \"$opaque_from\" ] && [[ $opaque =~ $opaque_re ]]; then") }
-      defect == "suffix-first-word" && /for \(\(j=opaque_from;/ {
-        swap("j<${#tokens[@]}", "j<opaque_from+1 && j<${#tokens[@]}")
+      defect == "shell-prefix" { swap("scan=1 ;;", "[ -z \"$opaque_from\" ] && scan=1 || scan=\"\" ;;") }
+      defect == "suffix-first-word" && /for \(\(candidate=scan_from;/ {
+        swap("candidate<${#stage_args[@]}", "candidate<scan_from+1 && candidate<${#stage_args[@]}")
       }
-      defect == "suffix-stage-only" && /for \(\(j=opaque_from;/ { swap("j<${#tokens[@]}", "j<end") }
+      defect == "suffix-stage-only" { swap("unsupported=1; compound=1", "unsupported=\"\"; compound=1") }
+      defect == "suffix-launcher" { swap("environment_producer argv", "environment_producer argv; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
+      defect == "suffix-set" { swap("environment_producer argv", "environment_producer argv; [ \"${stage_args[$candidate]}\" != set ] || mode=dump-unknown") }
+      defect == "suffix-quotes" { swap("[ -z \"${word_code[${origins[$candidate]}]:-}\" ]", "false") }
+      defect == "quoted-heredoc" { swap("doc<${#heredocs[@]}", "doc<0") }
+      defect == "heredoc-resume" { swap("heredocs=(); heredoc_tabs=() ;;", "heredocs=(); heredoc_tabs=(); i=$text_length ;;") }
+      defect == "unset-operand" { swap("-u | --unset | -C | --chdir) pos=$((pos + 2))", "-u | --unset | -C | --chdir) pos=$((pos + 1))") }
       defect == "head-basename" && $0 == "      case \"${args[$pos]}\" in" {
         $0 = "      case \"${args[$pos]##*/}\" in"; changed++
       }
@@ -702,12 +755,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
       defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
       defect == "no-dollar-opener" { swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)") }
-      defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || return 0", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
+      defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
       defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
-      defect == "opaque-escaped-pass" { swap("[ \"${kinds[$j]}\" != ansi-escaped ] || mode=dump-unknown", "[ \"${kinds[$j]}\" != ansi-escaped ] || :") }
+      defect == "opaque-escaped-pass" { swap("[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || return 0", "[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || :") }
       defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
-      defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || return 0", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
-      defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || return 0", "[ -z \"$input_escaped\" ] || :") }
+      defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
+      defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; return; }", "[ -z \"$input_escaped\" ] || :") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -742,6 +795,13 @@ unproved-records|FAIL environment: xargs-flattened-records: exit=0 expected=2
 unproved-records|FAIL environment: cat-transformed-records: exit=0 expected=2
 unproved-records|FAIL environment: tr-conversion-cannot-repair-records: exit=0 expected=2
 unproved-records|FAIL environment: strings-conversion-cannot-repair-records: exit=0 expected=2
+suffix-launcher|FAIL environment: wrapper-launcher: exit=2 expected=0
+suffix-launcher|FAIL environment: wrapper-launcher-redirect: exit=2 expected=0
+suffix-set|FAIL environment: strict-set-receipt: exit=2 expected=0
+suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
+quoted-heredoc|FAIL environment: double-quoted-heredoc-data: exit=2 expected=0
+heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
+unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
 shell-prefix|FAIL environment: brace-dump: exit=0 expected=2
 shell-prefix|FAIL environment: if-body-dump: exit=0 expected=2
 shell-prefix|FAIL environment: timed-dump: exit=0 expected=2

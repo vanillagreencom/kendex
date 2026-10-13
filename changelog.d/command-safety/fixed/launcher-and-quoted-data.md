@@ -1,0 +1,1 @@
+- Allow env launchers and set commands with operands in wrapper arguments. Keep quoted arguments and quoted heredoc bodies as data. Continue to refuse bare environment dumps.
