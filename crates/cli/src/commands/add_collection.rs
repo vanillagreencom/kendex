@@ -2,15 +2,15 @@
 //! subscribe each repository the scope lacks (at the snapshot commit) and
 //! install every member. Existing subscriptions are reused only when
 //! their revision matches the snapshot; the steps refuse before anything
-//! changes otherwise.
+//! changes otherwise. Core prepares and checks the whole collection before
+//! this command applies its single plan.
 
-use kendex_core::engine::ops::{self, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::advisory::{Listing, print_safety};
+use super::advisory::Listing;
 use super::engine_common::{apply_report, ask_before_writing, print_report};
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::offers::Blocked;
@@ -57,15 +57,17 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         ),
         yes,
     )?;
-    // Every repository is fetched and every member proven present before
-    // the first mutation — a collection whose third repository is broken
-    // must refuse up front, not leave the first two half-installed.
-    prevalidate(env, scope, &steps)?;
-    // Each add plan also checks the recorded revisions it keeps. A later
-    // step can refuse one after earlier steps installed. The error is
-    // held until the close has reported those writes.
-    let (mut closing, failed) =
-        install_steps(steps, |step, wrote| install_step(env, scope, step, wrote));
+    let prepared = source_ops::prepare_collection(env, scope, &steps)?;
+    let subscribed: Vec<String> = prepared.subscription_names().map(str::to_owned).collect();
+    let report = prepared.plan(env)?;
+    let mut wrote = Written::default();
+    let failed = install_report(env, &report, &mut wrote).err();
+    if failed.is_none() {
+        for name in subscribed {
+            say(&format!("{}: subscribed to '{name}'", scope_label(scope)));
+        }
+    }
+    let mut closing = closing(vec![wrote]);
     let skipped = std::mem::take(&mut closing.skipped);
     // A member skipped on conflict is not a step failure, and it is not
     // installed either: the line would claim a member the ledger then
@@ -117,9 +119,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
 /// registration of the folder the packages landed in.
 ///
 /// The parts are handed in so the order can be asked without a registry, a
-/// network and a git host — the same reason [`install_steps`] takes its
-/// installer. What it decides is the whole of what a reviewer of this file
-/// would otherwise have to read the callers to know.
+/// network and a git host.
 ///
 /// The registration runs on every arm where packages landed, and never
 /// behind the account's answer: a package's declared installer exiting
@@ -144,9 +144,8 @@ fn finish<C: FnOnce()>(
         false => Ok(()),
     };
     if let Some(error) = failed {
-        // A step failed with earlier steps already installed. What they
-        // wrote is reported before the error goes up, and the repository
-        // account is not asked for on a run that is already failing.
+        // A failed apply reports its ledger before the error goes up.
+        // Repository effects are not run after an installation failure.
         close();
         return (Err(error), registered(wrote).err());
     }
@@ -156,34 +155,6 @@ fn finish<C: FnOnce()>(
         Ok(()) => (registry, None),
         Err(error) => (Err(error), registry.err()),
     }
-}
-
-/// Take the steps in order, stopping at the first failure, and reduce
-/// what the run wrote into its close.
-///
-/// The written set, never the succeeded set. A step is not outcome-free
-/// before it fails: it can apply a new subscription, apply the pins that
-/// hold reused members at the snapshot, and print blocked and safety rows
-/// before a later fetch returns an error. Dropping that with the error
-/// closes a run that changed the repository on a ledger naming less than
-/// it did. Each step fills its own [`Written`] as it goes, so the outcome
-/// is kept whichever way the step returned.
-fn install_steps(
-    steps: Vec<kendex_core::source_ops::CollectionStep>,
-    mut install: impl FnMut(kendex_core::source_ops::CollectionStep, &mut Written) -> CliResult,
-) -> (Closing, Option<Box<dyn std::error::Error>>) {
-    let mut written: Vec<Written> = Vec::new();
-    let mut failed: Option<Box<dyn std::error::Error>> = None;
-    for step in steps {
-        let mut wrote = Written::default();
-        let outcome = install(step, &mut wrote);
-        written.push(wrote);
-        if let Err(error) = outcome {
-            failed = Some(error);
-            break;
-        }
-    }
-    (closing(written), failed)
 }
 
 /// What the run says at the end: the ledger's count, the collapsed
@@ -271,195 +242,25 @@ struct Written {
     applied: usize,
 }
 
-/// Subscribe (or reuse), install every member, and — for a reused
-/// subscription that may track a moved branch — pin each member to the
-/// snapshot commit so what installs is the snapshot, not the branch head.
-///
-/// A fresh subscription rides in the members' own plan, so an install the
-/// add refuses — a member no tool on this machine can take — leaves the
-/// scope subscribed to nothing rather than holding a subscription it
-/// installed nothing from. Every write lands in `wrote` before the next
-/// fallible call, so the error path carries what the step had already
-/// done.
-fn install_step(
+/// Apply the core collection plan and retain its outcome for the ledger.
+fn install_report(
     env: &Env,
-    scope: &Scope,
-    step: kendex_core::source_ops::CollectionStep,
+    report: &kendex_core::engine::EngineReport,
     wrote: &mut Written,
 ) -> CliResult {
-    let members: Vec<(kendex_core::model::ItemKind, String)> = step
-        .members()
-        .map(|(kind, name)| (kind, name.clone()))
-        .collect();
-    let request = AddRequest {
-        agents: step.agents.clone(),
-        skills: step.skills.clone(),
-        hooks: step.hooks.clone(),
-        commands: step.commands.clone(),
-        mcp_servers: step.mcp_servers.clone(),
-        output_styles: step.output_styles.clone(),
-        ..AddRequest::default()
-    };
-    // Prevalidation fetched both snapshots and reused subscriptions. The
-    // write loop reads those checked cache resolutions without fetching a
-    // branch that could select another catalog after an earlier write.
-    let (report, subscribed) = match &step.action {
-        SourceAction::Reuse { name } => {
-            let report = ops::add(
-                env,
-                scope,
-                &AddRequest {
-                    source: Some(name.clone()),
-                    ..request
-                },
-            )?;
-            (report, None)
-        }
-        SourceAction::Subscribe { reference } => {
-            let subscribed = source_ops::subscribe_and_install(env, scope, reference, &request)?;
-            (subscribed.report, Some(subscribed.name))
-        }
-    };
-    // The step's own plan goes to the caller, which discloses over the
-    // whole collection at once. Nothing here runs an effect.
     wrote.effects.extend(report.repo_effects.iter().cloned());
     wrote.planned = !report.plan.is_empty();
-    let blocked = print_report(env, &report, Listing::Attention);
+    let blocked = print_report(env, report, Listing::Attention);
     wrote.skipped.extend(report.skipped_asked());
     wrote.blocked.extend(blocked);
     wrote.scored.extend(report.safety.iter().cloned());
-    wrote.applied += apply_report(env, &report)?;
-    if let Some(name) = subscribed {
-        say(&format!("{}: subscribed to '{name}'", scope_label(scope)));
-    }
-    if let SourceAction::Reuse { .. } = &step.action
-        && let Some(commit) = &step.commit
-    {
-        for (kind, name) in &members {
-            let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
-            // The pin's rows reach the collection's closing ledger with
-            // the step's own, which speaks for what this folds.
-            print_safety(&pinned.safety, Listing::Attention);
-            wrote.scored.extend(pinned.safety.iter().cloned());
-            wrote.applied += apply_report(env, &pinned)?;
-        }
-    }
-    Ok(())
-}
-
-/// Fetch collection snapshots and reused subscription resolutions before
-/// the first step. A cached branch may still match the snapshot even when
-/// its upstream already requires a newer engine.
-fn prevalidate(
-    env: &Env,
-    scope: &Scope,
-    steps: &[kendex_core::source_ops::CollectionStep],
-) -> CliResult {
-    for step in steps {
-        prevalidate_snapshot(env, step)?;
-    }
-    let manifest = kendex_core::engine::ops::manifest_for_reading(env, scope)?;
-    for step in steps {
-        if let SourceAction::Reuse { name } = &step.action
-            && let Some(decl) = manifest.sources.get(name)
-            && let Some(repo) = &decl.repo
-        {
-            kendex_core::remote::sync(env, repo, decl.rev.as_deref())?;
-        }
-    }
-    kendex_core::source::check_catalog_compatibility(env, scope, &manifest)?;
-    Ok(())
-}
-
-fn prevalidate_snapshot(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> CliResult {
-    let resolution = kendex_core::remote::sync(env, &step.repo, step.commit.as_deref())
-        .map_err(|error| format!("{}: {error}", step.repo))?;
-    let sealed = kendex_core::source_read::SealedSource::open(&resolution.root)?;
-    let config =
-        kendex_core::source::source_config(&sealed, kendex_core::source::repo_leaf(&step.repo))?;
-    for (kind, name) in step.members() {
-        if kendex_core::source::find_item(&sealed, &config, kind, name).is_none() {
-            return Err(format!(
-                "{} does not offer {} '{name}' at the collection's snapshot — nothing was installed",
-                step.repo,
-                kind.name()
-            )
-            .into());
-        }
-    }
+    wrote.applied += apply_report(env, report)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Written, finish, install_steps, wrote_count};
-    use kendex_core::repo_effects::{DeclaredEffects, RepoEffects};
-    use kendex_core::source_ops::{CollectionStep, SourceAction};
-
-    fn step(repo: &str) -> CollectionStep {
-        CollectionStep {
-            repo: repo.to_owned(),
-            commit: None,
-            action: SourceAction::Subscribe {
-                reference: repo.to_owned(),
-            },
-            agents: Vec::new(),
-            skills: vec!["guard".to_owned()],
-            hooks: Vec::new(),
-            commands: Vec::new(),
-            mcp_servers: Vec::new(),
-            output_styles: Vec::new(),
-        }
-    }
-
-    fn declared(name: &str) -> DeclaredEffects {
-        DeclaredEffects {
-            name: name.to_owned(),
-            root: std::path::PathBuf::from("packages").join(name),
-            effects: RepoEffects {
-                summary: "arms this repository's commit hooks".to_owned(),
-                writes: Vec::new(),
-                installer: None,
-                uninstaller: None,
-                checker: None,
-                staged_checker: None,
-                removal: None,
-                notes: Vec::new(),
-                companions: Vec::new(),
-                unknown_keys: Vec::new(),
-            },
-        }
-    }
-
-    /// A step that subscribed and then failed changed the repository, so
-    /// the close names what it wrote: its subscription in the ledger's
-    /// count, and the declaration it installed on the repository-effects
-    /// screen. Read off the steps that succeeded alone, a run that had
-    /// just written twice closes on one.
-    #[test]
-    fn a_failed_step_still_names_what_it_wrote() {
-        let (closing, failed) = install_steps(
-            vec![step("owner/first"), step("owner/second")],
-            |step, wrote: &mut Written| {
-                wrote.applied += 1;
-                wrote.planned = true;
-                wrote.effects.push(declared(&step.repo));
-                match step.repo.as_str() {
-                    "owner/second" => Err("owner/second moved under the run".into()),
-                    _ => Ok(()),
-                }
-            },
-        );
-        assert!(failed.is_some());
-        assert_eq!(closing.count, Some(2));
-        let named: Vec<&str> = closing
-            .pending
-            .iter()
-            .map(|effects| effects.name.as_str())
-            .collect();
-        assert_eq!(named, ["owner/first", "owner/second"]);
-    }
-
+    use super::{finish, wrote_count};
     /// A run that wrote reports what it wrote, whatever the member plans
     /// said. The pin and the subscription are writes the member plan
     /// never carries, so a ledger deciding from that plan alone calls a
@@ -476,8 +277,7 @@ mod tests {
 
     /// Every way a collection run can end, and what each does about the
     /// registry. A collection needs a directory service, a git host and a
-    /// registry to reach this by any other route, so the parts are handed
-    /// in — the shape `install_steps` above is already tested through.
+    /// registry to reach this by any other route, so the parts are handed in.
     ///
     /// The claim every row makes is the one the issue turns on: the folder
     /// the packages landed in is registered on every arm where they

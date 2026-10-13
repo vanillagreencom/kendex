@@ -58,6 +58,87 @@ pub enum SourceAction {
     Subscribe { reference: String },
 }
 
+/// A whole collection's checked additions. Planning consumes the same
+/// manifest and installation record that the compatibility check read.
+pub struct PreparedCollection {
+    scope: Scope,
+    addition: crate::engine::ops::PreparedAddition,
+    subscriptions: Vec<(String, crate::manifest::SourceDecl)>,
+}
+
+impl PreparedCollection {
+    pub fn subscription_names(&self) -> impl Iterator<Item = &str> {
+        self.subscriptions.iter().map(|(name, _)| name.as_str())
+    }
+
+    pub fn check_catalog_compatibility(&self, env: &Env) -> Result<()> {
+        self.addition.check_catalog_compatibility(env)
+    }
+
+    pub fn plan(self, env: &Env) -> Result<crate::engine::EngineReport> {
+        self.check_catalog_compatibility(env)?;
+        let mut report = self.addition.plan(env)?;
+        for (name, decl) in self.subscriptions {
+            super::subscribe::announce_subscription(env, &mut report, &self.scope, &name, &decl);
+        }
+        Ok(report)
+    }
+}
+
+/// Resolve every snapshot and prepare every declaration before a plan can
+/// render. A retained incompatible revision therefore refuses before any
+/// part of the collection installs.
+pub fn prepare_collection(
+    env: &Env,
+    scope: &Scope,
+    steps: &[CollectionStep],
+) -> Result<PreparedCollection> {
+    for step in steps {
+        crate::remote::sync(env, &step.repo, step.commit.as_deref())?;
+    }
+    let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
+    for step in steps {
+        if let SourceAction::Reuse { name } = &step.action
+            && let Some(decl) = manifest.sources.get(name)
+            && let Some(repo) = &decl.repo
+        {
+            crate::remote::sync(env, repo, decl.rev.as_deref())?;
+        }
+    }
+    let mut addition = crate::engine::ops::PreparedAddition::new(env, scope)?;
+    let mut subscriptions = Vec::new();
+    for step in steps {
+        let (name, seed) = match &step.action {
+            SourceAction::Reuse { name } => (name.clone(), None),
+            SourceAction::Subscribe { reference } => {
+                let declared = super::subscribe::declared(env, scope, reference, None)?;
+                let name = addition.subscription_name(&step.repo);
+                subscriptions.push((name.clone(), declared.decl.clone()));
+                (name.clone(), Some((name, declared.decl)))
+            }
+        };
+        let request = crate::engine::ops::AddRequest {
+            source: Some(name),
+            agents: step.agents.clone(),
+            skills: step.skills.clone(),
+            hooks: step.hooks.clone(),
+            commands: step.commands.clone(),
+            mcp_servers: step.mcp_servers.clone(),
+            output_styles: step.output_styles.clone(),
+            hold: matches!(step.action, SourceAction::Reuse { .. }) && step.commit.is_some(),
+            ..Default::default()
+        };
+        addition.include(env, &request, seed, step.commit.as_deref())?;
+    }
+    let prepared = PreparedCollection {
+        scope: scope.clone(),
+        addition,
+        subscriptions,
+    };
+    prepared.check_catalog_compatibility(env)?;
+    Ok(prepared)
+}
+
 pub fn collection_steps(
     env: &Env,
     scope: &Scope,

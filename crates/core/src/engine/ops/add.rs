@@ -122,98 +122,157 @@ pub fn add_seeded(
             manifest_file: manifest::manifest_file_name(env, scope),
         });
     }
-    let mut manifest = manifest_for_mutation(env, scope)?;
-    // Arrival is the manifest gaining a declaration, and it is the one
-    // thing that applies a settings template. Committed state, so a clone
-    // carrying no lock re-arrives nothing. Read expanded, because a bundle
-    // declaration accounts for its members and their own declarations are
-    // taken away as it does.
-    let declared = crate::engine::installed::skills_installed(env, scope, &manifest);
-    if let Some((name, decl)) = seed {
-        manifest.sources.insert(name, decl);
-    }
-    let mut notes = Vec::new();
-    // A request that names its harnesses has answered which tools it goes
-    // to. One that leaves them to the scope reads the scope's list as
-    // written, filled from the machine only where it declares none.
-    if request.harnesses.is_none()
-        && let Some(left_out) = super::settle_defaults(env, scope, &mut manifest)
-    {
-        notes.push(left_out);
-    }
-    // Before a byte of the manifest is persisted: a request whose tools can
-    // take none of what it asks for would plan nothing, apply nothing, and
-    // report success. Asked once the scope's list is settled, so a request
-    // leaving the tools to that list is judged by the list the declaration
-    // would actually be written with — on a machine with no tool and no
-    // list, an empty one.
-    let targets =
-        crate::engine::desired::requested_or_default(request.harnesses.as_deref(), &manifest);
-    if let Some(reason) = lands_nowhere(request, &targets, scope) {
-        return Err(CoreError::InstallsNowhere { reason });
-    }
-    let lock = crate::lock::load(&lock_path(env, scope))?;
-    let (mut groups, context) = place::place(env, scope, &mut manifest, request)?;
-    let all_source = match (request.all, &context) {
-        (false, _) => None,
-        (true, Some(ctx)) => Some(ctx.clone()),
-        (true, None) => Some(pick::default_source(&manifest)?),
-    };
-    if let Some(source_name) = &all_source {
-        groups.entry(source_name.clone()).or_default();
+    let mut prepared = PreparedAddition::new(env, scope)?;
+    prepared.include(env, request, seed, None)?;
+    prepared.plan(env)
+}
+
+/// One add's declarations and recorded readings, shared by preparation,
+/// compatibility checks and planning. Collections include every request
+/// before checking retained revisions, so their repository order cannot
+/// turn a replacement into a retained incompatible installation.
+pub(crate) struct PreparedAddition {
+    scope: Scope,
+    manifest: Manifest,
+    lock: Lock,
+    declared: BTreeSet<String>,
+    declaring: BTreeSet<Held>,
+    notes: Vec<String>,
+    options: PlanOptions,
+}
+
+impl PreparedAddition {
+    pub(crate) fn new(env: &Env, scope: &Scope) -> Result<Self> {
+        let manifest = manifest_for_mutation(env, scope)?;
+        let declared = crate::engine::installed::skills_installed(env, scope, &manifest);
+        Ok(Self {
+            scope: scope.clone(),
+            manifest,
+            lock: crate::lock::load(&lock_path(env, scope))?,
+            declared,
+            declaring: BTreeSet::new(),
+            notes: Vec::new(),
+            options: PlanOptions::for_additions([]),
+        })
     }
 
-    let mut optional_offers: Vec<(String, String)> = Vec::new();
-    let mut declaring: BTreeSet<Held> = BTreeSet::new();
-    for (source_name, wanted) in &groups {
-        declaring.extend(add_from(
+    pub(crate) fn subscription_name(&self, repo: &str) -> String {
+        manifest::catalog_alias(&self.manifest, repo)
+    }
+
+    pub(crate) fn include(
+        &mut self,
+        env: &Env,
+        request: &AddRequest,
+        seed: Option<(String, crate::manifest::SourceDecl)>,
+        revision: Option<&str>,
+    ) -> Result<()> {
+        let scope = &self.scope;
+        let manifest = &mut self.manifest;
+        let lock = &self.lock;
+        let notes = &mut self.notes;
+        if let Some((name, decl)) = seed {
+            manifest.sources.insert(name, decl);
+        }
+        // A request that names its harnesses has answered which tools it goes
+        // to. One that leaves them to the scope reads the scope's list as
+        // written, filled from the machine only where it declares none.
+        if request.harnesses.is_none()
+            && let Some(left_out) = super::settle_defaults(env, scope, manifest)
+        {
+            notes.push(left_out);
+        }
+        // Before a byte of the manifest is persisted: a request whose tools can
+        // take none of what it asks for would plan nothing, apply nothing, and
+        // report success. Asked once the scope's list is settled, so a request
+        // leaving the tools to that list is judged by the list the declaration
+        // would actually be written with — on a machine with no tool and no
+        // list, an empty one.
+        let targets =
+            crate::engine::desired::requested_or_default(request.harnesses.as_deref(), manifest);
+        if let Some(reason) = lands_nowhere(request, &targets, scope) {
+            return Err(CoreError::InstallsNowhere { reason });
+        }
+        let (mut groups, context) = place::place(env, scope, manifest, request)?;
+        let all_source = match (request.all, &context) {
+            (false, _) => None,
+            (true, Some(ctx)) => Some(ctx.clone()),
+            (true, None) => Some(pick::default_source(manifest)?),
+        };
+        if let Some(source_name) = &all_source {
+            groups.entry(source_name.clone()).or_default();
+        }
+
+        let mut optional_offers: Vec<(String, String)> = Vec::new();
+        let mut declaring: BTreeSet<Held> = BTreeSet::new();
+        for (source_name, wanted) in &groups {
+            declaring.extend(add_from(
+                env,
+                scope,
+                manifest,
+                lock,
+                request,
+                source_name,
+                wanted,
+                all_source.as_deref() == Some(source_name),
+                notes,
+                &mut optional_offers,
+                revision,
+            )?);
+        }
+        // A choice naming an optional dependency nothing offers is an error
+        // that leaves the manifest exactly as it was — never a silently
+        // ignored flag.
+        for wanted in &request.optional {
+            if !optional_offers.iter().any(|(_, name)| name == wanted) {
+                return Err(CoreError::NoSuchOptional {
+                    name: wanted.clone(),
+                    source_name: groups.keys().cloned().collect::<Vec<_>>().join(", "),
+                });
+            }
+        }
+        for (parent, name) in optional_offers {
+            let taken = manifest.optional_dependencies.entry(parent).or_default();
+            if !taken.contains(&name) {
+                taken.push(name);
+                taken.sort();
+            }
+        }
+
+        self.declaring.extend(declaring);
+        let mut supplied_settings = std::mem::take(&mut self.options.supplied_settings);
+        supplied_settings.extend(request.settings.iter().cloned());
+        self.options = PlanOptions {
+            arriving_skills: &crate::engine::installed::skills_installed(env, scope, manifest)
+                - &self.declared,
+            supplied_settings,
+            ..PlanOptions::for_additions(self.declaring.iter().cloned())
+        };
+        Ok(())
+    }
+
+    pub(crate) fn check_catalog_compatibility(&self, env: &Env) -> Result<()> {
+        crate::source::check_catalog_compatibility(env, &self.scope, &self.manifest)?;
+        crate::engine::desired::hold::held_planning(
             env,
-            scope,
-            &mut manifest,
-            &lock,
-            request,
-            source_name,
-            wanted,
-            all_source.as_deref() == Some(source_name),
-            &mut notes,
-            &mut optional_offers,
-        )?);
-    }
-    // A choice naming an optional dependency nothing offers is an error
-    // that leaves the manifest exactly as it was — never a silently
-    // ignored flag.
-    for wanted in &request.optional {
-        if !optional_offers.iter().any(|(_, name)| name == wanted) {
-            return Err(CoreError::NoSuchOptional {
-                name: wanted.clone(),
-                source_name: groups.keys().cloned().collect::<Vec<_>>().join(", "),
-            });
-        }
-    }
-    for (parent, name) in optional_offers {
-        let taken = manifest.optional_dependencies.entry(parent).or_default();
-        if !taken.contains(&name) {
-            taken.push(name);
-            taken.sort();
-        }
+            &self.scope,
+            &self.manifest,
+            &self.lock,
+            &self.options,
+        )?;
+        Ok(())
     }
 
-    // Source edits reach the requested packages. The add keeps every other
-    // installation at its recorded revision.
-    let options = PlanOptions {
-        arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
-            - &declared,
-        supplied_settings: request.settings.clone(),
-        ..PlanOptions::for_additions(declaring.iter().cloned())
-    };
-    let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
-    report.notes.extend(notes);
-    report
-        .notes
-        .extend(moved(&lock, &report.record, &declaring));
-    report.asked = crate::engine::Asked::Named(declaring);
-    ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
-    Ok(report)
+    pub(crate) fn plan(self, env: &Env) -> Result<EngineReport> {
+        let mut report = plan_scope(env, &self.scope, &self.manifest, &self.lock, &self.options)?;
+        report.notes.extend(self.notes);
+        report
+            .notes
+            .extend(moved(&self.lock, &report.record, &self.declaring));
+        report.asked = crate::engine::Asked::Named(self.declaring);
+        ensure_manifest_persisted(env, &self.scope, &self.manifest, &mut report)?;
+        Ok(report)
+    }
 }
 
 /// Every package this request declares that its record already holds at
@@ -268,8 +327,9 @@ fn add_from(
     take_all: bool,
     notes: &mut Vec<String>,
     optional_offers: &mut Vec<(String, String)>,
+    revision: Option<&str>,
 ) -> Result<BTreeSet<Held>> {
-    let ready = source::require_ready(env, scope, source_name, manifest)?;
+    let ready = source::require_ready_at(env, scope, source_name, manifest, revision)?;
     let hold_at = hold_commit(request, source_name, &ready)?;
     let hold_at = hold_at.as_deref();
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
