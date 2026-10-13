@@ -133,6 +133,8 @@ else exec '{shutil.which("date")}' "$@"; fi
                 message.write_text("Later notice.\n")
                 subprocess.run([*mail, "notice", "--item", "overseer", "--to", "owner", "--file", str(message)],
                                cwd=root, env=env, capture_output=True, check=True, timeout=10)
+                notice = json.loads(box.read_text().splitlines()[-1])
+                public = {ask["id"]: "ask", notice["id"]: "notice"}
                 relay.poll("UBOT")
                 held &= len(api.messages) == 1 and "Later notice." in api.messages[0].get("markdown_text", "")
                 held &= ask["id"] not in relay.skipped and ask["id"] not in relay.state.carried
@@ -187,12 +189,21 @@ else exec '{shutil.which("date")}' "$@"; fi
                     and (outcome.get("tracker_label") == "owner-gated" if posted else outcome.get("cause") == row)
                     and out.strip() == "id=" + ask["id"])
                 for verb, args in (("events", ()), ("pending", ()), ("drain", ("--after", "0"))):
-                    envelopes = [e for e in read(verb, *args) if e["kind"] == "ask"]
+                    rows = read(verb, *args)
+                    expected_rows = {ask["id"]: "ask"} if verb == "pending" else public
+                    facts["projection"] &= (len(rows) == len(expected_rows)
+                        and {e["id"]: e["kind"] for e in rows} == expected_rows)
+                    envelopes = [e for e in rows if e["kind"] == "ask"]
                     facts["projection"] &= (len(envelopes) == 1 and envelopes[0]["id"] == ask["id"]
                         and envelopes[0]["tracker_posted"] is posted and "tracker_pending" not in envelopes[0])
                 events = [e for e in read("events") if e["kind"] == "ask"]
                 facts["projection"] &= len(events) == 1 and events[0]["line"] == 1 and events[0]["count"] == 3
-                facts["projection"] &= all(e["kind"] != "ask" for e in read("drain", "--after", "1"))
+                cursor_rows = read("drain", "--after", "1")
+                facts["projection"] &= (len(cursor_rows) == 1
+                    and cursor_rows[0]["id"] == notice["id"] and cursor_rows[0]["kind"] == "notice")
+                imported_rows, _ = relay.mail._read_events()
+                facts["projection"] &= (len(imported_rows) == len(public)
+                    and {e["id"]: e["kind"] for e in imported_rows} == public)
                 relay.poll("UBOT")
                 relay.poll("UBOT")
                 expected = "Approve this change? [KEN-7](https://linear.app/workspace/issue/KEN-7)"

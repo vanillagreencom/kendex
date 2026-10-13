@@ -38,7 +38,7 @@ assert_eq "$(jq '.projection' <<<"$FACTS")" true 'readers fold terminal outcomes
 assert_eq "$(jq '.delivery' <<<"$FACTS")" true 'the real relay holds pending asks then posts the selected form once'
 assert_eq "$(jq '.bound' <<<"$FACTS")" true 'a missing outcome releases at the fixed bound and preserves later delivery'
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound; do
+  for rule in pending failed bound private-failed; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -48,11 +48,16 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" 'lm_append_local "$TO_OVERSEER" "$POSTED_LINE"' \
         'if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then lm_append_local "$TO_OVERSEER" "$POSTED_LINE"; fi'
       assertion='the real relay holds pending asks then posts the selected form once'
-    else
+    elif [[ "$rule" == bound ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/lane-mail-store.py" \
         'and (release_at is None or time.time() < release_at)' \
         'and (release_at is None or True or time.time() < release_at)'
       assertion='a missing outcome releases at the fixed bound and preserves later delivery'
+    else
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        'select(.kind != "tracker-posted" and .kind != "tracker-failed")' \
+        'select(.kind != "tracker-posted")'
+      assertion='readers fold terminal outcomes without replay or private events'
     fi
     control_rc=0
     MAILBOX_UNDER_TEST="$TMP_ROOT/control-$rule" "$BASH" "$ROOT/skills/mailbox/tests/owner-tracker.sh" \

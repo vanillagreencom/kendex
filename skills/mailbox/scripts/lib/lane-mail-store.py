@@ -25,7 +25,7 @@ def objects($box):
   | [$all[] | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
   | [range(0; $box.raw | length) as $i
       | ($box.raw[$i] | (fromjson? // empty) | objects)
-      | select(.kind != "tracker-posted" and .kind != "tracker-failed")
+      | owner_tracker_public
       | owner_tracker_record($posted)
       | {line: $box.numbers[$i], envelope: .}];
 '''

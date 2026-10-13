@@ -207,7 +207,9 @@ owner_tracker_unwritten() { # ISSUE CAUSE
 }
 
 # Both mailbox readers fold posting evidence before selecting asks or cursors.
-OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_tracker_record($outcomes):
+OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_tracker_public:
+  select(.kind != "tracker-posted" and .kind != "tracker-failed");
+def owner_tracker_record($outcomes):
   if .kind == "ask" and .to == "owner" and .issue != null then
     . as $ask | ([$outcomes[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
     | .tracker_posted = ($record.kind == "tracker-posted")

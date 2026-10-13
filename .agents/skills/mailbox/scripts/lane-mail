@@ -170,12 +170,14 @@ Overseer side:
               reads no cursor, since no directive is printed, so a cursor
               read that missed refuses neither
   events --item ITEM [--box to-lane|to-overseer [--after N]]
-              print every envelope of both files, to-overseer.jsonl then
+              print public envelopes of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
               `line` its logical line number and `count` that file's logical
               line count, including lines filtered as invalid JSON,
               and `mail_class` on to-lane records from the shared mailbox rule,
-              answered asks and their answers included. With --box, read
+              answered asks and their answers included. Without --box, hold
+              an owner ask whose tracker outcome is pending for up to 300
+              seconds from its `at`. With --box, read
               that file alone: print its header (below), then its envelopes
               whose `line` is past --after N (0 when not given), in file
               order. Logical numbers survive compaction, so a watcher keeps
@@ -1408,7 +1410,7 @@ lm_objects() { # FILE [BOX [AFTER]]
       | {physical: $physical, envelope: .}] as $rows
     | [$rows[].envelope | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
     | $rows[] | .physical as $physical | .envelope
-    | select(.kind != "tracker-posted" and .kind != "tracker-failed")
+    | owner_tracker_public
     | owner_tracker_record($posted)
     # Snapshot consumers reread every ask; cursor consumers must retain pending
     # asks at their original line. The bound releases interrupted tracker writes.
