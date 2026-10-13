@@ -256,6 +256,10 @@ pub const EVENTS: &[HookEvent] = &[
         fires: "After the conversation is compacted",
     },
     HookEvent {
+        name: "PostModelSwitch",
+        fires: "After the session's model changes",
+    },
+    HookEvent {
         name: "TaskCompleted",
         fires: "Before a task is marked complete",
     },
@@ -533,6 +537,38 @@ mod tests {
         assert_eq!(manifest.custom_hooks[0].name.as_deref(), Some("kept"));
         assert_eq!(manifest.custom_hooks[1].name.as_deref(), Some("b-stop"));
         assert!(!name_custom_hooks(&mut manifest));
+    }
+
+    #[test]
+    fn post_model_switch_validates_and_registers_only_on_claude() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let env = crate::env::Env::fake(&home, crate::env::FakeOs::Linux);
+        let project = home.join("app");
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::write(
+            project.join("kendex.toml"),
+            "schema = 7\n[install]\nharnesses = [\"claude\"]\n[[custom-hooks]]\nevent = \"PostModelSwitch\"\ncommand = \"./model-changed.sh\"\nagents = \"all\"\n",
+        )
+        .unwrap();
+        let scope = crate::model::Scope::Project {
+            root: project.clone(),
+        };
+        let report = crate::engine::audit(&env, &scope).unwrap();
+        crate::apply::execute(&env, &report.plan).unwrap();
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(project.join(".claude/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            settings["hooks"]["PostModelSwitch"][0]["hooks"][0]["command"],
+            "./model-changed.sh"
+        );
+        assert_eq!(codex_event("PostModelSwitch"), None);
+        assert_eq!(crate::harness::pi_listener("PostModelSwitch"), None);
+        assert_eq!(crate::harness::gemini::event("PostModelSwitch"), None);
+        assert_eq!(crate::harness::copilot::event("PostModelSwitch"), None);
+        assert_eq!(crate::harness::antigravity::event("PostModelSwitch"), None);
     }
 
     #[test]

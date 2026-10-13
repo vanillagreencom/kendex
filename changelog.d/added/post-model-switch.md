@@ -1,0 +1,1 @@
+- Hooks can declare Claude Code's `PostModelSwitch` event to act when a session's model changes.
