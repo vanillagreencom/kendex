@@ -695,9 +695,8 @@ fn unknown(text: impl Into<Sentence>) -> Line {
 /// until a declaration sits on files no record accounts for, which is
 /// the one state it plans the scope to judge, inside the session hook's
 /// budget. Before the first such plan, every selected scope's catalog
-/// compatibility must answer within that same deadline. A clean check
-/// resolves no catalog. `mode` says whether that plan may write a project's committed
-/// install record.
+/// compatibility must answer within that same deadline. `mode` says
+/// whether that plan may write a project's committed install record.
 pub fn check(env: &Env, scopes: &[Scope], mode: crate::drift::copies::CheckMode) -> CheckReport {
     check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET, mode)
 }

@@ -1,1 +1,1 @@
-- Manual and session checks leave every selected scope's install record unchanged when any selected catalog requires a newer kendex version. Clean checks skip the compatibility read. A compatibility read that exceeds the shared session deadline also leaves every selected record unchanged.
+- Manual and session checks leave every selected scope's install record unchanged when any selected catalog requires a newer kendex version. A compatibility read that exceeds the shared session deadline also leaves every selected record unchanged.
