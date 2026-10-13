@@ -5,6 +5,7 @@
 # change_class_path PATH PHASE sets CHANGE_CLASS_PATH and
 # CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, pointer, narrow or
 # launch (all phases). An unmatched path leaves both empty.
+# The launch phase consumes CHANGE_CLASS_STANDARD_PATHS when the caller loads it.
 # change_class_path_load CONF reads the narrow-phase lists once. Returns 1
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
 # narrow class. Call it before the narrow or launch phase.
@@ -51,6 +52,13 @@ change_class_path() { # PATH PHASE
   local globs
   CHANGE_CLASS_PATH=""
   CHANGE_CLASS_PATH_CAUSE=""
+  if [ "$2" = launch ]; then
+    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
+      CHANGE_CLASS_PATH=standard
+      CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
+      return 0
+    fi
+  fi
   if [ "$2" = before-render ] || [ "$2" = launch ]; then
     # These files decide the render and classifier inputs. Gemini's shim
     # owns one key only, not the other settings its harness executes.

@@ -105,38 +105,101 @@ done
 
 # open-terminal records this machine-read cause with the launch tier.
 assert_standard_setting() {
-  local setting want
-  while IFS='|' read -r setting want; do
-    rm -f -- "$TMP_ROOT/kendex.settings.toml"
-    if [ "$setting" != unset ]; then
-      printf '[env]\nHARNESS_CI_STANDARD_PATHS = "%s"\n' "$setting" >"$TMP_ROOT/kendex.settings.toml"
+  local setting globs want setting_root ceiling repo="${1:-$TMP_ROOT}" input="${2:-location}" args path_count
+  args=(--path src/main.rs)
+  path_count=1
+  if [ "$input" = range ]; then
+    args=(--base "$BASE" --head HEAD)
+    path_count=0
+  fi
+  while IFS='|' read -r setting globs want; do
+    [ -z "${SETTING_ONLY:-}" ] || [ "$SETTING_ONLY" = "$setting" ] || continue
+    setting_root="$repo"
+    ceiling="$GIT_CEILING_DIRECTORIES"
+    # A non-repository range fails its Git read before settings resolution.
+    if [ "$setting" = resolver-failed ]; then
+      [ "$input" != range ] || continue
+      setting_root="$TMP_ROOT/nonrepo"
+      ceiling="$TMP_ROOT"
+      mkdir -p "$setting_root"
     fi
-    assert_eq "$(TIER_RAW=true run_tier - --production 1 --path src/main.rs)" \
-      "$want estimate=1 delta=- paths=1 rc=0" "repository standard paths: $setting"
+    rm -rf -- "$setting_root/kendex.settings.toml" "$setting_root/.kendex"
+    if [ "$setting" != unset ]; then
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = "%s"\n' "$globs" >"$setting_root/kendex.settings.toml"
+    fi
+    case "$setting" in
+      root-malformed) printf '[env]\nHARNESS_CI_STANDARD_PATHS = src/*.rs\n' >"$setting_root/kendex.settings.toml" ;;
+      local-empty | local-malformed)
+        mkdir -p "$setting_root/.kendex"
+        if [ "$setting" = local-empty ]; then
+          printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\n' >"$setting_root/.kendex/settings.toml"
+        else
+          printf '[env]\nHARNESS_CI_STANDARD_PATHS = src/*.rs\n' >"$setting_root/.kendex/settings.toml"
+        fi ;;
+    esac
+    assert_eq "$(GIT_CEILING_DIRECTORIES="$ceiling" TIER_RAW=true run_tier - --production 1 --repo "$setting_root" "${args[@]}")" \
+      "$want estimate=1 delta=- paths=$path_count rc=0" "repository standard paths: $setting $input"
   done <<'ROWS'
-src/*.rs|tier=standard brief=start cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/main.rs glob=src/*.rs
-unset|tier=micro brief=micro cause=estimate-within-micro production=1
-|tier=micro brief=micro cause=estimate-within-micro production=1
+resolver-failed||tier=standard brief=start cause=base-settings-unreadable
+match|src/*.rs|tier=standard brief=start cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/main.rs glob=src/*.rs
+unset||tier=micro brief=micro cause=estimate-within-micro production=1
+empty||tier=micro brief=micro cause=estimate-within-micro production=1
+local-empty|src/*.rs|tier=micro brief=micro cause=estimate-within-micro production=1
+root-malformed||tier=standard brief=start cause=base-settings-unreadable
+local-malformed||tier=standard brief=start cause=base-settings-unreadable
 ROWS
 }
 assert_standard_setting
+rm -rf -- "$TMP_ROOT/.kendex"
 cp -R "$LAYOUT" "$TMP_ROOT/no-standard-setting"
-awk '/^      if change_class_path_match "\$path" "\$CHANGE_CLASS_STANDARD_PATHS"; then$/ {hits++; print "      if false; then # " $0; next} {print} END {exit hits == 2 ? 0 : 3}' \
-  "$TIER" >"$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"
-if cmp -s "$TIER" "$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"; then
+awk '/^    if change_class_path_match "\$1" "\$\{CHANGE_CLASS_STANDARD_PATHS:-\}"; then$/ {hits++; print "    if false; then # " $0; next} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$LAYOUT/harness-ci/scripts/lib/change-class.sh" >"$TMP_ROOT/no-standard-setting/harness-ci/scripts/lib/change-class.sh"
+if cmp -s "$LAYOUT/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/no-standard-setting/harness-ci/scripts/lib/change-class.sh"; then
   echo 'FAIL: standard paths control changed nothing' >&2; exit 1
 fi
 TIER_BIN="$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"
 printf '[env]\nHARNESS_CI_STANDARD_PATHS = "src/*.rs"\n' >"$TMP_ROOT/kendex.settings.toml"
 assert_eq "$(run_tier - --production 1 --path src/main.rs)" \
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: today's tier misses a repository standard path"
-if (PASS=0; FAIL=0; assert_standard_setting >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+if (PASS=0; FAIL=0; SETTING_ONLY=match assert_standard_setting >/dev/null; [[ "$FAIL" -eq 0 ]]); then
   fail "control standard setting: the path assertion stays green"
 else
   pass "control standard setting: the path assertion turns red"
 fi
 unset TIER_BIN
-rm -- "$TMP_ROOT/kendex.settings.toml"
+# The two declared settings sources can be malformed in a consumer checkout.
+# Each failed load must reach the refusal instead of a default.
+for control in root-refusal local-refusal root-resolution local-precedence; do
+  cp -R "$LAYOUT" "$TMP_ROOT/$control"
+  case "$control" in
+    root-refusal) target='    kendex_load_settings_file "$root/kendex.settings.toml" || exit 1'; setting=root-malformed ;;
+    local-refusal) target='    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1'; setting=local-malformed ;;
+    root-resolution) target='  root="$("$CHANGE_CLASS_LIB_DIR/../git-context" common-root "$1")" || return 1'; setting=resolver-failed ;;
+    local-precedence) target='    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1'; setting=local-empty ;;
+  esac
+  awk -v target="$target" -v control="$control" '
+    $0 == target {
+      hits++; original = $0
+      if (control == "local-precedence") sub(/kendex_load_settings_file/, ":")
+      else if (control == "root-resolution") sub(/\|\| return 1$/, "|| root=\"$1\"")
+      else sub(/\|\| (exit|return) 1$/, "|| :")
+      print $0 " # " original; next
+    }
+    {print}
+    END {exit hits == 1 ? 0 : 3}
+  ' "$LAYOUT/orch/scripts/lib/change-class.sh" >"$TMP_ROOT/$control/orch/scripts/lib/change-class.sh"
+  if cmp -s "$LAYOUT/orch/scripts/lib/change-class.sh" "$TMP_ROOT/$control/orch/scripts/lib/change-class.sh"; then
+    echo "FAIL: $control changed nothing" >&2; exit 1
+  fi
+  TIER_BIN="$TMP_ROOT/$control/orch/scripts/item-tier"
+  if (PASS=0; FAIL=0; SETTING_ONLY="$setting" assert_standard_setting >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+    fail "control $control: the settings assertion stays green"
+  else
+    pass "control $control: the settings assertion turns red"
+  fi
+done
+unset TIER_BIN
+rm -rf -- "$TMP_ROOT/kendex.settings.toml" "$TMP_ROOT/.kendex"
 
 # The filer emits Location and Expected delta headers; launch passes the same
 # body file. Every body but no-location-body names a one-subsystem Location.
@@ -357,6 +420,8 @@ assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "branch growth does not replace the launch estimate"
 assert_eq "$(run_tier - --floor small --base "$BASE" --head HEAD --repo "$RANGE")" \
   "tier=small brief=small cause=floor class=small rc=0" "branch growth does not replace the recorded tier"
+assert_standard_setting "$RANGE" range
+rm -rf -- "$RANGE/kendex.settings.toml" "$RANGE/.kendex"
 # A linked lane changes its local setting; the base checkout still owns it.
 printf '[env]\nHARNESS_CI_STANDARD_PATHS = "src/*.rs"\n' >"$RANGE/kendex.settings.toml"
 git -C "$RANGE" worktree add -q -b lane "$TMP_ROOT/lane"

@@ -172,9 +172,6 @@ fi
 if [ "${#paths[@]}" -gt 0 ]; then
   if change_class_location_load "$repo"; then
     for path in "${paths[@]}"; do
-      if change_class_path_match "$path" "$CHANGE_CLASS_STANDARD_PATHS"; then
-        consider standard "repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
-      fi
       change_class_path "$path" launch
       [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done
@@ -197,9 +194,6 @@ if [ -n "$base" ]; then
   else
     consider micro branch-paths
     while IFS= read -r -d '' path; do
-      if change_class_path_match "$path" "$CHANGE_CLASS_STANDARD_PATHS"; then
-        consider standard "repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
-      fi
       change_class_path "$path" launch
       [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done <"$range_paths"
