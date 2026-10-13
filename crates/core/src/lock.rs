@@ -114,6 +114,21 @@ pub struct Lock {
     /// `engine::instruction_shims::recorded_shims`'s.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub shims: BTreeSet<KeyedShim>,
+    /// Whether the project default was inserted here or left to the user.
+    /// A released record also preserves a user's deletion across later applies.
+    #[serde(
+        default,
+        rename = "claudeProjectDefault",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_project_default: Option<ClaudeProjectDefault>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClaudeProjectDefault {
+    Owned,
+    Released,
 }
 
 /// One instruction shim written as a key into a document whose other keys

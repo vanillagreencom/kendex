@@ -18,6 +18,12 @@ pub(crate) fn codex_env_vars(env: &Value) -> Result<Vec<String>, String> {
 }
 pub use text::{marker_block, remove_marker_block, style_blocks, upsert_marker_block};
 
+fn remove_claude_project_default(object: &mut Map<String, Value>) {
+    if object.get("switchModelsOnFlag") == Some(&Value::Bool(true)) {
+        object.shift_remove("switchModelsOnFlag");
+    }
+}
+
 /// A deterministic, idempotent structured edit. Applied to the file's
 /// current text at execute time; a file is in sync exactly when
 /// `apply(current) == current` — that equality is the drift check for
@@ -26,6 +32,8 @@ pub use text::{marker_block, remove_marker_block, style_blocks, upsert_marker_bl
 pub enum ConfigEdit {
     /// Claude project defaults preserve choices already present in the file.
     ClaudeProjectDefaults,
+    /// Remove only the unchanged project default whose insertion was recorded.
+    RemoveClaudeProjectDefaults,
     /// Claude Code's response style selection. Set only when absent.
     ClaudeOutputStyle {
         name: String,
@@ -273,6 +281,7 @@ impl ConfigEdit {
             | Self::RemoveCodexMcpServer { .. } => Document::Toml,
             Self::UpsertMarkerBlock { .. } | Self::RemoveMarkerBlock { .. } => Document::Text,
             Self::ClaudeProjectDefaults
+            | Self::RemoveClaudeProjectDefaults
             | Self::ClaudeOutputStyle { .. }
             | Self::RemoveClaudeOutputStyle { .. }
             | Self::UpsertHook { .. }
@@ -322,7 +331,16 @@ impl ConfigEdit {
                 } else {
                     serde_json::from_str(current).map_err(|e| e.to_string())?
                 };
-                let selection = root.get("outputStyle").cloned();
+                let selection_key = match json_edit {
+                    Self::ClaudeProjectDefaults | Self::RemoveClaudeProjectDefaults => {
+                        Some("switchModelsOnFlag")
+                    }
+                    Self::ClaudeOutputStyle { .. } | Self::RemoveClaudeOutputStyle { .. } => {
+                        Some("outputStyle")
+                    }
+                    _ => None,
+                };
+                let selection = selection_key.and_then(|key| root.get(key)).cloned();
                 let object = root
                     .as_object_mut()
                     .ok_or("config root is not a JSON object")?;
@@ -335,10 +353,8 @@ impl ConfigEdit {
                 } else {
                     json_edit.apply_json(object)?;
                 }
-                if matches!(
-                    json_edit,
-                    Self::ClaudeOutputStyle { .. } | Self::RemoveClaudeOutputStyle { .. }
-                ) && root.get("outputStyle").cloned() == selection
+                if let Some(key) = selection_key
+                    && root.get(key).cloned() == selection
                 {
                     return Ok(current.to_owned());
                 }
@@ -357,6 +373,7 @@ impl ConfigEdit {
                     .or_insert(Value::Bool(true));
                 Ok(())
             }
+            ConfigEdit::RemoveClaudeProjectDefaults => Ok(remove_claude_project_default(object)),
             ConfigEdit::ClaudeOutputStyle { name } => {
                 object
                     .entry("outputStyle")

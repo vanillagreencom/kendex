@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use kendex_core::apply::{self, Op};
 use kendex_core::engine::{PlanOptions, audit, ops, plan_apply};
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::lock::{ClaudeProjectDefault, load, lock_path};
 use kendex_core::model::Scope;
 use serde_json::json;
 
@@ -60,6 +61,57 @@ fn fixture() -> Fixture {
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn change_default_preserving_user_value(f: &Fixture, change: Option<bool>) {
+    let settings = f.project.join(".claude/settings.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    match change {
+        Some(flag) => value["switchModelsOnFlag"] = json!(flag),
+        None => {
+            value
+                .as_object_mut()
+                .unwrap()
+                .shift_remove("switchModelsOnFlag");
+        }
+    }
+    fs::write(
+        &settings,
+        format!("{}\n", serde_json::to_string_pretty(&value).unwrap()),
+    )
+    .unwrap();
+    let changed = audit(&f.env, &f.scope).unwrap();
+    assert_eq!(
+        changed.record.claude_project_default,
+        Some(ClaudeProjectDefault::Released)
+    );
+    let observed = load(&lock_path(&f.env, &f.scope)).unwrap();
+    let standing = kendex_core::attest::record(
+        &f.env,
+        &f.scope,
+        &observed,
+        &changed,
+        &kendex_core::attest::Floor::Open,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        standing.problems.len(),
+        usize::from(observed.claude_project_default == Some(ClaudeProjectDefault::Owned))
+    );
+    assert!(
+        changed
+            .plan
+            .ops
+            .iter()
+            .all(|op| !matches!(&op.op, Op::EditFile {path, ..} if path == &settings))
+    );
+    apply::execute(&f.env, &changed.plan).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(written, value);
 }
 
 /// The person moves the registration kendex wrote to another event, and
@@ -371,4 +423,118 @@ fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
             assert_eq!(actual, expected);
         }
     }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn claude_default_ownership_preserves_user_values_and_deletions_through_removal() {
+    use ClaudeProjectDefault::{Owned, Released};
+    let user_settings = json!({
+        "permissions": {"allow": ["Read"]},
+        "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "user-start"}]}]}
+    });
+    for (initial, edits, ownership, removed_flag, reinstalled_flag) in [
+        (None, &[][..], Owned, None, Some(true)),
+        (Some(true), &[][..], Released, Some(true), Some(true)),
+        (Some(false), &[][..], Released, Some(false), Some(false)),
+        (None, &[Some(false)][..], Released, Some(false), Some(false)),
+        (None, &[None][..], Released, None, None),
+        (
+            None,
+            &[Some(false), Some(true)][..],
+            Released,
+            Some(true),
+            Some(true),
+        ),
+    ] {
+        let f = fixture();
+        let settings = f.project.join(".claude/settings.json");
+        let original_manifest = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
+        let mut initial_settings = user_settings.clone();
+        if let Some(value) = initial {
+            initial_settings["switchModelsOnFlag"] = json!(value);
+        }
+        fs::write(&settings, format!("{}\n", initial_settings)).unwrap();
+        apply_now(&f);
+        let record_path = lock_path(&f.env, &f.scope);
+        assert_eq!(
+            load(&record_path).unwrap().claude_project_default,
+            Some(initial.map_or(Owned, |_| Released))
+        );
+        for change in edits {
+            change_default_preserving_user_value(&f, *change);
+        }
+        assert_eq!(
+            load(&record_path).unwrap().claude_project_default,
+            Some(ownership)
+        );
+        let removal = ops::remove(&f.env, &f.scope, &["guard".into()], None, false).unwrap();
+        apply::execute(&f.env, &removal.plan).unwrap();
+        let mut expected = user_settings.clone();
+        if let Some(value) = removed_flag {
+            expected["switchModelsOnFlag"] = json!(value);
+        }
+        let remaining: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(remaining, expected);
+        assert!(audit(&f.env, &f.scope).unwrap().plan.is_empty());
+        fs::write(f.project.join("kendex.toml"), original_manifest).unwrap();
+        apply_now(&f);
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(value["switchModelsOnFlag"].as_bool(), reinstalled_flag);
+        assert_eq!(value["permissions"], user_settings["permissions"]);
+        assert_eq!(
+            value["hooks"]["SessionStart"],
+            user_settings["hooks"]["SessionStart"]
+        );
+        assert!(audit(&f.env, &f.scope).unwrap().plan.is_empty());
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn claude_owned_default_stays_until_the_last_enabled_installation_leaves() {
+    let f = fixture();
+    let manifest = f.project.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "{declared}\n[plugins.\"fmt@marketplace\"]\nenabled = true\nharness = \"claude\"\n"
+        ),
+    )
+    .unwrap();
+    apply_now(&f);
+    let remove_hook = ops::remove(&f.env, &f.scope, &["guard".into()], None, false).unwrap();
+    apply::execute(&f.env, &remove_hook.plan).unwrap();
+    let settings = f.project.join(".claude/settings.json");
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        value,
+        json!({"enabledPlugins": {"fmt@marketplace": true}, "switchModelsOnFlag": true})
+    );
+    assert_eq!(
+        load(&lock_path(&f.env, &f.scope))
+            .unwrap()
+            .claude_project_default,
+        Some(ClaudeProjectDefault::Owned)
+    );
+    let last = ops::remove(&f.env, &f.scope, &["fmt@marketplace".into()], None, false).unwrap();
+    assert!(
+        last.plan
+            .ops
+            .iter()
+            .any(|op| matches!(&op.op, Op::Trash {path, ..} if path == &settings))
+    );
+    apply::execute(&f.env, &last.plan).unwrap();
+    assert!(!settings.exists());
+    assert!(
+        load(&lock_path(&f.env, &f.scope))
+            .unwrap()
+            .claude_project_default
+            .is_none()
+    );
+    assert!(audit(&f.env, &f.scope).unwrap().plan.is_empty());
 }

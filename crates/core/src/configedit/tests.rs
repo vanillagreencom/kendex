@@ -19,6 +19,27 @@ fn claude_project_settings_default_preserves_existing_keys_and_choices() {
         let value: Value = serde_json::from_str(&rendered).expect("rendered JSON");
         assert_eq!(value, expected);
         assert!(edit.in_sync(&rendered).expect("rendered settings"));
+        if existing.is_some() {
+            assert_eq!(rendered, current.to_string());
+        }
+        let removed = ConfigEdit::RemoveClaudeProjectDefaults
+            .apply(&rendered)
+            .expect("remove default");
+        let mut expected_removed = expected;
+        if existing != Some(false) {
+            expected_removed
+                .as_object_mut()
+                .expect("object")
+                .shift_remove("switchModelsOnFlag");
+        }
+        let removed_value: Value = serde_json::from_str(&removed).expect("removed JSON");
+        assert_eq!(removed_value, expected_removed);
+        assert_eq!(
+            ConfigEdit::RemoveClaudeProjectDefaults
+                .apply(&removed)
+                .expect("repeated removal"),
+            removed
+        );
     }
 }
 

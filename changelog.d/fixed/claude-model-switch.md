@@ -1,1 +1,1 @@
-- Claude project settings enable automatic model switching after a safeguard flag when no existing setting overrides the default.
+- Claude project settings default to automatic model switching after a safeguard flag. User changes and deletions in the project remain. Removing the last Claude installation removes only the unchanged default that kendex inserted.

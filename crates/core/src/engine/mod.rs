@@ -309,16 +309,28 @@ fn plan_claude_project_defaults(
     lock: &Lock,
     config_edits: &mut config_edits::ConfigEditPlan,
 ) {
-    if matches!(scope, Scope::Project { .. })
-        && lock
-            .entries
-            .values()
-            .any(|entry| entry.harness == HarnessId::Claude && entry.enabled)
-    {
+    if !matches!(scope, Scope::Project { .. }) {
+        return;
+    }
+    let enabled = lock
+        .entries
+        .values()
+        .any(|entry| entry.harness == HarnessId::Claude && entry.enabled);
+    let edit = match (lock.claude_project_default, enabled) {
+        (None | Some(crate::lock::ClaudeProjectDefault::Owned), true) => {
+            Some(crate::configedit::ConfigEdit::ClaudeProjectDefaults)
+        }
+        (Some(crate::lock::ClaudeProjectDefault::Owned), false) => {
+            Some(crate::configedit::ConfigEdit::RemoveClaudeProjectDefaults)
+        }
+        (None | Some(crate::lock::ClaudeProjectDefault::Released), false)
+        | (Some(crate::lock::ClaudeProjectDefault::Released), true) => None,
+    };
+    if let Some(edit) = edit {
         config_edits.push(
             targets::claude_settings(env, scope),
             "Claude project defaults".into(),
-            crate::configedit::ConfigEdit::ClaudeProjectDefaults,
+            edit,
         );
     }
 }
@@ -799,6 +811,7 @@ fn fresh_lock(
         // Carried until the shim pass settles them: the record of a write
         // stands until a pass takes the write back.
         shims: lock.shims.clone(),
+        claude_project_default: lock.claude_project_default,
     };
     (fresh, readings)
 }

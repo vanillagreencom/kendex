@@ -472,6 +472,13 @@ pub fn record(
         };
         problems.push(format!("shim {}: {held}", shim.spelled()).into());
     }
+    if planned.claude_project_default != lock.claude_project_default {
+        problems.push(
+            "claudeProjectDefault: ownership is not what this pass records"
+                .to_owned()
+                .into(),
+        );
+    }
     Ok(Some(Standing {
         path,
         remedy: problems.iter().find_map(|problem| problem.remedy.clone()),

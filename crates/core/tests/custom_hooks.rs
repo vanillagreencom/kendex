@@ -214,6 +214,10 @@ fn claude_project_settings_default_reaches_current_installations_only_in_project
         .unwrap();
         let first = audit(&w.env, &scope).unwrap();
         kendex_core::apply::execute(&w.env, &first.plan).unwrap();
+        let claude_settings = w.project.join(".claude/settings.json");
+        if harness == "codex" {
+            assert!(!claude_settings.exists());
+        }
         let path = match (global, harness) {
             (true, _) => w.env.home.join(".claude/settings.json"),
             (false, "codex") => w.project.join(".codex/hooks.json"),
@@ -235,6 +239,11 @@ fn claude_project_settings_default_reaches_current_installations_only_in_project
             format!("{}\n", serde_json::to_string_pretty(&before).unwrap()),
         )
         .unwrap();
+        // A prior writer kept current registrations without this ownership field.
+        let lock_path = kendex_core::lock::lock_path(&w.env, &scope);
+        let mut legacy = kendex_core::lock::load(&lock_path).unwrap();
+        legacy.claude_project_default = None;
+        kendex_core::lock::save(&lock_path, &legacy).unwrap();
         let report = audit(&w.env, &scope).unwrap();
         assert!(report.drift.is_empty(), "{:?}", report.drift);
         kendex_core::apply::execute(&w.env, &report.plan).unwrap();
@@ -250,6 +259,12 @@ fn claude_project_settings_default_reaches_current_installations_only_in_project
         assert!(clean.plan.ops.iter().all(|op| {
             !matches!(&op.op, kendex_core::apply::Op::EditFile { path: edited, .. } if edited == &path)
         }));
+        if harness == "codex" {
+            assert!(!claude_settings.exists());
+            assert!(clean.plan.ops.iter().all(|op| {
+                !matches!(&op.op, kendex_core::apply::Op::EditFile { path: edited, .. } if edited == &claude_settings)
+            }));
+        }
     }
 }
 

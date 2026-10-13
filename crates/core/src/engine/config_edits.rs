@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::configedit::ConfigEdit;
 use crate::error::{CoreError, Result};
-use crate::lock::{Lock, OutputStyleRecord, entry_key};
+use crate::lock::{ClaudeProjectDefault, Lock, OutputStyleRecord, entry_key};
 use crate::model::{HarnessId, ItemKind};
 
 /// Every structured edit the plan wants, grouped by config file. The plan
@@ -38,7 +38,34 @@ impl ConfigEditPlan {
         edits.sort_by_key(|edit| matches!(edit, ConfigEdit::ClaudeOutputStyle { .. }));
         let mut written = current.to_owned();
         for edit in edits {
+            if new_lock.claude_project_default == Some(ClaudeProjectDefault::Owned)
+                && matches!(
+                    edit,
+                    ConfigEdit::ClaudeProjectDefaults | ConfigEdit::RemoveClaudeProjectDefaults
+                )
+                && ConfigEdit::RemoveClaudeProjectDefaults
+                    .in_sync(&written)
+                    .map_err(error)?
+            {
+                new_lock.claude_project_default = Some(ClaudeProjectDefault::Released);
+                *edit = ConfigEdit::RemoveClaudeProjectDefaults;
+            }
             let after = edit.apply(&written).map_err(error)?;
+            match edit {
+                ConfigEdit::ClaudeProjectDefaults if new_lock.claude_project_default.is_none() => {
+                    new_lock.claude_project_default = Some(if after != written {
+                        ClaudeProjectDefault::Owned
+                    } else {
+                        ClaudeProjectDefault::Released
+                    });
+                }
+                ConfigEdit::RemoveClaudeProjectDefaults
+                    if new_lock.claude_project_default == Some(ClaudeProjectDefault::Owned) =>
+                {
+                    new_lock.claude_project_default = None;
+                }
+                _ => {}
+            }
             if let ConfigEdit::ClaudeOutputStyle { name } = edit {
                 let mut selected_by_other = false;
                 if after == written {

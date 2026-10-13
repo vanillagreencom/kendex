@@ -753,6 +753,7 @@ mod tests {
                 sources: BTreeMap::new(),
                 bundles: BTreeMap::new(),
                 shims: BTreeSet::new(),
+                claude_project_default: None,
             },
             registrations: Vec::new(),
         }
