@@ -62,6 +62,14 @@ kendex writes no `CLAUDE.md`. It leaves former shims with the project under the 
 
 [Claude Code reads `AGENTS.md` natively](https://code.claude.com/docs/en/memory#agents-md) from v2.1.277. Bedrock and telemetry-off sessions need v2.1.281. By default, a `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the working directory or above prevents native loading. A nested `AGENTS.md` loads when Claude reads a file there, unless that directory has one of those Claude files. Files under `.agents/` do not load.
 
+Observed on Claude Code 2.1.289 ([KEN-3972](https://linear.app/vanillagreen/issue/KEN-3972)): with `CLAUDE_CONFIG_DIR` set to an account folder such as `~/.4claude`, Claude Code counts an existing `~/.claude/CLAUDE.md` in the user home as a project-chain instruction file. In the default `claude-md-or-agents-md` mode, that file stops native `AGENTS.md` loading throughout the repository.
+
+For this case, merge the following into the account’s shared user `settings.json`. The [Project instructions setting](https://code.claude.com/docs/en/memory#choose-which-instruction-files-load) makes Claude Code read both instruction files and restores native `AGENTS.md` loading. Claude Code ignores this setting in repository and local settings files.
+
+```json
+{"pluginConfigs":{"cc-plugin-agents-md@builtin":{"options":{"instructionFiles":"claude-md-and-agents-md"}}}}
+```
+
 `InstructionsLoaded` hooks do not fire for native `AGENTS.md` loading. Directories added with `--add-dir` do not load their `AGENTS.md`. A person who needs an older session, a disabled native plugin or Project instructions set to `claude-md` keeps their own `CLAUDE.md` with an `@AGENTS.md` import. The output-style route writes neither instruction file.
 
 ## Output styles
