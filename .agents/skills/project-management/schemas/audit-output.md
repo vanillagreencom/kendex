@@ -92,7 +92,7 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 {
   "mode": "issue",
   "approved_at_plan_gate": false,
-  "proposal_sources": [{"index": 1, "tracker": "linear|github", "repository": "owner/repo|null", "issue": "PROJ-123|issue-123", "comment_id": "id", "comment_url": "url|null", "comment_author": "login", "source": "review", "source_pr": "owner/repo#123"}],
+  "proposal_sources": [{"index": 1, "tracker": "linear|github", "repository": "owner/repo|null", "issue": "PROJ-123|issue-123", "comment_id": "id", "comment_url": "url|null", "comment_author": "login", "source": "review", "source_repository": "owner/repo", "source_pr": "owner/repo#123", "source_commit": null}],
   "summary": {"total_input": 0, "create": 0, "valid": 0, "skip": 0, "expand": 0, "update": 0,
               "supersede": 0, "superseded": 0, "combine": 0, "cancel": 0},
   "issues": [
@@ -136,7 +136,9 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 }
 ```
 
-`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its authorized tracker comment, preserved author, original `Source:` value, and merged source PR. `source` must match `create_fields.source`. `repository` and `comment_url` are required for GitHub and null for Linear. Linear receives a parent reply. GitHub receives a new issue comment that cites `comment_url`. Cancellation-sweep rows have no proposal source.
+`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its authorized tracker comment, preserved author, original `Source:` value, and merged source PR or landed source commit. `source` must match `create_fields.source`. `repository` and `comment_url` are required for GitHub and null for Linear. Linear receives a parent reply. GitHub receives a new issue comment that cites `comment_url`. Cancellation-sweep rows have no proposal source.
+
+`source_repository` is required for both trackers and echoes the brief's `Source repository`. Each entry carries exactly one non-null source reference: `source_pr` from `Source PR:` for a merged PR, or `source_commit` from `Source commit:` for a commit verified on the fetched base branch. The other field is null or omitted. The source PR or commit belongs to `source_repository`.
 
 | Action | Meaning |
 |--------|---------|
