@@ -35,12 +35,18 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     }
     ui::intro("kendex remove");
     let scopes = resolve_scopes(env, filter)?;
-    for scope in &scopes {
-        if let Err(error) = kendex_core::engine::check_catalog_compatibility(
-            env,
-            scope,
-            &kendex_core::engine::PlanOptions::locked(),
-        ) && error.is_catalog_compatibility()
+    let prepared: Vec<_> = scopes
+        .iter()
+        .map(|scope| match mode {
+            Removal::Disown { sweep, kind } => {
+                ops::prepare_remove(env, scope, &names, kind, sweep.unwrap_or(false))
+            }
+            Removal::KeepDeclaration => ops::prepare_uninstall(env, scope, &names),
+        })
+        .collect();
+    for removal in prepared.iter().flatten() {
+        if let Err(error) = removal.check_catalog_compatibility(env)
+            && error.is_catalog_compatibility()
         {
             return Err(error.into());
         }
@@ -53,8 +59,11 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     // line, and the error leaves once that line is said.
     let mut closing: Vec<(Scope, usize)> = Vec::new();
     let mut stopped: Option<Box<dyn std::error::Error>> = None;
-    for scope in scopes {
-        match remove_scope(env, &scope, &names, mode) {
+    for (scope, prepared) in scopes.into_iter().zip(prepared) {
+        match prepared
+            .map_err(Into::into)
+            .and_then(|prepared| remove_scope(env, &scope, prepared, mode))
+        {
             Ok(Some(applied)) => closing.push((scope, applied)),
             Ok(None) => {}
             Err(error) => {
@@ -94,21 +103,16 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
 fn remove_scope(
     env: &Env,
     scope: &Scope,
-    names: &[String],
+    prepared: ops::PreparedRemoval,
     mode: Removal,
 ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
     let planned = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
-        match mode {
-            Removal::Disown { sweep, kind } => {
-                ops::remove(env, scope, names, kind, sweep.unwrap_or(false))
-            }
-            Removal::KeepDeclaration => ops::uninstall(env, scope, names),
-        }
+        prepared.plan(env)
     };
     let report = planned?;
     let report = match mode {
-        Removal::Disown { sweep, kind } => answer(env, scope, names, kind, report, sweep)?,
+        Removal::Disown { sweep, .. } => answer(env, &prepared, report, sweep)?,
         Removal::KeepDeclaration => report,
     };
     // What still wants a removed item says so now, not on the next
@@ -219,9 +223,7 @@ fn say_split(report: &EngineReport, mode: Removal, file: &str) {
 /// answer it.
 fn answer(
     env: &Env,
-    scope: &Scope,
-    names: &[String],
-    kind: Option<ItemKind>,
+    prepared: &ops::PreparedRemoval,
     report: EngineReport,
     sweep: Option<bool>,
 ) -> Result<EngineReport, Box<dyn std::error::Error>> {
@@ -245,7 +247,7 @@ fn answer(
         leftovers.join(", ")
     ))?;
     match asked {
-        true => Ok(ops::remove(env, scope, names, kind, true)?),
+        true => Ok(prepared.plan_sweeping(env)?),
         false => Ok(report),
     }
 }

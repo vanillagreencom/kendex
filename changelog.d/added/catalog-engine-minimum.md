@@ -1,1 +1,1 @@
-- Catalogs can declare their minimum kendex version; an older engine refuses every selected scope before rendering or installing packages, including collection members and Pi extensions.
+- Catalogs can declare their minimum kendex version; an older engine refuses every selected scope before rendering or installing packages, including collection members and Pi extensions. Historical incompatible packages can still be removed when the remaining readings are compatible.

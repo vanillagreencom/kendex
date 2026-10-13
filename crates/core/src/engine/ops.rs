@@ -129,7 +129,7 @@ pub fn remove(
     kind: Option<ItemKind>,
     sweep: bool,
 ) -> Result<EngineReport> {
-    removal(env, scope, names, kind, sweep, true)
+    prepare_remove(env, scope, names, kind, sweep)?.plan(env)
 }
 
 /// Take these items' installations away and keep their declarations. The
@@ -140,22 +140,106 @@ pub fn remove(
 /// a removal. Never a sweep: what these items pull in is wanted again the
 /// moment they are.
 pub fn uninstall(env: &Env, scope: &Scope, names: &[String]) -> Result<EngineReport> {
-    removal(env, scope, names, None, false, false)
+    prepare_uninstall(env, scope, names)?.plan(env)
 }
 
-/// The removal both verbs share. The plan is made against a manifest
-/// without the declarations either way; `disown` is whether that manifest
-/// becomes the file. Kept declared, nothing writes it: the upstream skill
-/// merge waits for the refresh, and so does any save the planner makes of
-/// its own, which would write the manifest without the declarations.
-fn removal(
+/// Prepare the same removal inputs both the compatibility pass and plan
+/// consume. No rendering or installation write occurs during preparation.
+pub fn prepare_remove(
+    env: &Env,
+    scope: &Scope,
+    names: &[String],
+    kind: Option<ItemKind>,
+    sweep: bool,
+) -> Result<PreparedRemoval> {
+    prepare_removal(env, scope, names, kind, sweep, true)
+}
+
+/// Prepare an uninstall with its declarations omitted from the reading,
+/// while retaining the original manifest for the next refresh.
+pub fn prepare_uninstall(env: &Env, scope: &Scope, names: &[String]) -> Result<PreparedRemoval> {
+    prepare_removal(env, scope, names, None, false, false)
+}
+
+/// One removal's post-change declaration, record and reading options.
+/// Private fields prevent a caller from reconstructing another selection
+/// between the command-wide compatibility pass and its plan.
+pub struct PreparedRemoval {
+    scope: Scope,
+    manifest: Manifest,
+    original: Manifest,
+    lock: Lock,
+    names: Vec<String>,
+    options: PlanOptions,
+    disown: bool,
+}
+
+impl PreparedRemoval {
+    pub fn check_catalog_compatibility(&self, env: &Env) -> Result<()> {
+        crate::source::check_catalog_compatibility(env, &self.scope, &self.manifest)?;
+        super::desired::hold::held_planning(
+            env,
+            &self.scope,
+            &self.manifest,
+            &self.lock,
+            &self.options,
+        )?;
+        Ok(())
+    }
+
+    pub fn plan(&self, env: &Env) -> Result<EngineReport> {
+        self.plan_with_options(env, &self.options)
+    }
+
+    /// Answering the sweep prompt changes orphan removal only. The
+    /// captured manifest and recorded readings remain the checked inputs.
+    /// An uninstall keeps its dependencies for the next refresh.
+    pub fn plan_sweeping(&self, env: &Env) -> Result<EngineReport> {
+        let options = PlanOptions {
+            sweep_unneeded: self.disown,
+            ..self.options.clone()
+        };
+        self.plan_with_options(env, &options)
+    }
+
+    fn plan_with_options(&self, env: &Env, options: &PlanOptions) -> Result<EngineReport> {
+        let mut report = plan_scope(env, &self.scope, &self.manifest, &self.lock, options)?;
+        match self.disown {
+            true => {
+                report.notes.extend(unreadable_origins(
+                    env,
+                    &self.scope,
+                    &self.manifest,
+                    &self.lock,
+                    &self.names,
+                    options,
+                ));
+                // An unchanged manifest is no removal. Creating one in a
+                // previously absent scope would declare a new install.
+                if self.manifest != self.original {
+                    ensure_manifest_persisted(env, &self.scope, &self.manifest, &mut report)?;
+                    report.disowned = Some(disowned(&self.original, &self.manifest, &self.names));
+                }
+            }
+            false => report
+                .plan
+                .ops
+                .retain(|op| !matches!(op.op, Op::WriteManifest { .. })),
+        }
+        Ok(report)
+    }
+}
+
+/// The declaration edit both verbs share. Their plans omit the same
+/// declarations; `disown` decides whether the edited manifest is saved.
+fn prepare_removal(
     env: &Env,
     scope: &Scope,
     names: &[String],
     kind: Option<ItemKind>,
     sweep: bool,
     disown: bool,
-) -> Result<EngineReport> {
+) -> Result<PreparedRemoval> {
     let mut manifest = manifest_for_mutation(env, scope)?;
     let held = manifest.clone();
     let lock = crate::lock::load(&lock_path(env, scope))?;
@@ -234,25 +318,15 @@ fn removal(
     for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
         manifest.suppress(kind, &name);
     }
-    let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
-    match disown {
-        true => {
-            report.notes.extend(unreadable_origins(
-                env, scope, &manifest, &lock, names, &options,
-            ));
-            // A save of the manifest as it was read is no removal, and
-            // where the scope has no kendex.toml it would create one.
-            if manifest != held {
-                ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
-                report.disowned = Some(disowned(&held, &manifest, names));
-            }
-        }
-        false => report
-            .plan
-            .ops
-            .retain(|op| !matches!(op.op, Op::WriteManifest { .. })),
-    }
-    Ok(report)
+    Ok(PreparedRemoval {
+        scope: scope.clone(),
+        manifest,
+        original: held,
+        lock,
+        names: names.to_vec(),
+        options,
+        disown,
+    })
 }
 
 /// What `manifest` changes from `held` that names an item: the
