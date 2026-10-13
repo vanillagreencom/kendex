@@ -53,6 +53,8 @@ Use a private Git repository for your assistant home. Committed files travel wit
 
 Install the `jarvis` bundle in this home with `kendex add --bundle jarvis --harness claude,codex,copilot,pi --yes`. The bundle installs Jarvis and the hooks that confirm the native session identity.
 
+Before the first Jarvis Start with Copilot CLI, open this home in native Copilot with the selected account. Approve its folder-trust request once. Jarvis does not approve native security requests. Without this setup, Start can remain Starting until the launch bound, then report a launch failure.
+
 | Path | Git status | Reason |
 |---|---|---|
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
-from fixtures.harness import native_header
+from fixtures.harness import AUTH_MESSAGES, native_header
 import shlex
 import subprocess
 import sys
@@ -394,25 +394,38 @@ class SessionContract(unittest.TestCase):
 
     def test_sign_in_failure(self):
         fixture = self.home / ".fixture.json"
-        fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_failure": True}))
-        for teardown in ("allowed", "refused"):
-            with self.subTest(teardown=teardown):
-                flag = self.refuse_teardown() if teardown == "refused" else None
-                self.call("start", "claude")
-                record = self.await_worker_result()
-                answer, _ = self.call("status")
-                if flag:
-                    self.assertEqual((answer["state"], answer["reason"]), ("starting", "launching"))
-                    self.assertIsNotNone(answer["terminal"])
-                    self.assertEqual(answer["detail"], "")
-                    self.assertTrue(record["history"]["pending"]["started_at"])
-                    flag.unlink()
+        for harness in AUTH_MESSAGES:
+            fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": None}))
+            self.call("start", harness)
+            self.wait()
+            confirmed = self.started()[-1]["id"]
+            self.call("stop")
+            self.wait("stopped")
+            for auth_mode, teardown in (("stale", "allowed"), ("current", "allowed"), ("current", "refused")):
+                with self.subTest(harness=harness, auth_mode=auth_mode, teardown=teardown):
+                    fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": auth_mode}))
+                    flag = self.refuse_teardown() if teardown == "refused" else None
+                    self.call("start", harness)
+                    if auth_mode == "stale":
+                        answer = self.wait(reason="resumed")
+                        self.assertIsNotNone(answer["terminal"])
+                        self.assertEqual(self.started()[-1]["id"], confirmed)
+                        self.assertEqual(json.loads(self.record.read_text())["pending"]["native_session_id"], confirmed)
+                    else:
+                        record = self.await_worker_result()
+                        answer, _ = self.call("status")
+                        if flag:
+                            self.assertEqual((answer["state"], answer["reason"]), ("starting", "launching"))
+                            self.assertIsNotNone(answer["terminal"])
+                            self.assertEqual(answer["detail"], "")
+                            self.assertTrue(record["history"]["pending"]["started_at"])
+                            flag.unlink()
+                        else:
+                            self.assertEqual((answer["state"], answer["reason"]), ("blocked", "sign-in-required"))
+                            self.assertIsNone(answer["terminal"])
+                            self.assertTrue(answer["detail"])
                     self.call("stop")
                     self.wait("stopped")
-                else:
-                    self.assertEqual((answer["state"], answer["reason"]), ("blocked", "sign-in-required"))
-                    self.assertIsNone(answer["terminal"])
-                    self.assertTrue(answer["detail"])
 
     def test_account_is_checked_before_private_brief(self):
         self.call("start")

@@ -65,10 +65,10 @@ case "$verb" in
     socket="$1" pane="$2" harness="$3" var="$4" account="$5"
     export TMUX="$socket,0,0"
     screen="$(tmux -S "$socket" capture-pane -p -t "$pane")" || exit 1
-    if lane_auth_failure "$screen"; then printf 'auth\n'; exit; fi
     pid="$(tmux -S "$socket" display-message -p -t "$pane" '#{pane_pid}')" || exit 1
     cmd="$(tmux -S "$socket" display-message -p -t "$pane" '#{pane_current_command}')" || exit 1
     lane_state state listed "$cmd" "$pid" "$screen" || exit 1
+    if [[ "$LANE_WALL_KIND" == auth ]]; then printf 'auth\n'; exit; fi
     if [[ "$state" == working || "$6" == confirmed ]]; then
       lane_account_check "$pane" "$var" "$account" prefix 2 || { printf 'wrong-account\n'; exit; }
       case "$LANE_ACCOUNT_RESULT" in

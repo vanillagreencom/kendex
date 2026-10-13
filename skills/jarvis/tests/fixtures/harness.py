@@ -8,6 +8,13 @@ import subprocess
 import select
 import sys
 
+# Native errors and turn markers exercised by orch/tests/lane-state-auth.sh.
+AUTH_MESSAGES = {
+    "claude": "  ⎿ \u00a0Login expired · Please run /login",
+    "codex": "■ Your access token could not be refreshed because your refresh token has expired.",
+    "copilot": " ✗ You must be logged in to send messages. Please run /login",
+}
+
 def native_header(harness, identity, cwd):
     if harness == "claude":
         return {"cwd": cwd, "sessionId": identity}
@@ -67,14 +74,20 @@ def main():
     shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/session-rows.sh"; SESSION_ROWS_WAIT=10; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_write "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key"'
     subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"]],
                    input=json.dumps(payload), text=True, check=True)
-    print("❯\u00a0", flush=True)
+    auth_mode = fixture.get("auth_mode")
+    if auth_mode == "stale":
+        print(AUTH_MESSAGES[harness] + "\n❯ continue\n❯\u00a0", flush=True)
+    else:
+        print("❯\u00a0", flush=True)
     prompt = sys.stdin.readline()
     with rows.open("a") as stream:
         stream.write(json.dumps({"prompt": prompt.strip(), "id": identity, "harness": harness}) + "\n")
     if fixture.get("idle"):
         print("❯\u00a0", flush=True)
-    elif fixture.get("auth_failure"):
-        print("Not logged in. Please run /login", flush=True)
+    elif auth_mode == "current":
+        print(AUTH_MESSAGES[harness], flush=True)
+    elif auth_mode == "stale":
+        print(AUTH_MESSAGES[harness] + "\nesc to interrupt", flush=True)
     else:
         print("Working to interrupt", flush=True)
     sys.stdin.read()
