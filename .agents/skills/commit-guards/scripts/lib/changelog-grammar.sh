@@ -245,15 +245,15 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # line for collation. A missing section, duplicate section, or unclosed fence
 # is a refusal. The collator uses these boundaries without another search.
 #
-# entry_query=1 is the version check's read instead: one "KIND<TAB>line" row
+# entry_query=1 is the version check's read instead: one "KIND<TAB>source<TAB>line" row
 # per release entry it judges, in file order. KIND is breaking for an item
 # opening with a named call-out, `**Breaking:**` or `**Breaking**:`, the
 # spelling the Pi package records write, and added for an item under the
 # release's `### Added` heading, a heading only a level-2 record carries.
-# A record holding the new version's own section
-# answers with that section alone, after a "released<TAB>heading" row:
-# those are the entries the release publishes, and pending ones wait for
-# the next release.
+# A named release emits a "released<TAB>heading" row and prefixes pending
+# entry kinds with "pending-". Each entry carries its source and text, so the
+# version owner can refuse incompatible installed code without borrowing a
+# later entry to justify the release's own major.
 # With whole_entry=1 the input is one fragment, whose entry_section names its
 # directory. packages_part, GG_PACKAGES_PART, names the part whose entries
 # are no release entry of the record's own version.
@@ -281,8 +281,8 @@ function heading_text(l,   i, n, t) {
     # A fragment is one list item, so its first non-blank line is the entry.
     if (opened || line !~ /[^ \t]/) next
     opened = 1
-    if (named_breaking(line)) printf "breaking\t%s\n", line
-    if (entry_section == "added") printf "added\t%s\n", line
+    if (named_breaking(line)) printf "breaking\t%s\t%s\n", ENVIRON["GG_ENTRY_SOURCE"], line
+    if (entry_section == "added") printf "added\t%s\t%s\n", ENVIRON["GG_ENTRY_SOURCE"], line
     next
   }
   i = lead(line)
@@ -315,8 +315,8 @@ function heading_text(l,   i, n, t) {
     } else if (release_level == 2 && lvl == 3) part = tolower(heading_text(line))
     if (scope == "") next
     if (packages_part != "" && part == packages_part) next
-    if (named_breaking(line)) { rows[++count] = "breaking\t" line; row_scope[count] = scope }
-    if (part == "added" && line ~ /^- /) { rows[++count] = "added\t" line; row_scope[count] = scope }
+    if (named_breaking(line)) { rows[++count] = "breaking\t" ENVIRON["GG_ENTRY_SOURCE"] "\t" line; row_scope[count] = scope }
+    if (part == "added" && line ~ /^- /) { rows[++count] = "added\t" ENVIRON["GG_ENTRY_SOURCE"] "\t" line; row_scope[count] = scope }
     next
   }
   if (lvl == 1 || lvl == 2) {
@@ -336,7 +336,10 @@ END {
     if (fence != "") exit 3
     alone = (release_heading != "")
     if (alone) printf "released\t%s\n", release_heading
-    for (k = 1; k <= count; k++) if (!alone || row_scope[k] == "released") print rows[k]
+    for (k = 1; k <= count; k++) {
+      if (alone && row_scope[k] == "pending") printf "pending-"
+      print rows[k]
+    }
     exit
   }
   # A body that bailed lands here too, and its status is the one to keep.
