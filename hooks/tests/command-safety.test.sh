@@ -252,10 +252,7 @@ environment_rows() {
 [2,"cat <<'EOF' | eval 'sh'\nprintenv\nEOF","piped-eval-stdin-heredoc-program"]
 [2,"bash -c ':; bash' <<'EOF'\nenv\nEOF","later-command-string-stdin-program"]
 [2,"bash wrapper.sh env NAME=value bash <<'EOF'\nenv\nEOF","wrapper-shell-stdin-heredoc-program"]
-[0,"eval 'printf done' <<'EOF'\nenv\nEOF","eval-heredoc-input-is-data"]
-[0,"bash -c 'bash < script.sh' <<'EOF'\nenv\nEOF","command-string-stdin-replaced"]
 [2,"cat <<'INPUT' | bash -c 'cat <<OUTPUT\n$(bash)\nOUTPUT'\nenv\nINPUT","nested-heredoc-expansion-inherits-input"]
-[0,"cat <<'INPUT' | bash -c 'cat <<\"OUTPUT\"\n$(bash)\nOUTPUT'\nenv\nINPUT","nested-quoted-heredoc-keeps-input-data"]
 [2,"sh <<'EOF'\nprintenv\nEOF","sh-quoted-heredoc-program"]
 [2,"sh -s <<'EOF'\nenv\nEOF","sh-stdin-heredoc-program"]
 [2,"command bash <<'EOF'\nenv\nEOF","forwarded-heredoc-program"]
@@ -271,15 +268,28 @@ environment_rows() {
 [0,"bash <<'EOF'\nset -euo pipefail\nprintf done\nEOF","safe-heredoc-shell-program"]
 [0,"bash <<'EOF'\nprintenv NAME\nEOF","named-heredoc-shell-program"]
 [2,"bash <<'EOF'\nenv | grep NAME\nEOF","heredoc-program-filter-stays-unproved"]
-[0,"bash -c 'printf done' <<'EOF'\nenv\nEOF","command-string-heredoc-is-data"]
-[0,"bash script.sh <<'EOF'\nenv\nEOF","script-argument-heredoc-is-data"]
-[0,"bash <<'FIRST' <<'SECOND'\nenv\nFIRST\nprintf done\nSECOND","unused-quoted-shell-heredoc-data"]
-[0,"bash 3<<'EOF'\nenv\nEOF","non-stdin-shell-heredoc-data"]
 [2,"bash 0<<'EOF'\nenv\nEOF","explicit-stdin-heredoc-program"]
 [2,"bash <<'FIRST' 3<<'SECOND'\nenv\nFIRST\ndata\nSECOND","non-stdin-heredoc-keeps-stdin-program"]
+[2,"bash <<'FIRST' <<'SECOND'\n'\nFIRST\nenv\nSECOND","shell-heredoc-bodies-have-independent-quotes"]
 [2,"cat <<'EOF' | bash 3< other\nenv\nEOF","non-stdin-redirect-keeps-piped-program"]
-[0,"cat 3<<'EOF' | bash\nenv\nEOF","non-stdin-heredoc-does-not-feed-pipe"]
-[0,"cat <<'EOF' | sh < script.sh\nenv\nEOF","piped-heredoc-input-replaced"]
+[2,"bash /dev/stdin <<'EOF'\nenv\nEOF","shell-stdin-script-program"]
+[2,"sh /proc/self/fd/0 <<'EOF'\nenv\nEOF","shell-proc-stdin-script-program"]
+[2,"bash /dev/fd/0 <<'EOF'\nenv\nEOF","shell-fd-stdin-script-program"]
+[2,"cat <<'EOF' | bash /dev/stdin\nenv\nEOF","piped-stdin-script-program"]
+[2,"bash 3<<'EOF' 0<&3\nenv\nEOF","shell-duplicated-heredoc-program"]
+[2,"sh 3<<'EOF' 0<&3-\nenv\nEOF","shell-moved-heredoc-program"]
+[2,"bash /dev/fd/3 3<<'EOF'\nenv\nEOF","shell-descriptor-script-program"]
+[2,"source /dev/stdin 3<<'EOF' 0<&3\nenv\nEOF","source-duplicated-heredoc-program"]
+[2,". /dev/fd/3 3<<'EOF'\nprintenv\nEOF","source-descriptor-script-program"]
+[2,"bash -c 'bash 0<&0' <<'EOF'\nenv\nEOF","command-string-stdin-self-duplicate"]
+[2,"bash -c 'bash < /dev/stdin' <<'EOF'\nenv\nEOF","command-string-stdin-alias"]
+[2,"bash -c 'bash < /proc/self/fd/0' <<'EOF'\nenv\nEOF","command-string-proc-stdin-alias"]
+[2,"bash <<EOF; env","unread-shell-heredoc-body"]
+[2,"bash -c 'bash' <<'EOF'; printenv","unread-command-string-heredoc-body"]
+[2,"sh <<X && printenv","unread-conditional-heredoc-body"]
+[2,"cat <<X | bash; env","unread-piped-heredoc-body"]
+[2,"bash <<EOF; printf 'line\nbreak'; env","unread-heredoc-quoted-newline"]
+[2,"bash <<EOF","unregistered-heredoc-final-word"]
 [2,"cat <<FIRST <<'SECOND'\n$(env >&2)\nFIRST\ndata\nSECOND","mixed-heredoc-expansion"]
 [2,"cat <<'FIRST' <<SECOND\ndata\nFIRST\n$(printenv >&2)\nSECOND","reversed-mixed-heredoc-expansion"]
 [2,"cat <<FIRST <<'SECOND'\n'$(env >&2)'\nFIRST\ndata\nSECOND","unquoted-heredoc-single-quotes-expand"]
@@ -295,6 +305,18 @@ environment_rows() {
 [2,"if true; then sh -c 'printenv'; fi","conditional-shell-command-string"]
 [2,"for ITEM in one; do eval 'env'; done","loop-eval-command-string"]
 [2,"bash -c -- 'env'","shell-command-string-options-end"]
+[2,"bash -c -e 'env'","shell-command-string-option-after-c"]
+[2,"bash -c -o pipefail 'env'","shell-command-string-option-operand-after-c"]
+[2,"bash -ec -u 'env'","shell-command-string-grouped-options"]
+[2,"bash -co pipefail 'env'","shell-command-string-grouped-option-operand"]
+[2,"bash -c -eo pipefail 'env'","shell-command-string-grouped-operand-after-c"]
+[2,"bash -c +o pipefail 'env'","shell-command-string-positive-option-operand"]
+[2,"bash -c -O extglob 'env'","shell-command-string-shopt-operand-after-c"]
+[2,"{ command bash -c -o pipefail -- 'env'; }","forwarded-command-string-option-operand"]
+[2,"bash -c -o pipefail \"sh -c -e 'env'\"","nested-command-string-option-operand"]
+[0,"bash -c -e \"printf '%s' 'env'\"","shell-option-quoted-argument-data"]
+[0,"bash -c -o pipefail -- 'printenv NAME'","shell-option-named-read"]
+[0,"bash -co pipefail \"printf '%s' 'env'\"","shell-grouped-option-argument-data"]
 [2,"command bash -c -- 'env'","forwarded-command-string-options-end"]
 [2,"env NAME=value bash -c -- 'env'","env-command-string-options-end"]
 [2,"{ sudo -u NAME command bash -c -- 'env'; }","nested-forwarded-command-string"]
@@ -842,15 +864,19 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "array-head" { swap("if [ \"$1\" = argv ]; then pos=0; return; fi", "if [ \"$1\" = argv ]; then for ((cursor=0; cursor<${#args[@]}; cursor++)); do arg_unquoted[cursor]=1; done; fi") }
       defect == "here-string" { swap("then c=\047<<<\047", "then c=\047<<\047") }
       defect == "delimiter-proof" { swap("[ \"$kind\" != ansi-escaped ] || return 0", "[ \"$kind\" != ansi-escaped ] || return 1") }
-      defect == "heredoc-program" { swap("if [ -n \"$data_source\" ] && [ -n \"${stage_stdin[$stage]}\" ]; then", "if false; then") }
-      defect == "heredoc-pipe" { swap("data_source=$piped_source", "data_source=\"\"") }
+      defect == "heredoc-program" { swap("if [ -n \"${stage_stdin[$stage]}\" ]; then", "if false; then") }
+      defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
+      defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
+      defect == "body-registration" { swap("[ -z \"$heredoc_op\" ] || return 0", "[ -z \"$heredoc_op\" ] || :") }
+      defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]}") }
+      defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
       defect == "heredoc-expansion" { swap("[ -n \"$quoted\" ] || heredoc_expand[doc]=1", "[ -n \"$quoted\" ] || :") }
       defect == "heredoc-expansion-quotes" && /environment_dump expansions conservative;/ { swap("environment_dump expansions conservative", "environment_dump shell conservative") }
       defect == "executable-text" { swap("if [ -n \"$source_pos\" ]; then", "if false; then") }
-      defect == "shell-terminator" { swap("if [ \"$value\" = -- ]; then cursor=$((cursor + 1)); continue; fi", "if [ \"$value\" = -- ]; then break; fi") }
+      defect == "shell-terminator" { swap("--) options_ended=1; cursor=$((cursor + 1)); continue ;;", "--) break ;;") }
+      defect == "invocation-options" && $0 == "        if [ -z \"$options_ended\" ]; then" { swap("if [ -z \"$options_ended\" ]; then", "if [ -z \"$options_ended\" ] && [ -z \"$wants_string\" ]; then") }
+      defect == "invocation-operand" { swap("*o* | *O*) cursor=$((cursor + 2))", "*o* | *O*) cursor=$((cursor + 1))") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
-      defect == "program-input" { swap("environment_dump shell conservative \"${heredoc_bodies[$data_source]}\"", "environment_dump shell conservative") }
-      defect == "expansion-input" { swap("environment_dump expansions conservative \"$3\"", "environment_dump expansions conservative") }
       defect == "nested-stdin" { swap("[ -z \"$stdin_program\" ] || stage_stdin[stage]=1", "[ -z \"$stdin_program\" ] || :") }
       defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
@@ -902,14 +928,19 @@ here-string|FAIL environment: quoted-here-string-data: exit=2 expected=0
 delimiter-proof|FAIL environment: encoded-heredoc-delimiter: exit=0 expected=2
 heredoc-program|FAIL environment: bash-quoted-heredoc-program: exit=0 expected=2
 heredoc-pipe|FAIL environment: piped-heredoc-program: exit=0 expected=2
+body-evidence|FAIL environment: unread-shell-heredoc-body: exit=0 expected=2
+body-registration|FAIL environment: unregistered-heredoc-final-word: exit=0 expected=2
+descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
+body-separation|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
 heredoc-expansion|FAIL environment: mixed-heredoc-expansion: exit=0 expected=2
 heredoc-expansion-quotes|FAIL environment: unquoted-heredoc-single-quotes-expand: exit=0 expected=2
 executable-text|FAIL environment: grouped-shell-command-string: exit=0 expected=2
 executable-text|FAIL environment: grouped-eval-command-string: exit=0 expected=2
 shell-terminator|FAIL environment: shell-command-string-options-end: exit=0 expected=2
-program-input|FAIL environment: command-string-stdin-heredoc-program: exit=0 expected=2
-program-input|FAIL environment: eval-stdin-heredoc-program: exit=0 expected=2
-expansion-input|FAIL environment: nested-heredoc-expansion-inherits-input: exit=0 expected=2
+invocation-options|FAIL environment: shell-command-string-option-after-c: exit=0 expected=2
+invocation-options|FAIL environment: shell-command-string-option-operand-after-c: exit=0 expected=2
+invocation-operand|FAIL environment: shell-command-string-grouped-option-operand: exit=0 expected=2
+invocation-operand|FAIL environment: shell-command-string-positive-option-operand: exit=0 expected=2
 nested-stdin|FAIL environment: exec-stdin-heredoc-program: exit=0 expected=2
 empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
 set-unknown|FAIL environment: set-unquoted-variable-can-disappear: exit=0 expected=2
