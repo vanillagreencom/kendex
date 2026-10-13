@@ -89,24 +89,21 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 		}
 
 		if (provider === "gemini") {
-			const all: ResultRef[] = [];
-			let answer: string | undefined;
-			let sourceLabel = "gemini";
-			for (const query of queries) {
+			const sourceLabel = settings.apiKeys.gemini ? "gemini" : "gemini-web";
+			const client = settings.apiKeys.gemini ? new GeminiApiClient({ apiKey: settings.apiKeys.gemini }) : undefined;
+			const sections = await Promise.all(queries.map(async (query) => {
 				let response;
-				if (settings.apiKeys.gemini) {
-					const client = new GeminiApiClient({ apiKey: settings.apiKeys.gemini });
-					response = await client.search({ query, model: settings.geminiSearchModel, includeDomains: params.includeDomains, excludeDomains: params.excludeDomains }, signal);
+				if (client) {
+					response = await client.search({ query, model: settings.geminiSearchModel, numResults, includeDomains: params.includeDomains, excludeDomains: params.excludeDomains, startPublishedDate: params.startPublishedDate, endPublishedDate: params.endPublishedDate }, signal);
 				} else if (settings.browserCookieAccess) {
 					response = await geminiWebSearch({ query, numResults }, { browserCookies: { pi, preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal });
-					sourceLabel = "gemini-web";
 				} else {
 					throw new Error("Gemini provider requires GEMINI_API_KEY or browserCookieAccess=true with a signed-in Firefox/Zen/Chrome.");
 				}
-				if (!answer && response.answer) answer = response.answer;
-				for (const result of response.results.slice(0, numResults)) all.push(toResultRef(result));
-			}
-			return { content: [{ type: "text", text: formatProviderBody(sourceLabel, all, answer) }], details: { provider: sourceLabel, results: all } };
+				const results = response.results.slice(0, numResults).map((result) => toResultRef(result));
+				return { results, text: `## ${query}\n\n${formatProviderBody(sourceLabel, results, response.answer)}` };
+			}));
+			return { content: [{ type: "text", text: sections.map((section) => section.text).join("\n\n") }], details: { provider: sourceLabel, results: sections.flatMap((section) => section.results) } };
 		}
 
 		if (provider === "duckduckgo") {
