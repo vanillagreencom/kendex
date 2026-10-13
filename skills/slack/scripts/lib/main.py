@@ -21,6 +21,7 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack listen --status --root ROOT [--root ROOT]...
        slack post [--root ROOT] [--channel ID] --text TEXT [--mention]
                   [--file PATH] [--thread TS] [--update TS]
+       slack read --channel ID (--ts TS | --latest N)
        slack compact [--root ROOT]...
        slack thread TS [--root ROOT] [--limit N]
        slack install --root ROOT [--root ROOT]... [--print]
@@ -80,6 +81,13 @@ post      one message to the bound channel, or --channel for another, its
           --thread replies only in a thread; --update edits the message at that
           ts. Text and file bytes are refused when they match the
           secret-value pattern
+read      read the named channel without a binding or owner settings, using
+          the same token settings as post --channel; --ts reads a message
+          and its replies, --latest reads the newest N top-level messages.
+          Print oldest first: slack: ts=TS edited=TS|- bot=ID|user=ID text=TEXT.
+          text is the last field; backslash, newline and carriage return
+          become \\\\, \\n and \\r. Slack markup stays literal. An empty channel
+          prints nothing. --latest must be positive
 thread    print the requested thread as plain text, oldest first, each
           message headed by its author (owner or app, or another person's
           Slack user id) and UTC time; TS names
@@ -167,6 +175,11 @@ def build() -> Parser:
     p.add_argument("--thread")
 
     p.add_argument("--update")
+    p = verbs.add_parser("read", add_help=False)
+    p.add_argument("--channel", required=True)
+    selector = p.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--ts")
+    selector.add_argument("--latest", type=int)
     p = verbs.add_parser("compact", add_help=False)
     p.add_argument("--root", action="append")
     p = verbs.add_parser("thread", add_help=False)
@@ -204,6 +217,10 @@ def run(argv: List[str]) -> int:
             raise Refusal("usage", "--update edits text and takes no --file")
         root = roots_of([args.root] if args.root else [])[0]
         return verbs.post(root, args.channel, args.text, args.file, args.mention, args.thread, args.update)
+    if args.verb == "read":
+        if args.latest is not None and args.latest < 1:
+            raise Refusal("usage", "--latest must be positive")
+        return verbs.read(args.channel, args.ts, args.latest)
     if args.verb == "compact":
         return verbs.compact_roots(roots_of(args.root or []))
     if args.verb == "thread":

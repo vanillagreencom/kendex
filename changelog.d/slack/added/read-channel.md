@@ -1,0 +1,1 @@
+- Read a named Slack channel without a relay binding, with message timestamps, edit times, authors and escaped text for scripts.

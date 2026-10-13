@@ -24,6 +24,7 @@ The relay between one checkout's overseer mailbox and one private Slack channel.
 .agents/skills/slack/scripts/slack listen --root ROOT [--root ROOT]... [--once]
 .agents/skills/slack/scripts/slack listen --status --root ROOT [--root ROOT]...
 .agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH] [--thread TS] [--update TS]
+.agents/skills/slack/scripts/slack read --channel ID (--ts TS | --latest N)
 .agents/skills/slack/scripts/slack compact [--root ROOT]...
 .agents/skills/slack/scripts/slack install --root ROOT [--root ROOT]... [--print]
 ```
@@ -42,6 +43,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing either token, restart the relay.
 - A threaded directive's parent carries every owner and app thread message its reader generation has not received: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers). Read the full thread only when needed with `slack thread TS [--limit N]`.
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.
+- `read --channel` needs no binding or owner settings. It uses the same token route as `post --channel`. `--ts` reads a message and its replies; `--latest N` reads the newest positive N top-level messages. Both print oldest first. Each line is `slack: ts=TS edited=TS|- bot=ID text=TEXT`, with `user=ID` instead of `bot=ID` for a user message. An absent author is `user=-`. `text=` is the last field; it preserves Slack markup and escapes backslash, newline and carriage return as `\\`, `\n` and `\r`. An empty channel prints nothing and exits 0. API refusals use the existing keyed stderr format and exit 2.
 - Settings live in the project's `kendex.settings.toml` and the two tokens, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
 
 ## Message standard

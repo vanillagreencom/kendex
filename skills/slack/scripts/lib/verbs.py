@@ -1,4 +1,4 @@
-"""The verbs beside `listen`: setup, post, compact, install and status."""
+"""The verbs beside `listen`: setup, post, read, thread, compact, install and status."""
 
 from __future__ import annotations
 
@@ -260,6 +260,25 @@ def post(
         return 0
     answer = api.post("chat.postMessage", channel=channel, **{body_arg: body}, thread_ts=thread)
     notice("posted", f"{answer['ts']} channel={channel}")
+    return 0
+
+
+def read(channel: str, ts: Optional[str], latest: Optional[int]) -> int:
+    settings = load(need_owners=False)
+    api = api_for(settings)
+    if ts is not None:
+        selected = api.paged("conversations.replies", "messages", channel=channel, ts=ts)
+    else:
+        messages = api.paged("conversations.history", "messages", channel=channel)
+        # History includes replies broadcast to the channel. They must not
+        # consume the caller's top-level message count.
+        parents = (m for m in messages if not m.get("thread_ts") or m["thread_ts"] == m["ts"])
+        selected = itertools.islice(parents, latest)
+    for message in sorted(selected, key=lambda m: float(m["ts"])):
+        edited = (message.get("edited") or {}).get("ts") or "-"
+        author = f"bot={message['bot_id']}" if message.get("bot_id") else f"user={message.get('user') or '-'}"
+        text = str(message.get("text") or "").replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+        notice("ts", f"{message['ts']} edited={edited} {author} text={text}")
     return 0
 
 
