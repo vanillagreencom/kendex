@@ -256,6 +256,7 @@ shard_filters() { # WORKFLOW ; `|<argument string>` per shard on this platform
   one_line_steps "$wf" | while IFS=$'\037' read -r job cond wd run; do
     [[ "$run" == 'bash skills/orch/tests/run-all.sh'* ]] || continue
     [[ "$run" != 'bash skills/orch/tests/run-all.sh --battery '* ]] || continue
+    [[ "$run" != 'bash skills/orch/tests/run-all.sh --report-job' ]] || continue
     shard="$(one_shard "$cond")"
     grep -qxF "$shard" <<< "$excluded" && continue
     printf '|%s\n' "${run#bash skills/orch/tests/run-all.sh}"
@@ -1453,6 +1454,38 @@ shared_steps() { # WORKFLOW — the Linux anchor and macOS alias
     /^    steps:/ && (job == "skill-suites-shard:" || job == "skill-suites-macos:" || job == "skill-suites-macos-queue:") { print job " " $2 }
   ' "$1"
 }
+# The final timing measurement belongs to the shared job, after every
+# selected battery, rather than to any individual battery completion.
+job_report_boundary() { # WORKFLOW — count, success condition and final step
+  local records last
+  records="$(one_line_steps "$1" | awk -F '\037' '$1 == "skill-suites-shard" && $4 == "bash skills/orch/tests/run-all.sh --report-job" {n++; cond=$2} END {printf "%d|%s",n+0,cond}')"
+  last="$(awk '
+    /^  [A-Za-z0-9_-]+:/ { job=$1 }
+    job == "skill-suites-shard:" && substr($0,1,8) == "      - " {step=NR}
+    job == "skill-suites-shard:" && $0 == "        run: bash skills/orch/tests/run-all.sh --report-job" {report=NR}
+    END {print (report > step ? "last" : "not-last")}
+  ' "$1")"
+  printf '%s|%s' "$records" "$last"
+}
+check 'one successful final job report follows every selected battery' \
+  '1|success()|last' "$(job_report_boundary "$WORKFLOW")"
+for rule in missing duplicated early failed; do
+  case "$rule" in
+    missing) sed '/run: bash skills\/orch\/tests\/run-all.sh --report-job/d' "$WORKFLOW" >"$TMP/job-$rule.yml" ;;
+    duplicated) awk '{print} /        run: bash skills\/orch\/tests\/run-all.sh --report-job/ {print "      - name: Duplicate job report"; print "        if: success()"; print}' "$WORKFLOW" >"$TMP/job-$rule.yml" ;;
+    early) sed '/run: bash skills\/orch\/tests\/run-all.sh --report-job/a\
+      - run: echo later-job-work' "$WORKFLOW" >"$TMP/job-$rule.yml" ;;
+    failed) sed '/if: success()/s/success()/always()/' "$WORKFLOW" >"$TMP/job-$rule.yml" ;;
+  esac
+  case "$rule" in
+    missing) want='0||not-last' ;;
+    duplicated) want='2|success()|last' ;;
+    early) want='1|success()|not-last' ;;
+    failed) want='1|always()|last' ;;
+  esac
+  check "must-fail: $rule final-job boundary changes the producer contract" \
+    "$want" "$(job_report_boundary "$TMP/job-$rule.yml")"
+done
 check "both shell runners use the same suite steps, the queue's macOS legs included" \
   $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: *skill-suite-steps\nskill-suites-macos-queue: *skill-suite-steps' \
   "$(shared_steps "$WORKFLOW")"

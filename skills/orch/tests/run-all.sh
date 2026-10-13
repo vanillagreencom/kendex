@@ -16,6 +16,7 @@
 #   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
 #   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
+#   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
@@ -45,8 +46,10 @@
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
 #
-# A passing suite and a green total can each print a warning after their
-# report line. The warning does not change the passing exit status:
+# A passing suite can print a warning after its report line. --report-job
+# prints final job evidence without running suites. The workflow calls it
+# once in its last successful shared suite step, after all batteries finish.
+# A battery total emits no job warning. Warnings keep the passing exit status:
 #
 #   ::warning::run-all-budget run=<id> attempt=<n> os=<name> shard=<name> suite=<name|job> seconds=<n> bound=<n> review=<n> margin-percent=<n>
 #
@@ -131,6 +134,36 @@ if [ "${1-}" = --battery ]; then
 fi
 # The verdict line names the tree whose tests/ the battery is.
 BATTERY="$(basename "$(dirname "$TEST_DIR")")"
+
+# CI supplies its review policy. Local batteries have no timing policy.
+REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
+if [ -n "$REVIEW_SECS" ]; then
+  for value in "$REVIEW_SECS" "${RUN_ALL_MARGIN_PERCENT:-}" "${RUN_ALL_JOB_SECS:-}" "${RUN_ALL_JOB_STARTED_EPOCH:-}"; do
+    case "$value" in
+      '' | *[!0-9]* | 0*) echo "run-all.sh: budget-input value=$value" >&2; exit 1 ;;
+    esac
+  done
+fi
+
+budget_warning() { # SUITE SECONDS CAP
+  [ -n "$REVIEW_SECS" ] || return 0
+  if [ "$2" -gt "$REVIEW_SECS" ] || [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then
+    printf '::warning::run-all-budget run=%s attempt=%s os=%s shard=%s suite=%s seconds=%s bound=%s review=%s margin-percent=%s\n' \
+      "${GITHUB_RUN_ID:-unknown}" "${GITHUB_RUN_ATTEMPT:-unknown}" "${RUNNER_OS:-unknown}" \
+      "${RUN_ALL_SHARD:-$BATTERY}" "$1" "$2" "$3" "$REVIEW_SECS" "$RUN_ALL_MARGIN_PERCENT"
+  fi
+}
+
+# The workflow calls this once after every selected battery succeeds.
+# A battery completion is only a partial measurement of that job.
+if [ "${1-}" = --report-job ]; then
+  [ "$#" -eq 1 ] || { echo 'run-all.sh: job-report-arguments' >&2; exit 1; }
+  if [ -n "$REVIEW_SECS" ]; then
+    now="$(date +%s)" || { echo 'run-all.sh: budget-clock=unread' >&2; exit 1; }
+    budget_warning job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"
+  fi
+  exit 0
+fi
 
 SELECT=()
 REJECT=()
@@ -255,25 +288,6 @@ fi
 # How long a stopped suite's processes get to end on TERM, its EXIT trap's
 # cleanup among them, before KILL.
 STOP_GRACE=10
-
-# CI supplies its review policy. Local batteries have no timing policy.
-REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
-if [ -n "$REVIEW_SECS" ]; then
-  for value in "$REVIEW_SECS" "${RUN_ALL_MARGIN_PERCENT:-}" "${RUN_ALL_JOB_SECS:-}" "${RUN_ALL_JOB_STARTED_EPOCH:-}"; do
-    case "$value" in
-      '' | *[!0-9]* | 0*) echo "run-all.sh: budget-input value=$value" >&2; exit 1 ;;
-    esac
-  done
-fi
-
-budget_warning() { # SUITE SECONDS CAP
-  [ -n "$REVIEW_SECS" ] || return 0
-  if [ "$2" -gt "$REVIEW_SECS" ] || [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then
-    printf '::warning::run-all-budget run=%s attempt=%s os=%s shard=%s suite=%s seconds=%s bound=%s review=%s margin-percent=%s\n' \
-      "${GITHUB_RUN_ID:-unknown}" "${GITHUB_RUN_ATTEMPT:-unknown}" "${RUNNER_OS:-unknown}" \
-      "${RUN_ALL_SHARD:-$BATTERY}" "$1" "$2" "$3" "$REVIEW_SECS" "$RUN_ALL_MARGIN_PERCENT"
-  fi
-}
 
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
@@ -508,10 +522,6 @@ echo "============================================"
 printf 'total suites=%d seconds=%d pass=%d fail=%d\n' \
   "$RUN" "$((SECONDS - started))" "$TOTAL_PASS" "$TOTAL_FAIL"
 if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then
-  if [ -n "$REVIEW_SECS" ]; then
-    now="$(date +%s)" || { echo 'run-all.sh: budget-clock=unread' >&2; exit 1; }
-    budget_warning job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"
-  fi
   printf '%s tests: all %d file(s) passed\n' "$BATTERY" "$RUN"
   exit 0
 else

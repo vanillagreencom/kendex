@@ -1529,6 +1529,10 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
+      - name: Report final job budget
+        if: success()
+        run: bash skills/orch/tests/run-all.sh --report-job
+
   # On main pushes changes is skipped, so the shared matrix expression uses
   # its full-roster fallback. The suite steps and budgets have one owner.
   skill-suites-macos:
