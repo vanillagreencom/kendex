@@ -1,0 +1,1 @@
+- Sessions read the Slack relay's delivered thread in full and fetch Slack history only when required history is missing.

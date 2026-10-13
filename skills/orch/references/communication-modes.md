@@ -164,7 +164,8 @@ For the Jarvis session and every overseer, a conversation stays in the medium wh
 ### Thread rule
 
 - Answer a note typed in the pane in the pane only. Answer a Slack-delivered mailbox note with `lane-mail notice --item overseer --to owner --ref [DIRECTIVE_ID] --file [PATH]`; the pane shows at most one line naming the Slack post. A directive carrying `thread_ts` takes this notice, which keeps the reply in its thread. An owner's typed yes approves per [§ Voice requests](#voice-requests). A `slack post` text reply takes `--thread TS`. Answer a voice request per [§ Voice requests](#voice-requests).
-- The directive's `parent` is small context, not the full conversation. Read more only when needed with `slack thread TS [--limit N]`; TS may name the root or a reply. Read no history by default.
+- The Slack relay delivers the whole thread up to the note in `parent.thread` on the first delivery to a reader generation. Later deliveries carry only messages since that generation's mark, excluding answers already delivered individually.
+- Read the delivered `parent.thread` in full. Nothing is read twice within the same applicable revision. Make no further Slack read unless required history is missing; then use `slack thread TS [--limit N]`, where TS names the root or a reply.
 
 ### Words
 
