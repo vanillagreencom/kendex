@@ -12,7 +12,7 @@ from typing import List
 
 import verbs
 from refusals import EXPLAIN, Refusal, print_refusal
-from relay import Relay
+from relay import listen
 from settings import load
 
 HELP = """\
@@ -208,8 +208,7 @@ def run(argv: List[str]) -> int:
         if args.status:
             return verbs.status(roots, time.time())
         settings = load(need_app_token=not args.once)
-        relay = Relay(roots, settings, verbs.api_for(settings))
-        return relay.run(args.once)
+        return listen(roots, settings, verbs.api_for(settings), args.once)
     if args.verb == "post":
         if not args.text and not args.file:
             raise Refusal("usage", "post needs --text or --file")

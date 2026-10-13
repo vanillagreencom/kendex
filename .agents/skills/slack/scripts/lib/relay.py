@@ -158,6 +158,48 @@ MARK_SETTLED = {"already_reacted", "no_reaction", "message_not_found"}
 Page = Tuple[Optional[str], List[Dict]]
 
 
+def listen(roots: List[Path], settings: Settings, api: Slack, once: bool) -> int:
+    """Own the worker's deadline even while startup or DNS cannot return."""
+    bound = settings.poll_seconds + RECONNECT_BOUND_SECONDS
+    condition = threading.Condition()
+    stage, completed = "startup", time.monotonic()
+    outcome: list = []
+
+    def progress(current: str, done: bool = False) -> None:
+        nonlocal stage, completed
+        with condition:
+            stage = current
+            if done:
+                completed = time.monotonic()
+            condition.notify()
+
+    def work() -> None:
+        try:
+            relay = Relay(roots, settings, api)
+            relay.progress = progress
+            result = relay.run(once)
+        except BaseException as err:
+            result = err
+        with condition:
+            outcome.append(result)
+            condition.notify()
+
+    threading.Thread(target=work, daemon=True).start()
+    with condition:
+        while not outcome:
+            age = time.monotonic() - completed
+            remaining = bound - age
+            if remaining <= 0:
+                # A stuck worker cannot run cleanup. A normal exit can also
+                # wait on its children, so end the whole process here.
+                print(keyed("worker-stalled", f"{stage} age={age:.3f}s bound={bound}s"), file=sys.stderr, flush=True)
+                os._exit(2)
+            condition.wait(remaining)
+    if isinstance(outcome[0], BaseException):
+        raise outcome[0]
+    return outcome[0]
+
+
 def at_epoch(at: str) -> float:
     """An envelope's `at` as epoch seconds; lane-mail wrote it."""
     try:
@@ -1091,6 +1133,7 @@ class Relay:
         self.api = api
         self.clock = clock
         self.sleep = sleep
+        self.progress: Callable = lambda stage, done=False: None
         self.paths = roots
         self.roots: List[RootRelay] = []
         self.by_channel: Dict[str, RootRelay] = {}
@@ -1210,16 +1253,21 @@ class Relay:
         or a settled code update alone ends."""
         print(keyed("listening", f"{len(self.paths)} poll_seconds={self.settings.poll_seconds}"), flush=True)
         if once:
-            return 0 if self.poll_once() else 1
+            self.progress("poll")
+            result = 0 if self.poll_once() else 1
+            self.progress("poll", True)
+            return result
         app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
         next_poll = retry_at = self.clock()
         delay = RETRY_FIRST_SECONDS
         try:
             self.run_connected(app_api, next_poll, retry_at, delay)
         finally:
+            self.progress("reader-stop")
             self.stop_reader.set()
             if self.reader is not None:
                 self.reader.join()
+        self.progress("reload")
         self.reexec()
 
     def reexec(self) -> NoReturn:
@@ -1243,20 +1291,27 @@ class Relay:
         can reload onto."""
         while True:
             if self.socket is None and self.clock() >= retry_at:
-                if self.open(app_api):
+                self.progress("connect")
+                opened = self.open(app_api)
+                self.progress("connect", True)
+                if opened:
                     delay = RETRY_FIRST_SECONDS
                     next_poll = self.clock()
                 else:
                     retry_at = self.clock() + delay
                     delay = min(2 * delay, RETRY_MAX_SECONDS)
             if self.clock() >= next_poll:
+                self.progress("poll")
                 self.poll_once()
+                self.progress("poll", True)
                 if self.settled and self.close_for_reload():
                     return
                 next_poll = self.clock() + self.settings.poll_seconds
             if self.socket is None:
+                self.progress("reconnect-wait")
                 self.sleep(max(0.0, min(next_poll, retry_at) - self.clock()))
                 continue
+            self.progress("socket-wait")
             self.listen_until(next_poll)
             if self.socket is None:
                 retry_at = self.clock()
@@ -1362,9 +1417,12 @@ class Relay:
             except queue.Empty:
                 return
             if isinstance(envelope, Closed):
+                self.progress("reader-stop")
                 self.drop(str(envelope))
                 return
+            self.progress("delivery")
             self.deliver(envelope)
+            self.progress("socket-wait")
 
     def read_socket(self, socket: WebSocket) -> None:
         """The single reader owns sends and closes; it never calls the worker."""
