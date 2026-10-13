@@ -18,6 +18,7 @@ import { ensureTurnStarted, noteChildExecutedToolResults, processAssistantMessag
 import { extensionApi, safeNotify } from "./bridge-state.js";
 import { type Config } from "./config.js";
 import { debug } from "./debug.js";
+import { modelDisplayName } from "./models.js";
 import { type QueryContext } from "./query-state.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isUsageLimitMessage, uniqueNonEmptyLines } from "./rate-limit.js";
 import { activeStreamIdleWatchdogs } from "./stream-idle-watchdog.js";
@@ -253,7 +254,7 @@ export async function consumeQuery(
 					debug("consumeQuery: model_refusal_fallback", () => JSON.stringify({ originalModel, fallbackModel }));
 					if (typeof fallbackModel === "string" && typeof originalModel === "string") {
 						safeNotify(
-							`Pi Claude switched ${originalModel} to ${fallbackModel} after Claude Code safety fallback.`,
+							`Pi Claude switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
 							"info",
 						);
 					}

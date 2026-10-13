@@ -4,7 +4,8 @@
 
 ### Unreleased
 
-- The model menu reads Pi's Anthropic registry at run time. Claude Code chooses the safety fallback. New model entries need no bridge release. An unknown model request keeps its ID and shows one notice per session.
+- Breaking: The model menu offers Pi's Anthropic registry entries at run time. A model absent from that registry no longer appears in the menu. A saved `pi-claude` selection absent from the registry uses Pi's initial model with Pi's fallback message. Claude Code chooses the safety fallback. New registry entries need no bridge release. An unknown model request handed to the bridge keeps its ID and shows one notice per session.
+- Safety fallback notices use registry display names when available. Unknown model notices show one plain line. Model resolution details go to the debug log.
 
 ### 4.2.0
 

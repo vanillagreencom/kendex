@@ -5,7 +5,7 @@ var __export = (target, all) => {
 };
 
 // src/index.ts
-import * as piAi from "@earendil-works/pi-ai";
+import * as piAi2 from "@earendil-works/pi-ai";
 
 // node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 import { createRequire as Yne } from "node:module";
@@ -36815,6 +36815,18 @@ function convertPiMessages(messages, customToolNameToSdk) {
 }
 
 // src/models.ts
+import * as piAi from "@earendil-works/pi-ai";
+
+// src/pi-ai-compat.ts
+var dynamicImport = (specifier) => import(specifier);
+async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendil-works/pi-ai/compat")) {
+  if (typeof root?.getModels === "function") return root.getModels;
+  const compat = await loadCompat();
+  if (typeof compat?.getModels !== "function") throw new Error("pi-ai getModels API is unavailable");
+  return compat.getModels;
+}
+
+// src/models.ts
 function buildModels(piAiModels) {
   return piAiModels.map(({ id: id2, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
     id: id2,
@@ -36826,6 +36838,11 @@ function buildModels(piAiModels) {
     thinkingLevelMap,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }));
+}
+var getModels = await resolveGetModels(piAi);
+var MODELS = buildModels(getModels("anthropic"));
+function modelDisplayName(modelId) {
+  return MODELS.find((model) => model.id === modelId)?.name ?? modelId;
 }
 
 // src/extract-tool-results.ts
@@ -37879,8 +37896,8 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
 
 // src/native-provider.ts
 var NATIVE_PROVIDER_UNSUPPORTED_MESSAGE = "Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi.";
-function supportsNativeProvider(piAi2) {
-  const host = piAi2;
+function supportsNativeProvider(piAi3) {
+  const host = piAi3;
   return ["createProvider", "getCurrentTools", "getCurrentSystemPrompt"].every((name) => typeof host?.[name] === "function");
 }
 function claudeAuthSourceLabel(env = process.env) {
@@ -37889,8 +37906,8 @@ function claudeAuthSourceLabel(env = process.env) {
   if (env.ANTHROPIC_AUTH_TOKEN?.trim()) return "ANTHROPIC_AUTH_TOKEN";
   return "Claude Code login";
 }
-function buildNativeProvider(piAi2, models, streamSimple, env = process.env, hasCredentials = () => hasClaudeCredentials(env)) {
-  if (!supportsNativeProvider(piAi2)) {
+function buildNativeProvider(piAi3, models, streamSimple, env = process.env, hasCredentials = () => hasClaudeCredentials(env)) {
+  if (!supportsNativeProvider(piAi3)) {
     throw Object.assign(new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE), { code: "CLAUDE_BRIDGE_NATIVE_PROVIDER_UNSUPPORTED" });
   }
   const stamped = models.map((model) => ({ ...model, api: "claude-bridge", baseUrl: "claude-bridge", provider: PROVIDER_ID }));
@@ -37898,7 +37915,7 @@ function buildNativeProvider(piAi2, models, streamSimple, env = process.env, has
     stream: streamSimple,
     streamSimple
   };
-  return piAi2.createProvider({
+  return piAi3.createProvider({
     id: PROVIDER_ID,
     name: "Pi Claude",
     baseUrl: "claude-bridge",
@@ -52480,15 +52497,6 @@ function jsonSchemaToZodShape(schema) {
   return shape;
 }
 
-// src/pi-ai-compat.ts
-var dynamicImport = (specifier) => import(specifier);
-async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendil-works/pi-ai/compat")) {
-  if (typeof root?.getModels === "function") return root.getModels;
-  const compat = await loadCompat();
-  if (typeof compat?.getModels !== "function") throw new Error("pi-ai getModels API is unavailable");
-  return compat.getModels;
-}
-
 // src/connector-cache.ts
 import { createHash } from "node:crypto";
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync } from "node:fs";
@@ -54945,7 +54953,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
           debug("consumeQuery: model_refusal_fallback", () => JSON.stringify({ originalModel, fallbackModel }));
           if (typeof fallbackModel === "string" && typeof originalModel === "string") {
             safeNotify(
-              `Pi Claude switched ${originalModel} to ${fallbackModel} after Claude Code safety fallback.`,
+              `Pi Claude switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
               "info"
             );
           }
@@ -55290,8 +55298,7 @@ function buildClaudeQueryOptions(input) {
 }
 
 // src/index.ts
-var _piAi = piAi;
-var getModels = await resolveGetModels(_piAi);
+var _piAi = piAi2;
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
 var getCurrentTools = (messages) => _piAi.getCurrentTools(messages);
 var getCurrentSystemPrompt = (messages) => _piAi.getCurrentSystemPrompt(messages);
@@ -55300,10 +55307,6 @@ var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeS
 var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
 var HISTORY_RESTART_KEY = /* @__PURE__ */ Symbol("claude-bridge:historyRestart");
 var MAX_ROTATION_ATTEMPTS = 16;
-var MODELS = buildModels(getModels("anthropic"));
-function modelDisplayName(modelId) {
-  return MODELS.find((model) => model.id === modelId)?.name ?? modelId;
-}
 function extractAllToolResults2(context) {
   const { results, stopIdx } = extractAllToolResults(context.messages);
   debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
@@ -55801,8 +55804,8 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   }
   const queryModel = account?.modelId && account.modelId !== model.id ? { ...model, id: account.modelId, name: modelDisplayName(account.modelId) } : model;
   if (!MODELS.some((entry) => entry.id === queryModel.id) && takeUnknownModelNotice()) {
-    safeNotify(`model-resolution: unknown=${queryModel.id}
-Pi Claude uses this model as requested. Claude Code chooses its fallback.`, "warning");
+    debug(`model-resolution: unknown=${queryModel.id}`);
+    safeNotify(`Pi Claude uses ${queryModel.id} as requested. Claude Code chooses its fallback.`, "warning");
   }
   if (queryModel.id !== model.id) {
     updateTurnOutputModel(queryModel.id);

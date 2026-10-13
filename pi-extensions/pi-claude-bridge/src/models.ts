@@ -1,3 +1,6 @@
+import * as piAi from "@earendil-works/pi-ai";
+import { resolveGetModels } from "./pi-ai-compat.js";
+
 type BridgeModelMetadata = {
 	id: string;
 	name: string;
@@ -15,4 +18,10 @@ export function buildModels(piAiModels: BridgeModelMetadata[]) {
 		id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	}));
+}
+const getModels = await resolveGetModels(piAi);
+export const MODELS = buildModels(getModels("anthropic"));
+
+export function modelDisplayName(modelId: string): string {
+	return MODELS.find((model) => model.id === modelId)?.name ?? modelId;
 }

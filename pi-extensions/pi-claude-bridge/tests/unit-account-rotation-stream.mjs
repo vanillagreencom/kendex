@@ -5,7 +5,7 @@ import { waitFor } from "./lib/wait-for.mjs";
 import "./lib/debug-env.mjs";
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -18,6 +18,8 @@ import {
 } from "../src/index.ts";
 import * as piAi from "@earendil-works/pi-ai";
 import { buildModels } from "../src/models.ts";
+import { resolveGetModels } from "../src/pi-ai-compat.ts";
+import { DEBUG_LOG_PATH } from "../src/debug.ts";
 import { buildNativeProvider } from "../src/native-provider.ts";
 import { RATE_LIMIT_TOKEN } from "../src/rate-limit.ts";
 import { setExtensionApi } from "../src/bridge-state.ts";
@@ -667,6 +669,8 @@ describe("managed account stream rotation", () => {
 
 	it("passes an unknown model unchanged with one warning per session", async () => {
 		const unknownModel = { ...model, id: "claude-fixture-99" };
+		const logStart = existsSync(DEBUG_LOG_PATH) ? readFileSync(DEBUG_LOG_PATH, "utf8").length : 0;
+		const resolutionIds = () => [...readFileSync(DEBUG_LOG_PATH, "utf8").slice(logStart).matchAll(/\] model-resolution: unknown=([^\n]+)\n/g)].map((match) => match[1]);
 		const options = [];
 		__testSetSdkQueryFactory((input) => {
 			options.push(input.options);
@@ -681,9 +685,37 @@ describe("managed account stream rotation", () => {
 		assert.deepEqual(options.map((option) => option.model), ["claude-fixture-99", "claude-fixture-99", "claude-fixture-99"]);
 		assert.equal(options.every((option) => !Object.hasOwn(option, "fallbackModel")), true);
 		assert.deepEqual(notifications.map((notice) => notice.level), ["warning", "warning"]);
+		assert.deepEqual(resolutionIds(), [unknownModel.id, unknownModel.id]);
+		for (const notice of notifications) {
+			assert.equal(notice.message.includes("model-resolution:"), false);
+			assert.equal(notice.message.includes("\n"), false);
+		}
 		deleteQueryLane("unknown-a");
 		await collect(streamClaudeAgentSdk(unknownModel, context, { sessionId: "unknown-a" }));
 		assert.deepEqual(notifications.map((notice) => notice.level), ["warning", "warning", "warning"]);
+		assert.deepEqual(resolutionIds(), [unknownModel.id, unknownModel.id, unknownModel.id]);
+	});
+
+	it("rejects missing unknown-model debug details", () => {
+		assertSourceControl({
+			source: "src/index.ts",
+			before: 'debug(`model-resolution: unknown=${queryModel.id}`);',
+			after: 'if (false) debug(`model-resolution: unknown=${queryModel.id}`);',
+			suite: "unit-account-rotation-stream.mjs",
+			pattern: "passes an unknown model unchanged",
+			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
+		});
+	});
+
+	it("rejects machine-format unknown-model toast details", () => {
+		assertSourceControl({
+			source: "src/index.ts",
+			before: 'safeNotify(`Pi Claude uses ${queryModel.id} as requested. Claude Code chooses its fallback.`, "warning");',
+			after: 'safeNotify(`model-resolution: unknown=${queryModel.id}\\nPi Claude uses this model as requested.`, "warning");',
+			suite: "unit-account-rotation-stream.mjs",
+			pattern: "passes an unknown model unchanged",
+			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
+		});
 	});
 
 	it("rejects repeated unknown-model warnings", () => {
@@ -706,6 +738,40 @@ describe("managed account stream rotation", () => {
 		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "native-fallback" }));
 		assert.equal(events.find((event) => event.type === "done")?.message.model, "claude-fixture-98");
 		assert.deepEqual(notifications.map((notice) => notice.level), ["info"]);
+	});
+
+	it("uses registry labels for native fallback IDs and preserves unknown IDs", async () => {
+		const registry = (await resolveGetModels(piAi))("anthropic");
+		const known = registry.filter((entry) => entry.name !== entry.id).slice(0, 2);
+		assert.equal(known.length, 2);
+		const unknown = { id: "claude-fixture-98", name: "claude-fixture-98" };
+		for (const [original, fallback] of [[known[0], known[1]], [known[0], unknown], [unknown, known[1]], [unknown, unknown]]) {
+			__testSetSdkQueryFactory(() => fakeSdkQuery([
+				{ type: "system", subtype: "init", session_id: "registry-fallback-session" },
+				{ type: "system", subtype: "model_refusal_fallback", original_model: original.id, fallback_model: fallback.id },
+				{ type: "result", subtype: "success", result: "native-fallback-answer" },
+			], "a", observedState()));
+			notifications.length = 0;
+			const events = await collect(streamClaudeAgentSdk({ ...model, id: known[0].id, name: known[0].name }, context, { sessionId: "registry-fallback" }));
+			assert.equal(events.find((event) => event.type === "done")?.message.model, fallback.id);
+			assert.deepEqual(notifications.map((notice) => notice.level), ["info"]);
+			const { message } = notifications[0];
+			for (const entry of [original, fallback]) {
+				assert.equal(message.includes(entry.name), true);
+				if (entry.name !== entry.id) assert.equal(message.includes(entry.id), false);
+			}
+		}
+	});
+
+	it("rejects raw known model IDs in native fallback notices", () => {
+		assertSourceControl({
+			source: "src/consume-query.ts",
+			before: '${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)}',
+			after: '${originalModel} to ${fallbackModel}',
+			suite: "unit-account-rotation-stream.mjs",
+			pattern: "uses registry labels for native fallback IDs",
+			failure: /(?:not ok|✖) .*uses registry labels for native fallback IDs/,
+		});
 	});
 
 	it("rejects a suppressed native safety-fallback notice", () => {

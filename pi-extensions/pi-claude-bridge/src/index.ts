@@ -4,7 +4,7 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSdkMcpServer, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
 import { PROVIDER_ID, messageContentToText } from "./convert.js";
-import { buildModels } from "./models.js";
+import { MODELS, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, drainStrandedToolCalls, popContext, stackDepth, pushContext, failedTurnOutput, summarizeDroppedUserMessages, takeQueuedOrParkedResult, takeUnknownModelNotice, toolCallDrainCause, type DeferredUserMessage, type QueryRestartRequest } from "./query-state.js";
@@ -14,7 +14,6 @@ import { installSettingsCacheRefresh } from "./package-config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
 import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativeProvider } from "./native-provider.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
-import { resolveGetModels } from "./pi-ai-compat.js";
 // Re-exported from the extension entry point ON PURPOSE. Consuming apps
 // regenerate their vendored package.json with a CLOSED exports map
 // ({".": "./bundle/index.js"}), which makes Node reject BOTH a subpath import
@@ -103,7 +102,6 @@ export {
 
 // Compat (#2): use factory if available (pi-ai ≥0.66), else fall back to constructor (gsd-pi etc.)
 const _piAi = piAi as any;
-const getModels = await resolveGetModels(_piAi) as (provider: string) => Array<Model<any>>;
 const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 	typeof _piAi.createAssistantMessageEventStream === "function"
 		? _piAi.createAssistantMessageEventStream
@@ -177,14 +175,6 @@ type BridgeStreamOptions = SimpleStreamOptions & {
 	[ROTATION_STATE_KEY]?: RotationRequestState;
 	[HISTORY_RESTART_KEY]?: HistoryRestartState;
 };
-
-const MODELS = buildModels(getModels("anthropic"));
-
-function modelDisplayName(modelId: string): string {
-	return MODELS.find((model) => model.id === modelId)?.name ?? modelId;
-}
-
-
 
 // Pi doesn't pass tool results directly — it appends them to the context and calls
 // the provider again. Thin wrapper over extract-tool-results.js that adds per-turn
@@ -1036,7 +1026,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		? { ...model, id: account.modelId, name: modelDisplayName(account.modelId) }
 		: model;
 	if (!MODELS.some((entry) => entry.id === queryModel.id) && takeUnknownModelNotice()) {
-		safeNotify(`model-resolution: unknown=${queryModel.id}\nPi Claude uses this model as requested. Claude Code chooses its fallback.`, "warning");
+		debug(`model-resolution: unknown=${queryModel.id}`);
+		safeNotify(`Pi Claude uses ${queryModel.id} as requested. Claude Code chooses its fallback.`, "warning");
 	}
 	if (queryModel.id !== model.id) {
 		// Stamp the output model on EVERY attempt (each retry resets turn state),
