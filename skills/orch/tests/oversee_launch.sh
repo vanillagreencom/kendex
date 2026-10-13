@@ -108,26 +108,31 @@ fixture_worker() { # ROLE BARRIERS
   fixture_server_allocate b worker initial
   fixture_server_start || return 1
   first="${FIXTURE_ADDR%%,*}"
-  printf '%s\n' "$first" > "$barriers/$role.sockets"
-  printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.ready"
+  printf '%s\n' "$first" > "$barriers/$role.sockets.tmp"
+  mv "$barriers/$role.sockets.tmp" "$barriers/$role.sockets"
+  printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.ready.tmp"
+  mv "$barriers/$role.ready.tmp" "$barriers/$role.ready"
   if [[ "$role" == a ]]; then
     await_marker "$barriers/a.stop" || return 1
     fixture_server_stop "$first" || return 1
     touch "$barriers/a.stopped"
   else
     await_marker "$barriers/b.check" || return 1
-    tmux -S "$first" display-message -p '#{socket_path},#{pid},0' > "$barriers/b.answered" || return 1
+    tmux -S "$first" display-message -p '#{socket_path},#{pid},0' > "$barriers/b.answered.tmp" || return 1
+    mv "$barriers/b.answered.tmp" "$barriers/b.answered"
   fi
   await_marker "$barriers/$role.restart" || return 1
   [[ "$role" == a ]] || fixture_server_stop "$first" || return 1
   fixture_server_allocate b worker register
   # Compare before acquisition too: base reuse must fail on ownership,
   # even while kill-server's asynchronous shutdown is still in progress.
-  printf '%s\n' "$FIXTURE_SOCKET" >> "$barriers/$role.sockets"
-  fixture_distinct_sockets "$barriers/$role.sockets" || return 1
+  printf '%s\n' "$first" "$FIXTURE_SOCKET" > "$barriers/$role.sockets.tmp"
+  fixture_distinct_sockets "$barriers/$role.sockets.tmp" || return 1
+  mv "$barriers/$role.sockets.tmp" "$barriers/$role.sockets"
   fixture_server_start || return 1
   assert_eq "${FIXTURE_ADDR%%,*}" "$FIXTURE_SOCKET" "restarted fixture answers on its allocated fresh socket"
-  printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.restarted"
+  printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.restarted.tmp"
+  mv "$barriers/$role.restarted.tmp" "$barriers/$role.restarted"
   await_marker "$barriers/release" || return 1
   fixture_server_stop "$FIXTURE_SOCKET" || return 1
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
@@ -141,7 +146,7 @@ fi
 [[ $# -eq 0 ]] || exit 2
 
 test_concurrent_fixtures() {
-  local barriers="$TMP_ROOT/concurrent" run status a_addr b_addr a_pid b_pid control answer
+  local barriers="$TMP_ROOT/concurrent" run status a_addr b_addr a_pid b_pid control answer delayed
   mkdir -p "$barriers"
   echo "=== concurrent tmux fixture ownership ==="
   for run in a b; do
@@ -191,6 +196,38 @@ test_concurrent_fixtures() {
   done
   mutate_file "$control" $'\nTEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
     "$(printf '\nTEST_DIR=%q' "$TEST_DIR")"
+  delayed="$TMP_ROOT/control/delayed.sh"
+  cp "$control" "$delayed"
+  mutate_file "$delayed" "tmux -S \"\$first\" display-message -p '#{socket_path},#{pid},0' > \"\$barriers/b.answered.tmp\"" \
+    "{ touch \"\$barriers/b.writing\"; await_marker \"\$barriers/b.write\" || return 1; tmux -S \"\$first\" display-message -p '#{socket_path},#{pid},0'; } > \"\$barriers/b.answered.tmp\""
+  for run in atomic direct; do
+    barriers="$TMP_ROOT/$run-barriers"
+    mkdir -p "$barriers"
+    if [[ "$run" == direct ]]; then
+      mutate_file "$delayed" $'> "$barriers/b.answered.tmp" || return 1\n    mv "$barriers/b.answered.tmp" "$barriers/b.answered"' \
+        '> "$barriers/b.answered" || return 1'
+    fi
+    "$BASH" "$delayed" --fixture-worker b "$barriers" > "$barriers/b.log" 2>&1 &
+    FIXTURE_CHILDREN+=("$!")
+    await_marker "$barriers/b.ready" || { cat "$barriers/b.log"; return 1; }
+    touch "$barriers/b.check"
+    await_marker "$barriers/b.writing" || { cat "$barriers/b.log"; return 1; }
+    answer=unpublished
+    [[ ! -f "$barriers/b.answered" ]] || answer="$(cat "$barriers/b.answered")"
+    if [[ "$run" == atomic ]]; then
+      assert_eq "$answer" unpublished "parent cannot read a marker before its content is complete"
+    else
+      assert_eq "$answer" "" "control: direct publication lets the parent read an empty answer"
+    fi
+    touch "$barriers/b.write"
+    await_marker "$barriers/b.answered" || { cat "$barriers/b.log"; return 1; }
+    if [[ "$run" == atomic ]]; then
+      assert_eq "$(cat "$barriers/b.answered")" "$(cat "$barriers/b.ready")" "published delayed marker holds the complete answer"
+    fi
+    touch "$barriers/b.restart" "$barriers/release"
+    wait "${FIXTURE_CHILDREN[0]}" || { cat "$barriers/b.log"; return 1; }
+    FIXTURE_CHILDREN=()
+  done
   mutate_file "$control" $'\n    FIXTURE_NAME="$1-${2:0:1}-${3:0:1}"' $'\n    FIXTURE_NAME="$1-${2:0:1}-i"'
   barriers="$TMP_ROOT/control-barriers"
   "$BASH" "$control" --fixture-worker a "$barriers" > "$barriers/a.log" 2>&1 &
