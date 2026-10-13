@@ -823,7 +823,11 @@ fn history_problem(
 /// file the way the writer left it. A removal lands only in a file a
 /// registration or shim is judged in. The scope default transition follows
 /// those removals, using the base record's ownership and this pass's enabled
-/// installations through the planner's shared decision. The files are every `keys`
+/// installations through the planner's shared decision. The writer's
+/// [`crate::engine::config_edits::ConfigEditPlan::compose`] then orders and
+/// transforms those edits against the base text, including ownership release
+/// for a value the person changed or deleted before that revision. Replay
+/// discards its record changes. The files are every `keys`
 /// position the pass prints: each registration's edit targets and each
 /// instruction shim that is an edit, read off the same standings `verify`
 /// prints rows for, so no position is printed as keys with nothing here
@@ -875,6 +879,8 @@ pub fn foreign_since(
         Some(BaseRecord::Held(lock)) => lock.claude_project_default,
         Some(BaseRecord::Absent) | None => None,
     };
+    let mut replay_record = report.record.clone();
+    replay_record.claude_project_default = ownership;
     if let Some((path, edit)) = crate::engine::claude_project_default_edit(
         env,
         &report.plan.scope,
@@ -886,10 +892,10 @@ pub fn foreign_since(
     }
     by_file
         .into_iter()
-        .map(|(path, edits)| {
+        .map(|(path, mut edits)| {
             let standing = removals
                 .is_some()
-                .then(|| foreign_of(&base, &path, &edits))
+                .then(|| foreign_of(&base, &path, &mut edits, &mut replay_record))
                 .flatten()
                 .unwrap_or(Foreign::Unknown);
             (path, standing)
@@ -1067,7 +1073,8 @@ impl Base<'_> {
 fn foreign_of(
     base: &Base,
     path: &Path,
-    edits: &[crate::configedit::ConfigEdit],
+    edits: &mut [crate::configedit::ConfigEdit],
+    record: &mut Lock,
 ) -> Option<Foreign> {
     let text = match base.copy(path) {
         BaseCopy::Held(text) => text,
@@ -1075,10 +1082,8 @@ fn foreign_of(
         BaseCopy::Unreadable => return None,
     };
     let head = crate::fs::read_if_exists(path).ok()?.unwrap_or_default();
-    let applied = edits
-        .iter()
-        .try_fold(text, |text, edit| edit.apply(&text))
-        .ok()?;
+    let applied =
+        crate::engine::config_edits::ConfigEditPlan::compose(path, &text, edits, record).ok()?;
     Some(match applied == head {
         true => Foreign::Unchanged,
         false => Foreign::Changed,

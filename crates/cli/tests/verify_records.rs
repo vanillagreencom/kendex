@@ -1748,54 +1748,125 @@ fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order(
     );
 }
 
-#[test]
-#[allow(clippy::unwrap_used)]
-fn claude_scope_default_transitions_replay_without_changing_user_settings() {
-    let world = world();
-    let declared = format!(
-        "[sources.cat]\n{}\n[hooks.guard]\nsource = \"cat\"\n",
-        source_path(&world.catalog)
-    );
-    for (name, initial, change, legacy_missing, disable, expected) in [
-        ("owned-remove", None, None, false, true, None),
+type ClaudeDefaultReplayCase = (
+    &'static str,
+    Option<bool>,
+    Option<Option<bool>>,
+    ClaudeDefaultReplayBase,
+    bool,
+    Option<bool>,
+    bool,
+);
+
+const CLAUDE_DEFAULT_REPLAY_CASES: &[ClaudeDefaultReplayCase] = {
+    use ClaudeDefaultReplayBase::{BeforeInstall, Installed, Legacy, OwnedDeletion};
+    &[
+        ("owned-remove", None, None, Installed, true, None, false),
         (
             "preexisting-true",
             Some(true),
             None,
-            false,
+            Installed,
             true,
             Some(true),
+            false,
         ),
         (
             "preexisting-false",
             Some(false),
             None,
-            false,
+            Installed,
             true,
             Some(false),
+            false,
         ),
         (
             "released-false",
             None,
             Some(Some(false)),
-            false,
+            Installed,
             true,
             Some(false),
+            false,
         ),
         (
             "released-true",
             None,
             Some(Some(true)),
-            false,
+            Installed,
             true,
             Some(true),
+            false,
         ),
-        ("recorded-deletion", None, Some(None), false, true, None),
-        ("owned-active", None, None, false, false, Some(true)),
-        ("current-hook-insert", None, None, true, false, Some(true)),
-    ] {
+        (
+            "recorded-deletion",
+            None,
+            Some(None),
+            Installed,
+            true,
+            None,
+            false,
+        ),
+        (
+            "owned-active",
+            None,
+            None,
+            Installed,
+            false,
+            Some(true),
+            false,
+        ),
+        (
+            "current-hook-insert",
+            None,
+            None,
+            Legacy,
+            false,
+            Some(true),
+            false,
+        ),
+        (
+            "owned-deletion-before-apply",
+            None,
+            None,
+            OwnedDeletion,
+            false,
+            None,
+            false,
+        ),
+        (
+            "default-and-style-insert",
+            None,
+            None,
+            BeforeInstall,
+            false,
+            Some(true),
+            true,
+        ),
+    ]
+};
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn claude_scope_default_transitions_replay_without_changing_user_settings() {
+    let world = world();
+    write(
+        &world.catalog.join("output-styles/STE.md"),
+        "---\nname: STE\ndescription: Short sentences\nkeep-coding-instructions: true\n---\nWrite short sentences.\n",
+    );
+    commit(&world.catalog, "an output style");
+    let declared = format!(
+        "[sources.cat]\n{}\n[hooks.guard]\nsource = \"cat\"\n",
+        source_path(&world.catalog)
+    );
+    for &(name, initial, change, base, disable, expected, style) in CLAUDE_DEFAULT_REPLAY_CASES {
+        let declarations = if style {
+            format!("{declared}[output-styles.STE]\nsource = \"cat\"\n")
+        } else {
+            declared.clone()
+        };
         let project =
-            claude_default_replay_base(&world, name, &declared, initial, change, legacy_missing);
+            claude_default_replay_base(&world, name, &declarations, initial, change, base);
         let settings = project.join(".claude/settings.json");
         let permissions = serde_json::json!({"allow": ["Read"]});
         let mut user = serde_json::json!({"permissions": permissions});
@@ -1812,7 +1883,18 @@ fn claude_scope_default_transitions_replay_without_changing_user_settings() {
         let actual: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
         assert_eq!(actual["switchModelsOnFlag"].as_bool(), expected, "{name}");
-        assert_eq!(actual["permissions"], permissions, "{name}");
+        assert_eq!(
+            actual["permissions"],
+            if style {
+                serde_json::Value::Null
+            } else {
+                permissions
+            },
+            "{name}"
+        );
+        if style {
+            assert_eq!(actual["outputStyle"], "STE", "{name}");
+        }
         if disable {
             let mut retained = user.clone();
             retained
@@ -1827,17 +1909,33 @@ fn claude_scope_default_transitions_replay_without_changing_user_settings() {
         let (output, document) =
             verify_from(&world.home, &project, "project", Some("default-base"));
         assert!(output.status.success(), "{name}: {}", said(&output));
-        assert_eq!(
-            keys_positions(&document),
-            vec![(
-                "hook",
-                "guard",
+        let mut expected_keys = vec![(
+            "hook",
+            "guard",
+            ".claude/settings.json",
+            Some(Foreign::Unchanged),
+        )];
+        if style {
+            expected_keys.push((
+                "output-style",
+                "STE",
                 ".claude/settings.json",
-                Some(Foreign::Unchanged)
-            )],
-            "{name}"
-        );
+                Some(Foreign::Unchanged),
+            ));
+        }
+        let mut actual_keys = keys_positions(&document);
+        expected_keys.sort_by_key(|position| (position.0, position.1, position.2));
+        actual_keys.sort_by_key(|position| (position.0, position.1, position.2));
+        assert_eq!(actual_keys, expected_keys, "{name}");
     }
+}
+
+#[derive(Clone, Copy)]
+enum ClaudeDefaultReplayBase {
+    Installed,
+    Legacy,
+    OwnedDeletion,
+    BeforeInstall,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -1847,7 +1945,7 @@ fn claude_default_replay_base(
     declared: &str,
     initial: Option<bool>,
     change: Option<Option<bool>>,
-    legacy_missing: bool,
+    base: ClaudeDefaultReplayBase,
 ) -> PathBuf {
     let project = second_project(world, name, declared);
     let settings = project.join(".claude/settings.json");
@@ -1855,9 +1953,13 @@ fn claude_default_replay_base(
     if let Some(value) = initial {
         user["switchModelsOnFlag"] = value.into();
     }
-    write(&settings, &format!("{user}\n"));
-    let install = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
-    assert!(install.status.success(), "{name}: {}", said(&install));
+    if !matches!(base, ClaudeDefaultReplayBase::BeforeInstall) {
+        write(&settings, &format!("{user}\n"));
+    }
+    if !matches!(base, ClaudeDefaultReplayBase::BeforeInstall) {
+        let install = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+        assert!(install.status.success(), "{name}: {}", said(&install));
+    }
     if let Some(value) = change {
         // Release ownership before the base commit, including a true
         // choice reached by changing the owned default to false first.
@@ -1876,13 +1978,27 @@ fn claude_default_replay_base(
             }
         });
     }
-    if legacy_missing {
+    if matches!(
+        base,
+        ClaudeDefaultReplayBase::Legacy | ClaudeDefaultReplayBase::OwnedDeletion
+    ) {
         edit_json(&settings, |settings| {
             settings
                 .as_object_mut()
                 .unwrap()
                 .shift_remove("switchModelsOnFlag");
         });
+    }
+    if matches!(base, ClaudeDefaultReplayBase::OwnedDeletion) {
+        let record: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(project.join(RECORD)).unwrap()).unwrap();
+        assert_eq!(record["claudeProjectDefault"], "owned");
+    }
+    if matches!(base, ClaudeDefaultReplayBase::BeforeInstall) {
+        assert!(!settings.exists());
+        assert!(!project.join(RECORD).exists());
+    }
+    if matches!(base, ClaudeDefaultReplayBase::Legacy) {
         edit_json(&project.join(RECORD), |record| {
             record
                 .as_object_mut()
@@ -1890,7 +2006,9 @@ fn claude_default_replay_base(
                 .shift_remove("claudeProjectDefault");
         });
     }
-    commit(&project, "base settings and ownership");
+    if !matches!(base, ClaudeDefaultReplayBase::BeforeInstall) {
+        commit(&project, "base settings and ownership");
+    }
     git(&project, &["tag", "default-base"]);
     project
 }

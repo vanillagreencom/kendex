@@ -11,7 +11,7 @@ use crate::model::{HarnessId, ItemKind};
 /// per-edit preconditions against the same original bytes can never all
 /// hold once the first edit lands.
 #[derive(Debug, Default)]
-pub(super) struct ConfigEditPlan {
+pub(crate) struct ConfigEditPlan {
     pub(super) by_file: BTreeMap<PathBuf, (Vec<String>, Vec<ConfigEdit>)>,
 }
 
@@ -23,7 +23,7 @@ impl ConfigEditPlan {
     }
 
     /// Compose a shared-file mutation and record its selection ownership.
-    pub(super) fn compose(
+    pub(crate) fn compose(
         path: &Path,
         current: &str,
         edits: &mut [ConfigEdit],

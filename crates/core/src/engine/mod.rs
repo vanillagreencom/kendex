@@ -12,7 +12,7 @@ mod agent_skills;
 mod antigravity;
 pub(crate) mod bundles;
 mod catalog;
-mod config_edits;
+pub(crate) mod config_edits;
 mod copilot;
 pub mod deps;
 pub mod desired;
