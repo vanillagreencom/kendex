@@ -462,6 +462,7 @@ assert_eq "$(jq -s '[.[] | select(.config_dir | endswith("/.claude"))] | length'
 # record on disk, which the cleanup assertion catches.
 marker_control() { # NAME MATCH REPLACEMENT SEED-POLICY [WRITE-POLICY...]
   local name="$1" match="$2" replacement="$3" seed="$4" control_dir write state="$TMP_ROOT/marker-$1"
+  local FAKE_TODAY=2099-01-01
   shift 4
   control_dir="$(mutant_scripts "control-marker-$name" lanes)"
   mutate_file "$control_dir/lanes" "$match" "$replacement"
