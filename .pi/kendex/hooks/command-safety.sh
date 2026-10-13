@@ -499,7 +499,8 @@ environment_dump() { # command kind; arguments are already decoded data
   done
   # Heredoc input in a pipeline has no body-data permission. Main's known-read
   # evidence covers the whole context without inferring its receiving path.
-  if [ -n "$pipeline" ] && [ -n "$heredoc_input" ] && environment_main_evidence "$command_text" "${@:3}"; then return 0; fi
+  # The tokenizer snapshot survives body-local recursive input bindings.
+  if [ -n "$pipeline" ] && [ -n "$heredoc_input" ] && environment_main_evidence "$text" "${@:3}"; then return 0; fi
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); arg_roles=()
     proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""

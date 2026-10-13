@@ -277,6 +277,11 @@ environment_rows() {
 [2,"sudo -u NAME sh <<'EOF'\nprintenv\nEOF","sudo-heredoc-program"]
 [2,"cat <<'EOF' | bash\nenv\nEOF","piped-heredoc-program"]
 [2, "cat <<'EOF' \u007c& bash\nenv\nEOF", "copilot-merged-pipe-heredoc-program"]
+[2, "cat <<'FIRST' 3<<SECOND \u007c& bash\nenv\nFIRST\nordinary\nSECOND", "mixed-body-merged-pipeline"]
+[2, "cat 3<<FIRST <<'SECOND' \u007c& bash\nordinary\nFIRST\nprintenv\nSECOND", "reversed-mixed-body-merged-pipeline"]
+[2, "{ cat <<'FIRST' 3<<SECOND \u007c& sh; }\nenv\nFIRST\nordinary\nSECOND", "mixed-body-merged-pipeline-group"]
+[2, "cat <<'EOF' \u007c& bash; cat <<AUX\nenv\nEOF\nplain\nAUX", "merged-heredoc-cut-overwritten-by-later-unquoted-body"]
+[2, "cat <<AUX; cat <<'EOF' \u007c& bash\nplain\nAUX\nenv\nEOF", "merged-heredoc-cut-overwritten-by-earlier-unquoted-body"]
 [2, "cat <<'EOF' \u007c& bash\nenv\nEOF", "copilot-inline-merged-pipe-heredoc-program"]
 [2, "{ cat <<'EOF' \u007c& command env NAME=value bash; }\nenv\nEOF", "grouped-merged-piped-heredoc-program"]
 [2, "cat <<'EOF' \u007c& cat | sh -s\nprintenv\nEOF", "indirect-merged-piped-heredoc-program"]
@@ -919,7 +924,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
       defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
       defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
-      defect == "heredoc-pipeline-cut" { swap("environment_main_evidence \"$command_text\" \"${@:3}\"", "false") }
+      defect == "heredoc-pipeline-cut" { swap("environment_main_evidence \"$text\" \"${@:3}\"", "false") }
+      defect == "heredoc-original-input" { swap("environment_main_evidence \"$text\" \"${@:3}\"", "environment_main_evidence \"$command_text\" \"${@:3}\"") }
       defect == "persistent-input-cut" { swap("[ -z \"$data_source\" ] || { mode=dump-unknown; return; }", "[ -z \"$data_source\" ] || :") }
       defect == "grouped-operands-cut" { swap("if environment_main_evidence \"${args[@]:pos}\"; then", "if false; then") }
       defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
@@ -989,6 +995,12 @@ descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expec
 heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
 heredoc-pipeline-cut|FAIL environment: copilot-merged-pipe-heredoc-program: exit=0 expected=2
 heredoc-pipeline-cut|FAIL environment: pipeline-heredoc-data-retains-main-refusal: exit=0 expected=2
+heredoc-original-input|FAIL environment: mixed-body-merged-pipeline: exit=0 expected=2
+heredoc-original-input|FAIL environment: reversed-mixed-body-merged-pipeline: exit=0 expected=2
+heredoc-original-input|FAIL environment: mixed-body-merged-pipeline-group: exit=0 expected=2
+heredoc-original-input|FAIL environment: merged-heredoc-cut-overwritten-by-later-unquoted-body: exit=0 expected=2
+heredoc-original-input|FAIL environment: merged-heredoc-cut-overwritten-by-earlier-unquoted-body: exit=0 expected=2
+heredoc-pipeline-cut|FAIL environment: mixed-body-merged-pipeline: exit=0 expected=2
 persistent-input-cut|FAIL environment: carried-shell-descriptor-program: exit=0 expected=2
 persistent-input-cut|FAIL environment: carried-source-descriptor-program: exit=0 expected=2
 grouped-operands-cut|FAIL environment: shell-command-string-multiple-option-operands: exit=0 expected=2
