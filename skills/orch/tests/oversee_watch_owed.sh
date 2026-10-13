@@ -1092,6 +1092,17 @@ shared_reads_world() {
   jq 'map(select(.state == "Verifying") | .created_at = (if .id == "KEN-39" then "2026-09-01T00:00:00.142Z" else "2026-09-20T00:00:00Z" end))' \
     "$STUB_DIR/tracker.out" >"$STUB_DIR/shared-reads.json"
   mv -- "$STUB_DIR/shared-reads.json" "$STUB_DIR/tracker.out"
+  if [[ $# -gt 1 ]]; then
+    jq 'map(select(.id == "KEN-30" or .id == "KEN-31" or .id == "KEN-32" or .id == "KEN-39"))
+      | .[0].description as $release | map(.description = $release)' \
+      "$STUB_DIR/tracker.out" >"$STUB_DIR/shared-reads.json"
+    mv -- "$STUB_DIR/shared-reads.json" "$STUB_DIR/tracker.out"
+    jq --argjson copies "$2" '[to_entries[] as $item | range($copies) as $n
+      | {number: ($item.key * $copies + $n + 1), headRefName: ($item.value.id | ascii_downcase), title: $item.value.id,
+         mergedAt: ("2026-10-01T00:00:" + ($item.key | tostring) + "0Z"),
+         mergeCommit: {oid: "1111111111111111111111111111111111111111"}}]' \
+      "$STUB_DIR/tracker.out" >"$STUB_DIR/merged.json"
+  fi
 }
 shared_reads_contract() {
   local count="${1:-1}" batches="${2:-4}"
@@ -1122,6 +1133,31 @@ for repo in owner/repo owner/other; do
   assert_eq "$(grep -c "^pr list --repo $repo .*--state merged" "$STUB_DIR/gh.calls" || true)" 4 "$repo shares its merged pull request batches" "$ERR"
   assert_eq "$(grep -c "^release list --repo $repo " "$STUB_DIR/gh.calls" || true)" 1 "$repo has one release read" "$ERR"
 done
+# GitHub can return complete batches whose combined repository cache exceeds
+# one search page. A capped batch still refuses the whole inventory.
+while IFS='|' read -r name copies want; do
+  shared_reads_world "verifying_shared_history_$name" "$copies"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  if [[ "$want" == complete ]]; then
+    shared_reads_contract 1 2
+    assert_eq "$(verification_lines | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^merged=/) print $2 " " $i }')" \
+      'KEN-30 merged=2026-10-01T00:00:00Z
+KEN-31 merged=2026-10-01T00:00:10Z
+KEN-32 merged=2026-10-01T00:00:20Z
+KEN-39 merged=2026-10-01T00:00:30Z' 'each shared-history item receives its own matched merge' "$ERR"
+    MUTANT_DIR="$TMP_ROOT/shared-history-cap"
+    MUTANT_WATCH="$(mutant_scripts shared-history-cap/orch oversee-watch)/oversee-watch" || exit 1
+    ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+    ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+    mutate_verifying "$MUTANT_WATCH" '[[ -n "${6:-}" || "$rows" -lt "$MERGED_SEARCH_PAGE" ]]' '[[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]]'
+    WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  fi
+  assert_eq "rc=$RC lines=$(verification_lines) key=$(grep -cxF 'oversee-watch: merged-search-truncated repo=owner/repo item=KEN-30 limit=1000' "$ERR" || true)" \
+    'rc=2 lines= key=1' "$name: the incomplete batch or aggregate-cap control refuses verification" "$ERR"
+done <<'ROWS'
+complete|260|complete
+capped|334|capped
+ROWS
 while IFS='|' read -r prefix batches from to; do
   shared_reads_world "verifying_query_limits_$batches"
   jq --arg prefix "$prefix" '[range(70) as $n | .[0] |
