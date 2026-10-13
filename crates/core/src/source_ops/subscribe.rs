@@ -103,17 +103,22 @@ fn subscribed(
 
 /// A subscription judged but not written: the declaration a reference
 /// parses to, the alias it takes, and the manifest it was judged against.
-struct Declared {
-    manifest: Manifest,
-    name: String,
-    decl: SourceDecl,
-    lead: Option<String>,
+pub(super) struct Declared {
+    pub(super) manifest: Manifest,
+    pub(super) name: String,
+    pub(super) decl: SourceDecl,
+    pub(super) lead: Option<String>,
 }
 
 /// Parse a reference and judge it against the scope: one repository per
 /// scope, an alias that is free or already points here. Nothing is
 /// written; the caller decides which plan the declaration rides in.
-fn declared(env: &Env, scope: &Scope, reference: &str, alias: Option<&str>) -> Result<Declared> {
+pub(super) fn declared(
+    env: &Env,
+    scope: &Scope,
+    reference: &str,
+    alias: Option<&str>,
+) -> Result<Declared> {
     let (decl, lead) = match crate::source_ref::parse_typed(reference)? {
         crate::source_ref::SourceRef::Remote { repo, rev } => (
             SourceDecl {
@@ -428,7 +433,7 @@ fn normalize_tree(
 /// The §4.1 preview line: every subscribe names its destination scope,
 /// manifest path, and the source's alias, repo, and revision — which
 /// scope a click mutates is never inferred from the page being looked at.
-fn announce_subscription(
+pub(super) fn announce_subscription(
     env: &Env,
     report: &mut EngineReport,
     scope: &Scope,

@@ -178,7 +178,7 @@ pub(crate) fn persist_and_plan_with(
 /// [`crate::source_ref::parse_typed`]: `owner/repo[@rev]`, a full remote
 /// URL, a local path, a GitHub tree URL, or a skills.sh package URL.
 pub fn add_source(env: &Env, scope: &Scope, name: &str, reference: &str) -> Result<EngineReport> {
-    Ok(subscribe(env, scope, reference, Some(name))?.report)
+    prepare_source_change(env, scope, SourceChange::Add { name, reference })?.plan(env)
 }
 
 mod collection;
@@ -190,39 +190,109 @@ pub use subscribe::{
 };
 
 pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineReport> {
+    prepare_source_change(env, scope, SourceChange::Remove { name })?.plan(env)
+}
+
+/// Disabling deactivates the source's installations in place; re-enabling
+/// restores them. Other packages hold at their recorded commit.
+pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Result<EngineReport> {
+    prepare_source_change(env, scope, SourceChange::SetEnabled { name, enabled })?.plan(env)
+}
+
+/// The requested subscription edit, prepared in memory before a
+/// multi-scope command checks the catalogs its resulting manifests select.
+#[derive(Clone, Copy)]
+pub enum SourceChange<'a> {
+    Add { name: &'a str, reference: &'a str },
+    Remove { name: &'a str },
+    SetEnabled { name: &'a str, enabled: bool },
+}
+
+/// A validated subscription change that has not rendered or written.
+pub struct PreparedSourceChange {
+    scope: Scope,
+    manifest: Manifest,
+    subscription: Option<(String, manifest::SourceDecl)>,
+}
+
+impl PreparedSourceChange {
+    /// Check the post-change reading, including surviving recorded pins.
+    /// Disabling or removing a source does not select its former catalog.
+    pub fn check_catalog_compatibility(&self, env: &Env) -> Result<()> {
+        crate::engine::check_catalog_compatibility_for(
+            env,
+            &self.scope,
+            &self.manifest,
+            &PlanOptions::locked(),
+        )
+    }
+
+    pub fn plan(self, env: &Env) -> Result<EngineReport> {
+        let mut report = persist_and_plan(env, &self.scope, self.manifest)?;
+        if let Some((name, decl)) = self.subscription {
+            subscribe::announce_subscription(env, &mut report, &self.scope, &name, &decl);
+        }
+        Ok(report)
+    }
+}
+
+pub fn prepare_source_change(
+    env: &Env,
+    scope: &Scope,
+    change: SourceChange<'_>,
+) -> Result<PreparedSourceChange> {
+    if let SourceChange::Add { name, reference } = change {
+        let subscribe::Declared {
+            mut manifest,
+            name,
+            decl,
+            ..
+        } = subscribe::declared(env, scope, reference, Some(name))?;
+        manifest.sources.insert(name.clone(), decl.clone());
+        return Ok(PreparedSourceChange {
+            scope: scope.clone(),
+            manifest,
+            subscription: Some((name, decl)),
+        });
+    }
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
+    let name = match change {
+        SourceChange::Remove { name } | SourceChange::SetEnabled { name, .. } => name,
+        SourceChange::Add { .. } => unreachable!("handled before the manifest load"),
+    };
     if !manifest.sources.contains_key(name) {
         return Err(CoreError::UnknownSource {
             name: name.to_owned(),
         });
     }
-    let used_by = referents(&manifest, name);
-    if !used_by.is_empty() {
-        return Err(CoreError::ManifestInvalid {
-            path: manifest::manifest_path(env, scope),
-            findings: vec![manifest::Finding {
-                location: format!("sources.{name}"),
-                problem: format!("still referenced by {}", used_by.join(", ")),
-                fix: "remove those items first, or disable the source instead".to_owned(),
-            }],
-        });
+    match change {
+        SourceChange::Remove { name } => {
+            let used_by = referents(&manifest, name);
+            if !used_by.is_empty() {
+                return Err(CoreError::ManifestInvalid {
+                    path: manifest::manifest_path(env, scope),
+                    findings: vec![manifest::Finding {
+                        location: format!("sources.{name}"),
+                        problem: format!("still referenced by {}", used_by.join(", ")),
+                        fix: "remove those items first, or disable the source instead".to_owned(),
+                    }],
+                });
+            }
+            manifest.sources.remove(name);
+        }
+        SourceChange::SetEnabled { name, enabled } => {
+            let Some(decl) = manifest.sources.get_mut(name) else {
+                unreachable!("source checked above");
+            };
+            decl.enabled = enabled;
+        }
+        SourceChange::Add { .. } => unreachable!("handled before the manifest load"),
     }
-    manifest.sources.remove(name);
-    persist_and_plan(env, scope, manifest)
-}
-
-/// Disabling deactivates the source's installations in place; re-enabling
-/// restores them (they stay declared throughout — not drift). Every other
-/// package holds at its recorded commit, as [`remove_source`] holds it.
-pub fn toggle_source(env: &Env, scope: &Scope, name: &str, enabled: bool) -> Result<EngineReport> {
-    let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    let Some(decl) = manifest.sources.get_mut(name) else {
-        return Err(CoreError::UnknownSource {
-            name: name.to_owned(),
-        });
-    };
-    decl.enabled = enabled;
-    persist_and_plan(env, scope, manifest)
+    Ok(PreparedSourceChange {
+        scope: scope.clone(),
+        manifest,
+        subscription: None,
+    })
 }
 
 #[cfg(test)]

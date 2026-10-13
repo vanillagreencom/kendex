@@ -44,6 +44,7 @@ pub fn agent_model_request(
         let mut state = crate::engine::desired::DesiredState::default();
         let expansion =
             crate::engine::expansion::expand_installed(env, &scope, &manifest, &lock, &mut state);
+        state.refuse_catalog().map_err(|error| error.to_string())?;
         if !state.unreadable_catalogs.is_empty()
             || state.declaration_status == crate::engine::DeclarationStatus::Incomplete
         {

@@ -1,6 +1,8 @@
 use clap::{Args, Subcommand};
 use kendex_core::env::Env;
+use kendex_core::model::Scope;
 use kendex_core::{remote, source_ops};
+use source_ops::SourceChange;
 
 use super::engine_common::apply_report;
 use super::{CliResult, out, resolve_scopes, say, scope_label};
@@ -91,7 +93,26 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
         }
         return Ok(());
     }
-    for scope in resolve_scopes(env, filter)? {
+    let scopes = resolve_scopes(env, filter)?;
+    let change = match &command {
+        SourceCommand::Add {
+            name, reference, ..
+        } => Some(SourceChange::Add { name, reference }),
+        SourceCommand::Remove { name, .. } => Some(SourceChange::Remove { name }),
+        SourceCommand::Enable { name, .. } => Some(SourceChange::SetEnabled {
+            name,
+            enabled: true,
+        }),
+        SourceCommand::Disable { name, .. } => Some(SourceChange::SetEnabled {
+            name,
+            enabled: false,
+        }),
+        SourceCommand::List | SourceCommand::Refresh { .. } => None,
+    };
+    if let Some(change) = change {
+        return write_changes(env, &command, scopes, change);
+    }
+    for scope in scopes {
         match &command {
             SourceCommand::List => {
                 for row in source_ops::list_sources(env, &scope)? {
@@ -110,38 +131,10 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
                     ));
                 }
             }
-            SourceCommand::Add {
-                name, reference, ..
-            } => {
-                let report = source_ops::add_source(env, &scope, name, reference)?;
-                apply_report(env, &report)?;
-                say(&format!(
-                    "{}: added marketplace '{name}'",
-                    scope_label(&scope)
-                ));
-            }
-            SourceCommand::Remove { name, .. } => {
-                let report = source_ops::remove_source(env, &scope, name)?;
-                apply_report(env, &report)?;
-                say(&format!(
-                    "{}: removed marketplace '{name}'",
-                    scope_label(&scope)
-                ));
-            }
-            SourceCommand::Enable { name, .. } | SourceCommand::Disable { name, .. } => {
-                let enabled = matches!(command, SourceCommand::Enable { .. });
-                let report = source_ops::toggle_source(env, &scope, name, enabled)?;
-                apply_report(env, &report)?;
-                say(&format!(
-                    "{}: marketplace '{name}' {}",
-                    scope_label(&scope),
-                    if enabled {
-                        "switched on"
-                    } else {
-                        "switched off"
-                    }
-                ));
-            }
+            SourceCommand::Add { .. }
+            | SourceCommand::Remove { .. }
+            | SourceCommand::Enable { .. }
+            | SourceCommand::Disable { .. } => unreachable!("handled before the read loop"),
             SourceCommand::Refresh { stale: true } => unreachable!("handled above the scope loop"),
             SourceCommand::Refresh { stale: false } => {
                 let Some(manifest) = kendex_core::manifest::load_for_mutation(
@@ -160,6 +153,53 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
                     "{}: marketplaces checked for updates",
                     scope_label(&scope)
                 ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_changes(
+    env: &Env,
+    command: &SourceCommand,
+    scopes: Vec<Scope>,
+    change: SourceChange<'_>,
+) -> CliResult {
+    let prepared: Vec<_> = scopes
+        .iter()
+        .map(|scope| source_ops::prepare_source_change(env, scope, change))
+        .collect();
+    for change in prepared.iter().flatten() {
+        if let Err(error) = change.check_catalog_compatibility(env)
+            && error.is_catalog_compatibility()
+        {
+            return Err(error.into());
+        }
+    }
+    for (scope, change) in scopes.into_iter().zip(prepared) {
+        apply_report(env, &change?.plan(env)?)?;
+        match command {
+            SourceCommand::Add { name, .. } => say(&format!(
+                "{}: added marketplace '{name}'",
+                scope_label(&scope)
+            )),
+            SourceCommand::Remove { name, .. } => say(&format!(
+                "{}: removed marketplace '{name}'",
+                scope_label(&scope)
+            )),
+            SourceCommand::Enable { name, .. } | SourceCommand::Disable { name, .. } => {
+                say(&format!(
+                    "{}: marketplace '{name}' {}",
+                    scope_label(&scope),
+                    if matches!(command, SourceCommand::Enable { .. }) {
+                        "switched on"
+                    } else {
+                        "switched off"
+                    }
+                ))
+            }
+            SourceCommand::List | SourceCommand::Refresh { .. } => {
+                unreachable!("only subscription edits are prepared")
             }
         }
     }

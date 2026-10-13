@@ -507,6 +507,7 @@ fn installed_native_agent_fixture(
     home: &Path,
     project: &Path,
     catalog: &Path,
+    bundled: bool,
 ) -> Result<kendex_core::env::Env, Box<dyn std::error::Error>> {
     use kendex_core::{env::Env, model::Scope};
     use std::fs;
@@ -516,10 +517,19 @@ fn installed_native_agent_fixture(
         catalog.join("agents/worker.md"),
         "---\nname: worker\ndescription: Work\nmodel: light\n---\nBody.\n",
     )?;
+    let declaration = if bundled {
+        fs::write(
+            catalog.join("kendex.toml"),
+            "[bundles.team]\nagents = ['worker']\n",
+        )?;
+        "[bundles.team]"
+    } else {
+        "[agents.worker]"
+    };
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
+            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n{declaration}\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
             crate::test_util::source_path(catalog)
         ),
     )?;
@@ -532,6 +542,68 @@ fn installed_native_agent_fixture(
     )?;
     kendex_core::apply::execute(&env, &report.plan)?;
     Ok(env)
+}
+
+#[test]
+fn native_agent_lookup_preserves_the_catalog_compatibility_cause() {
+    for (key, diagnostic) in [
+        (
+            "min_kendex = '999999.0.0'",
+            format!(
+                "catalog-needs-engine min=999999.0.0 engine={}",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ),
+        (
+            "min_kendex = true",
+            format!(
+                "catalog-min-invalid min=boolean engine={} reason=expected-string",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ),
+        (
+            "min_kendex = 'bad'",
+            format!(
+                "catalog-min-invalid min=bad engine={} reason=invalid-semver",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = home.join("consumer");
+        let catalog = home.join("catalog");
+        // An installed bundle makes expansion read the catalog before
+        // lookup can resolve a direct managed declaration.
+        installed_native_agent_fixture(&home, &project, &catalog, true).unwrap();
+        std::fs::write(catalog.join("kendex.toml"), key).unwrap();
+        let paths = [
+            project.join("kendex.toml"),
+            project.join(".kendex-lock.json"),
+            project.join(".claude/agents/worker.md"),
+        ];
+        let before = paths.each_ref().map(|path| std::fs::read(path).unwrap());
+        let output = invoke_at(
+            &home,
+            &project,
+            &["tier-model", "claude", "--agent", "worker", "--json"],
+            None,
+            None,
+        );
+        assert_eq!(output.status.code(), Some(1));
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["resolution"]["tag"], "refused");
+        assert_eq!(response["resolution"]["code"], "agent-request-unreadable");
+        // The native caller consumes this JSON cause across the String boundary.
+        assert_eq!(
+            response["resolution"]["diagnostics"][0]["cause"],
+            diagnostic
+        );
+        assert_eq!(
+            paths.each_ref().map(|path| std::fs::read(path).unwrap()),
+            before
+        );
+    }
 }
 
 fn globally_installed_class_agent_fixture(
@@ -583,7 +655,7 @@ fn native_agent_lookup_retains_intent_and_refuses_edited_managed_bytes() {
     let home = rooted(&tmp);
     let project = home.join("project");
     let catalog = home.join("catalog");
-    let env = installed_native_agent_fixture(&home, &project, &catalog).unwrap();
+    let env = installed_native_agent_fixture(&home, &project, &catalog, false).unwrap();
     let evidence = json!({"protocol":"model-resolution-v1","harness":"claude","account":"fixture","host":"host","providers":["anthropic"],"currentProvider":null,"models":{"tag":"failed","source":"fixture:reader","cause":"read failed"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]});
     for (agent, tag, class) in [
         ("worker", "harness-default", Some("fast")),

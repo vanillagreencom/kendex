@@ -60,14 +60,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // Every repository is fetched and every member proven present before
     // the first mutation — a collection whose third repository is broken
     // must refuse up front, not leave the first two half-installed.
-    for step in &steps {
-        prevalidate(env, step)?;
-    }
-    kendex_core::engine::check_catalog_compatibility(
-        env,
-        scope,
-        &kendex_core::engine::PlanOptions::locked(),
-    )?;
+    prevalidate(env, scope, &steps)?;
     // Prevalidation refuses a broken collection before the first
     // mutation, so a failure here is a repository that moved under the
     // run. The steps before it are installed either way, and the error is
@@ -308,18 +301,11 @@ fn install_step(
         output_styles: step.output_styles.clone(),
         ..AddRequest::default()
     };
-    // The fetch landed in the prevalidation for a fresh subscription, at
-    // the snapshot commit the reference carries; a reused one may track a
-    // branch, and its declared revision is what the install reads.
+    // Prevalidation fetched both snapshots and reused subscriptions. The
+    // write loop reads those checked cache resolutions without fetching a
+    // branch that could select another catalog after an earlier write.
     let (report, subscribed) = match &step.action {
         SourceAction::Reuse { name } => {
-            if let kendex_core::manifest::ManifestFile::Current(manifest) =
-                kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope))?
-                && let Some(decl) = manifest.sources.get(name)
-                && let Some(repo) = decl.repo.clone()
-            {
-                kendex_core::remote::sync(env, &repo, decl.rev.as_deref())?;
-            }
             let report = ops::add(
                 env,
                 scope,
@@ -362,9 +348,36 @@ fn install_step(
     Ok(())
 }
 
-/// Fetch one step's repository at its snapshot commit and prove every
-/// member exists there, mutating nothing.
-fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> CliResult {
+/// Fetch all the readings the install uses before its first render. The
+/// resolver's snapshot may match a reused subscription's stale cache even
+/// though its upstream branch already requires a newer engine.
+fn prevalidate(
+    env: &Env,
+    scope: &Scope,
+    steps: &[kendex_core::source_ops::CollectionStep],
+) -> CliResult {
+    for step in steps {
+        prevalidate_snapshot(env, step)?;
+    }
+    let manifest = kendex_core::engine::ops::manifest_for_reading(env, scope)?;
+    for step in steps {
+        if let SourceAction::Reuse { name } = &step.action
+            && let Some(decl) = manifest.sources.get(name)
+            && let Some(repo) = &decl.repo
+        {
+            kendex_core::remote::sync(env, repo, decl.rev.as_deref())?;
+        }
+    }
+    kendex_core::engine::check_catalog_compatibility_for(
+        env,
+        scope,
+        &manifest,
+        &kendex_core::engine::PlanOptions::locked(),
+    )?;
+    Ok(())
+}
+
+fn prevalidate_snapshot(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> CliResult {
     let resolution = kendex_core::remote::sync(env, &step.repo, step.commit.as_deref())
         .map_err(|error| format!("{}: {error}", step.repo))?;
     let sealed = kendex_core::source_read::SealedSource::open(&resolution.root)?;

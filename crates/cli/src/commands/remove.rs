@@ -39,7 +39,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         if let Err(error) = kendex_core::engine::check_catalog_compatibility(
             env,
             scope,
-            &kendex_core::engine::PlanOptions::current(),
+            &kendex_core::engine::PlanOptions::locked(),
         ) && error.is_catalog_compatibility()
         {
             return Err(error.into());

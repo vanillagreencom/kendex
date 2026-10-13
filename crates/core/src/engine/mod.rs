@@ -831,8 +831,19 @@ pub fn check_catalog_compatibility(env: &Env, scope: &Scope, options: &PlanOptio
     let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
         return Ok(());
     };
-    crate::source::check_catalog_compatibility(env, scope, &manifest)?;
+    check_catalog_compatibility_for(env, scope, &manifest, options)
+}
+
+/// Check a prepared manifest before rendering. Source edits and fresh
+/// collection installs select a manifest that is not yet on disk.
+pub fn check_catalog_compatibility_for(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    options: &PlanOptions,
+) -> Result<()> {
+    crate::source::check_catalog_compatibility(env, scope, manifest)?;
     let lock = crate::lock::load(&lock_path(env, scope))?;
-    desired::hold::held_planning(env, scope, &manifest, &lock, options)?;
+    desired::hold::held_planning(env, scope, manifest, &lock, options)?;
     Ok(())
 }
