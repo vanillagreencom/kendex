@@ -234,6 +234,24 @@ environment_rows() {
     [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
+[2,"set \"${!NO_SUCH_PREFIX@}\"","copilot-set-indirect-name-spread-empty"]
+[2,"eval \"$MAYBE_EMPTY\" 'env'","copilot-eval-empty-earlier-operand"]
+[2,"eval :; then env -u \"$@\" MISSING; fi","copilot-suffix-env-empty-spread-shipped-eval"]
+[2,"set \"$ONE\" \"$TWO\"","set-only-unknown-operands-retains-main-refusal"]
+[2,"bash wrapper.sh set \"${!NO_SUCH_PREFIX@}\"","suffix-set-indirect-spread-retains-main-refusal"]
+[2,"{ eval \"$MAYBE_EMPTY\" 'env'; }","grouped-evaluator-unproved-input"]
+[2,"eval $PREFIX \"env\"","unquoted-evaluator-unproved-input"]
+[2,"eval \"$PREFIX\" \"printenv NAME\"","unproved-evaluator-named-read-retains-main-refusal"]
+[0,"eval \"$PREFIX\" \"printf done\"","unproved-evaluator-without-known-read"]
+[2,"bash -c 'env -u \"$@\" __KEN_MISSING__'","nested-unset-unproved-option-operand"]
+[2,"eval 'env --unset \"$@\" __KEN_MISSING__'","literal-evaluator-unproved-unset-operand"]
+[2,"bash -c 'env -C \"$@\" .'","nested-chdir-unproved-option-operand"]
+[2,"eval 'env --chdir \"$@\" .'","literal-evaluator-unproved-chdir-operand"]
+[2,"bash wrapper.sh env -u \"$@\" __KEN_MISSING__","suffix-unset-unproved-option-operand"]
+[2,"if :; then env -u \"$@\" __KEN_MISSING__; fi","conditional-unset-unproved-option-operand"]
+[2,"bash -c 'command env -u \"$@\" __KEN_MISSING__'","forwarded-nested-unproved-option-operand"]
+[0,"env -u \"$@\" __KEN_MISSING__","direct-unset-unproved-operand-keeps-main-behavior"]
+[0,"env -C \"$@\" .","direct-chdir-unproved-operand-keeps-main-behavior"]
 [0,"cat <<< 'env'\nprintf done","quoted-here-string-data"]
 [0,"cat <<< \"$json\"","variable-here-string-data"]
 [2,"cat <<< 'ordinary'\nenv","dump-after-single-quoted-here-string"]
@@ -366,7 +384,6 @@ environment_rows() {
 [2,"set \"${LIST[@]}\"","set-quoted-array-can-disappear"]
 [2,"bash wrapper.sh set $NAME","suffix-set-variable-can-disappear"]
 [0,"set -o \"$NAME\"","set-literal-option-stays-present"]
-[0,"{ set \"$NAME\"; }","suffix-set-quoted-variable-stays-present"]
 [2,"printenv","bare-printenv"]
 [2,"export -p","export-list"]
 [2,"set","shell-state"]
@@ -492,7 +509,6 @@ environment_rows() {
 [0,"bash wrapper.sh set -- args","wrapper-set-operands"]
 [0,"bash wrapper.sh set -- env printenv set","wrapper-set-producer-operands"]
 [0,"bash wrapper.sh printenv env set","wrapper-named-producer-operands"]
-[0,"set \"$NAME\"","set-variable-operand"]
 [0,"bash wrapper.sh 'set -euo pipefail'","wrapper-quoted-set-data"]
 [0,"{ printf '%s\\n' start > receipt; set -o pipefail; command-name args | tee -a receipt; printf 'exit=%s\\n' \"$?\" >> receipt; }","strict-set-receipt"]
 [2,"set > out","bare-set-redirect"]
@@ -877,12 +893,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         swap("candidate<${#stage_args[@]}", "candidate<1 && candidate<${#stage_args[@]}")
       }
       defect == "suffix-stage-only" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=1; fi") }
-      defect == "suffix-launcher" { swap("environment_producer shell", "environment_producer shell; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
-      defect == "suffix-set" { swap("environment_producer shell", "environment_producer shell; [ \"${stage_args[$candidate]}\" != set ] || mode=dump-unknown") }
+      defect == "suffix-launcher" { swap("environment_producer shell conservative", "environment_producer shell conservative; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
+      defect == "suffix-set" { swap("environment_producer shell conservative", "environment_producer shell conservative; [ \"${stage_args[$candidate]}\" != set ] || mode=dump-unknown") }
       defect == "suffix-quotes" { swap("[ \"${stage_roles[$candidate]}\" = argument ] &&", "false &&") }
       defect == "quoted-heredoc" && /^              for \(\(doc=0;/ { swap("doc<${#heredocs[@]}", "doc<0") }
       defect == "heredoc-resume" { swap("heredoc_bodies[doc]=$body", "heredoc_bodies[doc]=$body; i=$text_length") }
-      defect == "unset-operand" { swap("-u | --unset | -C | --chdir) pos=$((pos + 2))", "-u | --unset | -C | --chdir) pos=$((pos + 1))") }
+      defect == "unset-operand" && $0 == "                pos=$((pos + 2)) ;;" { swap("pos=$((pos + 2))", "pos=$((pos + 1))") }
       defect == "head-basename" && $0 == "    value=${args[$cursor]}" { swap("value=${args[$cursor]}", "value=${args[$cursor]##*/}") }
       defect == "quoted-head" && $0 == "    if [ \"${arg_kinds[$cursor]}\" = literal ] && [ -n \"${arg_unquoted[$cursor]}\" ]; then" {
         swap("[ -n \"${arg_unquoted[$cursor]}\" ]", "true")
@@ -907,6 +923,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
       defect == "nested-stdin" { swap("[ -z \"$stdin_program\" ] || stage_stdin[stage]=1", "[ -z \"$stdin_program\" ] || :") }
       defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
+      defect == "set-literal-proof" && /^        for \(\(j=pos;/ { swap("[ \"${arg_kinds[$j]}\" != literal ] || named=1", "named=1") }
+      defect == "evaluator-input-proof" { swap("if [ -n \"$unproved\" ] && environment_main_evidence \"$source\"; then", "if false; then") }
+      defect == "env-option-proof" { swap("[ -z \"${2:-}\" ] || [ \"${arg_kinds[$((pos + 1))]:-}\" = literal ] || { mode=dump-unknown; return; }", ":") }
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
       defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
@@ -976,6 +995,10 @@ invocation-operand|FAIL environment: shell-command-string-positive-option-operan
 empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
 nested-stdin|FAIL environment: conditional-wrapper-stdin-program: exit=0 expected=2
 set-unknown|FAIL environment: set-unquoted-variable-can-disappear: exit=0 expected=2
+set-literal-proof|FAIL environment: copilot-set-indirect-name-spread-empty: exit=0 expected=2
+evaluator-input-proof|FAIL environment: copilot-eval-empty-earlier-operand: exit=0 expected=2
+env-option-proof|FAIL environment: nested-unset-unproved-option-operand: exit=0 expected=2
+env-option-proof|FAIL environment: nested-chdir-unproved-option-operand: exit=0 expected=2
 suffix-launcher|FAIL environment: wrapper-launcher: exit=2 expected=0
 suffix-launcher|FAIL environment: wrapper-launcher-redirect: exit=2 expected=0
 suffix-set|FAIL environment: wrapper-set-strict: exit=2 expected=0
