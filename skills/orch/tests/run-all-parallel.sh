@@ -39,6 +39,9 @@
 #      for RUN_ALL_SUITE_SECS and RUN_ALL_DEADLINE_EPOCH, each with the
 #      control that plants a defect in that rule alone; and a bound that is
 #      not a number refuses
+#  11. budget warnings: passing suite and job reports retain exit 0,
+#      caller thresholds and margin arithmetic determine warnings, invalid
+#      inputs refuse before launch, and each rule has a must-fail control
 #
 # Bash 3.2 compatible.
 
@@ -672,7 +675,7 @@ for row in 'review|301|900|300|125' 'margin|721|900|1000|125' 'annotation|301|90
   case "$rule" in
     review) mutate_file "$B/control" '[ "$2" -gt "$REVIEW_SECS" ]' '[ "$2" -gt "$REVIEW_SECS" ] && false' ;;
     margin) mutate_file "$B/control" '[ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]' '[ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ] && false' ;;
-    annotation) mutate_file "$B/control" '::warning::run-all-budget' '::notice::run-all-budget' ;;
+    annotation) mutate_file "$B/control" "printf '::warning::run-all-budget" "printf '::notice::run-all-budget" ;;
   esac
   got="$(budget_of "$B/control" "$seconds" "$cap" "$review" "$percent")"
   CONTROL_RC=0

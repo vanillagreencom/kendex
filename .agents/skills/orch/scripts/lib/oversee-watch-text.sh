@@ -288,6 +288,21 @@ The long pass's events, checked and reported in this order:
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
+  EVENT main-push-budget <repo> workflow=skill-tests.yml run=<run-id> evidence=<JSON array>
+                             a completed successful main push has runner
+                             budget warnings. Every history page is read.
+                             evidence= holds all distinct warning lines in
+                             sorted order, without the annotation marker or
+                             gh's job, step and timestamp prefix. The event
+                             reports once per repository and run. A reported
+                             run is not read again. A successful quiet read
+                             is cached by run attempt and completion update;
+                             a changed identity reads its log again. A failed
+                             full-log read prints main-push-unread with
+                             read=annotations and records no successful read.
+                             That run stays eligible even after newer runs
+                             complete. Failure judgment still uses only the
+                             latest completed main push
   EVENT main-push-failing <repo> workflow=skill-tests.yml run=<run-id> jobs=<JSON array> cause=<line>
                              the latest completed push on main failed or
                              timed out. jobs= lists failed or timed-out job
@@ -1112,7 +1127,9 @@ Environment:
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff,
                               account, outside-contribution, refresh-failing,
-                              main-push-failing,
+                              main-push-failing and main-push-budget,
+                              whose run row holds reported or a quiet read's
+                              attempt and completion update,
                               security-alert, bot-fix and
                               security-alerts-unread rows; the mail pass's
                               file beside the first one holds
@@ -1181,7 +1198,7 @@ ow_message() { # REASON FIELD=VALUE...
     start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     start-stall-unread) text='The lane start could not be read from its status file or GitHub. This pass cannot establish whether it started. No start-stalled event goes out and the row stands. The exit names the failed read.' ;;
     refresh-unread) text='The refresh run list or failed-step log could not be read. A failed run-list read leaves the baseline intact; a failed log read reports cause=unread. The watch continues.' ;;
-    main-push-unread) text='The main-push run list, jobs or failed-step log could not be read. An unread run list or jobs leaves the incident intact; an unread log reports cause=unread. The watch continues.' ;;
+    main-push-unread) text='The main-push history, jobs or log could not be read. Unread history or jobs leaves the failure incident intact; an unread failed-step log reports cause=unread. A full-log failure has read=annotations, emits no budget event and caches no successful read. The older run stays eligible after newer runs complete. The watch continues.' ;;
     refresh-stale) text='GitHub answered the refresh run list with a page that judges nothing: newest= is the run it was checked against, the one the watch last read or, for a pair opening an incident or with none read, the newest completed run in the unfiltered list, none when it has none, and read= the newest run the page holds, none for an empty page. No pair is reported and none is cleared. The watch continues.' ;;
     refresh-order-unknown) text='The refresh run-list judgement named an order other than newer, same, older or unrecorded, so the run list cannot be judged.' ;;
     lane-rows-unread) text='The Pi lane session rows could not be read, so the lane reads unjudged this pass and its pane is not read in their place. The exit is lane_host_fetch'"'"'s for a hosted lane, 2 a failed read and 4 no lane-host slot; 0 is a file this read reached and could not read, or whose last row names an event no writer writes, and 2 on a local lane is a record naming no mail_root.' ;;

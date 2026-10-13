@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: oversee-watch main-push-failing protocol consumed by oversee-events.md.
+# Surface: oversee-watch main-push failure and budget protocols consumed by oversee-events.md.
 # Inputs: scripts/oversee-watch, scripts/lib/oversee-watch-text.sh and lib/oversee-watch-harness.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -11,6 +11,7 @@ main_watch() {
   : > "$STUB_DIR/gh.calls"
   run_watch -- --max-loops 1 >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || MAIN_RC=$?
   MAIN_EVENTS="$(awk '/^EVENT main-push-(failing|budget) /' "$STUB_DIR/out")"
+  MAIN_READS="$(awk '/^run view .* --log$/ { print $3 }' "$STUB_DIR/gh.calls" | sort -n | paste -sd, -)"
   MAIN_NOTICES="$(awk '/^oversee-watch: main-push-unread / { n++ } END { print n+0 }' "$STUB_DIR/err")"
 }
 
@@ -132,11 +133,13 @@ done
 
 # gh's rewritten 404 alone does not prove that the workflow is absent.
 for row in \
-  "absent|{\"workflows\":[]}|0|$EVENT" \
-  'present-unread|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
-  'workflow-list-unread|denied|1|' \
-  'workflow-list-invalid|{}|1|'; do
-  IFS='|' read -r name workflows notices restored <<<"$row"
+  "absent|rewritten|{\"workflows\":[]}|0|$EVENT" \
+  "api-absent|api|{\"workflows\":[]}|0|$EVENT" \
+  'api-permission-unread|api|{"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
+  'present-unread|rewritten|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
+  'workflow-list-unread|rewritten|denied|1|' \
+  'workflow-list-invalid|rewritten|{}|1|'; do
+  IFS='|' read -r name error_form workflows notices restored <<<"$row"
   new_case "$name"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
   jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
@@ -144,6 +147,10 @@ for row in \
   main_watch
   assert_eq "$MAIN_EVENTS" "$EVENT" "$name seeds incident" "$STUB_DIR/err"
   printf 'HTTP 404: workflow skill-tests.yml not found on the default branch (https://api.github.com/repos/owner/repo/actions/workflows/skill-tests.yml)\n' > "$STUB_DIR/main-push.owner_repo.err"
+  if [[ "$error_form" == api ]]; then
+    cp "$STUB_DIR/main-push.owner_repo.err" "$STUB_DIR/main-push-list.owner_repo.err"
+    printf 'gh: Not Found (HTTP 404)\n' >"$STUB_DIR/main-push.owner_repo.err"
+  fi
   if [[ "$workflows" == denied ]]; then
     printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/workflows.owner_repo.err"
   else
@@ -154,6 +161,7 @@ for row in \
   main_watch
   assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=" "$name repeated pass" "$STUB_DIR/err"
   rm -- "$STUB_DIR/main-push.owner_repo.err"
+  rm -f -- "${STUB_DIR:?}/main-push-list.owner_repo.err"
   main_watch
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$restored" "$name restoration" "$STUB_DIR/err"
 done
@@ -189,63 +197,125 @@ CONTROL_RC=0
 ( assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'unchanged-suite event oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
 assert_eq "watch=$MAIN_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' 'control rejects raw diagnostics in failure identity' "$STUB_DIR/err"
 
-new_case main_push_budget
 BUDGET='run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=dev_validate_run seconds=883 bound=900 review=600 margin-percent=125'
-BUDGET_EVENT="EVENT main-push-budget owner/repo workflow=skill-tests.yml run=202 evidence=[\"$BUDGET\"]"
-printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
-printf '{"jobs":[]}\n' >"$STUB_DIR/main-jobs.202.json"
+BUDGET_JOB='run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=job seconds=1641 bound=1800 review=600 margin-percent=125'
+BUDGET_EVENT="EVENT main-push-budget owner/repo workflow=skill-tests.yml run=202 evidence=[\"$BUDGET\",\"$BUDGET_JOB\"]"
+
+new_case main_push_budget
+# A successful quiet read belongs to an attempt and completion update.
+# Changing either must re-read; an unread response must remain retryable.
+# A reported event belongs to the run, even after its identity changes.
 for row in \
-  'within-budget|quiet|0|' \
-  'unread-before-warning|unread|1|' \
-  "first-warning|warning|0|$BUDGET_EVENT" \
-  'same-warning|raw|0|' \
-  'unread-after-warning|unread|1|' \
-  'restored-warning|warning|0|'; do
-  IFS='|' read -r name log_case notices expected <<<"$row"
-  rm -f -- "$STUB_DIR/main-log.202.err"
+  'within-budget|quiet|1|00|0|202|' \
+  'same-quiet|unread|1|00|0||' \
+  'changed-attempt-unread|unread|2|00|1|202|' \
+  'still-unread|unread|2|00|1|202|' \
+  'quiet-new-completion|quiet|2|01|0|202|' \
+  "first-warning|warning|2|02|0|202|$BUDGET_EVENT" \
+  'same-warning|raw|2|02|0||' \
+  'unread-after-warning|unread|3|03|0||' \
+  'restored-warning|warning|3|03|0||'; do
+  IFS='|' read -r name log_case attempt stamp notices reads expected <<<"$row"
+  jq -cn --argjson attempt "$attempt" --arg stamp "$stamp" '[{databaseId:202,headBranch:"main",event:"push",status:"completed",conclusion:"success",attempt:$attempt,updatedAt:("2026-10-08T08:00:"+$stamp+"Z")}]' >"$STUB_DIR/main-push.owner_repo.json"
+  rm -f -- "${STUB_DIR:?}/main-log.202.err"
   case "$log_case" in
     quiet) printf 'suite=dev_validate_run seconds=1 pass=4 fail=0\n' >"$STUB_DIR/main-log.202.txt" ;;
     unread) printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-log.202.err" ;;
-    warning) printf 'Job\tSuite\t2026-10-08T08:00:00Z ##[warning]%s\n' "$BUDGET" >"$STUB_DIR/main-log.202.txt" ;;
-    raw) printf '::warning::%s\n::warning::%s\n' "$BUDGET" "$BUDGET" >"$STUB_DIR/main-log.202.txt" ;;
+    warning) printf 'Job\tSuite\t2026-10-08T08:00:00Z ##[warning]%s\n::warning::%s\nJob\tSuite\t2026-10-08T08:00:00Z ##[warning]%s\n' "$BUDGET_JOB" "$BUDGET" "$BUDGET" >"$STUB_DIR/main-log.202.txt" ;;
+    raw) printf '::warning::%s\n::warning::%s\n' "$BUDGET" "$BUDGET_JOB" >"$STUB_DIR/main-log.202.txt" ;;
   esac
   main_watch
-  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=$expected" "$name" "$STUB_DIR/err"
+  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$name" "$STUB_DIR/err"
 done
-assert_eq "$(awk '/^run view 202 .* --log$/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")" 1 'green read requests full log, not failed steps'
 
-# A later green run reports its own event. Reading an older reported run
-# again must not recreate an event after the latest run changed.
-for run in 203 202; do
-  jq -cn --argjson run "$run" '[{databaseId:$run,headBranch:"main",event:"push",status:"completed",conclusion:"success"}]' >"$STUB_DIR/main-push.owner_repo.json"
-  printf '{"jobs":[]}\n' >"$STUB_DIR/main-jobs.$run.json"
-  printf '::warning::%s\n' "${BUDGET/run=202/run=$run}" >"$STUB_DIR/main-log.$run.txt"
+# Discovery uses every API page, without a newest-run watermark. A run
+# that finishes late and an unread older run remain eligible after a newer
+# completion. Quiet and reported runs do not download their logs again.
+new_case main_push_budget_history
+for row in \
+  "older-warning|203|202|success|warning|0|202,203|$BUDGET_EVENT" \
+  'same-history|203|202|success|warning|0||' \
+  'newer-quiet-older-unread|204|201|success|unread|1|201,204|' \
+  'another-completion-older-unread|205|201|success|unread|1|201,205|' \
+  "older-log-recovers|205|201|success|warning|0|201|${BUDGET_EVENT//202/201}" \
+  'older-still-running|205|200|in_progress|warning|0||' \
+  "older-finishes-late|205|200|success|warning|0|200|${BUDGET_EVENT//202/200}"; do
+  IFS='|' read -r name newest older conclusion log_case notices reads expected <<<"$row"
+  status=completed
+  [[ "$conclusion" != in_progress ]] || { status=in_progress; conclusion=''; }
+  jq -cn --argjson newest "$newest" --argjson older "$older" --arg conclusion "$conclusion" --arg status "$status" '[{databaseId:$newest,headBranch:"main",event:"push",status:"completed",conclusion:"success"},{databaseId:$older,headBranch:"main",event:"push",status:$status,conclusion:$conclusion}]' >"$STUB_DIR/main-push.owner_repo.json"
+  printf 'suite=quiet seconds=1 pass=4 fail=0\n' >"$STUB_DIR/main-log.$newest.txt"
+  rm -f -- "${STUB_DIR:?}/main-log.$older.err"
+  if [[ "$log_case" == unread ]]; then
+    printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-log.$older.err"
+  else
+    printf '::warning::%s\n::warning::%s\n' "${BUDGET//202/$older}" "${BUDGET_JOB//202/$older}" >"$STUB_DIR/main-log.$older.txt"
+  fi
   main_watch
-  expected=""
-  if [[ "$run" == 203 ]]; then expected="${BUDGET_EVENT//run=202/run=203}"; fi
-  assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$expected" "budget history run=$run" "$STUB_DIR/err"
+  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$name" "$STUB_DIR/err"
 done
 
-for rule in annotation dedup unread; do
+# GitHub supplies total_count on each page. A truncated response or an
+# overlapping page must leave both the warning and failure records intact.
+# The complete two-page response includes a newer failure and older warning.
+for shape in complete truncated overlapping; do
+  new_case "main_push_budget_pages_$shape"
+  jq -cn '[{total_count:2,workflow_runs:[{id:203,head_branch:"main",event:"push",status:"completed",conclusion:"failure",run_attempt:1,updated_at:"2026-10-08T08:00:00Z"}]},{total_count:2,workflow_runs:[{id:202,head_branch:"main",event:"push",status:"completed",conclusion:"success",run_attempt:2,updated_at:"2026-10-08T08:00:00Z"}]}]' >"$STUB_DIR/main-push-pages.owner_repo.json"
+  case "$shape" in
+    truncated) jq 'map(.total_count=3)' "$STUB_DIR/main-push-pages.owner_repo.json" >"$STUB_DIR/pages.tmp"; mv "$STUB_DIR/pages.tmp" "$STUB_DIR/main-push-pages.owner_repo.json" ;;
+    overlapping) jq '.[0].workflow_runs[0] = .[1].workflow_runs[0]' "$STUB_DIR/main-push-pages.owner_repo.json" >"$STUB_DIR/pages.tmp"; mv "$STUB_DIR/pages.tmp" "$STUB_DIR/main-push-pages.owner_repo.json" ;;
+  esac
+  printf '::warning::%s\n::warning::%s\n' "$BUDGET" "$BUDGET_JOB" >"$STUB_DIR/main-log.202.txt"
+  printf '{"jobs":[{"name":"Red job","conclusion":"failure"}]}\n' >"$STUB_DIR/main-jobs.203.json"
+  printf '%s\n' "$CAUSE" >"$STUB_DIR/main-log.203.txt"
+  main_watch
+  notices=1 reads='' expected=''
+  if [[ "$shape" == complete ]]; then
+    notices=0 reads=202
+    expected="$BUDGET_EVENT"$'\n'"EVENT main-push-failing owner/repo workflow=skill-tests.yml run=203 jobs=[\"Red job\"] cause=$CAUSE"
+  fi
+  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$shape history pages" "$STUB_DIR/err"
+  assert_eq "$(awk '/^api --paginate repos\/owner\/repo\/actions\/workflows\/skill-tests.yml\/runs\?per_page=100 --slurp$/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")" 1 'history read has no search filters or result limit'
+done
+
+for rule in annotation dedup quiet-cache attempt-cache completion-cache unread evidence history page-count page-identity; do
   MUTANT="$(mutant_scripts "budget-control-$rule/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/budget-control-$rule/github"
   case "$rule" in
     annotation) mutate_file "$MUTANT" 'sub(/^(::warning::|##\[warning\])/, ""); print' 'sub(/^(::warning::|##\[warning\])/, ""); if (0) print' ;;
-    dedup) mutate_file "$MUTANT" '          if [[ -z "$prior" ]]; then' '          if true; then' ;;
+    dedup) mutate_file "$MUTANT" '      if [[ "$prior" != reported && "$prior" != "$identity" ]]; then' '      if [[ "$prior" != "$identity" ]]; then' ;;
+    quiet-cache) mutate_file "$MUTANT" '      if [[ "$prior" != reported && "$prior" != "$identity" ]]; then' '      if [[ "$prior" != reported ]]; then' ;;
+    attempt-cache) mutate_file "$MUTANT" '      identity="quiet|$attempt|$completed"' '      identity="quiet|$completed"' ;;
+    completion-cache) mutate_file "$MUTANT" '      identity="quiet|$attempt|$completed"' '      identity="quiet|$attempt"' ;;
     unread) mutate_file "$MUTANT" $'        if (( rc != 0 )); then\n          ow_message main-push-unread' $'        if false; then\n          ow_message main-push-unread' ;;
+    evidence) mutate_file "$MUTANT" 'split("\n") | map(select(length > 0)) | unique' 'split("\n") | map(select(length > 0)) | unique | .[:1]' ;;
+    history) mutate_file "$MUTANT" "jq -r '.[] | select(.conclusion == \"success\")" "jq -r '.[:1][] | select(.conclusion == \"success\")" ;;
+    page-count) mutate_file "$MUTANT" 'any($pages[]; .total_count != ($all | length))' 'false' ;;
+    page-identity) mutate_file "$MUTANT" '($all | map(.id) | unique | length) != ($all | length)' 'false' ;;
   esac
   new_case "main_push_budget_control_$rule"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
-  printf '{"jobs":[]}\n' >"$STUB_DIR/main-jobs.202.json"
-  printf '::warning::%s\n' "$BUDGET" >"$STUB_DIR/main-log.202.txt"
-  expected="$BUDGET_EVENT" notices=0
+  printf '::warning::%s\n::warning::%s\n::warning::%s\n' "$BUDGET_JOB" "$BUDGET" "$BUDGET" >"$STUB_DIR/main-log.202.txt"
+  expected="$BUDGET_EVENT" notices=0 reads=202
   case "$rule" in
-    dedup) main_watch; expected="" ;;
+    dedup) main_watch; expected='' reads='' ;;
+    quiet-cache) : >"$STUB_DIR/main-log.202.txt"; main_watch; expected='' reads='' ;;
+    attempt-cache | completion-cache)
+      : >"$STUB_DIR/main-log.202.txt"
+      WATCH_BIN="$MUTANT" main_watch
+      jq --arg rule "$rule" '.[0] += (if $rule=="attempt-cache" then {attempt:2} else {updatedAt:"2026-10-08T08:00:01Z"} end)' "$STUB_DIR/main-push.owner_repo.json" >"$STUB_DIR/pages.tmp"
+      mv "$STUB_DIR/pages.tmp" "$STUB_DIR/main-push.owner_repo.json"
+      printf '::warning::%s\n::warning::%s\n' "$BUDGET" "$BUDGET_JOB" >"$STUB_DIR/main-log.202.txt"
+      ;;
     unread) printf 'HTTP 502: bad gateway\n' >"$STUB_DIR/main-log.202.err"; expected="" notices=1 ;;
+    history) jq '.[0] as $older | [$older + {databaseId:203},$older]' "$STUB_DIR/main-push.owner_repo.json" >"$STUB_DIR/pages.tmp"; mv "$STUB_DIR/pages.tmp" "$STUB_DIR/main-push.owner_repo.json"; : >"$STUB_DIR/main-log.203.txt"; reads=202,203 ;;
+    page-count | page-identity)
+      jq -cn --arg rule "$rule" '[{total_count:3,workflow_runs:[{id:202,head_branch:"main",event:"push",status:"completed",conclusion:"success",run_attempt:2,updated_at:"2026-10-08T08:00:00Z"}]}] | if $rule=="page-identity" then .[0].total_count=2 | .[0].workflow_runs += .[0].workflow_runs else . end' >"$STUB_DIR/main-push-pages.owner_repo.json"
+      expected='' notices=1 reads='' ;;
   esac
   WATCH_BIN="$MUTANT" main_watch
   CONTROL_RC=0
-  ( assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=$expected" "$rule budget oracle"; [[ "$FAIL" -eq 0 ]] ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
+  ( assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES reads=$MAIN_READS events=$MAIN_EVENTS" "rc=0 notices=$notices reads=$reads events=$expected" "$rule budget oracle"; [[ "$FAIL" -eq 0 ]] ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
   assert_eq "watch=$MAIN_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "$rule control turns maintenance oracle red" "$STUB_DIR/err"
 done
 

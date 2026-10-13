@@ -93,8 +93,11 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   refresh-log.<RUN>.txt is the failed-step log (default: empty);
 #   refresh-log.<RUN>.err fails that log with the file's stderr.
 #   main-push.<SLUG>.json is the Skill Tests run history (default: []),
-#   filtered by branch, event and status and capped by the list's limit;
-#   main-push.<SLUG>.err fails that list. main-jobs.<RUN>.json supplies jobs,
+#   supplied as paginated workflow history by the API, or filtered and capped
+#   by run list. main-push-pages.<SLUG>.json overrides the API page array;
+#   main-push.<SLUG>.err fails the history read and run list;
+#   main-push-list.<SLUG>.err overrides only the run-list error.
+#   main-jobs.<RUN>.json supplies jobs,
 #   main-jobs.<RUN>.err fails that read. main-log.<RUN>.txt and .err supply
 #   or fail the failed-step log of a main-push run.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
@@ -163,6 +166,7 @@ case "${1:-} ${2:-}" in
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
     if [[ "$verb" == list && "$workflow" == skill-tests.yml ]]; then
       src="$STUB_DIR/main-push.$slug"
+      [[ ! -f "$STUB_DIR/main-push-list.$slug.err" ]] || { cat "$STUB_DIR/main-push-list.$slug.err" >&2; exit 1; }
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       if [[ -f "$src.json" ]]; then
         jq -c --arg branch "$branch" --arg event "$event" --arg status "$status" --argjson limit "$limit" '
@@ -175,7 +179,7 @@ case "${1:-} ${2:-}" in
       src="$STUB_DIR/main-jobs.$run"
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       if [[ -f "$src.json" ]]; then cat "$src.json"; else printf '{"jobs":[]}\n'; fi
-    elif [[ "$verb" == view && -f "$STUB_DIR/main-jobs.$run.json" ]]; then
+    elif [[ "$verb" == view && ( -f "$STUB_DIR/main-jobs.$run.json" || -f "$STUB_DIR/main-log.$run.txt" || -f "$STUB_DIR/main-log.$run.err" ) ]]; then
       src="$STUB_DIR/main-log.$run"
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       [[ ! -f "$src.txt" ]] || cat "$src.txt"
@@ -198,6 +202,23 @@ case "${1:-} ${2:-}" in
   "api --paginate")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     path="$3"; filter=""
+    if [[ "$path" == repos/*/actions/workflows/skill-tests.yml/runs\?per_page=100 ]]; then
+      repo="${path#repos/}"; repo="${repo%/actions/workflows/*}"
+      slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+      src="$STUB_DIR/main-push.$slug"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      if [[ -f "$STUB_DIR/main-push-pages.$slug.json" ]]; then
+        cat "$STUB_DIR/main-push-pages.$slug.json"
+      else
+        input='[]'
+        [[ ! -f "$src.json" ]] || input="$(cat "$src.json")"
+        jq -c 'if type == "array" then [{total_count:length, workflow_runs:map({
+          id:.databaseId, head_branch:.headBranch, event, status, conclusion,
+          run_attempt:(.attempt // 1), updated_at:(.updatedAt // "2026-10-08T08:00:00Z")
+        })}] else . end' <<<"$input"
+      fi
+      exit
+    fi
     [[ "${4:-}" == --jq ]] && filter="$5"
     list="${path%%\?*}"; list="${list##*/}"
     tail="$list"

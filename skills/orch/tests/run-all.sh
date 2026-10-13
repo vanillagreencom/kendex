@@ -39,11 +39,25 @@
 # below runs by itself after the others. run-all.sh prints a start line as
 # it launches each suite, so a run cut off by a signal or a job timeout still
 # names every suite that was running; after each suite's output it prints
-# one line, and after the last suite one total line:
+# one report line, and after the last suite one total line:
 #
 #   start suite=<name>
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
+#
+# A passing suite and a green total can each print a warning after their
+# report line. The warning does not change the passing exit status:
+#
+#   ::warning::run-all-budget run=<id> attempt=<n> os=<name> shard=<name> suite=<name|job> seconds=<n> bound=<n> review=<n> margin-percent=<n>
+#
+# A warning means seconds exceed the review threshold, or seconds times
+# margin-percent exceed 100 times the bound. Job seconds count from the
+# caller's job-start epoch. Nonempty RUN_ALL_REVIEW_SECS enables warnings.
+# That input, RUN_ALL_MARGIN_PERCENT, RUN_ALL_JOB_SECS and
+# RUN_ALL_JOB_STARTED_EPOCH must all be positive whole numbers. A missing
+# or invalid required input refuses before any suite starts. RUN_ALL_SHARD
+# is optional and defaults to the selected battery. skill-tests.yml supplies
+# its review and margin inputs; this package sets no defaults for those inputs.
 #
 # Two bounds hold a suite. RUN_ALL_SUITE_SECS (default 900) counts from the
 # suite's own start. RUN_ALL_DEADLINE_EPOCH, where set, is the Unix time in
