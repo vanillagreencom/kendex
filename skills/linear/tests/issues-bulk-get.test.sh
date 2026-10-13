@@ -121,15 +121,23 @@ get with --bundle|--bundle
 ROWS
 
 # Session routing reads flat compact rows without issue descriptions.
-while IFS='|' read -r format check; do
+while IFS='|' read -r format want_rc want_requests check; do
     rc=0
+    : >"$TMP_ROOT/calls"
     out=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CALLS="$TMP_ROOT/calls" \
         LINEAR_API_KEY_OVERRIDE=test-key "$BASH" .agents/skills/linear/scripts/linear.sh \
         issues bulk-get KEN-2 KEN-1 "--format=$format" 2>"$TMP_ROOT/err") || rc=$?
-    assert_eq "bulk-get $format succeeds" "$rc" 0
-    assert_jq "bulk-get $format returns its format" "$out" "$check"
+    assert_eq "bulk-get $format status" "$rc" "$want_rc"
+    requests=$(wc -l <"$TMP_ROOT/calls" | tr -d ' ')
+    assert_eq "bulk-get $format requests" "$requests" "$want_requests"
+    if [[ "$want_rc" == 0 ]]; then
+        assert_jq "bulk-get $format returns its format" "$out" "$check"
+    else
+        assert_eq "bulk-get $format prints no rows" "$out" ""
+    fi
 done <<'ROWS'
-safe|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and has("description"))
-compact|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and (has("description") or has("url") or has("created_at") or has("updated_at") | not))
-raw|.issues.nodes | map(.identifier) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state.name == "Todo" and has("description"))
+safe|0|1|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and has("description"))
+compact|0|1|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and (has("description") or has("url") or has("created_at") or has("updated_at") | not))
+raw|0|1|.issues.nodes | map(.identifier) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state.name == "Todo" and has("description"))
+comapct|1|0|
 ROWS

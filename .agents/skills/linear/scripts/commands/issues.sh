@@ -602,6 +602,8 @@ bulk_get_issues() {
         done
     fi
 
+    linear_require_format "$FORMAT" safe compact ids raw || return 1
+
     local refs
     refs=$(linear_issue_refs refs ${identifiers[@]+"${identifiers[@]}"}) || return 1
 
