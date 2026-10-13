@@ -2,7 +2,8 @@
 # Pin the argv the built-in Claude target receives, not its help text.
 # The host probe checks enforcement; this fixture checks dispatch in every mode.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
-EXPECTED=$'-p\n--output-format\njson\n--no-session-persistence\n--model\nclaude-opus-5-5\n--effort\nhigh\n--restricted\n--permission-mode\ndontAsk\n--tools\nBash,Read,Glob,Grep\n--allowedTools\nBash(read-only:true),Read,Glob,Grep\n--setting-sources='
+BASE_EXPECTED=$'-p\n--output-format\njson\n--no-session-persistence\n--effort\nhigh\n--restricted\n--permission-mode\ndontAsk\n--tools\nBash,Read,Glob,Grep\n--allowedTools\nBash(read-only:true),Read,Glob,Grep\n--setting-sources='
+EXPECTED="$BASE_EXPECTED"$'\n--model\nopus'
 # Each control retains the flag text but removes it from the executable default.
 ROWS='review|-
 audit|-
@@ -11,6 +12,11 @@ quick|-
 quick|override
 quick|example
 quick|project
+quick|unresolved
+quick|empty
+quick|inherit
+audit|unresolved-retry
+quick|version-control
 quick|--output-format json
 quick|--permission-mode dontAsk
 quick|--tools Bash,Read,Glob,Grep
@@ -20,6 +26,8 @@ i=0
 while IFS='|' read -r mode change; do
   i=$((i + 1))
   build "argv-$i" current:none models:claude
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/tier-argv"\nprintf "opus\\n"\n' "$ROW" >"$ROW/bin/kendex"
+  chmod +x "$ROW/bin/kendex"
   mkdir -p "$ROW/.claude"
   printf '{"permissions":{"defaultMode":"bypassPermissions"}}\n' >"$ROW/.claude/settings.json"
   cat >"$ROW/bin/claude" <<SH
@@ -33,9 +41,19 @@ SH
   case "$change" in
     -) ;;
     override) W_ENV+=("SECOND_OPINION_CLAUDE_CMD=claude --custom-command"); want=--custom-command ;;
-    example) cp "$SKILL_DIR/kendex.settings.toml.example" "$PROJ/kendex.settings.toml" ;;
+    example) cp "$SKILL_DIR/kendex.settings.toml.example" "$PROJ/kendex.settings.toml"; want="${BASE_EXPECTED/$'\n--effort'/$'\n--model\nclaude-opus-5-5\n--effort'}" ;;
     # The command row alone: the project's room check needs fleet accounts.
-    project) { echo '[env]'; grep '^SECOND_OPINION_CLAUDE_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml" ;;
+    project) { echo '[env]'; grep '^SECOND_OPINION_CLAUDE_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml"; want="${BASE_EXPECTED/$'\n--effort'/$'\n--model\nclaude-opus-5-5\n--effort'}" ;;
+    unresolved|unresolved-retry|empty|inherit)
+      case "$change" in
+        unresolved*) printf '#!/usr/bin/env bash\necho resolver-failed >&2\nexit 1\n' >"$ROW/bin/kendex" ;;
+        empty) printf '#!/usr/bin/env bash\nexit 0\n' >"$ROW/bin/kendex" ;;
+        inherit) printf '#!/usr/bin/env bash\necho inherit\n' >"$ROW/bin/kendex" ;;
+      esac
+      want="$BASE_EXPECTED"
+      if [[ "$change" == unresolved-retry ]]; then response partial claude >"$ROW/resp-claude"; response clean claude >"$ROW/resp-retry-claude"; fi
+      ;;
+    version-control) mutate_script "$SO" ' --effort high --restricted' ' --model claude-opus-5-5 --effort high --restricted' ;;
     *)
       python3 - "$SO" "$change" <<'PY'
 import pathlib, sys
@@ -62,15 +80,19 @@ PY
   assert_eq "$(jq -r .summary "$ROW/out/out.json")" clean "$mode/$change preserves the reply"
   got="$(cat "$ROW/argv")"
   case "$change" in
-    -|override|example|project) assert_eq "$got" "$want" "$mode/$change argv under a bypass default" ;;
+    -|override|example|project|unresolved|unresolved-retry|empty|inherit) assert_eq "$got" "$want" "$mode/$change argv under a bypass default" ;;
     *)
       control_rc=0
       (assert_eq "$got" "$want" "must-fail: $change"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
       assert_eq "$control_rc" 1 "$change control turns the argv pin red"
       ;;
   esac
+  case "$change" in
+    -) assert_eq "$(cat "$ROW/tier-argv")" $'tier-model\nclaude\n2' "$mode resolves standard through the class table" ;;
+    unresolved|unresolved-retry|empty|inherit) assert_eq "$(grep -c 'class=standard unresolved target=claude; using harness default' "$ROW/stderr")" 1 "$change emits one fallback notice" ;;
+  esac
 done <<<"$ROWS"
 help_text="$("$SO" --help)"
 help_cmd="$(awk '/^  claude:/ { on=1; sub(/^  claude: /, "") } on && /^          Bash/ { exit } on { gsub(/^ +/, ""); printf "%s ", $0 }' <<<"$help_text")"
-assert_eq "${help_cmd% }" "claude ${EXPECTED//$'\n'/ }" "help exposes the same default command"
+assert_eq "${help_cmd% }" "claude ${BASE_EXPECTED//$'\n'/ }" "help exposes the default command before class resolution"
 finish
