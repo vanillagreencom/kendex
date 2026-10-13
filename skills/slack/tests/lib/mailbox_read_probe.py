@@ -19,7 +19,9 @@ from mailbox import LaneMail
 
 root = Path(sys.argv[2])
 mail = LaneMail(root)
-box = root / "tmp/lane-mail/overseer"
+linked = len(sys.argv) > 3
+mailbox_root = Path(sys.argv[3]).resolve() if linked else root.resolve()
+box = mailbox_root / "tmp/lane-mail/overseer"
 
 
 def equivalent():
@@ -203,4 +205,9 @@ finally:
         os.close(fd)
     for stream in streams:
         stream.close()
+if linked:
+    assert mail.box == box
+    assert not (root / "tmp/lane-mail/overseer").exists(), "reads must not create a second mailbox"
+    assert Path(mail.reader.__code__.co_filename) == root / ".agents/skills/mailbox/scripts/lib/lane-mail-store.py", \
+        "the reader code must come from the bound checkout"
 print("mailbox-read: output-equivalent=yes numbered-tail=yes cursor=yes")

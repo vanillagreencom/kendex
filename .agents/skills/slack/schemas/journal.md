@@ -78,7 +78,7 @@ A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` l
 | Field | Value |
 |-------|-------|
 | `pid` | The relay's process id, which a re-execution onto updated code keeps |
-| `code` | The fingerprint of the code the relay runs: 12 hex characters of one sha256 over `scripts/slack` and every `scripts/lib/*.py`, files in sorted order |
+| `code` | The fingerprint of the code the relay runs: 12 hex characters of one sha256 over `scripts/slack`, sorted `scripts/lib/*.py`, and each bound root's mailbox store, projection definitions and common-root resolver |
 | `channel` | The bound channel id |
 | `poll_seconds` | The `SLACK_POLL_SECONDS` the relay runs with |
 | `compacted_day` | The UTC day the journal was last compacted, or first seen |

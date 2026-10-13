@@ -39,7 +39,8 @@ code_of() {
   local scripts="${SK_BIN%/*}"
   (export LC_ALL=C; cat -- "$scripts/slack" "$scripts"/lib/*.py \
     "$ROOT/.agents/skills/mailbox/scripts/lib/lane-mail-store.py" \
-    "$ROOT/.agents/skills/mailbox/scripts/lib/mailbox-append.sh") \
+    "$ROOT/.agents/skills/mailbox/scripts/lib/mailbox-append.sh" \
+    "$ROOT/.agents/skills/mailbox/scripts/lib/common-root.sh") \
     | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])'
 }
 row() { sk_run -- listen --status --root "$ROOT"; LINE="$OUT"; }
@@ -179,17 +180,23 @@ assert_eq "$(field "$LINE" state)=$(field "$LINE" code)=$(reloads)" "ok=$C1=1" \
 sk_relay_stop
 
 # --- a mailbox-only update reaches the imported reader through the same reload ---
-for mode in production untracked; do
-  fresh "mailbox-update-$mode"
+while IFS='|' read -r mode member; do
+  fresh "mailbox-update-$mode-$member"
   if [ "$mode" = production ]; then
     sk_copy "mailbox-update-$mode"
   else
     sk_mutant mailbox-untracked relay.py 'for root in sorted\(roots\):' 'for root in []:'
   fi
   mailer
+  # The fixture links shared definitions. Replace the link before changing
+  # one root's dependency, so the update cannot reach another root.
+  if [ "$member" = common-root.sh ]; then
+    cp "$ROOT/.agents/skills/mailbox/scripts/lib/$member" "$ROOT/tmp/$member"
+    mv "$ROOT/tmp/$member" "$ROOT/.agents/skills/mailbox/scripts/lib/$member"
+  fi
   start
   PID="$(pid)"
-  printf '# mailbox update\n' >> "$ROOT/.agents/skills/mailbox/scripts/lib/lane-mail-store.py"
+  printf '# mailbox update\n' >> "$ROOT/.agents/skills/mailbox/scripts/lib/$member"
   C1="$(code_of)"
   WAIT=20
   [ "$mode" != untracked ] || WAIT=6
@@ -201,7 +208,12 @@ for mode in production untracked; do
     assert_eq "$(reloads)" 0 'control: the running reader stays unchanged after the mailbox update'
   fi
   sk_relay_stop
-done
+done <<'ROWS'
+production|lane-mail-store.py
+untracked|lane-mail-store.py
+production|common-root.sh
+untracked|common-root.sh
+ROWS
 
 # --- a held reply defers the reload on its open connection --------------------------
 fresh deferred

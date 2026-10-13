@@ -26,7 +26,11 @@ from refusals import Refusal, keyed
 from store import parse_at
 
 LANE_MAIL = Path(".agents/skills/mailbox/scripts/lane-mail")
-MAILBOX_READ_FILES = (LANE_MAIL.parent / "lib" / "lane-mail-store.py", LANE_MAIL.parent / "lib" / "mailbox-append.sh")
+MAILBOX_READ_FILES = (
+    LANE_MAIL.parent / "lib" / "lane-mail-store.py",
+    LANE_MAIL.parent / "lib" / "mailbox-append.sh",
+    LANE_MAIL.parent / "lib" / "common-root.sh",
+)
 LANE_MAIL_TIMEOUT_SECONDS = 30
 LANE_MAIL_CLEANUP_SECONDS = 5
 FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution")}
@@ -40,6 +44,7 @@ class LaneMail:
         self.reader = None
         self.snapshots: Dict = {}
         self.jq_defs = ""
+        self.box: Optional[Path] = None
         if not os.access(self.script, os.X_OK):
             raise Refusal("orch-missing", str(root))
 
@@ -95,16 +100,23 @@ class LaneMail:
             if shell is None:
                 raise Refusal("lane-mail-failed", "command-missing=bash")
             definitions = subprocess.run(
-                [shell, "-c", 'set -euo pipefail; . "$1"; printf "%s" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
-                 "mailbox-definitions", str(self.root / MAILBOX_READ_FILES[1])],
+                [shell, "-c", 'set -euo pipefail; . "$1"; . "$2"; '
+                 'mailbox_root="$(mailbox_common_root "$3")"; '
+                 'printf "%s\\0%s" "$mailbox_root" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
+                 "mailbox-definitions", str(self.root / MAILBOX_READ_FILES[1]),
+                 str(self.root / MAILBOX_READ_FILES[2]), str(self.root)],
                 capture_output=True, text=True, timeout=max(0, deadline - time.monotonic()),
             )
             if definitions.returncode != 0:
                 raise Refusal("lane-mail-failed", definitions.stderr.strip())
-            self.jq_defs = definitions.stdout
+            # Overseer mail belongs to the main checkout; reader code and
+            # relay state belong to the bound checkout. NUL preserves paths
+            # containing newlines without splitting the shared definitions.
+            mailbox_root, self.jq_defs = definitions.stdout.split("\0", 1)
+            self.box = Path(mailbox_root) / "tmp" / "lane-mail" / "overseer"
             self.reader = reader
         try:
-            return self.reader(self.root / "tmp" / "lane-mail" / "overseer", self.jq_defs, self.snapshots,
+            return self.reader(self.box, self.jq_defs, self.snapshots,
                                receipts=receipts, timeout=max(0, deadline - time.monotonic()))
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
             raise Refusal("lane-mail-failed", str(error)) from error
