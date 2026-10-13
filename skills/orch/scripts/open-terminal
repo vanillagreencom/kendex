@@ -3138,10 +3138,9 @@ host_launch_resume() {
 
 # Only a completed launch or confirmed cleanup can retire its checkpoint.
 # A selection checkpoint already owns a harness, including on a retry that
-# fails before its saved pane can be restored. The background log is retained
-# by the same record writer as before; it is not a selection checkpoint.
-host_launch_ready() { # completed|failed [BACKGROUND_LOG REASON]
-  local outcome="$1" log="${2:-}" reason="${3:-}" mail_root="$remote_path"
+# fails before its saved pane can be restored.
+host_launch_ready() { # completed|failed
+  local outcome="$1" mail_root="$remote_path"
   case "$outcome" in
     completed) ;;
     failed)
@@ -3160,19 +3159,12 @@ host_launch_ready() { # completed|failed [BACKGROUND_LOG REASON]
         if [[ -n "$UNTAKEN_PANE" ]]; then
           tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
           if [[ "$FLEET" == true ]]; then
-            if [[ -n "$log" ]]; then
-              prepare_record_write stopped "$log" "$reason" || return 1
-            elif ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$mail_root" "" "$launched_at" stopped; then
+            if ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$mail_root" "" "$launched_at" stopped; then
               ot_message record-stop-failed "item=$item" "state=oversee" >&2
               return 1
             fi
           fi
         fi
-      elif [[ -n "$log" ]]; then
-        # A legacy SSH pane keeps the background window-close contract.
-        host_pane_stop || return 1
-        tmux_window_close "$LAUNCH_PANE" "$title" || true
-        prepare_record_write stopped "$log" "$reason" || return 1
       fi ;;
     *) ot_message host-launch-outcome-invalid "item=$item" "outcome=$outcome" >&2; return 1 ;;
   esac
@@ -3499,17 +3491,18 @@ host_pane_stop() {
 launch_prepared() { # LOG
   local reason=wait-failed
   HOST_BUSY_RETRY=true
-  UNTAKEN_PANE="$LAUNCH_PANE"
   if host_transport wait --item "$wt_id"; then
     reason=launch-failed
     if LAUNCH_PREPARE="$(prepare_record "$1")"; then
-      UNTAKEN_PANE=""
-      if launch_finish; then host_launch_ready completed; return; fi
+      launch_finish && return 0
+      # A taken launch remains owned when only its later record write fails.
+      [[ "${HOST_PANE:-local}" != verb || "${HOST_PANE_LAUNCH:-unstarted}" != owned || -n "$UNTAKEN_PANE" ]] || return 1
     fi
   fi
-  host_launch_ready failed "$1" "$reason" || return 1
+  host_pane_stop || return 1
+  tmux_window_close "$LAUNCH_PANE" "$title" || true
+  prepare_record_write stopped "$1" "$reason" || return 1
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
-  return 1
 }
 
 # The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the items the

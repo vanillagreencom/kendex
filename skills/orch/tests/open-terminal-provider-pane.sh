@@ -196,7 +196,7 @@ PREPARING_CREATE_LINE="${LANE_HOST_STUB_CREATE_LINE}"$'\tstate=preparing'
 for code in live control; do
   OPEN_TERMINAL="$BACKGROUND_MUTANT"
   if [[ "$code" == control ]]; then
-    mutate_file "$BACKGROUND_MUTANT" '[[ -n "$UNTAKEN_PANE" ]] || return 1' '[[ -n "$UNTAKEN_PANE" ]] || UNTAKEN_PANE="$LAUNCH_PANE"'
+    mutate_file "$BACKGROUND_MUTANT" '[[ "${HOST_PANE:-local}" != verb || "${HOST_PANE_LAUNCH:-unstarted}" != owned || -n "$UNTAKEN_PANE" ]] || return 1' 'false || true'
   fi
   fleet="$TMP_ROOT/background-$code"
   ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$fleet" "$PWD"
@@ -249,6 +249,12 @@ mutate_file "$RETAIN_MUTANT" 'host_pane_stop || return 1 ;;' 'host_pane_stop || 
 CONFIRM_MUTANT="$(mutant_scripts selection-confirmation/orch open-terminal)/open-terminal"
 orch_fixture_shared_libs "$TMP_ROOT/selection-confirmation/orch"
 mutate_file "$CONFIRM_MUTANT" 'host_pane_stop || return 1 ;;' ': ;; # host_pane_stop || return 1 ;;'
+HOST_LOSS_MUTANT="$(mutant_scripts selection-host-loss/orch open-terminal)/open-terminal"
+orch_fixture_shared_libs "$TMP_ROOT/selection-host-loss/orch"
+mutate_file "$HOST_LOSS_MUTANT" '(del(.prepare) | if .status == "preparing" then .status = "stopped" else . end)' \
+  '(del(.prepare, .host) | if .status == "preparing" then .status = "stopped" else . end)'
+mutate_file "$HOST_LOSS_MUTANT" '"$WORKFLOW_STATE" update "$wt_id" '\''del(.host_launch)'\'' >/dev/null' \
+  '"$WORKFLOW_STATE" update "$wt_id" '\''del(.host_launch, .issue_id)'\'' >/dev/null'
 
 selection_checkpoint() {
   if [[ "$scope" == fleet ]]; then
@@ -266,12 +272,19 @@ selection_contract() {
   if [[ "$stop_status" == 0 ]]; then expected_checkpoint=null; expected_status=stopped; expected_killed=1; fi
   [[ "$scope" != fleet ]] || state="$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get oversee '[.lanes[] | select(.item == "KEN-40") | .status] | first')"
   assert_eq "$(selection_checkpoint)" "$expected_checkpoint" "$1 retains or retires the complete selection checkpoint"
+  local record_key=KEN-40 record_query='.' expected_record
+  [[ "$scope" != fleet ]] || { record_key=oversee; record_query='.lanes[] | select(.item == "KEN-40")'; }
   if [[ "$stop_status" != 0 ]]; then
-    local record_key=KEN-40 record_query='.'
-    [[ "$scope" != fleet ]] || { record_key=oversee; record_query='.lanes[] | select(.item == "KEN-40")'; }
-    assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get "$record_key" "$record_query" | jq -Sc .)" \
-      "$(jq -Sc "$record_query" <<< "$saved_record")" "$1 preserves the entire current ownership record"
+    expected_record="$(jq -Sc "$record_query" <<< "$saved_record")"
+  elif [[ "$scope" == fleet ]]; then
+    # The completed cleanup retires prepare and sets stopped. Every other
+    # field remains the value saved before cleanup, including the host.
+    expected_record="$(jq -Sc '.lanes[] | select(.item == "KEN-40") | del(.prepare) | .status = "stopped"' <<< "$saved_record")"
+  else
+    expected_record="$(jq -Sc 'del(.host_launch)' <<< "$saved_record")"
   fi
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get "$record_key" "$record_query" | jq -Sc .)" \
+    "$expected_record" "$1 keeps every remaining ownership field"
   [[ "$scope" != fleet ]] || assert_eq "$state" "$expected_status" "$1 preserves fleet ownership until cleanup confirms exit"
   assert_eq "rc=$RC killed=$killed stops=$(grep -c '^stop --item KEN-40 --harness codex ' "$RUN/host.log" || true) after=$(cat "$provider_state")" \
     "rc=1 killed=$expected_killed stops=1 after=$post_state" "$1 follows confirmed provider stop before retirement"
@@ -310,13 +323,15 @@ for row in 'ok|0|gone' 'ok|7|live' 'ok|7|gone' 'failed|0|gone' 'failed|7|live' '
     rm -f -- "${slot_file:?}"
     retry_env="$selection_env;OT_TMUX_PANES=$saved_panes;LANE_HOST_STUB_SELECTION=pending;LANE_HOST_STUB_STOP_STATUS=$stop_status;OT_POST_STOP_STATE=$post_state"
     [[ "$read_state" != failed ]] || retry_env+=";LANE_HOST_STUB_CAT_STATUS=7;LANE_HOST_STUB_CAT_PATH=/srv/lane/tmp/lane-mail/KEN-40/relaunch-selection"
-    for code in live control; do
+    for code in live control host-loss; do
+      [[ "$code" != host-loss || "$stop_status" == 0 ]] || continue
       printf 'running\n' > "$provider_state"
       "$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" update "$([[ "$scope" == fleet ]] && echo oversee || echo KEN-40)" '$record' --argjson record "$saved_record" >/dev/null
       OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
       if [[ "$code" == control ]]; then
         OPEN_TERMINAL="$RETAIN_MUTANT"
         [[ "$stop_status" != 0 ]] || OPEN_TERMINAL="$CONFIRM_MUTANT"
+      elif [[ "$code" == host-loss ]]; then OPEN_TERMINAL="$HOST_LOSS_MUTANT"
       fi
       run_ot "$retry_env" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
       if [[ "$code" == live ]]; then
@@ -324,9 +339,20 @@ for row in 'ok|0|gone' 'ok|7|live' 'ok|7|gone' 'failed|0|gone' 'failed|7|live' '
         assert_eq "$(grep -c '^open-terminal: relaunch-selection-failed item=KEN-40 operation=' <<< "$OUT" || true)" 1 "$scope $row reports the original selection failure"
         [[ "$stop_status" == 0 ]] || assert_eq "$(grep -c '^open-terminal: host-stop-failed item=KEN-40 exit=7$' <<< "$OUT" || true)" 1 "$scope $row reports unconfirmed stop"
       else
+        if [[ "$code" == host-loss ]]; then
+          # Prove the mutant completed cleanup; syntax or transport failure
+          # must not stand in for the unrelated-field deletion under test.
+          assert_eq "$(selection_checkpoint)" null "$scope $row host-loss control retired its checkpoint"
+          if [[ "$scope" == fleet ]]; then
+            assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get oversee '[.lanes[] | select(.item == "KEN-40") | [.status,has("host")]] | first | @tsv')" \
+              $'stopped\tfalse' "$scope $row host-loss control reached the stopped record"
+          else
+            assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$selection_state" get KEN-40 'has("issue_id")')" false "$scope $row control deleted the item identity after cleanup"
+          fi
+        fi
         CONTROL_RC=0
         ( FAIL=0; selection_contract control; [[ "$FAIL" == 0 ]] ) > "$selection_state/control-$code.log" 2>&1 || CONTROL_RC=$?
-        assert_eq "$CONTROL_RC" 1 "$scope $row rejects retirement without confirmed cleanup"
+        assert_eq "$CONTROL_RC" 1 "$scope $row $code rejects lost ownership or unconfirmed cleanup"
       fi
     done
   done
