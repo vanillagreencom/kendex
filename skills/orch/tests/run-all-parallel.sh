@@ -189,12 +189,33 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
   suite "$B" "$name" "${RED_STATUS[i]}" "${RED_BODIES[i]}" "${RED_ERR[i]}"
   want_body="${RED_BODIES[i]}"
   [[ -z "${RED_ERR[i]}" ]] || want_body+=$'\n'"${RED_ERR[i]}"
-  run_battery "$B" 3
-  assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=$name " "$name: the run exits 1 and names only it"
-  assert_eq "$(line_of "$name")" "suite=$name seconds=N ${RED_WANT[i]}" "$name reports ${RED_WANT[i]}"
-  assert_eq "$(printf '%s\n' "$OUT" | awk -v h="──── $name ────" -v t="suite=$name " \
-    '$0 == h { on = 1; next } on && index($0, t) == 1 { exit } on')" "$want_body" \
-    "$name: its stdout and stderr are printed whole under its header"
+  # A controlled report duration crosses the enabled review trigger. The
+  # existing red fixtures still own their status and parsed failure count.
+  mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 2'
+  variants=row
+  [ "$i" -ne 0 ] || variants='row control'
+  for variant in $variants; do
+    if [ "$variant" = control ]; then
+      mutate_file "$B/run-all.sh" 'if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]]; then' \
+        'if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]] || true; then'
+    fi
+    run_battery "$B" 3 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+      RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
+      GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
+    warnings="$(awk -v s="suite=$name" '/^::warning::run-all-budget / {for (i=1; i<=NF; i++) if ($i==s) n++} END {print n+0}' <<<"$OUT")"
+    if [ "$variant" = row ]; then
+      assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=$name " "$name: the run exits 1 and names only it"
+      assert_eq "$(line_of "$name")" "suite=$name seconds=N ${RED_WANT[i]}" "$name reports ${RED_WANT[i]}"
+      assert_eq "$(printf '%s\n' "$OUT" | awk -v h="──── $name ────" -v t="suite=$name " \
+        '$0 == h { on = 1; next } on && index($0, t) == 1 { exit } on')" "$want_body" \
+        "$name: its stdout and stderr are printed whole under its header"
+      assert_eq "$warnings" 0 "$name emits no passing-suite budget annotation"
+    else
+      CONTROL_RC=0
+      ( assert_eq "$warnings" 0 "$name passing-only annotation oracle"; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
+      assert_eq "rc=$RC warnings=$warnings oracle=$CONTROL_RC" 'rc=1 warnings=1 oracle=1' "$name control rejects a budget annotation on failure"
+    fi
+  done
   i=$((i + 1))
 done
 
@@ -584,11 +605,13 @@ the stop names the row the suite printed last|trapped|RUN_ALL_SUITE_SECS=2|rc=1 
 n=0
 shared=""
 shared_outcome=""
+shared_warnings=""
 while IFS='|' read -r rule kind settings want edit control_want; do
   n=$((n + 1))
   for variant in row control; do
     if [ "$variant" = row ] && [ -n "$shared" ] && [ "$kind $settings" = "$shared" ]; then
       got="$shared_outcome"
+      red_warnings="$shared_warnings"
     else
       B="$TMP_ROOT/bound-$n-$variant"
       bound_battery "$B" "$kind"
@@ -605,17 +628,27 @@ while IFS='|' read -r rule kind settings want edit control_want; do
         case "$setting" in *=+*) setting="${setting%%=*}=$(($(date +%s) + ${setting#*=+}))" ;; esac
         args+=("$setting")
       done
-      run_bounded "$B" "${args[@]}"
+      run_bounded "$B" "${args[@]}" RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+        RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
+        GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
       got="$(bound_outcome "$B")"
+      red_warnings="$(awk '
+        $1 ~ /^suite=/ && $4 != "fail=0" { red[$1] = 1 }
+        /^::warning::run-all-budget / {
+          for (i = 1; i <= NF; i++) if ($i ~ /^suite=/) warnings[$i]++
+        }
+        END { for (suite in red) n += warnings[suite]; print n + 0 }
+      ' <<<"$OUT")"
       if [ "$variant" = row ]; then
         case "$settings" in
           *=+*) shared="" ;;
-          *) shared="$kind $settings"; shared_outcome="$got" ;;
+          *) shared="$kind $settings"; shared_outcome="$got"; shared_warnings="$red_warnings" ;;
         esac
       fi
     fi
     if [ "$variant" = row ]; then
       expect="$want" name="$rule"
+      assert_eq "$red_warnings" 0 "$rule: failed or stopped suites emit no passing-suite budget annotation"
     else
       expect="$control_want" name="control, $edit: $rule fails"
     fi
