@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use kendex_core::source_read::NOT_RENDERED;
+
 use super::deps_cli::tree;
 use super::verify_records::{commit, kendex, repository, said, write};
 use crate::test_util::rooted;
@@ -103,6 +105,19 @@ fn assert_user_files(project: &Path, before: &BTreeMap<PathBuf, Vec<u8>>) {
 }
 
 #[allow(clippy::unwrap_used)]
+fn catalog_render(catalog: &Path) -> Vec<(String, Vec<u8>)> {
+    tree(&catalog.join("skills/jarvis"))
+        .into_iter()
+        .filter(|(entry, _)| {
+            let (_, relative) = entry.split_once(':').unwrap();
+            !NOT_RENDERED
+                .iter()
+                .any(|name| Path::new(relative).starts_with(name))
+        })
+        .collect()
+}
+
+#[allow(clippy::unwrap_used)]
 fn release(catalog: &Path) {
     let reference = catalog.join("skills/jarvis/references/memory.md");
     let text = fs::read_to_string(&reference).unwrap();
@@ -127,7 +142,7 @@ fn refresh_updates_jarvis_and_preserves_the_assistant_home() {
     println!("Install with private operator:\n{install_output}");
     let before = user_files(&project);
     let render = project.join(".agents/skills/jarvis");
-    assert_eq!(tree(&render), tree(&catalog.join("skills/jarvis")));
+    assert_eq!(tree(&render), catalog_render(&catalog));
     release(&catalog);
     let refreshed = kendex(
         &home,
@@ -136,7 +151,7 @@ fn refresh_updates_jarvis_and_preserves_the_assistant_home() {
     );
     assert!(refreshed.status.success(), "{}", said(&refreshed));
     println!("Jarvis refresh:\n{}", said(&refreshed));
-    assert_eq!(tree(&render), tree(&catalog.join("skills/jarvis")));
+    assert_eq!(tree(&render), catalog_render(&catalog));
     assert!(!project.join("skills/base").exists());
     assert_user_files(&project, &before);
     let verified = kendex(&home, &project, &["verify"]);

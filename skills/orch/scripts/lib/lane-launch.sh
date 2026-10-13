@@ -76,21 +76,21 @@ lane_session_command() { # HARNESS NATIVE_ID RESUME_FILE
   [[ "$harness" != pi ]] || LANE_SESSION_ACCOUNT_VAR=PI_CODING_AGENT_DIR
   LANE_SESSION_CMD="$(
   case "$harness" in
-    claude)
+    (claude)
       if [[ -n "$file" ]]; then printf 'claude -n jarvis --resume %q' "$id"
       else printf 'claude -n jarvis --session-id %q' "$id"; fi ;;
-    codex)
+    (codex)
       launch_choice_lead_settings codex || return 1
       printf 'codex'
       printf ' %q' "${LAUNCH_CHOICE_KEPT[@]}"
       [[ -z "$file" ]] || printf ' resume %q' "$id" ;;
-    copilot)
+    (copilot)
       if [[ -n "$file" ]]; then printf 'copilot --resume=%q' "$id"
       else printf 'copilot --session-id=%q' "$id"; fi ;;
-    pi)
+    (pi)
       if [[ -n "$file" ]]; then printf 'pi --session %q' "$file"
       else printf 'pi --session-id %q' "$id"; fi ;;
-    *) return 2 ;;
+    (*) return 2 ;;
   esac
   printf '\n'
   )" || return 1
