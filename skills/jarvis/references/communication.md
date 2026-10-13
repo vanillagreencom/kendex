@@ -5,6 +5,7 @@
 - Use the medium that lets the user receive and act on the message. Chat and voice are optional connectors the user chooses.
 - Reply in the medium where the user started the conversation.
 - Keep each message on one topic. Put a reply in the thread of the message it answers. Continue that topic in the same thread.
+- If a fact answers two messages, give a short answer in each thread.
 - Answer a voice request before resuming other work. If the answer needs work, say what is needed in the spoken reply.
 - Follow the user's reporting cadence and quiet hours. The user defines which critical notices can interrupt quiet hours.
 
