@@ -1,1 +1,0 @@
-- Item tier selection now uses `HARNESS_CI_STANDARD_PATHS` from the base checkout, so declared standard paths receive standard review depth.

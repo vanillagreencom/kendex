@@ -63,6 +63,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### command-safety
 
+- Refuses recognized whole-environment reads in shell command text unless a filter names a variable. The refusal gives the filtered form. Project deny patterns cannot disable this check.
 - Warn once and allow the shell call when tools, payload, installed settings support or project settings cannot be read, or the deny pattern is invalid or empty. Keep matching raw command text and joined line continuations, including quoted examples. Capture installed support diagnostics below their keyed warning.
 
 #### commit-guards
@@ -91,12 +92,14 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### harness-ci
 
+- Shared launch-path classification now applies repository standard path floors, so orch uses the same class and cause for Location and changed paths.
 - Consumer CI templates and wiring examples pin GitHub-owned and third-party actions to full commit SHAs with release-version comments.
 - A change to `.github/ci-lanes.conf` selects only lanes whose names, claims or queue marks changed. Other paths keep default-branch claims. An unreadable declaration still runs every lane.
 - The Dependabot wiring guide ignores kendex workflow and action refs so the kendex refresh route owns their updates.
 
 #### jarvis
 
+- Jarvis reaches the agent in each of your kendex projects through that repository's mailbox: its setup check lists the reachable and unreachable repositories, it offers the mailbox install where one is missing, and until then it answers from the agent's session transcript, labelled as such.
 - Keep send results separate from output filters, read totals and ages from their source records, and remove sign-in query strings before logging browser tabs.
 - Jarvis builds a report's waiting-on-you list from live sources and lists as landed only merges it read in the session. It reports a fix sent to another owner as sent until it checks the fix where the problem was seen, and repairs the step behind each of its errors. It sweeps unanswered messages at each wake.
 - Jarvis adds a weekly efficiency audit that reads the consumer's own session, overseer and lane records and writes a report with an owner summary of at most 15 lines.
@@ -129,6 +132,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### mailbox
 
+- The overseer can close peer asks and asks with no audience. Pending lists and mailbox compaction recognize these closes.
 - Use the mailbox skill for repository questions, notices and answers without installing orchestration.
 - Mailbox directives preserve long Slack threads without exceeding the process argument limit. Envelope write failures report the write error and its cause.
 - Item owner asks reach Linear without a team setting. Close retains the applied label for cleanup, and unavailable tracker settings report their cause while the chat ask remains available.
@@ -140,6 +144,12 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### orch
 
+- Fleet log takeover skips `token` rows written by fleet's `reap`, so token events cannot displace rulings from a successor's takeover window.
+- Claude cloud sessions create ready pull requests through REST after their tests and internal review pass, then request Copilot review without a draft-to-ready step.
+- Item tier selection now uses `HARNESS_CI_STANDARD_PATHS` from the base checkout, so declared standard paths receive standard review depth.
+- Keep Verifying checks running when unrelated merged pull requests exceed the search limit. Share searches for bounded batches of Verifying item keys and branches per repository and pass.
+- Require the caller's on-screen Approve for destructive or money steps on a call.
+- Overseer turn-end mark checks reuse loaded settings and complete caller records to start fewer processes.
 - Reuse a lane provider's capability reply while its file stays unchanged, including the static SSH reply for providers that refuse the capability verb.
 - Copilot account records expose the usage response's raw month consumption as `credits_used`. An unavailable value stays null.
 - Long lanes with repeated fixes receive a design review before another patch round. The overseer also reviews a mechanism before filing its second fix in one day.
