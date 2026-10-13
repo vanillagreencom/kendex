@@ -188,20 +188,73 @@ fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
     assert!(clean.drift.is_empty(), "{:?}", clean.drift);
 }
 
+const CLAUDE_SETTINGS_ROWS: &[(&str, bool, &str, Option<bool>, Option<bool>, bool)] = {
+    const HOOK: &str = "[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"all\"\n";
+    const PLUGIN: &str = "[plugins.\"fmt@marketplace\"]\nenabled = true\nharness = \"claude\"\n";
+    const SKILL: &str = "[skills.inspect]\nsource = \"cat\"\n";
+    const AGENT: &str = "[agents.scout]\nsource = \"cat\"\n";
+    const STYLE: &str = "[output-styles.STE]\nsource = \"cat\"\n";
+    const MCP: &str = "[mcp-servers.reader]\nsource = \"cat\"\n";
+    &[
+        ("claude", false, HOOK, None, Some(true), true),
+        ("claude", false, PLUGIN, None, Some(true), true),
+        ("claude", false, STYLE, None, Some(true), true),
+        (
+            "claude",
+            false,
+            "[plugins.\"fmt@marketplace\"]\nenabled = false\nharness = \"claude\"\n",
+            None,
+            None,
+            true,
+        ),
+        ("claude", false, HOOK, Some(false), Some(false), true),
+        ("claude", false, PLUGIN, Some(false), Some(false), true),
+        ("claude", true, PLUGIN, None, None, true),
+        ("codex", false, HOOK, None, None, true),
+        ("claude", false, SKILL, None, None, false),
+        ("claude", false, AGENT, None, None, false),
+        ("claude", false, SKILL, Some(true), Some(true), false),
+        ("claude", false, MCP, None, None, false),
+    ]
+};
+
+#[allow(clippy::unwrap_used)]
+fn claude_settings_catalog(w: &World) -> String {
+    let catalog = w.env.home.join("catalog");
+    for directory in ["skills/inspect", "agents", "output-styles", "mcp"] {
+        fs::create_dir_all(catalog.join(directory)).unwrap();
+    }
+    for (path, contents) in [
+        ("kendex.toml", "is_source_catalog = true\n"),
+        (
+            "skills/inspect/SKILL.md",
+            "---\nname: inspect\ndescription: Inspect files\n---\nInspect files.\n",
+        ),
+        (
+            "agents/scout.md",
+            "---\nname: scout\ndescription: Find files\n---\nFind files.\n",
+        ),
+        (
+            "output-styles/STE.md",
+            "---\nname: STE\ndescription: Short sentences\nkeep-coding-instructions: true\n---\nWrite short sentences.\n",
+        ),
+        ("mcp/reader.toml", "command = \"reader-mcp\"\n"),
+    ] {
+        fs::write(catalog.join(path), contents).unwrap();
+    }
+    format!(
+        "[sources.cat]\n{}\n",
+        crate::test_util::source_path(&catalog)
+    )
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
-fn claude_project_settings_default_reaches_current_installations_only_in_project_scope() {
-    let hook = "[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"all\"\n";
-    let plugin = "[plugins.\"fmt@marketplace\"]\nenabled = true\nharness = \"claude\"\n";
-    for (harness, global, declaration, existing, expected) in [
-        ("claude", false, hook, None, Some(true)),
-        ("claude", false, plugin, None, Some(true)),
-        ("claude", false, hook, Some(false), Some(false)),
-        ("claude", false, plugin, Some(false), Some(false)),
-        ("claude", true, plugin, None, None),
-        ("codex", false, hook, None, None),
-    ] {
+fn claude_project_settings_default_reaches_current_settings_registrations_only_in_project_scope() {
+    for &(harness, global, declaration, existing, expected, settings_exist) in CLAUDE_SETTINGS_ROWS
+    {
         let w = world();
+        let source = claude_settings_catalog(&w);
         fs::create_dir_all(w.env.home.join(".claude")).unwrap();
         fs::create_dir_all(w.project.join(".claude")).unwrap();
         let scope = if global { Scope::Global } else { scope(&w) };
@@ -209,7 +262,7 @@ fn claude_project_settings_default_reaches_current_installations_only_in_project
         fs::create_dir_all(manifest.parent().unwrap()).unwrap();
         fs::write(
             manifest,
-            format!("schema = 7\n[install]\nharnesses = [\"{harness}\"]\n{declaration}"),
+            format!("schema = 7\n{source}[install]\nharnesses = [\"{harness}\"]\n{declaration}"),
         )
         .unwrap();
         let first = audit(&w.env, &scope).unwrap();
@@ -223,8 +276,12 @@ fn claude_project_settings_default_reaches_current_installations_only_in_project
             (false, "codex") => w.project.join(".codex/hooks.json"),
             (false, _) => w.project.join(".claude/settings.json"),
         };
-        let mut before: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(path.exists(), settings_exist, "{declaration}");
+        let mut before: serde_json::Value = if settings_exist {
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
+        } else {
+            serde_json::json!({})
+        };
         before
             .as_object_mut()
             .unwrap()
@@ -249,7 +306,11 @@ fn claude_project_settings_default_reaches_current_installations_only_in_project
         kendex_core::apply::execute(&w.env, &report.plan).unwrap();
         let rendered: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(rendered["switchModelsOnFlag"].as_bool(), expected);
+        assert_eq!(
+            rendered["switchModelsOnFlag"].as_bool(),
+            expected,
+            "{declaration}"
+        );
         let mut expected_keys = before;
         if let Some(value) = expected {
             expected_keys["switchModelsOnFlag"] = serde_json::json!(value);

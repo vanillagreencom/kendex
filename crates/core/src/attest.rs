@@ -823,7 +823,7 @@ fn history_problem(
 /// file the way the writer left it. A removal lands only in a file a
 /// registration or shim is judged in. The scope default transition follows
 /// those removals, using the base record's ownership and this pass's enabled
-/// installations through the planner's shared decision. The writer's
+/// settings registrations through the planner's shared decision. The writer's
 /// [`crate::engine::config_edits::ConfigEditPlan::compose`] then orders and
 /// transforms those edits against the base text, including ownership release
 /// for a value the person changed or deleted before that revision. Replay
@@ -886,6 +886,7 @@ pub fn foreign_since(
         &report.plan.scope,
         ownership,
         &report.record,
+        &report.registrations,
     ) && let Some(edits) = by_file.get_mut(&path)
     {
         edits.push(edit);
