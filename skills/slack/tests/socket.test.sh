@@ -136,6 +136,7 @@ while read -r failure mutant tries want_count; do
   if [ "$failure" = mail ]; then
     rm -- "${RETRY_ROOT:?}/.agents/skills/mailbox/scripts"
     mkdir -p "$RETRY_ROOT/.agents/skills/mailbox/scripts"
+    sk_store_fixture "$RETRY_ROOT" ""
     cat > "$RETRY_ROOT/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "$RETRY_ROOT/tmp/send-refused" ]; then
@@ -197,6 +198,7 @@ while read -r mode tries want; do
   STATUS_PARENT="$(sk_inject "$STATUS_CH" U001 'Old status topic.' '' "\"ts\": \"$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')\"")"
   rm -- "$STATUS_ROOT/.agents/skills/mailbox/scripts"
   mkdir -p "$STATUS_ROOT/.agents/skills/mailbox/scripts"
+  sk_store_fixture "$STATUS_ROOT" ""
   cat > "$STATUS_ROOT/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "$STATUS_ROOT/tmp/send-refused" ]; then
@@ -270,6 +272,7 @@ sk_relay_stop
 THETA="$(sk_new_root theta)"
 rm -- "${THETA:?}/.agents/skills/mailbox/scripts"
 mkdir -p "$THETA/.agents/skills/mailbox/scripts"
+sk_store_fixture "$THETA" ""
 cat > "$THETA/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env bash
 if [ -e "${THETA:?}/tmp/send-refused" ]; then
@@ -385,6 +388,7 @@ for variant in normal late-ack worker-ack no-mark no-notice; do
   SC="$(sk_channel "$SLOW")"
   rm -- "${SLOW:?}/.agents/skills/mailbox/scripts"
   mkdir -p "$SLOW/.agents/skills/mailbox/scripts"
+  sk_store_fixture "$SLOW" ""
   cat > "$SLOW/.agents/skills/mailbox/scripts/lane-mail" <<EOF
 #!/usr/bin/env python3
 import json, os, pathlib, sys, time, urllib.request
