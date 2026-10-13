@@ -95,7 +95,9 @@ DIRECTIVE=(send --item CC-1 --directive --file "$TMP_ROOT/directive" --state-dir
 
 echo "=== a directive reaches a session lane through the Claude CLI ==="
 session_delivered() {
-  lm -- "${DIRECTIVE[@]}"
+  local destination=()
+  [[ "${1:-0}" == 0 ]] || destination=(--root "$CHECKOUT/wt/CC-1" --host)
+  lm -- "${DIRECTIVE[@]}" ${destination[@]+"${destination[@]}"}
   assert_eq "rc=$RC out=$OUT" "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD" \
     "a session root inside its checkout delivers and receipts the directive"
   if [[ -f "$TMP_ROOT/claude.log" ]]; then
@@ -108,7 +110,7 @@ session_delivered() {
   assert_eq "mailbox=$([[ -e "$CHECKOUT/wt/CC-1/tmp/lane-mail/CC-1/to-lane.jsonl" || -e "$CHECKOUT/tmp/lane-mail/CC-1/to-lane.jsonl" ]] && echo yes || echo no)" \
     "mailbox=no" "nothing lands in a mailbox for a session lane"
 }
-session_delivered
+for hosted in 0 1; do session_delivered "$hosted"; done
 
 echo "=== what a session send cannot deliver refuses, reaching no session ==="
 ARCHIVED='{"ok":false,"error":"Session session_01CLOUD is archived"}'
@@ -126,8 +128,12 @@ for row in \
   envs=()
   [[ -z "$env" ]] || envs=("$env")
   read -r -a opts <<<"$opt"
-  lm ${envs[@]+"${envs[@]}"} -- send --item "$item" "${opts[@]}" --file "$TMP_ROOT/directive" --state-dir "$state"
-  assert_eq "rc=$RC err=$ERR called=$(called)" "rc=2 err=$want called=$call" "$label"
+  for hosted in 0 1; do
+    destination=()
+    [[ "$hosted" == 0 ]] || destination=(--root "$CHECKOUT" --host)
+    lm ${envs[@]+"${envs[@]}"} -- send --item "$item" "${opts[@]}" --file "$TMP_ROOT/directive" --state-dir "$state" ${destination[@]+"${destination[@]}"}
+    assert_eq "rc=$RC err=$ERR called=$(called)" "rc=2 err=$want called=$call" "$label: host=$hosted"
+  done
 done
 
 echo "=== every session send records its result and the account's credit ==="
@@ -279,10 +285,17 @@ assert_eq "err=$ERR" "err=lane-mail: session-archived=session_01CLOUD" "control:
 mutant session-foreign '  lm_root_own "$root" own' '  :'
 lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
 assert_eq "called=$(called)" "called=yes" "control: without the root check another repository's session is reached"
+lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE" --root "$CHECKOUT" --host
+assert_eq "called=$(called)" "called=yes" "control: without ownership a hosted send reaches another repository's session"
+# shellcheck disable=SC2016
+mutant session-host-ownership 'if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; then' \
+  'if [ "$HOST" -eq 0 ] && { [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; }; then'
+lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE" --root "$CHECKOUT" --host
+assert_eq "rc=$RC called=$(called)" "rc=0 called=yes" "control: coupling ownership to the host flag admits a foreign session"
 # shellcheck disable=SC2016
 mutant session-checkout '  lm_root_own "$root" own' '  lm_root_own "$root" checkout'
 SESSION_ASSERT_RC=0
-( FAIL=0; session_delivered; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/session-root-control.out" || SESSION_ASSERT_RC=$?
+( FAIL=0; for hosted in 0 1; do session_delivered "$hosted"; done; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/session-root-control.out" || SESSION_ASSERT_RC=$?
 assert_eq "$SESSION_ASSERT_RC" 1 "control: requiring a checkout root fails the same session delivery assertions"
 # shellcheck disable=SC2016
 mutant session-unrecorded '[ -z "$STATE_DIR" ] || refuse lane-unrecorded' 'true || refuse lane-unrecorded'

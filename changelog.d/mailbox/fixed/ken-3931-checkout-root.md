@@ -1,1 +1,1 @@
-- Refuse a local mailbox root that is not a checkout's top-level directory, so questions cannot go to a mailbox the overseer does not read.
+- Refuse mistaken local mailbox directories as checkout roots, while keeping reads of recorded merged worktrees and repository ownership checks for cloud sessions.

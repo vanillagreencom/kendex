@@ -22,7 +22,7 @@ Launch only this repository's items and send prioritized foreign tracker issues 
 
 - `--repo` names ANOTHER repository's checkout: a value holding `/` is a path, a bare name is a checkout beside this one. It resolves to that repository's main checkout, so a path inside the peer reaches the same mailbox; a path that is no checkout is refused as `repo-unresolved`, and one resolving to this checkout as `repo-self`, since both sides of an exchange in one mailbox would make this repository its own peer. A note to this overseer is `lane-mail send --item overseer`.
 - Add `--host` for a peer on another host, `--repo` naming its path there.
-- `lane-mail send` writes a mailbox of the caller's own repository alone, a lane's or its own overseer's. A `--root` under another repository is refused with the first line `lane-mail: lane-foreign=[ROOT]`. `peer` is the only cross-repository write.
+- `lane-mail send` writes a mailbox of the caller's own repository alone, a lane's or its own overseer's. A local `--root` must be a checkout's physical top-level directory; another value refuses as `root-not-checkout`. A checkout owned by another repository refuses with the first line `lane-mail: lane-foreign=[ROOT]`. `peer` is the only cross-repository write.
 - Every message carries its sender, so the watch reports an owner's note as an owner message and a peer's as `peer-note [REPOSITORY]`. The repository is the `[marketplace]` name in the sender's `kendex.toml`, else the last segment of its origin URL, else its checkout's directory name.
 
 ## Who reads a note

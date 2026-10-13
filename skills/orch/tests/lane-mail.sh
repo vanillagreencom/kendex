@@ -10,6 +10,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_ARCHIVE_ROOT
+export MSYS=winsymlinks:nativestrict
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
@@ -112,6 +113,49 @@ for root in "$LANE" "$TMP_ROOT/root-link" omitted; do
   lm ask --item KEN-1 ${args[@]+"${args[@]}"} --file "$(text root "Checkout $root?")"
   assert_eq "$RC=$(jq -r 'select(.id == "'"${OUT#id=}"'") | .text' "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl")" \
     "0=Checkout $root?" "$root: an ask lands in the worktree mailbox"
+done
+
+recorded_root() { # CASE EXPECTED_EXIT
+  local kind="$1" expected="$2" root="$TMP_ROOT/record-$1" recorded
+  LANE="$TMP_ROOT/root_base"
+  case "$kind" in
+    directory) root="$LANE/tmp/lane-mail"; mkdir -p "$root" ;;
+    link) ln -s "$TMP_ROOT/removed-link-target" "$root"; [[ -L "$root" ]] || exit 1 ;;
+    *)
+      git -C "$LANE" worktree add -q --detach "$root"
+      git -C "$LANE" worktree remove -f "$root"
+      ;;
+  esac
+  recorded="$root"
+  [[ "$kind" != mismatched ]] || recorded="$TMP_ROOT/another-removed-root"
+  jq -n --arg root "$recorded" '{lanes: [{item: "KEN-1", host: null, mail_root: $root, cycle: {pr: 1}}]}' \
+    > "$LANE/tmp/workflow-state-oversee.json"
+  case "$kind" in
+    unrecorded) printf '{"lanes":[]}\n' > "$LANE/tmp/workflow-state-oversee.json" ;;
+    unmerged) jq 'del(.lanes[0].cycle)' "$LANE/tmp/workflow-state-oversee.json" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$LANE/tmp/workflow-state-oversee.json" ;;
+    hosted-record) jq '.lanes[0].host = "ssh"' "$LANE/tmp/workflow-state-oversee.json" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$LANE/tmp/workflow-state-oversee.json" ;;
+    unreadable) printf 'not JSON\n' > "$LANE/tmp/workflow-state-oversee.json" ;;
+  esac
+  if [[ "$kind" == write ]]; then
+    lm ask --item KEN-1 --root "$root" --file "$(text record 'A removed root cannot receive an ask.')"
+  else
+    lm pending --item KEN-1 --root "$root"
+  fi
+  assert_eq "$RC=$OUT" "$expected=" "$kind: the recorded-root contract controls the result"
+  if [[ "$expected" == 2 ]]; then
+    assert_eq "${ERR%% top=*}" "lane-mail: root-not-checkout=$root" "$kind: an invalid explicit root keeps its refusal key"
+    assert_eq "$(wc -l < "$TMP_ROOT/err" | tr -d ' ')" 1 "$kind: the root refusal is one line"
+  else
+    assert_eq "$ERR" '' "$kind: a recorded merged worktree reads empty after removal"
+  fi
+  if [[ "$kind" == write ]]; then
+    assert_eq "$([[ -e "$root" ]] && echo written || echo untouched)" untouched "a refused removed root creates no mailbox"
+    rm -rf -- "$root"
+  fi
+  [[ "$kind" != link ]] || rm -- "$root"
+}
+for row in removed:0 unrecorded:2 unmerged:2 mismatched:2 directory:2 link:2 write:2 unreadable:2 hosted-record:2; do
+  recorded_root "${row%:*}" "${row#*:}"
 done
 
 new_lane envelope
@@ -1494,6 +1538,22 @@ assert_eq "$ROOT_ASSERT_RC" 1 "control: removing the checkout check fails the sa
 assert_eq "$(jq -r '.text' "$LANE/tmp/lane-mail/tmp/lane-mail/KEN-1/to-overseer.jsonl")" 'Which checkout?' \
   "control: the old root behavior writes the question where no overseer reads"
 
+for rule in removed matching merged missing read host; do
+  # shellcheck disable=SC2016  # Mutations use literal production text.
+  case "$rule" in
+    removed) old='if [ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]] &&'; new='if false && [ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]] &&'; row=removed:0 ;;
+    matching) old='.mail_root == $root and'; new='true and'; row=mismatched:2 ;;
+    merged) old='(.cycle.pr | type == "number")'; new='true'; row=unmerged:2 ;;
+    missing) old='[[ ! -e "$1" && ! -L "$1" ]]'; new='true'; row=directory:2 ;;
+    read) old='[ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]]'; new='true && [[ ! -e "$1" && ! -L "$1" ]]'; row=write:2 ;;
+    host) old='(.host == null or .host == "local")'; new='true'; row=hosted-record:2 ;;
+  esac
+  mutant "recorded-root-$rule" "$old" "$new"
+  ROOT_ASSERT_RC=0
+  ( FAIL=0; recorded_root "${row%:*}" "${row#*:}"; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/record-control-$rule.out" || ROOT_ASSERT_RC=$?
+  assert_eq "$ROOT_ASSERT_RC" 1 "control: the $rule root defect fails the same recorded-root assertions"
+done
+
 new_lane control_wait_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Read once?')"
 WAIT_ID="${OUT#id=}"
@@ -1582,7 +1642,7 @@ mutant interval-overshoots '[ "$LEFT" -ge "$NAP" ] || NAP="$LEFT"' ':'
 clock_lm wait --item KEN-1 --id "$OVERSHOOT_ID" --timeout 1 --interval 5
 assert_eq "$RC=$SLEPT" "124=5" "control: without the cap the wait sleeps the whole interval past its deadline"
 
-mutant unowned-send 'if { [ "$VERB" = send ] || [ "$VERB" = resolve ]; } && [ "$HOST" -eq 0 ]; then' 'if false; then'
+mutant unowned-send 'if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; then' 'if false; then'
 LANE="$PEER_A"
 lm send --item KEN-1 --root "$PEER_B" --directive --file "$(text d 'Not yours.')"
 assert_eq "$RC=$(jq -r '.text' < "$PEER_B/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0=Not yours." \
