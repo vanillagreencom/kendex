@@ -102,7 +102,7 @@ from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tupl
 from api import RETRIES, Slack
 from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail
 from markup import Verbatim, outbound, plain
-from refusals import Refusal, keyed, notice, print_refusal
+from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
 from settings import CALLER_ENV, JARVIS_SESSION, RENAMED_SETTINGS, Presence, Settings, load_presence
@@ -112,6 +112,7 @@ from store import (
     Binding,
     Journal,
     RelayLock,
+    LOCK,
     JARVIS_LOCK,
     State,
     Thread,
@@ -1183,7 +1184,10 @@ class Relay:
     def root_failed(self, root: Union[Path, RootRelay], err: Exception) -> None:
         """Record one root's failure without letting its status write stop
         other roots. A dead token still stops the shared relay."""
-        if isinstance(err, Refusal) and err.key in ("slack-auth-failed", "root-unbound", "binding-invalid", "channel-shared", "relay-running"):
+        if isinstance(err, Refusal) and (
+            err.key in ("slack-auth-failed", "root-unbound", "binding-invalid", "channel-shared")
+            or isinstance(err, LockRefusal) and err.lock_name == LOCK
+        ):
             raise err
         path = root if isinstance(root, Path) else root.path
         error = f"{err.key}={err.value}" if isinstance(err, Refusal) else f"{type(err).__name__}: {err}"

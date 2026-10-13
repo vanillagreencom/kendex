@@ -145,20 +145,32 @@ missing|retry
 poll|diagnostic
 ROWS
 
-# A duplicate must refuse before attempting Socket Mode, both at start and
-# when an inactive root's command returns. The API fault ends the skip control.
-while read -r phase mode; do
-  BAD_ROOT="$(sk_new_root "locked-$phase-$mode")"
-  GOOD_ROOT="$(sk_new_root "lock-good-$phase-$mode")"
+# Listen contention must refuse before Socket Mode, at start and retry.
+# Jarvis probe contention must keep healthy mail and retained replies alive.
+while read -r kind phase mode; do
+  BAD_ROOT="$(sk_new_root "locked-$kind-$phase-$mode")"
+  GOOD_ROOT="$(sk_new_root "lock-good-$kind-$phase-$mode")"
   sk_bind "$BAD_ROOT"
   sk_bind "$GOOD_ROOT"
+  if [ "$kind" = jarvis ]; then
+    sk_poll "$BAD_ROOT"
+    sk_poll "$GOOD_ROOT"
+    sk_lm "$GOOD_ROOT" notice --item overseer --to owner --file "$(sk_text "$kind-$phase-$mode" 'Jarvis healthy notice.')" >/dev/null
+  fi
   if [ "$mode" = control ]; then
-    sk_mutant duplicate-skip relay.py '"channel-shared", "relay-running"' '"channel-shared"'
+    case "$kind" in
+      listen) sk_mutant duplicate-skip relay.py 'or isinstance\(err, LockRefusal\) and err.lock_name == LOCK' 'or False' ;;
+      jarvis) sk_mutant ambiguous-lock relay.py 'or isinstance\(err, LockRefusal\) and err.lock_name == LOCK' 'or err.key == "relay-running"' ;;
+    esac
   fi
   sk_ctl /_test/calls-reset >/dev/null
-  sk_ctl /_test/fault '{"method":"apps.connections.open","error":"missing_scope"}' >/dev/null
+  if [ "$kind" = listen ]; then
+    sk_ctl /_test/fault '{"method":"apps.connections.open","error":"missing_scope"}' >/dev/null
+  else
+    sk_ctl /_test/fault '{"method":"conversations.replies","error":"channel_not_found"}' >/dev/null
+  fi
   cat > "$SK_TMP/lock-probe.py" <<'PY'
-import json, pathlib, subprocess, sys
+import fcntl, json, pathlib, subprocess, sys, time
 if sys.argv[1] != "--child":
     result = subprocess.run([sys.executable, __file__, "--child", *sys.argv[1:]], timeout=60)
     sys.exit(result.returncode)
@@ -168,12 +180,52 @@ from api import Slack
 from refusals import Refusal
 from relay import Relay
 from settings import load
-from store import RelayLock
-bad, good, phase, command = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4], sys.argv[5]
+from store import JARVIS_LOCK, RelayLock
+bad, good, phase, command, kind = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), *sys.argv[4:]
 holder = RelayLock(bad)
+probe = None
 relay = None
+polls = []
+reply = ""
+error_key = ""
+code = 0
 try:
-    if phase == "initial":
+    if kind == "jarvis":
+        settings = load()
+        api = Slack(settings.token, settings.api_url)
+        bad_session = bad / "tmp/jarvis-session"
+        bad_lock = RelayLock(bad, JARVIS_LOCK)
+        if phase == "initial":
+            bad_session.touch()
+            (bad / "kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = ' + json.dumps(str(bad_session)) + '\n')
+            probe = bad_lock.path.open("a+")
+            fcntl.flock(probe.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        relay = Relay([bad, good], settings, api)
+        app = Slack(settings.app_token, settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
+        assert relay.open(app)
+        channel = json.loads((good / "tmp/slack/binding.json").read_text())["channel"]
+        parent = api.post("_test/message", channel=channel, user="U001", text="Jarvis old parent.",
+                          ts="%.6f" % (time.time() - 8 * 86400))["ts"]
+        relay.deliver(relay.incoming.get(timeout=10))
+        reply = api.post("_test/message", channel=channel, user="U001", text="Jarvis retained reply.", thread_ts=parent)["ts"]
+        envelope = relay.incoming.get(timeout=10)
+        assert envelope["payload"]["event"]["ts"] == reply
+        relay.deliver(envelope)
+        assert reply in relay.by_channel[channel].pending_live
+        if phase == "retry":
+            bad_session.touch()
+            (bad / "kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = ' + json.dumps(str(bad_session)) + '\n')
+            probe = bad_lock.path.open("a+")
+            fcntl.flock(probe.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        # held() takes the same shared OS lock while probing a mention hold.
+        # The fixture retains its descriptor until the root attempts acquire.
+        polls.append(relay.poll_once())
+        polls.append(relay.poll_once())
+        probe.close()
+        probe = None
+        bad_session.unlink()
+        polls.append(relay.poll_once())
+    elif phase == "initial":
         holder.acquire()
         child = subprocess.run([command, "listen", "--root", str(bad), "--root", str(good)],
                                capture_output=True, text=True, timeout=60)
@@ -192,33 +244,66 @@ try:
             relay.open(app)
         except Refusal as error:
             print(json.dumps({"code": 2, "refused": error.key == "relay-running"}))
+except Refusal as error:
+    if kind != "jarvis":
+        raise
+    error_key = error.key
+    code = 2
 finally:
+    if probe is not None:
+        probe.close()
     holder.release()
     if relay is not None:
+        relay.stop_reader.set()
+        if relay.reader is not None:
+            relay.reader.join(timeout=10)
         for root in relay.roots:
             root.hold_lock.release()
             root.lock.release()
+if kind == "jarvis":
+    print(json.dumps({"error": error_key, "polls": polls, "reply": reply}))
+    sys.exit(code)
 PY
   RC=0
   OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
     GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
-    python3 "$SK_TMP/lock-probe.py" "${SK_BIN%/*}/lib" "$BAD_ROOT" "$GOOD_ROOT" "$phase" "$SK_BIN")" || RC=$?
+    python3 "$SK_TMP/lock-probe.py" "${SK_BIN%/*}/lib" "$BAD_ROOT" "$GOOD_ROOT" "$phase" "$SK_BIN" "$kind")" || RC=$?
   RESULT="$(printf '%s\n' "$OUT" | tail -n 1)"
-  GOT="$RC|$(jq -cr '[.code,.refused]' <<<"$RESULT")|$(sk_state '[.calls[] | select(. == "apps.connections.open")] | length')"
-  if [ "$mode" = control ]; then
-    sk_assert_red "$GOT" '0|[2,true]|0' "$phase: restoring this head's lock skip breaks the refusal before Socket Mode"
+  if [ "$kind" = jarvis ]; then
+    GOOD_CH="$(sk_channel "$GOOD_ROOT")"
+    TS="$(jq -r .reply <<<"$RESULT")"
+    DELIVERED=0
+    if [ -f "$(sk_box "$GOOD_ROOT")/to-lane.jsonl" ]; then
+      DELIVERED="$(jq -s --arg key "$GOOD_CH:$TS" '[.[] | select(.delivery_id == $key)] | length' "$(sk_box "$GOOD_ROOT")/to-lane.jsonl")"
+    fi
+    GOT="$RC|$(jq -c .polls <<<"$RESULT")|$(asks "$GOOD_CH" 'Jarvis healthy notice.')|$DELIVERED"
+    if [ "$mode" = control ]; then
+      sk_assert_red "$GOT" '0|[false,false,true]|1|1' "$phase: the current-head key-only lock rule stops healthy delivery and loses the retained old reply"
+      assert_eq "$GOT" '2|[]|0|0' "$phase: the ambiguous lock classification exits before the healthy root serves its mail"
+    else
+      assert_eq "$GOT" '0|[false,false,true]|1|1' "$phase: Jarvis probe contention stays local while healthy mail and the retained old reply arrive once"
+    fi
   else
-    assert_eq "$GOT" '0|[2,true]|0' "$phase: a held root lock is fatal before Socket Mode"
+    GOT="$RC|$(jq -cr '[.code,.refused]' <<<"$RESULT")|$(sk_state '[.calls[] | select(. == "apps.connections.open")] | length')"
+    if [ "$mode" = control ]; then
+      sk_assert_red "$GOT" '0|[2,true]|0' "$phase: removing listen-lock identity breaks the refusal before Socket Mode"
+    else
+      assert_eq "$GOT" '0|[2,true]|0' "$phase: a held listen lock is fatal before Socket Mode"
+    fi
   fi
   sk_ctl /_test/faults-reset >/dev/null
   sk_bin_reset
 done <<'ROWS'
-initial production
-initial control
-retry production
-retry control
+listen initial production
+listen initial control
+listen retry production
+listen retry control
+jarvis initial production
+jarvis initial control
+jarvis retry production
+jarvis retry control
 ROWS
 
 # The Socket Mode reader acknowledges the failed root's old-thread reply.

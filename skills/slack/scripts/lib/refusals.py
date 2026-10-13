@@ -214,6 +214,14 @@ class Refusal(Exception):
         self.extra_keyed = list(extra_keyed)
 
 
+class LockRefusal(Refusal):
+    """A held lock whose identity stays internal to refusal classification."""
+
+    def __init__(self, lock_name: str, value: str) -> None:
+        super().__init__("relay-running", value)
+        self.lock_name = lock_name
+
+
 def keyed(key: str, value: str) -> str:
     return f"{NAME}: {key}={value}"
 

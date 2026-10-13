@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Callable, Dict, List, Optional, Set
 
-from refusals import Refusal
+from refusals import LockRefusal, Refusal
 
 DIR = "tmp/slack"
 BINDING = "binding.json"
@@ -433,7 +433,7 @@ class RelayLock:
             holder = handle.read().strip() or "unknown"
             handle.close()
             if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                raise Refusal("relay-running", f"{self.path.parent.parent.parent} pid={holder}") from err
+                raise LockRefusal(self.path.name, f"{self.path.parent.parent.parent} pid={holder}") from err
             raise Refusal("lock-failed", f"{self.path} ({err.strerror})") from err
         handle.seek(0)
         handle.truncate()
