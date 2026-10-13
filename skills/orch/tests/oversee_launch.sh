@@ -43,69 +43,176 @@ TMP_ROOT="$(mktemp -d)" || { echo "oversee_launch: scratch=mktemp-failed" >&2; e
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_launch: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_launch: scratch=resolve-failed" >&2; exit 1; }
 TMUX_DIR="$TMP_ROOT/tmux"
-mkdir -p "$TMUX_DIR"
+BIN="$TMP_ROOT/bin"
+mkdir -p "$TMUX_DIR" "$BIN"
+FIXTURE_SOCKETS=()
+FIXTURE_CHILDREN=()
+# Each label identifies one lifetime. Short labels fit macOS's temp paths.
+fixture_server_allocate() { # SIDE MODE PHASE
+  if [[ "$2" == default ]]; then
+    FIXTURE_NAME=default
+  else
+    FIXTURE_NAME="$1-${2:0:1}-${3:0:1}"
+  fi
+  local uid
+  uid="$(id -u)" || return 1
+  FIXTURE_SOCKET="$TMUX_DIR/tmux-$uid/$FIXTURE_NAME"
+}
+fixture_server_start() {
+  env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$FIXTURE_NAME" -f /dev/null \
+    new-session -d -s fleet -x 200 -y 40 'exec sleep 100000' || return 1
+  FIXTURE_SOCKETS+=("$FIXTURE_SOCKET")
+  tmux -S "$FIXTURE_SOCKET" set-option -g default-shell /bin/sh || return 1
+  tmux -S "$FIXTURE_SOCKET" set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh" || return 1
+  FIXTURE_ADDR="$(tmux -S "$FIXTURE_SOCKET" display-message -p '#{socket_path},#{pid},0')" || return 1
+  printf 'fixture-socket=%s\n' "${FIXTURE_ADDR%%,*}"
+}
+fixture_server_stop() { # SOCKET
+  local i
+  for ((i=0; i<${#FIXTURE_SOCKETS[@]}; i++)); do
+    [[ "${FIXTURE_SOCKETS[i]}" == "$1" ]] || continue
+    tmux -S "$1" kill-server || return 1
+    FIXTURE_SOCKETS[i]=''
+    return 0
+  done
+  echo "fixture: socket=not-owned value=[$1]" >&2
+  return 1
+}
 cleanup() {
-  local socket
+  local socket child
+  for child in ${FIXTURE_CHILDREN[@]+"${FIXTURE_CHILDREN[@]}"}; do
+    [[ -n "$child" ]] || continue
+    kill "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+  done
   [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
-  for socket in "$TMUX_DIR"/tmux-*/?*; do
-    [[ ! -S "$socket" ]] || tmux -S "$socket" kill-server 2>/dev/null || true
+  for socket in ${FIXTURE_SOCKETS[@]+"${FIXTURE_SOCKETS[@]}"}; do
+    [[ -z "$socket" ]] || tmux -S "$socket" kill-server 2>/dev/null || true
   done
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
-source "$TEST_DIR/lib/watch-fixture.sh"
-QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee)" || exit 1
-OVERSEE="$QUIET_SCRIPTS/oversee"
-fixture_watch_neighbor "$OVERSEE"
 tm() { TMUX_TMPDIR="$TMUX_DIR" tmux -L default "$@"; }
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
-if [[ $# -eq 0 ]]; then
+fixture_distinct_sockets() {
+  local duplicates
+  duplicates="$(sort "$@" | uniq -d)" || return 1
+  assert_eq "$duplicates" "" "fixture lifetimes own distinct tmux sockets"
+  [[ -z "$duplicates" ]]
+}
+fixture_worker() { # ROLE BARRIERS
+  local role="$1" barriers="$2" first
+  fixture_server_allocate b worker initial
+  fixture_server_start || return 1
+  first="${FIXTURE_ADDR%%,*}"
+  printf '%s\n' "$first" > "$barriers/$role.sockets"
+  printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.ready"
+  if [[ "$role" == a ]]; then
+    await_marker "$barriers/a.stop" || return 1
+    fixture_server_stop "$first" || return 1
+    touch "$barriers/a.stopped"
+  else
+    await_marker "$barriers/b.check" || return 1
+    tmux -S "$first" display-message -p '#{socket_path},#{pid},0' > "$barriers/b.answered" || return 1
+  fi
+  await_marker "$barriers/$role.restart" || return 1
+  [[ "$role" == a ]] || fixture_server_stop "$first" || return 1
+  fixture_server_allocate b worker register
+  # Compare before acquisition too: base reuse must fail on ownership,
+  # even while kill-server's asynchronous shutdown is still in progress.
+  printf '%s\n' "$FIXTURE_SOCKET" >> "$barriers/$role.sockets"
+  fixture_distinct_sockets "$barriers/$role.sockets" || return 1
+  fixture_server_start || return 1
+  assert_eq "${FIXTURE_ADDR%%,*}" "$FIXTURE_SOCKET" "restarted fixture answers on its allocated fresh socket"
+  printf '%s\n' "$FIXTURE_ADDR" > "$barriers/$role.restarted"
+  await_marker "$barriers/release" || return 1
+  fixture_server_stop "$FIXTURE_SOCKET" || return 1
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+}
+if [[ "${1:-}" == --fixture-worker ]]; then
+  [[ $# -eq 3 && ( "$2" == a || "$2" == b ) ]] || exit 2
+  fixture_worker "$2" "$3"
+  exit
+fi
+[[ $# -eq 0 ]] || exit 2
+
+test_concurrent_fixtures() {
+  local barriers="$TMP_ROOT/concurrent" run status a_addr b_addr a_pid b_pid control answer
+  mkdir -p "$barriers"
+  echo "=== concurrent tmux fixture ownership ==="
+  for run in a b; do
+    "$BASH" "$TEST_DIR/oversee_launch.sh" --fixture-worker "$run" "$barriers" > "$barriers/$run.log" 2>&1 &
+    FIXTURE_CHILDREN+=("$!")
+  done
+  for run in a b; do
+    await_marker "$barriers/$run.ready" || { cat "$barriers/$run.log"; return 1; }
+  done
+  a_addr="$(cat "$barriers/a.ready")" || return 1
+  b_addr="$(cat "$barriers/b.ready")" || return 1
+  fixture_distinct_sockets "$barriers/a.sockets" "$barriers/b.sockets" || return 1
+  a_pid="${a_addr#*,}" a_pid="${a_pid%%,*}"
+  b_pid="${b_addr#*,}" b_pid="${b_pid%%,*}"
+  assert_eq "$([[ "$a_pid" != "$b_pid" ]] && echo distinct || echo shared)" distinct "concurrent fixtures own distinct live server PIDs"
+  answer="$(tmux -S "${a_addr%%,*}" display-message -p '#{socket_path},#{pid},0')" || return 1
+  assert_eq "$answer" "$a_addr" "A answers while B is live"
+  answer="$(tmux -S "${b_addr%%,*}" display-message -p '#{socket_path},#{pid},0')" || return 1
+  assert_eq "$answer" "$b_addr" "B answers while A is live"
+  touch "$barriers/a.stop"
+  await_marker "$barriers/a.stopped" || { cat "$barriers/a.log"; return 1; }
+  touch "$barriers/b.check"
+  await_marker "$barriers/b.answered" || { cat "$barriers/b.log"; return 1; }
+  answer="$(cat "$barriers/b.answered")" || return 1
+  assert_eq "$answer" "$b_addr" "B still answers after A stops its own server"
+  touch "$barriers/a.restart" "$barriers/b.restart"
+  for run in a b; do
+    await_marker "$barriers/$run.restarted" || { cat "$barriers/$run.log"; return 1; }
+  done
+  fixture_distinct_sockets "$barriers/a.sockets" "$barriers/b.sockets" || return 1
+  touch "$barriers/release"
+  for run in 0 1; do
+    status=0
+    wait "${FIXTURE_CHILDREN[run]}" || status=$?
+    FIXTURE_CHILDREN[run]=''
+    assert_eq "$status" 0 "concurrent fixture worker $run passes"
+  done
+  FIXTURE_CHILDREN=()
+  cat "$barriers/a.log" "$barriers/b.log"
+
   control="$TMP_ROOT/control/oversee_launch.sh"
-  mkdir -p "${control%/*}"
+  mkdir -p "${control%/*}" "$TMP_ROOT/control-barriers"
   cp "$TEST_DIR/oversee_launch.sh" "$control"
-  for helper in git-env.sh copilot-context-world.sh lanes-fixture.sh growth-state.sh assertions.sh overseer-checkout.sh; do
+  for helper in git-env.sh copilot-context-world.sh lanes-fixture.sh growth-state.sh assertions.sh; do
     mutate_file "$control" 'source "$(dirname "${BASH_SOURCE[0]}")/lib/'"$helper"'"' \
       "source $(printf '%q' "$TEST_DIR/lib/$helper")"
   done
   mutate_file "$control" $'\nTEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
     "$(printf '\nTEST_DIR=%q' "$TEST_DIR")"
-  mutate_file "$control" $'\n    b_name="server-b-$mode-$verb"' $'\n    b_name="server-b-$mode"'
-  mutate_file "$control" $'\n    b_name="server-b-$mode-control"' $'\n    b_name="server-b-$mode"'
-  "$BASH" "$control" --single-run "$TMP_ROOT/control.ready" "$TMP_ROOT/go" > "$TMP_ROOT/control.log" 2>&1 &
-  control_pid=$!
-  children=()
-  for run in a b; do
-    "$BASH" "$TEST_DIR/oversee_launch.sh" --single-run "$TMP_ROOT/$run.ready" "$TMP_ROOT/go" > "$TMP_ROOT/$run.log" 2>&1 &
-    children+=("$!")
-  done
-  for run in a b control; do
-    await_marker "$TMP_ROOT/$run.ready" || { cat "$TMP_ROOT/$run.log"; exit 1; }
-  done
-  assert_eq "$(sort "$TMP_ROOT/a.ready" "$TMP_ROOT/b.ready" | uniq -d)" "" "concurrent runs own different live tmux sockets"
-  touch "$TMP_ROOT/go"
-  for run in 0 1; do
-    status=0
-    wait "${children[$run]}" || status=$?
-    assert_eq "$status" 0 "concurrent oversee_launch run $run passes"
-  done
-  cat "$TMP_ROOT/a.log" "$TMP_ROOT/b.log"
-  sockets="$(sed -n 's/^fixture-socket=//p' "$TMP_ROOT/a.log" "$TMP_ROOT/b.log")"
-  assert_contains "$sockets" /default "both runs reported their real tmux sockets"
-  assert_eq "$(sort <<<"$sockets" | uniq -d)" "" "concurrent runs never reuse a tmux server socket"
-  wait "$control_pid" || true
-  control_sockets="$(sed -n 's/^fixture-socket=//p' "$TMP_ROOT/control.log")"
-  assert_contains "$(sort <<<"$control_sockets" | uniq -d)" /server-b-register \
-    "control: base socket reuse fails the concurrent row's ownership assertion" "$TMP_ROOT/control.log"
-  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-  [[ "$FAIL" -eq 0 ]]
-  exit
-fi
-[[ $# -eq 3 && "$1" == --single-run ]] || exit 2
+  mutate_file "$control" $'\n    FIXTURE_NAME="$1-${2:0:1}-${3:0:1}"' $'\n    FIXTURE_NAME="$1-${2:0:1}-i"'
+  barriers="$TMP_ROOT/control-barriers"
+  "$BASH" "$control" --fixture-worker a "$barriers" > "$barriers/a.log" 2>&1 &
+  FIXTURE_CHILDREN+=("$!")
+  await_marker "$barriers/a.ready" || { cat "$barriers/a.log"; return 1; }
+  touch "$barriers/a.stop"
+  await_marker "$barriers/a.stopped" || { cat "$barriers/a.log"; return 1; }
+  touch "$barriers/a.restart"
+  status=0
+  wait "${FIXTURE_CHILDREN[0]}" || status=$?
+  FIXTURE_CHILDREN=()
+  assert_eq "$status" 1 "control: base socket reuse fails the fixture worker"
+  status=0
+  (fixture_distinct_sockets "$barriers/a.sockets") > "$barriers/comparison.log" || status=$?
+  assert_eq "$status" 1 "control: the same ownership comparison rejects base socket reuse"
+}
+test_concurrent_fixtures
 
-BIN="$TMP_ROOT/bin"
+source "$TEST_DIR/lib/watch-fixture.sh"
+QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee)" || exit 1
+OVERSEE="$QUIET_SCRIPTS/oversee"
+fixture_watch_neighbor "$OVERSEE"
 mkdir -p "$BIN/processes" "$TMP_ROOT/work/tmp"
 for harness in claude codex copilot; do
   cp "$(command -v sleep)" "$BIN/processes/$harness"
@@ -180,17 +287,13 @@ make_fetcher "$FETCHER"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
-env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L default -f /dev/null new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+fixture_server_allocate default default initial
+fixture_server_start
 KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g renumber-windows off
-tm set-option -g default-shell /bin/sh
-tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 SERVER_PID="$(tm display-message -p '#{pid}')"
 SERVER_START="$(tm display-message -p '#{start_time}')"
 SOCKET="$TMUX_DIR/tmux-$(id -u)/default"
-printf 'fixture-socket=%s\n' "$SOCKET"
-printf '%s\n' "$SOCKET" > "$2"
-await_marker "$3"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 # run_oversee ENV=VAL... -- ARGS... — the script under an explicit, whole
@@ -1463,14 +1566,16 @@ test_register_live_holder
 
 test_recorded_server() {
   local a_addr b_addr b_server holder candidate before verb control old file mode="${1:-register}" fresh_control decoy predecessor_control panes form expected key snapshot fail_bin real_ps process_control legacy_control
-  local a_name="server-a-$mode" b_name="server-b-$mode" name
+  local a_name b_name a_socket b_socket side
   cp -- "$FLEET_STATE" "$TMP_ROOT/two-server.saved"
-  for name in "$a_name" "$b_name"; do
-    env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" -f /dev/null \
-      new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" set-option -g default-shell /bin/sh
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
-    printf 'fixture-socket=%s\n' "$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$name" display-message -p '#{socket_path}')"
+  for side in a b; do
+    fixture_server_allocate "$side" "$mode" initial
+    fixture_server_start
+    if [[ "$side" == a ]]; then
+      a_name="$FIXTURE_NAME" a_socket="$FIXTURE_SOCKET"
+    else
+      b_name="$FIXTURE_NAME" b_socket="$FIXTURE_SOCKET"
+    fi
   done
   a_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$a_name" display-message -p '#{socket_path},#{pid},0')"
   b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{socket_path},#{pid},0')"
@@ -1571,17 +1676,13 @@ STUB
   jq '.overseer.server_start = 0' <<<"$before" > "$FLEET_STATE"
   run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register
   assert_eq "$RC|$(recorded server)" "0|$b_server" "a different recorded server start permits takeover"
-  TMUX_TMPDIR="$TMUX_DIR" tmux -L "$a_name" kill-server
+  fixture_server_stop "$a_socket"
   for verb in register launch; do
     # A fresh B repeats A's launched pane number when it opens its overseer.
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" kill-server
-    # kill-server can return while its server still accepts connections.
-    b_name="server-b-$mode-$verb"
-    printf 'fixture-socket=%s/tmux-%s/%s\n' "$TMUX_DIR" "$(id -u)" "$b_name"
-    env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" -f /dev/null \
-      new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" set-option -g default-shell /bin/sh
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
+    fixture_server_stop "$b_socket"
+    fixture_server_allocate b "$mode" "$verb"
+    fixture_server_start
+    b_name="$FIXTURE_NAME" b_socket="$FIXTURE_SOCKET"
     b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{socket_path},#{pid},0')"
     b_server="${b_addr#*,}" b_server="${b_server%%,*}"
     candidate="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{pane_id}')"
@@ -1602,13 +1703,10 @@ STUB
     fi
   done
   if [[ "$mode" == launch ]]; then
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" kill-server
-    b_name="server-b-$mode-control"
-    printf 'fixture-socket=%s/tmux-%s/%s\n' "$TMUX_DIR" "$(id -u)" "$b_name"
-    env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" -f /dev/null \
-      new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" set-option -g default-shell /bin/sh
-    TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
+    fixture_server_stop "$b_socket"
+    fixture_server_allocate b "$mode" control
+    fixture_server_start
+    b_name="$FIXTURE_NAME" b_socket="$FIXTURE_SOCKET"
     b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{socket_path},#{pid},0')"
     fresh_control="$(mutant_scripts fresh-server-control lib/overseer-launch.sh)" || exit 1
     mutate_file "$fresh_control/lib/overseer-launch.sh" 'if [[ "${2:-}" != --launch ]]; then' 'if true; then'
@@ -1617,7 +1715,7 @@ STUB
     assert_eq "$RC|$(recorded pane)|$(recorded server_socket)" "1|$holder|${a_addr%%,*}" \
       "control: routing fresh verification through the prior record rejects B's new same-numbered pane" "$OUT"
   fi
-  TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" kill-server
+  fixture_server_stop "$b_socket"
   mv -- "$TMP_ROOT/two-server.saved" "$FLEET_STATE"
 }
 for recorded_mode in register launch; do test_recorded_server "$recorded_mode"; done
