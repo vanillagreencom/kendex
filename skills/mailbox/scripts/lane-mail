@@ -1025,7 +1025,7 @@ lm_send_channel() {
   esac
   IFS=$'\t' read -r harness account session root < <(jq -r '[.harness // "", .account // "", .session_id // "", .mail_root // ""] | @tsv' <<<"$record") ||
     refuse state-unreadable "$ITEM"
-  lm_root_own "$root"
+  lm_root_own "$root" own
   [ -z "$MSGID" ] || refuse channel-session --re
   [ "$HALT" -eq 0 ] || refuse channel-session --halt
   { [ -n "$account" ] && [ -n "$session" ]; } || refuse session-unrecorded "$ITEM"
@@ -1175,22 +1175,30 @@ fi
 # exists to be. A root that resolves to no common root at all is refused with
 # them, so an unreadable checkout is no way in. A hosted send is out of reach:
 # the root is a path on another host.
-lm_root_own() { # ROOT
+lm_root_own() { # ROOT own|checkout
   local top canonical
-  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
-  canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
-  [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
-  if [ -z "$top" ] || [ "$canonical" != "$top" ]; then
-    printf 'lane-mail: root-not-checkout=%s top=%s\n' "$1" "$top" >&2
-    exit 2
+  # --root selects a mailbox base; a session record can name a directory
+  # inside its checkout. This local input distinction needs no decision record.
+  if [ "$2" = checkout ]; then
+    top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
+    canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
+    [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
+    if [ -z "$top" ] || [ "$canonical" != "$top" ]; then
+      printf 'lane-mail: root-not-checkout=%s top=%s\n' "$1" "$top" >&2
+      exit 2
+    fi
   fi
   if { [ "$VERB" = send ] || [ "$VERB" = resolve ]; } && [ "$HOST" -eq 0 ]; then
     LANE_ROOT="$(mailbox_common_root "$1" 2>/dev/null)" || LANE_ROOT=""
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
 }
-if [ "$HOST" -eq 0 ] && [ "$VERB" != peer ] && { [[ "$OPTS_GIVEN" == *"--root$NL"* ]] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; }; then
-  lm_root_own "$ROOT"
+if [ "$HOST" -eq 0 ] && [ "$VERB" != peer ]; then
+  if [[ "$OPTS_GIVEN" == *"--root$NL"* ]]; then
+    lm_root_own "$ROOT" checkout
+  elif [ "$VERB" = send ] || [ "$VERB" = resolve ]; then
+    lm_root_own "$ROOT" own
+  fi
 fi
 
 # The mailbox a verb reads or writes. A peer exchange moves it once: the same

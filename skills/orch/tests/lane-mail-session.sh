@@ -94,14 +94,21 @@ called() { [[ -f "$TMP_ROOT/claude.log" ]] && echo yes || echo no; }
 DIRECTIVE=(send --item CC-1 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE")
 
 echo "=== a directive reaches a session lane through the Claude CLI ==="
-lm -- "${DIRECTIVE[@]}"
-assert_eq "rc=$RC out=$OUT" "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD" \
-  "an ok answer is delivery, receipted with the session"
-assert_eq "$(paste -sd'|' "$TMP_ROOT/claude.log")" \
-  "argv=-p --cloud session_01CLOUD --output-format json|config=$TMP_ROOT/.eclaude|stdin=Rebase on main, then push." \
-  "the directive is queued into the record's session under its account, the text on stdin"
-assert_eq "mailbox=$([[ -e "$CHECKOUT/wt/CC-1/tmp/lane-mail/CC-1/to-lane.jsonl" || -e "$CHECKOUT/tmp/lane-mail/CC-1/to-lane.jsonl" ]] && echo yes || echo no)" \
-  "mailbox=no" "nothing lands in a mailbox for a session lane"
+session_delivered() {
+  lm -- "${DIRECTIVE[@]}"
+  assert_eq "rc=$RC out=$OUT" "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD" \
+    "a session root inside its checkout delivers and receipts the directive"
+  if [[ -f "$TMP_ROOT/claude.log" ]]; then
+    assert_eq "$(paste -sd'|' "$TMP_ROOT/claude.log")" \
+      "argv=-p --cloud session_01CLOUD --output-format json|config=$TMP_ROOT/.eclaude|stdin=Rebase on main, then push." \
+      "the directive is queued into the record's session under its account, the text on stdin"
+  else
+    assert_eq "$(called)" yes "the session CLI receives the directive"
+  fi
+  assert_eq "mailbox=$([[ -e "$CHECKOUT/wt/CC-1/tmp/lane-mail/CC-1/to-lane.jsonl" || -e "$CHECKOUT/tmp/lane-mail/CC-1/to-lane.jsonl" ]] && echo yes || echo no)" \
+    "mailbox=no" "nothing lands in a mailbox for a session lane"
+}
+session_delivered
 
 echo "=== what a session send cannot deliver refuses, reaching no session ==="
 ARCHIVED='{"ok":false,"error":"Session session_01CLOUD is archived"}'
@@ -269,9 +276,14 @@ mutant session-archived 'elif (.error // "" | tostring | test("archived"; "i")) 
 lm STUB_CLAUDE_OUT="$MISSING" -- "${DIRECTIVE[@]}"
 assert_eq "err=$ERR" "err=lane-mail: session-archived=session_01CLOUD" "control: every ok false read as archived fails the not-found row"
 # shellcheck disable=SC2016
-mutant session-foreign '  lm_root_own "$root"' '  :'
+mutant session-foreign '  lm_root_own "$root" own' '  :'
 lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
 assert_eq "called=$(called)" "called=yes" "control: without the root check another repository's session is reached"
+# shellcheck disable=SC2016
+mutant session-checkout '  lm_root_own "$root" own' '  lm_root_own "$root" checkout'
+SESSION_ASSERT_RC=0
+( FAIL=0; session_delivered; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/session-root-control.out" || SESSION_ASSERT_RC=$?
+assert_eq "$SESSION_ASSERT_RC" 1 "control: requiring a checkout root fails the same session delivery assertions"
 # shellcheck disable=SC2016
 mutant session-unrecorded '[ -z "$STATE_DIR" ] || refuse lane-unrecorded' 'true || refuse lane-unrecorded'
 printf 'Rebase again.\n' > "$TMP_ROOT/directive-2"
