@@ -61,7 +61,7 @@ run_action() { # SCRIPT EVENT
 }
 
 rows=0
-while IFS='|' read -r case event change expected_lanes expected_verdicts; do
+while IFS='|' read -r case event change expected_lanes expected_verdicts control control_lane control_expected; do
   rows=$((rows + 1))
   git -C "$repo" checkout -q -B row "$base"
   git -C "$repo" clean -qfd
@@ -74,11 +74,25 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts; do
     in-place) printf 'updated implementation\n' >>"$repo/$old" ;;
     unclaimed) git -C "$repo" mv "$spare" .agents/skills/spare/renamed.py ;;
     destination) git -C "$repo" mv "$spare" "$new" ;;
+    rewritten)
+      git -C "$repo" mv "$spare" "$new"
+      printf 'replacement implementation\n' >"$repo/$new" ;;
+    addition) printf 'replacement implementation\n' >"$repo/$new" ;;
+    paired-addition)
+      git -C "$repo" mv "$old" .agents/skills/spare/renamed.py
+      printf 'replacement implementation\n' >"$repo/$new" ;;
+    unclaimed-rewritten)
+      git -C "$repo" mv "$spare" .agents/skills/spare/renamed.py
+      printf 'replacement implementation\n' >"$repo/.agents/skills/spare/renamed.py" ;;
   esac
   git -C "$repo" add -A
   git -C "$repo" ls-files .agents | jq -Rs 'split("\n")[:-1] + [".kendex-generated.json"] | sort' >"$repo/.kendex-generated.json"
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$case"
+  if [ "$change" = rewritten ]; then
+    assert_eq "$case: Git reports deletion plus addition" "$(printf 'A\t%s\nD\t%s' "$new" "$spare")" \
+      "$(git -C "$repo" diff --name-status --find-renames --diff-filter=ADR "$base" HEAD)"
+  fi
   run_action "$SANDBOX/action/classify" "$event"
   assert_eq "$case: lanes" "lanes=$expected_lanes" \
     "$(sed -n '/^lanes=/p' "$SANDBOX/output")"
@@ -98,27 +112,39 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts; do
       esac
     done
   fi
-  if [ "$rows" -eq 1 ]; then
-    # Restoring the old render skip must turn the first row's true verdicts
-    # false. Keep the matched class and claim logic in the disposable copy.
-    awk '$0 == "          lanes=true lanes_cause=render-moved-claim" {
-      hits++; print "          lanes=false lanes_cause=render"; next
+  if [ -n "$control" ]; then
+    case "$control" in
+      old-skip)
+        needle='        lanes=true lanes_cause=render-moved-claim'
+        replacement='        lanes=false lanes_cause=render' ;;
+      candidate-off)
+        needle='  if [ "$unmatched_deletion" = true ]; then'
+        replacement='  if false; then' ;;
+      candidate-on)
+        needle='  if [ "$unmatched_deletion" = true ]; then'
+        replacement='  if true; then' ;;
+    esac
+    NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
+      hits++; print ENVIRON["REPLACEMENT"]; next
     } { print } END { if (hits != 1) exit 2 }' "$ACTION" >"$SANDBOX/action/control"
     ! cmp -s "$ACTION" "$SANDBOX/action/control" || exit 1
     chmod +x "$SANDBOX/action/control"
     run_action "$SANDBOX/action/control" "$event"
-    assert_eq 'must-fail: the old render skip rejects the first row' lanes=false \
-      "$(sed -n '/^lanes=/p' "$SANDBOX/output")"
-    assert_eq 'must-fail: the old render skip skips a claiming lane' lane_orch=false \
-      "$(sed -n '/^lane_orch=/p' "$SANDBOX/output")"
+    assert_eq "must-fail: $case changes its claiming lane under $control" "lane_$control_lane=$control_expected" \
+      "$(sed -n "/^lane_$control_lane=/p" "$SANDBOX/output")"
   fi
 done <<'ROWS'
-rename across skills|pull_request|renamed|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=true,lane_other=false
+rename across skills|pull_request|renamed|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=true,lane_other=false|old-skip|orch|false
 rename in merge group|merge_group|renamed|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=true,lane_other=false
 delete claimed file|pull_request|deleted|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_other=false
 modify claimed file in place|pull_request|in-place|false|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_other=false
 rename unclaimed file|pull_request|unclaimed|false|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_other=false
 rename into claimed directory|pull_request|destination|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false
+rewritten move into claimed directory|pull_request|rewritten|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false|candidate-off|mailbox|false
+rewritten move in merge group|merge_group|rewritten|true|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_other=false
+addition into claimed directory|pull_request|addition|false|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_other=false|candidate-on|mailbox|true
+addition beside a paired rename|pull_request|paired-addition|true|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_other=false
+rewritten unclaimed move|pull_request|unclaimed-rewritten|false|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_other=false
 ROWS
 require_rows render-moved-claims "$rows"
 report render-moved-claims

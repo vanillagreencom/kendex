@@ -82,14 +82,15 @@
 #                      ran, as kendex's tools/ci-job-set does.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
 #                      A proved render runs lanes whose default-branch claims
-#                      match a deletion or either rename end. In-place
+#                      match a deletion, either rename end, or an added path
+#                      beside an unmatched deletion. In-place and addition-only
 #                      renders and moves of only unclaimed paths keep
 #                      lanes=false. Remaining skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or proof-reused where
-#                      lanes=false; render-moved-claim for a claimed render
-#                      deletion or rename; the class otherwise.
+#                      lanes=false; render-moved-claim for a claimed moved-file
+#                      candidate in a render; the class otherwise.
 #   lane_verdicts      one `lane_<name>=true|false` line per default-branch
 #                      lane, in base order, with head-only lanes appended in
 #                      head order on a valid declaration comparison. This is
@@ -109,7 +110,8 @@
 # A lane verdict uses default-branch claims except for the declaration path,
 # whose comparison follows wiring.md § Per-lane verdicts. In this order:
 # false wherever lanes is false; then, on render, true only for lanes whose
-# default-branch claim matches a deleted path or either rename end, with
+# default-branch claim matches a deleted path, either rename end, or a possible
+# added destination beside an unmatched deletion, with
 # cause=render-moved-claim and its path and glob; then true for every lane where the
 # declaration comparison failed; then, on a pull request,
 # false with the cause queue-deferred for a lane the declaration marks
@@ -442,27 +444,36 @@ if [ "$lane_state" = read ] && [ "$class" = render ]; then
   [ -n "$render_base" ] && [ -n "$render_head" ] ||
     die render-range-unreadable "the render classifier supplied no resolved range"
   git -C "$REPO" -c diff.renameLimit=0 diff --no-ext-diff --no-textconv --find-renames \
-    --name-status -z --diff-filter=DR "$render_base" "$render_head" -- \
-    >"${work:?}/moved" || die render-moves-unreadable "could not read render deletions and renames"
+    --name-status -z --diff-filter=ADR "$render_base" "$render_head" -- \
+    >"${work:?}/moved" || die render-moves-unreadable "could not read render additions, deletions and renames"
+  moved_paths=() added_paths=() unmatched_deletion=false
   while IFS= read -r -d '' status <&3; do
     IFS= read -r -d '' path <&3 || die render-moves-unreadable "a moved path is absent"
-    moved_paths=("$path")
     case "$status" in
+      A) added_paths+=("$path") ;;
+      D) unmatched_deletion=true; moved_paths+=("$path") ;;
       R*)
+        moved_paths+=("$path")
         IFS= read -r -d '' path <&3 || die render-moves-unreadable "a rename destination is absent"
         moved_paths+=("$path") ;;
     esac
-    for path in "${moved_paths[@]}"; do
-      index=0
-      while [ "$index" -lt "$lane_count" ]; do
-        if ci_lanes_claims "$index" "$path" && [ -z "${render_hits[$index]:-}" ]; then
-          render_hits[$index]="path=$path glob=$LANE_GLOB_HIT"
-          lanes=true lanes_cause=render-moved-claim
-        fi
-        index=$((index + 1))
-      done
-    done
   done 3<"${work:?}/moved"
+  # WriteTree can relocate and rewrite supporting files in one refresh.
+  # Git cannot pair heavily rewritten files, so an unmatched deletion makes
+  # each addition a possible destination. Additions alone grant no lane.
+  if [ "$unmatched_deletion" = true ]; then
+    moved_paths=("${moved_paths[@]+"${moved_paths[@]}"}" "${added_paths[@]+"${added_paths[@]}"}")
+  fi
+  for path in ${moved_paths[@]+"${moved_paths[@]}"}; do
+    index=0
+    while [ "$index" -lt "$lane_count" ]; do
+      if ci_lanes_claims "$index" "$path" && [ -z "${render_hits[$index]:-}" ]; then
+        render_hits[$index]="path=$path glob=$LANE_GLOB_HIT"
+        lanes=true lanes_cause=render-moved-claim
+      fi
+      index=$((index + 1))
+    done
+  done
 fi
 declaration_comparison=not-needed
 no_changed_paths=false
