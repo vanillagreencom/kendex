@@ -22,7 +22,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::engine::{DriftState, EngineReport, PlanOptions, plan_apply, plan_scope};
+use crate::engine::{
+    DeclarationStatus, DriftState, EngineReport, PlanOptions, plan_apply, plan_scope,
+};
 use crate::env::{Env, FakeOs};
 use crate::lock::{LOCK_FILE, Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest, ManifestFile};
@@ -50,6 +52,7 @@ enum Finding {
     Unsettled {
         entries: BTreeSet<String>,
     },
+    Incomplete,
 }
 
 /// Whether every committed render is the bytes this checkout renders.
@@ -116,6 +119,10 @@ fn refusal(finding: &Finding) -> String {
             for entry in entries {
                 text.push_str(&format!("  {entry}\n"));
             }
+        }
+        Finding::Incomplete => {
+            text.push_str(&line("incomplete", "declarations"));
+            text.push_str("the declared installation set is incomplete, so record agreement cannot be proved\n");
         }
     }
     text
@@ -340,10 +347,16 @@ fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
         },
     )
     .map_err(|error| error.to_string())?;
+    if !complete_declarations(&refresh) {
+        return Ok(Standing::Refused(Finding::Incomplete));
+    }
     crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?;
     let lock = record(env, root)?;
     let verified = plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
         .map_err(|error| error.to_string())?;
+    if !complete_declarations(&verified) {
+        return Ok(Standing::Refused(Finding::Incomplete));
+    }
     let mut entries: BTreeSet<String> = lock
         .entries
         .keys()
@@ -364,11 +377,20 @@ fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
     Ok(Standing::Current)
 }
 
+/// Equal retained records prove nothing when a declared source could not
+/// be read. Both phases consume the engine's completeness decision.
+fn complete_declarations(report: &EngineReport) -> bool {
+    match report.declaration_status {
+        DeclarationStatus::Complete => true,
+        DeclarationStatus::Incomplete => false,
+    }
+}
+
 #[test]
 fn refresh_then_verify_agrees_on_every_committed_install_record() {
     let (tmp, copy) =
         committed_copy(&crate::test_util::checkout_root()).expect("the committed checkout copies");
-    let env = Env::fake(&crate::test_util::rooted(&tmp).join("home"), FakeOs::Linux);
+    let env = Env::fake(crate::test_util::rooted(&tmp).join("home"), FakeOs::Linux);
     assert!(
         !record(&env, &copy)
             .expect("the committed record reads")
@@ -388,33 +410,64 @@ fn refresh_then_verify_agrees_on_every_committed_install_record() {
     }
 }
 
+const PROBE: &str = "#!/bin/sh\n# ---\n# name: probe\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude, codex]\n# ---\nexit 0\n";
+
+struct RefreshFixture {
+    _tmp: tempfile::TempDir,
+    home: PathBuf,
+    project: PathBuf,
+    catalog: PathBuf,
+    env: Env,
+}
+
+#[allow(clippy::expect_used, reason = "fixture setup failures stop the test")]
+impl RefreshFixture {
+    fn new() -> Self {
+        let tmp = tempfile::tempdir().expect("the fixture directory creates");
+        let home = crate::test_util::rooted(&tmp);
+        let project = home.join("project");
+        let catalog = home.join("catalog");
+        std::fs::create_dir_all(catalog.join("hooks")).expect("the catalog directory creates");
+        std::fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n")
+            .expect("the executable catalog declares its layout");
+        std::fs::create_dir_all(&project).expect("the project directory creates");
+        std::fs::write(catalog.join("hooks/probe.sh"), PROBE).expect("the source writes");
+        let env = Env::fake(&home, FakeOs::Linux);
+        let fixture = Self {
+            _tmp: tmp,
+            home,
+            project,
+            catalog,
+            env,
+        };
+        fixture.declare(&crate::test_util::source_path(&fixture.catalog));
+        fixture
+    }
+
+    fn declare(&self, source: &str) {
+        std::fs::write(self.project.join("kendex.toml"), format!(
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
+        source,
+    )).expect("the declaration writes");
+    }
+}
+
 /// A catalog change can exclude a tool while a repository sync updates its
 /// old copy without updating the install record. Those bytes remain an
 /// edit; the repository check must reject them before the merge.
 #[test]
 fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
-    let tmp = tempfile::tempdir().expect("the fixture directory creates");
-    let home = crate::test_util::rooted(&tmp);
-    let project = home.join("project");
-    let catalog = home.join("catalog");
-    std::fs::create_dir_all(catalog.join("hooks")).expect("the catalog directory creates");
-    std::fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n")
-        .expect("the executable catalog declares its layout");
-    std::fs::create_dir_all(&project).expect("the project directory creates");
-    let before = "#!/bin/sh\n# ---\n# name: probe\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude, codex]\n# ---\nexit 0\n";
-    std::fs::write(catalog.join("hooks/probe.sh"), before).expect("the source writes");
-    std::fs::write(project.join("kendex.toml"), format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
-        crate::test_util::source_path(&catalog),
-    )).expect("the declaration writes");
-    let env = Env::fake(&home, FakeOs::Linux);
-    assert_eq!(refresh_and_verify(&env, &project), Ok(Standing::Current));
-    let after = before.replace("[claude, codex]", "[claude]");
-    std::fs::write(catalog.join("hooks/probe.sh"), &after).expect("the source changes");
-    let excluded = project.join(".codex/hooks/probe.sh");
+    let f = RefreshFixture::new();
+    assert_eq!(
+        refresh_and_verify(&f.env, &f.project),
+        Ok(Standing::Current)
+    );
+    let after = PROBE.replace("[claude, codex]", "[claude]");
+    std::fs::write(f.catalog.join("hooks/probe.sh"), &after).expect("the source changes");
+    let excluded = f.project.join(".codex/hooks/probe.sh");
     std::fs::write(&excluded, &after).expect("the committed copy changes");
     assert_eq!(
-        refresh_and_verify(&env, &project),
+        refresh_and_verify(&f.env, &f.project),
         Ok(Standing::Refused(Finding::Unsettled {
             entries: BTreeSet::from(["hook:probe:codex".to_owned()]),
         }))
@@ -424,7 +477,98 @@ fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
         after
     );
     std::fs::remove_file(excluded).expect("the excluded committed copy removes");
-    assert_eq!(refresh_and_verify(&env, &project), Ok(Standing::Current));
+    assert_eq!(
+        refresh_and_verify(&f.env, &f.project),
+        Ok(Standing::Current)
+    );
+}
+
+/// Catalog edits and unavailable checkouts can retain byte-identical
+/// records without completing expansion. The proof needs a complete
+/// declaration set even when an inactive source is legitimate CLI state.
+#[test]
+fn an_incomplete_declaration_set_cannot_prove_record_agreement() {
+    #[derive(Debug)]
+    enum SourceChange {
+        Deleted,
+        Renamed,
+        MissingRoot,
+        InvalidHeader,
+        EscapedItem,
+        Disabled,
+        Unfetched,
+    }
+    let mut missed = Vec::new();
+    for change in [
+        SourceChange::Deleted,
+        SourceChange::Renamed,
+        SourceChange::MissingRoot,
+        SourceChange::InvalidHeader,
+        SourceChange::EscapedItem,
+        SourceChange::Disabled,
+        SourceChange::Unfetched,
+    ] {
+        let f = RefreshFixture::new();
+        assert_eq!(
+            refresh_and_verify(&f.env, &f.project),
+            Ok(Standing::Current)
+        );
+        let installed = f.project.join(".codex/hooks/probe.sh");
+        let bytes = std::fs::read(&installed).expect("the installed copy reads");
+        let recorded =
+            std::fs::read(f.project.join(LOCK_FILE)).expect("the installed record reads");
+        let source = f.catalog.join("hooks/probe.sh");
+        let saved = f.home.join("saved-catalog");
+        match change {
+            SourceChange::Deleted => std::fs::remove_file(&source).expect("the source deletes"),
+            SourceChange::Renamed => std::fs::rename(&source, f.catalog.join("hooks/renamed.sh"))
+                .expect("the source renames"),
+            SourceChange::MissingRoot => {
+                std::fs::rename(&f.catalog, &saved).expect("the catalog moves")
+            }
+            SourceChange::InvalidHeader => std::fs::write(&source, "#!/bin/sh\nexit 0\n")
+                .expect("the unreadable header writes"),
+            SourceChange::EscapedItem => {
+                let outside = f.home.join("outside.sh");
+                std::fs::write(&outside, PROBE).expect("the outside item writes");
+                std::fs::remove_file(&source).expect("the source removes");
+                std::os::unix::fs::symlink(outside, &source).expect("the escaping link creates");
+            }
+            SourceChange::Disabled => f.declare(&format!(
+                "{}\nenabled = false",
+                crate::test_util::source_path(&f.catalog)
+            )),
+            SourceChange::Unfetched => f.declare("repo = \"vanillagreencom/kendex\""),
+        }
+        let result = refresh_and_verify(&f.env, &f.project);
+        if result != Ok(Standing::Refused(Finding::Incomplete)) {
+            missed.push(format!("{change:?}: {result:?}"));
+        }
+        assert_eq!(
+            std::fs::read(&installed).expect("the held copy reads"),
+            bytes
+        );
+        assert_eq!(
+            std::fs::read(f.project.join(LOCK_FILE)).expect("the held record reads"),
+            recorded
+        );
+        if saved.exists() {
+            std::fs::rename(&saved, &f.catalog).expect("the catalog restores");
+        }
+        if source.is_symlink() {
+            std::fs::remove_file(&source).expect("the escaping link removes");
+        }
+        std::fs::write(&source, PROBE).expect("the source restores");
+        f.declare(&crate::test_util::source_path(&f.catalog));
+        assert_eq!(
+            refresh_and_verify(&f.env, &f.project),
+            Ok(Standing::Current)
+        );
+    }
+    assert!(
+        missed.is_empty(),
+        "incomplete declarations accepted: {missed:?}"
+    );
 }
 
 /// One skill this checkout's declaration configures instructions for,
