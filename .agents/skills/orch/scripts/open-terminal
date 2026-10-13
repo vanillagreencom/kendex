@@ -3136,7 +3136,46 @@ host_launch_resume() {
   [[ "$host_pending_step" != selection ]] || host_pending_record="$pending"
 }
 
-host_launch_ready() {
+# Only a completed launch or confirmed cleanup can retire its checkpoint.
+# A selection checkpoint already owns a harness, including on a retry that
+# fails before its saved pane can be restored. The background log is retained
+# by the same record writer as before; it is not a selection checkpoint.
+host_launch_ready() { # completed|failed [BACKGROUND_LOG REASON]
+  local outcome="$1" log="${2:-}" reason="${3:-}" mail_root="$remote_path"
+  case "$outcome" in
+    completed) ;;
+    failed)
+      if [[ "${HOST_PANE:-local}" == verb ]]; then
+        case "${HOST_PANE_LAUNCH:-unstarted}" in
+          unjudged) return 1 ;;
+          owned)
+            # No untaken pane means the launch took before its record failed.
+            [[ -n "$UNTAKEN_PANE" ]] || return 1
+            host_pane_stop || return 1 ;;
+          unstarted)
+            # Early failures cannot discard a saved, already started selector.
+            [[ "$host_pending_step" != selection || -n "$UNTAKEN_PANE" ]] || return 1 ;;
+          *) ot_message host-stop-state-invalid "item=$item" "state=$HOST_PANE_LAUNCH" >&2; return 1 ;;
+        esac
+        if [[ -n "$UNTAKEN_PANE" ]]; then
+          tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
+          if [[ "$FLEET" == true ]]; then
+            if [[ -n "$log" ]]; then
+              prepare_record_write stopped "$log" "$reason" || return 1
+            elif ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$mail_root" "" "$launched_at" stopped; then
+              ot_message record-stop-failed "item=$item" "state=oversee" >&2
+              return 1
+            fi
+          fi
+        fi
+      elif [[ -n "$log" ]]; then
+        # A legacy SSH pane keeps the background window-close contract.
+        host_pane_stop || return 1
+        tmux_window_close "$LAUNCH_PANE" "$title" || true
+        prepare_record_write stopped "$log" "$reason" || return 1
+      fi ;;
+    *) ot_message host-launch-outcome-invalid "item=$item" "outcome=$outcome" >&2; return 1 ;;
+  esac
   if [[ "$FLEET" == true ]]; then
     "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee --arg item "$wt_id" \
       '(.lanes[]? | select(.item == $item and .prepare.line != null)) |= (del(.prepare) | if .status == "preparing" then .status = "stopped" else . end)' >/dev/null
@@ -3423,16 +3462,11 @@ launch_handoff() {
   ot_message lane-preparing "item=$item" "log=$log"
 }
 
-# Ends a foreground relaunch in a fleet whose open_tmux failed after its
-# window opened, UNTAKEN_PANE. A detached harness stops through its provider
-# before the window closes and retires its claim. The record is written stopped
-# only once that close succeeded: a close that failed returns 1 with the record as it
-# read, tmux-failed naming the cause. lane_record_write keeps the fields the
-# next relaunch's route is judged on.
+# Legacy local and SSH panes own their harness through the window. A failed
+# close must keep the current record; the next relaunch uses its saved fields.
 launch_stop() {
   local mail_root="$wt"
   [[ "$LANE_HOST" == local ]] || mail_root="$remote_path"
-  host_pane_stop || return 1
   tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
   lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$mail_root" "" "$launched_at" stopped && return 0
   ot_message record-stop-failed "item=$item" "state=oversee" >&2
@@ -3465,18 +3499,17 @@ host_pane_stop() {
 launch_prepared() { # LOG
   local reason=wait-failed
   HOST_BUSY_RETRY=true
+  UNTAKEN_PANE="$LAUNCH_PANE"
   if host_transport wait --item "$wt_id"; then
     reason=launch-failed
     if LAUNCH_PREPARE="$(prepare_record "$1")"; then
-      launch_finish && return 0
-      # A taken launch remains owned when only its later record write fails.
-      [[ "${HOST_PANE:-local}" != verb || "${HOST_PANE_LAUNCH:-unstarted}" != owned || -n "$UNTAKEN_PANE" ]] || return 1
+      UNTAKEN_PANE=""
+      if launch_finish; then host_launch_ready completed; return; fi
     fi
   fi
-  host_pane_stop || return 1
-  tmux_window_close "$LAUNCH_PANE" "$title" || true
-  prepare_record_write stopped "$1" "$reason" || return 1
+  host_launch_ready failed "$1" "$reason" || return 1
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
+  return 1
 }
 
 # The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the items the
@@ -3654,6 +3687,7 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     break
   fi
+  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" HOST_PANE_LAUNCH=unstarted
   host_pending_step="" host_line=""
   if [[ "$LANE_HOST" != local ]]; then
     host_launch_resume || { failed=$((failed + 1)); continue; }
@@ -3867,13 +3901,12 @@ for raw in "${ITEMS[@]}"; do
     if [[ -z "$ssh_target" || -z "$remote_path" || -z "$remote_prefix" || "$host_line" == *$'\n'* \
       || -n "$host_state" && "$host_state" != preparing ]]; then
       ot_message host-line-invalid "item=$item" >&2
-      host_launch_ready || { failed=$((failed + 1)); continue; }
+      host_launch_ready failed || { failed=$((failed + 1)); continue; }
       failed=$((failed + 1))
       continue
     fi
     wt="$CLAIM_ROOT"
   fi
-  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" HOST_PANE_LAUNCH=unstarted
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
   # stamp taken after the open and its verification would leave anything that
@@ -3911,7 +3944,7 @@ for raw in "${ITEMS[@]}"; do
       continue
     elif [[ "$wait_rc" -ne 0 ]]; then
       ot_message host-prepare-failed "item=$item" >&2
-      host_launch_ready || { failed=$((failed + 1)); continue; }
+      host_launch_ready failed || { failed=$((failed + 1)); continue; }
       failed=$((failed + 1))
       continue
     fi
@@ -3925,18 +3958,14 @@ for raw in "${ITEMS[@]}"; do
       # UNTAKEN_PANE distinguishes a failed launch from a taken launch whose
       # later record write failed. Every owned detached failed attempt stops
       # through its provider; closing its dormant window cannot stop it.
-      if [[ -n "$UNTAKEN_PANE" ]]; then
-        if [[ "$FLEET" == true && ( "$RELAUNCH" == true || "${HOST_PANE:-local}" == verb && "${HOST_PANE_LAUNCH:-unstarted}" == owned ) ]]; then
-          launch_stop || true
-        elif [[ "${HOST_PANE:-local}" == verb && "${HOST_PANE_LAUNCH:-unstarted}" == owned ]]; then
-          if host_pane_stop; then tmux_window_close "$UNTAKEN_PANE" "$title" || true; fi
-        fi
+      if [[ "${HOST_PANE:-local}" != verb && -n "$UNTAKEN_PANE" && "$FLEET" == true && "$RELAUNCH" == true ]]; then
+        launch_stop || true
       fi
-      [[ "$LANE_HOST" == local ]] || host_launch_ready || { failed=$((failed + 1)); continue; }
+      [[ "$LANE_HOST" == local ]] || host_launch_ready failed || { failed=$((failed + 1)); continue; }
       failed=$((failed + 1))
       continue
     fi
-    [[ "$LANE_HOST" == local ]] || host_launch_ready || { failed=$((failed + 1)); continue; }
+    [[ "$LANE_HOST" == local ]] || host_launch_ready completed || { failed=$((failed + 1)); continue; }
     launched=$((launched + 1))
   fi
   # Recorded here, after the window exists: a lane picked for an item that
