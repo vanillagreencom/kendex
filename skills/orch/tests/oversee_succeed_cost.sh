@@ -41,6 +41,7 @@ scripts = root / 'candidate/orch/scripts'
 stub = '#!' + bash + '''
 set -euo pipefail
 [[ "$1" == pick && "$2" == --lane && "$3" == "$FIXTURE_ACCOUNT" ]] || exit 2
+[[ -z "${FIXTURE_MODEL:-}" || " $* " == *" --model $FIXTURE_MODEL "* ]] || exit 2
 printf '%s\\n' "$FIXTURE_RECORD"
 '''
 (scripts / 'lanes').write_text(stub)
@@ -115,7 +116,8 @@ def run(script, name, extra=None, args=()):
 rows = [
     ('complete', identity, {}, (), 0, b'mark-unmeasured'),
     ('bootstrap', None, {}, (), 0, b'mark-unmeasured'),
-    ('partial', {**identity, 'model': None, 'account': None}, {}, (), 0, b'mark-unmeasured'),
+    ('partial', {**identity, 'model': None}, {'FIXTURE_MODEL': 'fable'}, (), 0,
+     b'mark-unmeasured kind=rate reason=one-sample'),
     ('bad-record', 'invalid', {}, (), 0, b'mark-unmeasured'),
     ('capture-error', identity, {'FAIL_READ': 'capture-pane'}, (), 1, None),
     ('window-error', identity, {'FAIL_READ': '#{window_id}'}, (), 1, None),
@@ -135,14 +137,15 @@ for name, record, extra, args, status, key in rows:
     elif record is not None:
         record_file.write_text(json.dumps({'overseer': record}) + '\n')
     if name == 'partial':
+        # The row writer emits compact JSON; the event reader searches that spelling.
         row_file.write_text(json.dumps({'event': 'SessionStart', 'harness': 'claude', 'account': account,
-                                        'model': 'fable', 'cwd': str(root / 'work')}) + '\n')
+                                        'model': 'fable', 'cwd': str(root / 'work')}, separators=(',', ':')) + '\n')
         context_file.write_text(json.dumps({'harness': 'claude', 'model': 'other', 'pane_key': '123 %1'}) + '\n')
     actual = run(scripts / 'oversee-succeed', name, extra, args)
     result(name + ': exit', actual[0], status)
     if key:
         # oversee-watch consumes the first keyed line. Prose stays outside the assertion.
-        result(name + ': keyed result', actual[1].split()[1].decode(), key.decode())
+        result(name + ': keyed result', b' '.join(actual[1].split()[1:1 + len(key.split())]).decode(), key.decode())
     if name == 'complete':
         print('metric', 'candidate-own-processes', actual[3], sep='\t')
         if BOUND is not None:
