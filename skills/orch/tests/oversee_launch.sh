@@ -1709,7 +1709,7 @@ STUB
     b_name="$FIXTURE_NAME" b_socket="$FIXTURE_SOCKET"
     b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{socket_path},#{pid},0')"
     fresh_control="$(mutant_scripts fresh-server-control lib/overseer-launch.sh)" || exit 1
-    mutate_file "$fresh_control/lib/overseer-launch.sh" 'if [[ "${2:-}" != --launch ]]; then' 'if true; then'
+    mutate_file "$fresh_control/lib/overseer-launch.sh" 'if [[ "${2:-}" != --launch && "$record" != null ]]; then' 'if true; then'
     printf '%s\n' "$before" > "$FLEET_STATE"
     OVERSEE_BIN="$fresh_control/oversee" run_oversee TMUX="$b_addr" -- launch --wait-secs 20
     assert_eq "$RC|$(recorded pane)|$(recorded server_socket)" "1|$holder|${a_addr%%,*}" \

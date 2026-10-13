@@ -1,0 +1,1 @@
+- Overseer turn-end mark checks reuse loaded settings and complete caller records to start fewer processes.

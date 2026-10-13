@@ -64,7 +64,7 @@ composed_value() {
 }
 
 # Message text is centralized; callers supply the reason and relevant values.
-message() {
+orch_env_message() {
   local reason="$1"
   shift
   printf '%s: %s' orch-env "$reason"
@@ -80,6 +80,56 @@ message() {
   esac
 }
 
+orch_env_arguments() {
+  if [[ $# -ne 2 ]]; then
+    orch_env_message argument-count "count=$#" >&2
+    return 2
+  fi
+
+  if ! [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    orch_env_message invalid-name "name=$1" >&2
+    return 2
+  fi
+}
+
+orch_env_value() { # NAME DEFAULT: settings already loaded by the caller.
+  orch_env_arguments "$@" || return $?
+
+  # Consumer-train settings can remain in existing project configuration after
+  # its workflow is removed. Refuse at every read, including overseer startup.
+  if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then
+    orch_env_message retired-setting 'key=ORCH_CONSUMER_REPOS' >&2
+    return 1
+  fi
+
+  # Read only now: assigned above the loader, the NAME to look up would itself be
+  # settable from the configuration being looked up.
+  local VAR_NAME="$1"
+  local DEFAULT="$2"
+
+  user_mode_effective
+
+  local value="${!VAR_NAME-}"
+  if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
+    # What ../workflows/oversee.md § 3 Launch selects a question template from,
+    # so it is the same normalized mode the composition below tests.
+    value="$USER_MODE"
+  elif [[ -z "$value" ]]; then
+    if [[ "$USER_MODE" == ceo ]]; then
+      composed_value "$VAR_NAME"
+      value="$COMPOSED"
+    fi
+  fi
+  [[ -n "$value" ]] || value="$DEFAULT"
+  if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    value="$DEFAULT"
+  fi
+  printf '%s\n' "$value"
+}
+
+# Sourced callers reuse the same value resolution after their settings load.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 # Help is answered before any project configuration is read: .env.local is
 # sourced as shell, so a help form that reaches the loader runs whatever the
 # checkout put there. Position 1 only — the second operand is the DEFAULT
@@ -91,15 +141,7 @@ help | --help | -h)
   ;;
 esac
 
-if [[ $# -ne 2 ]]; then
-  message argument-count "count=$#" >&2
-  exit 2
-fi
-
-if ! [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-  message invalid-name "name=$1" >&2
-  exit 2
-fi
+orch_env_arguments "$@" || exit $?
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
@@ -109,33 +151,4 @@ export PROJECT_ROOT
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 
-# Consumer-train settings can remain in existing project configuration after
-# its workflow is removed. Refuse at every read, including overseer startup.
-if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then
-  message retired-setting 'key=ORCH_CONSUMER_REPOS' >&2
-  exit 1
-fi
-
-# Read only now: assigned above the loader, the NAME to look up would itself be
-# settable from the configuration being looked up.
-VAR_NAME="$1"
-DEFAULT="$2"
-
-user_mode_effective
-
-value="${!VAR_NAME-}"
-if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
-  # What ../workflows/oversee.md § 3 Launch selects a question template from,
-  # so it is the same normalized mode the composition below tests.
-  value="$USER_MODE"
-elif [[ -z "$value" ]]; then
-  if [[ "$USER_MODE" == ceo ]]; then
-    composed_value "$VAR_NAME"
-    value="$COMPOSED"
-  fi
-fi
-[[ -n "$value" ]] || value="$DEFAULT"
-if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
-  value="$DEFAULT"
-fi
-printf '%s\n' "$value"
+orch_env_value "$@"

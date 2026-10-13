@@ -471,7 +471,7 @@
 # watch that ran it logs its failed relaunch itself.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
 export SCRIPT_DIR
 
 usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -645,6 +645,8 @@ source "$SCRIPT_DIR/lib/job-unit.sh"
 # through, shared with `oversee launch --predecessor`.
 # shellcheck source=lib/watch-handover.sh
 source "$SCRIPT_DIR/lib/watch-handover.sh"
+# shellcheck source=orch-env
+source "$SCRIPT_DIR/orch-env"
 
 # The internal `--watch-restart STATE CALLER_SESSION PANE LANE_VAR LANE_HOME
 # HARNESS CWD SCRIPT ARGC ARGS... [FLAG...]` run, step 6's helper, which the succession starts before its
@@ -842,7 +844,7 @@ fi
 # Resolve the hook's setting through orch-env before judging the live reading.
 # A due check needs no pane identity or successful record write.
 if (( JUDGES )); then
-  requested_pct="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90 2>"$DEP_ERR")" \
+  requested_pct="$(orch_env_value ORCH_HANDOFF_CONTEXT_PCT 90 2>"$DEP_ERR")" \
     || die settings-rejected "setting=ORCH_HANDOFF_CONTEXT_PCT"
   CONTEXT_PCT="$(lane_context_handoff_pct "$requested_pct")" \
     || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
@@ -940,8 +942,15 @@ if [[ "$MODE" != dead ]]; then
   fi
   [[ -z "$OL_KNOWN_CWD" ]] || CALLER_PATH="$OL_KNOWN_CWD"
   reading_harness="" reading_model=""
-  OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
-  if [[ -f "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" ]] \
+  # A complete identity already supplies both facts the context row could add.
+  reading_needed=1
+  case "$OL_KNOWN_HARNESS" in
+    claude | codex | copilot) [[ -z "$OL_KNOWN_MODEL" ]] || reading_needed=0 ;;
+    pi) [[ "$OL_KNOWN_MODEL" != ?*/?* ]] || reading_needed=0 ;;
+  esac
+  OVERSEER_BOX=""
+  (( ! reading_needed )) || OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
+  if (( reading_needed )) && [[ -f "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" ]] \
      && lane_context_record_fields "$(cat -- "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" 2>/dev/null)" \
      && [[ "$LANE_CTX_PANE_KEY" == "$CALLER_SERVER $CALLER_PANE" ]]; then
     reading_harness="$LANE_CTX_HARNESS" reading_model="$LANE_CTX_MODEL"
@@ -970,7 +979,8 @@ if [[ "$MODE" != dead ]]; then
   # model with or without one: lib/overseer-launch.sh § ol_pi_model is the one
   # precedence over the three, so a turn-end judgement, handed no flags, and
   # the succession it asks for read one account.
-  if ! flag_model="$(launch_choice_launch_model "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+  flag_model=""
+  if (( ${#HARNESS_FLAGS[@]} > 0 )) && ! flag_model="$(launch_choice_launch_model "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
     die launch-choice-failed "harness=$CALLER_HARNESS" step=model-read
   fi
   caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"

@@ -433,8 +433,8 @@ assert_eq "$BARE_MODEL|$RC|$(grep -m1 -o '^oversee-succeed: pi-account-unknown [
 # judged on the reading's.
 MODELCTL="$(mutant_scripts modelctl oversee-succeed)" || exit 1
 mutate_file "$MODELCTL/oversee-succeed" \
-  '  caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"' \
-  '  : caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"; caller_model="${reading_model:-$flag_model}"'
+  '  reading_needed=1' \
+  '  OL_KNOWN_MODEL=""; reading_needed=1'
 new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-5)"

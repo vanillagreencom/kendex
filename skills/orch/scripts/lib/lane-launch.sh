@@ -17,24 +17,24 @@
 # caller that must stay errexit-free restores its own posture after sourcing
 # this file, the way `lanes` already does at its lib seam.
 # shellcheck source=lane-claims.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-claims.sh"
+source "${BASH_SOURCE[0]%/*}/lane-claims.sh"
 
 # The codex arm of lane_trust_prepare below reads a codex config.toml for one
 # key and writes it back without one table. That reading is shared with `spawn-adapter`,
 # which asks the same file a different question, so it lives in its own library
 # and both callers source it rather than each carrying a scanner of its own.
 # shellcheck source=toml.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/toml.sh"
+source "${BASH_SOURCE[0]%/*}/toml.sh"
 
 # The private home the preparation below builds is named by lane-home.sh, which
 # also takes such a path back apart for the readers outside this launch that ask
 # which account a session is spending.
 # shellcheck source=lane-home.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-home.sh"
+source "${BASH_SOURCE[0]%/*}/lane-home.sh"
 # The claude adapter names the window a claude model runs, which decides
 # whether a claude command may turn its compaction off (launch_choice_compaction).
 # shellcheck source=adapters/claude.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
+source "${BASH_SOURCE[0]%/*}/adapters/claude.sh"
 
 # The env prefix that puts a launch on a chosen account: the harness names the
 # variable, the directory IS the account. One mapping for every caller — the

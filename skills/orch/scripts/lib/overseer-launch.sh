@@ -921,7 +921,7 @@ ol_session_inspect() { # SESSION [--launch]
   recorded_pane=""
   # --launch verifies the fresh pane create just opened. A pane number from
   # an earlier server can repeat there, so its prior record cannot route it.
-  if [[ "${2:-}" != --launch ]]; then
+  if [[ "${2:-}" != --launch && "$record" != null ]]; then
     recorded_pane="$(jq -r '.pane // empty' <<<"$record" 2>"$DEP_ERR")" \
       || { OL_REASON=inspect-failed; return 1; }
   fi
@@ -1220,10 +1220,13 @@ ol_record_pending() { # LINE IDENTITY
 # puts back, and a query is not a snapshot.
 OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
 ol_record_current() { # SERVER PANE
-  local record fields start sep=$'\x1f'
+  local record fields start state_file sep=$'\x1f'
   OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
-  "$SCRIPT_DIR/workflow-state" exists oversee >/dev/null 2>&1 || return 1
-  record="$(ol_record_get)" || return 2
+  # Resolve once through the state owner, then read that file without reloading settings.
+  state_file="$("$SCRIPT_DIR/workflow-state" path oversee 2>/dev/null)" || return 1
+  [[ -f "$state_file" ]] || return 1
+  record="$(jq -r '.overseer // null' "$state_file" 2>"$DEP_ERR")" || return 2
+  record="${record:-null}"
   # Unread, the start names no record bound to one: the caller keeps its own
   # readings, and nothing here acts on the record.
   start="$(ol_session_start "$1" "$2")" || start=""
@@ -1304,8 +1307,12 @@ OL_KNOWN_HARNESS="" OL_KNOWN_ACCOUNT="" OL_KNOWN_MODEL="" OL_KNOWN_CWD=""
 ol_caller_known() { # SERVER PANE DIR
   local rc=0
   ol_record_current "$1" "$2" || rc=$?
-  # A rows file that cannot be read is no row: the caller's fallbacks answer.
-  session_rows_start "$(session_rows_overseer_file "$3" "$1" "$2")" || true
+  # A complete launch identity needs no SessionStart fallback.
+  SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD=""
+  if [[ -z "$OL_CUR_HARNESS" || -z "$OL_CUR_ACCOUNT" || -z "$OL_CUR_MODEL" || -z "$OL_CUR_CWD" ]]; then
+    # A rows file that cannot be read is no row: the caller's fallbacks answer.
+    session_rows_start "$(session_rows_overseer_file "$3" "$1" "$2")" || true
+  fi
   case "$SR_HARNESS" in claude | codex) ;; *) SR_HARNESS="" SR_ACCOUNT="" SR_MODEL="" SR_CWD="" ;; esac
   OL_KNOWN_HARNESS="${OL_CUR_HARNESS:-$SR_HARNESS}"
   OL_KNOWN_ACCOUNT="${OL_CUR_ACCOUNT:-$SR_ACCOUNT}"
