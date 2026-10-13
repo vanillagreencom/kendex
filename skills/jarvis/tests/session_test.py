@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
-from fixtures.harness import AUTH_MESSAGES, native_header, native_launcher
+from fixtures.harness import AUTH_MESSAGES, main as harness_main, native_header, native_launcher
 import shlex
 import subprocess
 import sys
@@ -386,17 +386,29 @@ class SessionContract(unittest.TestCase):
         os.mkfifo(self.gate)
         brief = self.home / "private.txt"
         brief.write_text("Continue the consumer's private work.")
-        for process in ("selected", "unrelated"):
+        processes = ["selected", "unrelated-name"]
+        try:
+            os.readlink("/proc/self/exe")
+        except OSError:
+            pass
+        else:
+            processes.append("unrelated-path")
+        for process in processes:
             with self.subTest(process=process):
-                if process == "unrelated":
+                configuration = self.home / ".fixture.json"
+                fixture = json.loads(configuration.read_text())
+                if process != "selected":
+                    fixture.update(harness="codex", hold_prompt=True)
                     native = self.root / "unrelated"
                     shutil.copyfile(HARNESS, native)
                     native.chmod(0o755)
                     wrapper = self.root / "bin/codex"
-                    # argv[0] still selects the Codex fixture. OS executable
-                    # identity remains unrelated and must refuse its brief.
-                    wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\nexec -a codex "
+                    # Keep the readable-path row's accepted argv name. The
+                    # portable row has no accepted harness process name.
+                    command = "exec -a codex " if process == "unrelated-path" else "exec "
+                    wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n" + command
                                        + shlex.quote(str(native)) + ' "$@"\n')
+                configuration.write_text(json.dumps(fixture))
                 inspections = len(events.read_text().splitlines()) if events.exists() else 0
                 launches = len(self.started()) if self.rows.exists() else 0
                 prompt_count = sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()) if self.rows.exists() else 0
@@ -409,7 +421,7 @@ class SessionContract(unittest.TestCase):
                 self.await_rows(events, inspections + 2)
                 with self.gate.open("w") as stream:
                     stream.write("1")
-                if process == "unrelated":
+                if process != "selected":
                     deadline = time.monotonic() + 10
                     while not json.loads(self.record.read_text())["pending"].get("started_at") and time.monotonic() < deadline:
                         time.sleep(0.05)
@@ -495,6 +507,26 @@ class SessionContract(unittest.TestCase):
         confirmed = self.started()[-1]["id"]
         self.call("stop")
         self.wait("stopped")
+        # EOF is a fixture input, distinct from any delivered prompt. Exercise
+        # this owner with its native-writer dependency acknowledged separately.
+        count = len(self.rows.read_text().splitlines())
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(self.home)
+            with patch.dict(os.environ, self.env | {"JARVIS_RECORD": str(self.record),
+                    "JARVIS_GENERATION": str(json.loads(self.record.read_text())["generation"]),
+                    "JARVIS_TEST_HARNESS": "claude", "CLAUDE_CONFIG_DIR": str(self.account)}, clear=True), \
+                    patch.object(sys, "argv", ["claude", "--resume", confirmed]), \
+                    patch.object(sys, "stdin", io.StringIO("")), \
+                    patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                    patch("fixtures.harness.select.select", return_value=([], [], [])), \
+                    redirect_stdout(io.StringIO()):
+                harness_main()
+        finally:
+            os.chdir(previous_cwd)
+        eof_rows = [json.loads(line) for line in self.rows.read_text().splitlines()[count:]]
+        self.assertTrue(any(row.get("eof") is True for row in eof_rows))
+        self.assertFalse(any("prompt" in row for row in eof_rows))
         # A real CLI wrapper can override the selected account before exec.
         wrong = self.root / "wrong-account"
         wrong.mkdir()

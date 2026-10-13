@@ -50,7 +50,8 @@ def native_header(harness, identity, cwd):
 
 
 def main():
-    harness = os.environ["JARVIS_TEST_HARNESS"]
+    fixture = json.loads(Path(".fixture.json").read_text())
+    harness = fixture.get("harness", os.environ["JARVIS_TEST_HARNESS"])
     args = sys.argv[1:]
     record_path = Path(os.environ["JARVIS_RECORD"])
     record = json.loads(record_path.read_text())
@@ -71,7 +72,6 @@ def main():
             raise AssertionError("the native identity flag is absent")
     account_var = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME", "copilot": "COPILOT_HOME", "pi": "PI_CODING_AGENT_DIR"}[harness]
     account = Path(os.environ[account_var])
-    fixture = json.loads(Path(".fixture.json").read_text())
     rows = Path(fixture["rows"])
     with rows.open("a") as stream:
         stream.write(json.dumps({"harness": harness, "id": identity, "argv": args, "cwd": os.getcwd(),
@@ -98,12 +98,21 @@ def main():
     shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; SESSION_ROWS_WAIT=10; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_write "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2"'
     subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness],
                    input=json.dumps(payload), text=True, check=True)
+    if fixture.get("hold_prompt"):
+        # The direct delivery case first observes the real identity write.
+        # Hold its prompt marker so automatic delivery cannot race that probe.
+        with gate.open() as stream:
+            stream.read(1)
     auth_mode = fixture.get("auth_mode")
     if auth_mode == "stale":
         print(AUTH_MESSAGES[harness] + "\n❯ continue\n❯\u00a0", flush=True)
     else:
         print("❯\u00a0", flush=True)
     prompt = sys.stdin.readline()
+    if prompt == "":
+        with rows.open("a") as stream:
+            stream.write(json.dumps({"eof": True, "id": identity, "harness": harness}) + "\n")
+        return
     with rows.open("a") as stream:
         stream.write(json.dumps({"prompt": prompt.strip(), "id": identity, "harness": harness}) + "\n")
     if fixture.get("idle"):
