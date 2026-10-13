@@ -42,6 +42,13 @@ answer() { # ITEM MSGID TEXT
   (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item "$1" --root "$CASE_REPO_ROOT" --re "$2" --file "$TMP_ROOT/ans.txt")
 }
 
+# Both the local peer rows and the stopped hosted lane send from this checkout.
+PEER_REPO="$TMP_ROOT/peer-repo"
+mkdir -p -- "$PEER_REPO"
+git -C "$PEER_REPO" init -q
+git -C "$PEER_REPO" config gc.auto 0
+git -C "$PEER_REPO" config maintenance.auto false
+
 if [[ "$PART" == all || "$PART" == delivery ]]; then
 new_case mail_once
 mail_reset KEN-7
@@ -658,10 +665,6 @@ assert_eq "$SHARED_BETA_SEEN" "1" \
 # reports the repository the note came from rather than the owner.
 new_case mail_peer_note
 mail_reset overseer
-PEER_REPO="$TMP_ROOT/peer-repo"
-rm -rf -- "${PEER_REPO:?}"
-mkdir -p -- "$PEER_REPO"
-git -C "$PEER_REPO" init -q
 printf 'VSY-47 is ours; hold KEN-7.\n' > "$TMP_ROOT/peer-note.txt"
 (cd "$PEER_REPO" && "$LANE_MAIL" peer send --repo "$CASE_REPO_ROOT" --file "$TMP_ROOT/peer-note.txt")
 PEER_NOTE="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || PEER_NOTE=unsent
