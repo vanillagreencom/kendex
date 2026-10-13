@@ -28,6 +28,7 @@ import { setConnectorCallAuditSink } from "../src/connector-audit.ts";
 import { ctx, deleteQueryLane, resetStack } from "../src/query-state.ts";
 import { runInRequestLane } from "../src/request-lane.ts";
 import { assertSourceControl } from "./lib/source-control.mjs";
+import { piContext } from "./lib/transcript.mjs";
 
 const model = {
 	id: "claude-haiku-4-5",
@@ -41,7 +42,10 @@ const model = {
 	contextWindow: 200000,
 	maxTokens: 8192,
 };
-const context = { messages: [{ role: "user", content: "hello", timestamp: Date.now() }] };
+const context = piContext({
+	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+	tools: [{ name: "echo", description: "Return a supplied value", parameters: { type: "object", properties: { value: { type: "string" } } } }],
+});
 
 
 function makeRouter(observed, options = {}) {
@@ -696,39 +700,6 @@ describe("managed account stream rotation", () => {
 		assert.deepEqual(resolutionIds(), [unknownModel.id, unknownModel.id, unknownModel.id]);
 	});
 
-	it("rejects missing unknown-model debug details", () => {
-		assertSourceControl({
-			source: "src/index.ts",
-			before: 'debug(`model-resolution: unknown=${queryModel.id}`);',
-			after: 'if (false) debug(`model-resolution: unknown=${queryModel.id}`);',
-			suite: "unit-account-rotation-stream.mjs",
-			pattern: "passes an unknown model unchanged",
-			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
-		});
-	});
-
-	it("rejects machine-format unknown-model toast details", () => {
-		assertSourceControl({
-			source: "src/index.ts",
-			before: 'safeNotify(`Pi Claude uses ${queryModel.id} as requested. Claude Code chooses its fallback.`, "warning");',
-			after: 'safeNotify(`model-resolution: unknown=${queryModel.id}\\nPi Claude uses this model as requested.`, "warning");',
-			suite: "unit-account-rotation-stream.mjs",
-			pattern: "passes an unknown model unchanged",
-			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
-		});
-	});
-
-	it("rejects repeated unknown-model warnings", () => {
-		assertSourceControl({
-			source: "src/query-state.ts",
-			before: "if (state.reportedUnknownModel) return false;",
-			after: "if (state.reportedUnknownModel) return true;",
-			suite: "unit-account-rotation-stream.mjs",
-			pattern: "passes an unknown model unchanged",
-			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
-		});
-	});
-
 	it("announces a safety fallback reported by Claude Code", async () => {
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "native-fallback-session" },
@@ -763,25 +734,60 @@ describe("managed account stream rotation", () => {
 		}
 	});
 
-	it("rejects raw known model IDs in native fallback notices", () => {
-		assertSourceControl({
+	const noticeControls = [
+		{
+			name: "rejects missing unknown-model debug details",
+			source: "src/index.ts",
+			before: 'debug(`model-resolution: unknown=${queryModel.id}`);',
+			after: 'if (false) debug(`model-resolution: unknown=${queryModel.id}`);',
+			pattern: "passes an unknown model unchanged",
+			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
+		},
+		{
+			name: "rejects machine-format unknown-model toast details",
+			source: "src/index.ts",
+			before: 'safeNotify(`Pi Claude uses ${queryModel.id} as requested. Claude Code chooses its fallback.`, "warning");',
+			after: 'safeNotify(`model-resolution: unknown=${queryModel.id}\\nPi Claude uses this model as requested.`, "warning");',
+			pattern: "passes an unknown model unchanged",
+			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
+		},
+		{
+			name: "rejects repeated unknown-model warnings",
+			source: "src/query-state.ts",
+			before: "if (state.reportedUnknownModel) return false;",
+			after: "if (state.reportedUnknownModel) return true;",
+			pattern: "passes an unknown model unchanged",
+			failure: /(?:not ok|✖) .*passes an unknown model unchanged/,
+		},
+		{
+			name: "rejects raw known model IDs in native fallback notices",
 			source: "src/consume-query.ts",
 			before: '${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)}',
 			after: '${originalModel} to ${fallbackModel}',
-			suite: "unit-account-rotation-stream.mjs",
 			pattern: "uses registry labels for native fallback IDs",
 			failure: /(?:not ok|✖) .*uses registry labels for native fallback IDs/,
-		});
-	});
-
-	it("rejects a suppressed native safety-fallback notice", () => {
-		assertSourceControl({
+		},
+		{
+			name: "rejects a suppressed native safety-fallback notice",
 			source: "src/consume-query.ts",
 			before: 'if (typeof fallbackModel === "string" && typeof originalModel === "string") {',
 			after: 'if (typeof fallbackModel === "number" && typeof originalModel === "string") {',
-			suite: "unit-account-rotation-stream.mjs",
 			pattern: "announces a safety fallback reported",
 			failure: /(?:not ok|✖) .*announces a safety fallback reported/,
+		},
+	];
+	for (const { name, ...control } of noticeControls) {
+		it(name, () => assertSourceControl({ ...control, suite: "unit-account-rotation-stream.mjs" }));
+	}
+
+	it("rejects notice controls whose mutations leave source unchanged", () => {
+		assertSourceControl({
+			source: "tests/lib/source-control.mjs",
+			before: "writeFileSync(path, mutated);",
+			after: "writeFileSync(path, original);",
+			suite: "unit-account-rotation-stream.mjs",
+			pattern: noticeControls.map(({ name }) => name).join("|"),
+			failure: new RegExp(noticeControls.map(({ name }) => `(?:not ok|✖) .*${name}`).join("[\\s\\S]*")),
 		});
 	});
 
@@ -961,7 +967,7 @@ describe("stream-independent metadata capture (C3)", () => {
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "session-a" },
 			{ type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } },
-			{ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "call-1", name: "mytool", input: {} } } },
+			{ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "call-1", name: "mcp__custom-tools__echo", input: {} } } },
 			{ type: "stream_event", event: { type: "content_block_stop", index: 0 } },
 			{ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } } },
 			{ type: "stream_event", event: { type: "message_stop" } },
@@ -987,7 +993,7 @@ describe("stream-independent metadata capture (C3)", () => {
 				// Child-executed connector call (not mirrored, does not end the turn)…
 				{ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "conn-1", name: "mcp__claude_ai_Gmail__search_threads", input: {} } } },
 				// …then a Pi tool call that DOES end the Pi turn.
-				{ type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "call-1", name: "mytool", input: {} } } },
+				{ type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "call-1", name: "mcp__custom-tools__echo", input: {} } } },
 				{ type: "stream_event", event: { type: "content_block_stop", index: 1 } },
 				{ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } } },
 				{ type: "stream_event", event: { type: "message_stop" } },
