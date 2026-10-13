@@ -116,9 +116,18 @@ set -euo pipefail
 printf 'change-class %s\n' "$*" >>"$STUB_LOG"
 printf 'base-rev: %s\nhead-rev: %s\n' "$STUB_BASE_REV" "$STUB_HEAD_REV" >&2
 [ "${STUB_CLASS_EXIT:-0}" -eq 0 ] || exit "$STUB_CLASS_EXIT"
-[ -z "${GITHUB_OUTPUT:-}" ] ||
-  printf 'change_class=%s\nqueue_only=%s\n' "$STUB_CLASS" "${STUB_QUEUE:-false}" >>"$GITHUB_OUTPUT"
-[ -z "${STUB_OUTPUT_UNREADABLE:-}" ] || chmod 200 "$GITHUB_OUTPUT"
+output="${GITHUB_OUTPUT:-}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -z "$output" ] || printf 'change_class=%s\n' "$STUB_CLASS" >>"$output"
+if [ "${STUB_QUEUE_ABSENT:-false}" != true ]; then
+  printf 'queue-only: queue_only=%s cause=stub\n' "${STUB_QUEUE:-false}" >&2
+  [ -z "$output" ] || printf 'queue_only=%s\n' "${STUB_QUEUE:-false}" >>"$output"
+fi
 printf 'change_class=%s\n' "$STUB_CLASS"
 STUB
 cat >"$STUBS/skills/harness-ci/scripts/harness-only" <<'STUB'
@@ -368,7 +377,7 @@ check "the step says why the lanes answered as they did" \
 # reader of the same diff.
 run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md >/dev/null
 check "each wrapped script is called once, with the step's inputs, and the proof with the work directory" \
-  "change-class --event pull_request --head h1 --repo $TMP/subject --base b0
+  "change-class --event pull_request --head h1 --repo $TMP/subject --base b0 --output /dev/null
 harness-only --mode docs --event pull_request --head h1 --repo $TMP/subject --base b0 --paths-output PATHS
 proof WORK" \
   "$(sed 's/--paths-output [^ ]*$/--paths-output PATHS/; s/^proof .*/proof WORK/' "$LOG")"
@@ -384,7 +393,7 @@ check "a declared lane asks harness-only for the paths outside the docs set" \
   "$(sed -n 's/--paths-output [^ ]* --outside-output [^ ]*$/--paths-output PATHS --outside-output OUTSIDE/; s/^harness-only /harness-only /p' "$LOG")"
 run "$CLASSIFY" STUB_CLASS=standard BASE= >/dev/null
 check "an empty base is not passed as a flag" \
-  "change-class --event pull_request --head h1 --repo $TMP/subject" \
+  "change-class --event pull_request --head h1 --repo $TMP/subject --output /dev/null" \
   "$(sed -n 's/^change-class /change-class /p' "$LOG")"
 
 # --- 2. Must-fail: a classify that decides the class itself ------------------
@@ -392,18 +401,31 @@ check "an empty base is not passed as a flag" \
 # prints `standard` there instead. The render row, whose stub says render,
 # must see the difference.
 mutant="$CONTROL_ROOT/classify"
-needle='"$SCRIPTS/change-class" "${args[@]}"'
+needle='"$SCRIPTS/change-class" "${args[@]}" --output /dev/null'
 [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
   { echo "the change-class call is no longer one line in $CLASSIFY" >&2; exit 1; }
 NEEDLE="$needle" awk '
   { i = index($0, ENVIRON["NEEDLE"]) }
   i > 0 {
-    $0 = substr($0, 1, i - 1) "printf '"'"'change_class=standard\\n'"'"' | tee -a \"$GITHUB_OUTPUT\"" substr($0, i + length(ENVIRON["NEEDLE"]))
+    $0 = substr($0, 1, i - 1) "printf '"'"'change_class=standard\\n'"'"'" substr($0, i + length(ENVIRON["NEEDLE"]))
   }
   { print }
 ' "$CLASSIFY" >"$mutant"
 ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant changed nothing" >&2; exit 1; }
-check "must-fail: a classify that decides its own class fails the render row" \
+status="$(run "$mutant" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
+check "must-fail: a classify that decides its own class changes the render row" \
+  '0 change_class=standard' "$status $(sed -n '/^change_class=/p' "$OUT")"
+
+# The wrapped dependency writes outputs by default. Removing the explicit
+# sink restores that unused path and makes the existing output row fail.
+needle=' --output /dev/null '
+NEEDLE="$needle" awk '
+  { i = index($0, ENVIRON["NEEDLE"]) }
+  i > 0 { hits++; $0 = substr($0, 1, i - 1) " " substr($0, i + length(ENVIRON["NEEDLE"])) }
+  { print } END { if (hits != 1) exit 2 }
+' "$CLASSIFY" >"$mutant"
+! cmp -s "$CLASSIFY" "$mutant" || exit 1
+check 'must-fail: the wrapped command uses its output sink' \
   no "$(row_holds "$mutant" render)"
 
 # A rule planted wrong in a copy of TARGET, `classify` or `lib`, every other
@@ -489,7 +511,7 @@ refusal_rows=0
 while IFS='|' read -r cause assignments; do
   refusal_rows=$((refusal_rows + 1))
   case "$assignments" in
-    *STUB_PATHS_UNREADABLE=* | *STUB_OUTPUT_UNREADABLE=* | *STUB_RECORD_MODE=unreadable*)
+    *STUB_PATHS_UNREADABLE=* | *STUB_RECORD_MODE=unreadable*)
       if [ "$(id -u)" -eq 0 ]; then
         printf '  skip  refusal %s: root reads a mode-000 file\n' "$cause"
         continue
@@ -500,7 +522,7 @@ while IFS='|' read -r cause assignments; do
   check "refusal $cause: exit" "2" "$status"
   actual="$(refusal)"
   case "$cause" in
-    proof-unreadable | queue-only-unreadable) actual="${actual%% *}" ;;
+    proof-unreadable) actual="${actual%% *}" ;;
   esac
   check "refusal $cause: key" "$cause" "$actual"
   check "refusal $cause: no outputs" "" "$(cat "$OUT")"
@@ -512,7 +534,6 @@ missing-repo|REPO=
 missing-output-file|GITHUB_OUTPUT=
 classifier-failed status=2|STUB_CLASS_EXIT=2
 verdict-unreadable class-line=change_class=enormous|STUB_CLASS=enormous
-queue-only-unreadable|STUB_OUTPUT_UNREADABLE=1
 path-reader-failed status=2|STUB_PATHS_EXIT=2 STUB_PATHS=a
 docs-verdict-unreadable docs-line=harness_only=true|STUB_DOCS_LINE=harness_only=true STUB_PATHS=a
 class-without-paths class=micro|STUB_CLASS=micro STUB_PATHS=
@@ -1076,8 +1097,19 @@ run "$CLASSIFY" HEAD="$JUDGED_NO_READER" LANES_FROM="$TMP/decl/queued-no-reader"
 check "both trees without the reader name both on a lane line and warn once" \
   "lane: name=bench verdict=true cause=queue-reader-absent tree=lanes-from,judged path=benches/b.rs glob=benches/* 1" \
   "$(grep '^lane: name=bench ' "$TMP/err") $(grep -c '^::warning title=queue lane not deferred::' "$TMP/stdout")"
-check "the step forwards the classifier's queue_only line as it wrote it" "queue_only=true" \
-  "$(run "$CLASSIFY" STUB_QUEUE=true STUB_PATHS=src/main.rs >/dev/null; grep '^queue_only=' "$OUT")"
+rows=0
+while IFS='|' read -r name queue absent expected; do
+  rows=$((rows + 1))
+  status="$(run "$CLASSIFY" STUB_QUEUE="$queue" STUB_QUEUE_ABSENT="$absent" STUB_PATHS=src/main.rs)"
+  check "$name: queue metadata handoff exits 0" 0 "$status"
+  check "$name: the step forwards the documented queue record" "$expected" \
+    "$(sed -n '/^queue_only=/p' "$OUT")"
+done <<'ROWS'
+queue required|true|false|queue_only=true
+queue not required|false|false|queue_only=false
+classifier predates queue metadata|false|true|
+ROWS
+require_rows queue-metadata "$rows"
 
 # The merge group after a pull request that deferred `nightly`: that run's
 # record says nightly did not run, so the proof stands down `check`, which

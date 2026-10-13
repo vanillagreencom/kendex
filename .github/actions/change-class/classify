@@ -5,9 +5,9 @@
 # passing run of this workflow already proved the tree this run tests.
 #
 # Nothing here decides a class or a docs verdict. `change-class` prints one
-# and writes it to the step's output file itself, and `harness-only --mode
-# docs` does the same for docs_only; this script adds the path families beside
-# them, and the families are a grouping of the path list that docs-mode call
+# on stdout, and this script forwards it with its queue-only stderr record.
+# `harness-only --mode docs` writes docs_only; this script adds the path
+# families beside them, grouping the path list that docs-mode call
 # prints, never a second reading of the diff. Taking the list from that call
 # is what keeps the grouping on the shipped reader: `change-class` repeats the
 # same paths on its stderr in a shell-quoted form whose only decoder is `eval`,
@@ -45,9 +45,9 @@
 #   GITHUB_SHA and the rest `proof` lists
 #
 # Outputs appended to GITHUB_OUTPUT:
-#   change_class       render|trivial|micro|small|standard, written by the
-#                      shipped classifier itself
-#   queue_only         true|false, written by the shipped classifier itself:
+#   change_class       render|trivial|micro|small|standard, forwarded from the
+#                      shipped classifier's stdout
+#   queue_only         true|false, forwarded from the shipped classifier:
 #                      whether the change must run in a merge group before
 #                      it lands, the value of its `queue-only:` line, whose
 #                      statement is change-class's header. Absent where the
@@ -255,10 +255,9 @@ export GITHUB_OUTPUT="${work:?}/outputs"
 args=(--event "$EVENT" --head "$HEAD" --repo "$REPO")
 [ -z "${BASE:-}" ] || args=("${args[@]}" --base "$BASE")
 
-# The verdict. `change-class` appends `change_class=` to GITHUB_OUTPUT on its
-# own and prints that same line, and nothing else, on stdout, which is where
-# it is read back. Any other exit is a wiring error that carries no verdict.
-verdict="$("$SCRIPTS/change-class" "${args[@]}" 2>"${work:?}/class-log")" || {
+# Only stdout and the queue record are needed here. The /dev/null output
+# contract avoids a local lane decision before the declaration-aware call.
+verdict="$("$SCRIPTS/change-class" "${args[@]}" --output /dev/null 2>"${work:?}/class-log")" || {
   status=$?
   cat -- "${work:?}/class-log" >&2
   die "classifier-failed status=$status" "change-class exited $status"
@@ -270,21 +269,17 @@ case "$verdict" in
   *) die "verdict-unreadable class-line=$verdict" \
     "the classifier printed no change_class line this action knows" ;;
 esac
-# The queue_only line change-class appended beside its class, the one answer
-# a `:queue` lane's deferral stands on; empty where the classifier root
-# predates it.
-queue_only="$(sed -n 's/^queue_only=//p' "$GITHUB_OUTPUT")" ||
-  die "queue-only-unreadable path=$GITHUB_OUTPUT" \
-    "could not read back the queue_only line change-class wrote"
-
-# The action publishes the shared decision after its CI proof. Remove the
-# preliminary local answer, which has no declaration or proof attached.
-sed '/^lanes=/d; /^lanes_cause=/d' "$GITHUB_OUTPUT" >"$work/class-outputs"
-cat "$work/class-outputs" >"$GITHUB_OUTPUT"
+# The documented stderr record owns queue_only. A classifier predating it
+# leaves the output absent, as it did before the action forwarded the record.
+queue_only="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
+  die "queue-only-unreadable path=${work:?}/class-log" \
+    "could not read the queue-only record change-class wrote"
+printf 'change_class=%s\n' "$class" >>"$GITHUB_OUTPUT"
+[ -z "$queue_only" ] || printf 'queue_only=%s\n' "$queue_only" >>"$GITHUB_OUTPUT"
 
 # The docs verdict and the paths, from the reader that owns the diff range for
-# every event. It appends `docs_only=` to GITHUB_OUTPUT on its own, as the
-# classifier does its class. The paths outside the docs set are asked for
+# every event. It appends `docs_only=` to GITHUB_OUTPUT on its own.
+# The paths outside the docs set are asked for
 # only where a lane is declared: a classifier checkout older than that flag
 # still serves every caller that declares none.
 docs_args=(--mode docs "${args[@]}" --paths-output "${work:?}/paths")
