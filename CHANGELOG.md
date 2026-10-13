@@ -84,6 +84,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### github
 
+- Read merge times and queue entries from their API fields, and check required workflow runs after adding a rule to an open pull request.
 - pr-timeline prints `ci_head_spans`: the start and end of each check run on the final head, including a superseded workflow run's.
 - Pull-request timelines now return the recorded merge route for merge-delay reports.
 - Count Copilot's “Needs a closer look” overview as one review finding that a head-bound Dispositions comment can answer.
@@ -96,6 +97,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### jarvis
 
+- Keep send results separate from output filters, read totals and ages from their source records, and remove sign-in query strings before logging browser tabs.
 - Jarvis builds a report's waiting-on-you list from live sources and lists as landed only merges it read in the session. It reports a fix sent to another owner as sent until it checks the fix where the problem was seen, and repairs the step behind each of its errors. It sweeps unanswered messages at each wake.
 - Jarvis adds a weekly efficiency audit that reads the consumer's own session, overseer and lane records and writes a report with an owner summary of at most 15 lines.
 - Setup workflows guide the assistant and user through connecting Slack, Linear, GitHub and a fleet machine, with protected credentials and a checked connection result.
@@ -121,6 +123,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### linear
 
+- Read state-entry times from issue history, tick verified boxes through issue completion, and select an app token for cross-team relations.
 - `issues create`, `issues update --description` or `--description-file`, and `issues bulk-update --description` refuse a body whose first non-empty line is a `**Key**:` or `Reached by:` header, or that has a header line over 500 characters, naming the line and its length; `LINEAR_REQUIRE_REACH` set empty turns it off with the reach guard.
 - Owner asks can put their action line before a Linear issue's outcome sentence, so the question comment can post on the item again.
 
@@ -137,6 +140,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### orch
 
+- Reuse a lane provider's capability reply while its file stays unchanged, including the static SSH reply for providers that refuse the capability verb.
 - Copilot account records expose the usage response's raw month consumption as `credits_used`. An unavailable value stays null.
 - Long lanes with repeated fixes receive a design review before another patch round. The overseer also reviews a mechanism before filing its second fix in one day.
 - `review-artifact-check` accepts a `perf_qa` `metric_kind: "measure"` with a `name`, a free-text `unit`, numeric `values` and a `samples` count above zero, so byte rates and Criterion means are recorded under their true name and unit instead of outside the block or as a failed measurement.

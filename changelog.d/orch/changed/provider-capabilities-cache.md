@@ -1,1 +1,0 @@
-- Reuse a lane provider's capability reply while its file stays unchanged, including the static SSH reply for providers that refuse the capability verb.
