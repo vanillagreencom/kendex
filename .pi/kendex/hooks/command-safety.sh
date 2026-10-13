@@ -18,7 +18,7 @@ set -euo pipefail
 # evidence, never proof of routing; unseen program semantics are not judged.
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1
-  local j start=0 end n fd target proc output input_redirect pos program value named flags
+  local j start=0 end n fd target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 opaque text text_length span span_re comment_span options_ended null_output syntax_head opaque_from
   local continuation=$'\\\n'
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
@@ -150,7 +150,7 @@ environment_dump() { # command kind; arguments are already decoded data
   done
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); origins=()
-    proc=""; output=""; input_redirect=""; mode=other; program=""; opaque_from=""
+    proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; opaque_from=""
     for ((j=start; j<end; j++)); do
       if [ "${kinds[$j]}" = operator ]; then
         fd=""; n=${#args[@]}
@@ -161,6 +161,7 @@ environment_dump() { # command kind; arguments are already decoded data
         case "${tokens[$((j - 1))]}" in
           '<')
             input_redirect=1
+            [ "${kinds[$j]:-}" != ansi-escaped ] || input_escaped=1
             [[ $target != /proc/*/environ ]] || proc=1 ;;
           '<&' | '<<') input_redirect=1 ;;
           '>' | '>>' | '>&') [ "$fd" = 2 ] || output=1 ;;
@@ -247,6 +248,17 @@ environment_dump() { # command kind; arguments are already decoded data
         *) break ;;
       esac
     done
+    # Bash expands ANSI-C escapes after the harness submits command text.
+    # These producer operands cannot prove a safe name, flag or input path.
+    case "${program:-}" in
+      printenv | export | declare | typeset | set | systemctl | cat | tr | strings | xargs)
+        for ((j=pos; j<${#args[@]}; j++)); do
+          [ "${arg_kinds[$j]}" != ansi-escaped ] || return 0
+        done ;;
+    esac
+    case "${program:-}" in
+      cat | tr | strings | xargs) [ -z "$input_escaped" ] || return 0 ;;
+    esac
     case "${program:-}" in
       printenv)
         named=""; options_ended=""; null_output=""; mode=dump-lines

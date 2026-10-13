@@ -490,6 +490,46 @@ environment_rows() {
 [2,"printenv $'NAME'","ansi-named-argument-stays-unproved"]
 [2,"systemctl $'show-environment'","ansi-systemctl-producer-argument"]
 [2,"systemctl $\"show-environment\"","locale-systemctl-producer-argument"]
+[2,"systemctl --user $'show-\\x65nvironment'","ansi-systemctl-encoded-argument"]
+[2,"cat $'/proc/self/\\x65nviron'","ansi-cat-encoded-argument"]
+[2,"declare $'-\\160'","ansi-declare-encoded-argument"]
+[2,"typeset $'-\\x78'","ansi-typeset-encoded-argument"]
+[2,"printenv $'N\\x41ME'","ansi-printenv-encoded-argument"]
+[2,"export $'-\\160'","ansi-export-encoded-argument"]
+[2,"set $'\\x2de'","ansi-set-encoded-argument"]
+[2,"tr $'\\0' $'\\n'","ansi-tr-encoded-arguments"]
+[2,"strings $'/proc/self/\\u0065nviron'","ansi-strings-encoded-argument"]
+[2,"xargs $'-\\060'","ansi-xargs-encoded-argument"]
+[2,"env $'N\\x41ME=value' git status","ansi-env-encoded-operand"]
+[2,"systemctl $'show-\\U00000065nvironment'","ansi-long-unicode-argument"]
+[2,"systemctl $'show-\\545nvironment'","ansi-octal-wrap-argument"]
+[2,"systemctl $'show-environment\\0ignored'","ansi-nul-argument"]
+[2,"systemctl show-$'env\\0ignored'ironment","ansi-nul-fragment-argument"]
+[2,"systemctl $'\\cE'","ansi-control-argument"]
+[2,"systemctl $'\\q'","ansi-unknown-escape-argument"]
+[2,"systemctl $'\\x'","ansi-incomplete-escape-argument"]
+[2,"systemctl $'a\\tb'","ansi-simple-escape-argument"]
+[2,"systemctl $'show-\\x65'n\"viron\"'ment'","ansi-mixed-fragment-argument"]
+[2,"systemctl $'show-\\x65'\"$NAME\"","ansi-escape-before-variable-fragment"]
+[2,"systemctl $'show-\\x65'$'nvironment'","ansi-escape-before-dollar-fragment"]
+[2,"systemctl $'show-\\'environment'","ansi-escaped-apostrophe-argument"]
+[2,"command -p -- systemctl $'show-\\x65nvironment'","ansi-command-producer-argument"]
+[2,"sudo -u root -- cat $'/proc/self/\\x65nviron'","ansi-sudo-producer-argument"]
+[2,"env NAME=value declare $'-\\160'","ansi-env-producer-argument"]
+[2,"systemctl $'show-\\x65nvironment' | grep NAME","ansi-argument-filter-stays-unproved"]
+[2,"cat < $'/proc/self/\\x65nviron'","ansi-cat-encoded-input"]
+[2,"tr '\\0' '\\n' < $'/proc/self/\\x65nviron' | grep NAME","ansi-tr-encoded-input"]
+[2,"strings < $'/proc/self/\\x65nviron' | grep NAME","ansi-strings-encoded-input"]
+[2,"xargs -0 < $'/proc/self/\\x65nviron'","ansi-xargs-encoded-input"]
+[0,"printf $'a\\tb'","ansi-benign-printf-argument"]
+[0,"printf '%s' < $'a\\tb'","ansi-ordinary-command-input"]
+[0,"sudo -u $'r\\x6fot' git status","ansi-wrapper-option-is-not-producer-argument"]
+[0,"systemctl \"$'show-\\x65nvironment'\"","ansi-opener-in-double-quoted-argument"]
+[0,"systemctl '$'\\''show-\\x65nvironment'","ansi-opener-in-single-quoted-argument"]
+[0,"systemctl \\$'show-\\x65nvironment'","ansi-escaped-dollar-argument"]
+[0,["systemctl","$'show-\\x65nvironment'"],"ansi-array-argument-is-data"]
+[0,["cat","$'/proc/self/\\x65nviron'"],"ansi-array-path-is-data"]
+[0,["declare","$'-\\160'"],"ansi-array-flag-is-data"]
 [0,"printf '%s' $'\\x65nv'","ansi-escaped-argument-data"]
 [0,"printf '%s' $'$(env)'","ansi-substitution-text-is-data"]
 [0,"\"en\\v\"","double-backslash-is-literal"]
@@ -666,6 +706,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
       defect == "opaque-escaped-pass" { swap("[ \"${kinds[$j]}\" != ansi-escaped ] || mode=dump-unknown", "[ \"${kinds[$j]}\" != ansi-escaped ] || :") }
       defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
+      defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || return 0", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
+      defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || return 0", "[ -z \"$input_escaped\" ] || :") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -739,6 +781,8 @@ opaque-escaped-pass|FAIL environment: ansi-builtin-escaped-head: exit=0 expected
 opaque-escaped-pass|FAIL environment: ansi-dollar-exec-escaped-head: exit=0 expected=2
 opaque-escaped-pass|FAIL environment: ansi-command-exec-escaped-head: exit=0 expected=2
 systemctl-literal-argument|FAIL environment: ansi-systemctl-producer-argument: exit=0 expected=2
+escaped-argument-pass|FAIL environment: ansi-systemctl-encoded-argument: exit=0 expected=2
+escaped-input-pass|FAIL environment: ansi-cat-encoded-input: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
