@@ -115,9 +115,16 @@ for root in "$LANE" "$TMP_ROOT/root-link" omitted; do
     "0=Checkout $root?" "$root: an ask lands in the worktree mailbox"
 done
 
-recorded_root() { # CASE EXPECTED_EXIT
-  local kind="$1" expected="$2" root="$TMP_ROOT/record-$1" recorded
+recorded_root() { # CASE EXPECTED_EXIT [default|selected]
+  local kind="$1" expected="$2" root="$TMP_ROOT/record-$1" recorded scope="${3:-default}" state args=()
   LANE="$TMP_ROOT/root_base"
+  state="$LANE/tmp/workflow-state-oversee.json"
+  if [[ "$scope" == selected ]]; then
+    mkdir -p "$TMP_ROOT/selected-fleet"
+    printf '{"lanes":[]}\n' > "$state"
+    state="$TMP_ROOT/selected-fleet/workflow-state-oversee.json"
+    args=(--state-dir "$TMP_ROOT/selected-fleet")
+  fi
   case "$kind" in
     directory) root="$LANE/tmp/lane-mail"; mkdir -p "$root" ;;
     link) ln -s "$TMP_ROOT/removed-link-target" "$root"; [[ -L "$root" ]] || exit 1 ;;
@@ -129,17 +136,17 @@ recorded_root() { # CASE EXPECTED_EXIT
   recorded="$root"
   [[ "$kind" != mismatched ]] || recorded="$TMP_ROOT/another-removed-root"
   jq -n --arg root "$recorded" '{lanes: [{item: "KEN-1", host: null, mail_root: $root, cycle: {pr: 1}}]}' \
-    > "$LANE/tmp/workflow-state-oversee.json"
+    > "$state"
   case "$kind" in
-    unrecorded) printf '{"lanes":[]}\n' > "$LANE/tmp/workflow-state-oversee.json" ;;
-    unmerged) jq 'del(.lanes[0].cycle)' "$LANE/tmp/workflow-state-oversee.json" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$LANE/tmp/workflow-state-oversee.json" ;;
-    hosted-record) jq '.lanes[0].host = "ssh"' "$LANE/tmp/workflow-state-oversee.json" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$LANE/tmp/workflow-state-oversee.json" ;;
-    unreadable) printf 'not JSON\n' > "$LANE/tmp/workflow-state-oversee.json" ;;
+    unrecorded) printf '{"lanes":[]}\n' > "$state" ;;
+    unmerged) jq 'del(.lanes[0].cycle)' "$state" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$state" ;;
+    hosted-record) jq '.lanes[0].host = "ssh"' "$state" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$state" ;;
+    unreadable) printf 'not JSON\n' > "$state" ;;
   esac
   if [[ "$kind" == write ]]; then
     lm ask --item KEN-1 --root "$root" --file "$(text record 'A removed root cannot receive an ask.')"
   else
-    lm pending --item KEN-1 --root "$root"
+    lm pending --item KEN-1 --root "$root" ${args[@]+"${args[@]}"}
   fi
   assert_eq "$RC=$OUT" "$expected=" "$kind: the recorded-root contract controls the result"
   if [[ "$expected" == 2 ]]; then
@@ -154,8 +161,10 @@ recorded_root() { # CASE EXPECTED_EXIT
   fi
   [[ "$kind" != link ]] || rm -- "$root"
 }
-for row in removed:0 unrecorded:2 unmerged:2 mismatched:2 directory:2 link:2 write:2 unreadable:2 hosted-record:2; do
-  recorded_root "${row%:*}" "${row#*:}"
+for scope in default selected; do
+  for row in removed:0 unrecorded:2 unmerged:2 mismatched:2 directory:2 link:2 write:2 unreadable:2 hosted-record:2; do
+    recorded_root "${row%:*}" "${row#*:}" "$scope"
+  done
 done
 
 new_lane envelope
@@ -1553,6 +1562,12 @@ for rule in removed matching merged missing read host; do
   ( FAIL=0; recorded_root "${row%:*}" "${row#*:}"; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/record-control-$rule.out" || ROOT_ASSERT_RC=$?
   assert_eq "$ROOT_ASSERT_RC" 1 "control: the $rule root defect fails the same recorded-root assertions"
 done
+
+# shellcheck disable=SC2016  # Mutations use literal production text.
+mutant unselected-record 'LM_LANE_STATE_ARGS=(--state-dir "$STATE_DIR")' ': # LM_LANE_STATE_ARGS=(--state-dir "$STATE_DIR")'
+ROOT_ASSERT_RC=0
+( FAIL=0; recorded_root removed 0 selected; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/record-state-control.out" || ROOT_ASSERT_RC=$?
+assert_eq "$ROOT_ASSERT_RC" 1 'control: ignoring the selected state fails the same removed-root assertions'
 
 new_lane control_wait_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Read once?')"

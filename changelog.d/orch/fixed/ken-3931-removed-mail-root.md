@@ -1,1 +1,1 @@
-- Clarify the local mailbox root refusal contract in peer-mail instructions.
+- Use the selected fleet state for mailbox reads in fleet reports, and clarify the local mailbox root refusal contract in peer-mail instructions.

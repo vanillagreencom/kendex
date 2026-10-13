@@ -354,7 +354,7 @@ Options:
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
   --state-dir PATH
-                send only: the fleet state whose record names the lane
+                send and pending: the fleet state whose record names the lane
   --to WHO      `owner` or `peer`: the audience field of an overseer ask or
                 notice, which a peer ask writes as `peer` itself, and the
                 filter `pending` keeps
@@ -479,7 +479,8 @@ only cross-repository write. A hosted mailbox root is outside that ownership
 check: its path is on another host. A session send always checks repository
 ownership from the recorded mail_root, which can be inside its checkout.
 `pending` can read a removed local worktree when the lane's fleet record
-names that exact root and carries its merged pull request.
+names that exact root and carries its merged pull request. Pass --state-dir
+when the caller selected a fleet outside the default state directory.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
 outside the alphabet, a lock, a write or a host that failed; 69
@@ -806,7 +807,7 @@ for given in $OPTS_GIVEN; do
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
-    --state-dir) [ "$VERB" = send ] || refuse option-unknown --state-dir ;;
+    --state-dir) case "$VERB" in send | pending) ;; *) refuse option-unknown --state-dir ;; esac ;;
   esac
 done
 
