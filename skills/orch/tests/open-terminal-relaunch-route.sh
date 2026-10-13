@@ -444,7 +444,7 @@ run_ot claude "$HARNESS_SCREEN" claude
 RUN_ENV=()
 assert_eq "missing=$(said 'harness-screen-missing')" "missing=1" \
   "control: without its own status a failed read reports as a pane with no harness screen"
-control stopped '          launch_stop || true' '          if false; then launch_stop || true; fi'
+control stopped 'launch_stop || true' 'if false; then launch_stop || true; fi'
 run_ot claude - claude
 assert_eq "closed=$(closed) status=$(status)" "closed=0 status=running" \
   "control: without the stop the window stays open and the record stays running behind the dead pane"
@@ -455,12 +455,14 @@ switched="$(said 'harness-switched')"
 prepared_fail codex claude
 assert_eq "switched=$switched held=$HELD settled=$SETTLED" "switched=1 held=preparing claude settled=stopped claude" \
   "control: a relaunch record that rewrites the harness before it takes names claude and turns the next codex relaunch into a harness switch"
-control close 'tmux_window_close "$UNTAKEN_PANE" "$title" || return 1' 'tmux_window_close "$UNTAKEN_PANE" "$title" || true'
+control close '  tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
+  lane_record_write' '  tmux_window_close "$UNTAKEN_PANE" "$title" || true
+  lane_record_write'
 RUN_ENV=(OT_TMUX_FAIL=kill-window)
 run_ot claude - claude
 RUN_ENV=()
 assert_eq "status=$(status)" "status=stopped" "control: a stop past a failed close writes stopped over a live window"
-control untaken 'if [[ -n "$UNTAKEN_PANE" ]]; then' 'if [[ -n "${UNTAKEN_PANE:=$LAUNCH_PANE}" ]]; then'
+control untaken 'if [[ "${HOST_PANE:-local}" != verb && -n "$UNTAKEN_PANE" && "$FLEET" == true && "$RELAUNCH" == true ]]; then' 'if [[ "${HOST_PANE:-local}" != verb && -n "${UNTAKEN_PANE:=$LAUNCH_PANE}" && "$FLEET" == true && "$RELAUNCH" == true ]]; then'
 SEED_LANES='[42]'
 run_ot claude "$HARNESS_SCREEN" claude
 SEED_LANES='[]'

@@ -127,8 +127,8 @@ mutate_file "$CONTROL/lib/lane-launch.sh" "printf 'custom\n'; return;" "printf '
 STOP_CONTROL="$(mutant_scripts relaunch-stop open-terminal)"
 orch_fixture_shared_libs "${STOP_CONTROL%/scripts}"
 mutate_file "$STOP_CONTROL/open-terminal" \
-  'if [[ "$FLEET" == true && ( "$RELAUNCH" == true ||' \
-  'if [[ "$FLEET" == true && ( "$HOST_RELAUNCH" == true ||'
+  'if [[ "${HOST_PANE:-local}" != verb && -n "$UNTAKEN_PANE" && "$FLEET" == true && "$RELAUNCH" == true ]]; then' \
+  'if [[ "${HOST_PANE:-local}" != verb && -n "$UNTAKEN_PANE" && "$FLEET" == true && "$HOST_RELAUNCH" == true ]]; then'
 
 run_case() { # NAME SCRIPT MODE EXPECT [HARNESS]
   local name="$1" script="$2" mode="$3" want="$4" harness="${5:-claude}" rc=0 actual=missing
