@@ -207,10 +207,11 @@ owner_tracker_unwritten() { # ISSUE CAUSE
 }
 
 # Both mailbox readers fold posting evidence before selecting asks or cursors.
-OWNER_TRACKER_JQ='def owner_tracker_record($posted):
+OWNER_TRACKER_JQ='def owner_tracker_record($outcomes):
   if .kind == "ask" and .to == "owner" and .issue != null then
-    . as $ask | ([$posted[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
-    | .tracker_posted = ($record != null)
+    . as $ask | ([$outcomes[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
+    | .tracker_posted = ($record.kind == "tracker-posted")
+    | if $record != null then del(.tracker_pending) else . end
     | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
   else . end;
 def owner_tracker_label($configured):
@@ -238,24 +239,25 @@ owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTE
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   local tracker="$1" envelope="$2" work="$3" issue labels current owner description
   OWNER_TRACKER_POSTED=0
+  OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
   owner="$("$tracker" users list --max --format=safe 2>"$work/tracker.err" | jq -ce --arg email "$OWNER_TRACKER_EMAIL" '
     [.[] | select((.email | ascii_downcase) == ($email | ascii_downcase))]
     | if length == 1 then .[0] | select(.id != "" and (.name | test("\\S"))) else empty end')" || {
-    owner_tracker_unwritten "$issue" owner-read; return 0;
+    OWNER_TRACKER_CAUSE=owner-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   "$tracker" issues update "$issue" --assignee "$(jq -r '.id' <<<"$owner")" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    owner_tracker_unwritten "$issue" assign; return 0;
+    OWNER_TRACKER_CAUSE=assign; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   current="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker.err")" || {
-    owner_tracker_unwritten "$issue" labels-read; return 0;
+    OWNER_TRACKER_CAUSE=labels-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
   description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
     (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
   description="${description%.}"
   "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    owner_tracker_unwritten "$issue" label; return 0;
+    OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   jq -r '.text, "", ("Options: " + (.options | join(", "))),
     (if .reserved == true then "No default. This action waits for your approval. Due " + .deadline
@@ -265,7 +267,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
     "Reply with one comment: ok, yes or done to approve; anything else is a change request."' \
     <<<"$envelope" >"$work/tracker-comment" || return 1
   "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    owner_tracker_unwritten "$issue" comment; return 0;
+    OWNER_TRACKER_CAUSE=comment; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   OWNER_TRACKER_POSTED=1
 }

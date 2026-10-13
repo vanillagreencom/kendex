@@ -391,6 +391,7 @@ delivery_id), thread_ts and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
 draft (a draft ask only: recipient, medium, text and text_hash),
 reserved (true on a reserved ask only), issue (a configured item ask),
+tracker_pending (true on the immutable ask while its tracker outcome is missing),
 tracker_posted (a boolean projected by mailbox reads after the complete tracker
 question is confirmed), tracker_label (the confirmed label used for close
 when settings change or cannot be read),
@@ -403,8 +404,9 @@ verb writes the item, a send into the overseer's own mailbox and a `resolve
 --default` included, writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
-A private tracker-posted record confirms an immutable ask by its re and issue.
-Reads fold it into that ask before cursor filtering and never emit it as an
+A private tracker-posted or tracker-failed record carries an immutable ask's
+outcome by its re and issue. Failure records carry the failed operation in cause.
+Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. Closure still uses
 its issue to clean up partial tracker writes.
@@ -1395,9 +1397,9 @@ lm_objects() { # FILE [BOX [AFTER]]
     --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
     [inputs | input_line_number as $physical | (fromjson? // empty) | objects
       | {physical: $physical, envelope: .}] as $rows
-    | [$rows[].envelope | select(.kind == "tracker-posted")] as $posted
+    | [$rows[].envelope | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
     | $rows[] | .physical as $physical | .envelope
-    | select(.kind != "tracker-posted")
+    | select(.kind != "tracker-posted" and .kind != "tracker-failed")
     | owner_tracker_record($posted)
     | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
@@ -2102,6 +2104,9 @@ case "$VERB" in
       fi
     fi
     LINE="$(lm_envelope "$VERB")"
+    if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
+      LINE="$(jq -c '.tracker_pending = true' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
+    fi
     [ "$VERB" != notice ] || lm_receipt_fields "$LINE"
     # An owner notice is judged on its text for a day, under the lock after
     # the minute check, so a retry inside the minute keeps its `duplicate`.
@@ -2114,12 +2119,17 @@ case "$VERB" in
       lm_append_local "$TO_OVERSEER" "$LINE"
     fi
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
-      owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR"
+      if ! owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR"; then
+        owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_CAUSE"
+      fi
       if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then
         POSTED_LINE="$(jq -c --arg label "$OWNER_TRACKER_LABEL" '{id: (.id + "-tracker"), kind: "tracker-posted", at, from,
           re: .id, issue, tracker_label: $label, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
-        lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
+      else
+        POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" '{id: (.id + "-tracker"), kind: "tracker-failed", at, from,
+          re: .id, issue, cause: $cause, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
       fi
+      lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
     fi
     if [ "$VERB" = ask ]; then
       printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
