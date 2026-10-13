@@ -44,10 +44,11 @@ row() { sk_run -- listen --status --root "$1"; LINE="$(printf '%s' "$OUT" | sed 
 refuse_next_post() { sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null; }
 # A status timestamp acknowledges a completed poll. The parent suite bounds
 # this wait even if the relay or the settings reader stops making progress.
-polled_after() { # ROOT LAST_POLL
+polled_after() { # ROOT LAST_POLL [RESUMED]
   local tries=0 value
   while [ "$tries" -lt 100 ]; do
-    value="$(jq -r --argjson after "$2" '.last_poll > $after' "$1/tmp/slack/status.json" 2>/dev/null)"
+    value="$(jq -r --argjson after "$2" --argjson resumed "${3:-false}" \
+      '.last_poll > $after and ($resumed == false or (.last_poll_ok and .held_by == ""))' "$1/tmp/slack/status.json" 2>/dev/null)"
     [ "$value" != true ] || return 0
     tries=$((tries + 1)); sleep 0.1
   done
@@ -638,7 +639,9 @@ while read -r name source caller control; do
         named) printf 'SLACK_JARVIS_SESSION_FILE=\n' > "$R/private.env" ;;
       esac
       AFTER="$(jq -r .last_poll "$R/tmp/slack/status.json")"
-      polled_after "$R" "$AFTER" || exit 1
+      # A refused poll can finish after removal. Its timestamp does not
+      # acknowledge the new setting; wait for a successful, unheld poll.
+      polled_after "$R" "$AFTER" true || exit 1
       row "$R"; assert_eq "$(field "$LINE" state)=$(field "$LINE" held-by)" "ok=" "$name: removing or emptying the setting resumes"
       assert_eq "$(count "$CHANNEL" "Changed hold $name.")=$(count "$CHANNEL" "Invalid hold $name.")" "1=1" \
         "$name: resume posts the held notices once"
