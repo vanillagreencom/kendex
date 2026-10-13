@@ -324,12 +324,18 @@ if [[ "$match" == true ]]; then
   printf '%s\n' "$TOOL" >>"$WT_EXCLUDE_TRACE"
   exit 2
 fi
+if [[ "${WT_EXCLUDE_FAULT:-}" == content-after-copy && "$TOOL" == cp && "${1:-}" == -p && "${3:-}" == "$WT_EXCLUDE_FILE" ]]; then
+  "$REAL_TOOL" "$@" || exit $?
+  printf '%s\n' permission-copy >>"$WT_EXCLUDE_TRACE" || exit $?
+  exit 0
+fi
 exec "$REAL_TOOL" "$@"
 WRAPPER
     chmod +x "$TMP_ROOT/outcome-bin/$tool"
   done
   printf 'REAL_GIT=%q\n' "$git_tool" >"$TMP_ROOT/outcome-bash-env"
   cat >>"$TMP_ROOT/outcome-bash-env" <<'WRAPPER'
+WT_EXCLUDE_CONTENT_WRITES=0
 git() {
   local frame
   if [[ "${WT_EXCLUDE_FAULT:-}" == lookup && "$#" -eq 4 && "$1" == -C && "$2" == "$WT_EXCLUDE_TREE" && "$3" == rev-parse && "$4" == --git-common-dir ]]; then
@@ -343,7 +349,17 @@ git() {
   command "$REAL_GIT" "$@"
 }
 printf() {
-  if [[ "${WT_EXCLUDE_FAULT:-}" == content && "${1:-}" == '%s' && "${2:-}" == *"/$WT_EXCLUDE_PATH"* ]]; then
+  if [[ ( "${WT_EXCLUDE_FAULT:-}" == content || "${WT_EXCLUDE_FAULT:-}" == content-after-copy ) && "${1:-}" == '%s' && "${2:-}" == *"/$WT_EXCLUDE_PATH"* ]]; then
+    if [[ "$WT_EXCLUDE_FAULT" == content-after-copy ]]; then
+      WT_EXCLUDE_CONTENT_WRITES=$((WT_EXCLUDE_CONTENT_WRITES + 1))
+      if [[ "$WT_EXCLUDE_CONTENT_WRITES" -eq 1 ]]; then
+        builtin printf "$@" || return $?
+        builtin printf '%s\n' content-first >>"$WT_EXCLUDE_TRACE" || return $?
+        return 0
+      fi
+      builtin printf '%s\n' content-second >>"$WT_EXCLUDE_TRACE" || return $?
+      return 2
+    fi
     builtin printf '%s\n' printf >>"$WT_EXCLUDE_TRACE"
     return 2
   fi
@@ -406,7 +422,7 @@ outcome_case() {
   : >"$ROOT/dependency-trace"
   if [[ "$outcome" == failed ]]; then expected=1; fi
   case "$fault" in lookup|filter|inspection|comparison) error_kind=read ;; esac
-  case "$fault" in lookup) operation=git-common-directory ;; inspection) operation=entry-inspection ;; initial-permissions) operation=permissions ;; esac
+  case "$fault" in lookup) operation=git-common-directory ;; inspection) operation=entry-inspection ;; initial-permissions) operation=permissions ;; content-after-copy) operation=content ;; esac
   local -a args=("$route" "$WT")
   if [[ "$route" == create ]]; then args=(create new-outcome); fi
   (cd "$MAIN" && PATH="$TMP_ROOT/outcome-bin:$PATH" BASH_ENV="$TMP_ROOT/outcome-bash-env" \
@@ -419,6 +435,9 @@ outcome_case() {
     records="$(awk -v key="worktree-exclude-$error_kind-failed:" -v operation="operation=$operation" '$1 == key && $0 ~ operation { print $1 }' "$ROOT/err")"
     assert_eq "$records" "worktree-exclude-$error_kind-failed:" "$caller $route $fault: writer diagnosis"
     assert_eq "${trace:+reached}" reached "$caller $route $fault: dependency reached"
+    if [[ "$fault" == content-after-copy ]]; then
+      assert_eq "$trace" $'content-first\npermission-copy\ncontent-second' "$caller $route $fault: earlier write and permission copy succeeded"
+    fi
     records="$(awk '/^worktree-(links-restored|links-repaired):/ || /^\// { print }' "$ROOT/out" "$ROOT/err")"
     assert_eq "$records" '' "$caller $route $fault: no successful command result"
     if [[ "$route" == fix-links ]]; then
@@ -486,7 +505,7 @@ symlink|repair-links|unchanged|lookup'
 ignore-copy|repair-links|failed|filter
 child-link|repair-links|failed|permissions
 materialized|repair-links|failed|permissions'
-  for fault in lookup inspection comparison directory temporary-file content replacement cleanup initial-permissions; do
+  for fault in lookup inspection comparison directory temporary-file content content-after-copy replacement cleanup initial-permissions; do
     OUTCOMES+=$'\n'"symlink|fix-links|failed|$fault"
   done
   while IFS='|' read -r caller route outcome fault; do
@@ -510,6 +529,7 @@ read
 directory
 temporary-file
 content
+content-second
 permissions-status
 replacement
 cleanup
@@ -559,7 +579,12 @@ if [[ -n "$CONTROLS" ]]; then
         new='  candidate="$(mktemp "$info_exclude.wt-tmp.XXXXXX" 2>/dev/null)"'
         select_fault=temporary-file
         ;;
-      content) expected_matches=2; select_fault=content ;;
+      content) expected_matches=2; select_fault='content content-after-copy' ;;
+      content-second)
+        old='    printf '\''%s'\'' "$filtered" 2>/dev/null > "$tmp" || return 1'
+        new='    printf '\''%s'\'' "$filtered" 2>/dev/null > "$tmp"'
+        select_fault=content-after-copy
+        ;;
       permissions-status)
         old='    cp -p -- "$info_exclude" "$tmp" 2>/dev/null || return 1'
         new='    cp -p -- "$info_exclude" "$tmp" 2>/dev/null'
@@ -582,6 +607,13 @@ if [[ -n "$CONTROLS" ]]; then
         ;;
       callers) expected_matches=5; select_fault='permissions filter' ;;
     esac
+    if [[ -n "${WORKTREE_EXCLUDE_SELECT_FAULT:-}" && "$matrix_only" == 1 ]]; then
+      selected=false
+      for fault in $select_fault; do
+        if [[ " $WORKTREE_EXCLUDE_SELECT_FAULT " == *" $fault "* ]]; then selected=true; fi
+      done
+      [[ "$selected" == true ]] || continue
+    fi
     scripts="$TMP_ROOT/control-$control"
     cp -R -- "${WORKTREE_SCRIPT%/*}" "$scripts"
     writer="$scripts/lib/links.sh"
