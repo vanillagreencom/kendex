@@ -410,6 +410,10 @@ Reads fold the outcome into that ask and clear tracker_pending before cursor fil
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. Closure still uses
 its issue to clean up partial tracker writes.
+The full events snapshot, which the Slack relay reads without --box or --after,
+holds pending tracker asks for 300 seconds from at. An outcome releases the ask.
+At that bound, a missing outcome releases the full question. Cursored events,
+pending and drain still include pending asks, so their cursors cannot lose a later outcome.
 Reads of legacy closing answers warn `lane-mail: legacy-close=<id>` on stderr.
 The old format remains readable through kendex 1.4.
 
@@ -1385,22 +1389,33 @@ lm_header() { # FILE
 # parse is dropped here and counted above. Events name BOX to carry logical
 # line numbers before that filtering, aligned with the Jarvis session's seen count.
 lm_objects() { # FILE [BOX [AFTER]]
-  local count=0 numbers=/dev/null
+  local count=0 numbers=/dev/null snapshot=false now=0
   [ "$ITEM" != overseer ] || mailbox_warn_legacy "$1" || return 2
   if [ -n "${2:-}${3:-}" ]; then
     count="$(lm_count "$1")" || return 1
     numbers="$1.index"
   fi
+  if [ "$VERB" = events ] && [ -z "${3:-}" ]; then
+    snapshot=true
+    now="$(date -u +%s)" || return 1
+  fi
   # Posting is confirmed after the immutable ask. Fold that evidence before
   # cursor selection, while keeping the ask's original logical position.
   jq -c -R -n --arg box "${2:-}" --arg after "${3:-}" --argjson count "$count" \
-    --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
+    --argjson snapshot "$snapshot" --argjson now "$now" \
+    --slurpfile numbers "$numbers" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
     [inputs | input_line_number as $physical | (fromjson? // empty) | objects
       | {physical: $physical, envelope: .}] as $rows
     | [$rows[].envelope | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
     | $rows[] | .physical as $physical | .envelope
     | select(.kind != "tracker-posted" and .kind != "tracker-failed")
     | owner_tracker_record($posted)
+    # Snapshot consumers reread every ask; cursor consumers must retain pending
+    # asks at their original line. The bound releases interrupted tracker writes.
+    | if $snapshot then
+        select(.tracker_pending != true or ((.at | at_epoch) + 300 <= $now))
+        | del(.tracker_pending)
+      else . end
     | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end)

@@ -1,1 +1,1 @@
-- Owner questions record when a tracker write is pending and record its success or failure for mailbox readers.
+- Slack waits for an owner question's tracker outcome before it selects the item link or full question. A missing outcome releases the full question after 300 seconds.
