@@ -298,6 +298,7 @@ environment_rows() {
 [2,". /dev/stdin <<'EOF'\nprintenv\nEOF","dot-heredoc-program"]
 [2,"bash <<< 'env'","shell-here-string-program"]
 [2,"cat <<< 'env' | sh","piped-here-string-program"]
+[2, "bash -c 'cat \u007c& cat' <<< 'printenv NAME'", "inherited-merged-here-string-main-refusal"]
 [0,"bash <<'EOF'\nset -euo pipefail\nprintf done\nEOF","safe-heredoc-shell-program"]
 [0,"bash <<'EOF'\nprintenv NAME\nEOF","named-heredoc-shell-program"]
 [2,"bash <<'EOF'\nenv | grep NAME\nEOF","heredoc-program-filter-stays-unproved"]
@@ -926,6 +927,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
       defect == "heredoc-pipeline-cut" { swap("environment_main_evidence \"$text\" \"${@:3}\"", "false") }
       defect == "heredoc-original-input" { swap("environment_main_evidence \"$text\" \"${@:3}\"", "environment_main_evidence \"$command_text\" \"${@:3}\"") }
+      defect == "inherited-input-cut" { swap("if [ -n \"$incoming_sources\" ] &&", "if false &&") }
       defect == "persistent-input-cut" { swap("[ -z \"$data_source\" ] || { mode=dump-unknown; return; }", "[ -z \"$data_source\" ] || :") }
       defect == "grouped-operands-cut" { swap("if environment_main_evidence \"${args[@]:pos}\"; then", "if false; then") }
       defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
@@ -993,6 +995,7 @@ heredoc-program|FAIL environment: bash-quoted-heredoc-program: exit=0 expected=2
 body-evidence|FAIL environment: unread-shell-heredoc-body: exit=0 expected=2
 descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
 heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
+inherited-input-cut|FAIL environment: inherited-merged-here-string-main-refusal: exit=0 expected=2
 heredoc-pipeline-cut|FAIL environment: copilot-merged-pipe-heredoc-program: exit=0 expected=2
 heredoc-pipeline-cut|FAIL environment: pipeline-heredoc-data-retains-main-refusal: exit=0 expected=2
 heredoc-original-input|FAIL environment: mixed-body-merged-pipeline: exit=0 expected=2
