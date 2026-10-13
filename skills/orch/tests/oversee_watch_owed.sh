@@ -13,6 +13,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
+# A direct run keeps every row; run-all bounds each measured group separately.
+PART="${1:-all}"
+case "$PART" in
+  all|development|membership|shared|release|bulk) ;;
+  *) echo "oversee_watch_owed: part-invalid value=$PART" >&2; exit 1 ;;
+esac
+
 HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
 
 # record ITEM STATUS HARNESS [EXTRA_JSON] — one lanes[] record with no window,
@@ -149,6 +156,7 @@ KEN-13|owed KEN-13 state=in-review priority=2 lane=done verdict=merged commit=01
 
 echo "=== oversee-watch owed items ==="
 
+if [[ "$PART" == all || "$PART" == development ]]; then
 world owed
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
@@ -318,6 +326,7 @@ done <<'ROWS'
 object|{"id":"KEN-2","state":"In Progress"}
 bad_id|[{"id":"KEN 2","state":"In Progress","priority":2}]
 ROWS
+fi
 
 
 # Verifying membership comes from the same read as owed development. KEN-1
@@ -360,6 +369,7 @@ want_events='EVENT verifying-deadline KEN-1 box=2 trigger="merge" status=overdue
 EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z
 EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
 EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z'
+if [[ "$PART" == all || "$PART" == membership ]]; then
 verifying_world verifying_deadline
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(verification_events)" "rc=0 $want_events" "the deadline raises attention for active and queued verification" "$ERR"
@@ -458,6 +468,7 @@ done
 
 # The overseer consumes these machine fields. Each row changes one rule and
 # observes the same script result, including a must-fail production mutation.
+fi
 verifying_one() {
   world "$1"
   local trigger="$2" blockers="${3:-[]}"
@@ -469,6 +480,7 @@ verifying_one() {
   jq -nr '"2026-10-02T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
 }
 box_status() { awk '$1 == "verifying" && $2 == "KEN-1" {for(i=1;i<=NF;i++) if($i ~ /^status=/) print $i}' <<<"$OUT"; }
+if [[ "$PART" == all || "$PART" == membership ]]; then
 while IFS='|' read -r name trigger blockers stamp want old new; do
   verifying_one "trigger_$name" "$trigger" "$blockers"
   [[ "$stamp" == - ]] || jq -nr --arg stamp "$stamp" '$stamp | fromdateiso8601' >"$STUB_DIR/now.epoch"
@@ -503,6 +515,7 @@ mv -- "$STUB_DIR/ticked.json" "$STUB_DIR/tracker.out"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "$(box_status)" '' "a tick removes the due box" "$ERR"
 assert_contains "$(verification_lines)" 'verifying KEN-1 boxes=0' "all ticked boxes request completion" "$ERR"
+fi
 
 release_world() {
   verifying_one "$1" "${2:-release owner/releases v*}"
@@ -513,6 +526,7 @@ release_world() {
 }
 # Both scripts read the same Linear boxes and GitHub evidence. The adapters
 # only translate each external API's row format; they do not judge boxes.
+if [[ "$PART" == all || "$PART" == shared ]]; then
 RECONCILE_SCRIPTS="$(mutant_scripts shared-reconcile/orch)" || exit 1
 mkdir -p "$TMP_ROOT/shared-reconcile/linear/scripts"
 ln -s "$REPO_ROOT/skills/linear/scripts/lib" "$TMP_ROOT/shared-reconcile/linear/scripts/lib"
@@ -715,9 +729,11 @@ assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "the dea
 assert_eq "$(awk '/^api repos\/.*\/compare\// {n++} END {print n+0}' "$STUB_DIR/gh.calls")" 0 "a release in another repository makes no compare call" "$ERR"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=due events=' "release evidence stays due on every pass" "$ERR"
+fi
 
 # GitHub's compare response is the containment evidence. The older merged row
 # comes last to prove selection uses merge time, not the API's row order.
+if [[ "$PART" == all || "$PART" == release ]]; then
 own_release_world() {
   release_world "$1" 'release owner/repo v*'
   cp "$STUB_DIR/releases.owner_releases.json" "$STUB_DIR/releases.owner_repo.json"
@@ -1007,6 +1023,7 @@ branch|ken-1|feature|
 title|cloud/session|fix(KEN-1): feature|
 body|cloud/session|feature|Closes KEN-1
 ROWS
+fi
 
 # The stage reads each issue and builds its box results in bulk records. Per
 # issue: its inventory record, the parser's description read, done_when_parse,
@@ -1017,6 +1034,7 @@ ROWS
 # box update starts a process. Only jq the watch starts is counted: the gh
 # stub's own jq is not the stage's work.
 REAL_JQ="$(command -v jq)"
+if [[ "$PART" == all || "$PART" == bulk ]]; then
 mkdir -p "$TMP_ROOT/work-bin"
 cat >"$TMP_ROOT/work-bin/jq" <<SH
 #!/usr/bin/env bash
@@ -1212,9 +1230,11 @@ box_field@release_boxes@      [[ "$oid" != invalid ]]@      glob="$(jq -rn --arg
 release_tag@release_candidates@        [[ -n "$at" ]] || continue@        [[ -n "$at" ]] || continue; tag="$(jq -rn --arg tag "$tag" '$tag')"
 box_update@release_boxes@      fired_at+=@      boxes="$(jq -c . <<<"$boxes")"; fired_at+=
 ROWS
+fi
 
 # A due set's status change must raise attention even when its membership
 # stays the same. Standing due lines still print without a second event.
+if [[ "$PART" == all || "$PART" == membership ]]; then
 verifying_one due_to_overdue merge
 watch_pass -- --state "$STUB_DIR/state.json"
 jq -nr '"2026-10-03T00:00:01Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
@@ -1287,7 +1307,9 @@ mutate_verifying "$MUTANT_WATCH" 'select(.post_merge and (.checked | not))' 'sel
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "$RC" 0 "control: tick reaches the watch result" "$ERR"
 assert_eq "$(box_status)" 'status=due' "control: ignoring a tick violates removal of the due box" "$ERR"
+fi
 
+if [[ "$PART" == all || "$PART" == development ]]; then
 echo "=== must-fail controls ==="
 # Rows, on `@` since the replaced text carries `|`: the world it runs in @
 # name @ text the mutant replaces @ its replacement @ item, notices, pi-pick
@@ -1323,6 +1345,7 @@ world@without the record's host the pick judges the default host's accounts@env 
 world@without the pick's own reset the wall goes undated@.walled_resets_at | if . == null then "-"@null | if . == null then "-"@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=-
 noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=1 provider-x=0
 ROWS
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

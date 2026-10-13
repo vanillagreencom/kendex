@@ -12,6 +12,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
+# A direct run keeps every row; run-all bounds each measured group separately.
+PART="${1:-all}"
+case "$PART" in
+  all|delivery|local|hosted|cadence|failures|tracker|tracker_close|tracker_controls|process) ;;
+  *) echo "oversee_watch_mail: part-invalid value=$PART" >&2; exit 1 ;;
+esac
+
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
@@ -35,6 +42,7 @@ answer() { # ITEM MSGID TEXT
   (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item "$1" --root "$CASE_REPO_ROOT" --re "$2" --file "$TMP_ROOT/ans.txt")
 }
 
+if [[ "$PART" == all || "$PART" == delivery ]]; then
 new_case mail_once
 mail_reset KEN-7
 ID="$(say KEN-7 ask 'Cut the scanner or keep it?' cut,keep)"
@@ -489,6 +497,8 @@ assert_eq "$(arm_facts)" "rc=2 due-unread=0 resolve-failed=1 first=EVENT owner-n
 # one, so a watch started there reads the same mailbox through the same cursor
 # the main checkout's watch advanced. WT_SEEN counts how often the one note is
 # reported across a pass from each.
+fi
+if [[ "$PART" == all || "$PART" == local ]]; then
 git -C "$CASE_REPO_ROOT" -c user.email=t@t -c user.name=t commit -q --allow-empty -m worktree-seed
 git -C "$CASE_REPO_ROOT" worktree add -q --detach "$TMP_ROOT/watch-worktree"
 mkdir -p "$TMP_ROOT/watch-worktree/.agents/skills"
@@ -783,6 +793,8 @@ done
 # One stopped hosted lane is a failed read, not the end of the pass. The later
 # lane and both kinds of overseer note each advance their own cursor. The
 # stopped row advances only when the provider reports another state.
+fi
+if [[ "$PART" == all || "$PART" == hosted ]]; then
 stopped_fleet() {
   local remote_disk="$STUB_DIR/stopped-remote" n
   STOPPED_REMOTE="$remote_disk"
@@ -1023,6 +1035,8 @@ assert_eq "$(hosted_facts 2)" "issue-2: handoff=0 closes=0" \
   "control: a watch that reads the clone alone misses a record in the lane root's tmp" "$STUB_DIR/run1.err"
 
 # --- the mail pass on its own cadence --------------------------------------
+fi
+if [[ "$PART" == all || "$PART" == cadence ]]; then
 # A lane-mail that logs each verb it is run with, stamped with the pr-watch
 # calls made so far, and on the drain NOTE_AT lands a notice in KEN-70's
 # mailbox before reading it: a note written between two mail passes.
@@ -1355,6 +1369,8 @@ assert_eq "$FAST_FACTS" "printed=2 late=0 drains=2" "control: without the row a 
   "$STUB_DIR/fast.err"
 
 # --- the overseer mailbox, read through its own cursor ----------------------
+fi
+if [[ "$PART" == all || "$PART" == failures ]]; then
 # One note across three runs, each with a state directory of its own: a
 # successor started from another checkout, or with another --since, holds no
 # position of the one it follows. The cursor is the mailbox's own, so the note
@@ -1632,6 +1648,8 @@ assert_eq "$(grep -c '^oversee-watch: lane-host-busy ' "$STUB_DIR/lane-mail-busy
   "$STUB_DIR/lane-mail-busy-mutant.err"
 
 # Tracker replies share the mailbox replay guard.
+fi
+if [[ "$PART" == all || "$PART" == tracker || "$PART" == tracker_close || "$PART" == tracker_controls ]]; then
 TRACKER_MAIL="$(mutant_scripts owner-tracker/orch lane-mail)/lane-mail"
 mkdir -p "$TMP_ROOT/owner-tracker/linear/scripts"
 TRACKER_STUB="$TMP_ROOT/owner-tracker/linear/scripts/linear.sh"
@@ -2007,6 +2025,7 @@ tracker_case() { # ROW WATCH
     assert_eq "$before" 0 'no item makes no tracker write'
   fi
 }
+if [[ "$PART" != tracker_controls ]]; then
 TRACKER_CASES='enabled|1,0
 missing-action|0,0
 empty-action|0,0
@@ -2062,6 +2081,10 @@ failed-comment|0,0
 due|1,0
 failed-read|0,0
 large|1,0'
+case "$PART" in
+  tracker) TRACKER_CASES="$(awk -F '|' '$1 !~ /^close-/' <<<"$TRACKER_CASES")" ;;
+  tracker_close) TRACKER_CASES="$(awk -F '|' '$1 ~ /^close-/' <<<"$TRACKER_CASES")" ;;
+esac
 TRACKER_ROWS=0
 while IFS='|' read -r row want; do
   tracker_case "$row" "$REPO_ROOT/skills/orch/scripts/oversee-watch"
@@ -2069,9 +2092,13 @@ while IFS='|' read -r row want; do
   assert_eq "$TRACKER_FACTS" "$want" "$row delivers only the person's new comment, once"
   TRACKER_ROWS=$((TRACKER_ROWS + 1))
 done <<<"$TRACKER_CASES"
-assert_eq "$TRACKER_ROWS" "$(awk 'END {print NR}' <<<"$TRACKER_CASES")" 'all tracker table rows completed'
+if [[ "$PART" != tracker_close ]]; then
+  assert_eq "$TRACKER_ROWS" "$(awk 'END {print NR}' <<<"$TRACKER_CASES")" 'all tracker table rows completed'
+fi
+fi
 
 NORMAL_TRACKER_MAIL="$TRACKER_MAIL"
+if [[ "$PART" == all || "$PART" == tracker_controls ]]; then
 SETTINGS_CONTROLS='team|no-team|no-team opens with the resolved first name, action and unchanged body
 fallback|close-unset|close-unset clears the recorded tracker ownership
 diagnostic|disabled|disabled identifies the settings failure
@@ -2396,9 +2423,13 @@ else
 fi
 
 # The mailbox process ceilings use the same instrument as the reader suite.
+fi
+fi
+if [[ "$PART" == all || "$PART" == process ]]; then
 PROCESS_RC=0
 "$BASH" "$REPO_ROOT/skills/orch/tests/lib/watch-process-cases.sh" || PROCESS_RC=$?
 assert_eq "$PROCESS_RC" 0 'idle ticks and complete lane mail passes meet their process ceilings'
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

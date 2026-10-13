@@ -200,10 +200,15 @@ done
 FILTER="$*"
 
 matches() { # BASE FILTER
-  # Exact callers select the entire physical suite, including both parts.
+  # Exact callers select every part of the physical suite.
   if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] &&
     [ "$1" = dev_validate_run_selection ] && [ "$2" = =dev_validate_run ]; then
     return 0
+  fi
+  if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
+    case "$1:$2" in
+      oversee_watch_owed_*:=oversee_watch_owed|oversee_watch_mail_*:=oversee_watch_mail) return 0 ;;
+    esac
   fi
   case "$2" in
     =*) [ "$1" = "${2#=}" ] ;;
@@ -489,6 +494,12 @@ while [ "$finished" -lt "$RUN" ]; do
       suite_args=("$TEST_DIR/${SUITES[next]}.sh")
       if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] && [ "${SUITES[next]}" = dev_validate_run ]; then
         suite_args+=(runner)
+      fi
+      if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
+        case "${SUITES[next]}" in
+          oversee_watch_owed) suite_args+=(development) ;;
+          oversee_watch_mail) suite_args+=(delivery) ;;
+        esac
       fi
       "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
