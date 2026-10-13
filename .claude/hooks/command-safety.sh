@@ -250,7 +250,7 @@ environment_head() { # command kind; updates pos, syntax_head and arg_roles
           syntax_head=1; arg_roles[cursor]=syntax
           if [ "${args[$((cursor + 2))]:-}" = '{' ]; then state=name; fi
           continue ;;
-        fi | done | esac | '}' | ']]' | in)
+        fi | done | 'esac' | '}' | ']]' | in)
           syntax_head=1; arg_roles[cursor]=syntax; continue ;;
       esac
     fi
