@@ -55,7 +55,7 @@ A release carries:
 
 ## Catalog compatibility
 
-When a pull request makes the catalog require new engine behavior, raise the source `kendex.toml` root `min_kendex` to that engine's next release version in the same pull request. Package content changes that use existing engine behavior leave the minimum unchanged and cause no engine release or skill version change. A minimum above the running engine refuses the entire selected command before rendering or install writes. Catalog download caches are excluded from that guarantee.
+When a pull request makes the catalog require new engine behavior, raise the source `kendex.toml` root `min_kendex` to that engine's next release version in the same pull request. Package content changes that use existing engine behavior leave the minimum unchanged and cause no engine release or skill version change. The engine refuses an above-minimum catalog before rendering or install writes for its plan. The source architecture contract states which command-wide checks precede all plans. Catalog download caches are excluded from the write guarantee.
 
 `.github/workflows/catalog-check.yml` installs the latest released kendex and `tools/catalog-release-check` runs that engine's catalog check, then installs the catalog into an isolated project for all harnesses and runs the consumer's refresh and verify commands. Release an engine that supports a feature before merging catalog content that uses it; a binary built from the pull request does not satisfy this check.
 

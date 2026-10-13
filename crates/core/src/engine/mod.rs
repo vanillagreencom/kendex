@@ -834,8 +834,8 @@ pub fn check_catalog_compatibility(env: &Env, scope: &Scope, options: &PlanOptio
     check_catalog_compatibility_for(env, scope, &manifest, options)
 }
 
-/// Check a prepared manifest before rendering. Source edits and fresh
-/// collection installs select a manifest that is not yet on disk.
+/// Check a prepared manifest before rendering. Source edits select a
+/// manifest that is not yet on disk.
 pub fn check_catalog_compatibility_for(
     env: &Env,
     scope: &Scope,

@@ -61,10 +61,9 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // the first mutation — a collection whose third repository is broken
     // must refuse up front, not leave the first two half-installed.
     prevalidate(env, scope, &steps)?;
-    // Prevalidation refuses a broken collection before the first
-    // mutation, so a failure here is a repository that moved under the
-    // run. The steps before it are installed either way, and the error is
-    // held until the close has reported them.
+    // Each add plan also checks the recorded revisions it keeps. A later
+    // step can refuse one after earlier steps installed. The error is
+    // held until the close has reported those writes.
     let (mut closing, failed) =
         install_steps(steps, |step, wrote| install_step(env, scope, step, wrote));
     let skipped = std::mem::take(&mut closing.skipped);
@@ -348,9 +347,9 @@ fn install_step(
     Ok(())
 }
 
-/// Fetch all the readings the install uses before its first render. The
-/// resolver's snapshot may match a reused subscription's stale cache even
-/// though its upstream branch already requires a newer engine.
+/// Fetch collection snapshots and reused subscription resolutions before
+/// the first step. A cached branch may still match the snapshot even when
+/// its upstream already requires a newer engine.
 fn prevalidate(
     env: &Env,
     scope: &Scope,
@@ -368,12 +367,7 @@ fn prevalidate(
             kendex_core::remote::sync(env, repo, decl.rev.as_deref())?;
         }
     }
-    kendex_core::engine::check_catalog_compatibility_for(
-        env,
-        scope,
-        &manifest,
-        &kendex_core::engine::PlanOptions::locked(),
-    )?;
+    kendex_core::source::check_catalog_compatibility(env, scope, &manifest)?;
     Ok(())
 }
 
