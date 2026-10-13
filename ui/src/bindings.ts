@@ -124,13 +124,13 @@ export const commands = {
 	/**
 	 *  Write the whole settings object back.
 	 * 
-	 *  `base` is what the file was when this copy was read. Every settings
+	 *  `base` records both files when this copy was read. Every settings
 	 *  action sends the whole object, so a copy read before some other
-	 *  surface wrote the file — a resize, a project registered in another
-	 *  window — would put the older file back over it. A copy of a file that
+	 *  surface wrote either file, a resize or a project registered in another
+	 *  window, would put older values back over it. A copy of a file that
 	 *  is gone is refused, never applied.
 	 */
-	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused>(__TAURI_INVOKE("update_settings", { settings, base })),
+	updateSettings: (settings: AppSettings, base: SettingsBase) => typedError<SettingsRead, WriteRefused>(__TAURI_INVOKE("update_settings", { settings, base })),
 	/**
 	 *  The size on screen, written on its own. Nothing else in the file moves
 	 *  with it, and nothing else can move it: a size the person is looking at
@@ -810,7 +810,7 @@ export type AntiPattern = {
 	remediation: string,
 };
 
-/**  App preferences and the project registry — one settings file, nothing else. */
+/**  The shared preferences and this machine's state, combined for callers. */
 export type AppSettings = {
 	schema: number,
 	projects?: string[],
@@ -818,9 +818,8 @@ export type AppSettings = {
 	"harness-roots"?: { [key in string]: string },
 	appearance?: Appearance,
 	/**
-	 *  Packages whose update notifications are off. Machine-local like the
-	 *  rest of this file: a notification preference committed to a shared
-	 *  repository would silence a whole team.
+	 *  Packages whose update notifications are off on every machine that
+	 *  shares this person's preferences.
 	 */
 	"ignored-updates"?: IgnoredUpdate[],
 	/**
@@ -829,23 +828,22 @@ export type AppSettings = {
 	 */
 	"muted-app-notice"?: string | null,
 	/**
-	 *  How large the interface draws, as a percent. Machine-local like
-	 *  everything else in this file: how big text needs to be belongs to
-	 *  the person and the display in front of them, not to a project.
+	 *  How large the interface draws, as a percent. Shared with this
+	 *  person's other machines, independently of project configuration.
 	 */
 	zoom?: number,
 	/**
 	 *  Which version of the Terms of Service and Privacy Policy this
-	 *  machine accepted, and when. Machine-local like the rest of this
-	 *  file, and shared by both shells: the app's first-run screen and the
+	 *  machine accepted, and when. Kept in machine.toml and shared by both
+	 *  shells: the app's first-run screen and the
 	 *  CLI's first-run line write it, and neither asks again once it is
 	 *  here. [`crate::legal`] owns the rule.
 	 */
 	terms?: TermsAcceptance | null,
 	/**
 	 *  Whether kendex asks what to do with the files it wrote in a git
-	 *  project. Machine-local like the rest of this file: whether a person
-	 *  is asked is theirs, not their project's, and both shells read it.
+	 *  project. Shared with this person's other machines, independently
+	 *  of project configuration, and read by both shells.
 	 */
 	"commit-offer"?: CommitOffer,
 	/**
@@ -4970,6 +4968,15 @@ export type SecretsView = {
 };
 
 /**
+ *  Each file remembers its own bytes. A whole-object writer must present
+ *  both bases so an old project list cannot overwrite a newer registry.
+ */
+export type SettingsBase = {
+	preferences: Base,
+	machine: Base,
+};
+
+/**
  *  Edited settings values and what the settings file was when they were
  *  read. Each edit names the skill whose template declares its key, which
  *  is what core checks it against.
@@ -4996,14 +5003,14 @@ export type SettingsEditValue = { kind: "set"; value: string } |
 { kind: "reset" };
 
 /**
- *  The settings and the base of the exact file they describe — paired by
- *  one read, or handed back by the write that produced the file. One
+ *  The settings and the bases of both files they describe, paired by
+ *  their reads or handed back by the writes that produced them. One
  *  value, because a copy without its base cannot be written back safely,
  *  and the two obtained apart could describe different files.
  */
 export type SettingsRead = {
 	settings: AppSettings,
-	base: Base,
+	base: SettingsBase,
 };
 
 /**  One key a skill declares, and where the consumer's file stands on it. */

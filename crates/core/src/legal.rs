@@ -74,7 +74,7 @@ pub fn asks_again(accepted: Option<&TermsAcceptance>) -> bool {
 /// own account named — and every unprivileged settings write after it
 /// fails, for good, naming nothing. [`crate::privilege`] holds the whole
 /// reasoning, and the command record refuses on it too.
-pub fn accept(env: &Env) -> Result<(AppSettings, crate::base::Base)> {
+pub fn accept(env: &Env) -> Result<(AppSettings, settings::SettingsBase)> {
     accept_as(env, crate::privilege::acting_as_root())
 }
 
@@ -84,7 +84,7 @@ pub fn accept(env: &Env) -> Result<(AppSettings, crate::base::Base)> {
 ///
 /// Guarded here and nowhere below, ahead of the write lock: a root run
 /// creates neither the lock file nor the directory holding it.
-fn accept_as(env: &Env, root: bool) -> Result<(AppSettings, crate::base::Base)> {
+fn accept_as(env: &Env, root: bool) -> Result<(AppSettings, settings::SettingsBase)> {
     if root {
         return Err(crate::error::CoreError::WouldWriteAsRoot);
     }

@@ -458,9 +458,8 @@ pub fn scan(
     paths::scan(root, generated, before)
 }
 
-/// Whether this machine wants to be asked. Machine-local, like every other
-/// field in the app settings: whether a person is asked is theirs, not
-/// their project's.
+/// Whether this person wants to be asked. Their other machines share
+/// this preference. A project's settings do not choose for them.
 pub fn asking(env: &Env) -> bool {
     crate::settings::load(env)
         .map(|settings| settings.commit_offer.asking())

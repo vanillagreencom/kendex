@@ -63,7 +63,10 @@ beforeEach(() => {
   vi.mocked(commands.registerProject).mockResolvedValue({
     status: "ok",
     data: {
-      read: { settings: { projects: ["/work/acme"] }, base: null },
+      read: {
+        settings: { projects: ["/work/acme"] },
+        base: { preferences: null, machine: null },
+      },
       root: "/work/acme",
     } as never,
   });
@@ -112,7 +115,7 @@ describe("adding a project", () => {
       data: {
         read: {
           settings: { projects: ["/home/u/dev/acme", "/home/u/dev/beta"] },
-          base: null,
+          base: { preferences: null, machine: null },
         },
         root: "/home/u/dev/acme",
       } as never,

@@ -6,6 +6,7 @@ import {
   type CommitOffer,
   commands,
   type HarnessId,
+  type SettingsBase,
   type SettingsRead,
   ZOOM,
 } from "@/bindings";
@@ -18,22 +19,22 @@ import { type ZoomSlice, zoomActions } from "./settings-zoom";
 
 interface SettingsState extends ZoomSlice, ProjectsSlice {
   settings: AppSettings | null;
-  /** What the settings file was when `settings` was read from it — sent
+  /** What each settings file was when `settings` was read from it: sent
    *  back with every whole-settings write, so a copy of a file something
    *  else has since written is refused instead of putting the older file
    *  back over it. */
-  base: string | null;
+  base: SettingsBase;
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
-  /** The settings file alone, read again.
+  /** Settings alone, read again.
    *
-   *  The file is machine-local and two programs write it: this window, and
-   *  the CLI, which registers the project a `kendex add` installed into.
+   *  The project registry is machine-local. This window and the CLI write
+   *  it. The CLI registers the project a `kendex add` installed into.
    *  So a window that has been away can be looking at a registry that has
    *  since gained a project, and the Projects page would go on drawing the
    *  old list until the app was restarted.
    *
-   *  Only the file. [`load`] also reads the capability table and asks the
+   *  Only settings. [`load`] also reads the capability table and asks the
    *  window what size it opened at, and it reports a launch that would not
    *  take the saved zoom — a session-long fact, so running that again on
    *  every focus would re-open a dialog about a launch the person has
@@ -182,7 +183,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
 
   return {
     settings: null,
-    base: null,
+    base: { preferences: null, machine: null },
     capabilities: [],
     ...zoom,
     saveZoom: () => writing(() => zoom.saveZoom()),

@@ -112,12 +112,18 @@ beforeEach(() => {
   vi.mocked(commands.appUpdateCheck).mockResolvedValue(available());
   vi.mocked(commands.getSettings).mockResolvedValue({
     status: "ok",
-    data: { settings: { schema: 1, appearance: "system" }, base: "abc" },
+    data: {
+      settings: { schema: 1, appearance: "system" },
+      base: { preferences: "abc-p", machine: "abc-m" },
+    },
   });
   vi.mocked(commands.openUrl).mockResolvedValue({ status: "ok", data: null });
   vi.mocked(commands.updateSettings).mockResolvedValue({
     status: "ok",
-    data: { settings: { schema: 1, appearance: "system" }, base: "def" },
+    data: {
+      settings: { schema: 1, appearance: "system" },
+      base: { preferences: "def-p", machine: "def-m" },
+    },
   });
 });
 
@@ -481,7 +487,7 @@ describe("hiding this version", () => {
     await press(container, APP_UPDATE_DISMISS_LABEL);
     expect(commands.updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ "muted-app-notice": RELEASED }),
-      "abc",
+      { preferences: "abc-p", machine: "abc-m" },
     );
     expect(container.textContent).toBe("");
   });

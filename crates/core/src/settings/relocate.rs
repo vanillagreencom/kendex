@@ -19,13 +19,12 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use specta::Type;
 
-use crate::base::Base;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
 use crate::package::updates::{IgnoredUpdate, scope_key};
 
-use super::{AppSettings, mutate, recorded_entry};
+use super::{AppSettings, SettingsBase, mutate, recorded_entry};
 
 /// What stands at the folder a project would be reconnected to.
 ///
@@ -138,8 +137,8 @@ impl Relocation {
 
 /// What the person is agreeing to, without doing any of it.
 ///
-/// Reads the registry and the destination and nothing else: a look at a
-/// folder somebody typed or picked must not be able to change anything.
+/// Reads the registry and destination without changing either project.
+/// Reading settings can migrate retired machine keys to machine.toml.
 pub fn inspect(env: &Env, from: &Path, to: &Path) -> Result<Relocation> {
     let settings = super::load(env)?;
     let from = recorded_entry(&settings, from)?;
@@ -165,7 +164,7 @@ pub fn inspect(env: &Env, from: &Path, to: &Path) -> Result<Relocation> {
 
 /// Point one registry entry at the folder its project moved to.
 ///
-/// One targeted settings mutation: the entry is replaced, the machine-local
+/// One targeted settings mutation: the entry is replaced, the shared
 /// preferences recorded against the old folder come with it, and every
 /// other entry and setting in the file is left exactly as it was. Neither
 /// folder is written to, moved or removed; the destination is read, since
@@ -180,7 +179,7 @@ pub fn relocate_project(
     from: &Path,
     to: &Path,
     consolidate: bool,
-) -> Result<(Relocation, AppSettings, Base)> {
+) -> Result<(Relocation, AppSettings, SettingsBase)> {
     let plan = inspect(env, from, to)?;
     if let Some(refusal) = plan.standing.refusal(&plan.to, consolidate) {
         return Err(refusal);
@@ -284,7 +283,7 @@ fn standing_at(env: &Env, settings: &AppSettings, from: &Path, to: &Path) -> Sta
     }
 }
 
-/// The machine-local preferences recorded against the folder being left,
+/// The shared preferences recorded against the folder being left,
 /// moved onto the one it is now at: which packages have their updates
 /// turned off there. They are the person's answers about this project, and
 /// a project that moved is the same project.

@@ -1,5 +1,7 @@
 # Settings a skill declares
 
+Personal app preferences use separate [app settings files](../app-settings.md).
+
 A skill ships a `kendex.settings.toml.example` at its root. It declares two kinds of key: the settings a consumer sets, under `[env]`, and the credentials the skill reads, under `[secrets]`. Both are what the app's Customize tab renders and what a save is checked against; only `[env]` is written into the consumer's `kendex.settings.toml`. Start from [templates/kendex.settings.toml.example](templates/kendex.settings.toml.example); the rule below is the one statement of what reaches a consumer's file and when, and a template's header, a skill's README and its SKILL.md point here rather than restating it.
 
 Declare what somebody might reasonably change. The app shows one row per declared key and refuses to save a key no template declares; declaring costs the consumer nothing. A key only a maintainer or a test touches is read the same way and set by hand in `kendex.settings.toml` or any layer above it. Every key belongs in the SKILL.md table either way; that table is the reference and the body a marketplace page shows.

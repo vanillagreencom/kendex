@@ -1,20 +1,17 @@
-//! The app-settings surface: reads and writes of the app's `settings.toml`
-//! (the machine-local preferences file under the app config dir, distinct
-//! from a project's committed `kendex.settings.toml`), and the project
-//! registry kept in it.
+//! The app-settings surface combines shared preferences in `settings.toml`
+//! and local state in `machine.toml` under the app config directory.
 //!
 //! Two kinds of write, and no third: `settings::mutate` for a targeted
 //! change made server-side in one breath, and the whole-file
-//! `update_settings`, which must present the base of the file its copy
+//! `update_settings`, which must present the bases of both files its copy
 //! was read from.
 
 use std::path::Path;
 
-use kendex_core::base::Base;
 use kendex_core::discover;
 use kendex_core::engine::DriftRow;
 use kendex_core::env::Env;
-use kendex_core::settings::{self, AppSettings, Relocation};
+use kendex_core::settings::{self, AppSettings, Relocation, SettingsBase};
 use serde::Serialize;
 use specta::Type;
 
@@ -22,19 +19,19 @@ use crate::whole_file::{WriteRefused, refusal};
 
 use crate::scopes::env;
 
-/// The settings and the base of the exact file they describe — paired by
-/// one read, or handed back by the write that produced the file. One
+/// The settings and the bases of both files they describe, paired by
+/// their reads or handed back by the writes that produced them. One
 /// value, because a copy without its base cannot be written back safely,
 /// and the two obtained apart could describe different files.
 #[derive(Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsRead {
     pub settings: AppSettings,
-    pub base: Base,
+    pub base: SettingsBase,
 }
 
-impl From<(AppSettings, Base)> for SettingsRead {
-    fn from((settings, base): (AppSettings, Base)) -> SettingsRead {
+impl From<(AppSettings, SettingsBase)> for SettingsRead {
+    fn from((settings, base): (AppSettings, SettingsBase)) -> SettingsRead {
         SettingsRead { settings, base }
     }
 }
@@ -65,7 +62,7 @@ pub fn get_settings() -> Result<SettingsRead, String> {
 fn update_settings_at(
     env: &Env,
     mut settings: AppSettings,
-    held: &Base,
+    held: &SettingsBase,
 ) -> Result<SettingsRead, WriteRefused> {
     // A harness root is where this build applies packages, so its `~` is
     // this build's home — a sandboxed one included. The two calls that take
@@ -82,20 +79,20 @@ fn update_settings_at(
 
 /// Write the whole settings object back.
 ///
-/// `base` is what the file was when this copy was read. Every settings
+/// `base` records both files when this copy was read. Every settings
 /// action sends the whole object, so a copy read before some other
-/// surface wrote the file — a resize, a project registered in another
-/// window — would put the older file back over it. A copy of a file that
+/// surface wrote either file, a resize or a project registered in another
+/// window, would put older values back over it. A copy of a file that
 /// is gone is refused, never applied.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn update_settings(
     settings: AppSettings,
-    base: Option<String>,
+    base: SettingsBase,
 ) -> Result<SettingsRead, WriteRefused> {
     // The bytes behind this base were read on the settings page, so it
     // arrives as a claim and is only ever compared, never believed.
-    update_settings_at(&env()?, settings, &Base::claimed(base))
+    update_settings_at(&env()?, settings, &base)
 }
 
 fn save_zoom_at(env: &Env, percent: u16) -> Result<u16, String> {
@@ -421,7 +418,8 @@ mod tests {
             appearance: kendex_core::settings::Appearance::Dark,
             ..AppSettings::default()
         };
-        update_settings_at(&env, settings, &kendex_core::base::Base::absent()).unwrap();
+        let (_, base) = settings::read_for_mutation(&env).unwrap();
+        update_settings_at(&env, settings, &base).unwrap();
 
         save_zoom_at(&env, 150).unwrap();
 
@@ -439,7 +437,8 @@ mod tests {
             .harness_roots
             .insert("claude".into(), "~/elsewhere/.claude".into());
 
-        let saved = update_settings_at(&env, settings, &kendex_core::base::Base::absent()).unwrap();
+        let (_, base) = settings::read_for_mutation(&env).unwrap();
+        let saved = update_settings_at(&env, settings, &base).unwrap();
         assert_eq!(
             saved.settings.harness_roots.get("claude"),
             Some(&tmp.path().join("elsewhere/.claude"))

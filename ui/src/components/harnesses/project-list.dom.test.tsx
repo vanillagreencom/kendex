@@ -176,7 +176,10 @@ describe("a project added while the list is on screen", () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
       data: {
-        read: { settings: { projects: ["/work/acme"] }, base: null },
+        read: {
+          settings: { projects: ["/work/acme"] },
+          base: { preferences: null, machine: null },
+        },
         root: "/work/acme",
       } as never,
     });
@@ -531,7 +534,10 @@ describe("a place card's actions", () => {
   it("removes the project the card names, without leaving the page", async () => {
     vi.mocked(commands.unregisterProject).mockResolvedValue({
       status: "ok",
-      data: { settings: { projects: [] }, base: null } as never,
+      data: {
+        settings: { projects: [] },
+        base: { preferences: null, machine: null },
+      } as never,
     });
     const host = mount(<ProjectList />);
     await settle();

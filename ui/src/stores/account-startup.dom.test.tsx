@@ -53,7 +53,7 @@ describe("the account read on window focus", () => {
           projects: [],
           zoom: 100,
         },
-        base: null,
+        base: { preferences: null, machine: null },
       },
     } as unknown as Awaited<ReturnType<typeof commands.getSettings>>);
     vi.mocked(commands.capabilityTable).mockResolvedValue({

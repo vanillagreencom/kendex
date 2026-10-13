@@ -22,7 +22,6 @@ use std::time::Duration;
 use serde::Serialize;
 use specta::Type;
 
-use crate::base::Base;
 use crate::command_update::{
     COMMAND_NAME, INSTALLER_SYSTEM_BIN, InstalledCommand, command_candidates,
 };
@@ -30,6 +29,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::install_channel::{Host, HostProbe, inside_the_app};
 use crate::process::Hardened;
+use crate::settings::SettingsBase;
 use crate::settings::{self, AppSettings, CommandLinkPrompt};
 
 /// Where Homebrew links its commands on Apple silicon. Searched, never
@@ -489,7 +489,7 @@ pub fn install(
 
 /// Record that the first-launch question was answered, so it is not put
 /// again.
-pub fn answer_prompt(env: &Env) -> Result<(AppSettings, Base)> {
+pub fn answer_prompt(env: &Env) -> Result<(AppSettings, SettingsBase)> {
     settings::mutate(env, |settings| {
         settings.command_link_prompt = CommandLinkPrompt::Answered;
         Ok(())

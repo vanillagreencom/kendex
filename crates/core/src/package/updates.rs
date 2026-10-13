@@ -1,8 +1,7 @@
 //! Which installed packages have newer versions, computed from the mirrors
 //! alone — offline, read-only, no plan. Ignoring a package's updates is a
-//! machine-local preference in settings.toml, never manifest intent: a
-//! notification choice committed to a shared repository would silence a
-//! whole team.
+//! shared personal preference in settings.toml, never project manifest
+//! intent: it silences notices on machines sharing that person's dotfiles.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

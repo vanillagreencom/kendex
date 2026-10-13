@@ -59,7 +59,7 @@ const settingsData = (
       projects,
       zoom: 100,
     },
-    base: null,
+    base: { preferences: null, machine: null },
   }) as unknown as SettingsData;
 
 const settingsRead = (
@@ -74,7 +74,10 @@ const settingsRead = (
 describe("the project registry on window focus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useSettingsStore.setState({ settings: null, base: null });
+    useSettingsStore.setState({
+      settings: null,
+      base: { preferences: null, machine: null },
+    });
     useCommitOfferStore.setState({ queue: [], scanning: false });
     vi.mocked(commands.commandLinkState).mockResolvedValue({
       status: "ok",
@@ -333,7 +336,10 @@ describe("the project registry on window focus", () => {
   // already on disk.
   it("keeps a reconnection whose write left before the read that answered first", async () => {
     vi.useFakeTimers();
-    useSettingsStore.setState({ settings: null, base: null });
+    useSettingsStore.setState({
+      settings: null,
+      base: { preferences: null, machine: null },
+    });
     vi.mocked(commands.getSettings).mockResolvedValue(
       settingsRead([NEW_PROJECT]),
     );

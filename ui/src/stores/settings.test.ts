@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSettings } from "@/bindings";
+import type { AppSettings, SettingsBase } from "@/bindings";
 import { commands } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -41,9 +41,23 @@ const settings: AppSettings = {
   zoom: 100,
 };
 
+const oldBase: SettingsBase = { preferences: "old-p", machine: "old-m" };
+const freshBase: SettingsBase = {
+  preferences: "fresh-p",
+  machine: "fresh-m",
+};
+const writtenBase: SettingsBase = {
+  preferences: "written-p",
+  machine: "written-m",
+};
+
 describe("settings store", () => {
   beforeEach(() => {
-    useSettingsStore.setState({ settings: null, base: null, capabilities: [] });
+    useSettingsStore.setState({
+      settings: null,
+      base: { preferences: null, machine: null },
+      capabilities: [],
+    });
     useScanStore.setState({
       result: null,
       scanning: false,
@@ -113,7 +127,7 @@ describe("settings store", () => {
     useSettingsStore.setState({ settings });
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "ok",
-      data: { settings: updated, base: "b1" },
+      data: { settings: updated, base: writtenBase },
     });
 
     await useSettingsStore.getState().setAppearance("dark");
@@ -121,6 +135,11 @@ describe("settings store", () => {
     expect(toast.success).not.toHaveBeenCalled();
     expect(useProblemsStore.getState().dialog.open).toBe(false);
     expect(useSettingsStore.getState().settings).toEqual(updated);
+    expect(commands.updateSettings).toHaveBeenCalledWith(updated, {
+      preferences: null,
+      machine: null,
+    });
+    expect(useSettingsStore.getState().base).toEqual(writtenBase);
   });
 
   /// The refusal: a copy read before something else wrote the file is
@@ -128,17 +147,17 @@ describe("settings store", () => {
   /// onto a freshly read copy and written again — nothing the stale copy
   /// predated is lost, and the person sees no error.
   it("re-reads and re-applies the change when the copy in hand is stale", async () => {
-    useSettingsStore.setState({ settings, base: "old" });
+    useSettingsStore.setState({ settings, base: oldBase });
     const onDisk = { ...settings, projects: ["/home/x/acme-web"], zoom: 150 };
     vi.mocked(commands.updateSettings)
       .mockResolvedValueOnce({ status: "error", error: { kind: "stale" } })
       .mockImplementationOnce(async (next) => ({
         status: "ok",
-        data: { settings: next, base: "written" },
+        data: { settings: next, base: writtenBase },
       }));
     vi.mocked(commands.getSettings).mockResolvedValue({
       status: "ok",
-      data: { settings: onDisk, base: "fresh" },
+      data: { settings: onDisk, base: freshBase },
     });
 
     await useSettingsStore.getState().setAppearance("dark");
@@ -147,14 +166,14 @@ describe("settings store", () => {
     // with only the intended field changed, under the fresh base.
     expect(commands.updateSettings).toHaveBeenLastCalledWith(
       { ...onDisk, appearance: "dark" },
-      "fresh",
+      freshBase,
     );
     expect(useProblemsStore.getState().dialog.open).toBe(false);
     expect(useSettingsStore.getState().settings).toEqual({
       ...onDisk,
       appearance: "dark",
     });
-    expect(useSettingsStore.getState().base).toBe("written");
+    expect(useSettingsStore.getState().base).toEqual(writtenBase);
   });
 
   /// The re-read is the way out of a stale refusal; when it fails, the
@@ -162,7 +181,7 @@ describe("settings store", () => {
   /// refresh that never happened and invite retries of a path that
   /// cannot progress.
   it("names the failed re-read when stale recovery cannot read the settings", async () => {
-    useSettingsStore.setState({ settings, base: "old" });
+    useSettingsStore.setState({ settings, base: oldBase });
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "error",
       error: { kind: "stale" },
@@ -181,7 +200,7 @@ describe("settings store", () => {
     expect(dialog.message).not.toContain("another window");
     // The store still holds the copy it had — nothing pretended to refresh.
     expect(useSettingsStore.getState().settings).toBe(settings);
-    expect(useSettingsStore.getState().base).toBe("old");
+    expect(useSettingsStore.getState().base).toEqual(oldBase);
   });
 
   /// Contention that survives the re-read reaches the person as a message,
@@ -190,7 +209,7 @@ describe("settings store", () => {
   /// read-only refresh, because the second refusal proved the previous
   /// re-read is already behind the file.
   it("stops after one retry, refreshes read-only, and tells the person when the file keeps moving", async () => {
-    useSettingsStore.setState({ settings, base: "old" });
+    useSettingsStore.setState({ settings, base: oldBase });
     const moved = { ...settings, zoom: 150 };
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "error",
@@ -199,11 +218,14 @@ describe("settings store", () => {
     vi.mocked(commands.getSettings)
       .mockResolvedValueOnce({
         status: "ok",
-        data: { settings, base: "fresh" },
+        data: { settings, base: freshBase },
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: { settings: moved, base: "moved" },
+        data: {
+          settings: moved,
+          base: { preferences: "moved-p", machine: "moved-m" },
+        },
       });
 
     await useSettingsStore.getState().setAppearance("dark");
@@ -216,13 +238,16 @@ describe("settings store", () => {
     // The store holds what the final refresh read, not the copy the second
     // write was refused over — that is what makes the claim true.
     expect(useSettingsStore.getState().settings).toEqual(moved);
-    expect(useSettingsStore.getState().base).toBe("moved");
+    expect(useSettingsStore.getState().base).toEqual({
+      preferences: "moved-p",
+      machine: "moved-m",
+    });
   });
 
   /// When the final refresh cannot be read, the message stops claiming the
   /// displayed settings are current — a claim nothing verified.
   it("drops the currency claim when the final refresh fails after a second stale refusal", async () => {
-    useSettingsStore.setState({ settings, base: "old" });
+    useSettingsStore.setState({ settings, base: oldBase });
     vi.mocked(commands.updateSettings).mockResolvedValue({
       status: "error",
       error: { kind: "stale" },
@@ -230,7 +255,7 @@ describe("settings store", () => {
     vi.mocked(commands.getSettings)
       .mockResolvedValueOnce({
         status: "ok",
-        data: { settings, base: "fresh" },
+        data: { settings, base: freshBase },
       })
       .mockResolvedValueOnce({
         status: "error",
@@ -249,10 +274,10 @@ describe("settings store", () => {
   /// a whole-file save resolving after a later project registration must
   /// not put its older settings/base pair back over the newer one.
   it("drops a reply that arrives after a newer one was held", async () => {
-    useSettingsStore.setState({ settings, base: "b0" });
+    useSettingsStore.setState({ settings, base: oldBase });
     let resolveUpdate: (value: {
       status: "ok";
-      data: { settings: AppSettings; base: string };
+      data: { settings: AppSettings; base: SettingsBase };
     }) => void = () => {};
     vi.mocked(commands.updateSettings).mockReturnValue(
       new Promise((resolve) => {
@@ -263,7 +288,7 @@ describe("settings store", () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
       data: {
-        read: { settings: registered, base: "b2" },
+        read: { settings: registered, base: writtenBase },
         root: "/home/x/acme-web",
       },
     });
@@ -272,11 +297,11 @@ describe("settings store", () => {
     await useSettingsStore.getState().registerProject("/home/x/acme-web");
     resolveUpdate({
       status: "ok",
-      data: { settings: { ...settings, appearance: "dark" }, base: "b1" },
+      data: { settings: { ...settings, appearance: "dark" }, base: freshBase },
     });
     await older;
 
-    expect(useSettingsStore.getState().base).toBe("b2");
+    expect(useSettingsStore.getState().base).toEqual(writtenBase);
     expect(useSettingsStore.getState().settings).toEqual(registered);
   });
 
@@ -286,7 +311,7 @@ describe("settings store", () => {
       data: {
         read: {
           settings: { ...settings, projects: ["/home/x/acme-web"] },
-          base: "b1",
+          base: writtenBase,
         },
         root: "/home/x/acme-web",
       },
@@ -390,7 +415,7 @@ describe("settings store", () => {
     for (const [_what, breakRead, message] of rows) {
       vi.mocked(commands.getSettings).mockResolvedValue({
         status: "ok",
-        data: { settings, base: "file" },
+        data: { settings, base: freshBase },
       });
       vi.mocked(commands.capabilityTable).mockResolvedValue({
         status: "ok",

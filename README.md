@@ -81,6 +81,7 @@ This repository is also the default catalog. Its agents, skills, hooks and Pi ex
 
 - `kendex.toml` declares a setup and holds the instructions or options you add for each tool.
 - Package settings apply per project; change them in the package's Customize tab or in that project's `kendex.settings.toml`.
+- Personal app preferences and machine state use separate [app settings files](docs/app-settings.md).
 - Private settings and secrets go in `.env.local`.
 - A formatter such as Biome or Prettier that checks JSON at the project root needs `.kendex-lock.json` and `.kendex-generated.json` in its ignore list; kendex writes both in its own layout.
 
