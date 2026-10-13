@@ -26,6 +26,11 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER
        (.host // "local"), (.recovery.session // ""), .tracker, (.repo // "")]
     | join("\u001f")' <<<"$1")" || return 1
   IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo <<<"$fields"
+  # The launcher records relative provider paths without their resolution base.
+  case "$LANE_RECOVERY_HOST" in
+    local|claude-cloud|/*) ;;
+    *) LANE_RECOVERY_CAUSE=relative-provider-deferred:KEN-3996; return 1 ;;
+  esac
   LANE_RECOVERY_CAUSE=checkout-unavailable
   LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1
   lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_RECOVERY_HOST" "$LANE_RECOVERY_CWD" || rc=$?

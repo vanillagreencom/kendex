@@ -42,6 +42,14 @@ exit "${STUB_RELAUNCH_EXIT:-0}"
 EOF
 chmod +x "$TMP_ROOT/bin/open-terminal-stub.sh"
 
+# A provider update after account selection invalidates its cached declaration.
+mutate_file "$TMP_ROOT/bin/lanes-stub.sh" 'if [[ "${1:-}" == pick ]]; then' \
+  'if [[ "${1:-}" == pick ]]; then
+  if [[ -f "$STUB_DIR/fail-capabilities-after-pick" ]]; then
+    touch "$STUB_DIR/fail-capabilities"
+    printf "\n" >> "$ORCH_LANE_HOST"
+  fi'
+
 # stage SCREEN PICK — gh-2 claimed on SPENT by pane %3 and recorded running
 # KEN-2 on claude MODEL; SCREEN `walled` is the account's banner under the
 # composer and `working` a turn in flight printing the same words; PICK is
@@ -56,7 +64,7 @@ stage() {
   printf '900\t%%3\t%s\tgh-2\t2026-08-16T00:00:00Z\n' "$SPENT" > "$STATE_DIR/claims/a.claim"
   case "$profile" in
     github) item=issue-2; tracker=github ;;
-    hosted|hosted-local|hosted-verb|cap-unavailable|hosted-legacy|stop-failed|stop-unconfirmed) host="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+    hosted|hosted-local|hosted-verb|cap-unavailable|relative|hosted-legacy|stop-failed|stop-unconfirmed) host="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
       [[ "$profile" != hosted-verb ]] || { item=issue-2; tracker=github; }
       mkdir -p "$STUB_DIR/host/srv/lane/tmp/lane-mail/$item" "$STUB_DIR/host/srv/clone/tmp"
       printf 'gitdir: /srv/clone/.git/worktrees/%s\n' "$item" > "$STUB_DIR/host/srv/lane/.git"
@@ -65,9 +73,19 @@ stage() {
         hosted-local) PROFILE_ENV+=(LANE_HOST_STUB_CAPABILITIES="$CAPS"$'\tpane=local') ;;
         hosted-verb) PROFILE_ENV+=(LANE_HOST_STUB_CAPABILITIES="$CAPS"$'\tpane=verb' LANE_HOST_STUB_CAPTURE_FILE="$STUB_DIR/provider-screen") ;;
         cap-unavailable)
+          host="$STUB_DIR/recovery-provider"
+          cp "$REPO_ROOT/skills/orch/tests/fixtures/lane-host" "$host"
+          mutate_file "$host" 'if [ -n "${LANE_HOST_STUB_NO_CAPABILITIES:-}" ]; then' \
+            'if [[ -f "$STUB_DIR/fail-capabilities" ]]; then
+    LANE_HOST_STUB_NO_CAPABILITIES=7
+    LANE_HOST_STUB_CAPABILITIES_WORDS="lane-host-fixture: capabilities-failed exit=7"
+  fi
+  if [ -n "${LANE_HOST_STUB_NO_CAPABILITIES:-}" ]; then'
+          touch "$STUB_DIR/fail-capabilities-after-pick" ;;
+        relative)
           host=./recovery-provider
           ln -sf "$REPO_ROOT/skills/orch/tests/fixtures/lane-host" "$TMP_ROOT/repo/recovery-provider"
-          cwd="$STUB_DIR/peer"; mkdir -p "$cwd" ;;
+          ;;
       esac
       [[ "$profile" != stop-failed ]] || PROFILE_ENV+=(LANE_HOST_STUB_STOP_STATUS=1)
       [[ "$profile" != stop-unconfirmed ]] || PROFILE_ENV+=(LANE_HOST_STUB_STOP_OUT=unconfirmed) ;;
@@ -198,11 +216,12 @@ USAGE_LIMIT="EVENT+usage-limit+gh-2+$SPENT+resets=2026-09-02T16:50:00Z"
 ROW_RELAUNCH="a walled lane with a qualifying pick preserves its permission choice, host and session|walled|fresh|-|rc=0 first=$RELAUNCHED out~EVENT+usage-limit=false pick=$SPENT killed=none relaunch~--relaunch=true relaunch~--lane+$FRESH=true relaunch~--model+$MODEL+--effort+high+--permission-mode+dontAsk=true relaunch~--host+local=true relaunch~--continue-resume=true session=main relaunch~KEN-2=true"
 ROW_SPENT="the spent account handed back is refused, and the wall goes to the overseer|walled|spent|auto|rc=0 first=$USAGE_LIMIT second=pick+lane=$SPENT err~reason%espent-account=true killed=none relaunch~--relaunch=false"
 ROW_VERB="provider-owned recovery leaves the prior lane intact|walled:hosted-verb|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%erelaunch-deferred:KEN-3996=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
-ROW_CAP_FAILED="unavailable saved host capabilities leave the prior lane intact|walled:cap-unavailable|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%ehost-capabilities-unavailable+exit%e1=true err~lane-host:+host-unavailable+path%e./recovery-provider=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
+ROW_CAP_FAILED="unavailable absolute host capabilities leave the prior lane intact|walled:cap-unavailable|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%ehost-capabilities-unavailable+exit%e7=true err~lane-host-fixture:+capabilities-failed+exit%e7=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
+ROW_RELATIVE="relative provider recovery leaves the prior lane intact|walled:relative|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%erelative-provider-deferred:KEN-3996=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
 
 echo "=== the watch owns the usage-limit route ==="
 wall_table "$ROW_RELAUNCH" \
-  "$ROW_VERB" "$ROW_CAP_FAILED" \
+  "$ROW_VERB" "$ROW_CAP_FAILED" "$ROW_RELATIVE" \
   "a walled lane no account qualifies for is usage-limit with its reset, the pick's answer under it|walled|none|auto|rc=0 first=$USAGE_LIMIT second=pick+none pick=$SPENT killed=none relaunch~--relaunch=false" \
   "a working lane printing limit text is left alone: no event, no pick, no kill|working|fresh|auto|rc=0 out~EVENT+usage-limit=false out~lane-relaunched=false pick=none killed=none relaunch~--relaunch=false" \
   "under ask the wall is usage-limit alone, with the pick's answer on the following line|walled|fresh|ask|rc=0 first=$USAGE_LIMIT second=pick+lane=$FRESH out~lane-relaunched=false killed=none relaunch~--relaunch=false" \
@@ -348,6 +367,13 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/capabilities-unrefused/github"
 mutate_file "$scripts/lib/lane-relaunch.sh" \
   '"$LANE_RECOVERY_CWD" || rc=$?' '"$LANE_RECOVERY_CWD" || rc=0'
 WATCH_BIN="$scripts/oversee-watch" wall_table "refusal-control: $ROW_CAP_FAILED"
+
+scripts="$(mutant_scripts relative-recovery-unrefused/orch lib/lane-relaunch.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/relative-recovery-unrefused/github"
+mutate_file "$scripts/lib/lane-relaunch.sh" \
+  '*) LANE_RECOVERY_CAUSE=relative-provider-deferred:KEN-3996; return 1 ;;' \
+  '*) LANE_RECOVERY_CAUSE=relative-provider-deferred:KEN-3996; : ;;'
+WATCH_BIN="$scripts/oversee-watch" wall_table "refusal-control: $ROW_RELATIVE"
 
 # Removing the launcher's context read makes the removed checkout look usable.
 scripts="$(mutant_scripts checkout-unrefused/orch lib/lane-relaunch.sh)" || exit 1
