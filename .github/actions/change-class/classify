@@ -81,11 +81,12 @@
 #                      event and paths out of it to re-derive what that run
 #                      ran, as kendex's tools/ci-job-set does.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
-#                      false on `render` unless a deleted path or either
-#                      rename end matches a default-branch lane claim;
-#                      false on `trivial`, on docs_only=true
-#                      whatever the class, and where a proof covers every
-#                      lane the diff would run; true on every other diff.
+#                      A proved render runs lanes whose default-branch claims
+#                      match a deletion or either rename end. In-place
+#                      renders and moves of only unclaimed paths keep
+#                      lanes=false. Remaining skip conditions follow
+#                      skills/harness-ci/references/wiring.md
+#                      § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or proof-reused where
 #                      lanes=false; render-moved-claim for a claimed render
 #                      deletion or rename; the class otherwise.
