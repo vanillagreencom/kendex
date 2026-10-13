@@ -12,7 +12,7 @@ CONTROLS = [
     ("ensure", "jarvis/scripts/lib/session.py", 'if matching and record["state"] in ("starting", "running")', 'if False and record["state"] in ("starting", "running")', "test_claude_contract"),
     ("boot receipt", "jarvis/scripts/lib/session.py", 'if boot and record and record.get("boot") == boot:', 'if False:', "test_off_and_boot_receipt"),
     ("app Off", "jarvis/scripts/lib/session.py", 'if record and record.get("app_off") and args.origin != "app-on":', 'if False:', "test_off_and_boot_receipt"),
-    ("app On", "jarvis/scripts/lib/session.py", '"app_off": False, "intent": "start", "terminal": None,', '"app_off": args.origin == "app-on", "intent": "start", "terminal": None,', "test_off_and_boot_receipt"),
+    ("app On", "jarvis/scripts/lib/session.py", 'if args.origin == "app-on":', 'if False:', "test_off_and_boot_receipt"),
     ("native identity", "jarvis/scripts/lib/session.py", 'if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in ("idle", "working"):', 'if not record.get("brief_delivered"):', "test_identity_before_private_brief"),
     ("account before brief", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$state" == working || "$6" == confirmed ]]; then', 'if [[ "$state" == working ]]; then', "test_account_is_checked_before_private_brief"),
     ("working turn", "jarvis/scripts/lib/session.py", 'elif record.get("brief_delivered") and observed == "working":', 'elif record.get("brief_delivered"):', "test_idle_prompt_is_not_running"),
@@ -20,6 +20,17 @@ CONTROLS = [
     ("record reasons", "jarvis/scripts/lib/session.py", 'if record.get("reason") not in STATE_REASONS.get(record.get("state"), set()):', 'if False:', "test_record_contract_refuses_corruption"),
     ("detail length", "jarvis/scripts/lib/session.py", 'if not clean(detail) or len(detail) > 200:', 'if not clean(detail):', "test_record_contract_refuses_corruption"),
     ("detail controls", "jarvis/scripts/lib/session.py", 'if not clean(detail) or len(detail) > 200:', 'if len(detail) > 200:', "test_record_contract_refuses_corruption"),
+    ("boot refusal receipt", "jarvis/scripts/lib/session.py", 'if boot:\n                    record["boot"] = boot\n                if args.origin == "app-on":', 'if False:\n                    record["boot"] = boot\n                if args.origin == "app-on":', "test_off_and_boot_receipt"),
+    ("app On state", "jarvis/scripts/lib/session.py", 'if record["state"] == "off":', 'if False:', "test_off_and_boot_receipt"),
+    ("confirmed account scope", "jarvis/scripts/lib/session.py", 'if pending.get("started_at") and (record.get("identity_verified") or record.get("state") == "running"):', 'if pending.get("started_at"):', "test_account_is_checked_before_private_brief"),
+    ("confirmed history", "jarvis/scripts/lib/session.py", 'return record.get("history")', 'return None', "test_pi_contract"),
+    ("launch bound", "jarvis/scripts/lib/session.py", 'if time.monotonic() >= self.deadline:', 'self.deadline = time.monotonic() + CALL_SECONDS\n                if time.monotonic() >= self.deadline:', "test_idle_prompt_is_not_running"),
+    ("abandoned worker", "jarvis/scripts/lib/session.py", 'return result.returncode == 0', 'return True', "test_verbs_answer_with_held_launch"),
+    ("record location", "jarvis/scripts/lib/session.py", 'self.path = state / "kendex/jarvis" / key / "jarvis-session.json"', 'self.path = Path(self.home) / "jarvis-session.json"', "test_copilot_contract"),
+    ("retained running owner", "jarvis/scripts/lib/session.py", 'reason="existing" if controller_state == "running" else "launching", detail="")', 'reason="launching", detail="")\n        retained["state"] = "starting"', "test_cancelled_replacement_keeps_the_live_owner"),
+    ("retained starting owner", "jarvis/scripts/lib/session.py", 'controller_state == "running"', 'controller_state in ("running", "starting")', "test_sign_in_failure"),
+    ("stop request identity", "jarvis/scripts/lib/session.py", 'record["generation"] += 1', 'record["generation"] += 0', "test_cancelled_replacement_keeps_the_live_owner"),
+    ("stop failure result", "jarvis/scripts/lib/session.py", 'if live:\n                    record = self.retain_live(record, live)', 'if live:\n                    if verb == "stop":\n                        return\n                    record = self.retain_live(record, live)', "test_cancelled_replacement_keeps_the_live_owner"),
     ("replacement cancellation", "jarvis/scripts/lib/session.py", 'dict(predecessor, generation=record["generation"] + 1, intent=', 'dict(predecessor, generation=record["generation"], intent=', "test_cancelled_replacement_keeps_the_live_owner"),
 ]
 
@@ -32,7 +43,8 @@ with tempfile.TemporaryDirectory() as allocation:
     for name, relative, old, new, test in CONTROLS:
         path = skills / relative
         original = path.read_text()
-        assert original.count(old) == 1, name
+        expected = 2 if name == "retained starting owner" else 1
+        assert original.count(old) == expected, name
         mutant = original.replace(old, new)
         assert mutant != original
         path.write_text(mutant)

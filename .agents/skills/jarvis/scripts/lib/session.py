@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import select
-import shlex
 import shutil
 import subprocess
 import sys
@@ -173,6 +172,9 @@ class Session:
             else:
                 state, reason = record["state"], record["reason"]
                 detail = record.get("detail", "")
+                if terminal and state == "stopping" and not self.worker_live(record):
+                    retained = self.retain_live(record, view)
+                    state, reason, detail = retained["state"], retained["reason"], ""
                 if not terminal and state in ("running", "stopping"):
                     state = "off" if record.get("app_off") else "stopped"
                     reason = "app-off" if state == "off" else ("stopped" if record.get("intent") == "stop" else "ended")
@@ -201,7 +203,37 @@ class Session:
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                      env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
-        return child.pid
+        identity = json.loads(self.backend("process", child.pid).stdout)
+        return identity
+
+    def worker_live(self, record):
+        identity = record.get("worker") if record else None
+        if not identity:
+            return False
+        result = self.backend("worker-live", identity["pid"], identity["started_at"], check=False)
+        if result.returncode > 1:
+            raise Refusal("record-unreadable")
+        return result.returncode == 0
+
+    def confirmed_history(self, record):
+        if not record:
+            return None
+        pending = record.get("pending") or {}
+        if pending.get("started_at") and (record.get("identity_verified") or record.get("state") == "running"):
+            return {key: record.get(key) for key in ("harness", "account", "effective_home", "pending")}
+        return record.get("history")
+
+    def retain_live(self, record, live):
+        # Request flags survive a refusal. Native ownership keeps its original
+        # generation, even though the request generation has advanced.
+        controller_state = live.get("controller_state", live["state"])
+        retained = dict(live, generation=record["generation"], intent=record.get("intent"),
+                        app_off=record.get("app_off", False), boot=record.get("boot"),
+                        history=self.confirmed_history(live) or record.get("history"))
+        retained.update(state="running" if controller_state == "running" else "starting",
+                        reason="existing" if controller_state == "running" else "launching", detail="")
+        retained.pop("worker", None)
+        return retained
 
     def start(self, args):
         boot = None
@@ -214,6 +246,20 @@ class Session:
                     return self.answer(record), 0
                 except Refusal as failure:
                     return self.answer(record, state=failure.state, reason=failure.reason, detail=failure.detail), 0
+            # Boot and app-on requests are handled even when launch is refused.
+            # The locked record owns these flags independently of the launch.
+            if boot or args.origin == "app-on":
+                if record is None:
+                    record = {"v": 1, "home": self.home, "harness": None, "account": None,
+                              "origin": None, "generation": 0, "terminal": None,
+                              "state": "stopped", "reason": "never-started", "detail": ""}
+                if boot:
+                    record["boot"] = boot
+                if args.origin == "app-on":
+                    record["app_off"] = False
+                    if record["state"] == "off":
+                        record.update(state="stopped", reason="stopped", detail="")
+                self.write(record)
             if record and record.get("app_off") and args.origin != "app-on":
                 if boot:
                     record["boot"] = boot
@@ -226,7 +272,23 @@ class Session:
                 raise Refusal("app-missing")
             account = str(Path(args.account).resolve(strict=True))
             matching = record and record.get("harness") == args.harness and record.get("account") == account
-            if matching and record["state"] in ("starting", "running") and (record["state"] == "starting" or self.terminal(record)):
+            if record and record["state"] == "starting" and not self.worker_live(record):
+                # A completed worker no longer owns a launch. Release only its
+                # recorded terminal before retrying, and retain confirmed history.
+                try:
+                    self.end_owned(record)
+                except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
+                    print("jarvis-session: abandoned-cleanup-failed cause=" + type(failure).__name__, file=sys.stderr)
+                    if not self.terminal(record):
+                        raise
+                    record = self.retain_live(record, record)
+                    self.write(record)
+                    return self.answer(record), 0
+                record.update(history=self.confirmed_history(record), terminal=None,
+                              state="failed", reason="launch-failed",
+                              detail="Jarvis's launch worker ended before Start completed.")
+                self.write(record)
+            if matching and record["state"] in ("starting", "running") and (self.worker_live(record) if record["state"] == "starting" else self.terminal(record)):
                 record["app_off"] = False
                 if boot:
                     record["boot"] = boot
@@ -250,7 +312,7 @@ class Session:
                 if not private or not clean(private):
                     raise Refusal("record-unreadable")
                 brief += " " + private
-            history_record = predecessor or record
+            history_record = self.confirmed_history(predecessor or record)
             history_matches = history_record and history_record.get("harness") == args.harness and history_record.get("account") == account
             confirmed = history_record and (history_record.get("pending") or {}).get("started_at")
             reason = "new-no-record" if not confirmed else "new-requested"
@@ -273,9 +335,9 @@ class Session:
                            "generation": generation, "state": "starting", "reason": "launching", "detail": "",
                            "app_off": False, "intent": "start", "terminal": None,
                            "launch": {"id": native_id, "file": file, "reason": reason, "brief": brief},
-                           "predecessor": predecessor}
+                           "predecessor": predecessor, "history": history_record}
             self.write(next_record)
-            next_record["worker_pid"] = self.detach("start", generation)
+            next_record["worker"] = self.detach("start", generation)
             self.write(next_record)
             return self.answer(next_record), 0
 
@@ -285,12 +347,18 @@ class Session:
             if not record:
                 record = {"v": 1, "home": self.home, "harness": None, "account": None, "origin": None,
                           "boot": None, "generation": 0, "terminal": None}
+            # Each request owns its generation. Native terminal ownership
+            # stays bound to pending.generation until that controller ends.
+            record["generation"] += 1
+            record["history"] = self.confirmed_history(record)
+            if record.get("state") in ("running", "starting"):
+                record["controller_state"] = record["state"]
             record["intent"] = "stop"
             record["app_off"] = origin == "app-off" or record.get("app_off", False)
             if self.terminal(record) or self.terminal(record.get("predecessor")) or record.get("state") == "starting":
                 record.update(state="stopping", reason="stop-requested", detail="")
                 self.write(record)
-                record["worker_pid"] = self.detach("stop", record["generation"])
+                record["worker"] = self.detach("stop", record["generation"])
                 self.write(record)
                 answer = self.answer(record, state="stopping", reason="stop-requested")
                 # Publish while teardown still waits on this lock. Off and
@@ -330,7 +398,7 @@ class Session:
                 return
             launch = record["launch"]
             prepared = json.loads(self.backend("prepare", record["harness"], record["account"], self.home,
-                                               launch["id"], launch["file"]).stdout)
+                                               launch["id"], launch["file"], self.path, generation).stdout)
             with self.locked():
                 record = self.read()
                 if not self._current_request(record, generation, "start"):
@@ -350,7 +418,7 @@ class Session:
                 self.tmux("set-option", "-t", pane, "@jarvis-generation", generation)
                 record["server_started_at"] = int(self.backend("server-start", socket, pane, server).stdout.strip())
                 self.write(record)
-                command = "env JARVIS_RECORD=" + shlex.quote(str(self.path)) + " JARVIS_GENERATION=" + str(generation) + " " + prepared["line"]
+                command = prepared["line"]
                 # The account observer reads descendants of the pane shell.
                 # A tail keeps that shell from exec-replacing itself.
                 self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
@@ -358,8 +426,11 @@ class Session:
                 process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                 record["process"] = json.loads(self.backend("process", process).stdout)
                 self.write(record)
+            # One bound covers native identity and the first working turn.
+            # Backend operations share it; inspection never renews the launch.
             while True:
-                self.deadline = time.monotonic() + CALL_SECONDS
+                if time.monotonic() >= self.deadline:
+                    raise Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
                 with self.locked():
                     record = self.read()
                     if not self._current_request(record, generation, "start"):
@@ -373,6 +444,10 @@ class Session:
                         raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
                     if observed == "wrong-account":
                         raise Refusal("selection-conflict")
+                    if identity.get("native_session_id") and identity.get("started_at") and observed in ("idle", "working"):
+                        record["identity_verified"] = True
+                        record["history"] = self.confirmed_history(record)
+                        self.write(record)
                     if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in ("idle", "working"):
                         prompt = self.path.parent / ("start-" + str(generation) + ".txt")
                         with prompt.open("x") as stream:
@@ -387,24 +462,40 @@ class Session:
                         record.update(state="running", reason=launch["reason"], detail="")
                         record.pop("predecessor", None)
                         record.pop("launch", None)
+                        record.pop("controller_state", None)
                         self.write(record)
                         return
                 time.sleep(0.2)
         except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
             print("jarvis-session: worker-failed cause=" + type(failure).__name__, file=sys.stderr)
+            if verb == "start" and (isinstance(failure, subprocess.TimeoutExpired) or time.monotonic() >= self.deadline):
+                failure = Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
             self.deadline = time.monotonic() + CALL_SECONDS
             with self.locked():
                 record = self.read()
-                if record and record["generation"] == generation and record["intent"] == "start":
-                    self.end_owned(record)
-                    predecessor = record.get("predecessor")
-                    if isinstance(failure, Refusal):
-                        if self.terminal(predecessor):
-                            record = predecessor
-                        record.update(state=failure.state, reason=failure.reason, detail=failure.detail)
-                    else:
-                        record.update(state="failed", reason="launch-failed", detail="Jarvis could not start. Check the session log.", terminal=None)
-                    self.write(record)
+                if not self._current_request(record, generation, verb):
+                    raise
+                record["history"] = self.confirmed_history(record)
+                if verb == "start":
+                    try:
+                        self.end_owned(record)
+                    except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
+                        print("jarvis-session: cleanup-failed cause=" + type(teardown).__name__, file=sys.stderr)
+                predecessor = record.get("predecessor")
+                live = record if self.terminal(record) else predecessor if self.terminal(predecessor) else None
+                if live:
+                    record = self.retain_live(record, live)
+                elif verb == "stop":
+                    record.update(state="off" if record["app_off"] else "stopped",
+                                  reason="app-off" if record["app_off"] else "stopped", detail="", terminal=None)
+                else:
+                    record.update(state=failure.state if isinstance(failure, Refusal) else "failed",
+                                  reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
+                                  detail=failure.detail if isinstance(failure, Refusal) else "Jarvis could not start. Check the session log.",
+                                  terminal=None)
+                record.pop("worker", None)
+                self.write(record)
+            raise
 
 
 class Arguments(argparse.ArgumentParser):

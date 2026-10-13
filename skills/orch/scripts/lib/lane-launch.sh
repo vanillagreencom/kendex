@@ -1486,11 +1486,14 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
 # because a launcher that exports COPILOT_HOME for its own name exports
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
-lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE]
+lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words scrub
   [[ -z "${6:-}" ]] || form=custom
   printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
   scrub="env$scrub"
+  # A controller supplies its child's quoted assignments after parent identity
+  # is removed. Callers without child assignments retain the existing line.
+  [[ -z "${7:-}" ]] || scrub+=" $7"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex && -n "$var" ]]; then
     [[ "$form" != unchecked && "$form" != custom ]] || verified=false

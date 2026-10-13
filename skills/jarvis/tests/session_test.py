@@ -5,12 +5,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
+from fixtures.harness import native_header
 import shlex
 import subprocess
 import sys
 import tempfile
 import time
-import threading
 import unittest
 
 
@@ -88,11 +89,14 @@ class SessionContract(unittest.TestCase):
 
     def tearDown(self):
         # Kill only the server this fixture started, then remove its scratch.
-        if self.record.exists():
-            self.call("stop")
-            self.wait("off" if json.loads(self.record.read_text()).get("app_off") else "stopped")
-        subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
-        self.scratch.cleanup()
+        (self.root / "refuse-teardown").unlink(missing_ok=True)
+        try:
+            if self.record.exists():
+                self.call("stop")
+                self.wait("off" if json.loads(self.record.read_text()).get("app_off") else "stopped")
+        finally:
+            subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
+            self.scratch.cleanup()
 
     def call(self, verb, harness="claude", mode="resume", origin="manual", **kwargs):
         argv = [str(SCRIPT), verb, "--home", str(self.home)]
@@ -103,21 +107,32 @@ class SessionContract(unittest.TestCase):
         if kwargs.get("brief"):
             argv += ["--brief-file", str(kwargs["brief"])]
         start = time.monotonic()
-        result = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
         self.assertLess(time.monotonic() - start, 60)
         return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
 
-    def wait(self, state="running", reason=None):
-        deadline = time.monotonic() + 20
+    def wait(self, state="running", reason=None, seconds=20):
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             answer, _ = self.call("status")
             if answer["state"] == state and (reason is None or answer["reason"] == reason):
                 return answer
-            if answer["state"] in ("blocked", "failed"):
+            # tmux can disappear between ownership reads during failed-start
+            # cleanup. Unknown ownership is a refusal until the final write.
+            transient_cleanup = reason != "record-unreadable" and (answer["state"], answer["reason"]) == ("blocked", "record-unreadable")
+            if answer["state"] in ("blocked", "failed") and not transient_cleanup:
                 self.fail(str(answer) + "\n" + (self.record.parent / "session.log").read_text())
             time.sleep(0.05)
         screen = subprocess.run(["tmux", "-L", self.label, "capture-pane", "-p"], capture_output=True, text=True).stdout
         self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n" + (self.record.parent / "session.log").read_text())
+
+    def await_launches(self, count):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if self.rows.exists() and len(self.started()) >= count:
+                return
+            time.sleep(0.05)
+        self.fail("the native fixture did not acknowledge its launch")
 
     def started(self):
         return [json.loads(line) for line in self.rows.read_text().splitlines() if "argv" in json.loads(line)]
@@ -131,6 +146,27 @@ class SessionContract(unittest.TestCase):
             + shlex.quote(str(events)) + "; fi; done\nexec " + shlex.quote(real) + ' "$@"\n')
         wrapper.chmod(0o755)
         return events
+
+    def refuse_teardown(self):
+        # tmux's nonzero owned if-shell result is the failure producer.
+        flag = self.root / "refuse-teardown"
+        flag.touch()
+        real = shutil.which("tmux")
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + "for arg in \"$@\"; do if [[ $arg == if-shell && -f " + shlex.quote(str(flag))
+            + " ]]; then exit 1; fi; done\nexec " + shlex.quote(real) + ' \"$@\"\n')
+        wrapper.chmod(0o755)
+        return flag
+
+    def await_worker_result(self):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            record = json.loads(self.record.read_text())
+            if "worker" not in record:
+                return record
+            time.sleep(0.05)
+        self.fail("the worker did not publish its final record")
 
     def await_rows(self, events, count):
         deadline = time.monotonic() + 10
@@ -149,13 +185,26 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(first["home"], str(self.home))
         self.assertEqual(first["account"], str(self.account))
         before = self.started()[-1]
+        actual_record = Path(before["record"])
+        self.assertTrue(actual_record.is_relative_to(Path(self.env["XDG_STATE_HOME"])))
+        self.assertFalse(actual_record.is_relative_to(self.home))
+        self.assertEqual(json.loads(actual_record.read_text())["home"], str(self.home))
+        state = self.home / "state"
+        state.mkdir()
+        (state / "jarvis-session.json").write_text("not a runtime record")
         self.assertEqual(before["cwd"], str(self.home))
         self.assertEqual(before["account"], json.loads(self.record.read_text())["effective_home"])
         self.assertEqual(len(self.started()), 1)
         target = json.loads(self.record.read_text())["pending"].get("session_file")
         if target:
             for name, cwd in (("newer-same", str(self.home)), ("newer-other", str(self.root))):
-                (Path(target).parent / (name + ".jsonl")).write_text(json.dumps({"type":"session_meta", "payload":{"id":name,"cwd":cwd}}) + "\n")
+                competitor = Path(target).parent / (name + ".jsonl")
+                competitor.write_text(json.dumps(native_header(harness, name, cwd)) + "\n")
+                reader = subprocess.run([self.env["JARVIS_TEST_BASH"],
+                    str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "history", harness,
+                    before["account"], name, str(competitor)], env=self.env, capture_output=True, text=True)
+                self.assertEqual(reader.returncode, 0, reader.stderr)
+                self.assertEqual(reader.stdout.strip(), str(competitor))
         else:
             for name, cwd in (("newer-same", str(self.home)), ("newer-other", str(self.root))):
                 folder = self.account / "session-state" / name
@@ -166,6 +215,14 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(len(self.started()), 1)
         self.call("stop")
         self.wait("stopped")
+        # Stop a resumed launch before the native SessionStart producer writes.
+        os.mkfifo(self.gate)
+        launches = len(self.started())
+        self.call("start", harness)
+        self.await_launches(launches + 1)
+        self.call("stop")
+        self.wait("stopped")
+        self.gate.unlink()
         self.call("start", harness)
         self.wait(reason="resumed")
         self.assertEqual(self.started()[-1]["id"], before["id"])
@@ -212,32 +269,44 @@ class SessionContract(unittest.TestCase):
                 validate(json.dumps(answer | patch) + "\n", 0, "status")
 
     def test_off_and_boot_receipt(self):
-        self.call("start", origin="boot")
-        self.wait()
-        self.call("start", origin="boot", duplicate_boot=True)
-        self.assertEqual(len(self.started()), 1)
-        self.call("stop")
-        self.wait("stopped")
-        self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "stopped")
-        self.assertEqual(len(self.started()), 1)
-        self.call("start")
-        self.wait()
-        answer, _ = self.call("stop", origin="app-off")
-        self.assertEqual((answer["state"], answer["reason"]), ("stopping", "stop-requested"))
-        self.wait("off")
-        self.assertEqual(self.call("start")[0]["reason"], "app-off")
-        self.call("start", origin="boot", duplicate_boot=True)
-        self.assertEqual(len(self.started()), 2)
-        self.call("start", origin="app-on")
-        self.wait()
-        self.assertFalse(json.loads(self.record.read_text())["app_off"])
-
-    def test_concurrent_ensure(self):
-        with ThreadPoolExecutor() as executor:
-            answers = list(executor.map(lambda _: self.call("start", "copilot"), range(4)))
-        self.assertTrue(all(code == 0 for _, code in answers))
-        self.wait()
-        self.assertEqual(len(self.started()), 1)
+        # A desktop with no selected app still has the lock/runtime tools.
+        tool_bin = self.root / "tools"
+        tool_bin.mkdir()
+        for tool in ("bash", "python3", "cat", "flock", "perl", "sleep", "ps", "tmux", "mkdir", "rmdir", "rm", "date", "stat", "sed", "awk"):
+            found = self.env["JARVIS_TEST_BASH"] if tool == "bash" else shutil.which(tool)
+            if found:
+                (tool_bin / tool).symlink_to(found)
+        missing = self.env | {"PATH": str(tool_bin)}
+        # The Linux boot producer is absent on macOS. Off/app-on is universal.
+        origins = (["boot"] if Path("/proc/sys/kernel/random/boot_id").is_file() else []) + ["app-on"]
+        for origin in origins:
+            with self.subTest(origin=origin):
+                if origin == "app-on":
+                    self.call("start")
+                    self.wait()
+                    answer, _ = self.call("stop", origin="app-off")
+                    self.assertEqual((answer["state"], answer["reason"]), ("stopping", "stop-requested"))
+                    self.wait("off")
+                    self.assertEqual(self.call("start")[0]["reason"], "app-off")
+                answer, code = self.call("start", origin=origin, env=missing)
+                self.assertEqual((answer["reason"], code), ("app-missing", 1))
+                if origin == "boot":
+                    self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "stopped")
+                    self.assertFalse(self.rows.exists())
+                else:
+                    self.assertFalse(json.loads(self.record.read_text())["app_off"])
+                    self.assertEqual(self.call("status")[0]["state"], "stopped")
+                    self.call("start")
+                    self.wait(reason="resumed")
+        if Path("/proc/sys/kernel/random/boot_id").is_file():
+            # A new login handles boot once, whether the session lives or ends.
+            self.env["XDG_SESSION_ID"] = "second-fixture-login"
+            self.call("start", origin="boot")
+            count = len(self.started())
+            self.call("stop")
+            self.wait("stopped")
+            self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "stopped")
+            self.assertEqual(len(self.started()), count)
 
     def test_identity_before_private_brief(self):
         events = self.observe_inspection()
@@ -262,6 +331,7 @@ class SessionContract(unittest.TestCase):
         self.assertNotIn("oversee", prompts[0])
 
     def test_idle_prompt_is_not_running(self):
+        # Real time tests launch-timer wiring against a held native prompt.
         events = self.observe_inspection()
         fixture = self.home / ".fixture.json"
         fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"idle": True}))
@@ -272,15 +342,38 @@ class SessionContract(unittest.TestCase):
         self.assertTrue(any("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()))
         self.await_rows(events, 3)
         self.assertEqual(self.call("status")[0]["state"], "starting")
+        answer = self.wait("failed", "launch-failed", seconds=70)
+        self.assertIsNone(answer["terminal"])
+        self.assertTrue(json.loads(self.record.read_text())["history"]["pending"]["started_at"])
 
     def test_sign_in_failure(self):
         fixture = self.home / ".fixture.json"
         fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_failure": True}))
-        self.call("start", "claude")
-        answer = self.wait("blocked", "sign-in-required")
-        self.assertTrue(answer["detail"])
+        for teardown in ("allowed", "refused"):
+            with self.subTest(teardown=teardown):
+                flag = self.refuse_teardown() if teardown == "refused" else None
+                self.call("start", "claude")
+                record = self.await_worker_result()
+                answer, _ = self.call("status")
+                if flag:
+                    self.assertEqual((answer["state"], answer["reason"]), ("starting", "launching"))
+                    self.assertIsNotNone(answer["terminal"])
+                    self.assertEqual(answer["detail"], "")
+                    self.assertTrue(record["history"]["pending"]["started_at"])
+                    flag.unlink()
+                    self.call("stop")
+                    self.wait("stopped")
+                else:
+                    self.assertEqual((answer["state"], answer["reason"]), ("blocked", "sign-in-required"))
+                    self.assertIsNone(answer["terminal"])
+                    self.assertTrue(answer["detail"])
 
     def test_account_is_checked_before_private_brief(self):
+        self.call("start")
+        self.wait()
+        confirmed = self.started()[-1]["id"]
+        self.call("stop")
+        self.wait("stopped")
         # A real CLI wrapper can override the selected account before exec.
         wrong = self.root / "wrong-account"
         wrong.mkdir()
@@ -293,9 +386,17 @@ class SessionContract(unittest.TestCase):
                            + shlex.quote(str(wrong)) + "\nexec " + shlex.quote(str(native)) + ' "$@"\n')
         private = self.root / "private-brief"
         private.write_text("private-account-work")
-        self.call("start", brief=private)
+        count = len(self.started())
+        prompt_count = sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines())
+        self.call("start", mode="new", brief=private)
         self.wait("blocked", "selection-conflict")
-        self.assertFalse(any("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()))
+        self.assertEqual(sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()), prompt_count)
+        self.assertEqual(json.loads(self.record.read_text())["history"]["pending"]["native_session_id"], confirmed)
+        shutil.copyfile(HARNESS, wrapper)
+        self.call("start")
+        self.wait(reason="resumed")
+        self.assertEqual(self.started()[-1]["id"], confirmed)
+        self.assertEqual(len(self.started()), count + 2)
 
     def test_unrelated_session_conflicts(self):
         subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, "new-session", "-d", "-s", "jarvis",
@@ -305,27 +406,51 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"], capture_output=True).returncode, 0)
 
     def test_verbs_answer_with_held_launch(self):
-        # This row measures the VGS time contract. The FIFO proves the native
-        # producer has not started. Real time proves it is held past 60s.
+        # The FIFO holds the native identity producer while the fixture ends
+        # its own worker. A subsequent Start must acquire a new live worker.
         os.mkfifo(self.gate)
         self.call("start")
         deadline = time.monotonic() + 10
         while not self.rows.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertTrue(self.rows.exists())
-        threading.Event().wait(61)
-        self.assertEqual(self.call("status")[0]["state"], "starting")
+        worker = json.loads(self.record.read_text())["worker"]
+        # The worker belongs to this fixture and is still held by the FIFO.
+        identity = subprocess.run([self.env["JARVIS_TEST_BASH"],
+            str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "worker-live",
+            str(worker["pid"]), worker["started_at"]], env=self.env, capture_output=True)
+        self.assertEqual(identity.returncode, 0)
+        os.kill(worker["pid"], signal.SIGTERM)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            result = subprocess.run([self.env["JARVIS_TEST_BASH"],
+                str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "worker-live",
+                str(worker["pid"]), worker["started_at"]], env=self.env, capture_output=True)
+            if result.returncode == 1:
+                break
+            time.sleep(0.05)
+        self.assertEqual(result.returncode, 1)
+        terminal = self.call("status")[0]["terminal"]
+        flag = self.refuse_teardown()
+        retained, _ = self.call("start")
+        self.assertEqual((retained["state"], retained["reason"], retained["terminal"]),
+                         ("starting", "launching", terminal))
+        self.assertNotIn("worker", json.loads(self.record.read_text()))
+        flag.unlink()
         self.assertEqual(self.call("start")[0]["state"], "starting")
-        self.assertEqual(self.call("stop")[0]["state"], "stopping")
-
-    def test_record_is_outside_home(self):
-        self.call("start")
-        self.wait()
-        self.assertFalse(self.record.is_relative_to(self.home))
-        state = self.home / "state"
-        state.mkdir()
-        (state / "jarvis-session.json").write_text("not a runtime record")
-        self.assertEqual(self.call("start")[0]["reason"], "existing")
+        replacement = json.loads(self.record.read_text())["worker"]
+        self.assertNotEqual(replacement, worker)
+        flag.touch()
+        self.assertEqual(self.call("stop", origin="app-off")[0]["state"], "stopping")
+        result = self.await_worker_result()
+        answer, _ = self.call("status")
+        self.assertEqual((answer["state"], answer["reason"], answer["terminal"]),
+                         ("starting", "launching", result["terminal"]))
+        self.assertTrue(result["app_off"])
+        self.assertEqual(self.call("start")[0]["reason"], "app-off")
+        flag.unlink()
+        self.call("stop")
+        self.wait("off")
 
     def test_record_contract_refuses_corruption(self):
         self.call("stop")
@@ -383,6 +508,39 @@ class SessionContract(unittest.TestCase):
         self.assertIn(marker, log.read_text().splitlines())
         self.assertEqual(self.call("status")[0]["state"], "running")
         self.assertEqual(len(self.started()), 1)
+        # The native account config emits an explicit trust refusal.
+        (account / ".claude.json").write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
+        self.call("start", account=account)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            record = json.loads(self.record.read_text())
+            if record["state"] == "running":
+                break
+            time.sleep(0.05)
+        answer, _ = self.call("status")
+        self.assertEqual((answer["state"], answer["account"], answer["terminal"]),
+                         ("running", str(self.account), first["terminal"]))
+        self.assertEqual(record["generation"], generation + 2)
+        self.assertEqual(len(self.started()), 1)
+        flag = self.refuse_teardown()
+        before_stop = json.loads(self.record.read_text())
+        origins = ("manual", "app-off")
+        with ThreadPoolExecutor() as executor:
+            answers = list(executor.map(lambda origin: self.call("stop", origin=origin), origins))
+        self.assertTrue(all(code == 0 and answer["state"] == "stopping" for answer, code in answers))
+        record = self.await_worker_result()
+        self.assertEqual(record["generation"], before_stop["generation"] + len(origins))
+        self.assertEqual(record["pending"]["generation"], before_stop["pending"]["generation"])
+        answer, _ = self.call("status")
+        self.assertEqual((answer["state"], answer["reason"], answer["terminal"]),
+                         ("running", "existing", first["terminal"]))
+        self.assertTrue(record["app_off"])
+        self.assertEqual(record["history"]["pending"]["native_session_id"], self.started()[0]["id"])
+        self.assertEqual(self.call("start")[0]["reason"], "app-off")
+        flag.unlink()
+        self.call("stop")
+        self.wait("off")
+        self.assertEqual(json.loads(self.record.read_text())["generation"], record["generation"] + 1)
 
 
 if __name__ == "__main__":

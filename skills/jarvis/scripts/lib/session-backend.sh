@@ -45,6 +45,11 @@ case "$verb" in
     at="$(lane_process_start "$1")" || exit 1
     [[ -n "$at" ]] || exit 1
     jq -cn --argjson pid "$1" --arg at "$at" '{pid:$pid,started_at:$at}' ;;
+  worker-live)
+    state="$(lane_process_state "$1")" || exit 2
+    [[ -n "$state" && "$state" != Z ]] || exit 1
+    at="$(lane_process_start "$1")" || exit 2
+    [[ "$at" == "$2" ]] || exit 1 ;;
   history) recorded_session_file "$@" ;;
   prepare)
     harness="$1" account="$2" home="$3" id="$4" file="$5"
@@ -52,7 +57,8 @@ case "$verb" in
     lane_session_command "$harness" "$id" "$file" || exit 1
     cmd="$LANE_SESSION_CMD" var="$LANE_SESSION_ACCOUNT_VAR"
     form="$(lane_launch_form "$cmd" "$harness" "$LANE_TRUST_HOME" "")"
-    line="$(lane_launch_line "$cmd" "$harness" "$var" "$LANE_TRUST_HOME" "$form")" || exit 1
+    child_env="JARVIS_RECORD=$(lane_single_quote "$6") JARVIS_GENERATION=$(lane_single_quote "$7")"
+    line="$(lane_launch_line "$cmd" "$harness" "$var" "$LANE_TRUST_HOME" "$form" "" "$child_env")" || exit 1
     jq -cn --arg line "$line" --arg var "$var" --arg home "$LANE_TRUST_HOME" \
       '{line:$line, var:$var, effective_home:$home}' ;;
   inspect)

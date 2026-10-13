@@ -72,7 +72,7 @@ source "$TEST_DIR/lib/shared-skill-libs.sh"
 # the shipped library even under the control, whose library lists none of it.
 NAMES="$(env -i PATH="$PATH" "$BASH" -c 'source "$1/lane-launch.sh" && printf "%s " "${LANE_LAUNCH_SCRUB[@]}"' _ "$TEST_DIR/../scripts/lib")" \
   || { echo "lane-launch-scrub: list=unread" >&2; exit 1; }
-for name in CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID JARVIS_RECORD; do
+for name in CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID JARVIS_RECORD JARVIS_GENERATION; do
   assert_contains " $NAMES" " $name " "the scrub list names $name"
 done
 
@@ -85,6 +85,7 @@ held=""
 for name in $SCRUB_NAMES; do [[ -z "${!name+set}" ]] || held+="$name,"; done
 printf 'held=%s|account=%s|origin=%s|pane=%s' "${held:--}" "${!ACCOUNT_VAR:-unset}" \
   "${KENDEX_LANE_ORIGIN:-unset}" "${TMUX_PANE:-unset}"
+printf '|record=%s|generation=%s' "${JARVIS_RECORD:-unset}" "${JARVIS_GENERATION:-unset}"
 STUB
 chmod +x "$TMP_ROOT/bin/claude"
 for harness in codex pi copilot; do cp "$TMP_ROOT/bin/claude" "$TMP_ROOT/bin/$harness"; done
@@ -108,13 +109,19 @@ render() {
     [[ -z "$var" ]] || dir="$root/account"
     cmd="$harness"
     [[ "$form" != custom ]] || cmd="true && exec $harness $flags"
-    line="$(lane_launch_line "$cmd" "$harness" "$var" "$dir" "$form")" || exit
+    child_env=""
+    if [[ "$7" == explicit ]]; then
+      child_env="JARVIS_RECORD=$(lane_single_quote "$root/child record.json") JARVIS_GENERATION=7"
+      line="$(lane_launch_line "$cmd" "$harness" "$var" "$dir" "$form" "" "$child_env")" || exit
+    else
+      line="$(lane_launch_line "$cmd" "$harness" "$var" "$dir" "$form")" || exit
+    fi
     printf "export KENDEX_LANE_ORIGIN=%s && export KENDEX_USER_EMAIL=%s && %s" \
       "$(lane_single_quote "$root/wt")" "$(lane_single_quote "")" "$line"
-  ' _ "$LIB" "$1" "$2" "$3" "$TMP_ROOT" "${4:-}"
+  ' _ "$LIB" "$1" "$2" "$3" "$TMP_ROOT" "${4:-}" "${5:-}"
 }
 
-# FORM|HARNESS|ACCOUNT VAR (- for none)|FLAGS|LABEL
+# FORM|HARNESS|ACCOUNT VAR (- for none)|FLAGS|LABEL|CHILD_ENV
 printf '%s\n' \
   'prefix|claude|CLAUDE_CONFIG_DIR||Claude lane under the prefix' \
   'launcher|codex|CODEX_HOME||Codex lane through its launcher' \
@@ -122,10 +129,11 @@ printf '%s\n' \
   'unchecked|pi|-||no lane picked' \
   'custom|claude|CLAUDE_CONFIG_DIR||custom command under an account' \
   'custom|claude|-|--permission-mode=bypassPermissions|custom command under launch env words' \
+  'prefix|claude|CLAUDE_CONFIG_DIR||explicit Jarvis child identity|explicit' \
   > "$TMP_ROOT/rows"
-while IFS='|' read -r form harness var flags label; do
+while IFS='|' read -r form harness var flags label child_env; do
   account_var="${var#-}"
-  line="$(render "$form" "$harness" "$account_var" "$flags")"
+  line="$(render "$form" "$harness" "$account_var" "$flags" "$child_env")"
   # The parent's own account stands in the environment too: a picked lane's
   # variable is set after the scrub and wins.
   parent=(TMUX=parent-server TMUX_PANE=%9 CLAUDE_CONFIG_DIR=/parent CODEX_HOME=/parent COPILOT_HOME=/parent)
@@ -134,7 +142,12 @@ while IFS='|' read -r form harness var flags label; do
     SCRUB_NAMES="$NAMES" ACCOUNT_VAR="${account_var:-CLAUDE_CONFIG_DIR}" "$BASH" -c "$line")"
   account=/parent
   [[ -z "$account_var" ]] || account="$TMP_ROOT/account"
-  assert_eq "$got" "held=-|account=$account|origin=$TMP_ROOT/wt|pane=%9" "$label: child environment"
+  identity='held=-'; record=unset; generation=unset
+  if [[ "$child_env" == explicit ]]; then
+    identity='held=JARVIS_RECORD,JARVIS_GENERATION,'
+    record="$TMP_ROOT/child record.json"; generation=7
+  fi
+  assert_eq "$got" "$identity|account=$account|origin=$TMP_ROOT/wt|pane=%9|record=$record|generation=$generation" "$label: child environment"
 done < "$TMP_ROOT/rows"
 
 # Execute the launch in each configured shell, including a default-command
@@ -175,6 +188,23 @@ fi
 # Must-fail control: a scrub list naming none of the shipped names leaves every
 # one of them in the child. Copy all library dependencies.
 if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
+  cp -R "$LIB" "$TMP_ROOT/child-mutant-lib"
+  python3 - "$TMP_ROOT/child-mutant-lib/lane-launch.sh" <<'PYCONTROL'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+old = '  [[ -z "${7:-}" ]] || scrub+=" $7"'
+text = path.read_text()
+assert text.count(old) == 1
+changed = text.replace(old, '  [[ -z "${7:-}" ]] || :')
+assert changed != text
+path.write_text(changed)
+PYCONTROL
+  rc=0
+  env LAUNCH_LIB_UNDER_TEST="$TMP_ROOT/child-mutant-lib" "$BASH" "$TEST_DIR/open-terminal-lane-launch-scrub.sh" > "$TMP_ROOT/child-control.out" 2>&1 || rc=$?
+  assert_eq "$rc" 1 'control: omitting explicit child assignments fails the suite'
+  assert_contains "$(cat "$TMP_ROOT/child-control.out")" '  FAIL  explicit Jarvis child identity: child environment' \
+    'control: the child row rejects missing identity values'
   cp -R "$LIB" "$TMP_ROOT/mutant-lib"
   python3 - "$TMP_ROOT/mutant-lib/lane-launch.sh" <<'PY'
 import pathlib
