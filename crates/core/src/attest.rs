@@ -828,10 +828,11 @@ fn history_problem(
 /// transforms those edits against the base text, including ownership release
 /// for a value the person changed or deleted before that revision. Replay
 /// discards its record changes. The files are every `keys`
-/// position the pass prints: each registration's edit targets and each
-/// instruction shim that is an edit, read off the same standings `verify`
-/// prints rows for, so no position is printed as keys with nothing here
-/// to judge it. A revision that does not resolve, whose record this build
+/// position the pass prints: each registration's edit targets, each keyed
+/// instruction shim and the scope positions from
+/// [`crate::engine::generated_paths::scope_positions`]. Scope ownership at
+/// either endpoint includes its file, so an unchanged default's removal
+/// can still be compared after ownership leaves. A revision that does not resolve, whose record this build
 /// cannot read, or holding an entry whose removal cannot be named,
 /// answers `Unknown` for every file rather than reading an absent copy as
 /// an empty one, a moved entry as never moved, or a dropped one as kept.
@@ -865,6 +866,14 @@ pub fn foreign_since(
             by_file.entry(shim.path.clone()).or_default().push(edit);
         }
     }
+    for position in report.scope_positions.iter().cloned().chain(match &record {
+        Some(BaseRecord::Held(lock)) => {
+            crate::engine::generated_paths::scope_positions(env, &report.plan.scope, lock)
+        }
+        Some(BaseRecord::Absent) | None => Vec::new(),
+    }) {
+        by_file.entry(position.path).or_default();
+    }
     // `None` where `record` is, and where a dropped entry's removal cannot
     // be named: either way no file here is judged.
     let removals = record
@@ -886,7 +895,6 @@ pub fn foreign_since(
         &report.plan.scope,
         ownership,
         &report.record,
-        &report.registrations,
     ) && let Some(edits) = by_file.get_mut(&path)
     {
         edits.push(edit);

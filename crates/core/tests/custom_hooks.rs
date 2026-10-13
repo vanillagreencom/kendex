@@ -211,10 +211,12 @@ const CLAUDE_SETTINGS_ROWS: &[(&str, bool, &str, Option<bool>, Option<bool>, boo
         ("claude", false, PLUGIN, Some(false), Some(false), true),
         ("claude", true, PLUGIN, None, None, true),
         ("codex", false, HOOK, None, None, true),
-        ("claude", false, SKILL, None, None, false),
-        ("claude", false, AGENT, None, None, false),
-        ("claude", false, SKILL, Some(true), Some(true), false),
-        ("claude", false, MCP, None, None, false),
+        ("claude", false, SKILL, None, Some(true), true),
+        ("claude", false, AGENT, None, Some(true), true),
+        ("claude", false, SKILL, Some(true), Some(true), true),
+        ("claude", false, SKILL, Some(false), Some(false), true),
+        ("claude", false, AGENT, Some(false), Some(false), true),
+        ("claude", false, MCP, None, Some(true), true),
     ]
 };
 
@@ -250,7 +252,7 @@ fn claude_settings_catalog(w: &World) -> String {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn claude_project_settings_default_reaches_current_settings_registrations_only_in_project_scope() {
+fn claude_project_settings_default_reaches_enabled_claude_installations_only_in_project_scope() {
     for &(harness, global, declaration, existing, expected, settings_exist) in CLAUDE_SETTINGS_ROWS
     {
         let w = world();
@@ -317,6 +319,13 @@ fn claude_project_settings_default_reaches_current_settings_registrations_only_i
         }
         assert_eq!(rendered, expected_keys);
         let clean = audit(&w.env, &scope).unwrap();
+        if harness == "claude"
+            && !global
+            && (declaration.contains("[skills.") || declaration.contains("[agents."))
+        {
+            assert_eq!(clean.generated.shared.contains(&path), existing.is_none());
+            assert!(!clean.generated.whole.contains(&path));
+        }
         assert!(clean.plan.ops.iter().all(|op| {
             !matches!(&op.op, kendex_core::apply::Op::EditFile { path: edited, .. } if edited == &path)
         }));

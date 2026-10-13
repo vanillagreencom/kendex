@@ -671,13 +671,17 @@ fn bookkeeping_rows(
             path: standing.path.clone(),
             owns: Owns::File,
         };
+        let mut positions = vec![position];
+        if kind == "record" {
+            positions.extend_from_slice(&report.scope_positions);
+        }
         let mut row = placer.row(
             kind,
             &name,
             None,
             State::of(problem.is_none()),
             problem,
-            &[position],
+            &positions,
         );
         row.remedy = standing.remedy;
         tally.rows.push(row);

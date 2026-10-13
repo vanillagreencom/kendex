@@ -404,7 +404,10 @@ fn expected_rows() -> Vec<Expected> {
             "record",
             ".kendex-lock.json",
             None,
-            vec![(".kendex-lock.json", Owns::File, None)],
+            vec![
+                (".kendex-lock.json", Owns::File, None),
+                (".claude/settings.json", Owns::Keys, keys),
+            ],
         ),
         (
             "inventory",
@@ -612,6 +615,7 @@ fn every_key_unknown() -> Vec<(&'static str, Option<Foreign>)> {
         (".mcp.json", Some(Foreign::Unknown)),
         (".claude/settings.json", Some(Foreign::Unknown)),
         (".gemini/settings.json", Some(Foreign::Unknown)),
+        (".claude/settings.json", Some(Foreign::Unknown)),
     ]
 }
 
@@ -1743,6 +1747,12 @@ fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order(
                 ".claude/settings.json",
                 Some(Foreign::Unchanged)
             ),
+            (
+                "record",
+                RECORD,
+                ".claude/settings.json",
+                Some(Foreign::Unchanged)
+            ),
         ],
         "{document:?}"
     );
@@ -1757,6 +1767,221 @@ type ClaudeDefaultReplayCase = (
     Option<bool>,
     bool,
 );
+
+type ClaudeScopeSettingsCase = (
+    &'static str,
+    Option<bool>,
+    Option<bool>,
+    Option<kendex_core::lock::ClaudeProjectDefault>,
+    Option<Foreign>,
+);
+
+const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
+    use kendex_core::lock::ClaudeProjectDefault::{Owned, Released};
+    &[
+        (
+            "insert",
+            None,
+            Some(true),
+            Some(Owned),
+            Some(Foreign::Unchanged),
+        ),
+        ("user-false", Some(false), Some(false), Some(Released), None),
+        ("user-true", Some(true), Some(true), Some(Released), None),
+        (
+            "deleted",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Changed),
+        ),
+        ("removed", None, None, None, Some(Foreign::Unchanged)),
+        (
+            "unapplied-false",
+            None,
+            Some(false),
+            Some(Owned),
+            Some(Foreign::Changed),
+        ),
+        (
+            "foreign",
+            None,
+            Some(true),
+            Some(Owned),
+            Some(Foreign::Changed),
+        ),
+        (
+            "unreadable",
+            None,
+            Some(true),
+            Some(Owned),
+            Some(Foreign::Unknown),
+        ),
+    ]
+};
+
+#[allow(clippy::unwrap_used)]
+fn claude_scope_settings_project(
+    world: &World,
+    kind: &str,
+    item: &str,
+    case: &str,
+    initial: Option<bool>,
+) -> (PathBuf, &'static str) {
+    let source = format!("[sources.cat]\n{}\n", source_path(&world.catalog));
+    let declaration = format!("{source}[{kind}.{item}]\nsource = \"cat\"\n");
+    let project = second_project(world, &format!("{kind}-{case}"), &declaration);
+    let settings = project.join(".claude/settings.json");
+    let mut user = serde_json::json!({"permissions": {"allow": ["Read"]}, "model": "opus"});
+    if let Some(value) = initial {
+        user["switchModelsOnFlag"] = value.into();
+    }
+    write(&settings, &format!("{user}\n"));
+    commit(&project, "user settings before installation");
+    git(&project, &["tag", "scope-before"]);
+    let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(
+        installed.status.success(),
+        "{kind}-{case}: {}",
+        said(&installed)
+    );
+    commit(&project, "scope-owned settings");
+    git(&project, &["tag", "scope-installed"]);
+    let base = match case {
+        "unapplied-false" => {
+            edit_json(&settings, |value| {
+                value["switchModelsOnFlag"] = false.into();
+            });
+            "scope-before"
+        }
+        "deleted" => {
+            edit_json(&settings, |value| {
+                value
+                    .as_object_mut()
+                    .unwrap()
+                    .shift_remove("switchModelsOnFlag");
+            });
+            "scope-installed"
+        }
+        "removed" => {
+            let manifest = project.join("kendex.toml");
+            let text = fs::read_to_string(&manifest).unwrap();
+            fs::write(
+                &manifest,
+                text.replace(&format!("[{kind}.{item}]\nsource = \"cat\"\n"), ""),
+            )
+            .unwrap();
+            "scope-installed"
+        }
+        "foreign" => {
+            edit_json(&settings, |value| {
+                value["model"] = "sonnet".into();
+            });
+            "scope-before"
+        }
+        "unreadable" => "missing-scope-base",
+        _ => "scope-before",
+    };
+    if case != "unapplied-false" {
+        let applied = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+        assert!(
+            applied.status.success(),
+            "{kind}-{case}: {}",
+            said(&applied)
+        );
+    }
+    (project, base)
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownership() {
+    use kendex_core::lock::ClaudeProjectDefault::Owned;
+    use kendex_core::model::Scope;
+    let world = world();
+    let permissions = serde_json::json!({"allow": ["Read"]});
+    for (kind, item) in [("skills", "second"), ("agents", "review")] {
+        for &(case, initial, expected, ownership, foreign) in CLAUDE_SCOPE_SETTINGS_CASES {
+            let (project, base) = claude_scope_settings_project(&world, kind, item, case, initial);
+            let settings = project.join(".claude/settings.json");
+            let actual: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+            assert_eq!(
+                actual["switchModelsOnFlag"].as_bool(),
+                expected,
+                "{kind}-{case}"
+            );
+            assert_eq!(actual["permissions"], permissions, "{kind}-{case}");
+            assert_eq!(
+                actual["model"],
+                if case == "foreign" { "sonnet" } else { "opus" }
+            );
+            let scope = Scope::Project {
+                root: project.clone(),
+            };
+            let env = Env::host_rooted(&world.home);
+            let report = kendex_core::engine::audit(&env, &scope).unwrap();
+            assert_eq!(
+                kendex_core::lock::load(&project.join(RECORD))
+                    .unwrap()
+                    .claude_project_default,
+                ownership,
+                "{kind}-{case}"
+            );
+            let inventory: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(project.join(".kendex-generated.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                inventory
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|path| path == ".claude/settings.json"),
+                ownership == Some(Owned),
+                "{kind}-{case}"
+            );
+            assert_eq!(
+                kendex_core::attest::foreign_since(&env, &project, base, &report)
+                    .get(&settings)
+                    .copied(),
+                foreign,
+                "{kind}-{case}"
+            );
+            let (output, document) = verify_from(&world.home, &project, "project", Some(base));
+            assert_eq!(
+                output.status.success(),
+                case != "unapplied-false",
+                "{kind}-{case}: {}",
+                said(&output)
+            );
+            assert_eq!(
+                row(&document, "record", RECORD, None).unwrap().state,
+                if case == "unapplied-false" {
+                    State::Failed
+                } else {
+                    State::Ok
+                },
+                "{kind}-{case}"
+            );
+            let expected_positions = if ownership == Some(Owned) {
+                vec![("record", RECORD, ".claude/settings.json", foreign)]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(
+                keys_positions(&document),
+                expected_positions,
+                "{kind}-{case}"
+            );
+            if case == "removed" {
+                assert!(
+                    matches!(report.generated.recorded, kendex_core::engine::Recorded::Known(ref paths) if paths.contains(&settings))
+                );
+            }
+        }
+    }
+}
 
 const CLAUDE_DEFAULT_REPLAY_CASES: &[ClaudeDefaultReplayCase] = {
     use ClaudeDefaultAction::{AddSkill, Apply, Disable, Unreachable};
@@ -1933,6 +2158,14 @@ fn claude_scope_default_transitions_replay_without_changing_user_settings() {
             expected_keys.push((
                 "output-style",
                 "STE",
+                ".claude/settings.json",
+                Some(Foreign::Unchanged),
+            ));
+        }
+        if expected == Some(true) && initial.is_none() && change.is_none() {
+            expected_keys.push((
+                "record",
+                RECORD,
                 ".claude/settings.json",
                 Some(Foreign::Unchanged),
             ));
@@ -2157,12 +2390,20 @@ fn a_moved_hook_is_replayed_with_its_retirement_first() {
     assert!(output.status.success(), "{}", said(&output));
     assert_eq!(
         keys_positions(&document),
-        vec![(
-            "hook",
-            "zebra",
-            ".claude/settings.json",
-            Some(Foreign::Unchanged)
-        )],
+        vec![
+            (
+                "hook",
+                "zebra",
+                ".claude/settings.json",
+                Some(Foreign::Unchanged)
+            ),
+            (
+                "record",
+                RECORD,
+                ".claude/settings.json",
+                Some(Foreign::Unchanged)
+            )
+        ],
         "{document:?}"
     );
 }
@@ -2181,10 +2422,17 @@ fn a_moved_hook_is_replayed_with_its_retirement_first() {
 /// removal in the replay, the retired entry is still in the replayed copy
 /// and every `Unchanged` here reads `Changed`; replaying the kept one's
 /// removal reads its row's `Unchanged` as `Changed` too.
-#[test]
+type RegistrationReplayCase = (
+    &'static str,
+    String,
+    String,
+    Option<Box<dyn Fn(&Path)>>,
+    &'static [&'static str],
+    Vec<(&'static str, &'static str, &'static str, Option<Foreign>)>,
+);
+
 #[allow(clippy::unwrap_used)]
-fn a_dropped_registration_is_replayed_with_its_removal() {
-    let world = world();
+fn dropped_registration_cases(world: &World) -> Vec<RegistrationReplayCase> {
     let servers = world.home.join("servers");
     write(&servers.join("kendex.toml"), "[catalog]\n");
     for name in ["alpha", "beta"] {
@@ -2216,16 +2464,13 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
             &format!("{}# mine\n", fs::read_to_string(&script).unwrap()),
         );
     };
-    let settings = |kind, name, foreign| vec![(kind, name, ".claude/settings.json", Some(foreign))];
-    type Row = (
-        &'static str,
-        String,
-        String,
-        Option<Box<dyn Fn(&Path)>>,
-        &'static [&'static str],
-        Vec<(&'static str, &'static str, &'static str, Option<Foreign>)>,
-    );
-    let rows: Vec<Row> = vec![
+    let settings = |kind, name, foreign| {
+        vec![
+            (kind, name, ".claude/settings.json", Some(foreign)),
+            ("record", RECORD, ".claude/settings.json", Some(foreign)),
+        ]
+    };
+    vec![
         (
             "hook",
             format!("{}{}", hook("zebra"), hook("yak")),
@@ -2264,10 +2509,24 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
             format!("{source}{}", server("alpha")),
             None,
             &[],
-            vec![("mcp-server", "alpha", ".mcp.json", Some(Foreign::Unchanged))],
+            vec![
+                ("mcp-server", "alpha", ".mcp.json", Some(Foreign::Unchanged)),
+                (
+                    "record",
+                    RECORD,
+                    ".claude/settings.json",
+                    Some(Foreign::Unchanged),
+                ),
+            ],
         ),
-    ];
-    for (name, before, after, edit, failing, expected) in rows {
+    ]
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dropped_registration_is_replayed_with_its_removal() {
+    let world = world();
+    for (name, before, after, edit, failing, expected) in dropped_registration_cases(&world) {
         let (output, document) = retired(&world, name, &before, &after, edit.as_deref());
         let failed: Vec<&str> = document
             .rows

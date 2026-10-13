@@ -377,6 +377,9 @@ pub struct EngineReport {
     /// covers the whole-file group and reads the rest as files it writes
     /// into — one collection, so the two cannot name different files.
     pub generated: super::GeneratedPaths,
+    /// Shared positions owned by the record this pass read. A proposed
+    /// ownership release does not erase what verification must compare.
+    pub scope_positions: Vec<super::Position>,
     /// The settings edits each registration this pass plans is, by lock
     /// entry key, as the pass held them in place: a record write for an
     /// entry this pass proved holds them in place again before it writes.
@@ -596,6 +599,7 @@ impl EngineReport {
             recorded_gone: Vec::new(),
             own_edit_rows: BTreeSet::new(),
             generated: super::GeneratedPaths::default(),
+            scope_positions: Vec::new(),
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
             wanted: BTreeMap::new(),

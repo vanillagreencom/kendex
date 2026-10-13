@@ -96,6 +96,7 @@ fn a_stale_copy_names_its_revision_both_hashes_and_the_adoption_step() {
         let planned = BTreeSet::new();
         let unrendered = super::super::Unrendered {
             planned: &planned,
+            scope_positions: Vec::new(),
             leaving: Vec::new(),
             kept: Vec::new(),
             recorded: Default::default(),

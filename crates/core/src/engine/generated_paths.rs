@@ -18,6 +18,21 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use super::desired::{Artifact, DesiredState, Owns};
 use super::instruction_shims::{ShimStanding, keyed_position, recorded_shims};
 
+/// Shared settings owned by the scope rather than an installation.
+/// A released default proves no ownership of the person's settings.
+pub fn scope_positions(env: &Env, scope: &Scope, lock: &crate::lock::Lock) -> Vec<super::Position> {
+    if matches!(scope, Scope::Project { .. })
+        && lock.claude_project_default == Some(crate::lock::ClaudeProjectDefault::Owned)
+    {
+        vec![super::Position {
+            path: super::targets::claude_settings(env, scope),
+            owns: Owns::Keys,
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
 
@@ -57,7 +72,7 @@ pub struct GeneratedPaths {
     /// their links and registration scripts.
     pub whole: BTreeSet<PathBuf>,
     /// Shared configuration files kendex writes one key in — the
-    /// `Registration` edit targets and Gemini's instruction shim.
+    /// `Registration` edit targets, keyed instruction shims and scope defaults.
     /// `desired.rs` states why kendex edits rather than renders them: every
     /// unrelated key in them stays intact.
     pub shared: BTreeSet<PathBuf>,
@@ -358,6 +373,11 @@ pub(super) fn recorded(env: &Env, scope: &Scope, lock: &crate::lock::Lock) -> Re
         });
     };
     let mut recorded = BTreeSet::new();
+    recorded.extend(
+        scope_positions(env, scope, &at_head)
+            .into_iter()
+            .map(|position| position.path),
+    );
     for entry in at_head.entries.values() {
         let edits = super::owned::installed(env, scope, entry).edits?;
         recorded.extend(edits.into_iter().map(|(path, _)| path));
@@ -407,6 +427,12 @@ pub(super) fn plan(
     ops: &mut Vec<PlannedOp>,
 ) -> Result<GeneratedPaths> {
     let mut generated = collect(state, unrendered.planned, shims, drift);
+    generated.shared.extend(
+        unrendered
+            .scope_positions
+            .iter()
+            .map(|position| position.path.clone()),
+    );
     let Scope::Project { root } = scope else {
         return Ok(generated);
     };
@@ -517,6 +543,7 @@ impl KeptPositions {
 #[derive(Debug)]
 pub(super) struct Unrendered<'a> {
     planned: &'a BTreeSet<(ItemKind, String, HarnessId)>,
+    scope_positions: Vec<super::Position>,
     /// Every package this pass takes out of the scope: its kind and name
     /// are in the old record and not in the new one. A tree one tool drops
     /// while another keeps the package is not among them.
@@ -554,6 +581,7 @@ impl<'a> Unrendered<'a> {
         };
         Ok(Unrendered {
             planned: &item_pass.planned,
+            scope_positions: scope_positions(env, scope, after),
             leaving: trees(before, &|_, entry| {
                 !staying.contains(&(entry.kind, entry.name.as_str()))
             }),
