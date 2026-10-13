@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 const lifecycleCases = [
@@ -26,12 +26,14 @@ test("widget lifecycle scenarios", () => {
 		mkdirSync(root, { recursive: true });
 		const dir = mkdtempSync(resolve(root, "widget-lifecycle-"));
 		try {
+			const startedAt = Date.now();
 			const result = spawnSync(process.execPath, [resolve(import.meta.dir, "fixtures/widget-lifecycle.ts"), scenario, String(seconds)], {
 				cwd: dir,
 				env: { ...process.env, PI_CODING_AGENT_DIR: dir, PI_BG_TASK_DIR: dir },
 				encoding: "utf8",
 				timeout: 10_000,
 			});
+			if (scenario === "expiry-above") console.log("widget timing:", JSON.stringify({ startedAt, finishedAt: Date.now(), phases: readFileSync(resolve(dir, "widget-timing.json"), "utf8") }));
 			expect({ scenario, error: result.error?.message, status: result.status, stderr: result.stderr, stdout: result.stdout }).toEqual({
 				scenario, error: undefined, status: 0, stderr: "", stdout: `widget lifecycle completed: ${scenario}\n`,
 			});

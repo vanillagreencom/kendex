@@ -7,6 +7,13 @@ import type { BackgroundTaskSnapshot } from "../../extensions/types.js";
 import type { TUI } from "@earendil-works/pi-tui";
 import type { MiniDashboardComponent, MiniDashboardFactory } from "../../extensions/stacked-widget.js";
 
+const phases: { phase: string; at: number }[] = [];
+const mark = (phase: string) => {
+	phases.push({ phase, at: performance.timeOrigin + performance.now() });
+	writeFileSync(join(process.cwd(), "widget-timing.json"), JSON.stringify(phases));
+};
+mark("entry");
+
 // Only external peer exports and the Pi host boundary are mocked. Settings,
 // restore, syncWidget, expiry and the shared stack run their production code.
 mock.module("@earendil-works/pi-coding-agent", () => ({ getShellConfig: () => { throw new Error("unexpected spawn"); } }));
@@ -22,6 +29,7 @@ mock.module("typebox", () => {
 	return { Type: { Object: schema, Optional: schema, String: schema, Number: schema, Boolean: schema } };
 });
 
+mark("mocks-ready");
 const { default: backgroundTasks } = await import("../../extensions/background-tasks.js");
 const { setMiniDashboardWidget } = await import("../../extensions/stacked-widget.js");
 const { BG_WIDGET_KEY, CONFIG_ID } = await import("../../extensions/constants.js");
@@ -32,6 +40,7 @@ writeFileSync(join(process.cwd(), "settings.json"), JSON.stringify({
 	kendex: { extensionManager: { config: { [CONFIG_ID]: { widgetFinishedRetentionSeconds: seconds, widgetPlacement: placement } } } },
 }));
 
+mark("scenario");
 const start = 1_700_000_000_000;
 let now = start;
 Date.now = () => now;
@@ -169,4 +178,5 @@ try {
 } finally {
 	await active.emit("session_shutdown");
 }
+mark("completed");
 console.log(`widget lifecycle completed: ${scenario}`);
