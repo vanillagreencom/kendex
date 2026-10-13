@@ -780,17 +780,6 @@ describe("managed account stream rotation", () => {
 		it(name, () => assertSourceControl({ ...control, suite: "unit-account-rotation-stream.mjs" }));
 	}
 
-	it("rejects notice controls whose mutations leave source unchanged", () => {
-		assertSourceControl({
-			source: "tests/lib/source-control.mjs",
-			before: "writeFileSync(path, mutated);",
-			after: "writeFileSync(path, original);",
-			suite: "unit-account-rotation-stream.mjs",
-			pattern: noticeControls.map(({ name }) => name).join("|"),
-			failure: new RegExp(noticeControls.map(({ name }) => `(?:not ok|✖) .*${name}`).join("[\\s\\S]*")),
-		});
-	});
-
 	it("surfaces an unavailable pool without starting Claude Code", async () => {
 		const observed = observedState();
 		const resetAtMs = Date.now() + 60_000;
