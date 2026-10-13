@@ -131,7 +131,7 @@ Non-fatal diagnostics on stderr:
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
     " compacted, installed, enabled, active, restarted, listening, connected,"
-    " reconnected, reloading, slack-relay on stdout; tracker-links-unavailable is a non-fatal"
+    " reconnected, reloading, slack-relay, ts on stdout; tracker-links-unavailable is a non-fatal"
     " notice on stderr; refusals on stderr with exit 2: python3 and"
     " settings-unreadable from the launcher before Python starts, then "
     + ", ".join(EXPLAIN) + ".",
