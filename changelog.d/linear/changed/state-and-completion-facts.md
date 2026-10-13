@@ -1,0 +1,1 @@
+- Read state-entry times from issue history, tick verified boxes through issue completion, and select an app token for cross-team relations.

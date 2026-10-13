@@ -43,6 +43,8 @@ Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_va
 
 ## Reads
 
+Read the time an issue entered a state from its history: the matching `toState` row's `createdAt`. Read every history page needed to identify the latest transition into that state. `updated_at` records the issue's latest update, which can be a different change. Use Linear's API or activity history; `issues get` exposes no history field. If the transition is unavailable, report its time as unread.
+
 ```bash
 linear.sh issues list --project "Phase 2" --state "Todo,In Progress" --max
 linear.sh issues get ABC-100 --with-bundle
@@ -104,6 +106,8 @@ No match leaves the calling workflow's missing-file behavior unchanged. Multiple
 
 ## Blocked Label vs Issue Relations
 
+For a cross-team relation, select a minted app token through `LINEAR_APP_TOKEN`. Confirm `credential: "app-token"` with `auth-check` and check that the actor can access both teams. Credential selection follows [README.md § Setup](README.md#setup).
+
 A blocker that is itself a Linear issue is a relation (`--blocked-by`); an external one (vendor, license) is the `blocked` label plus a comment.
 
 Blocking relations may connect issues with the same direct parent, two top-level issues, or a blocked leaf to an issue outside its ancestors. An ancestor/descendant pair is refused at any depth; use `--related` for traceability. The two issues need not share a project. One query reads child status and parent chains. An incomplete chain refuses.
@@ -124,7 +128,7 @@ A **name** selects one project on `issues create` / `update` / `bulk-update --pr
 - `issues activate` assigns an issue nobody is assigned to the user whose email is `KENDEX_USER_EMAIL`, in the same mutation, and never replaces an assignee. It says which happened in one stderr line, `assignee-set`, `assignee-kept` or `assignee-skipped` with its `cause=`, and in the result's `assignee` field; a skip still activates, and a failed issue read, users lookup or update fails the activation with no line (lines: `issues --help`). `--assignee` on create and update takes the same address form: a value containing `@` matches a user's whole email, case-insensitively; a user id is sent as given.
 - `issues bulk-update` is non-atomic: on partial failure it emits `partial: true` with per-issue results and exits non-zero.
 - `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command.
-- `issues complete` posts an optional summary before setting Done. With `--post-merge-at`, it validates the checklist against the merged PR's `mergedAt` and sets Verifying while a post-merge box remains open. It requires every branch-provable box to be checked. Each post-merge box uses the project-management skill's Done-when form and trigger deadline window. Without that option, explicit completion keeps its ordinary Done behavior. Its default output is JSON; `--format ids` or `--format=ids` prints only the identifier. A failed state update after a posted summary exits nonzero and reports on stderr in either format.
+- `issues complete` posts an optional summary before setting Done. Use `--done-when-met all` or a comma-separated list of box numbers to tick verified Done-when boxes in the same update that sets the state. With `--post-merge-at`, it validates the checklist against the merged PR's `mergedAt` and sets Verifying while a post-merge box remains open. It requires every branch-provable box to be checked. Each post-merge box uses the project-management skill's Done-when form and trigger deadline window. Without that option, explicit completion keeps its ordinary Done behavior. Its default output is JSON; `--format ids` or `--format=ids` prints only the identifier. A failed state update after a posted summary exits nonzero and reports on stderr in either format.
 
 ## validate-completion
 

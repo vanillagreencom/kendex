@@ -1,0 +1,1 @@
+- Keep send results separate from output filters, read totals and ages from their source records, and remove sign-in query strings before logging browser tabs.

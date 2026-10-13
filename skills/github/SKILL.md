@@ -81,6 +81,8 @@ github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 
 ### Waiting for merge state
 
+Read a pull request's merge time from `mergedAt`. An approval or a "merging" notice does not establish that time. Read its queue entry through a GraphQL query for `pullRequest { mergeQueueEntry { position } }`; `gh pr view --json` exposes no `mergeQueueEntry` field.
+
 **Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge: read `state`, which `pr-merge --check` carries. For a PR whose merge state GitHub is still computing, follow the orch skill's `merge-pr.md` § 5 step 1 explicit arm path. The route contract is `pr-merge --help` § Merge route. To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions. Use the review-gate skill's reducer when installed (`.agents/skills/review-gate/scripts/pr-watch.sh`).
 
 ## Output Formats
@@ -92,6 +94,8 @@ Formats and flag rules: `github.sh --help`.
 Keep secrets in `.env.local`; commit non-secret defaults to `kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
 
 ## Troubleshooting
+
+A [new required-workflow rule](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules#ruleset-workflows-for-open-pull-requests) does not automatically start its workflow for an open pull request. A new commit, a branch update or closing and reopening the pull request triggers it. Read the workflow run against the current rule before reporting that its requirement is met.
 
 **`VAR_SIGN`**: use a multi-line GraphQL query with `-F` variables.
 
