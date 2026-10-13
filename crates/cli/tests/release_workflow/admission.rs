@@ -1,4 +1,5 @@
-//! Inputs: .github/workflows/release.yml and .github/workflows/publish-aur.yml.
+//! Inputs: .github/workflows/release.yml, .github/workflows/publish-aur.yml,
+//! and skills/commit-guards/scripts/changelog-entries with its libraries.
 //! Shell fixtures prove source admission, create-only tags and main dispatch.
 //! They do not prove GitHub environment policy or live token permissions.
 
@@ -45,6 +46,8 @@ impl Fixture {
         fixture.git(&["init", "-b", "main"]);
         fixture.git(&["config", "user.name", "Fixture"]);
         fixture.git(&["config", "user.email", "fixture@example.test"]);
+        fixture.git(&["config", "gc.auto", "0"]);
+        fixture.git(&["config", "maintenance.auto", "false"]);
         fs::create_dir_all(fixture.root.join("changelog.d")).unwrap();
         fs::write(
             fixture.root.join("changelog.d/README.md"),
@@ -72,10 +75,112 @@ impl Fixture {
         fs::remove_dir_all(fixture.root.join("changelog.d/fixed")).unwrap();
         fixture.main = fixture.commit("later main");
         fixture.git(&["init", "--bare", "remote.git"]);
+        fixture.git(&["--git-dir=remote.git", "config", "gc.auto", "0"]);
+        fixture.git(&[
+            "--git-dir=remote.git",
+            "config",
+            "maintenance.auto",
+            "false",
+        ]);
         fixture.git(&["remote", "add", "origin", "remote.git"]);
         fixture.git(&["push", "origin", "main"]);
+        fixture.git(&[
+            "push",
+            "origin",
+            &format!("{}:refs/pull/1/head", fixture.source),
+        ]);
         fs::create_dir_all(fixture.root.join("bin")).unwrap();
+        fs::create_dir_all(fixture.root.join("skills/commit-guards")).unwrap();
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/commit-guards/scripts"),
+            fixture.root.join("skills/commit-guards/scripts"),
+        )
+        .unwrap();
+        fixture.shim(
+            "gh",
+            r#"[ "$1:$2:$3" = "api:repos/vanillagreencom/kendex/pulls/$REQUESTED_PR:--jq" ]
+jq -nr --arg commit "$REQUESTED_COMMIT" --arg head "${PR_HEAD:-$REQUESTED_COMMIT}" \
+  --arg base "${PR_BASE:-main}" --arg merged "${PR_MERGED:-true}" --arg merge "${PR_MERGE:-$REQUESTED_COMMIT}" \
+  '{merged: ($merged == "true"), base: {ref: $base}, merge_commit_sha: $merge, head: {sha: $head}} | '"$4""#,
+        );
         fixture
+    }
+
+    #[allow(
+        clippy::unwrap_used,
+        reason = "queue fixture writes are test preconditions"
+    )]
+    fn queued_release(method: &str) -> (Self, String) {
+        let mut fixture = Self::new();
+        fs::write(
+            fixture.root.join(".git/info/exclude"),
+            "bin/\nskills/\nremote.git/\ngithub.output\ngh.log\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.root.join("CHANGELOG.md"),
+            "# Changelog\n\n## [Unreleased]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.root.join("changelog.d/fixed")).unwrap();
+        fs::write(
+            fixture.root.join("changelog.d/fixed/cut.md"),
+            "- The release entry.\n",
+        )
+        .unwrap();
+        fixture.commit("release input");
+        fixture.git(&["checkout", "-b", "collation-pr"]);
+        let collate = fixture
+            .command("/bin/bash")
+            .args([
+                "skills/commit-guards/scripts/changelog-entries",
+                "--collate",
+            ])
+            .env("COMMIT_GUARDS_CHANGELOG_COLLATE", "1")
+            .output()
+            .unwrap();
+        assert!(
+            collate.status.success(),
+            "{}",
+            String::from_utf8_lossy(&collate.stdout)
+        );
+        let collation_head = fixture.commit("collate release");
+
+        fixture.git(&["checkout", "main"]);
+        fixture.git(&["checkout", "-b", "fragment-pr"]);
+        fs::create_dir_all(fixture.root.join("changelog.d/added")).unwrap();
+        fs::write(
+            fixture.root.join("changelog.d/added/next.md"),
+            "- The next release entry.\n",
+        )
+        .unwrap();
+        fixture.commit("later fragment");
+        fixture.git(&["checkout", "main"]);
+        fixture.git(&["merge", "--squash", "fragment-pr"]);
+        fixture.commit("fragment PR merges ahead in queue");
+        if method == "squash" {
+            fixture.git(&["merge", "--squash", "collation-pr"]);
+            fixture.source = fixture.commit("first release collation merge");
+        } else {
+            fixture.git(&[
+                "merge",
+                "--no-ff",
+                "-m",
+                "first release collation merge",
+                "collation-pr",
+            ]);
+            fixture.source = fixture.git(&["rev-parse", "HEAD"]);
+        }
+        fs::write(fixture.root.join("after-release"), "later main change\n").unwrap();
+        fixture.main = fixture.commit("main advances after release merge");
+        fixture.git(&["push", "origin", "main"]);
+        fixture.git(&[
+            "push",
+            "--force",
+            "origin",
+            &format!("{collation_head}:refs/pull/1/head"),
+        ]);
+        (fixture, collation_head)
     }
 
     fn command(&self, program: &str) -> Command {
@@ -124,7 +229,7 @@ impl Fixture {
         reason = "the shell must launch before a workflow assertion can run"
     )]
     fn shell(&self, script: &str, environment: &[(&str, &str)]) -> Output {
-        self.command("bash")
+        self.command("/bin/bash")
             .args(["--noprofile", "--norc", "-euo", "pipefail", "-c", script])
             .env(
                 "PATH",
@@ -138,6 +243,7 @@ impl Fixture {
             .env("GITHUB_OUTPUT", self.root.join("github.output"))
             .env("GH_LOG", self.root.join("gh.log"))
             .env("GITHUB_SHA", &self.main)
+            .env("REQUESTED_PR", "1")
             .envs(environment.iter().copied())
             .output()
             .unwrap()
@@ -197,6 +303,19 @@ fn select(
     commit: &str,
 ) -> Output {
     fs::write(fixture.root.join("github.output"), "").unwrap();
+    let resolved = fixture
+        .command("git")
+        .args(["rev-parse", "--verify", &format!("{commit}^{{commit}}")])
+        .output()
+        .unwrap();
+    let identity = if resolved.status.success() {
+        String::from_utf8(resolved.stdout)
+            .unwrap()
+            .trim()
+            .to_owned()
+    } else {
+        fixture.main.clone()
+    };
     fixture.shell(
         script,
         &[
@@ -204,6 +323,8 @@ fn select(
             ("RUN_REF", run_ref),
             ("REQUESTED_TAG", tag),
             ("REQUESTED_COMMIT", commit),
+            ("PR_MERGE", &identity),
+            ("PR_HEAD", &identity),
         ],
     )
 }
@@ -264,6 +385,111 @@ fn release_fragments_are_read_from_the_selected_commit() {
         fixture.outputs().get("source-commit"),
         Some(&fixture.source)
     );
+}
+
+#[test]
+fn the_first_collation_merge_tags_with_later_fragments_reserved() {
+    for method in ["squash", "merge"] {
+        let (fixture, collation_head) = Fixture::queued_release(method);
+        let environment = [
+            ("EVENT_NAME", "workflow_dispatch"),
+            ("RUN_REF", "refs/heads/main"),
+            ("REQUESTED_TAG", "v5.1.0"),
+            ("REQUESTED_COMMIT", fixture.source.as_str()),
+            ("PR_HEAD", collation_head.as_str()),
+        ];
+        let script = selection_script();
+        let selected = fixture.shell(&script, &environment);
+        assert!(
+            selected.status.success(),
+            "{method}: {}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        assert_eq!(
+            fixture.outputs().get("source-commit"),
+            Some(&fixture.source)
+        );
+        assert!(fixture.root.join("changelog.d/added/next.md").is_file());
+        assert!(!fixture.root.join("changelog.d/fixed/cut.md").exists());
+
+        let old_flow = mutant(
+            &script,
+            "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
+            "fragments=$(git ls-tree -r --name-only \"$source_commit\" -- changelog.d)\n[ \"$fragments\" = changelog.d/README.md ]",
+        );
+        assert!(
+            !fixture.shell(&old_flow, &environment).status.success(),
+            "{method}: prior flow accepted the queue fragment"
+        );
+
+        api_shim(
+            &fixture,
+            "git --git-dir=remote.git update-ref \"$ref\" \"$sha\" ''",
+        );
+        assert!(run_tag(&fixture, &tag_script()).status.success());
+        assert_eq!(
+            fixture.git(&[
+                "--git-dir=remote.git",
+                "rev-parse",
+                "refs/tags/v5.1.0^{commit}"
+            ]),
+            fixture.source
+        );
+        assert_ne!(fixture.source, collation_head);
+        assert_ne!(fixture.source, fixture.main);
+    }
+}
+
+#[test]
+fn the_release_pr_must_bind_the_collation_head_to_the_selected_main_merge() {
+    let fixture = Fixture::new();
+    fixture.git(&[
+        "--git-dir=remote.git",
+        "update-ref",
+        "refs/pull/0/head",
+        &fixture.source,
+    ]);
+    let script = selection_script();
+    for (field, value, disabled) in [
+        (
+            "REQUESTED_PR",
+            "0",
+            Some((
+                "if [[ ! \"$REQUESTED_PR\" =~ ^[1-9][0-9]*$ ]]; then",
+                "if false; then",
+            )),
+        ),
+        (
+            "PR_MERGED",
+            "false",
+            Some((
+                "if [ \"$merged:$base:$merge_commit\" != \"true:main:$source_commit\" ]; then",
+                "if false; then",
+            )),
+        ),
+        ("PR_BASE", "other", None),
+        ("PR_MERGE", fixture.main.as_str(), None),
+        ("PR_HEAD", "ffffffffffffffffffffffffffffffffffffffff", None),
+    ] {
+        let environment = [
+            ("EVENT_NAME", "workflow_dispatch"),
+            ("RUN_REF", "refs/heads/main"),
+            ("REQUESTED_TAG", "v5.1.0"),
+            ("REQUESTED_COMMIT", fixture.source.as_str()),
+            (field, value),
+        ];
+        assert!(
+            !fixture.shell(&script, &environment).status.success(),
+            "{field}"
+        );
+        if let Some((original, replacement)) = disabled {
+            let changed = mutant(&script, original, replacement);
+            assert!(
+                fixture.shell(&changed, &environment).status.success(),
+                "{field} control"
+            );
+        }
+    }
 }
 
 #[test]
@@ -615,8 +841,8 @@ fn source_admission_controls_reach_each_independent_rule() {
         ),
         (
             "fragment state",
-            "if [ \"$fragments\" != changelog.d/README.md ]; then",
-            "if false; then",
+            "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
+            ": \"$collation_commit\"",
             "workflow_dispatch",
             "refs/heads/main",
             "v5.1.0",
@@ -647,7 +873,7 @@ fn source_admission_controls_reach_each_independent_rule() {
 fn malformed_commit_characters_are_refused_before_git_resolution() {
     let fixture = Fixture::new();
     let real_git = fixture
-        .command("bash")
+        .command("/bin/bash")
         .args(["-c", "command -v git"])
         .output()
         .unwrap();
@@ -692,7 +918,7 @@ fn malformed_commit_characters_are_refused_before_git_resolution() {
 fn an_unreadable_fragment_tree_refuses_the_release_source() {
     let fixture = Fixture::new();
     let real_git = fixture
-        .command("bash")
+        .command("/bin/bash")
         .args(["-c", "command -v git"])
         .output()
         .unwrap();
@@ -717,8 +943,8 @@ fn an_unreadable_fragment_tree_refuses_the_release_source() {
     assert!(fixture.outputs().is_empty());
     let changed = mutant(
         &script,
-        "fragments=$(git ls-tree -r --name-only \"$source_commit\" -- changelog.d)",
-        "fragments=changelog.d/README.md",
+        "skills/commit-guards/scripts/changelog-entries --collated \"$collation_commit\"",
+        ": \"$collation_commit\"",
     );
     assert!(
         select(

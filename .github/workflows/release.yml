@@ -33,6 +33,10 @@ on:
         description: Full merged commit ID from main
         type: string
         required: true
+      release_pr:
+        description: Merged release collation pull request number
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -54,6 +58,9 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       mode: ${{ steps.source.outputs.mode }}
       source-commit: ${{ steps.source.outputs.source-commit }}
@@ -72,6 +79,8 @@ jobs:
           RUN_REF: ${{ github.ref }}
           REQUESTED_TAG: ${{ inputs.tag }}
           REQUESTED_COMMIT: ${{ inputs.release_commit }}
+          REQUESTED_PR: ${{ inputs.release_pr }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$RUN_REF" != refs/heads/main ]; then
@@ -102,12 +111,23 @@ jobs:
                 *) echo "::error::release-source: tag=$REQUESTED_TAG"; echo "The requested release tag must start with v and name a version."; exit 1 ;;
               esac
               git check-ref-format "refs/tags/$REQUESTED_TAG"
-              fragments=$(git ls-tree -r --name-only "$source_commit" -- changelog.d)
-              if [ "$fragments" != changelog.d/README.md ]; then
-                echo "::error::release-source: fragments=$source_commit"
-                echo "The release commit must contain only changelog.d/README.md under changelog.d."
+              if [[ ! "$REQUESTED_PR" =~ ^[1-9][0-9]*$ ]]; then
+                echo "::error::release-source: pr=$REQUESTED_PR"
+                echo "release_pr must be a pull request number."
                 exit 1
               fi
+              provenance=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$REQUESTED_PR" --jq \
+                '[.merged, .base.ref, .merge_commit_sha, .head.sha] | @tsv')
+              IFS=$'\t' read -r merged base merge_commit collation_commit <<< "$provenance"
+              if [ "$merged:$base:$merge_commit" != "true:main:$source_commit" ]; then
+                echo "::error::release-source: provenance=$REQUESTED_PR:$source_commit"
+                echo "The release pull request must name this merged commit on main."
+                exit 1
+              fi
+              # A squash merge does not retain the PR head in main's ancestry.
+              git fetch --no-tags origin "refs/pull/$REQUESTED_PR/head"
+              git rev-parse --verify --end-of-options "${collation_commit}^{commit}" > /dev/null
+              skills/commit-guards/scripts/changelog-entries --collated "$collation_commit"
               release_tag="$REQUESTED_TAG"
               ;;
             *) echo "::error::release-source: event=$EVENT_NAME"; echo "This event cannot select a release source."; exit 1 ;;
