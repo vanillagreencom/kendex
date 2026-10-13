@@ -780,13 +780,13 @@ Symlink entries that shadow tracked content:
 
 info/exclude entries:
   The ignore entry setup writes for each symlinked path goes into the COMMON
-  git dir's info/exclude, which every checkout reads. The entry is '/<path>',
-  anchored at the repository root so nested names stay visible. When the path
+  git dir's info/exclude, which every checkout reads. New entries use '/<path>'.
+  The leading slash limits the entry to the repository root. When the path
   holds tracked content, setup follows the entry with '!/<path>/' (a trailing-slash
   pattern matches a real directory but NOT a symlink pointing at one).
   Runtime-only paths keep the plain entry. The shape is re-evaluated on every
-  create/fix-links against both indexes, either one enough. Each pass removes
-  exact legacy '<path>' and '!<path>/' lines and preserves other patterns.
+  create/fix-links against both indexes, either one enough. Existing bare
+  patterns and other rules are preserved.
 
 Git-hook auto-repair:
   create and fix-links install shared post-checkout, post-merge, and

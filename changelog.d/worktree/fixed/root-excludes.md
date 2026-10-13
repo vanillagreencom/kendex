@@ -1,1 +1,1 @@
-- Keep new files in nested directories visible to Git when their names match a configured root symlink. Worktree setup and link repair migrate old exclusions to root-anchored patterns.
+- Write new Git ignore rules for worktree links with a leading slash so they do not match nested directories with the same name.

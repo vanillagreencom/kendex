@@ -49,6 +49,7 @@ MAIN=""
 WT=""
 ENTRY=""
 CHECK_PERMISSIONS=false
+SOURCE_ABSENT=false
 
 make_repo() {
   mkdir -p "$MAIN"
@@ -111,12 +112,17 @@ step() {
     legacy-lines)
       printf '%s\n' "$ENTRY" "!$ENTRY/" "$ENTRY" "!$ENTRY/" >"$MAIN/.git/info/exclude"
       ;;
+    bare-line) printf '%s\n' "$ENTRY" >"$MAIN/.git/info/exclude" ;;
+    source-absent)
+      must mv -- "$MAIN/$ENTRY" "$ROOT/moved-source"
+      SOURCE_ABSENT=true
+      ;;
     foreign-patterns)
       printf '%s\n' '**/.claude/*' 'nested/runtime/ignored' '/runtime/cache' '!runtime/sub/' >>"$MAIN/.git/info/exclude"
       ;;
     shared-exclude)
       must chmod 664 "$MAIN/.git/info/exclude"
-      printf '%s\n' "$ENTRY" >>"$MAIN/.git/info/exclude"
+      printf '!/%s/\n' "$ENTRY" >>"$MAIN/.git/info/exclude"
       mkdir -p "$MAIN/.claude"
       printf 'private\n' >"$MAIN/.claude/private-note"
       CHECK_PERMISSIONS=true
@@ -158,6 +164,7 @@ build() {
   WT=""
   ENTRY=""
   CHECK_PERMISSIONS=false
+  SOURCE_ABSENT=false
   mkdir -p "$ROOT"
   for word in "$@"; do
     step "$word"
@@ -263,9 +270,8 @@ the negation stays while the worktree'\''s own index still tracks the file main 
 the negation goes once neither index tracks a file under the entry|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md sync-wt|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,/harness/state.json main=- stage=- wt=.env.local,.gitignore,base.txt,harness-><main>/harness wt-status=-
 a line another tool wrote into the exclude file stays, before ours|repo tracked-entry foreign-line|create tracked-check|0|wt:tracked-check|-|exclude=**/.claude/*,/harness,!/harness/,/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
 a root runtime link leaves new files in a nested tracked namesake visible and stageable|repo runtime-entry nested-entry|create nested-check|0|wt:nested-check|-|exclude=/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
-fix-links removes duplicate bare lines from a legacy-only exclude file|repo runtime-entry create:legacy-check legacy-lines|fix-links <wt>|0|restored:legacy-check|-|exclude=/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
-fix-links migrates bare lines and preserves other patterns while nested files stay stageable|repo runtime-entry nested-entry create:legacy-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:legacy-check|-|exclude=**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/,/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
-fix-links migrates a tracked entry and keeps the negation last|repo tracked-entry create:legacy-check legacy-lines foreign-line|fix-links <wt>|0|restored:legacy-check|-|exclude=**/.claude/*,/harness,!/harness/ main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+fix-links preserves existing bare rules and negations while adding the anchored entry|repo runtime-entry create:cut-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:cut-check|-|exclude=runtime,!runtime/,runtime,!runtime/,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/,/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
+creation with an absent source leaves existing bare rules effective|repo runtime-entry nested-entry bare-line source-absent|create absent-source|0|wt:absent-source|-|exclude=runtime main=- stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md wt-status=-
 fix-links keeps shared exclusion permissions and foreign rules|repo runtime-entry create:shared-check foreign-line shared-exclude|fix-links <wt>|0|restored:shared-check|-|exclude=/runtime,**/.claude/* main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
 '
 
@@ -291,6 +297,7 @@ while IFS= read -r row; do
   if [[ "$CHECK_PERMISSIONS" == true ]]; then prefix='shared-mode=preserved '; fi
   if [[ -d "$MAIN/nested/runtime" ]]; then
     prefix='nested-status=?? nested/runtime/new.md staged=nested/runtime/new.md root-ignored=0 root-staged=- '
+    if [[ "$SOURCE_ABSENT" == true ]]; then prefix='nested-status= staged= root-ignored=0 root-staged=- '; fi
     prefix="$prefix$prefix"
   fi
   assert_eq "$(run "$command")" "${prefix}rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
@@ -310,7 +317,7 @@ outcome_dependencies() {
     cat >>"$TMP_ROOT/outcome-bin/$tool" <<'WRAPPER'
 match=false
 case "${WT_EXCLUDE_FAULT:-}:$TOOL" in
-  filter:grep) [[ "${1:-}" == -vxF && "${3:-}" == "$WT_EXCLUDE_PATH" ]] && match=true ;;
+  filter:grep) [[ "${1:-}" == -vxF && "${3:-}" == "!/$WT_EXCLUDE_PATH/" ]] && match=true ;;
   inspection:grep) [[ "$#" -eq 3 && "$1" == -qxF && "$3" == "/$WT_EXCLUDE_PATH" ]] && match=true ;;
   comparison:cmp) [[ "${4:-}" == "$WT_EXCLUDE_FILE" ]] && match=true ;;
   permissions:cp) [[ "${1:-}" == -p && "${3:-}" == "$WT_EXCLUDE_FILE" ]] && match=true ;;
@@ -403,7 +410,11 @@ outcome_case() {
     *) echo "unknown outcome caller: $caller" >&2; exit 2 ;;
   esac
   case "$outcome" in
-    written|failed)
+    written)
+      : >"$MAIN/.git/info/exclude"
+      if [[ "$caller" == ignore-copy || "$caller" == child-link ]]; then printf '%s\n' /runtime '!/runtime/' >>"$MAIN/.git/info/exclude"; fi
+      ;;
+    failed)
       printf '%s\n' "$failed_path" >"$MAIN/.git/info/exclude"
       if [[ "$caller" == ignore-copy || "$caller" == child-link ]]; then printf '%s\n' /runtime '!/runtime/' >>"$MAIN/.git/info/exclude"; fi
       ;;
@@ -445,16 +456,16 @@ outcome_case() {
       assert_eq "$records" worktree-links-unrestored: "$caller $fault: setup failure retained"
     fi
     # Cleanup can fail after a completed replacement; other failures keep the
-    # original legacy rule. Git itself proves the nested file remains hidden.
+    # original rule. Git itself proves an existing bare rule stays effective.
     if [[ "$fault" == initial-permissions ]]; then
       assert_eq "$(test -e "$MAIN/.git/info/exclude" && printf present || printf absent)" absent "$caller $route $fault: no incomplete first write"
     elif [[ "$fault" != cleanup ]]; then
       excluded="$(grep -xF -- "$failed_path" "$MAIN/.git/info/exclude")" || true
-      assert_eq "$excluded" "$failed_path" "$caller $route $fault: legacy rule retained"
+      assert_eq "$excluded" "$failed_path" "$caller $route $fault: existing rule retained"
       if [[ "$failed_path" == runtime ]]; then
         printf 'new\n' >"$MAIN/nested/runtime/new.md"
         stage="$(git -C "$MAIN" status --porcelain -- nested/runtime/new.md)"
-        assert_eq "$stage" '' "$caller $route $fault: hidden file cannot imply success"
+        assert_eq "$stage" '' "$caller $route $fault: existing bare rule stays effective"
       fi
     fi
   else
@@ -520,10 +531,10 @@ fi
 # The child suite uses its own repositories and skips this control loop.
 CONTROLS=""
 if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 ]]; then CONTROLS='anchor
-migration
 permissions'; fi
 if [[ "${WORKTREE_EXCLUDE_OUTCOME_CONTROL:-}" != 1 && "${WORKTREE_EXCLUDE_SKIP_OUTCOMES:-}" != 1 ]]; then
   CONTROLS+=$'\n''lookup
+preserve-existing
 empty
 read
 directory
@@ -548,10 +559,11 @@ if [[ -n "$CONTROLS" ]]; then
         old='  entry="/$path"'
         new='  entry="$path"'
         ;;
-      migration)
+      preserve-existing)
         matrix_only=0
-        old='      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?'
-        new='      grep -vxF -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?'
+        select_fault=cut-boundary
+        old='      grep -vxF -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?'
+        new='      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?'
         ;;
       permissions)
         matrix_only=0

@@ -95,15 +95,15 @@ exclude_from_worktree_index() (
   info_exclude="$common_dir/info/exclude"
   entry="/$path"
   negation="!/$path/"
-  # Remove exact legacy lines and move the current negation after the entry.
-  # Other patterns may belong to another tool and must stay in place.
+  # Move only the current anchored negation after the entry.
+  # Bare rules and other patterns stay in place.
   operation=filter
   if [[ -e "$info_exclude" || -L "$info_exclude" ]]; then
     [[ -f "$info_exclude" && ! -L "$info_exclude" ]] || return 1
     exists=true
     # The sentinel retains final newlines; grep's empty result is successful.
     filtered="$(
-      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?
+      grep -vxF -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?
       [[ "$rc" -le 1 ]] || exit 1
       printf '.' 2>/dev/null
     )" || return 1
