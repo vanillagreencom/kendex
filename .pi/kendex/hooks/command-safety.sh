@@ -25,7 +25,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local opaque_re='(^|[^A-Za-z0-9_])(env|printenv|set|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)|/proc/[^[:space:]]*/environ'
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
-  local single_span_re="^[^']+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
+  local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() origins=() evidence=()
   local starts=() ends=() separators=() decisions=()
   if [ "$1" = argv ]; then
@@ -37,6 +37,7 @@ environment_dump() { # command kind; arguments are already decoded data
     while [ "$i" -lt "$text_length" ]; do
       case "$quote" in
         "'") span_re=$single_span_re ;;
+        ansi) span_re=$ansi_span_re ;;
         '"') span_re=$double_span_re ;;
         *) span_re=$ordinary_span_re ;;
       esac
@@ -48,6 +49,14 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       c=${text:$i:1}; i=$((i + 1)); next=${text:$i:1}
+      if [ "$quote" = ansi ]; then
+        case "$c" in
+          "'") quote="" ;;
+          '\') kind=ansi-escaped; word=$word$c$next; i=$((i + 1)) ;;
+          *) word=$word$c ;;
+        esac
+        continue
+      fi
       if [ "$quote" = "'" ]; then
         if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
         continue
@@ -80,12 +89,22 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       if [ "$quote" = '"' ]; then
-        if [ "$c" = '"' ]; then quote=""; else word=$word$c; [ "$c" != '$' ] || kind=unknown; fi
+        if [ "$c" = '"' ]; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
         continue
       fi
       case "$c" in
         "'" | '"') quote=$c; active=1; bare=""; continue ;;
-        '$') kind=unknown; word=$word$c; active=1; bare=""; continue ;;
+        '$')
+          case "$next" in
+            "'" | '"')
+              quote=$next; [ "$next" != "'" ] || quote=ansi
+              # Dollar arguments keep their conservative kind. Only the
+              # existing command-head selector can use the literal word.
+              [ "$kind" != literal ] || kind=dollar-literal
+              i=$((i + 1)) ;;
+            *) [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c ;;
+          esac
+          active=1; bare=""; continue ;;
         '#')
           if [ -z "$active" ]; then
             if [[ ${text:$i} =~ $comment_span_re ]]; then
@@ -173,6 +192,10 @@ environment_dump() { # command kind; arguments are already decoded data
     # Only these literal forwarding forms are part of the input contract.
     # Unsupported executable-string arguments get conservative detection.
     while [ "$program" != opaque ] && [ "$pos" -lt "${#args[@]}" ]; do
+      # ANSI-C escapes in a head have no decoder in this input contract.
+      # Refuse rather than permit an encoded environment producer.
+      [ "${arg_kinds[$pos]}" != ansi-escaped ] || return 0
+      [ "${arg_kinds[$pos]}" != dollar-literal ] || arg_kinds[pos]=literal
       [ "${arg_kinds[$pos]}" = literal ] || break
       program=${args[$pos]##*/}; pos=$((pos + 1))
       case "$program" in
@@ -199,6 +222,7 @@ environment_dump() { # command kind; arguments are already decoded data
           options_ended=""; null_output=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
+            [ "${arg_kinds[$pos]}" = literal ] || break
             # -- ends options, not the following assignment operands.
             if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then pos=$((pos + 1)); continue; fi
             [ -z "$options_ended" ] || break
@@ -266,7 +290,9 @@ environment_dump() { # command kind; arguments are already decoded data
           if [ "$pos" -lt "${#args[@]}" ]; then mode=dump-unknown; else mode=dump-lines; fi
         fi ;;
       systemctl)
-        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump-lines; done
+        for ((j=pos; j<${#args[@]}; j++)); do
+          [ "${arg_kinds[$j]}" != literal ] || [ "${args[$j]}" != show-environment ] || mode=dump-lines
+        done
         if [ "$mode" = dump-lines ]; then
           for ((j=pos; j<${#args[@]}; j++)); do
             case "${args[$j]}" in --user | --system | -- | show-environment) ;; *) mode=dump-unknown ;; esac

@@ -1,0 +1,1 @@
+- Refuse dollar-quoted environment command heads and command heads that contain ANSI-C escapes. Named-variable reads keep working.

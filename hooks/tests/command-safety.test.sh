@@ -441,6 +441,43 @@ environment_rows() {
 [0,"# env\ngit status","comment-data"]
 [2,"\"env\"","quoted-producer"]
 [2,"'env'","single-quoted-producer"]
+[2,"$'env'","ansi-dollar-producer"]
+[2,"$\"env\"","locale-dollar-producer"]
+[2,"e\"n\"v","double-fragment-producer"]
+[2,"'e'\"n\"'v'","adjacent-ordinary-producer"]
+[2,"e$'n'v","ansi-dollar-fragment-producer"]
+[2,"e$\"n\"v","locale-dollar-fragment-producer"]
+[2,"$'e'$\"n\"$'v'","adjacent-dollar-producer"]
+[2,"e$''n$\"\"'v'","empty-dollar-fragment-producer"]
+[2,"$'\\145\\156\\166'","ansi-octal-producer"]
+[2,"$'\\x65\\x6e\\x76'","ansi-hex-producer"]
+[2,"$'\\u0065\\u006e\\u0076'","ansi-unicode-producer"]
+[2,"$'\\U00000065\\U0000006e\\U00000076'","ansi-long-unicode-producer"]
+[2,"$'\\545'nv","ansi-byte-wrap-producer"]
+[2,"$'env\\0ignored'","ansi-nul-producer"]
+[2,"e$'\\0ignored'nv","ansi-nul-fragment-producer"]
+[2,"$'\\x65'nv","ansi-encoded-fragment-producer"]
+[2,"$'\\x65nv'","ansi-escaped-head"]
+[2,"$'\\cE'nv","ansi-control-head"]
+[2,"$'en\\\\v'","ansi-backslash-head"]
+[2,"$'g\\x69t' status","ansi-ordinary-escaped-head"]
+[2,"$'e\\'nv'","ansi-escaped-quote-head"]
+[2,"command $'\\x65nv'","ansi-forwarded-escaped-head"]
+[0,"$'printenv' NAME","ansi-named-read"]
+[0,"$\"printenv\" NAME","locale-named-read"]
+[2,"printenv $'NAME'","ansi-named-argument-stays-unproved"]
+[0,"systemctl $'show-environment'","ansi-systemctl-argument-stays-data"]
+[0,"printf '%s' $'\\x65nv'","ansi-escaped-argument-data"]
+[0,"printf '%s' $'$(env)'","ansi-substitution-text-is-data"]
+[0,"\"en\\v\"","double-backslash-is-literal"]
+[0,"'en\\v'","single-backslash-is-literal"]
+[0,"\"$'env'\"","ansi-quote-text-in-double-quotes"]
+[0,"'$\"env\"'","locale-quote-text-in-single-quotes"]
+[0,"$\"en\\v\"","locale-backslash-is-literal"]
+[0,"$NAME$'env'","earlier-unknown-dollar-fragment"]
+[0,"$\"$NAME\"env","locale-substitution-stays-unknown"]
+[2,"env | grep $'^NAME='","ansi-filter-stays-unproved"]
+[2,"env | grep $\"^NAME=\"","locale-filter-stays-unproved"]
 [2,"e'n'v","split-producer"]
 [2,"en\\v","escaped-producer"]
 [2,"printf '%s' ready # ignored text\nsystemctl --user show-environment","comment-boundary-producer"]
@@ -470,6 +507,8 @@ environment_rows() {
 [2,["printenv"],"array-dump"]
 [0,["printenv","NAME"],"array-named"]
 [0,["printf","%s","env"],"array-data"]
+[0,["$'env'"],"array-dollar-quote-is-data"]
+[0,["$'\\x65nv'"],"array-dollar-escape-is-data"]
 [0,["env","","printenv"],"array-empty-launcher-target"]
 [2,["printenv","NAME\\cDATA"],"array-backslash-name-is-not-literal"]
 [2,["systemctl","--user","show-environment","|","grep","NAME"],"array-pipe-is-data"]
@@ -599,6 +638,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
       defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
+      defect == "no-dollar-opener" { swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)") }
+      defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || return 0", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -656,6 +697,9 @@ literal-span|FAIL environment: single-quoted-producer: exit=0 expected=2
 literal-span|FAIL environment: quoted-producer: exit=0 expected=2
 comment-boundary|FAIL environment: comment-boundary-producer: exit=0 expected=2
 array-decoding|FAIL environment: array-backslash-name-is-not-literal: exit=0 expected=2
+no-dollar-opener|FAIL environment: ansi-dollar-producer: exit=0 expected=2
+no-dollar-opener|FAIL environment: locale-dollar-producer: exit=0 expected=2
+escaped-head-pass|FAIL environment: ansi-escaped-head: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
