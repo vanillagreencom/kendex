@@ -29,8 +29,7 @@
 # for all of them; a filler string there would be a name matching no model, and
 # naming a model would then be more permissive than not naming one.
 
-parse_claude_usage() {
-	jq -c --arg rounding "${1:-rounded}" '
+CLAUDE_USAGE_JQ='def claude_usage($rounding):
 		# A missing, non-number or out-of-range percentage is null, the unmeasured
 		# reading lib/lane-model.sh refuses; 0 would read as an empty window.
 		# The range is judged before rounding: -0.4 rounds to -0, which no
@@ -86,8 +85,9 @@ parse_claude_usage() {
 		      weekly:  (if $w then ($w.resets_at // null) else null end),
 		      model:   (if $m then ($m.resets_at // null) else null end)
 		    }
-		  }
-	'
+		  };'
+parse_claude_usage() {
+	jq -c --arg rounding "${1:-rounded}" "$CLAUDE_USAGE_JQ"'claude_usage($rounding)'
 }
 
 # Codex: primary/secondary windows do NOT map to session/weekly by position.
@@ -108,9 +108,7 @@ parse_claude_usage() {
 # `codex app-server` process per account per refresh, where this body is the
 # one request the plan windows read below already come from, cached host-wide
 # per account for ORCH_LANES_USAGE_TTL.
-parse_codex_usage() {
-	local session_window="$1"
-	jq -c --argjson sw "$session_window" --arg rounding "${2:-rounded}" '
+CODEX_USAGE_JQ='def codex_usage($sw; $rounding):
 		def pct($p): $p | if type == "number" and . >= 0 and . <= 1e12
 		                 then if $rounding == "unrounded" then . else floor end else null end;
 		def flag: if type == "boolean" then . else null end;
@@ -154,8 +152,9 @@ parse_codex_usage() {
 		      weekly:  (if $w then $w.resets_at else null end),
 		      model:   null
 		    }
-		  }
-	'
+		  };'
+parse_codex_usage() {
+	jq -c --argjson sw "$1" --arg rounding "${2:-rounded}" "$CODEX_USAGE_JQ"'codex_usage($sw; $rounding)'
 }
 
 # The buckets one usage body answers, by the harness that measured it: the one
@@ -169,6 +168,25 @@ parse_usage_body() { # HARNESS [ROUNDING]
 		copilot) copilot_credits_parse ;;
 		*) parse_codex_usage "$SESSION_WINDOW_S" "${2:-rounded}" ;;
 	esac
+}
+
+# The writer parses the current and prior samples together. Keep both the
+# displayed percentages and the fractions that invalidate a consumed reset.
+parse_usage_samples() { # HARNESS CURRENT_JSON PRIOR_JSON
+	local parser current prior
+	case "$1" in
+		claude) parser="$CLAUDE_USAGE_JQ def sample(\$r): claude_usage(\$r);" ;;
+		codex) parser="$CODEX_USAGE_JQ def sample(\$r): codex_usage(\$sw; \$r);" ;;
+		copilot)
+			current="$(copilot_credits_parse <<<"$2")" || return 1
+			prior='{}'
+			[[ "$3" == null ]] || prior="$(copilot_credits_parse <<<"$3")" || return 1
+			jq -nc --argjson c "$current" --argjson p "$prior" '{buckets: $c, reset_buckets: $c, prior_buckets: $p}'
+			return ;;
+	esac
+	jq -nc --argjson current "$2" --argjson prior "$3" --argjson sw "$SESSION_WINDOW_S" "$parser"'
+		{buckets: ($current | sample("rounded")), reset_buckets: ($current | sample("unrounded")),
+		 prior_buckets: (if $prior == null then {} else $prior | sample("rounded") end)}'
 }
 
 # The tier inputs of one pick over LANES, `lanes`' JSON array of records, as

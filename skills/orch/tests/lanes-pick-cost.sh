@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
 # Surface: lanes pick and list account policy and provider rows.
 # Inputs: scripts/lanes, scripts/lib/*.sh, scripts/lane-host, scripts/workflow-state.
-# Count executable calls, not elapsed time or shell subshells. The live VM's
-# total process and time bounds are checked after consumer refresh.
+# Inputs: lib/lanes-cost-world.py, lib/lanes-cost-cases.py.
+# Record Bash children and executable PIDs; consumer latency is checked live.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="${LANES_UNDER_TEST:-$TEST_DIR/../scripts/lanes}"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
+if [[ -z "${BASHPID:-}" ]]; then
+  printf '%s\n' 'lanes-pick-cost: skip=no-bashpid'
+  exit 0
+fi
 mkdir -p "$TEST_DIR/../../../tmp"
 TMP_ROOT="$(mktemp -d "$TEST_DIR/../../../tmp/lanes-cost.XXXXXX")" || { echo 'lanes-pick-cost: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'lanes-pick-cost: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'lanes-pick-cost: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home"
-for tool in jq awk basename cksum date tr; do
-  real="$(command -v "$tool")"
-  printf '#!%s\nset -euo pipefail\nprintf "%%s\\n" %q >> "$COST_COUNTER"\n' "$BASH" "$tool" > "$TMP_ROOT/bin/$tool"
+cat > "$TMP_ROOT/trace.env" <<'TRACE'
+unset SECONDS; SECONDS=0
+set -T
+command_not_found_handle() { printf '%s\n' "$1" >> "$COST_UNWRAPPED"; return 127; }
+trap 'if [[ "${_cost_pid:-}" != "${BASHPID:-$$}" ]]; then _cost_pid="${BASHPID:-$$}"; printf "%s\n" "${BASHPID:-$$}" >> "$COST_COUNTER"; fi' DEBUG
+TRACE
+for tool in bash env jq awk basename cksum date tr dirname git rm mkdir mv chmod grep cat sed sort cut wc head tail column false true timeout flock mktemp stat ps sleep realpath readlink perl hostname uname xargs tee cp python3; do
+  real="$(command -v "$tool")" || continue
+  printf '#!%s\nset -euo pipefail\nprintf "%%s\\n" "${BASHPID:-$$}" >> "$COST_COUNTER"\nprintf "%%s\\n" %q >> "$COST_TOOL_LOG"\n' "$BASH" "$tool" > "$TMP_ROOT/bin/$tool"
   if [[ "$tool" == date ]]; then
     cat >> "$TMP_ROOT/bin/$tool" <<'STUB'
 case "${*: -1}" in
@@ -65,8 +75,11 @@ run_lanes() { # HOMES RETIRE PROVIDER VERB FORMAT
     printf '{}\n' > "$TMP_ROOT/home/.${i}claude/.claude.json"
   done
   : > "$TMP_ROOT/counter"
+  : > "$TMP_ROOT/tools"
+  : > "$TMP_ROOT/unwrapped"
   RC=0
-  (cd "$TMP_ROOT/home" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+  (cd "$TMP_ROOT/home" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin" HOME="$TMP_ROOT/home" \
+    BASH_ENV="$TMP_ROOT/trace.env" COST_TOOL_LOG="$TMP_ROOT/tools" COST_UNWRAPPED="$TMP_ROOT/unwrapped" \
     COST_COUNTER="$TMP_ROOT/counter" COST_REAL_DATE="$REAL_DATE" LANES_HOME="$TMP_ROOT/home" \
     ORCH_LANE_RETIRE="$retire" ORCH_LANE_EXCLUDE='blocked' ORCH_LANE_ALIASES=' aclaude = work , bclaude = blocked ' \
     ORCH_LANE_CLOUD_REPOS=' work = Owner/Repo , dclaude = Other/Repo ' \
@@ -74,9 +87,10 @@ run_lanes() { # HOMES RETIRE PROVIDER VERB FORMAT
     OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" "$LANES" "$verb" "${mode_args[@]}" \
     >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || RC=$?
   OUT="$(cat "$TMP_ROOT/out")"
-  COUNT="$(wc -l < "$TMP_ROOT/counter")"; COUNT="${COUNT//[[:space:]]/}"
-  BASES="$(awk '$0 == "basename" {n++} END {print n+0}' "$TMP_ROOT/counter")"
-  printf 'cost: verb=%s format=%s homes=%s retire=%s calls=%s basename=%s exit=%s\n' "$verb" "$format" "$n" "$retire" "$COUNT" "$BASES" "$RC"
+  [[ ! -s "$TMP_ROOT/unwrapped" ]] || { cat "$TMP_ROOT/unwrapped" >&2; return 1; }
+  COUNT="$(sort -u "$TMP_ROOT/counter" | wc -l)"; COUNT="${COUNT//[[:space:]]/}"
+  BASES="$(awk '$0 == "basename" {n++} END {print n+0}' "$TMP_ROOT/tools")"
+  printf 'cost: verb=%s format=%s homes=%s retire=%s processes=%s basename=%s exit=%s\n' "$verb" "$format" "$n" "$retire" "$COUNT" "$BASES" "$RC"
 }
 counts=()
 for homes in 4 8 12; do
@@ -193,6 +207,89 @@ for format in table json; do
   assert_eq "$rc" 1 "parity assertion rejects changed list $format bytes"
 done
 LANES="$ORIGINAL_LANES"
+export COST_CLAIM_PID="${BASHPID:-$$}"
+python3 "$TEST_DIR/lib/lanes-cost-cases.py" "$TMP_ROOT/world" "$LANES" "$BASH" "${LANES_COST_BASE:-${1:-}}" > "$TMP_ROOT/world-results.json"
+world_result() { jq -r "$1" "$TMP_ROOT/world-results.json"; }
+check_claims() { # JSON
+  local actual expected
+  while IFS=$'\t' read -r actual expected; do
+    assert_eq "$actual" "$expected" 'claims match the live fixture'
+  done < <(jq -r '.[] | [.actual, .expected] | @tsv' <<<"$1")
+}
+check_steps() { # JSON LIMIT LABEL
+  local counts sizes i delta bound
+  counts=( $(jq -r '.counts[]' <<<"$1") )
+  sizes=( $(jq -r '.sizes[]' <<<"$1") )
+  for i in 1 2; do
+    delta=$((counts[i] - counts[i-1]))
+    bound=$(( (sizes[i] - sizes[i-1]) * $2 ))
+    assert_le "$delta" "$bound" "$3 size ${sizes[i]}"
+  done
+}
+for row in pick list list-json; do
+  count="$(world_result ".\"$row\".count")"
+  printf 'warm: verb=%s processes=%s\n' "$row" "$count"
+  assert_le "$count" 299 "$row starts under 300 processes"
+  assert_eq "$(world_result ".\"$row\".exit")" 0 "$row succeeds on warm accounts"
+  assert_eq "$(world_result ".\"$row\".cold_warm_equal")" true "$row keeps cold and warm bytes"
+  assert_eq "$(world_result ".\"$row\".no_credential_parse")" true "$row parses no credentials on warm records"
+done
+for key in inventory claims copilot_credits_used token_excluded readings_only retired; do
+  assert_eq "$(world_result ".$key")" true "$key contract"
+done
+check_claims "$(world_result '.claims_rows')"
+rc=0
+( FAIL=0; check_claims "$(world_result '.claims_control_rows')"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-claims.log" || rc=$?
+assert_eq "$rc" 1 'the same claims assertion rejects a count increased by one'
+assert_eq "$(world_result '.counter.delta')" 1 'one builtin command substitution counts exactly one process'
+assert_eq "$(world_result '.counter.same_output')" true 'the counter control keeps the answer'
+assert_eq "$(world_result '.unwrapped_control')" true 'the closed PATH rejects an unwrapped command even when its exit is masked'
+printf 'named: total=%s caller=%s lanes=%s calibration=90 calibration-share=%s\n' "$(world_result '.caller.total')" "$(world_result '.caller.stub')" "$(world_result '.caller.share')" "$(world_result '.caller.calibration_share')"
+assert_eq "$(world_result '.caller.exit')" 0 'the real named mark check succeeds'
+assert_eq "$(world_result '.caller.equal')" true 'the named mark check keeps the builtin stub answer'
+assert_le "$(world_result '.caller.share')" 49 'the lanes share of the named mark check is under 50'
+if [[ -n "${LANES_COST_BASE:-${1:-}}" ]]; then
+  printf 'named-base: total=%s caller=%s lanes=%s calibration=90 calibration-share=%s\n' "$(world_result '.caller.base_total')" "$(world_result '.caller.base_stub')" "$(world_result '.caller.base_share')" "$(world_result '.caller.base_calibration_share')"
+  rc=0
+  ( FAIL=0; assert_le "$(world_result '.caller.base_share')" 49 'base named share'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/base-named.log" || rc=$?
+  assert_eq "$rc" 1 'the base script fails the named lanes share bound'
+fi
+for kind in home provider claim; do
+  bound=0
+  case "$kind" in home) bound=2 ;; provider) bound=4 ;; esac
+  for verb in pick list; do
+    steps="$(world_result ".growth.\"$kind-$verb\"")"
+    printf 'growth: kind=%s verb=%s samples=%s\n' "$kind" "$verb" "$(jq -c '.counts' <<<"$steps")"
+    check_steps "$steps" "$bound" "$kind $verb process growth"
+    rc=0
+    ( FAIL=0; check_steps "$(world_result ".controls.\"$kind-$verb\"")" "$bound" "$kind growth"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-$kind-$verb.log" || rc=$?
+    assert_eq "$rc" 1 "$kind $verb bound rejects the planted warm forks"
+    if [[ -n "${LANES_COST_BASE:-${1:-}}" ]]; then
+      old_steps="$(jq -c '{counts: .base_counts, sizes}' <<<"$steps")"
+      rc=0
+      ( FAIL=0; check_steps "$old_steps" "$bound" "$kind base growth"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/base-$kind-$verb.log" || rc=$?
+      assert_eq "$rc" 1 "$kind $verb base script fails the warm growth bound"
+    fi
+  done
+done
+for verb in pick list; do
+  rc=0
+  ( FAIL=0; assert_le "$(world_result ".controls.\"total-$verb\"")" 299 "$verb total"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-total-$verb.log" || rc=$?
+  assert_eq "$rc" 1 "$verb total bound rejects the planted warm forks"
+done
+while IFS=$'\t' read -r name equal; do
+  assert_eq "$equal" true "$name named cold and warm identity"
+done < <(world_result '.named | to_entries[] | [.key, .value.cold_warm_equal] | @tsv')
+if [[ -n "${LANES_COST_BASE:-${1:-}}" ]]; then
+  for verb in pick list list-json; do
+    assert_eq "$(world_result ".\"$verb\".base_equal")" true "$verb matches base stdout, stderr and exit"
+    assert_eq "$(world_result ".\"$verb\".cache_files_equal")" true "$verb uses the base cache file names"
+    rc=0
+    ( FAIL=0; assert_le "$(world_result ".\"$verb\".base_count")" 299 "$verb base total"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/base-total-$verb.log" || rc=$?
+    assert_eq "$rc" 1 "$verb base script fails the warm total"
+  done
+  assert_eq "$(world_result '[.named[].base_equal] | all')" true 'every named account kind matches the base bytes'
+fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
 

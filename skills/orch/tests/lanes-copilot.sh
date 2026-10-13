@@ -405,7 +405,7 @@ ROW_ENV=()
 assert_eq "rc=$RC dir=$(jq -r '.config_dir' <<<"$OUT" 2>/dev/null || echo unparseable)" "rc=0 dir=$H/.pi-copilot" \
   "a Pi pick returns the Pi root named for the pool it spends"
 CTL_MARK="$(mutant_scripts ctl-mark lanes)" || exit 1
-mutate_file "$CTL_MARK/lanes" '				copilot) markers=(config.json session-state) ;;' '				copilot) markers=(settings.json config.json) ;;'
+mutate_file "$CTL_MARK/lanes" 'copilot) markers=(config.json session-state) ;;' '				copilot) markers=(settings.json config.json) ;;'
 LANES_BIN="$CTL_MARK/lanes" run_lanes list --harness copilot --local --json
 assert_eq "$(names)" 1copilot,pi-copilot "control: with settings.json as a marker the Pi root reads as a Copilot account"
 rm -rf -- "${H:?}/.3copilot"
@@ -492,7 +492,7 @@ run_lanes pick --harness pi --model github-copilot/gpt-5 --json
 ROW_ENV=()
 assert_eq "$(jq -r '.config_dir' <<<"$OUT" 2>/dev/null || echo unparseable)" "$H/.1copilot" \
   "control: without the exclusion a Pi pick returns the Copilot account"
-lanes_control ctl-discover lanes '				copilot) markers=(config.json session-state) ;;' ''
+lanes_control ctl-discover lanes 'copilot) markers=(config.json session-state) ;;' ''
 run_lanes list --harness copilot --local --json
 assert_eq "$(jq 'length' <<<"$OUT" 2>/dev/null || echo unparseable)" 0 "control: without its markers no Copilot account is discovered"
 lanes_control ctl-ambiguous lib/copilot-credits.sh '            elif ($v | length) > 1 then "token-ambiguous"' '            elif ($v | length) > 1 then "token\t" + $v[0]'
@@ -690,7 +690,10 @@ lanes_control ctl-pi-override lib/lane-model.sh 'if $h == "pi" then (if .headroo
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
   "control: under the unreachable rule a refused Pi row hides the override"
-lanes_control ctl-pi-all lanes '		[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue' ''
+lanes_control ctl-pi-all lanes '		if [[ "$mode" != normalized ]]; then
+			[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue
+		fi' '		:'
+mutate_file "$LANES_BIN" '($h == "all" and .harness != "pi")' '($h == "all")'
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 1 "control: without the all filter list shows the Pi row"
 lanes_control ctl-pi-fix lanes 'lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2' ':; } >&2'
@@ -731,9 +734,7 @@ lanes_control ctl-pi-roots lanes '		pool_roots="$(lane_dirs pi all)"' '		pool_ro
 PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=1 pi_run room cli=10/100 pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=3 key=no-candidate fix=none" \
   "control: a guard counting every override entry reads a Copilot CLI home as a Pi root and refuses as no candidate"
-# The Pi branch's own line, at its three-tab depth: the other harnesses' filter
-# takes `all` too.
-lanes_control ctl-pi-roots-all lanes $'\t\t\t[[ "${2:-}" != all ]] && lane_excluded "$d" || printf' $'\t\t\tlane_excluded "$d" || printf'
+lanes_control ctl-pi-roots-all lanes '[[ "${2:-}" != all ]] && lane_excluded "$d" && continue' 'lane_excluded "$d" && continue'
 PI_STUB=ORCH_LANE_EXCLUDE=pi1 pi_run - 10/100 pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=5 key=copilot-pool-unstated fix=local" \
   "control: roots counted after the exclusion read an excluded stated root as no override"

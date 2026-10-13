@@ -470,9 +470,7 @@ wall_control mutant-wall-overlay 'weekly_pct: 100,' 'weekly_pct: .weekly_pct,' \
   "control: the measured weekly figure kept passes the walled account|$WALL_AHEAD|pick --lane $H/.neutralclaude --harness claude --model opus --json|rc=0"
 wall_control mutant-wall-expiry ' or $wall.resets_at <= now' '' \
   "control: with no reset test a passed wall still walls|$WALL_PASSED|$LIST|neutralclaude.weekly_pct=100 neutralclaude.verdict=walled"
-wall_control mutant-wall-fail-open 'unmeasured" >&2
-  return 1' 'unmeasured" >&2
-  printf '"'"'%s\n'"'"' "$3"; return 0' \
+wall_control mutant-wall-fail-open 'catch "unreadable"' 'catch null' \
   "control: an unreadable record passed over reads room|$WALL_JUNK|$LIST|neutralclaude.status=ok neutralclaude.verdict=room"
 wall_control mutant-wall-spelling 'ACCOUNT_WALL_CANON="$canon"' 'ACCOUNT_WALL_CANON="$2"' \
   "control: a dir taken as spelled misses the wall behind a trailing slash|$WALL_SLASH|$LIST|neutralclaude.weekly_pct=0 neutralclaude.verdict=room" \
@@ -547,7 +545,7 @@ pool_control mutant-pool-status lanes '^[[:space:]]*copilot_pool_entries >.dev.n
 # guard's control is in lanes-copilot.sh, on the form only that guard holds.
 pool_control mutant-pool-anchors lanes '=~ \^(\[0-9]{1,12})' '=~ ([0-9]{1,12})' \
   "control: with the credits anchors gone 12.5/300 is read as its tail|$POOL=12.5/300|pick --harness pi $COPILOT|rc=0"
-pool_control mutant-pool-duplicate lanes 'case "\$seen" in' - \
+pool_control mutant-pool-duplicate lanes 'case "\$seen" in.*invalid-copilot-pool' - \
   "control: with no duplicate check the first of two readings for one account wins|$POOL=1/10,$H/.pi1=10/10|pick --harness pi $COPILOT --json|rc=0 monthly_pct=10 qualifying_count=2"
 
 echo "=== pick: a Pi launch is judged on the account its model's provider bills ==="
@@ -708,11 +706,11 @@ api_control api-dollar-shape lanes \
   '[[ "$value" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-fields}"' ':' \
   'host-accounts --harness pi --json' '.' '0:[]'
 api_rows 150 invalid
-api_control api-expiry-shape lanes 'and ($e | fromdateiso8601) != null' 'and true' \
+api_control api-expiry-shape lanes '(try ($v[19] | fromdateiso8601) catch null) == null' 'false' \
   'host-accounts --harness pi --json' '.' '0:[]'
 api_rows 150 "$API_EXPIRES_SOON"
 printf '%s\tcredit-limit=0\n' "$(cat "$API_ROWS")" > "$API_ROWS"
-api_control api-positive-grant lanes '($l | tonumber) > 0 and' '($l | tonumber) >= 0 and' \
+api_control api-positive-grant lanes '(try ($v[16] | tonumber) catch 0) <= 0' '(try ($v[16] | tonumber) catch 0) < 0' \
   'host-accounts --harness pi --json' '.' '0:[]'
 api_rows 150 "$API_EXPIRES_SOON"
 printf '%s\tcredit-spent=\n' "$(cat "$API_ROWS")" > "$API_ROWS"
@@ -1270,8 +1268,9 @@ table \
   "an expired token without a refresh token reads expired, naming codex login, and the CLI is never started|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.status=expired codex.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.codex/auth.json_to_renew_with;_log_in_again_with_CODEX_HOME=$H/.codex_codex_login codexrenew=none fetched=none"
 # The controls. With the Codex expiry unread, the expired token goes to the
 # usage query and the renewal row is red.
-lanes_mutant mutant-codex-expiry lanes 'expires_ms="\$(token_expiry_ms "\$harness" "\$creds")"'
-LANES="$TMP_ROOT/mutant-codex-expiry/scripts/lanes"
+CODEX_EXPIRY_MUTANT="$(mutant_scripts mutant-codex-expiry lanes)" || exit 1
+mutate_file "$CODEX_EXPIRY_MUTANT/lanes" '| lane_access_token($h), lane_token_expiry_ms($h),' '| lane_access_token($h), 0,'
+LANES="$CODEX_EXPIRY_MUTANT/lanes"
 codex_expired_home refresh-codex
 table \
   "control: with the expiry unread the CLI is never asked and the lane is not refreshable|$CODEX_STUB_PATH;CODEX_RENEWED_AUTH=$RENEWED_AUTH|$CODEX_LIST|codex.refreshable=false codexrenew=none"
@@ -1500,7 +1499,7 @@ assert_eq "$(same_home_claim_result plan-api "$SCRIPTS_DIR" plan api)" '0:[0,150
 assert_eq "$(same_home_claim_result legacy-plan "$SCRIPTS_DIR" legacy legacy)" '3:[1]' \
   'a claim with no pool field remains a charged plan claim'
 POOL_READER_MUTANT="$(mutant_scripts mutant-claim-pool-reader lanes)" || exit 1
-mutate_file "$POOL_READER_MUTANT/lanes" '$3 == ENVIRON["LANE_CLAIMS_POOL_Q"] && (' '('
+mutate_file "$POOL_READER_MUTANT/lanes" '[[ "$claim_pool" == "$pool" ]] || continue' 'true || continue'
 POOL_FAIL="$FAIL"; FAIL=0
 assert_eq "$(same_home_claim_result old-reader "$POOL_READER_MUTANT" api-credit auto)" "$SAME_HOME_EXPECT" \
   'Claude session 92 keeps projected headroom 8 after a native Pi API claim on the same home' > "$TMP_ROOT/claim-pool-control.out"
@@ -1561,11 +1560,11 @@ ORCH_LANE_ALIASES="$WORK_ALIASES" claims_table \
 # by the canonical target's name, or written with no named spelling, the
 # aliased claim misses `work` the same way.
 claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" ' || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"])' ''
+mutate_file "$claims_scripts/lanes" ' || ( -n "$named" && "$named" == "$LANE_ACCOUNT_NAME" )' ''
 LANES="$claims_scripts/lanes" claims_table \
   "control: a path key counts two homes' claims on one account as two accounts|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-canon-alias lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" '"$(lane_account_name "${named:-$cfg}")"' '"$(lane_account_name "$cfg")"'
+mutate_file "$claims_scripts/lanes" 'lane_account_name "${named:-$cfg}" silent' 'lane_account_name "$cfg" silent'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
@@ -1573,21 +1572,21 @@ mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" "${8:-}" "${9:-plan}
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: a writer that drops the named spelling keys the claim by its target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-default-merged lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" '[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || printf' 'printf'
+mutate_file "$claims_scripts/lanes" '[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || LANE_ACCOUNT_NAME="$alias"' 'LANE_ACCOUNT_NAME="$alias"'
 LANES="$claims_scripts/lanes" claims_table \
   "control: keying a home's default .claude by its bare name charges every home's default to it|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|claude.claims=2"
 claims_scripts="$(mutant_scripts mutant-claims-own-named lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" 'case "$own" in *$'"'"'\n'"'"'"$cfg"$'"'"'\n'"'"'*) ;; *) key="$(lane_account_name "${named:-$cfg}")" ;; esac' 'key="$(lane_account_name "${named:-$cfg}")"'
+mutate_file "$claims_scripts/lanes" 'case "$own" in *$'"'"'\n'"'"'"$cfg"$'"'"'\n'"'"'*) ;; *) lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME" ;; esac' 'lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME"'
 ORCH_LANE_DIRS="$H/.eclaude:$TMP_ROOT/srv/.eclaude" LANES="$claims_scripts/lanes" claims_table \
   "control: naming a claim a listed lane holds charges it to the other lane sharing its alias|live:%1|theirs:live:%1:srv||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 claims_scripts="$(mutant_scripts mutant-claims-own-unexcluded lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" 'done < <(lane_dirs "$h" all)' 'done < <(lane_dirs "$h")'
+mutate_file "$claims_scripts/lanes" $'for h in claude codex copilot pi; do\n\t\tlane_dirs "$h" all silent' $'for h in claude codex copilot pi; do\n\t\tlane_dirs "$h" "" silent'
 ORCH_LANE_DIRS="$H/.eclaude:$TMP_ROOT/srv/.fclaude" ORCH_LANE_EXCLUDE=fclaude ORCH_LANE_ALIASES="$OWN_WORK" LANES="$claims_scripts/lanes" claims_table \
   "control: an inventory of listed lanes alone names the excluded lane's claim|live:%1|theirs:live:%1:srvf||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 claims_scripts="$(mutant_scripts mutant-claims-own-no-pi lanes)" || exit 1
 # The inventory loop alone: the chooser walks the same harness list.
-mutate_file "$claims_scripts/lanes" $'\tfor h in claude codex copilot pi; do\n\t\twhile IFS= read -r d; do' \
-  $'\tfor h in claude codex copilot; do\n\t\twhile IFS= read -r d; do'
+mutate_file "$claims_scripts/lanes" $'\tfor h in claude codex copilot pi; do\n\t\tlane_dirs "$h" all silent' \
+  $'\tfor h in claude codex copilot; do\n\t\tlane_dirs "$h" all silent'
 ORCH_LANE_DIRS="$H/.eclaude" ORCH_LANE_COPILOT_POOL="$TMP_ROOT/pi/.pia=1/10" ORCH_LANE_ALIASES="$OWN_WORK" LANES="$claims_scripts/lanes" claims_table \
   "control: an inventory without Pi roots names the Pi root's claim|live:%1|theirs:live:%1:pia||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 

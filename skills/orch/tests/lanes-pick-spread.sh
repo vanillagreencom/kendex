@@ -302,7 +302,7 @@ mutate_file "$CTRL/lib/lane-model.sh" 'then (.usage_rate_pct_per_min * 60) / (if
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=codex table \
   "control: charging the whole account rate walls the twelve-claim account|ORCH_LANE_DIRS=$H/.1codex|claim:1:12|1:22:20:12:628|pick --harness codex --model gpt-6.1-sol --json|rc=3 walled=1"
 CTRL="$(mutant_scripts mutant-sample-count lanes)" || exit 1
-mutate_file "$CTRL/lanes" 'sample_claims="$(account_claims "$2" "$1")"' 'sample_claims=1'
+mutate_file "$CTRL/lanes" 'sample_claims="$ACCOUNT_CLAIMS"' 'sample_claims=1'
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=codex table \
   "control: omitting the sampled count records one instead of twelve|ORCH_LANE_DIRS=$H/.1codex|claim:1:12||list --harness codex --json|rc=0 sample_claims=1"
 

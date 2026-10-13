@@ -828,7 +828,9 @@ PROG="lanes"
 # SCRIPT_DIR would otherwise choose which lib this sources.
 export PROG
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$SCRIPT_DIR" != "${BASH_SOURCE[0]}" ]] || SCRIPT_DIR=.
+SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 export SCRIPT_DIR
 
 print_lanes_usage() {
@@ -1178,7 +1180,8 @@ lane_canon() { # DIR: result in LANE_CANON
 		LANE_CANON="${LANE_CANON_IDS[i]}"
 		return 0
 	done
-	LANE_CANON="$(lane_claims_canon "$1")" || return 1
+	lane_claims_canon "$1" silent || return 1
+	LANE_CANON="$LANE_CLAIMS_CANON"
 	LANE_CANON_DIRS+=("$1"); LANE_CANON_IDS+=("$LANE_CANON")
 }
 
@@ -1233,8 +1236,9 @@ lane_admissible() {
 # never probed; its name decides, as discovery's glob does. Any other entry is
 # copilot when it holds config.json and no .credentials.json, and codex when it
 # holds auth.json and no .credentials.json.
-configured_lane_dirs() {
+configured_lane_dirs() { # HARNESS [SILENT]
 	local rest="$ORCH_LANE_DIRS:" entry kind
+	CONFIGURED_LANE_DIRS=()
 	while [[ -n "$rest" ]]; do
 		entry="${rest%%:*}"
 		rest="${rest#*:}"
@@ -1251,8 +1255,9 @@ configured_lane_dirs() {
 		elif [[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]]; then
 			kind=codex
 		fi
-		[[ "$kind" != "$1" ]] || printf '%s\n' "$entry"
+		[[ "$kind" != "$1" ]] || CONFIGURED_LANE_DIRS+=("$entry")
 	done
+	[[ "${2:-}" == silent || ${#CONFIGURED_LANE_DIRS[@]} == 0 ]] || printf '%s\n' "${CONFIGURED_LANE_DIRS[@]}"
 }
 
 # Dirs of harness $1 (`claude`, `codex`, `copilot` or `pi`), excluded ones
@@ -1267,7 +1272,9 @@ configured_lane_dirs() {
 # copilot inventory the same way; a Copilot launch builds no private home, so
 # the value is the account as it stands.
 lane_dirs() {
-	local configured="" home="${LANES_HOME:-$HOME}" d
+	local home="${LANES_HOME:-$HOME}" d seen=$'\n'
+	local candidates=()
+	LANE_DIRS_FOUND=()
 	# A Pi account on the Copilot pool this machine knows is one the owner
 	# states a reading for: nothing here is discovered as one, and a provider's
 	# harness=pi rows join the pick as host rows. The same setting also
@@ -1277,40 +1284,45 @@ lane_dirs() {
 	# the roots ORCH_LANE_EXCLUDE names, for a pick asking what the owner stated.
 	if [[ "$1" == pi ]]; then
 		local copilot_ids=$'\n' id
-		while IFS= read -r d; do
-			[[ -n "$d" ]] || continue
+		[[ -n "${ORCH_LANE_COPILOT_POOL:-}" ]] || return 0
+		lane_dirs copilot '' silent || return 1
+		for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
 			lane_canon "$d" || return 1
 			copilot_ids+="$LANE_CANON"$'\n'
-		done < <(lane_dirs copilot)
-		copilot_pool_entries 2>/dev/null | cut -f1 | while IFS= read -r d; do
+		done
+		LANE_DIRS_FOUND=()
+		while IFS=$'\t' read -r d _; do
 			lane_canon "$d" || return 1; id="$LANE_CANON"
 			case "$copilot_ids" in *$'\n'"$id"$'\n'*) continue ;; esac
-			[[ "${2:-}" != all ]] && lane_excluded "$d" || printf '%s\n' "$d"
-		done
-		return
-	fi
-	[[ -z "${ORCH_LANE_DIRS:-}" ]] || configured="$(configured_lane_dirs "$1")"
-	{
-		if [[ -n "$configured" ]]; then
-			printf '%s\n' "$configured"
+			candidates+=("$d")
+		done < <(copilot_pool_entries 2>/dev/null)
+	else
+		CONFIGURED_LANE_DIRS=()
+		[[ -z "${ORCH_LANE_DIRS:-}" ]] || configured_lane_dirs "$1" silent
+		if (( ${#CONFIGURED_LANE_DIRS[@]} )); then
+			candidates=("${CONFIGURED_LANE_DIRS[@]}")
 		else
 			local markers=(.claude.json .credentials.json)
-			case "$1" in
-				codex) markers=(auth.json config.toml) ;;
-				copilot) markers=(config.json session-state) ;;
-			esac
+			case "$1" in codex) markers=(auth.json config.toml) ;; copilot) markers=(config.json session-state) ;; esac
 			for d in "$home/.$1" "$home"/.*"$1"*; do
 				[[ -d "$d" ]] || continue
-				! lane_admissible "$d" ||
-					[[ -e "$d/${markers[0]}" || -e "$d/${markers[1]}" ]] || continue
-				printf '%s\n' "$d"
+				! lane_admissible "$d" || [[ -e "$d/${markers[0]}" || -e "$d/${markers[1]}" ]] || continue
+				candidates+=("$d")
 			done
 		fi
-		[[ "$1" != codex || -z "${CODEX_HOME:-}" ]] || lane_launch_home_account "$CODEX_HOME"
-		[[ "$1" != copilot || -z "${COPILOT_HOME:-}" ]] || printf '%s\n' "$COPILOT_HOME"
-	} 2>/dev/null | awk '!seen[$0]++' | while IFS= read -r d; do
-		[[ "${2:-}" != all ]] && lane_excluded "$d" || printf '%s\n' "$d"
+		if [[ "$1" == codex && -n "${CODEX_HOME:-}" ]]; then
+			d="$(lane_launch_home_account "$CODEX_HOME")" || return 1
+			candidates+=("$d")
+		fi
+		[[ "$1" != copilot || -z "${COPILOT_HOME:-}" ]] || candidates+=("$COPILOT_HOME")
+	fi
+	for d in ${candidates[@]+"${candidates[@]}"}; do
+		[[ "$1" == pi ]] || case "$seen" in *$'\n'"$d"$'\n'*) continue ;; esac
+		seen+="$d"$'\n'
+		[[ "${2:-}" != all ]] && lane_excluded "$d" && continue
+		LANE_DIRS_FOUND+=("$d")
 	done
+	[[ "${3:-}" == silent || ${#LANE_DIRS_FOUND[@]} == 0 ]] || printf '%s\n' "${LANE_DIRS_FOUND[@]}"
 }
 
 # The discovered alias is the config dir's own name, which is also the command
@@ -1514,7 +1526,13 @@ measure_lane() {
 	local alias creds status="ok" detail="" plan="" token="" account_id="" expires_ms=0 now_s
 	local refreshed=false refresh_out refusal
 	lane_alias_for "$dir" silent; alias="$LANE_ALIAS"
-	now_s=$(date +%s)
+	local normalized_i
+	for ((normalized_i=0; normalized_i<${#NORMALIZED_DIRS[@]}; normalized_i++)); do
+		[[ "${NORMALIZED_DIRS[normalized_i]}" == "$dir" && "${NORMALIZED_HARNESSES[normalized_i]}" == "$harness" && "${NORMALIZED_THROUGHS[normalized_i]}" == local ]] || continue
+		printf '%s\n' "${NORMALIZED_ROWS[normalized_i]}"
+		return 0
+	done
+	now_s="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
 
 	# Before the credentials path is even composed: a retired account is read
 	# no more than an excluded one.
@@ -1542,10 +1560,18 @@ measure_lane() {
 				emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
 				return
 			fi
-			if ! jq -e . "$creds" >/dev/null 2>&1; then
+			local credential_fields refresh_expiry
+			if ! credential_fields="$(jq -er --arg h "$harness" "$LANE_CREDENTIALS_JQ"'
+				select(. != false and . != null)
+				| lane_access_token($h), lane_token_expiry_ms($h),
+				  (try (.claudeAiOauth.subscriptionType // "") catch ""),
+				  (try (.tokens.account_id // "") catch ""),
+				  (try (.claudeAiOauth.refreshTokenExpiresAt // 0) catch 0)' "$creds" 2>/dev/null)"; then
 				emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
 				return
 			fi
+			{ IFS= read -r token; IFS= read -r expires_ms; IFS= read -r plan;
+			  IFS= read -r account_id; IFS= read -r refresh_expiry; } <<<"$credential_fields"
 			# `claude auth status` exposes current account authentication, but its
 			# documented JSON has no refresh-expiry timestamp. /status is an
 			# interactive view. Neither supplies this chooser's exact expiry read.
@@ -1555,21 +1581,11 @@ measure_lane() {
 			# https://code.claude.com/docs/en/cli-reference
 			# https://code.claude.com/docs/en/authentication#renew-an-expiring-login
 			if [[ "$harness" == claude ]]; then
-				local refresh_expiry
-				refresh_expiry="$(jq -r '.claudeAiOauth.refreshTokenExpiresAt // 0' "$creds")" || return 1
 				if token_expired "$refresh_expiry" "$now_s"; then
 					emit_lane "$alias" "$harness" "$dir" expired "refresh token expired; sign in again" "" '{}'
 					return
 				fi
 			fi
-			token="$(access_token "$harness" "$creds")"
-			expires_ms="$(token_expiry_ms "$harness" "$creds")"
-		fi
-
-		if [[ "$harness" == "claude" ]]; then
-			plan=$(jq -r 'try (.claudeAiOauth.subscriptionType // empty) catch empty' "$creds")
-		elif [[ "$harness" == codex ]]; then
-			account_id=$(jq -r 'try (.tokens.account_id // empty) catch empty' "$creds")
 		fi
 
 		if [[ -z "$token" ]]; then
@@ -1606,6 +1622,7 @@ measure_lane() {
 				return
 			fi
 			token="$refresh_out"
+			expires_ms="$(token_expiry_ms "$harness" "$creds")" || return 1
 			refreshed=true
 		fi
 
@@ -1616,12 +1633,12 @@ measure_lane() {
 	# own ceiling, and a warm figure or a live refusal has nothing to wait for.
 	# Only a lane the record cannot answer takes the lock, and
 	# refresh_lane_usage reads the record again inside it. The clock is read
-	# again first: a renewal above can have waited on the credentials lock while
+	# advanced first: a renewal above can have waited on the credentials lock while
 	# the peer holding it measured this lane, and the record that peer wrote
 	# would read as stamped in the future against the clock this function
 	# started with.
 	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null" sample_claims=1
-	now_s="$(date +%s)"
+	now_s="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
 	# store_usage_refusal keeps the prior figure beside a failed renewal.
 	# A cache-only reader must answer that live refusal before the figure.
 	if [[ "$CACHE_ONLY" == true ]] && refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
@@ -1633,6 +1650,7 @@ measure_lane() {
 			status=unreachable
 			detail="usage cache miss within $(usage_serve_max_age)s serve age (--cache-only)"
 		else
+			if [[ "$USAGE_CACHE_PRUNED" != true ]]; then prune_usage_cache; USAGE_CACHE_PRUNED=true; fi
 			usage_lock_take
 			refresh_lane_usage
 			usage_lock_release
@@ -1658,7 +1676,7 @@ measure_lane() {
 
 # Answers the lane from its usage record without posting anything, into
 # measure_lane's own `raw`, `age`, `status` and `detail`, and the sample
-# fields take_cached_usage sets: a figure eligible by age and bucket resets,
+# fields read_usage_cache sets: a figure eligible by age and bucket resets,
 # else a live refusal of the usage endpoint. Cache-only reads give the live
 # refusal priority over the figure store_usage_refusal retained beside it.
 # A 429 on record is
@@ -1673,12 +1691,13 @@ measure_lane() {
 # most able to multiply a burst, since declining the cache is what puts every
 # caller back on the endpoint at once.
 usage_from_record() { # NOW
-	local cached refusal=""
+	local refusal=""
 	if [[ "$CACHE_ONLY" == true ]]; then
 		refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || refusal=""
 	fi
-	if [[ "$USE_CACHE" == "true" && -z "$refusal" ]] && cached="$(read_usage_cache "$harness" "$dir" "$1" "$(usage_serve_max_age)")"; then
-		take_cached_usage "$cached"
+	usage_serve_max_age silent
+	if [[ "$USE_CACHE" == "true" && -z "$refusal" ]] && read_usage_cache "$harness" "$dir" "$1" "$USAGE_SERVE_MAX_AGE" silent; then
+		[[ "$USAGE_CACHE_LEGACY" != true || "$CACHE_ONLY" == true || "$refreshed" == true || "${CURRENT_USAGE_LOCKED:-false}" == true ]] || return 1
 		return 0
 	fi
 	if [[ "$CACHE_ONLY" != true ]]; then
@@ -1700,16 +1719,18 @@ usage_from_record() { # NOW
 # `dir`, `token` and `account_id`. An empty `raw` on return is a lane no figure
 # answers.
 #
-# The clock is read afresh here and after each answer, never taken from
-# measure_lane: a caller that waited for the lock would otherwise judge the
+# The run epoch advances by Bash elapsed seconds here and after each answer: a caller that waited for the lock would otherwise judge the
 # holder's new record as stamped in the future, and a window counted from
 # before a slow request can have closed by the time that request's refusal
 # arrives.
 refresh_lane_usage() {
-	local answer window at
+	local answer window at CURRENT_USAGE_LOCKED=true
 	# The second read, inside the lock: a caller that waited takes the figure or
 	# the refusal the holder brought back instead of posting its own request.
-	usage_from_record "$(date +%s)" && return
+	if usage_from_record "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"; then
+		[[ "$USAGE_CACHE_LEGACY" != true ]] || write_usage_cache "$harness" "$dir" "$current_at" "$raw" normalize-only || true
+		return
+	fi
 	if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
 		status="unreachable"
 		detail="usage query could not be run"
@@ -1721,11 +1742,11 @@ refresh_lane_usage() {
 		# resolves: the row served below is one caller's answer, and the record
 		# is what keeps every other caller on this host off the endpoint until
 		# the window passes.
-		record_usage_refusal "$(date +%s)"
+		record_usage_refusal "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
 		# A cached figure seconds old is a better answer than no answer, and no
 		# rate limit is a reason to wall a launch on an account the host has a
 		# reading of.
-		serve_refused_usage "$harness" "$dir" "$(date +%s)" "$detail; these are the last figures it gave" && return
+		serve_refused_usage "$harness" "$dir" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" "$detail; these are the last figures it gave" && return
 		# Nothing usable is cached, so there is no figure to stand in. One
 		# retry, because a first refusal with nothing behind it leaves every
 		# caller with nothing to decide on. It waits the window or
@@ -1747,7 +1768,7 @@ refresh_lane_usage() {
 	# 429 `rate_limited`, and any other code `refused`, a reading of the
 	# credential the request went through that a read never made cannot claim.
 	if [[ -n "$HTTP_CODE" && "$HTTP_CODE" != 2?? ]]; then
-		record_usage_refusal "$(date +%s)"
+		record_usage_refusal "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
 		return
 	fi
 	if [[ -z "$HTTP_BODY" ]]; then
@@ -1769,7 +1790,7 @@ refresh_lane_usage() {
 	# figure, so this run reports what it measured either way. The write
 	# replaces the whole record, so a refusal on record is spent the moment the
 	# endpoint answers again. The figure it displaces is this sample's prior.
-	at="$(date +%s)"
+	at="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"
 	current_at="$at"
 	write_usage_cache "$harness" "$dir" "$at" "$raw" || true
 	prior_at="${USAGE_PRIOR_AT:-}"; prior_raw="${USAGE_PRIOR_RAW:-}"
@@ -1802,24 +1823,9 @@ record_usage_refusal() { # NOW
 # are measure_lane's locals, reached through their frames by bash's dynamic
 # scope: neither may declare them, or the writes stop at its frame.
 serve_refused_usage() { # HARNESS DIR NOW DETAIL
-	local cached
-	cached="$(read_usage_cache "$1" "$2" "$3" "$SESSION_WINDOW_S")" || return 1
-	take_cached_usage "$cached"
+	read_usage_cache "$1" "$2" "$3" "$SESSION_WINDOW_S" silent || return 1
 	status="rate_limited"
 	detail="$4"
-}
-
-# Assigns measure_lane's `age`, `raw`, `current_at`, `prior_at` and
-# `prior_raw` from one read_usage_cache answer, in one jq pass, the way
-# serve_refused_usage assigns them and for the same reason. A figure kept
-# beside a refusal carries no prior, so a rate-limited lane reports its rate
-# unmeasured.
-take_cached_usage() { # CACHED
-	{ IFS= read -r age; IFS= read -r current_at; IFS= read -r raw
-	  IFS= read -r prior_at; IFS= read -r prior_raw; IFS= read -r sample_claims; } < <(jq -r '
-		.age, .fetched_at, (.usage | tojson), (.prior.fetched_at // ""),
-		(if (.prior.usage | type) == "object" then (.prior.usage | tojson) else "" end),
-		(.sample_claims // 1)' <<<"$1")
 }
 
 # ── Usage cache ──────────────────────────────────────────────────────────────
@@ -1842,16 +1848,49 @@ take_cached_usage() { # CACHED
 # refusal reader. The refusal names which endpoint refused, because the token
 # endpoint and the usage endpoint are different hosts under different limits.
 
-usage_cache_file() {
-	local sum
-	sum="$(printf '%s' "$2" | cksum)" || return 1
-	printf '%s/%s-%s.json' "$USAGE_CACHE_DIR" "$1" "${sum// /-}"
+LANE_CRC_TABLE=()
+lane_checksum() { # PATH: POSIX cksum, including its byte-count suffix.
+	local LC_ALL=C path="$1" i bit value byte crc=0 length
+	if (( ${#LANE_CRC_TABLE[@]} == 0 )); then
+		for ((i=0; i<256; i++)); do
+			value=$((i << 24))
+			for ((bit=0; bit<8; bit++)); do
+				if (( value & 0x80000000 )); then value=$(((value << 1) ^ 0x04c11db7)); else value=$((value << 1)); fi
+				value=$((value & 0xffffffff))
+			done
+			LANE_CRC_TABLE[i]="$value"
+		done
+	fi
+	length=${#path}
+	for ((i=0; i<length; i++)); do
+		printf -v byte '%d' "'${path:i:1}"
+		crc=$((((crc << 8) ^ LANE_CRC_TABLE[((crc >> 24) ^ byte) & 255]) & 0xffffffff))
+	done
+	value="$length"
+	while (( value > 0 )); do
+		crc=$((((crc << 8) ^ LANE_CRC_TABLE[((crc >> 24) ^ value) & 255]) & 0xffffffff))
+		value=$((value >> 8))
+	done
+	LANE_CHECKSUM=$(((~crc) & 0xffffffff)) LANE_CHECKSUM_BYTES="$length"
+}
+
+usage_cache_file() { # HARNESS DIR [SILENT]
+	# Keep the existing names without starting a checksum pipeline per home.
+	lane_checksum "$2"
+	USAGE_CACHE_FILE="$USAGE_CACHE_DIR/$1-$LANE_CHECKSUM-$LANE_CHECKSUM_BYTES.json"
+	[[ "${3:-}" == silent ]] || printf '%s' "$USAGE_CACHE_FILE"
 }
 
 # Records usage_cache_permitted has admitted this process, one path per line.
 # A record is judged once: the process runs under one policy and writes every
 # record under it, so what it admitted stays admissible for its lifetime.
-USAGE_CACHE_ADMITTED=$'\n'
+USAGE_CACHE_ADMITTED=$'\n' USAGE_CACHE_PRUNED=false
+USAGE_POLICY_JQ='def usage_policy_current($policy): .policy == $policy;'
+USAGE_RESET_JQ='def usage_consumed_reset($now):
+	utc_resets | shared_bindings + (.model_buckets // []) | .[]
+	| select((.pct | type) == "number" and .pct > 0)
+	| (.resets_at | reset_epoch) as $reset
+	| select($reset != null and $reset <= $now) | .resets_at;'
 
 # Whether the record at FILE may be read or kept, the one judgment the figure
 # reader, the writer's prior sample and the startup scan share. A lane record
@@ -1866,8 +1905,8 @@ usage_cache_permitted() { # FILE [HARNESS]
 	if [[ -z "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" && -n "${2:-}" && "$2" != host-accounts ]]; then
 		return 0
 	fi
-	verdict="$(jq -r "${USAGE_POLICY_ARGS[@]}" '
-		if .harness == "host-accounts" then (if .policy == $policy then "ok" else "stale" end)
+	verdict="$(jq -r "${USAGE_POLICY_ARGS[@]}" "$USAGE_POLICY_JQ"'
+		if .harness == "host-accounts" then (if usage_policy_current($policy) then "ok" else "stale" end)
 		elif (.harness | type) == "string" and (.config_dir | type) == "string" then "lane\t" + .config_dir
 		else "malformed" end' "$1" 2>/dev/null)" || return 1
 	case "$verdict" in
@@ -1898,6 +1937,10 @@ usage_cache_permitted() { # FILE [HARNESS]
 prune_usage_cache() {
 	local file marker="$USAGE_CACHE_DIR/.pruned" stamp=""
 	[[ -n "${ORCH_LANE_EXCLUDE:-}${ORCH_LANE_RETIRE:-}" && -d "$USAGE_CACHE_DIR" ]] || return 0
+	if [[ "${1:-}" == warm ]]; then
+		[[ -e "$marker" ]] || printf '%s' "$USAGE_POLICY" >"$marker" 2>/dev/null || true
+		return 0
+	fi
 	[[ ! -r "$marker" ]] || stamp="$(<"$marker")"
 	[[ "$stamp" != "$USAGE_POLICY" || "$USAGE_CACHE_DIR" -nt "$marker" ]] || return 0
 	printf '%s' "$USAGE_POLICY" >"$marker" 2>/dev/null || rm -f -- "$marker"
@@ -1922,39 +1965,58 @@ prune_usage_cache() {
 # there is. Whether --no-cache forbids the read is likewise the caller's: it
 # declines a figure it could refresh, not the figure that stands in for one the
 # endpoint refused.
-read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
-	local file cached usage buckets expired
-	file="$(usage_cache_file "$1" "$2")" || return 1
+read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S [SILENT]
+	local file output cached expired="" buckets legacy creds starting_age="${age:-null}"
+	usage_cache_file "$1" "$2" silent
+	file="$USAGE_CACHE_FILE"
 	[[ -f "$file" ]] || return 1
-	usage_cache_permitted "$file" "$1" || return 1
-	cached="$(jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson max "${4:-null}" '
+	if [[ "$1" != host-accounts ]]; then
+		lane_admissible "$2" || return 1
+		case "$1" in claude) creds="$2/.credentials.json" ;; codex) creds="$2/auth.json" ;; copilot) creds="$2/config.json" ;; esac
+		# This shell's successful renewal can follow a peer's fresh usage write.
+		# Its credentials are already validated. Other login changes miss here.
+		[[ "$CACHE_ONLY" == true || "${refreshed:-false}" == true || ! "$creds" -nt "$file" ]] || return 1
+	fi
+	output="$(jq -er --arg h "$1" --arg d "$2" --arg policy "$USAGE_POLICY" --arg host "${ORCH_LANE_HOST:-local}" \
+		--argjson now "$3" --argjson max "${4:-null}" "$LANE_MODEL_JQ$USAGE_POLICY_JQ$USAGE_RESET_JQ"'
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
 		       and ($at | type) == "number" and (.usage | type) == "object")
+		| select($h != "host-accounts" or usage_policy_current($policy))
 		| ($now - $at) as $age
 		| select($age >= 0 and ($max == null or $age < $max))
-		| {fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null), sample_claims: (.sample_claims // 1)}' "$file" 2>/dev/null)" || return 1
-	# The cache stores endpoint bodies and provider rows, so the same parsers
-	# that measure them expose every window, including a non-binding model.
-	if [[ "$1" == host-accounts ]]; then
-		usage="$(jq -r '.usage.rows // empty' <<<"$cached")" || return 1
-		buckets="$(host_account_rows "$usage" all buckets)" || return 1
-	else
-		usage="$(jq -c '.usage' <<<"$cached")" || return 1
-		buckets="$(parse_usage_body "$1" unrounded <<<"$usage")" || return 1
+		| ([if $h == "host-accounts" then .normalized.accounts[]?.reset_buckets
+		    else .normalized.account.reset_buckets end
+		    | usage_consumed_reset($now)]
+		   | first // "") as $expired
+		| $expired, (.normalized == null or (.normalized | usage_policy_current($policy) | not) or .normalized.host != $host
+		    or .normalized.fetched_at != $at or .normalized.prior_at != (.prior.fetched_at // null)),
+		  ({fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null), sample_claims: (.sample_claims // 1)} | tojson),
+		  $age, $at, (.usage | tojson), (.prior.fetched_at // ""),
+		  (if (.prior.usage | type) == "object" then (.prior.usage | tojson) else "" end),
+		  (.sample_claims // 1)' "$file" 2>/dev/null)" || return 1
+	{ IFS= read -r expired; IFS= read -r legacy; IFS= read -r cached;
+	  IFS= read -r age; IFS= read -r current_at; IFS= read -r raw;
+	  IFS= read -r prior_at; IFS= read -r prior_raw; IFS= read -r sample_claims; } <<<"$output"
+	[[ "$CACHE_ONLY" != true ]] || legacy=true
+	if [[ "$legacy" == true ]]; then
+		if [[ "$1" == host-accounts ]]; then
+			buckets="$(jq -r '.rows' <<<"$raw")" || return 1
+			buckets="$(host_account_rows "$buckets" all buckets)" || return 1
+		else
+			buckets="$(parse_usage_body "$1" unrounded <<<"$raw")" || return 1
+		fi
+		expired="$(jq -sr --argjson now "$3" "$LANE_MODEL_JQ$USAGE_RESET_JQ"'
+			[.[] | usage_consumed_reset($now)]
+			| first // empty' <<<"$buckets")" || return 1
 	fi
-	expired="$(jq -sr --argjson now "$3" "$LANE_MODEL_JQ"'
-		[.[] | utc_resets
-		 | shared_bindings + (.model_buckets // [])
-		 | .[] | select((.pct | type) == "number" and .pct > 0)
-		 | (.resets_at | reset_epoch) as $reset
-		 | select($reset != null and $reset <= $now) | .resets_at]
-		| first // empty' <<<"$buckets")" || return 1
 	if [[ -n "$expired" ]]; then
 		message usage-cache-reset "$2" "$expired" >&2
+		raw="" age="$starting_age" current_at="" prior_at="" prior_raw="" sample_claims=1
 		return 1
 	fi
-	printf '%s\n' "$cached"
+	USAGE_CACHE_RECORD="$cached" USAGE_CACHE_LEGACY="$legacy"
+	[[ "${5:-}" == silent ]] || printf '%s\n' "$cached"
 }
 
 # The age a cached figure is served within: the TTL, or the caller's own pass
@@ -1966,37 +2028,62 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
 # it. The refusal reader can still serve a retained figure under its own bound.
 usage_serve_max_age() {
 	if [[ "$USAGE_TTL" -eq 0 ]]; then
-		printf 0
+		USAGE_SERVE_MAX_AGE=0
 	elif [[ "$USAGE_MAX_AGE" -gt "$USAGE_TTL" ]]; then
-		printf '%s' "$USAGE_MAX_AGE"
+		USAGE_SERVE_MAX_AGE="$USAGE_MAX_AGE"
 	else
-		printf '%s' "$USAGE_TTL"
+		USAGE_SERVE_MAX_AGE="$USAGE_TTL"
 	fi
+	[[ "${1:-}" == silent ]] || printf '%s' "$USAGE_SERVE_MAX_AGE"
 }
 
 # Renamed into place only once complete, so a concurrent reader never parses
 # half a record.
 write_usage_cache() {
-	local file tmp prior=null sample_claims=1
-	[[ "$1" == host-accounts || "$LANE_CLAIMS_RC" -ne 0 ]] || sample_claims="$(account_claims "$2" "$1")" || return 1
+	local file tmp prior=null sample_claims=1 normalized=null parsed prior_fields ems="${expires_ms:-0}" rms="${refresh_expiry:-0}" write_mode="${5:-refresh}" existing_record=null
+	if [[ "$1" != host-accounts && "$LANE_CLAIMS_RC" == 0 ]]; then
+		account_claims "$2" "$1" '' silent || return 1
+		sample_claims="$ACCOUNT_CLAIMS"
+	fi
 	USAGE_SAMPLE_CLAIMS="$sample_claims"
-	file="$(usage_cache_file "$1" "$2")" || return 1
+	usage_cache_file "$1" "$2" silent
+	file="$USAGE_CACHE_FILE"
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
 	if [[ -f "$file" ]] && usage_cache_permitted "$file" "$1"; then
-		prior="$(jq -ce --arg h "$1" --arg d "$2" '
+		prior_fields="$(jq -er --arg h "$1" --arg d "$2" --arg mode "$write_mode" '
 			(.usage_fetched_at // .fetched_at) as $at
 			| select(.harness == $h and .config_dir == $d
 			       and ($at | type) == "number" and (.usage | type) == "object")
-			| {fetched_at: $at, usage}' "$file" 2>/dev/null)" || prior=null
+			| (if $mode == "normalize-only" then .prior // null else {fetched_at: $at, usage} end)
+			| select(type == "object") | tojson, .fetched_at, (.usage | tojson)' "$file" 2>/dev/null)" || prior_fields=""
+		if [[ -n "$prior_fields" ]]; then
+			{ IFS= read -r prior; IFS= read -r USAGE_PRIOR_AT; IFS= read -r USAGE_PRIOR_RAW; } <<<"$prior_fields"
+		fi
 	fi
-	if [[ "$prior" != null ]]; then
-		USAGE_PRIOR_AT="$(jq -r '.fetched_at' <<<"$prior")"
-		USAGE_PRIOR_RAW="$(jq -c '.usage' <<<"$prior")"
+	[[ "$write_mode" != normalize-only ]] || existing_record="$(<"$file")"
+	if [[ "$1" != host-accounts ]]; then
+		parsed="$(parse_usage_samples "$1" "$4" "${USAGE_PRIOR_RAW:-null}")" || return 1
+		[[ "$ems" =~ ^[0-9]+$ ]] || ems=0
+		[[ "$rms" =~ ^[0-9]+$ ]] || rms=0
+		normalized="$(jq -nc --arg h "$1" --arg d "$2" --arg status "${status:-ok}" --arg detail "${detail:-}" \
+			--arg plan "${plan:-}" --argjson parsed "$parsed" --argjson ems "$ems" --argjson rms "$rms" \
+			'{account: {harness: $h, config_dir: $d, status: $status, detail: $detail,
+			  plan: (if $h == "copilot" then $parsed.buckets.plan // "" else $plan end), through: "local",
+			  buckets: $parsed.buckets, reset_buckets: $parsed.reset_buckets,
+			  prior_buckets: $parsed.prior_buckets, expires_ms: $ems, refresh_expires_ms: $rms}}')" || return 1
+	else
+		local host_rows
+		host_rows="$(jq -r '.rows // ""' <<<"$4")" || return 1
+		normalized="$(host_account_rows "$host_rows" all normalized)" || return 1
 	fi
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
-	if jq -nc "${USAGE_POLICY_ARGS[@]}" --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" --argjson claims "$sample_claims" \
-		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p, sample_claims: $claims}
+	if jq -nc "${USAGE_POLICY_ARGS[@]}" --arg host "${ORCH_LANE_HOST:-local}" --argjson normalized "$normalized" \
+		--arg mode "$write_mode" --argjson existing "$existing_record" \
+		--arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" --argjson claims "$sample_claims" \
+		'(if $mode == "normalize-only" then $existing
+		  else {harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p, sample_claims: $claims} end)
+		+ {normalized: ($normalized + {host: $host, policy: $policy, fetched_at: $now, prior_at: ($p.fetched_at // null)})}
 		+ (if $h == "host-accounts" then {policy: $policy} else {} end)' >"$tmp" \
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
@@ -2013,9 +2100,12 @@ write_usage_cache() {
 # asking for a fresh reading must not be the one caller on the host that posts
 # again what the endpoint has already refused.
 read_usage_refusal() {
-	local file
-	file="$(usage_cache_file "$1" "$2")" || return 1
+	local file creds
+	usage_cache_file "$1" "$2" silent
+	file="$USAGE_CACHE_FILE"
 	[[ -f "$file" ]] || return 1
+	case "$1" in claude) creds="$2/.credentials.json" ;; codex) creds="$2/auth.json" ;; *) creds="$2/config.json" ;; esac
+	[[ "$CACHE_ONLY" == true || "${refreshed:-false}" == true || ! "$creds" -nt "$file" ]] || return 1
 	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" '
 		select(.harness == $h and .config_dir == $d
 		       and (.fetched_at | type) == "number"
@@ -2048,7 +2138,7 @@ write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 # for this lane, under its own stamp, beside it: `kept` is that figure as
 # `{usage, usage_fetched_at}`, or `{}` where there is none.
 store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
-	local file tmp window kept=""
+	local file tmp window kept="" parsed ems="${expires_ms:-0}" rms="${refresh_expiry:-0}"
 	window="$(usage_refusal_window "${8:-}")"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
@@ -2056,16 +2146,34 @@ store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
 		       and ($at | type) == "number" and (.usage | type) == "object")
-		| {usage: .usage, usage_fetched_at: $at}' "$file" 2>/dev/null)"
+		| {usage: .usage, usage_fetched_at: $at, normalized: .normalized}' "$file" 2>/dev/null)"
 	[[ -n "$kept" ]] || kept='{}'
+	parsed="$(jq -c '.normalized.account // null' <<<"$kept")" || return 1
+	if [[ "$parsed" == null ]]; then
+		local body samples
+		body="$(jq -c '.usage // {}' <<<"$kept")" || return 1
+		samples="$(parse_usage_samples "$1" "$body" null)" || return 1
+		parsed="$(jq -nc --argjson p "$samples" '{buckets: $p.buckets, reset_buckets: $p.reset_buckets}')" || return 1
+	fi
+	[[ "$ems" =~ ^[0-9]+$ ]] || ems=0
+	[[ "$rms" =~ ^[0-9]+$ ]] || rms=0
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
 	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" \
 		--arg status "$5" --arg code "$6" --arg detail "$7" \
+		--arg policy "$USAGE_POLICY" --arg host "${ORCH_LANE_HOST:-local}" --arg plan "${plan:-}" \
+		--argjson reading "$parsed" --argjson ems "$ems" --argjson rms "$rms" \
 		--argjson until "$(( $3 + window ))" --argjson kept "$kept" \
-		'$kept + {harness: $h, config_dir: $d, fetched_at: $now,
+		'($kept | del(.normalized)) + {harness: $h, config_dir: $d, fetched_at: $now,
 		  refusal: {endpoint: $ep, status: $status,
 		            code: (if $code == "" then null else $code end),
-		            detail: $detail, expires_at: $until}}' >"$tmp" \
+		            detail: $detail, expires_at: $until}}
+		| . + {normalized: {host: $host, policy: $policy,
+		    fetched_at: (.usage_fetched_at // $now), prior_at: null, refusal: .refusal,
+		    account: ($reading + {harness: $h, config_dir: $d, through: "local",
+		      status: (if .usage != null then "ok" else $status end),
+		      detail: (if .usage != null then "" else $detail end),
+		      plan: (if $h == "copilot" then $reading.plan // $plan else $plan end),
+		      prior_buckets: {}, expires_ms: $ems, refresh_expires_ms: $rms})}}' >"$tmp" \
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
 	fi
@@ -2142,26 +2250,24 @@ token_expired() {
 # the access token itself, a JWT whose segments are unpadded base64url, hence
 # the translation and the padding before decoding; 0 where the file holds no
 # such token (an API key, or a token no claim reads out of).
-token_expiry_ms() { # HARNESS CREDS
-	case "$1" in
-		claude) jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$2" ;;
-		codex)
-			jq -r '(try (.tokens.access_token | split(".")[1]
+LANE_CREDENTIALS_JQ='def lane_token_expiry_ms($h):
+	if $h == "claude" then try (.claudeAiOauth.expiresAt // 0) catch 0
+	else (try (.tokens.access_token | split(".")[1]
 			        | gsub("-"; "+") | gsub("_"; "/")
 			        | . + ("=" * ((4 - length % 4) % 4))
 			        | @base64d | fromjson | .exp | numbers | floor * 1000)
-			       catch null) // 0' "$2"
-			;;
-	esac
+			       catch null) // 0 end;
+def lane_access_token($h):
+	try (if $h == "claude" then .claudeAiOauth.accessToken // ""
+	     else .tokens.access_token // .OPENAI_API_KEY // "" end) catch "";'
+token_expiry_ms() { # HARNESS CREDS
+	jq -r --arg h "$1" "$LANE_CREDENTIALS_JQ"'lane_token_expiry_ms($h)' "$2"
 }
 
 # The access token in credentials file $2 of harness $1, empty where it holds
 # none. A Codex auth.json holding an API key and no login answers the key.
 access_token() { # HARNESS CREDS
-	case "$1" in
-		claude) jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' "$2" ;;
-		codex) jq -r 'try (.tokens.access_token // .OPENAI_API_KEY // empty) catch empty' "$2" ;;
-	esac
+	jq -r --arg h "$1" "$LANE_CREDENTIALS_JQ"'lane_access_token($h)' "$2"
 }
 
 # The User-Agent the renewal posts with. platform.claude.com answers HTTP 429
@@ -2232,7 +2338,7 @@ renew_token() { # HARNESS DIR CREDS
 	lock="$dir/.lanes-refresh.lock"
 	exec 9>"$lock" || { token_refusal error '' '' "the lock file $lock could not be opened"; return 1; }
 	orch_take_lock 9 "$lock" 30 || { token_refusal unreachable '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
-	if ! token_expired "$(token_expiry_ms "$harness" "$creds")" "$(date +%s)" \
+	if ! token_expired "$(token_expiry_ms "$harness" "$creds")" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" \
 		&& at="$(access_token "$harness" "$creds")" && [[ -n "$at" ]]; then
 		printf '%s' "$at"
 	else
@@ -2306,7 +2412,7 @@ refresh_claude_token() { # DIR CREDS
 	# through the check that closes it.
 	expires_in=$(jq -r 'try (.expires_in // empty) catch empty' <<<"$HTTP_BODY")
 	[[ "$expires_in" =~ ^[0-9]+$ && "$expires_in" -gt 0 ]] || { token_refusal expired "$HTTP_CODE" "$HTTP_RETRY" 'the token endpoint returned no usable expires_in'; return 1; }
-	new_exp=$(( ($(date +%s) + expires_in) * 1000 ))
+	new_exp=$(( ($((RUN_NOW + SECONDS - RUN_STARTED_SECONDS)) + expires_in) * 1000 ))
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$HTTP_BODY")
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
@@ -2387,7 +2493,7 @@ refresh_codex_token() { # DIR AUTH_JSON
 			waited=$((waited + 1))
 		done
 	} | (cd -- "$dir" && CODEX_HOME="$dir" codex app-server; : >"$run/exited") >"$run/answer" 2>"$run/stderr" 9>&-
-	token_expired "$(token_expiry_ms codex "$creds")" "$(date +%s)" && refusal="$(codex_renew_refusal "$dir" "$run")"
+	token_expired "$(token_expiry_ms codex "$creds")" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" && refusal="$(codex_renew_refusal "$dir" "$run")"
 	rm -rf -- "$run"
 	[[ -z "$refusal" ]] || { printf '%s' "$refusal"; return 1; }
 	at="$(access_token codex "$creds")"
@@ -2412,35 +2518,7 @@ refresh_codex_token() { # DIR AUTH_JSON
 # A Copilot record also carries `credits` and `unlimited`, information beside
 # its `monthly` bucket (schemas/copilot-credits.md); a Codex record carries
 # the `credits` lib/lane-usage.sh parse_codex_usage reads.
-emit_lane() {
-	# refreshable is true only for a lane this run found expired and made live,
-	# by its own renewal or by taking one a peer wrote under the lock: a lane
-	# whose token had not expired, and one whose renewal failed, are both false.
-	# `through` is the credential this row was measured through: `local` for a
-	# config dir on this machine, `host` for a row the provider reported. Carried
-	# in the record itself so no listing stamps it afterwards, which cost the
-	# whole listing one jq pass whether or not a provider was configured.
-	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}"
-	lane_retire_date "$dir" silent
-	[[ -n "$prior" ]] || prior='{}'
-	# No-figure callers pass empty buckets. In a cache-only listing, the wall
-	# oversee-watch recorded cannot supply the missing usage reading. Parsed
-	# figures and ordinary listings retain the existing wall overlay.
-	if [[ "$CACHE_ONLY" != true || "$buckets" != '{}' ]]; then
-		buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
-	fi
-	# `null`, never 0, when the store could not be read: "we could not see the
-	# launches in flight" must not read as "there are none".
-	local claims="null"
-	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(account_claims "$dir" "$harness" "$buckets")"
-	lane_canon "$dir" || return 1
-	jq -nc \
-		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" --arg id "$LANE_CANON" \
-		--arg status "$status" --arg detail "$detail" --arg plan "$plan" --arg retire "$LANE_RETIRE_DATE" \
-		--argjson claims "$claims" --argjson age "$age" \
-		--argjson refreshable "$refreshable" \
-		--arg through "$through" --argjson b "$buckets" \
-		--argjson pb "$prior" --argjson elapsed "$elapsed" --argjson sample_claims "$sample_claims" "$LANE_MODEL_JQ"'
+LANE_EMIT_JQ='def emit_lane_row($alias; $harness; $dir; $id; $status; $detail; $plan; $retire; $claims; $age; $refreshable; $through; $b; $pb; $elapsed; $sample_claims):
 		($b // {} | utc_resets) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct, $b.monthly_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0 and $b.credits.unit != "usd") then "no_usage_data" else $status end) as $st
@@ -2481,9 +2559,41 @@ emit_lane() {
 		             elif $detail == "" then null else $detail end)
 		  }
 		| . + (if $harness == "copilot" then {credits_used: ($b.credits_used // null)} else {} end)
-		| with_lane_binding(""; false)'
-}
+		| with_lane_binding(""; false);'
 
+emit_lane() {
+	# refreshable is true only for a lane this run found expired and made live,
+	# by its own renewal or by taking one a peer wrote under the lock: a lane
+	# whose token had not expired, and one whose renewal failed, are both false.
+	# `through` is the credential this row was measured through: `local` for a
+	# config dir on this machine, `host` for a row the provider reported. Carried
+	# in the record itself so no listing stamps it afterwards, which cost the
+	# whole listing one jq pass whether or not a provider was configured.
+	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}"
+	lane_retire_date "$dir" silent
+	[[ -n "$prior" ]] || prior='{}'
+	# No-figure callers pass empty buckets. In a cache-only listing, the wall
+	# oversee-watch recorded cannot supply the missing usage reading. Parsed
+	# figures and ordinary listings retain the existing wall overlay.
+	if [[ "$CACHE_ONLY" != true || "$buckets" != '{}' ]]; then
+		buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
+	fi
+	# `null`, never 0, when the store could not be read: "we could not see the
+	# launches in flight" must not read as "there are none".
+	local claims="null"
+	if [[ "$LANE_CLAIMS_RC" == 0 ]]; then
+		account_claims "$dir" "$harness" "$buckets" silent || return 1
+		claims="$ACCOUNT_CLAIMS"
+	fi
+	lane_canon "$dir" || return 1
+	jq -nc \
+		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" --arg id "$LANE_CANON" \
+		--arg status "$status" --arg detail "$detail" --arg plan "$plan" --arg retire "$LANE_RETIRE_DATE" \
+		--argjson claims "$claims" --argjson age "$age" \
+		--argjson refreshable "$refreshable" \
+		--arg through "$through" --argjson b "$buckets" \
+		--argjson pb "$prior" --argjson elapsed "$elapsed" --argjson sample_claims "$sample_claims" "$LANE_MODEL_JQ$LANE_EMIT_JQ"'emit_lane_row($alias; $harness; $dir; $id; $status; $detail; $plan; $retire; $claims; $age; $refreshable; $through; $b; $pb; $elapsed; $sample_claims)'
+}
 
 # Called before `collect_lanes`, never inside it: collect_lanes runs in a
 # command substitution, and a read failure recorded there would die with the
@@ -2500,11 +2610,11 @@ load_lane_claims() {
 	# knows: every harness's, Pi roots and excluded dirs included, since an
 	# exclusion added while a lane runs leaves its claim live.
 	for h in claude codex copilot pi; do
-		while IFS= read -r d; do
-			[[ -n "$d" ]] || continue
+		lane_dirs "$h" all silent || return 1
+		for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
 			lane_canon "$d" || return 1
 			own+="$LANE_CANON"$'\n'
-		done < <(lane_dirs "$h" all)
+		done
 	done
 	# Fleet mode ends in named spelling and pool. The reader supplies plan
 	# for an older claim, so empty fleet and named fields keep their positions.
@@ -2515,9 +2625,10 @@ load_lane_claims() {
 		rest="${line%$'\t'*}"
 		named="${rest##*$'\t'}"
 		key=""
-		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *) key="$(lane_account_name "${named:-$cfg}")" ;; esac
+		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *) lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME" ;; esac
 		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$key"$'\t'"$pool"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
+	load_normalized "${1:-}"
 }
 
 # The name a store several homes share knows DIR's account by: the alias `list`
@@ -2525,12 +2636,14 @@ load_lane_claims() {
 # harness word (`~/.claude`, `~/.codex`, `~/.copilot`) is the login that
 # harness falls back to in whatever home it sits, so two users' `~/.claude` are
 # two accounts, and only an ORCH_LANE_ALIASES name joins it to another home's.
-lane_account_name() { # DIR
+lane_account_name() { # DIR [SILENT]
 	local alias base
 	lane_alias_for "$1" silent; alias="$LANE_ALIAS"
 	lane_base "$1"; base="$LANE_BASE"
 	base="${base#.}"
-	[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || printf '%s' "$alias"
+	LANE_ACCOUNT_NAME=""
+	[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || LANE_ACCOUNT_NAME="$alias"
+	[[ "${2:-}" == silent ]] || printf '%s' "$LANE_ACCOUNT_NAME"
 }
 
 # Live claims against DIR's account. A store several homes share names one
@@ -2541,19 +2654,28 @@ lane_account_name() { # DIR
 # claim. Plan windows count only plan claims; Copilot counts its monthly
 # pool claims. Pi USD grants have no in-flight charge. Reads
 # LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
-account_claims() { # DIR [HARNESS [BUCKETS]]
-	local pool=plan unit=""
+account_claims() { # DIR [HARNESS [BUCKETS [SILENT]]]
+	local pool=plan unit="" line cfg named claim_pool key
 	case "${2:-claude}" in
 		copilot | pi) pool=copilot ;;
 	esac
 	if [[ "${2:-}" == pi && -n "${3:-}" ]]; then
 		unit="$(jq -r '.credits.unit // empty' <<<"$3")" || return 1
-		[[ "$unit" != usd ]] || { printf '0\n'; return 0; }
+		[[ "$unit" != usd ]] || { ACCOUNT_CLAIMS=0; [[ "${4:-}" == silent ]] || printf '0\n'; return 0; }
 	fi
 	lane_canon "$1" || return 1
-	LANE_CLAIMS_CANON_Q="$LANE_CANON" LANE_CLAIMS_ACCOUNT_Q="$(lane_account_name "$1")" LANE_CLAIMS_POOL_Q="$pool" \
-		awk -F'\t' '$3 == ENVIRON["LANE_CLAIMS_POOL_Q"] && ($1 == ENVIRON["LANE_CLAIMS_CANON_Q"] || ($2 != "" && $2 == ENVIRON["LANE_CLAIMS_ACCOUNT_Q"])) { n++ }
-			END { print n + 0 }' <<<"$LANE_CLAIM_ACCOUNTS"
+	key="$LANE_CANON"
+	lane_account_name "$1" silent
+	ACCOUNT_CLAIMS=0
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		cfg="${line%%$'\t'*}"; named="${line#*$'\t'}"
+		claim_pool="${named##*$'\t'}"; named="${named%%$'\t'*}"
+		[[ "$claim_pool" == "$pool" ]] || continue
+		[[ "$cfg" == "$key" || ( -n "$named" && "$named" == "$LANE_ACCOUNT_NAME" ) ]] || continue
+		ACCOUNT_CLAIMS=$((ACCOUNT_CLAIMS + 1))
+	done <<<"$LANE_CLAIM_ACCOUNTS"
+	[[ "${4:-}" == silent ]] || printf '%s\n' "$ACCOUNT_CLAIMS"
 }
 
 # EXCLUDE is the config dirs, one a line, that `pick` omits before the chooser
@@ -2568,13 +2690,19 @@ account_claims() { # DIR [HARNESS [BUCKETS]]
 # local loop, in the local dir's place, and the tail carries only the rows
 # naming a dir discovery does not reach.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x held_records i
+	local held_ids=() held_rows=()
 	while IFS= read -r x; do
 		[[ -n "$x" ]] || continue
 		lane_canon "$x" || return 1
 		excluded+="$LANE_CANON"$'\n'
 	done <<<"$exclude"
-	[[ "$hosted" == "[]" ]] || held="$(jq -r '.[]._id' <<<"$hosted")" || return 1
+	if [[ "$hosted" != "[]" ]]; then
+		held_records="$(jq -r '.[] | ._id, tojson' <<<"$hosted")" || return 1
+		while IFS= read -r id && IFS= read -r row; do
+			held+="$id"$'\n'; held_ids+=("$id"); held_rows+=("$row")
+		done <<<"$held_records"
+	fi
 	{
 		# `all` is the three harnesses whose accounts this machine measures; the
 		# Copilot pool a Pi launch on a `github-copilot/` model spends is
@@ -2595,8 +2723,10 @@ collect_lanes() {
 							# A helper failure must not restore shared host room
 							# when the requested model was never measured. This
 							# pipeline reports it as an unread candidate.
-							row="$(jq -c --arg id "$id" 'map(select(._id == $id)) | first' <<<"$hosted")" \
-								&& host_row_or_local "$h" "$d" "$row" "$model" \
+							for ((i=0; i<${#held_ids[@]}; i++)); do
+								[[ "${held_ids[i]}" != "$id" ]] || { row="${held_rows[i]}"; break; }
+							done
+							host_row_or_local "$h" "$d" "$row" "$model" \
 								|| { message pick-lane-failed "$d" local-reading >&2;
 									jq -c '. + {status: "error", headroom_pct: null, detail: "local-reading failed"}' <<<"$row" || return 1; }
 							continue
@@ -2633,9 +2763,22 @@ collect_lanes() {
 # gate is `host-accounts --no-cache`'s answer, never this one.
 HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS="" HOSTED_API_DISCOVERED=false
 host_lane_rows() { # HARNESS [READINGS [MODEL]]
-	local rows answer format="" hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0
+	local rows answer format="" hosted="" dirs ids="" d accounts_rc=0 hosted_rc=0 i
 	HOSTED_ROWS="[]" HOSTED_READ=local HOST_ACCOUNTS_ROWS="" HOSTED_API_DISCOVERED=false
 	[[ "${ORCH_LANE_HOST:-local}" != local ]] || return 0
+	if [[ "$NORMALIZED_HOST_READY" == true ]]; then
+		if [[ "$NORMALIZED_HOST_STATUS" == 2 ]]; then HOSTED_READ=absent; return 0; fi
+		HOSTED_READ=answered HOSTED_API_DISCOVERED="$NORMALIZED_HOST_API"
+		HOST_ACCOUNTS_ROWS="$(jq -r '.rows' <<<"$NORMALIZED_HOST_USAGE")" || return 1
+		rows=""
+		for ((i=0; i<${#NORMALIZED_DIRS[@]}; i++)); do
+			[[ "${NORMALIZED_THROUGHS[i]}" == host ]] || continue
+			[[ "${2:-}" != readings || "${NORMALIZED_READINGS[i]}" == true ]] || continue
+			rows+="${NORMALIZED_ROWS[i]}"$'\n'
+		done
+		HOSTED_ROWS="$(jq -cs --arg h "$1" 'map(select(.harness == $h or ($h == "all" and .harness != "pi")))' <<<"$rows")" || return 1
+		return 0
+	fi
 	[[ "$(lane_pick_pool "$1" "${3:-}")" != api-credit ]] || format=record
 	answer="$(host_accounts_answer "$ORCH_LANE_HOST" "$format")" || accounts_rc=$?
 	case "$accounts_rc" in
@@ -2741,6 +2884,7 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # map included, and the day, and is a miss under any other.
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVERY]
 	local rows="$1" want="$2" mode="${3:-}" line field key value bad retire said rest alias
+	local batch_args=() selected id claims wall wall_file kind payload normalized_result=""
 	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field
 	while IFS= read -r line; do
@@ -2801,84 +2945,93 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 				[[ "$value" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-fields}"
 			done
 			[[ "$credit_spent" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-spent}"
-			jq -en --arg l "$credit_limit" --arg e "$credit_expires" \
-				'($l | tonumber) > 0 and ($e | fromdateiso8601) != null' >/dev/null 2>&1 || bad="${bad:-credit-fields}"
 		fi
 		if [[ -n "$bad" ]]; then
 			message host-account-invalid "${account:-<unnamed>}" "$bad" >&2
 			continue
 		fi
-		# Judged AFTER the field rules, so a row nothing can read is reported
-		# whichever harness a caller asked for: a provider emitting a malformed
-		# row says so once, not only to the caller that wanted that harness.
-		[[ "$want" == all || "$harness" == "$want" ]] || continue
-		# The cache holds the whole answer, Pi rows included, for every harness
-		# a later read asks for.
-		[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue
-		[[ "$mode" != readings || -n "$said" ]] || continue
-		# Discovery survives policy filtering without retaining the excluded
-		# account or its usage in the cache's candidate rows.
-		if [[ "$mode" == discovery ]]; then
-			[[ -z "$credit_fields" && "$detail" != api-credit-* ]] || printf '%s\n' true
-			continue
+		selected=true id="" claims=null wall="" wall_file="" retire=""
+		[[ "$want" == all || "$harness" == "$want" ]] || selected=false
+		# Normalization keeps the same complete cache inventory, Pi included.
+		if [[ "$mode" != normalized ]]; then
+			[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue
 		fi
-		# The same two settings that remove a local lane remove a hosted row, and
-		# for the same reason: they are the operator saying the account is not
-		# available to this fleet, which a copy of it on another machine does not
-		# change. Without this an excluded account came back as host capacity the
-		# overseer could neither wait out nor place an item on, and a retired one
-		# was listed twice, retired locally and ok through the host. Keyed on the
-		# row's own account value, the config dir `create --account` receives.
-		if lane_excluded "$account"; then
-			continue
-		fi
-		if [[ "$mode" == canon ]]; then
-			lane_canon "$account" || return 1
-			continue
-		fi
-		if [[ "$mode" == seats ]]; then
-			[[ "$seat" == 1 ]] || continue
-			lane_canon "$account" || return 1
-			printf '%s\n' "$LANE_CANON"
-			continue
-		fi
+		[[ "$mode" != readings || -n "$said" ]] || selected=false
+		if [[ "$mode" != discovery ]] && lane_excluded "$account"; then selected=false; fi
 		lane_alias_for "$account" silent; alias="$LANE_ALIAS"
 		if lane_retired "$account" silent; then
 			retire="$LANE_RETIRE_DATE"
-			if [[ "$mode" == cache ]]; then
-				printf 'account=%s\tharness=%s\tstatus=retired\n' "$account" "$harness"
-				continue
+			if [[ "$mode" != seats && "$mode" != canon && "$mode" != discovery ]]; then
+				status=retired detail="retired on $retire (ORCH_LANE_RETIRE)"
 			fi
-			emit_lane "$alias" "$harness" "$account" "retired" \
-				"retired on $retire (ORCH_LANE_RETIRE)" "" '{}' null false host
-			continue
 		fi
-		if [[ "$mode" == cache ]]; then
-			printf '%s\n' "$line"
-			continue
+		retire="$LANE_RETIRE_DATE"
+		if [[ "$selected" == true && "$mode" != cache && "$mode" != discovery ]]; then
+			lane_canon "$account" || return 1; id="$LANE_CANON"
+			if [[ "$mode" == readings || -z "$mode" ]]; then
+				[[ "$LANE_CLAIMS_RC" != 0 ]] || { account_claims "$account" "$harness" '' silent || return 1; claims="$ACCOUNT_CLAIMS"; }
+				if [[ -d "$ACCOUNT_WALL_DIR" && "$status" != retired ]]; then
+					account_wall_file "$PROJECT_ROOT" "$account" || return 1
+					wall_file="$ACCOUNT_WALL_FILE"
+					[[ ! -e "$wall_file" ]] || wall="$(<"$wall_file")"
+				fi
+			fi
 		fi
-		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" --argjson mo "$mo_pct" \
-			--arg ml "$m_label" --arg sr "$s_reset" --arg wr "$w_reset" --arg mr "$m_reset" --arg mor "$mo_reset" \
-			--arg credit "$credit_fields" --arg cl "$credit_limit" --arg cs "$credit_spent" --arg cr "$credit_remaining" --arg ce "$credit_expires" '
-			def nz($v): if $v == "" then null else $v end;
-			{ session_5h_pct: $s, weekly_pct: $w, model_pct: $m, monthly_pct: $mo,
-			  credits: (if $credit == "" then null else {unit: "usd", limit_dollars: ($cl | tonumber),
-			    used_dollars: (if $cs == "" then null else ($cs | tonumber) end), remaining_dollars: ($cr | tonumber),
-			    resets_at: $ce, locked_reason: null} end),
-			  model_label: nz($ml),
-			  model_buckets: (if $m == null then [] else [{label: nz($ml), pct: $m,
-			                                                    resets_at: nz($mr)}] end),
-			  resets: {session: nz($sr), weekly: nz($wr), model: nz($mr), monthly: nz($mor)} }')" || {
-			message host-account-invalid "$account" buckets >&2
-			continue
-		}
-		if [[ "$mode" == buckets ]]; then
-			printf '%s\n' "$buckets"
-			continue
-		fi
-		lane_canon "$account" || return 1
-		emit_lane "$alias" "$harness" "$account" "$status" "$detail" "" "$buckets" null false host
+		batch_args+=("$account" "$harness" "$status" "$detail" "$seat" "$said" "$s_pct" "$w_pct" "$m_pct" "$mo_pct"
+			"$m_label" "$s_reset" "$w_reset" "$m_reset" "$mo_reset" "$credit_fields" "$credit_limit" "$credit_spent"
+			"$credit_remaining" "$credit_expires" "$alias" "$id" "$retire" "$claims" "$wall" "$wall_file" "$line" "$selected")
 	done <<<"$rows"
+	local decoded
+	decoded="$(jq -nr --arg mode "$mode" --args "$LANE_MODEL_JQ$LANE_EMIT_JQ$ACCOUNT_WALL_JQ"'
+		def nz: if . == "" then null else . end;
+		$ARGS.positional as $a
+		| [range(0; ($a | length); 28) as $i
+		   | $a[$i:$i+28] as $v
+		   | if $v[15] != "" and ((try ($v[16] | tonumber) catch 0) <= 0 or (try ($v[19] | fromdateiso8601) catch null) == null)
+		     then {kind: "invalid", payload: $v[0]}
+		     elif $v[27] != "true" or $mode == "canon" then empty
+		     elif $mode == "cache" then
+		       {kind: "text", payload: (if $v[2] == "retired" then "account=\($v[0])	harness=\($v[1])	status=retired" else $v[26] end)}
+		     elif $mode == "seats" then
+		       if $v[4] == "1" then {kind: "text", payload: $v[21]} else empty end
+		     elif $mode == "discovery" then
+		       if $v[15] != "" or ($v[3] | startswith("api-credit-")) then {kind: "text", payload: "true"} else empty end
+		     else
+		       (if $v[2] == "retired" then {} else
+		         {session_5h_pct: ($v[6] | fromjson), weekly_pct: ($v[7] | fromjson),
+		          model_pct: ($v[8] | fromjson), monthly_pct: ($v[9] | fromjson),
+		          credits: (if $v[15] == "" then null else {unit: "usd", limit_dollars: ($v[16] | tonumber),
+		             used_dollars: ($v[17] | if . == "" then null else tonumber end), remaining_dollars: ($v[18] | tonumber),
+		             resets_at: $v[19], locked_reason: null} end),
+		          model_label: ($v[10] | nz), model_buckets: (if $v[8] == "null" then []
+		             else [{label: ($v[10] | nz), pct: ($v[8] | tonumber), resets_at: ($v[13] | nz)}] end),
+		          resets: {session: ($v[11] | nz), weekly: ($v[12] | nz), model: ($v[13] | nz), monthly: ($v[14] | nz)}} end) as $b
+		       | if $mode == "normalized" then
+		           {kind: "account", payload: {harness: $v[1], config_dir: $v[0], status: $v[2], detail: $v[3], plan: "", through: "host",
+		              buckets: $b, reset_buckets: $b, prior_buckets: {}, has_reading: ($v[5] != "")}}
+		         elif $mode == "buckets" then {kind: "json", payload: ($b | tojson)}
+		         else
+		           (if $v[24] == "" then null else account_wall_read($v[24]) end) as $w
+		           | (if $w == "unreadable" then {} elif $w != null then ($b | account_wall_apply($w; $v[21])) else $b end) as $b
+		           | (if $w == "unreadable" then {kind: "wall-error", payload: $v[25]} else empty end),
+		             {kind: "json", payload: (emit_lane_row($v[20]; $v[1]; $v[0]; $v[21];
+		                (if $w == "unreadable" then "error" else $v[2] end);
+		                (if $w == "unreadable" then "wall record unreadable" else $v[3] end);
+		                ""; $v[22]; (if $v[1] == "pi" and $b.credits.unit == "usd" then 0 else $v[23] | fromjson end);
+		                null; false; "host"; $b; {}; null; 1) | tojson)}
+		         end
+		     end] as $rows
+		| if $mode == "normalized" then
+		    ($rows[] | select(.kind == "invalid") | .kind, .payload),
+		    "normalized", ({accounts: [$rows[] | select(.kind == "account") | .payload]} | tojson)
+		  else $rows[] | .kind, .payload end' ${batch_args[@]+"${batch_args[@]}"})" || return 1
+	while IFS= read -r kind && IFS= read -r payload; do
+		case "$kind" in
+			invalid) message host-account-invalid "$payload" credit-fields >&2 ;;
+			wall-error) account_wall_unreadable "$payload" >&2 ;;
+			json|text|normalized) printf '%s\n' "$payload" ;;
+		esac
+	done <<<"$decoded"
 }
 
 # The provider's `accounts` answer after row validation and the account policy,
@@ -2887,7 +3040,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 # status is the one host_account_records passes on: 0 answered, 2 verb absent,
 # 1 failed.
 host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status back
-	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait discovered
+	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait discovered cache_phase host_locked=false
 	local -a bound=()
 	# Read through the same cache every usage figure in this script uses, keyed on
 	# the PROVIDER rather than on a harness and a config dir, since one answer
@@ -2898,7 +3051,8 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 	# because which accounts a host holds decides a gate rather than reporting a
 	# figure. `pick` reads through the cache, since what it takes from the answer
 	# is usage windows, read on the TTL every window has.
-	now_s="$(date +%s)" || { message host-accounts-unreadable "$host" clock >&2; return 1; }
+	now_s="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" || { message host-accounts-unreadable "$host" clock >&2; return 1; }
+	for cache_phase in fast locked; do
 	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache host-accounts "$host" "$now_s" "$(usage_serve_max_age)")"; then
 		# ONE read of the record, status on its first line and the rows after it:
 		# a listing the overseer runs every cycle pays for each process it starts,
@@ -2918,11 +3072,17 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 			then "\(.usage.status)\n" + (if $mode == "record" then (.usage | tojson) else .usage.rows end)
 			else empty end' <<<"$cached")
 		case "$rc" in
-			0) printf '%s\n' "$rows"; return 0 ;;
-			2) return 2 ;;
+			0) [[ "$host_locked" != true ]] || usage_lock_release; printf '%s\n' "$rows"; return 0 ;;
+			2) [[ "$host_locked" != true ]] || usage_lock_release; return 2 ;;
 		esac
 		rc=0
 	fi
+	if [[ "$cache_phase" == fast ]]; then
+		if [[ "$USAGE_CACHE_PRUNED" != true ]]; then prune_usage_cache; USAGE_CACHE_PRUNED=true; fi
+		usage_lock_take
+		host_locked=true
+	fi
+	done
 	# The verb is OPTIONAL, so its absence is not news: exit 2 is the protocol's
 	# "this provider does not implement the verb" (schemas/lane-host.md), and a
 	# provider that answers it that way leaves this listing exactly the local
@@ -2957,13 +3117,14 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 		bound=(env "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=$busy_wait" "$ACCOUNTS_TIMEOUT_CMD" "$ACCOUNTS_TIMEOUT_S")
 	elif [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && "$USE_CACHE" != true ]]; then
 		message host-accounts-unbounded "$host" "$ACCOUNTS_TIMEOUT_S" >&2
+		usage_lock_release
 		return 1
 	fi
-	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; return 1; }
+	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; usage_lock_release; return 1; }
 	# The handler ends in `exit 1`: without it the handler returns and execution
 	# falls through to the `cat` below, which reads the file the handler has
 	# just deleted and prints its own error where the keyed line belongs.
-	trap 'rm -f -- "${err:?}"; exit 1' INT TERM
+	trap 'usage_lock_release; rm -f -- "${err:?}"; exit 1' INT TERM
 	rows="$(${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
 		if [[ "$rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
@@ -2980,21 +3141,24 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 		# transient one of the two and must not be replayed for the rest of it.
 		[[ "$rc" -ne 2 ]] || {
 			write_usage_cache host-accounts "$host" "$now_s" '{"status":2,"rows":""}' || true
+			usage_lock_release
 			return 2
 		}
+		usage_lock_release
 		return 1
 	fi
 	rm -f -- "$err"
 	trap - INT TERM
 	# The same parser names valid API rows before policy removes candidates.
 	# Its emitting cache pass below owns malformed-row notices.
-	discovered="$(host_account_rows "$rows" pi discovery 2>/dev/null)" || return 1
-	rows="$(host_account_rows "$rows" all cache)" || return 1
+	discovered="$(host_account_rows "$rows" pi discovery 2>/dev/null)" || { usage_lock_release; return 1; }
+	rows="$(host_account_rows "$rows" all cache)" || { usage_lock_release; return 1; }
 	record="$(jq -nc --arg r "$rows" --arg api "$discovered" '{status: 0, rows: $r, api_discovered: ($api != "")}')" || record_rc=$?
 	# Row callers can still use an answer the cache record could not carry.
 	# Record callers need discovery too and refuse that failure below. A failed
 	# cache write costs the next run a call, never a wrong answer.
 	[[ "$record_rc" -ne 0 ]] || write_usage_cache host-accounts "$host" "$now_s" "$record" || true
+	usage_lock_release
 	if [[ "${2:-}" == record ]]; then
 		[[ "$record_rc" -eq 0 ]] || return 1
 		rows="$record"
@@ -3246,7 +3410,7 @@ cmd_pick_lane() {
 	# store read it would carry 0 for an account with sessions in flight — the
 	# one value emit_lane says that field must never invent. emit_lane leaves it
 	# null when the store could not be read.
-	load_lane_claims
+	load_lane_claims "$dir"
 	# Under --projected, a REFUSAL, exit 6, before anything is measured: the
 	# verdict charges the claims, and an unread store judged as none is the
 	# launch the chooser dies rather than make. Otherwise a NOTICE: the verdict
@@ -3283,20 +3447,22 @@ cmd_pick_lane() {
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.
 	if [[ "$pick_pool" != api-credit ]]; then
-	while IFS= read -r d; do
+	lane_dirs "$harness" '' silent || return 1
+	for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
 		[[ -n "$d" ]] || continue
 		lane_canon "$d" || return 1
 		[[ "$LANE_CANON" == "$target" ]] || continue
 		found="$d"
 		break
-	done < <(lane_dirs "$harness")
+	done
 	fi
 	# The chooser's rule for one account, host_row_or_local, with its
 	# `lanes: pick-local-reading` line. A dir the provider holds and discovery
 	# does not reach is judged on the provider's row alone, which is then no
 	# longer a lane with no record.
 	hosted="$HOSTED_ROWS"
-	record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
+	record=""
+	[[ "$hosted" == '[]' ]] || record="$(jq -c --arg t "$target" 'map(select(._id == $t)) | first // empty' <<<"$hosted")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	elif [[ -n "$record" && "$pick_pool" != api-credit ]]; then
@@ -3324,8 +3490,9 @@ cmd_pick_lane() {
 	# the launch question, the chooser's own wall.
 	lane_tier_inputs "[$record]" "$harness" "$model" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
-	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
-	record="$(jq -c "$LANE_MODEL_JQ"' if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public' <<<"$record")" || return 1
+	local judged
+	judged="$(jq -r "$LANE_MODEL_JQ"'.verdict, (if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public | tojson)' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
+	{ IFS= read -r verdict; IFS= read -r record; } <<<"$judged"
 	if [[ "$verdict" == walled || "$verdict" == unmeasured ]]; then
 		refusal="$(jq -r 'if .refusal == null then empty else [.refusal.cause, (.refusal.retry_at // "none")] | @tsv end' <<<"$record")" || return 1
 		if [[ -n "$refusal" ]]; then
@@ -3828,11 +3995,19 @@ for _accounts_timeout in timeout gtimeout; do
 done
 unset _accounts_timeout
 # Beside the claim store, resolved by its owner, so both follow one setting.
-USAGE_CACHE_DIR="$(dirname -- "$(lane_claims_dir "$PROJECT_ROOT")")/usage"
+CLAIMS_DIR="$(lane_claims_dir "$PROJECT_ROOT")"
+USAGE_CACHE_DIR="${CLAIMS_DIR%/*}/usage"
+ACCOUNT_WALL_DIR="${CLAIMS_DIR%/*}/walls"
 # One clock for every host a fleet spans: a retirement date is a UTC date. A
 # clock that cannot be read refuses the run, since an empty date would read as
 # "no retirement has come" and hand a retired lane back out.
-TODAY="$(date -u +%Y-%m-%d)" && [[ "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die time-failed
+TODAY="$(date -u +%Y-%m-%d)" || die time-failed
+# Start elapsed seconds at the sampled epoch. Subtracting two independently
+# rounded SECONDS readings can otherwise stamp a refusal ahead of the clock.
+SECONDS=0
+RUN_STARTED_SECONDS=$SECONDS
+RUN_NOW="$(date +%s)" || die time-failed
+[[ "$RUN_NOW" =~ ^[0-9]+$ && "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die time-failed
 # The policy a provider record is stamped with and judged under: the UTC day
 # a retirement date is measured against and every LANE_POLICY_SETTINGS entry,
 # as `<name>=<value>` lines. A provider record holds the rows that policy
@@ -3847,6 +4022,113 @@ for _policy_setting in "${LANE_POLICY_SETTINGS[@]}"; do
 done
 unset _policy_setting
 USAGE_POLICY_ARGS=(--arg policy "$USAGE_POLICY")
+
+# A normalized record contains readings only. Claims, walls, age and the
+# caller's model are supplied again when this batch is rendered.
+NORMALIZED_DIRS=() NORMALIZED_HARNESSES=() NORMALIZED_ROWS=() NORMALIZED_THROUGHS=() NORMALIZED_READINGS=()
+NORMALIZED_HOST_READY=false NORMALIZED_HOST_USAGE="" NORMALIZED_HOST_STATUS=0 NORMALIZED_HOST_API=false
+load_normalized() { # [NAMED_DIR]
+	local h d file creds target="${1:-}" at row kind id alias retire wall json err
+	local files=() fields=() rows=() index=0 decoded
+	NORMALIZED_DIRS=() NORMALIZED_HARNESSES=() NORMALIZED_ROWS=() NORMALIZED_THROUGHS=() NORMALIZED_READINGS=()
+	NORMALIZED_HOST_READY=false NORMALIZED_HOST_USAGE=""
+	[[ "$USE_CACHE" == true && "$CACHE_ONLY" != true && "$USAGE_TTL" != 0 ]] || return 0
+	if [[ -n "$target" ]]; then lane_canon "$target" || return 1; target="$LANE_CANON"; fi
+	for h in claude codex copilot; do
+		lane_dirs "$h" all silent || return 1
+		for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
+			lane_canon "$d" || return 1
+			[[ -z "$target" || "$target" == "$LANE_CANON" ]] || continue
+			lane_admissible "$d" || continue
+			usage_cache_file "$h" "$d" silent
+			file="$USAGE_CACHE_FILE"
+			case "$h" in claude) creds="$d/.credentials.json" ;; codex) creds="$d/auth.json" ;; copilot) creds="$d/config.json" ;; esac
+			[[ -f "$file" && -f "$creds" && ! "$creds" -nt "$file" ]] || continue
+			files+=("$file")
+		done
+	done
+	if [[ "${ORCH_LANE_HOST:-local}" != local ]]; then
+		usage_cache_file host-accounts "$ORCH_LANE_HOST" silent
+		[[ ! -f "$USAGE_CACHE_FILE" ]] || files+=("$USAGE_CACHE_FILE")
+	fi
+	if (( ${#files[@]} == 0 )); then
+		prune_usage_cache; USAGE_CACHE_PRUNED=true
+		return 0
+	fi
+	usage_serve_max_age silent
+	# The files this batch names are atomically replaced by the cache writer.
+	# Older files have no normalized member and use the existing cold reader.
+	decoded="$(jq -sr --arg policy "$USAGE_POLICY" --arg host "${ORCH_LANE_HOST:-local}" \
+		--argjson now "$RUN_NOW" --argjson max "$USAGE_SERVE_MAX_AGE" "$LANE_MODEL_JQ$USAGE_POLICY_JQ$USAGE_RESET_JQ"'
+		.[] | . as $cache
+		| select((.normalized | usage_policy_current($policy)) and .normalized.host == $host)
+		| (.usage_fetched_at // .fetched_at) as $at
+		| select(.normalized.fetched_at == $at and .normalized.prior_at == (.prior.fetched_at // null))
+		| select(.harness != "host-accounts" or ((.usage.status | type) == "number" and (.usage.rows | type) == "string"
+		         and (.usage.status == 2 or (.usage.api_discovered | type) == "boolean")))
+		| select(($at | type) == "number" and $now >= $at)
+		| select(.normalized.refusal == null or .normalized.refusal == .refusal)
+		| select(if .usage == null then .refusal.expires_at > $now else $now - $at < $max end)
+		| (if .harness == "host-accounts" then
+		     select([.normalized.accounts[]?.reset_buckets | usage_consumed_reset($now)] | length == 0)
+		   else . end)
+		| (if .harness == "host-accounts" then (.usage.status | tostring), (.usage.api_discovered == true), "host-cache", (.usage | tojson) else empty end),
+		  ((.normalized.accounts // [.normalized.account])[] | select(type == "object")
+		| select((.expires_ms // 0) <= 0 or .expires_ms > $now * 1000)
+		| select((.refresh_expires_ms // 0) <= 0 or .refresh_expires_ms > $now * 1000)
+		| select([.reset_buckets | usage_consumed_reset($now)] | length == 0)
+		| . + {age: (if .through == "host" then null else $now - $at end),
+		        prior_buckets: (.prior_buckets // {}),
+		        elapsed: (if .through != "host" and ($cache.prior.fetched_at | type) == "number" then $at - $cache.prior.fetched_at else null end),
+		        sample_claims: (if .through == "host" then 1 else $cache.sample_claims // 1 end)}
+		| .config_dir, .harness, .through, tojson)' "${files[@]}" 2>/dev/null)" || return 0
+	while IFS= read -r d && IFS= read -r h && IFS= read -r kind && IFS= read -r json; do
+		if [[ "$kind" == host-cache ]]; then
+			NORMALIZED_HOST_READY=true NORMALIZED_HOST_USAGE="$json" NORMALIZED_HOST_STATUS="$d" NORMALIZED_HOST_API="$h"
+			continue
+		fi
+		[[ -n "$d" ]] || continue
+		lane_canon "$d" || return 1; id="$LANE_CANON"
+		[[ -z "$target" || "$target" == "$id" ]] || continue
+		lane_alias_for "$d" silent; alias="$LANE_ALIAS"
+		lane_retire_date "$d" silent; retire="$LANE_RETIRE_DATE"
+		ACCOUNT_CLAIMS=null
+		[[ "$LANE_CLAIMS_RC" != 0 ]] || account_claims "$d" "$h" '' silent || return 1
+		wall=""
+		if [[ -d "$ACCOUNT_WALL_DIR" ]]; then
+			account_wall_file "$PROJECT_ROOT" "$d" || return 1
+			[[ ! -e "$ACCOUNT_WALL_FILE" ]] || wall="$(<"$ACCOUNT_WALL_FILE")"
+		fi
+		fields+=("$json" "$id" "$alias" "$retire" "${ACCOUNT_CLAIMS:-null}" "$wall" "${ACCOUNT_WALL_FILE:-}")
+	done <<<"$decoded"
+	if (( ${#fields[@]} == 0 )); then
+		if [[ "$NORMALIZED_HOST_READY" == true ]]; then prune_usage_cache warm;
+		else prune_usage_cache; USAGE_CACHE_PRUNED=true; fi
+		return 0
+	fi
+	decoded="$(jq -nr --args "$LANE_MODEL_JQ$LANE_EMIT_JQ$ACCOUNT_WALL_JQ"'
+		$ARGS.positional as $args | range(0; $args | length; 7) as $i
+		| ($args[$i] | fromjson) as $r
+		| (if $args[$i+5] == "" then null else account_wall_read($args[$i+5]) end) as $w
+		| (if $w == "unreadable" then {}
+		   elif $w != null then ($r.buckets | account_wall_apply($w; $args[$i+1]))
+		   else $r.buckets end) as $b
+		| emit_lane_row($args[$i+2]; $r.harness; $r.config_dir; $args[$i+1];
+		    (if $w == "unreadable" then "error" else $r.status end);
+		    (if $w == "unreadable" then "wall record unreadable" else $r.detail end);
+		    $r.plan; $args[$i+3];
+		    (if $r.harness == "pi" and $b.credits.unit == "usd" then 0 else $args[$i+4] | fromjson end);
+		    $r.age; false; $r.through; $b; $r.prior_buckets; $r.elapsed; $r.sample_claims)
+		| $r.config_dir, $r.harness, $r.through, ($r.has_reading != false), tojson,
+		  (if $w == "unreadable" then $args[$i+6] else "" end)' "${fields[@]}")" || return 1
+	# Command substitution removes a final empty diagnostic line.
+	while IFS= read -r d && IFS= read -r h && IFS= read -r kind && IFS= read -r at && IFS= read -r row && { IFS= read -r err || err=""; }; do
+		[[ -z "$err" ]] || account_wall_unreadable "$err" >&2
+		NORMALIZED_DIRS+=("$d"); NORMALIZED_HARNESSES+=("$h"); NORMALIZED_ROWS+=("$row")
+		NORMALIZED_THROUGHS+=("$kind"); NORMALIZED_READINGS+=("$at")
+	done <<<"$decoded"
+	prune_usage_cache warm
+}
 
 # A lane key is a directory name or an alias. A `/` or `~` makes it a path,
 # which names no lane, so an exclusion written that way would protect nothing.
@@ -3903,7 +4185,7 @@ validate_lane_settings() {
 	# and the bound below is neither applied nor refused.
 	ACCOUNTS_TIMEOUT_S=$((10#$ACCOUNTS_TIMEOUT_S))
 	USAGE_TTL=$((10#$USAGE_TTL))
-	prune_usage_cache
+	[[ "$SUB" != check ]] || prune_usage_cache
 }
 
 parse_argv "$@"
@@ -3929,7 +4211,7 @@ case "$SUB" in
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not
 		# say. The projection rides beside it for a reader weighing the claims.
-		now="$(date +%s)" || exit 1
+		now="$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))" || exit 1
 		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" --argjson now "$now" "$LANE_MODEL_JQ"'
 			map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
@@ -4032,7 +4314,7 @@ case "$SUB" in
 		# harness, so its rows answer nothing either and the judge says unjudged.
 		[[ -n "$LANE_PANE_ID" ]] || STATE_ROWS=""
 		[[ -z "$LANE_PANE_ID" ]] || { rec="$(lane_running_record "$STATE_RECORDS" "$LANE_ARG" copilot)" &&
-			lane_context_copilot_note "$rec" "$(date +%s)"; } || die state-fleet "$LANE_ARG"
+			lane_context_copilot_note "$rec" "$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS))"; } || die state-fleet "$LANE_ARG"
 		[[ -z "$COPILOT_SESSION_NOTE" ]] || message copilot-note "$LANE_ARG" "$COPILOT_SESSION_NOTE" >&2
 		lane_state_rc=0
 		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" \

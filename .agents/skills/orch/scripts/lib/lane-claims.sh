@@ -89,11 +89,22 @@ lane_claims_dir() {
 # reduce to what discovery reports or its claims count against nothing. A path
 # that cannot be resolved keeps its own spelling, trailing slashes off.
 lane_claims_canon() {
-  local p="$1"
-  [[ -n "$p" ]] || return 0
-  ( cd -- "$p" 2>/dev/null && pwd -P ) && return 0
-  while [[ "$p" == */ && "$p" != "/" ]]; do p="${p%/}"; done
-  printf '%s\n' "$p"
+  local p="$1" previous="$PWD"
+  LANE_CLAIMS_CANON="$p"
+  if [[ -n "$p" ]] && cd -P -- "$p" 2>/dev/null; then
+    LANE_CLAIMS_CANON="$PWD"
+    cd -- "$previous" || return 1
+  else
+    while [[ "$LANE_CLAIMS_CANON" == */ && "$LANE_CLAIMS_CANON" != / ]]; do
+      LANE_CLAIMS_CANON="${LANE_CLAIMS_CANON%/}"
+    done
+  fi
+  [[ "${2:-}" == silent || -z "$LANE_CLAIMS_CANON" ]] || printf '%s\n' "$LANE_CLAIMS_CANON"
+}
+
+lane_claims_pane_live() { # LIVE SERVER PANE
+  case $'\n'"$1"$'\n' in *$'\n'"$2 $3"$'\n'*) return 0 ;; esac
+  return 1
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
@@ -174,7 +185,7 @@ lane_claims_read() {
       if [[ "$f" == *.reserve ]]; then
         # A reservation is live while the launcher that wrote it runs.
         ! lane_claims_pid_runs "$server" || live_now=1
-      elif grep -qxF -- "$server $pane" <<<"$live"; then
+      elif lane_claims_pane_live "$live" "$server" "$pane"; then
         live_now=1
       elif [[ "$server" == "$this_server" ]]; then
         # The pane list predates this record: another launcher can create its
@@ -195,7 +206,7 @@ lane_claims_read() {
           # Only a snapshot taken after this record was written can call it
           # dead, and none is available: unknown, and an unknown claim is kept.
           live_now=1
-        elif grep -qxF -- "$server $pane" <<<"$live"; then
+        elif lane_claims_pane_live "$live" "$server" "$pane"; then
           live_now=1
         fi
       elif lane_claims_pid_runs "$server"; then
@@ -209,13 +220,14 @@ lane_claims_read() {
       # Canonical on the way out, whatever spelling the record carries: the
       # count compares strings, and a hand-written or older record must still
       # land on the account discovery reports.
+      lane_claims_canon "$cfg" silent || return 2
       if [[ "$mode" == count || "$mode" == fleet || "$mode" == cap ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet" "$named"
+        printf '%s\t%s\t%s\t%s\t%s\t%s' "$LANE_CLAIMS_CANON" "$window" "$server" "$pane" "$fleet" "$named"
         [[ "$mode" != cap ]] || printf '\t%s' "$host_kind"
         [[ "$mode" != fleet ]] || printf '\t%s' "${pool:-plan}"
         printf '\n'
       else
-        printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
+        printf '%s\t%s\t%s\t%s\n' "$LANE_CLAIMS_CANON" "$window" "$server" "$pane"
       fi
     done
   done

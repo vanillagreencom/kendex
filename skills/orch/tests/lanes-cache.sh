@@ -397,8 +397,8 @@ assert_eq "$(find "$state/usage" -name 'host-accounts-*.json' | wc -l | tr -d ' 
 
 # Removing only read-time rows must not conceal bodies retained by the writer.
 control_dir="$(mutant_scripts control-write lanes)"
-mutate_file "$control_dir/lanes" 'rows="$(host_account_rows "$rows" all cache)" || return 1' \
-  ': "$rows" || return 1'
+mutate_file "$control_dir/lanes" 'rows="$(host_account_rows "$rows" all cache)" || { usage_lock_release; return 1; }' \
+  ': "$rows" || { usage_lock_release; return 1; }'
 LANES="$control_dir/lanes"
 cache_run "$TMP_ROOT/writer" ORCH_LANE_EXCLUDE=claude host-accounts --json --no-cache > "$TMP_ROOT/out"
 assert_eq "$(jq -r '.usage.rows' "$TMP_ROOT/writer"/usage/host-accounts-*.json | grep -c 'weekly-pct=20' || true)" \

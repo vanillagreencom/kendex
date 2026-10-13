@@ -33,7 +33,8 @@ account_wall_dir() { # ROOT
 ACCOUNT_WALL_FILE="" ACCOUNT_WALL_CANON=""
 account_wall_file() { # ROOT CONFIG_DIR
   local dir sum canon
-  dir="$(account_wall_dir "$1")" || return 1
+  dir="${ACCOUNT_WALL_DIR:-}"
+  [[ -n "$dir" ]] || dir="$(account_wall_dir "$1")" || return 1
   # lanes seeds its per-run map before child shells emit the same accounts.
   # Other wall readers retain lane_claims_canon's standalone contract.
   if declare -F lane_canon >/dev/null; then
@@ -43,7 +44,12 @@ account_wall_file() { # ROOT CONFIG_DIR
     canon="$(lane_claims_canon "$2")" || return 1
   fi
   ACCOUNT_WALL_CANON="$canon"
-  sum="$(printf '%s' "$ACCOUNT_WALL_CANON" | cksum)" || return 1
+  if declare -F lane_checksum >/dev/null; then
+    lane_checksum "$ACCOUNT_WALL_CANON"
+    sum="$LANE_CHECKSUM"
+  else
+    sum="$(printf '%s' "$ACCOUNT_WALL_CANON" | cksum)" || return 1
+  fi
   ACCOUNT_WALL_FILE="$dir/${sum%% *}.json"
 }
 
@@ -101,22 +107,30 @@ account_wall_record() { # ROOT CONFIG_DIR RESET NOW BANNER [CHANNEL]
 # a reset already passed, the reading comes back unchanged. A record jq cannot
 # read fails, after a keyed line on stderr: a wall nobody can read is no
 # evidence the account has room.
+ACCOUNT_WALL_JQ='def account_wall_read($text): try ($text | fromjson) catch "unreadable";
+  def account_wall_apply($wall; $d):
+    if $wall.config_dir != $d or $wall.resets_at <= now then .
+    else . + {weekly_pct: 100,
+              resets: ((.resets // {}) + {weekly: ($wall.resets_at | floor | todate)})}
+    end;'
 account_wall_buckets() { # ROOT CONFIG_DIR BUCKETS
-  local dir file
-  dir="$(account_wall_dir "$1")" || return 1
+  local dir file record
+  dir="${ACCOUNT_WALL_DIR:-}"
+  [[ -n "$dir" ]] || dir="$(account_wall_dir "$1")" || return 1
   [[ -d "$dir" ]] || { printf '%s\n' "$3"; return 0; }
   account_wall_file "$1" "$2" || return 1
   file="$ACCOUNT_WALL_FILE"
   [[ -e "$file" ]] || { printf '%s\n' "$3"; return 0; }
-  if jq -c --slurpfile w "$file" --arg d "$ACCOUNT_WALL_CANON" '
-    $w[0] as $wall
-    | if $wall.config_dir != $d or $wall.resets_at <= now then .
-      else . + {weekly_pct: 100,
-                resets: ((.resets // {}) + {weekly: ($wall.resets_at | floor | todate)})}
-      end' <<<"$3" 2>/dev/null; then
+  if record="$(<"$file")" && jq -c --arg record "$record" --arg d "$ACCOUNT_WALL_CANON" "$ACCOUNT_WALL_JQ"'
+    account_wall_read($record) as $wall
+    | if $wall == "unreadable" then error("wall-unreadable") else account_wall_apply($wall; $d) end' <<<"$3" 2>/dev/null; then
     return 0
   fi
-  printf 'account-wall: record-unreadable path=%s\n' "$file" >&2
-  printf '%s\n' "account-wall: the wall record for this account could not be read, so the account reads unmeasured" >&2
+  account_wall_unreadable "$file" >&2
   return 1
+}
+
+account_wall_unreadable() { # FILE
+  printf 'account-wall: record-unreadable path=%s\n' "$1"
+  printf '%s\n' "account-wall: the wall record for this account could not be read, so the account reads unmeasured" >&2
 }
