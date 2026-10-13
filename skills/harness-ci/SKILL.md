@@ -29,6 +29,8 @@ Use `--mode render-candidate` only to gate the engine installation and mirror re
 
 Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
 
+Use `change-class --output FILE` for local lane selection. It appends `lanes` and `lanes_cause` beside `change_class` and `queue_only`. Pass `--lanes-from DIR` with a separate trusted checkout to read its lane declaration. The default declares no lanes. `--covers-all-lanes true|false` has the action's `false` default. It describes workflow coverage and grants no local proof reuse. The action and command use `scripts/lib/change-class.sh` for the lane rules in [references/wiring.md § Per-lane verdicts](references/wiring.md#per-lane-verdicts). The action applies CI proof afterward. A local run never answers `proof-reused`, even when a CI record is present.
+
 A verification refusal carrying the source refresh remedy reads `cause=source-mirror-missing verb=source operation=refresh`. The caller refreshes its sources before retrying the proof.
 
 The render proof passes the trusted sibling `bot-instructions` package to `kendex verify --bot-instructions-from` only when `verify --help` advertises the option. Otherwise it uses the legacy verify call and ownership rules. Its checker compares bot output files through `--spec`, which reads the judged package's doctrine as data. It reports whole files only. Before applying the standard-class path exclusion, the classifier can use this proof for outputs outside the engine inventory only with a supporting verifier. A failed optional proof keeps that exclusion; a failed required render proof keeps its existing failure result.

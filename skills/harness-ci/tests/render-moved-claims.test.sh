@@ -8,6 +8,10 @@ set -euo pipefail
 
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 ACTION="$ROOT/.github/actions/change-class/classify"
+DECISION_LIB="$ROOT/skills/harness-ci/scripts/lib/change-class.sh"
+mkdir -p "$SANDBOX/control/skills"
+cp -R "$ROOT/skills/harness-ci" "$SANDBOX/control/skills/"
+cp -R "$ROOT/skills/orch" "$SANDBOX/control/skills/"
 mkdir -p "$SANDBOX/action" "$SANDBOX/bin" "$SANDBOX/default/.github"
 cp "$ACTION" "$SANDBOX/action/classify"
 cat >"$SANDBOX/action/proof" <<'STUB'
@@ -51,7 +55,7 @@ base="$(git -C "$repo" rev-parse HEAD)"
 run_action() { # SCRIPT EVENT
   local status=0
   : >"$SANDBOX/output"
-  PATH="$SANDBOX/bin:$PATH" CLASSIFIER="$ROOT" LANES_FROM="$SANDBOX/default" \
+  PATH="$SANDBOX/bin:$PATH" CLASSIFIER="${3:-$ROOT}" LANES_FROM="$SANDBOX/default" \
     EVENT="$2" BASE="$base" HEAD=HEAD REPO="$repo" \
     GITHUB_OUTPUT="$SANDBOX/output" "$1" \
     >"$SANDBOX/stdout" 2>"$SANDBOX/stderr" || status=$?
@@ -107,6 +111,13 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts control
     "$(sed -n '/^lanes=/p' "$SANDBOX/output")"
   verdicts="$(sed -n '/^lane_verdicts<</,/^__change_class_lane_verdicts_end__/{ /^lane_[^<]*=/p; }' "$SANDBOX/output" | tr '\n' ',')"
   assert_eq "$case: default-branch claiming lanes" "$expected_verdicts" "${verdicts%,}"
+  PATH="$SANDBOX/bin:$PATH" "$CHANGE_CLASS" --event "$event" --base "$base" \
+    --head HEAD --repo "$repo" --lanes-from "$SANDBOX/default" \
+    --output "$SANDBOX/local-output" >"$SANDBOX/local-stdout" 2>"$SANDBOX/local-stderr"
+  assert_eq "$case: local lanes match the action" \
+    "$(sed -n '/^lanes=/p; /^lanes_cause=/p' "$SANDBOX/output")" \
+    "$(sed -n '/^lanes=/p; /^lanes_cause=/p' "$SANDBOX/local-output")"
+  rm "${SANDBOX:?}/local-output"
   if [ "$expected_lanes" = true ]; then
     assert_eq "$case: lanes cause" lanes_cause=render-moved-claim \
       "$(sed -n '/^lanes_cause=/p' "$SANDBOX/output")"
@@ -138,10 +149,9 @@ while IFS='|' read -r case event change expected_lanes expected_verdicts control
     esac
     NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
       hits++; print ENVIRON["REPLACEMENT"]; next
-    } { print } END { if (hits != 1) exit 2 }' "$ACTION" >"$SANDBOX/action/control"
-    ! cmp -s "$ACTION" "$SANDBOX/action/control" || exit 1
-    chmod +x "$SANDBOX/action/control"
-    run_action "$SANDBOX/action/control" "$event"
+    } { print } END { if (hits != 1) exit 2 }' "$DECISION_LIB" >"$SANDBOX/control/skills/harness-ci/scripts/lib/change-class.sh"
+    ! cmp -s "$DECISION_LIB" "$SANDBOX/control/skills/harness-ci/scripts/lib/change-class.sh" || exit 1
+    run_action "$SANDBOX/action/classify" "$event" "$SANDBOX/control"
     assert_eq "must-fail: $case changes its claiming lane under $control" "lane_$control_lane=$control_expected" \
       "$(sed -n "/^lane_$control_lane=/p" "$SANDBOX/output")"
   fi

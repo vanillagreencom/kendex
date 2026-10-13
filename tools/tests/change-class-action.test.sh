@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # `.github/actions/change-class/classify` is the one reader of a change class
-# every workflow gates on, and the one decision it makes is `lanes`, from the
+# every workflow gates on. It calls the installed lane producer with the
 # two verdicts it reads: the class is what the shipped `change-class` printed,
 # docs_only is what the shipped `harness-only --mode docs` printed, and the
 # path families are a grouping of the path list that same call wrote. Beside
@@ -72,6 +72,7 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 ROOT="$(git rev-parse --show-toplevel)"
 CLASSIFY="$ROOT/.github/actions/change-class/classify"
 LANES_LIB="$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh"
+DECISION_LIB="$ROOT/skills/harness-ci/scripts/lib/change-class.sh"
 ACTION="$ROOT/.github/actions/change-class/action.yml"
 
 mkdir -p "$ROOT/tmp"
@@ -152,6 +153,7 @@ chmod +x "$STUBS/skills/harness-ci/scripts/change-class" \
 # lanes-reader refusal's.
 mkdir -p "$STUBS/skills/harness-ci/scripts/lib"
 cp "$LANES_LIB" "$STUBS/skills/harness-ci/scripts/lib/ci-lanes.sh"
+cp "$DECISION_LIB" "$STUBS/skills/harness-ci/scripts/lib/change-class.sh"
 mkdir -p "$TMP/no-lanes-lib"
 cp -R "$STUBS/skills" "$TMP/no-lanes-lib/skills"
 rm -- "${TMP:?}/no-lanes-lib/skills/harness-ci/scripts/lib/ci-lanes.sh"
@@ -409,12 +411,20 @@ check "must-fail: a classify that decides its own class fails the render row" \
 # of its own, which ROW_CLASSIFIER then names for the runs after it. Sets
 # PLANTED to the classify to run. Called outside a substitution, so the
 # root it names reaches the runs.
-MUTANT_STUBS="$TMP/mutant-stubs"
+MUTANT_STUBS="$CONTROL_ROOT/mutant-stubs"
 PLANTED=""
 plant() { # TARGET NEEDLE REPLACEMENT
   local file copy
   case "$1" in
-    classify) file="$CLASSIFY" copy="$mutant" ROW_CLASSIFIER="" ;;
+    classify)
+      if [ "$(grep -cF -- "$2" "$CLASSIFY")" -eq 0 ]; then
+        file="$DECISION_LIB" copy="$MUTANT_STUBS/skills/harness-ci/scripts/lib/change-class.sh"
+        rm -rf -- "${MUTANT_STUBS:?}"
+        cp -R "$STUBS" "$MUTANT_STUBS"
+        ROW_CLASSIFIER="$MUTANT_STUBS"
+      else
+        file="$CLASSIFY" copy="$mutant" ROW_CLASSIFIER=""
+      fi ;;
     lib)
       file="$LANES_LIB" copy="$MUTANT_STUBS/skills/harness-ci/scripts/lib/ci-lanes.sh"
       rm -rf -- "${MUTANT_STUBS:?}"
@@ -431,7 +441,7 @@ plant() { # TARGET NEEDLE REPLACEMENT
   ' "$file" >"$copy"
   ! cmp -s "$file" "$copy" || { echo "the mutant for '$2' changed nothing" >&2; exit 1; }
   PLANTED="$CLASSIFY"
-  [ "$1" = lib ] || PLANTED="$mutant"
+  [ "$file" != "$CLASSIFY" ] || PLANTED="$mutant"
 }
 
 # One copy per lanes rule, the rule planted wrong and every other line kept.
@@ -441,16 +451,9 @@ plant() { # TARGET NEEDLE REPLACEMENT
 mutants=0
 while IFS='@' read -r needle replacement row; do
   mutants=$((mutants + 1))
-  [ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
-    { echo "the lanes rule '$needle' is no longer one line in $CLASSIFY" >&2; exit 1; }
-  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
-    { i = index($0, ENVIRON["NEEDLE"]) }
-    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["REPLACEMENT"] substr($0, i + length(ENVIRON["NEEDLE"])) }
-    { print }
-  ' "$CLASSIFY" >"$mutant"
-  ! cmp -s "$CLASSIFY" "$mutant" || { echo "the mutant for '$needle' changed nothing" >&2; exit 1; }
+  plant classify "$needle" "$replacement"
   check "must-fail: '$needle' planted as '$replacement' fails the $row row" \
-    no "$(row_holds "$mutant" "$row")"
+    no "$(row_holds "$PLANTED" "$row")"
 done <<'ROWS'
 [ "$class" = render ] || @@render
  || [ "$class" = trivial ]; then@; then@trivial-allowlisted
@@ -458,6 +461,24 @@ elif [ "$docs" = docs_only=true ]; then@elif false; then@docs-only-standard
   lanes=true lanes_cause="$class"@  lanes=false lanes_cause="$class"@standard
 ROWS
 require_rows "lanes mutant" "$mutants"
+ROW_CLASSIFIER=""
+
+# The action can update before its separately checked-out default branch.
+# A classifier without the shared producer grants no lane skip.
+LEGACY_STUBS="$TMP/legacy-stubs"
+cp -R "$STUBS" "$LEGACY_STUBS"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n' \
+  >"$LEGACY_STUBS/skills/harness-ci/scripts/lib/change-class.sh"
+status="$(run "$CLASSIFY" CLASSIFIER="$LEGACY_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
+check 'an older classifier runs every lane' \
+  '0 lanes=true lanes_cause=lane-producer-unavailable lane_verdicts=' \
+  "$status $(outputs | tr ' ' '\n' | grep -E '^(lanes|lanes_cause|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//')"
+plant classify '  lanes=true lanes_cause=lane-producer-unavailable' \
+  '  lanes=false lanes_cause=lane-producer-unavailable'
+status="$(run "$PLANTED" CLASSIFIER="$LEGACY_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
+check 'must-fail: missing producer cannot authorize a lane skip' '0 lanes=false' \
+  "$status $(outputs | tr ' ' '\n' | grep '^lanes=')"
+ROW_CLASSIFIER=""
 
 # --- 3. The refusals --------------------------------------------------------
 
@@ -814,18 +835,11 @@ ROW_CLASSIFIER=""
 require_rows "lane mutant" "$mutants"
 
 # The refusal of a lanes-from naming the judged tree, planted away.
-needle='[ "$lanes_root" != "$judged_root" ] ||'
-[ "$(grep -cF -- "$needle" "$CLASSIFY")" -eq 1 ] ||
-  { echo "the judged-tree refusal is no longer one line in $CLASSIFY" >&2; exit 1; }
-NEEDLE="$needle" awk '
-  { i = index($0, ENVIRON["NEEDLE"]) }
-  i > 0 { $0 = substr($0, 1, i - 1) "true ||" substr($0, i + length(ENVIRON["NEEDLE"])) }
-  { print }
-' "$CLASSIFY" >"$mutant"
-! cmp -s "$CLASSIFY" "$mutant" || { echo "the judged-tree mutant changed nothing" >&2; exit 1; }
-status="$(run "$mutant" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
+plant classify '[ "$lanes_root" != "$judged_root" ] ||' 'true ||'
+status="$(run "$PLANTED" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
 check "must-fail: a classify reading lanes from the judged tree is not refused" \
   "0 lane_verdicts=lane_evil=true" "$status $(outputs | tr ' ' '\n' | grep '^lane_verdicts=')"
+ROW_CLASSIFIER=""
 
 # --- 5b. Declaration changes ------------------------------------------------
 

@@ -1,0 +1,1 @@
+- Local validation can read the same lane decision as CI through `change-class --output`. Local runs do not reuse CI proof records.
