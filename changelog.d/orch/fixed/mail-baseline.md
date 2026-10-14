@@ -1,0 +1,1 @@
+- Mail turns parse retained baseline rows once and preserve per-item message commits as the fleet history grows.

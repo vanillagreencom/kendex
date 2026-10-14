@@ -86,7 +86,12 @@ lane_failure_report() { # ITEM STATE
   if ! prior="$(lane_row_get lane-failed "$state" "$item")"; then
     die state-read-failed "" "item=$item" "row=lane-failed"
   fi
-  state="$(lane_row_set lane-failed "$state" "$item" "$key")"
+  if [[ "$MAIL_ROW_MODE" -eq 1 ]]; then
+    lane_row_set lane-failed "$state" "$item" "$key" >/dev/null
+    state="$LANE_ROW"
+  else
+    state="$(lane_row_set lane-failed "$state" "$item" "$key")"
+  fi
   # Only news fails the run: a failure already reported and still standing
   # neither ends the run nor stretches the repeat delay, so the other lanes'
   # mail keeps its interval while one lane stays broken.
@@ -310,18 +315,32 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # it carries `|` of its own.
 # The reported columns keep a re-run, which follows every event, from
 # delivering a line again for a walled, idle or exited lane or a merged --item.
-# Each helper takes the whole baseline blob and returns the answer or the
-# rewritten blob, so a pass mutates a local and commits once. `lane-exited` and
+# Long-pass helpers take a baseline blob. Mail helpers consume the loaded
+# parent-owned rows and serialize at each item commit. `lane-exited` and
 # `lane-idle` hold a needed first pass in a row, not a global: a pass that
 # found any event exits the process.
 LANE_ROW=""
+# Mail callers inherit this mode, including clone fallback getters in subshells.
+# Long-pass callers retain their independent baseline blob.
+MAIL_ROW_MODE=0
+lane_row_value() { # ROW PREFIX
+  LANE_ROW_VALUE="${1#"$2"}"
+  [[ "$1" == "$2"* && "$LANE_ROW_VALUE" != *$'\t'* ]]
+}
 lane_row_get() {
   local row prefix="$1"$'\t'"$3"$'\t' value
+  if [[ "$MAIL_ROW_MODE" -eq 1 ]]; then
+    mail_row_find "$prefix"
+    LANE_ROW=""
+    [[ "$MAIL_ROW_INDEX" -lt 0 ]] || LANE_ROW="${MAIL_ROW_VALUES[$MAIL_ROW_INDEX]}"
+    [[ -z "$LANE_ROW" ]] || printf '%s\n' "$LANE_ROW"
+    return 0
+  fi
   LANE_ROW=""
   while IFS= read -r row; do
     [[ "$row" == "$prefix"* ]] || continue
-    value="${row#"$prefix"}"
-    [[ "$value" != *$'\t'* ]] || continue
+    lane_row_value "$row" "$prefix" || continue
+    value="$LANE_ROW_VALUE"
     LANE_ROW+="$value"$'\n'
   done <<<"$2"
   LANE_ROW="${LANE_ROW%$'\n'}"
@@ -330,12 +349,12 @@ lane_row_get() {
 }
 
 lane_row_clear() {
-  local row prefix="$1"$'\t'"$3"$'\t' value
+  local row prefix="$1"$'\t'"$3"$'\t'
+  if [[ "$MAIL_ROW_MODE" -eq 1 ]]; then mail_row_update "$prefix" clear; return 0; fi
   LANE_ROW=""
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
-    value="${row#"$prefix"}"
-    [[ "$row" != "$prefix"* || "$value" == *$'\t'* ]] || continue
+    if [[ "$row" == "$prefix"* ]] && lane_row_value "$row" "$prefix"; then continue; fi
     LANE_ROW+="$row"$'\n'
   done <<<"$2"
   LANE_ROW="${LANE_ROW%$'\n'}"
@@ -347,12 +366,12 @@ lane_row_clear() {
 # the blob as it was and commits nothing. The value stays literal, including
 # backslashes in a path or message id.
 lane_row_set() {
-  local row prefix="$1"$'\t'"$3"$'\t' value set=0
+  local row prefix="$1"$'\t'"$3"$'\t' set=0
+  if [[ "$MAIL_ROW_MODE" -eq 1 ]]; then mail_row_update "$prefix" set "$4"; return 0; fi
   LANE_ROW=""
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
-    value="${row#"$prefix"}"
-    if [[ "$row" == "$prefix"* && "$value" != *$'\t'* ]]; then
+    if [[ "$row" == "$prefix"* ]] && lane_row_value "$row" "$prefix"; then
       [[ "$set" -ne 0 ]] || LANE_ROW+="$prefix$4"$'\n'
       set=1
     else
@@ -362,6 +381,118 @@ lane_row_set() {
   [[ "$set" -ne 0 ]] || LANE_ROW+="$prefix$4"$'\n'
   LANE_ROW="${LANE_ROW%$'\n'}"
   printf '%s\n' "$LANE_ROW"
+}
+
+# Ordered raw rows keep inactive cursors and malformed matches. Only this
+# turn's identities get keyed values; a serialization never parses history.
+MAIL_ROW_KEYS=() MAIL_ROW_VALUES=() MAIL_ROW_COUNT=()
+MAIL_ROW_LINES=() MAIL_ROW_NEXT=() MAIL_ROW_ALIVE=() MAIL_ROW_ORDER=() MAIL_ROW_BLANKS=()
+MAIL_ROWS_READY=0 MAIL_ROWS_DIRTY=0 MAIL_ROW_TAIL=0
+mail_row_find() { # PREFIX
+  local i
+  MAIL_ROW_INDEX=-1
+  for i in ${MAIL_ROW_KEYS[@]+"${!MAIL_ROW_KEYS[@]}"}; do
+    [[ "${MAIL_ROW_KEYS[$i]}" != "$1" ]] || { MAIL_ROW_INDEX="$i"; return 0; }
+  done
+}
+mail_rows_refresh() {
+  local i row kind rest identity prefix slot
+  MAIL_ROW_KEYS=() MAIL_ROW_VALUES=() MAIL_ROW_COUNT=()
+  for i in ${MAIL_ROW_ORDER[@]+"${MAIL_ROW_ORDER[@]}"}; do
+    row="${MAIL_ROW_LINES[$i]}"
+    kind="${row%%$'\t'*}"; rest="${row#*$'\t'}"; identity="${rest%%$'\t'*}"
+    prefix="$kind"$'\t'"$identity"$'\t'
+    lane_row_value "$row" "$prefix" || continue
+    mail_row_find "$prefix"; slot="$MAIL_ROW_INDEX"
+    if [[ "$slot" -lt 0 ]]; then
+      MAIL_ROW_KEYS+=("$prefix"); MAIL_ROW_VALUES+=("$LANE_ROW_VALUE"); MAIL_ROW_COUNT+=(1)
+    else
+      MAIL_ROW_VALUES[$slot]+=$'\n'"$LANE_ROW_VALUE"
+      MAIL_ROW_COUNT[$slot]=$((MAIL_ROW_COUNT[slot] + 1))
+    fi
+  done
+}
+mail_rows_load() {
+  local row kind identity rest prefix index wanted='|overseer|fleet|' item
+  MAIL_ROW_LINES=() MAIL_ROW_NEXT=() MAIL_ROW_ALIVE=() MAIL_ROW_ORDER=() MAIL_ROW_BLANKS=()
+  MAIL_ROWS_DIRTY=0
+  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do wanted+="$item|$item@clone|"; done
+  while IFS= read -r row; do
+    index="${#MAIL_ROW_LINES[@]}"
+    MAIL_ROW_LINES+=("$row"); MAIL_ROW_NEXT+=("$((index + 1))"); MAIL_ROW_ALIVE+=(1)
+    [[ -n "$row" ]] || { MAIL_ROW_BLANKS+=("$index"); continue; }
+    kind="${row%%$'\t'*}"; rest="${row#*$'\t'}"; identity="${rest%%$'\t'*}"
+    case "$kind" in clone-root|lane-mail|directive|lane-failed|mail-pass|long-pass) ;; *) continue ;; esac
+    [[ "$wanted" == *"|$identity|"* ]] || continue
+    prefix="$kind"$'\t'"$identity"$'\t'
+    lane_row_value "$row" "$prefix" || continue
+    MAIL_ROW_ORDER+=("$index")
+  done <<<"$MAIL_SEEN"
+  MAIL_ROW_TAIL=$((${#MAIL_ROW_LINES[@]} - 1))
+  MAIL_ROW_NEXT[$MAIL_ROW_TAIL]=-1
+  mail_rows_refresh
+  MAIL_ROWS_READY=1
+}
+# A duplicate getter can return several lines. A literal setter inserts those
+# lines at the first match, including invalid rows, as the blob API does.
+mail_row_fragment() { # POSITION ROWS
+  local index="$1" after="${MAIL_ROW_NEXT[$1]}" first=1 row next
+  while IFS= read -r row; do
+    if [[ "$first" -eq 1 ]]; then
+      MAIL_ROW_LINES[$index]="$row"; MAIL_ROW_ALIVE[$index]=1; first=0
+    else
+      next="${#MAIL_ROW_LINES[@]}"
+      MAIL_ROW_NEXT[$index]="$next"; index="$next"
+      MAIL_ROW_LINES+=("$row"); MAIL_ROW_NEXT+=("$after"); MAIL_ROW_ALIVE+=(1)
+    fi
+    MAIL_ROW_NEW_ORDER+=("$index")
+    [[ -n "$row" ]] || MAIL_ROW_BLANKS+=("$index")
+  done <<<"$2"
+  [[ "$after" -ne -1 ]] || MAIL_ROW_TAIL="$index"
+}
+mail_row_update() { # PREFIX set|clear [VALUE]
+  local slot i changed=0
+  LANE_ROW=""
+  mail_row_find "$1"; slot="$MAIL_ROW_INDEX"
+  if [[ ${#MAIL_ROW_BLANKS[@]} -eq 0 ]]; then
+    [[ "$2" != clear || "$slot" -ge 0 ]] || return 0
+    if [[ "$2" == set && "$slot" -ge 0 && "${MAIL_ROW_COUNT[$slot]}" -eq 1 \
+      && "${MAIL_ROW_VALUES[$slot]}" == "${3:-}" ]]; then return 0; fi
+  fi
+  for i in ${MAIL_ROW_BLANKS[@]+"${MAIL_ROW_BLANKS[@]}"}; do MAIL_ROW_ALIVE[$i]=0; done
+  MAIL_ROW_BLANKS=(); MAIL_ROW_NEW_ORDER=()
+  for i in ${MAIL_ROW_ORDER[@]+"${MAIL_ROW_ORDER[@]}"}; do
+    [[ "${MAIL_ROW_ALIVE[$i]}" -ne 0 ]] || continue
+    if lane_row_value "${MAIL_ROW_LINES[$i]}" "$1"; then
+      if [[ "$2" == set && "$changed" -eq 0 ]]; then
+        mail_row_fragment "$i" "$1${3:-}"
+        changed=1
+      else
+        MAIL_ROW_ALIVE[$i]=0
+      fi
+    else
+      MAIL_ROW_NEW_ORDER+=("$i")
+    fi
+  done
+  if [[ "$2" == set && "$changed" -eq 0 ]]; then
+    i="${#MAIL_ROW_LINES[@]}"
+    MAIL_ROW_NEXT[$MAIL_ROW_TAIL]="$i"
+    MAIL_ROW_LINES+=(""); MAIL_ROW_NEXT+=(-1); MAIL_ROW_ALIVE+=(1)
+    mail_row_fragment "$i" "$1${3:-}"
+  fi
+  MAIL_ROW_ORDER=( ${MAIL_ROW_NEW_ORDER[@]+"${MAIL_ROW_NEW_ORDER[@]}"} )
+  mail_rows_refresh
+  MAIL_ROWS_DIRTY=1
+}
+mail_rows_serialize() {
+  local i=0
+  LANE_ROW=""
+  while [[ "$i" -ge 0 ]]; do
+    [[ "${MAIL_ROW_ALIVE[$i]}" -eq 0 ]] || LANE_ROW+="${MAIL_ROW_LINES[$i]}"$'\n'
+    i="${MAIL_ROW_NEXT[$i]}"
+  done
+  LANE_ROW="${LANE_ROW%$'\n'}"
+  MAIL_ROWS_DIRTY=0
 }
 
 # The same two-phase flush triage uses, on the same file: nothing is written
@@ -375,6 +506,11 @@ lane_row_commit() {
 # The same flush, on the mail pass's file.
 MAIL_SEEN=""
 mail_row_commit() {
+  if [[ "$MAIL_ROW_MODE" -eq 1 ]]; then
+    [[ "$MAIL_ROWS_DIRTY" -ne 0 ]] || return 0
+    mail_rows_serialize
+    set -- "$LANE_ROW"
+  fi
   [[ "$1" != "$MAIL_SEEN" ]] || return 0
   pw_stage_state "$MAIL_STATE_FILE" "$1"
   pw_commit_state "$MAIL_STATE_FILE"
@@ -2352,6 +2488,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # With `overseer`, that mailbox is read alone, and the lists a long pass takes
 # from the last full read stand.
 check_mail() { # [overseer]
+  local MAIL_ROW_MODE=1
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at unread_passes repeat standing reported at
   local mail_items host_flag args state="$MAIL_SEEN"
@@ -4880,9 +5017,11 @@ long_start() {
   github_ready
   rm -f -- "$LONG_STATUS" "$LONG_DONE"
   mkdir -p -- "$WORK_DIR/long" || die state-directory-create-failed "" "path=$WORK_DIR/long"
-  local started
+  local started MAIL_ROW_MODE=1
   started="$(date -u +%s)" || die time-failed "" "clock=UTC"
-  mail_row_commit "$(lane_row_set long-pass "$MAIL_SEEN" fleet "$started")"
+  lane_row_set long-pass "" fleet "$started" >/dev/null
+  mail_row_commit ""
+  MAIL_ROW_MODE=0
   LONG_DUE=$((started + INTERVAL))
   ( WORK_DIR="$WORK_DIR/long"; PW_TMP_TAG="$$-long"; trap 'touch "$LONG_DONE"' EXIT; long_pass ) \
     >"$LONG_OUT" 2>"$LONG_ERR" &
@@ -4913,7 +5052,7 @@ long_collect() { # [wait]
 # again, once per --repeat.
 LONG_DUE=0
 long_due() {
-  local last
+  local last MAIL_ROW_MODE="$MAIL_ROWS_READY"
   [[ -z "$LONG_PID" && "$LONG_PASSES" -lt "$MAX_LOOPS" ]] || return 1
   if ! last="$(lane_row_get long-pass "$MAIL_SEEN" fleet)"; then
     die state-read-failed "" "path=$MAIL_STATE_FILE" "row=long-pass"
@@ -5014,11 +5153,17 @@ tick_wait() {
 # overseer mailbox's size is taken first, so a note landing during the read
 # moves it again and wakes the next wait.
 mail_turn() { # [overseer]
+  local MAIL_ROW_MODE=0
+  mail_rows_load
   BOX_SEEN="$(overseer_box_size)"
   overseer_down || check_mail "$@"
+  MAIL_ROW_MODE=1
   if [[ $# -eq 0 ]]; then
     MAIL_DUE=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))
-    [[ "$MAIL_INTERVAL" -eq 0 ]] || mail_row_commit "$(lane_row_set mail-pass "$MAIL_SEEN" fleet "$MAIL_DUE")"
+    if [[ "$MAIL_INTERVAL" -ne 0 ]]; then
+      lane_row_set mail-pass "" fleet "$MAIL_DUE" >/dev/null
+      mail_row_commit ""
+    fi
     MAIL_DUE=$((MAIL_DUE + MAIL_INTERVAL))
   fi
 }

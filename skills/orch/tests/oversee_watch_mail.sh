@@ -50,6 +50,146 @@ git -C "$PEER_REPO" config gc.auto 0
 git -C "$PEER_REPO" config maintenance.auto false
 
 if [[ "$PART" == all || "$PART" == delivery ]]; then
+# Exercise the production functions without starting a second watch main.
+sed -n '/^LANE_ROW=""$/,/^# The same two-phase flush/{ /^# The same two-phase flush/d; p; }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" >"$TMP_ROOT/mail-row-owner"
+mail_row_contract() (
+  source "$TMP_ROOT/mail-row-owner"
+  ITEMS=(KEN-7 KEN-8)
+  local label kind identity operation value before after expected actual
+  while IFS='|' read -r label kind identity operation value before after expected; do
+    before="${before//@t/$'\t'}"; before="${before//@n/$'\n'}"
+    after="${after//@t/$'\t'}"; after="${after//@n/$'\n'}"
+    value="${value//@t/$'\t'}"; value="${value//@n/$'\n'}"
+    expected="${expected//@n/$'\n'}"
+    MAIL_ROW_MODE=0
+    if [[ "$operation" == get ]]; then
+      actual="$(lane_row_get "$kind" "$before" "$identity")"
+      [[ "$actual" == "$expected" ]] || return 1
+    elif [[ "$operation" == set ]]; then
+      actual="$(lane_row_set "$kind" "$before" "$identity" "$value")"
+      [[ "$actual" == "$after" ]] || return 1
+    elif [[ "$operation" == clear ]]; then
+      actual="$(lane_row_clear "$kind" "$before" "$identity")"
+      [[ "$actual" == "$after" ]] || return 1
+    else
+      actual="$(lane_row_clear "$kind" "$before" "$identity")"
+      actual="$(lane_row_set "$kind" "$actual" "$identity" "$value")"
+      [[ "$actual" == "$after" ]] || return 1
+    fi
+    MAIL_SEEN="$before"; mail_rows_load; MAIL_ROW_MODE=1
+    if [[ "$operation" == get ]]; then
+      lane_row_get "$kind" ignored "$identity" >/dev/null
+      [[ "$LANE_ROW" == "$expected" ]] || return 1
+      actual="$(lane_row_get "$kind" ignored "$identity")"
+      [[ "$actual" == "$expected" ]] || return 1
+    elif [[ "$operation" == set ]]; then lane_row_set "$kind" ignored "$identity" "$value" >/dev/null
+    elif [[ "$operation" == clear ]]; then lane_row_clear "$kind" ignored "$identity" >/dev/null
+    else
+      lane_row_clear "$kind" ignored "$identity" >/dev/null
+      lane_row_set "$kind" ignored "$identity" "$value" >/dev/null
+    fi
+    mail_rows_serialize
+    [[ "$LANE_ROW" == "$after" ]] || { printf 'row contract failed: %s\n' "$label" >&2; return 1; }
+    expected="$(MAIL_ROW_MODE=0 lane_row_get "$kind" "$after" "$identity")"
+    actual="$(lane_row_get "$kind" ignored "$identity")"
+    [[ "$actual" == "$expected" ]] || { printf 'row read-back failed: %s\n' "$label" >&2; return 1; }
+  done <<'ROWS'
+valid duplicate read|lane-mail|KEN-7|get||lane-mail@tKEN-7@t1 first@nopaque@nlane-mail@tKEN-7@t2 second|lane-mail@tKEN-7@t1 first@nopaque@nlane-mail@tKEN-7@t2 second|1 first@n2 second
+duplicate set order|lane-mail|KEN-7|set|3 next|opaque@nlane-mail@tKEN-7@t1 first@nother@nlane-mail@tKEN-7@t2 second@ntail|opaque@nlane-mail@tKEN-7@t3 next@nother@ntail|
+malformed match|lane-mail|KEN-7|set|4 next|lane-mail@tKEN-7@tbad@textra@nlane-mail@tKEN-7@t1 first|lane-mail@tKEN-7@tbad@textra@nlane-mail@tKEN-7@t4 next|
+malformed clear|lane-mail|KEN-7|clear||lane-mail@tKEN-7@tbad@textra@nlane-mail@tKEN-7@t1 first|lane-mail@tKEN-7@tbad@textra|
+literal backslash|clone-root|KEN-7|set|C:\lane\clone|clone-root@tKEN-7@told@nclone-root@tKEN-70@tkeep|clone-root@tKEN-7@tC:\lane\clone@nclone-root@tKEN-70@tkeep|
+retained rows|lane-failed|KEN-7|clear||lane-mail@tKEN-8@t7 retained@nlane-mail@tKEN-999@t9 stopped@nlane-failed@tKEN-7@tfailed@ndirective@tKEN-999@t3 0:0 old|lane-mail@tKEN-8@t7 retained@nlane-mail@tKEN-999@t9 stopped@ndirective@tKEN-999@t3 0:0 old|
+clone cursor|lane-mail|KEN-7@clone|set|2 clone|lane-mail@tKEN-7@t1 lane@nlane-mail@tKEN-7@clone@t1 old|lane-mail@tKEN-7@t1 lane@nlane-mail@tKEN-7@clone@t2 clone|
+blank normalization|lane-failed|KEN-7|clear||@nopaque@n@n|opaque|
+clear then set appends|lane-mail|KEN-7|clear-set|2 new|lane-mail@tKEN-7@t1 old@nother|other@nlane-mail@tKEN-7@t2 new|
+empty duplicate|directive|KEN-7|get||directive@tKEN-7@t@ndirective@tKEN-7@tlast|directive@tKEN-7@t@ndirective@tKEN-7@tlast|@nlast
+literal tab write|clone-root|KEN-7|set|bad@tcolumn|clone-root@tKEN-7@told@nopaque|clone-root@tKEN-7@tbad@tcolumn@nopaque|
+literal multiline write|clone-root|KEN-7|set|first@nsecond|clone-root@tKEN-7@told@nopaque|clone-root@tKEN-7@tfirst@nsecond@nopaque|
+multiline duplicate write|clone-root|KEN-7|set|first@nsecond|clone-root@tKEN-7@tfirst@nopaque@nclone-root@tKEN-7@tsecond|clone-root@tKEN-7@tfirst@nsecond@nopaque|
+inserted duplicate row|clone-root|KEN-7|set|first@nclone-root@tKEN-7@tsecond|clone-root@tKEN-7@told@nopaque|clone-root@tKEN-7@tfirst@nclone-root@tKEN-7@tsecond@nopaque|
+trailing literal newline|clone-root|KEN-7|set|first@n|clone-root@tKEN-7@told@nopaque|clone-root@tKEN-7@tfirst@n@nopaque|
+ROWS
+  MAIL_SEEN=$'clone-root\tKEN-7\told\nopaque'
+  MAIL_ROW_MODE=0
+  actual="$(lane_row_set clone-root "$MAIL_SEEN" KEN-7 $'bad\tcolumn')"
+  actual="$(lane_row_set clone-root "$actual" KEN-7 new)"
+  [[ "$actual" == $'clone-root\tKEN-7\tbad\tcolumn\nopaque\nclone-root\tKEN-7\tnew' ]] || return 1
+  mail_rows_load; MAIL_ROW_MODE=1
+  lane_row_set clone-root ignored KEN-7 $'bad\tcolumn' >/dev/null
+  lane_row_set clone-root ignored KEN-7 new >/dev/null
+  mail_rows_serialize
+  [[ "$LANE_ROW" == "$actual" ]] || return 1
+)
+ROW_CONTRACT_RC=0
+mail_row_contract || ROW_CONTRACT_RC=$?
+assert_eq "$ROW_CONTRACT_RC" 0 'loaded and blob rows share literal, duplicate, malformed, placement and retention semantics'
+
+# Instrument a private watch copy. The production read and commit paths run;
+# restoring full-history gets must fail the same work assertion.
+ROW_WORK_WATCH="$(mutant_scripts row-work/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/row-work/github"
+mutate_file "$ROW_WORK_WATCH" 'mail_rows_load() {' \
+  'mail_rows_load() { printf "parse\n" >>"$STUB_DIR/row-work"'
+mutate_file "$ROW_WORK_WATCH" 'mail_turn() { # [overseer]' \
+  'mail_turn() { printf "turn\n" >>"$STUB_DIR/row-work" # [overseer]'
+mutate_file "$ROW_WORK_WATCH" 'lane_row_get() {' \
+  'lane_row_get() { [[ "$MAIL_ROW_MODE" -ne 1 ]] || printf "get %s\n" "${FUNCNAME[1]}" >>"$STUB_DIR/row-work"'
+ROW_WORK_TRACE="$(cat <<'TRACE'
+MAIL_ROW_MODE=0
+set -T
+trap 'if [[ "$MAIL_ROW_MODE" -eq 1 && "$BASH_COMMAND" == "IFS= read -r row" && "${row:-}" == *KEN-HISTORY* ]]; then
+  case "${FUNCNAME[0]:-}" in lane_row_set|lane_row_clear) printf "rescan\n" >>"$STUB_DIR/row-work" ;; esac
+fi' DEBUG
+lane_row_value()
+TRACE
+)" || exit 1
+mutate_file "$ROW_WORK_WATCH" $'MAIL_ROW_MODE=0\nlane_row_value()' "$ROW_WORK_TRACE"
+mutate_file "$ROW_WORK_WATCH" '    [[ "$row" == "$prefix"* ]] || continue' \
+  '    if [[ "$MAIL_ROW_MODE" -eq 1 && "$row" == *KEN-HISTORY* ]]; then printf "rescan\n" >>"$STUB_DIR/row-work"; fi
+    [[ "$row" == "$prefix"* ]] || continue'
+row_work_pass() { # WATCH CASE
+  local WATCH_BIN="$1" row_file before rc=0
+  new_case "$2"
+  mail_reset KEN-7
+  say KEN-7 notice 'A closing notice.' >/dev/null
+  mkdir -p -- "$STATE_DIR"
+  row_file="$STATE_DIR/owner_repo__none.mail"
+  printf 'clone-root\tKEN-7\t%s\nlane-mail\tKEN-7@clone\t0 \ndirective\tKEN-7@clone\t0 0:0 \nlane-mail\tKEN-HISTORY\t91 retained\nlong-pass\tfleet\t9999999999' \
+    "$CASE_REPO_ROOT" >"$row_file"
+  run_watch -- --max-loops 1 --item KEN-7 --root "KEN-7=$STUB_DIR/removed" \
+    >"$STUB_DIR/work.out" 2>"$STUB_DIR/work.err" || rc=$?
+  assert_eq "$rc" 0 'the work probe reaches the removed-worktree clone mailbox' "$STUB_DIR/work.err"
+  assert_contains "$(cat "$STUB_DIR/work.out")" 'EVENT lane-notice KEN-7 ' 'clone fallback still delivers mail' "$STUB_DIR/work.err"
+  cp -- "$row_file" "$STUB_DIR/committed"
+  # A fresh owner note ends the second run without starting a due long pass.
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/msg.txt") >/dev/null
+  run_watch -- --max-loops 1 --item KEN-7 --root "KEN-7=$STUB_DIR/removed" \
+    >"$STUB_DIR/repeat.out" 2>"$STUB_DIR/repeat.err" || rc=$?
+  assert_eq "$rc" 0 'the second read completes' "$STUB_DIR/repeat.err"
+  assert_not_contains "$(cat "$STUB_DIR/repeat.out")" 'EVENT lane-notice' 'retained clone cursors do not replay mail' "$STUB_DIR/repeat.err"
+  before=changed
+  if cmp -s -- "$row_file" "$STUB_DIR/committed"; then before=unchanged; fi
+  assert_eq "$before" unchanged 'an unchanged item leaves the committed bytes unchanged'
+  ROW_WORK_OK=0
+  if [[ -s "$STUB_DIR/row-work" ]] && [[ "$(grep -c '^turn$' "$STUB_DIR/row-work")" -gt 0 ]] \
+      && [[ "$(grep -c '^parse$' "$STUB_DIR/row-work")" == "$(grep -c '^turn$' "$STUB_DIR/row-work")" ]] \
+      && ! grep -q '^rescan$' "$STUB_DIR/row-work"; then ROW_WORK_OK=1; fi
+  assert_contains "$(cat "$STUB_DIR/row-work")" 'get local_clone' 'a fallback command substitution consumes loaded rows'
+  assert_contains "$(cat "$STUB_DIR/row-work")" 'get check_mail' 'direct mail getters consume loaded rows'
+  assert_contains "$(cat "$row_file")" $'lane-mail\tKEN-HISTORY\t91 retained' 'an inactive item with no fleet record keeps its cursor'
+}
+row_work_pass "$ROW_WORK_WATCH" mail_rows_one_parse
+assert_eq "$ROW_WORK_OK" 1 'each production mail turn parses once and no row helper rescans inactive history'
+mutate_file "$ROW_WORK_WATCH" '    mail_row_find "$prefix"
+    LANE_ROW=""
+    [[ "$MAIL_ROW_INDEX" -lt 0 ]] || LANE_ROW="${MAIL_ROW_VALUES[$MAIL_ROW_INDEX]}"
+    [[ -z "$LANE_ROW" ]] || printf '\''%s\n'\'' "$LANE_ROW"
+    return 0' '    set -- "$1" "$MAIL_SEEN" "$3"'
+row_work_pass "$ROW_WORK_WATCH" mail_rows_rescan_control
+assert_eq "$ROW_WORK_OK" 0 'control: restoring per-call whole-baseline gets fails the work assertion'
+
 new_case mail_once
 mail_reset KEN-7
 ID="$(say KEN-7 ask 'Cut the scanner or keep it?' cut,keep)"
