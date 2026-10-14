@@ -235,6 +235,25 @@ impl SealedSource {
         self.entry(path).ok().flatten().is_some_and(|m| m.is_dir())
     }
 
+    /// Existing physical directory identity without hiding a refused symlink.
+    pub(crate) fn directory_identity(&self, path: &Path) -> Result<PathBuf> {
+        self.contained(path)?;
+        let directory = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
+        if !directory.starts_with(&self.root) {
+            return Err(CoreError::SourceEscape {
+                path: directory,
+                reason: "outside the source root".to_owned(),
+            });
+        }
+        if !self.is_dir(&directory) {
+            return Err(CoreError::SourceEscape {
+                path: directory,
+                reason: "the source path is not a directory".to_owned(),
+            });
+        }
+        Ok(directory)
+    }
+
     pub fn read(&self, path: &Path) -> Result<Vec<u8>> {
         self.contained(path)?;
         let meta = fs::symlink_metadata(path).map_err(|e| CoreError::io(path, e))?;

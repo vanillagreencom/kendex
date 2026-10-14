@@ -159,8 +159,16 @@ fn parse(sealed: &SealedSource, text: &str) -> Registry {
         return registry;
     };
     let mut skill_allowance = Some(super::discover::MAX_SKILLS);
+    let mut defaults = super::catalog::DefaultInventories::new();
     for (index, entry) in entries.iter().enumerate() {
-        read_entry(sealed, index, entry, &mut registry, &mut skill_allowance);
+        read_entry(
+            sealed,
+            index,
+            entry,
+            &mut registry,
+            &mut skill_allowance,
+            &mut defaults,
+        );
     }
     registry
 }
@@ -171,6 +179,7 @@ fn read_entry(
     entry: &Value,
     registry: &mut Registry,
     skill_allowance: &mut Option<usize>,
+    defaults: &mut super::catalog::DefaultInventories,
 ) {
     let at = format!("{REGISTRY}: plugins[{index}]");
     let Some(name) = string(entry, "name") else {
@@ -218,7 +227,11 @@ fn read_entry(
     let Some(dir) = local_dir(&at, &name, entry, registry) else {
         return;
     };
-    if !sealed.is_dir(&sealed.root().join(&dir)) {
+    let accepted_dir = sealed
+        .directory_identity(&sealed.root().join(&dir))
+        .ok()
+        .and_then(|source| sealed.relative(&source).map(Path::to_path_buf));
+    let Some(dir) = accepted_dir else {
         registry.findings.push(CatalogFinding::new(
             at,
             format!(
@@ -228,7 +241,7 @@ fn read_entry(
             "point the entry at a directory that exists, or drop the entry",
         ));
         return;
-    }
+    };
     let skills = skill_dirs(
         sealed,
         &at,
@@ -258,7 +271,8 @@ fn read_entry(
             })
             .unwrap_or_default(),
     };
-    plugin.offers = super::catalog::read_offers(sealed, &plugin, skills, &mut registry.findings);
+    plugin.offers =
+        super::catalog::read_offers(sealed, &plugin, skills, defaults, &mut registry.findings);
     registry.plugins.push(plugin);
 }
 

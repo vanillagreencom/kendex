@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -22,25 +23,41 @@ use super::plugin_registry::{CatalogFinding, PLUGIN_MANIFEST, PluginEntry, Regis
 /// One registry read owns the accepted item paths.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Offers {
-    items: BTreeMap<ItemKind, BTreeMap<String, PathBuf>>,
+    items: BTreeMap<ItemKind, SharedItems>,
 }
+
+type SharedItems = Arc<BTreeMap<String, PathBuf>>;
+pub(super) type DefaultInventories = BTreeMap<PathBuf, BTreeMap<ItemKind, SharedItems>>;
 
 pub(super) fn read_offers(
     sealed: &SealedSource,
     entry: &PluginEntry,
-    declared_skills: Option<BTreeMap<String, PathBuf>>,
+    mut declared_skills: Option<BTreeMap<String, PathBuf>>,
+    defaults: &mut DefaultInventories,
     findings: &mut Vec<CatalogFinding>,
 ) -> Offers {
     let mut offers = Offers::default();
-    for kind in [ItemKind::Agent, ItemKind::Command] {
-        offers
-            .items
-            .insert(kind, offered(sealed, entry, kind, findings));
+    let source = sealed.root().join(&entry.dir);
+    for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
+        let selected = (kind == ItemKind::Skill)
+            .then(|| declared_skills.take())
+            .flatten();
+        let items = if let Some(items) = selected {
+            Arc::new(items)
+        } else if let Some(items) = defaults.get(&source).and_then(|kinds| kinds.get(&kind)) {
+            Arc::clone(items)
+        } else {
+            // Aliases retain one physical inventory, and publish its warnings
+            // only when that inventory is first constructed during this read.
+            let items = Arc::new(offered(sealed, entry, kind, findings));
+            defaults
+                .entry(source.clone())
+                .or_default()
+                .insert(kind, Arc::clone(&items));
+            items
+        };
+        offers.items.insert(kind, items);
     }
-    offers.items.insert(
-        ItemKind::Skill,
-        declared_skills.unwrap_or_else(|| offered(sealed, entry, ItemKind::Skill, findings)),
-    );
     offers
 }
 

@@ -335,6 +335,8 @@ fn a_registry_read_owns_its_offered_items_until_the_next_read() {
     let (_tmp, sealed) = fixture();
     let registry = read(&sealed).expect("read").expect("registry");
     let entry = registry.entry("data-science").expect("entry");
+    let mut defaults = DefaultInventories::new();
+    let before = read_offers(&sealed, entry, None, &mut defaults, &mut Vec::new());
     for (kind, path) in [
         (ItemKind::Agent, "agents/late.md"),
         (ItemKind::Command, "commands/late.md"),
@@ -358,7 +360,14 @@ fn a_registry_read_owns_its_offered_items_until_the_next_read() {
                 .iter()
                 .any(|item| item.kind == kind && item.name == "data-science/late")
         );
+        let reused = read_offers(&sealed, entry, None, &mut defaults, &mut Vec::new());
+        assert!(Arc::ptr_eq(&before.items[&kind], &reused.items[&kind]));
+        assert!(!reused.items[&kind].contains_key("late"));
         let fresh = read(&sealed).expect("read").expect("registry");
+        assert!(!Arc::ptr_eq(
+            &entry.offers.items[&kind],
+            &fresh.entry("data-science").expect("entry").offers.items[&kind]
+        ));
         assert!(
             items(&sealed, &fresh, kind)
                 .iter()
@@ -366,6 +375,269 @@ fn a_registry_read_owns_its_offered_items_until_the_next_read() {
         );
         assert!(find(&sealed, &fresh, kind, "data-science/late").is_some());
     }
+}
+
+const DEFAULT_ITEMS: [(ItemKind, &str, &str); 3] = [
+    (ItemKind::Agent, "agents/kept.md", "agents/kept.md"),
+    (ItemKind::Command, "commands/kept.md", "commands/kept.md"),
+    (ItemKind::Skill, "skills/kept", "skills/kept/SKILL.md"),
+];
+
+fn inventory_fixture() -> (tempfile::TempDir, SealedSource) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = rooted(&tmp);
+    let root = home.join("catalog");
+    write(
+        &root,
+        ".claude-plugin/marketplace.json",
+        &serde_json::json!({"name": "inventories", "owner": {"name": "publisher"}, "plugins": [
+            {"name": "first", "source": "."},
+            {"name": "second", "source": "./"},
+            {"name": "third", "source": "././"},
+            {"name": "other", "source": "other"}
+        ]})
+        .to_string(),
+    );
+    for (source, tag) in [("", "root"), ("other", "other")] {
+        for (_, _, marker) in DEFAULT_ITEMS {
+            write(
+                &root.join(source),
+                marker,
+                &format!("---\nname: kept\ndescription: inventory fixture\n---\ninventory {tag}\n"),
+            );
+        }
+        write(
+            &root.join(source),
+            "chosen/SKILL.md",
+            "---\nname: chosen\ndescription: selected fixture\n---\nchosen body\n",
+        );
+    }
+    let sealed = SealedSource::open(&root).expect("open");
+    (tmp, sealed)
+}
+
+#[test]
+fn default_aliases_share_physical_inventories_and_distinct_sources_stay_separate() {
+    let (_tmp, sealed) = inventory_fixture();
+    let registry = read(&sealed).expect("read").expect("registry");
+    assert!(registry.findings.is_empty());
+    for (kind, item, marker) in DEFAULT_ITEMS {
+        let first = &registry.entry("first").expect("entry").offers.items[&kind];
+        for alias in ["second", "third"] {
+            assert!(Arc::ptr_eq(
+                first,
+                &registry.entry(alias).expect("entry").offers.items[&kind]
+            ));
+        }
+        assert!(!Arc::ptr_eq(
+            first,
+            &registry.entry("other").expect("entry").offers.items[&kind]
+        ));
+        assert_eq!(
+            items(&sealed, &registry, kind),
+            ["first/kept", "other/kept", "second/kept", "third/kept"]
+        );
+        for (alias, source, tag) in [
+            ("first", "", "root"),
+            ("second", "", "root"),
+            ("third", "", "root"),
+            ("other", "other", "other"),
+        ] {
+            let path = find(&sealed, &registry, kind, &format!("{alias}/kept")).expect("offered");
+            assert_eq!(path, sealed.root().join(source).join(item));
+            assert!(
+                sealed
+                    .read_to_string(&sealed.root().join(source).join(marker))
+                    .expect("read")
+                    .contains(&format!("inventory {tag}"))
+            );
+        }
+    }
+    assert_eq!(registry.entry("first").expect("entry").dir, PathBuf::new());
+    assert_eq!(
+        registry.entry("other").expect("entry").dir,
+        PathBuf::from("other")
+    );
+    let config = crate::source::source_config(&sealed, "inventories").expect("config");
+    let cloned = config.clone();
+    for (kind, _, _) in DEFAULT_ITEMS {
+        let original = config
+            .plugin_registry
+            .as_ref()
+            .expect("registry")
+            .entry("first")
+            .expect("entry");
+        let copied = cloned
+            .plugin_registry
+            .as_ref()
+            .expect("registry")
+            .entry("first")
+            .expect("entry");
+        assert!(Arc::ptr_eq(
+            &original.offers.items[&kind],
+            &copied.offers.items[&kind]
+        ));
+    }
+}
+
+#[test]
+fn default_findings_are_published_once_per_physical_directory() {
+    let (_tmp, sealed) = inventory_fixture();
+    write(sealed.root(), "CaseProbe", "probe");
+    let case_sensitive = !sealed.root().join("caseprobe").exists();
+    for source in ["", "other"] {
+        for (dir, suffix) in [
+            ("agents", ".md"),
+            ("commands", ".md"),
+            ("skills", "/SKILL.md"),
+        ] {
+            write(
+                &sealed.root().join(source),
+                &format!("{dir}/-bad{suffix}"),
+                "bad name",
+            );
+            if case_sensitive {
+                for leaf in ["FOLD", "fold"] {
+                    write(
+                        &sealed.root().join(source),
+                        &format!("{dir}/{leaf}{suffix}"),
+                        &format!("---\nname: {leaf}\ndescription: folding fixture\n---\nbody\n"),
+                    );
+                }
+            }
+        }
+    }
+    let registry = read(&sealed).expect("read").expect("registry");
+    assert!(registry.findings.iter().all(|finding| !finding.breakage));
+    let config = crate::source::source_config(&sealed, "inventories").expect("config");
+    let meta = metadata(&sealed).expect("metadata").expect("registry");
+    let check = crate::check_catalog::check_with(&sealed, &config, "inventories").expect("check");
+    let index = crate::source::index::index(&sealed, "inventories").expect("index");
+    let reports = [
+        registry
+            .findings
+            .iter()
+            .map(|f| f.location.as_str())
+            .collect::<Vec<_>>(),
+        config.findings().map(|f| f.location.as_str()).collect(),
+        meta.findings.iter().map(|f| f.location.as_str()).collect(),
+        check.catalog.iter().map(|f| f.file.as_str()).collect(),
+        index.findings.iter().map(|f| f.location.as_str()).collect(),
+    ];
+    for report in reports {
+        for location in [
+            "/agent",
+            "/command",
+            "/skill",
+            "other/agent",
+            "other/command",
+            "other/skill",
+        ] {
+            assert_eq!(
+                report.iter().filter(|at| **at == location).count(),
+                if case_sensitive { 2 } else { 1 },
+                "{location}"
+            );
+        }
+    }
+    assert!(
+        check
+            .catalog
+            .iter()
+            .all(|finding| finding.severity == "warning")
+    );
+    for (kind, _, _) in DEFAULT_ITEMS {
+        for alias in ["first", "second", "third", "other"] {
+            assert!(find(&sealed, &registry, kind, &format!("{alias}/kept")).is_some());
+            assert!(find(&sealed, &registry, kind, &format!("{alias}/-bad")).is_none());
+        }
+    }
+}
+
+#[test]
+fn explicit_alias_skills_stay_separate_from_default_inventories() {
+    for (skills, expected) in [
+        (serde_json::json!(["chosen"]), vec!["selected/chosen"]),
+        (serde_json::json!([]), vec![]),
+        (serde_json::json!(["missing"]), vec![]),
+    ] {
+        let (_tmp, sealed) = inventory_fixture();
+        write(
+            sealed.root(),
+            ".claude-plugin/marketplace.json",
+            &serde_json::json!({
+            "name": "inventories", "owner": {"name": "publisher"}, "plugins": [
+                {"name": "default", "source": "."},
+                {"name": "selected", "source": "./", "skills": skills}
+            ]})
+            .to_string(),
+        );
+        let registry = read(&sealed).expect("read").expect("registry");
+        let default = registry.entry("default").expect("entry");
+        let selected = registry.entry("selected").expect("entry");
+        for kind in [ItemKind::Agent, ItemKind::Command] {
+            assert!(Arc::ptr_eq(
+                &default.offers.items[&kind],
+                &selected.offers.items[&kind]
+            ));
+        }
+        assert!(!Arc::ptr_eq(
+            &default.offers.items[&ItemKind::Skill],
+            &selected.offers.items[&ItemKind::Skill]
+        ));
+        let selected_names: Vec<_> = items(&sealed, &registry, ItemKind::Skill)
+            .into_iter()
+            .filter(|name| name.starts_with("selected/"))
+            .collect();
+        assert_eq!(selected_names, expected);
+        assert!(find(&sealed, &registry, ItemKind::Skill, "default/kept").is_some());
+        assert!(find(&sealed, &registry, ItemKind::Skill, "selected/kept").is_none());
+        assert_eq!(
+            find(&sealed, &registry, ItemKind::Skill, "selected/chosen").is_some(),
+            !expected.is_empty()
+        );
+        let meta = metadata(&sealed).expect("metadata").expect("registry");
+        assert_eq!(
+            meta.groups[1]
+                .members
+                .iter()
+                .filter(|item| item.kind == ItemKind::Skill)
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_plugin_source_is_refused_before_identity() {
+    let (_tmp, sealed) = inventory_fixture();
+    std::os::unix::fs::symlink(sealed.root(), sealed.root().join("linked")).expect("symlink");
+    write(
+        sealed.root(),
+        ".claude-plugin/marketplace.json",
+        &serde_json::json!({
+        "name": "inventories", "owner": {"name": "publisher"}, "plugins": [
+            {"name": "first", "source": "."}, {"name": "linked", "source": "linked"}
+        ]})
+        .to_string(),
+    );
+    let registry = read(&sealed).expect("read").expect("registry");
+    assert_eq!(
+        registry
+            .plugins
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["first"]
+    );
+    assert_eq!(registry.findings.len(), 1);
+    assert_eq!(
+        registry.findings[0].location,
+        ".claude-plugin/marketplace.json: linked"
+    );
+    assert!(!registry.findings[0].breakage);
 }
 
 fn declared_fixture(source: &str, skills: Option<Value>) -> (tempfile::TempDir, SealedSource) {
@@ -719,6 +991,7 @@ fn skill_declarations_share_the_discovery_allowance_across_plugins() {
         ".claude-plugin/marketplace.json",
         &serde_json::json!({
             "name": "heygen", "owner": {"name": "HeyGen"}, "plugins": [
+                {"name": "default", "source": "./"},
                 {"name": "first", "source": "./", "skills": first},
                 {"name": "second", "source": "./", "skills": second},
                 {"name": "exhausted", "source": "./", "skills": ["heygen-avatar"]}
@@ -729,7 +1002,11 @@ fn skill_declarations_share_the_discovery_allowance_across_plugins() {
     let registry = read(&sealed).expect("read").expect("registry");
     assert_eq!(
         items(&sealed, &registry, ItemKind::Skill),
-        ["first/heygen-avatar", "second/heygen-video"]
+        [
+            "default/unlisted",
+            "first/heygen-avatar",
+            "second/heygen-video"
+        ]
     );
     let exhaustion: Vec<_> = registry
         .findings

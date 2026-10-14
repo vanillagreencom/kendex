@@ -24,6 +24,31 @@ fn reads_inside_the_root() {
     );
 }
 
+#[test]
+fn directory_identity_keeps_canonical_directories_and_refuses_non_directories() {
+    let (_tmp, sealed) = fixture();
+    for relative in ["", "skills/gh"] {
+        let path = sealed.root().join(relative);
+        assert_eq!(sealed.directory_identity(&path).expect("identity"), path);
+    }
+    let file = sealed.root().join("skills/gh/SKILL.md");
+    assert!(
+        matches!(sealed.directory_identity(&file), Err(CoreError::SourceEscape { path, .. }) if path == file)
+    );
+    let missing = sealed.root().join("missing");
+    assert!(
+        matches!(sealed.directory_identity(&missing), Err(CoreError::Io { path, .. }) if path == missing)
+    );
+    #[cfg(unix)]
+    {
+        let link = sealed.root().join("linked");
+        std::os::unix::fs::symlink(sealed.root().join("skills/gh"), &link).expect("symlink");
+        assert!(
+            matches!(sealed.directory_identity(&link), Err(CoreError::SourceEscape { path, .. }) if path == link)
+        );
+    }
+}
+
 /// The bound is a ceiling, not a wall one short of it: a directory
 /// holding exactly the limit is inside it and must still read. The entry
 /// after that is the row below.
