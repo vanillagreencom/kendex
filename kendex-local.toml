@@ -612,7 +612,7 @@ source = "."
 
 [hooks.worktree-session-claim]
 source = "."
-harnesses = ["claude", "codex", "pi"]
+harnesses = ["claude", "codex", "pi", "copilot"]
 
 [hooks.worktree-prompt-claim]
 source = "."
