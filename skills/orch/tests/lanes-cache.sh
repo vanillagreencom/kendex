@@ -19,6 +19,9 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 30 40 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 make_fetcher "$TMP_ROOT/fetch"
 mkdir -p "$TMP_ROOT/repo" "$TMP_ROOT/bin"
+# Claude usage refusals read the profile. This neutral cache fixture has none.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/bin/curl"
+chmod +x "$TMP_ROOT/bin/curl"
 git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config gc.auto 0
 git -C "$TMP_ROOT/repo" config maintenance.auto false
