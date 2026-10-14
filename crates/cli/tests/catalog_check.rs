@@ -25,6 +25,47 @@ fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bad-catalog")
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn declared_skill_name_refusals_fail_the_normal_catalog_check() {
+    for declarations in [
+        serde_json::json!(["first/review", "second/review"]),
+        serde_json::json!(["nul", "first/review"]),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = home.join("catalog");
+        std::fs::create_dir_all(catalog.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            catalog.join(".claude-plugin/marketplace.json"),
+            serde_json::json!({"name":"reviews", "owner":{"name":"author"},
+                "plugins":[{"name":"reviews", "source":"./", "skills":declarations}]})
+            .to_string(),
+        )
+        .unwrap();
+        for folder in ["first/review", "second/review", "nul"] {
+            std::fs::create_dir_all(catalog.join(folder)).unwrap();
+            std::fs::write(
+                catalog.join(folder).join("SKILL.md"),
+                "---\nname: review\ndescription: review code\n---\nreview body\n",
+            )
+            .unwrap();
+        }
+        let output = kendex(
+            &home,
+            &home,
+            &["check", "--catalog", catalog.to_str().unwrap(), "--json"],
+        );
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["ok"], false, "{report}");
+        assert_eq!(report["breakage"], 1, "{report}");
+        let findings = report["findings"].as_array().unwrap();
+        assert_eq!(findings.len(), 1, "{report}");
+        assert_eq!(findings[0]["severity"], "error", "{report}");
+    }
+}
+
 /// The manifests are valid. Ignoring unsupported delivery makes the
 /// PermissionRequest row pass, so this is a must-fail control for the check.
 #[test]

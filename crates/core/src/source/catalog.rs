@@ -28,14 +28,19 @@ pub(super) struct Offers {
 pub(super) fn read_offers(
     sealed: &SealedSource,
     entry: &PluginEntry,
+    declared_skills: Option<BTreeMap<String, PathBuf>>,
     findings: &mut Vec<CatalogFinding>,
 ) -> Offers {
     let mut offers = Offers::default();
-    for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
+    for kind in [ItemKind::Agent, ItemKind::Command] {
         offers
             .items
             .insert(kind, offered(sealed, entry, kind, findings));
     }
+    offers.items.insert(
+        ItemKind::Skill,
+        declared_skills.unwrap_or_else(|| offered(sealed, entry, ItemKind::Skill, findings)),
+    );
     offers
 }
 
@@ -86,7 +91,7 @@ pub fn items(_sealed: &SealedSource, registry: &Registry, kind: ItemKind) -> Vec
     names
 }
 
-/// Every readable item path, from declared skill folders or the default layout.
+/// Every readable item path from the default layout.
 fn item_paths(
     sealed: &SealedSource,
     entry: &PluginEntry,
@@ -96,12 +101,9 @@ fn item_paths(
         return Vec::new();
     };
     let base = sealed.root().join(&entry.dir);
-    let paths = match (kind, &entry.skills) {
-        (ItemKind::Skill, Some(skills)) => skills.iter().map(|path| base.join(path)).collect(),
-        _ => match sealed.entries(&base.join(dir)) {
-            Ok(paths) => paths,
-            Err(_) => return Vec::new(),
-        },
+    let paths = match sealed.entries(&base.join(dir)) {
+        Ok(paths) => paths,
+        Err(_) => return Vec::new(),
     };
     let mut leaves = Vec::new();
     for path in paths {
@@ -130,27 +132,40 @@ fn offered(
     let mut folded = BTreeMap::new();
     for (leaf, path) in item_paths(sealed, entry, kind) {
         let at = format!("{}/{}", crate::paths::slashed(&entry.dir), kind.name());
-        if let Some(problem) = names::segment_problem(&leaf) {
-            findings.push(CatalogFinding::new(
-                at,
-                format!("`{}` cannot be installed: {problem}", names::shown(&leaf)),
-                "rename it in the catalog",
-            ));
-            continue;
+        if let Err(finding) = insert_offer(&at, leaf, path, &mut offered, &mut folded) {
+            findings.push(finding);
         }
-        let key = names::fold(&leaf);
-        if let Some(other) = folded.get(&key) {
-            findings.push(CatalogFinding::new(
-                at,
-                format!("`{leaf}` and `{other}` are the same name once a filesystem has folded case and trailing dots: one would overwrite the other"),
-                "rename one of them so they differ by more than case",
-            ));
-            continue;
-        }
-        folded.insert(key, leaf.clone());
-        offered.insert(leaf, path);
     }
     offered
+}
+
+pub(super) fn insert_offer(
+    at: &str,
+    leaf: String,
+    path: PathBuf,
+    offered: &mut BTreeMap<String, PathBuf>,
+    folded: &mut BTreeMap<String, String>,
+) -> std::result::Result<(), CatalogFinding> {
+    if let Some(problem) = names::segment_problem(&leaf) {
+        return Err(CatalogFinding::new(
+            at,
+            format!("`{}` cannot be installed: {problem}", names::shown(&leaf)),
+            "rename it in the catalog",
+        ));
+    }
+    let key = names::fold(&leaf);
+    if let Some(other) = folded.get(&key) {
+        return Err(CatalogFinding::new(
+            at,
+            format!(
+                "`{leaf}` and `{other}` are the same name once a filesystem has folded case and trailing dots: one would overwrite the other"
+            ),
+            "rename one of them so they differ by more than case",
+        ));
+    }
+    folded.insert(key, leaf.clone());
+    offered.insert(leaf, path);
+    Ok(())
 }
 
 /// One item a plugin ships.

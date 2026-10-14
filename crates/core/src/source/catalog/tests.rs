@@ -259,6 +259,14 @@ fn item_names_a_filesystem_would_fold_together_are_reported_not_installed() {
         expected_findings
     );
     assert!(check.failing(true) > 0);
+    assert!(
+        check
+            .catalog
+            .iter()
+            .filter(|finding| finding.file == at)
+            .all(|finding| finding.severity == "warning")
+    );
+    assert!(registry.findings.iter().all(|finding| !finding.breakage));
     let index = crate::source::index::index(&sealed, "workflows").expect("index");
     assert_eq!(
         index
@@ -469,25 +477,123 @@ fn declared_skill_paths_agree_across_index_lookup_and_metadata() {
     }
 }
 
+type DeclaredRefusal = (
+    Option<&'static str>,
+    Value,
+    &'static str,
+    &'static str,
+    &'static str,
+);
+
+fn declared_refusal_cases() -> Vec<DeclaredRefusal> {
+    vec![
+        (
+            None,
+            serde_json::json!("../outside"),
+            "skills[../outside]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
+            serde_json::json!("/outside"),
+            "skills[/outside]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
+            serde_json::json!("./../outside"),
+            "skills[./../outside]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
+            serde_json::json!("missing"),
+            "skills[missing]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
+            serde_json::json!("missing"),
+            "skills[missing]",
+            "",
+            "",
+        ),
+        (
+            None,
+            serde_json::json!(""),
+            "skills[]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
+            serde_json::json!({"name": "missing-path"}),
+            "",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
+            serde_json::json!("nul"),
+            "skills[nul]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            Some("first/review"),
+            serde_json::json!({"path": "second/review"}),
+            "skills[second/review]",
+            "review",
+            "first/review",
+        ),
+        (
+            Some("first/review"),
+            serde_json::json!("second/REVIEW"),
+            "skills[second/REVIEW]",
+            "review",
+            "first/review",
+        ),
+        (
+            Some("heygen-avatar"),
+            serde_json::json!("heygen-avatar"),
+            "skills[heygen-avatar]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+    ]
+}
+
 #[test]
-fn declared_unsafe_or_missing_skill_paths_are_named_and_do_not_hide_siblings() {
-    for (declaration, location) in [
-        (serde_json::json!("../outside"), "skills[../outside]"),
-        (serde_json::json!("/outside"), "skills[/outside]"),
-        (serde_json::json!("./../outside"), "skills[./../outside]"),
-        (serde_json::json!("missing"), "skills[missing]"),
-        (serde_json::json!(""), "skills[]"),
-        (serde_json::json!({"name": "missing-path"}), ""),
-    ] {
-        let (_tmp, sealed) = declared_fixture(
-            "./",
-            Some(serde_json::json!([declaration, "heygen-avatar"])),
-        );
+fn declared_skill_refusals_are_breaking_and_keep_accepted_siblings() {
+    // Marketplace path strings and HeyGen path objects share one acceptance rule.
+    for (prefix, declaration, location, accepted, accepted_path) in declared_refusal_cases() {
+        let mut declarations = Vec::new();
+        if let Some(prefix) = prefix {
+            declarations.push(serde_json::json!(prefix));
+        }
+        declarations.push(declaration);
+        if prefix.is_none() && !accepted.is_empty() {
+            declarations.push(serde_json::json!("heygen-avatar"));
+        }
+        let (_tmp, sealed) = declared_fixture("./", Some(serde_json::json!(declarations)));
+        for folder in ["nul", "first/review", "second/review", "second/REVIEW"] {
+            write(
+                sealed.root(),
+                &format!("{folder}/SKILL.md"),
+                "---\nname: review\ndescription: review code\n---\nreview body\n",
+            );
+        }
         let registry = read(&sealed).expect("read").expect("registry");
-        assert_eq!(
-            items(&sealed, &registry, ItemKind::Skill),
-            ["heygen/heygen-avatar"]
-        );
+        let expected = if accepted.is_empty() {
+            Vec::new()
+        } else {
+            vec![format!("heygen/{accepted}")]
+        };
+        assert_eq!(items(&sealed, &registry, ItemKind::Skill), expected);
         assert_eq!(
             registry
                 .findings
@@ -505,6 +611,10 @@ fn declared_unsafe_or_missing_skill_paths_are_named_and_do_not_hide_siblings() {
         );
         assert!(registry.findings[0].breakage);
         let config = crate::source::source_config(&sealed, "heygen").expect("config");
+        assert_eq!(
+            config.findings().collect::<Vec<_>>(),
+            registry.findings.iter().collect::<Vec<_>>()
+        );
         let check = crate::check_catalog::check_with(&sealed, &config, "heygen").expect("check");
         assert_eq!(check.failing(false), 1);
         let index = crate::source::index::index(&sealed, "heygen").expect("index");
@@ -513,11 +623,41 @@ fn declared_unsafe_or_missing_skill_paths_are_named_and_do_not_hide_siblings() {
             index
                 .packages
                 .iter()
-                .map(|item| item.name.as_str())
+                .map(|item| item.name.clone())
                 .collect::<Vec<_>>(),
-            ["heygen/heygen-avatar"]
+            expected
         );
-        assert!(find(&sealed, &registry, ItemKind::Skill, "heygen/outside").is_none());
+        let meta = metadata(&sealed).expect("metadata").expect("registry");
+        assert_eq!(meta.findings, registry.findings);
+        assert_eq!(
+            meta.groups[0]
+                .members
+                .iter()
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let members = plugin_members(&sealed, &registry.plugins[0]).expect("members");
+        assert_eq!(members, meta.groups[0].members);
+        for leaf in [
+            "heygen-avatar",
+            "review",
+            "REVIEW",
+            "nul",
+            "unlisted",
+            "outside",
+        ] {
+            let found = find(
+                &sealed,
+                &registry,
+                ItemKind::Skill,
+                &format!("heygen/{leaf}"),
+            );
+            assert_eq!(found.is_some(), leaf == accepted);
+            if let Some(path) = found {
+                assert_eq!(path, sealed.root().join(accepted_path));
+            }
+        }
     }
 }
 

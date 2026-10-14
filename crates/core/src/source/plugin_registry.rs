@@ -14,6 +14,7 @@
 //! skipped with a finding: fetching it would be a second, unpinned download
 //! behind the one the user asked for.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -78,8 +79,6 @@ pub struct PluginEntry {
     pub name: String,
     /// Relative to the source root, always beneath it.
     pub dir: PathBuf,
-    /// Declared skill folders relative to the plugin; absence uses `skills/`.
-    pub skills: Option<Vec<PathBuf>>,
     pub(super) offers: super::catalog::Offers,
     pub description: Option<String>,
     pub version: Option<String>,
@@ -242,7 +241,6 @@ fn read_entry(
     let mut plugin = PluginEntry {
         name,
         dir,
-        skills,
         offers: super::catalog::Offers::default(),
         description: string(entry, "description"),
         version: string(entry, "version"),
@@ -260,7 +258,7 @@ fn read_entry(
             })
             .unwrap_or_default(),
     };
-    plugin.offers = super::catalog::read_offers(sealed, &plugin, &mut registry.findings);
+    plugin.offers = super::catalog::read_offers(sealed, &plugin, skills, &mut registry.findings);
     registry.plugins.push(plugin);
 }
 
@@ -356,37 +354,36 @@ fn skill_dirs(
     value: Option<&Value>,
     registry: &mut Registry,
     skill_allowance: &mut Option<usize>,
-) -> Option<Vec<PathBuf>> {
+) -> Option<BTreeMap<String, PathBuf>> {
     let value = value?;
     // Claude marketplaces emit strings; HeyGen also emits objects with `path`.
     let declarations: &[Value] = match value {
         Value::Array(list) => list,
         _ => std::slice::from_ref(value),
     };
-    let mut skills = Vec::new();
+    let mut skills = BTreeMap::new();
+    let mut folded = BTreeMap::new();
     for declaration in declarations {
-        // Foreign registries can repeat valid or refused paths. Count their
-        // work before any read or retained per-declaration diagnostic.
-        match skill_allowance {
-            Some(remaining) if *remaining > 0 => *remaining -= 1,
-            Some(_) => {
-                registry.findings.push(
-                    CatalogFinding::new(
-                        format!("{REGISTRY}: skills"),
-                        format!(
-                            "more than {} skill declarations; the rest are not read",
-                            super::discover::MAX_SKILLS
-                        ),
-                        "reduce the registry's skill declarations",
-                    )
-                    .breaking(),
-                );
+        let Some(remaining) = *skill_allowance else {
+            break;
+        };
+        // Complete acceptance stays here: a declared folder must never reach
+        // the default scanner's warning-only rejection handler.
+        let resolved: std::result::Result<(), CatalogFinding> = (|| {
+            // Foreign registries can repeat valid or refused paths. Count their
+            // work before any read or retained per-declaration diagnostic.
+            if remaining == 0 {
                 *skill_allowance = None;
-                break;
+                return Err(CatalogFinding::new(
+                    format!("{REGISTRY}: skills"),
+                    format!(
+                        "more than {} skill declarations; the rest are not read",
+                        super::discover::MAX_SKILLS
+                    ),
+                    "reduce the registry's skill declarations",
+                ));
             }
-            None => break,
-        }
-        let resolved: std::result::Result<PathBuf, CatalogFinding> = (|| {
+            *skill_allowance = Some(remaining - 1);
             let path = declaration
                 .as_str()
                 .or_else(|| declaration.get("path").and_then(Value::as_str))
@@ -399,7 +396,8 @@ fn skill_dirs(
                 })?;
             let at = format!("{at}: skills[{}]", names::shown(path));
             let relative = relative_dir(&at, name, path)?;
-            let marker = sealed.root().join(dir).join(&relative).join("SKILL.md");
+            let folder = sealed.root().join(dir).join(&relative);
+            let marker = folder.join("SKILL.md");
             sealed.read_to_string(&marker).map_err(|problem| {
                 CatalogFinding::new(
                     &at,
@@ -410,10 +408,20 @@ fn skill_dirs(
                     "point the declaration at a skill folder with a readable SKILL.md",
                 )
             })?;
-            Ok(relative)
+            let leaf = folder
+                .file_name()
+                .and_then(|leaf| leaf.to_str())
+                .ok_or_else(|| {
+                    CatalogFinding::new(
+                        &at,
+                        "a skill folder has no readable item name",
+                        "name the skill folder",
+                    )
+                })?;
+            super::catalog::insert_offer(&at, leaf.to_owned(), folder, &mut skills, &mut folded)
         })();
         match resolved {
-            Ok(relative) => skills.push(relative),
+            Ok(()) => {}
             Err(finding) => registry.findings.push(finding.breaking()),
         }
     }
