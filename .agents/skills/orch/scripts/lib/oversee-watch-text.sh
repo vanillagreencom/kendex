@@ -122,9 +122,10 @@ The long pass's events, checked and reported in this order:
                              `oversee-succeed --check-marks`, the same one
                              overseer-mark rests on, and it is required
                              because THIS pane carries the limit banners this
-                             watch relays about other lanes: a wall the
-                             account refutes is one of those, and the pane is
-                             left alone under overseer-wall-unconfirmed. The
+                             watch relays about other lanes. A banner the
+                             account judgement does not confirm causes no wall
+                             recovery, under overseer-wall-unconfirmed.
+                             Independent reserve recovery can still run. The
                              banner's own window follows a pane wall's line,
                              as it does for a lane's usage-limit. The line
                              goes to the
@@ -150,9 +151,12 @@ The long pass's events, checked and reported in this order:
                              Capacity notices reach the fleet log and the
                              overseer mailbox. A successful successor ends
                              the old watch through its usual handover.
-                             The watch owns this succession and sends no
-                             parallel overseer-mark handover instruction
-                             for the reserve reading.
+                             This watch manages its automatic attempt and
+                             sends no parallel overseer-mark instruction
+                             for this reading. The turn-end hook keeps its
+                             own policy. The request and failure distinction
+                             is in references/overseer-session-events.md,
+                             Recovery requests.
   EVENT overseer-mark <pane> kind=<headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
                              the OVERSEER's own account reached its mark,
@@ -1176,7 +1180,7 @@ ow_message() { # REASON FIELD=VALUE...
     mark-repeat-invalid) text='ORCH_OVERSEER_MARK_REPEAT must be a positive integer.' ;;
     overseer-mark-unjudged) text='The overseer own-mark judgement could not be made this pass, so its account marks settle nothing here. A standing mark is not cleared by a reading that failed; oversee-succeed owns the judgement and its own keyed line says why.' ;;
     overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
-    overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
+    overseer-wall-unconfirmed) text='The account judgement did not confirm that the pane banner describes a wall on this overseer. The fields name that judgement. This watch declines wall recovery for this reading. Independent reserve recovery can still launch a successor in the same pass. See references/overseer-session-events.md, Recovery requests.' ;;
     overseer-wall-lifted) text='The overseer session rows last recorded a usage-limit failure and its own account now measures room, so the wall has lifted and the session is read as live. Only a finished turn writes the row that clears it.' ;;
     overseer-context-alerted) text='The overseer context record carried the same gap on two consecutive long passes, so the owner was sent one notice naming the pane and the gap, or already held the same notice text from a send within the last 24 hours that lane-mail refused to repeat as owner-notice-repeated, and the fleet log took one row unless an overseer-notice-failed line for its channel precedes this one; the event is not repeated while that gap stands. A notice to the owner that fails prints no such line and is sent again the next pass.' ;;
     overseer-context-unread) text='The overseer context record, or the session rows file its staleness is judged against, could not be read or is not a shape the lane-mail-check hook writes, so neither overseer-context event nor a context wedge is judged on it this pass. A harness field names a record whose harness no context adapter reads.' ;;

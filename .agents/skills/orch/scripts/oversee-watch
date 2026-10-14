@@ -3195,12 +3195,12 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
 # again. A reserve refusal leaves the current session live; real failures stop
 # repeat mode.
 #
-# The account and the time it frees up are the account judgement's own fields,
-# read off the one `--check-marks` line this pass already took and that
-# confirmed the wall. Not derived from the banner: `lanes context` measured
-# the headroom that confirmed it and names the bucket's own reset, so the
-# figure the fleet waits on and the figure that established the wall are one
-# reading. Either can be absent where that judgement named neither.
+# The account fields come from this pass's existing `--check-marks` result,
+# never from the banner or from the requested recovery mode. Reserve refusal
+# reports the measured account without a reset promise. Actual wall recovery
+# reports a measured binding bucket reset where available. Authentication
+# failure has no usage reset. See ../references/overseer-session-events.md,
+# Recovery requests.
 overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW KIND
   local row="$1" rows="$2" identity="$3" pane="$4" window="$5"
   local kind="$6"
@@ -3869,6 +3869,8 @@ check_overseer() {
     # nothing and its case is the event the branch below carries.
     if [[ "$ov_case" == reserve ]]; then
       # Automatic reserve recovery owns succession, including its retry.
+      # This covers this watch's attempt and mark output only. Other callers,
+      # including the turn-end hook, keep their own succession policy.
       rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
       OVERSEER_MARK_ROWS="$rows"
     else
