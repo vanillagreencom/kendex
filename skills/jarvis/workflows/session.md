@@ -16,12 +16,21 @@ Follow this workflow when starting a continuing session, reconciling open work o
 - Load only the safety core at start: the role in [persona.md](../persona.md), [Authority](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records). Use already loaded text rather than reading it again. Keep one assistant in control at a time.
 - Check current holds and temporary instructions in the compact handoff sections above. Read the current owner request with its delivered context. Apply its decision boundary through Authority before choosing work.
 - Check the event registration state in the handoff's State section.
-- Register with the event source the user selected. Use its supported registration and delivery interface. The source can change without changing this session contract.
+- For control-host events, register and start `watch-loop` through [Control-host events](#control-host-events). For another selected event source, use its supported registration and delivery interface.
 - Check the user channel and each agent's channel for unread events. Keep one communication channel per agent. Use the source's delivery order rather than sorting event ids.
 - Confirm the session prerequisites under [Homes](../references/long-session.md#homes). If they are missing, take its setup route as the first decision and leave the handoff untouched. Otherwise read all open session work from the selected tracker project, through every page. Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source. Reconcile the tracker queue, the open asks and the due audits through live reads of their homes. Keep a compact view of open work and due obligations for the first decision. Check what each open item waits for and why. Resume authorized work when the wait no longer applies.
 - Read no other record before the first decision.
 - Before taking the selected action, load its sections under [Action routes](#action-routes).
 - Follow [Handoff replacement](#handoff-replacement) before writing the current handoff under the [Handoff contract](../references/long-session.md#handoff) and entering the event loop.
+
+## Control-host events
+
+- Read [Control-host events](../references/control-host-events.md) before starting or recovering the producer. Use the settings in the [example](../kendex.settings.toml.example). Select one absolute home path for every start and recovery command.
+- From the native session's own pane, run `.agents/skills/orch/scripts/oversee register`. The session's next native hook establishes its session binding. Registration alone cannot renew presence.
+- Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings. The process pattern matches `watch-loop --home HOME` for this home. Escape regular-expression characters in HOME. The start command names this same home and its harness route below. The existing turn-end check reports an absent loop and that command. It starts no process.
+- On Claude Code, run `.agents/skills/jarvis/scripts/watch-loop --home HOME` through Monitor at its maximum expiry. Keep that same loop for the session. A batch pointer means the directive is ready in the home mailbox. Read it through the installed deliver hook or `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer` from HOME. Re-arm Monitor only on expiry or reported loop death.
+- On Pi and Copilot, launch the same command through `.agents/skills/orch/scripts/lib/job-unit.sh launch NAME RECORD -- .agents/skills/jarvis/scripts/watch-loop --home HOME`. Use a home-specific NAME and retain RECORD with the runner's process group PID in the handoff. Pi's installed mailbox wake delivers the directive. Copilot's installed hooks deliver at their native checkpoints; this producer supplies no idle extension.
+- Stop a job through `.agents/skills/orch/scripts/lib/job-unit.sh stop-job RECORD PID '*watch-loop --home HOME*'`, using its retained record and process identity. Stop the Monitor-owned command through Monitor. Retain the event log and batch state for restart. Keep the source registration, home, launch route and runner record in the handoff's State section.
 
 ## Action routes
 

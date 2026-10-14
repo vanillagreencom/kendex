@@ -96,4 +96,6 @@ skills/jarvis/scripts/lib/op_fifo.py text eol=lf
 .agents/skills/jarvis/scripts/lib/op_fifo.py text eol=lf
 skills/jarvis/SKILL.md text eol=lf
 skills/slack/tests/fixtures/mailbox-pre-read-events/** text eol=lf
+skills/jarvis/scripts/lib/watch.py text eol=lf
+.agents/skills/jarvis/scripts/lib/watch.py text eol=lf
 tools/lib/skill-requirements.awk text eol=lf

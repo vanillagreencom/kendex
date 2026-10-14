@@ -25,6 +25,7 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 - `reviewer-arch` checks a design against the project's architecture rules.
 - `publicist` drafts product videos, posts and outreach. Each send needs your approval on its tracker item.
 - Setup workflows connect Slack, Linear, GitHub and a fleet machine with checked results.
+- The [control-host event source](#control-host-events) collects mail and sends each settled burst through the session mailbox.
 - Your own skills and private notes add task knowledge and personal context.
 - [Updates](#update) replace the Jarvis render and keep your instructions, own skills, memory and handoffs unchanged.
 
@@ -80,6 +81,21 @@ The contract rows use real tmux, the shipped SessionStart carrier and native CLI
 - Codex: `start`, `status` and `stop` meet the contract in `test_codex_contract`.
 - Copilot CLI: `start`, `status` and `stop` meet the contract in `test_copilot_contract`.
 - Pi: `start`, `status` and `stop` meet the contract in `test_pi_contract`.
+
+## Control-host events
+
+Start the event source through the [session workflow](workflows/session.md#control-host-events). It reads mail on this machine and, when configured, on an SSH control host. A fixed settle combines a burst into one session mailbox directive. The session's existing mailbox route supplies the body.
+
+Set the keys shown in [kendex.settings.toml.example](kendex.settings.toml.example) under `[env]` in the assistant home's `kendex.settings.toml`. The process environment takes precedence over the private env file, which takes precedence over shared settings.
+
+- `JARVIS_CONTROL_HOST` selects the SSH destination. Empty runs local mail only.
+- `JARVIS_LOG_DIR` selects durable logs and batch state. The default is `${XDG_STATE_HOME:-$HOME/.local/state}/jarvis`. Give simultaneous homes separate directories.
+- `JARVIS_WAKE_SETTLE_SECS` defaults to 15 seconds. Zero sends immediately.
+- `SLACK_JARVIS_SESSION_FILE` reuses the Slack relay's hold. Set it in each local or host root whose relay the session must hold. An empty value creates no hold.
+
+Claude Code runs the loop through Monitor and receives a pointer for each batch. Pi uses its installed mailbox wake. Copilot receives mail through its installed hooks; idle delivery depends on its native extension.
+
+Consumer checks can append complete events under the [log contract](references/control-host-events.md#input-log). That reference also defines recovery and session-bound presence.
 
 ## Update
 

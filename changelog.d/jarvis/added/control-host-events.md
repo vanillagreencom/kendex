@@ -1,0 +1,1 @@
+- Jarvis collects local and control-host mail into fixed batches, retries saved batches through the existing mailbox writer, and renews the Slack hold from the bound session's hook activity.

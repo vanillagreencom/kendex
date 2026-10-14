@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Usage: watch-loop [--home PATH]
+# Run this foreground command through Claude Monitor, or an orch job unit.
+set -euo pipefail
+SCRIPT_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+# Keep this foreground shell in the job's process group. The existing wake
+# check matches its home-specific argv; the job runner stops the whole group.
+python3 -B "$SCRIPT_ROOT/lib/watch.py" loop --bash "$BASH" "$@"

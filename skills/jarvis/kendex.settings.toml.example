@@ -1,0 +1,11 @@
+[env]
+# Empty means local mail only. The host needs kendex on its SSH PATH.
+JARVIS_CONTROL_HOST = ""
+# Default when unset: ${XDG_STATE_HOME:-$HOME/.local/state}/jarvis.
+# Each home that runs at the same time needs a separate directory.
+JARVIS_LOG_DIR = "~/.local/state/jarvis"
+# A fixed window from the first complete event. Zero sends immediately.
+JARVIS_WAKE_SETTLE_SECS = "15"
+# Optional existing Slack hold. Set this in each root whose relay is held.
+# Accepts an absolute path, ~/path, or a path relative to that root.
+SLACK_JARVIS_SESSION_FILE = ""
