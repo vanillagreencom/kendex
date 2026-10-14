@@ -373,7 +373,7 @@ send() { # ITEM TEXT [--re MSGID]
 
 # --- the overseer's identity -----------------------------------------------
 # These neutral records name an already-bound native session s1. Initial
-# binding cases clear it and supply their own top-level native evidence.
+# binding cases clear it before the matching native caller runs.
 # The tmux stub below reads the overseer's server and pane, one part of its
 # identity. It is the one read
 # that asks — the server a pane belongs to, which the orch library pairs with
@@ -444,16 +444,6 @@ bind_overseer() { # HARNESS HOME SESSION
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee \
     --arg harness "$1" --arg home "$2" --arg session "$3" \
     '.overseer += {harness:$harness, home:$home, session_id:$session}' >/dev/null)
-}
-
-# Persisted top-level SessionStart input for cases that exercise initial
-# binding rather than the row writer. Lifecycle cases run the real writer.
-record_native_start() { # HARNESS SESSION [PANE]
-  local pane="${3:-$OVERSEER_PANE}" file
-  file="$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${pane#%}.jsonl"
-  mkdir -p "${file%/*}"
-  jq -nc --arg harness "$1" --arg session "$2" \
-    '{event:"SessionStart",harness:$harness,session_id:$session,at:1}' >> "$file"
 }
 
 # `lane-mail peer send --repo` from another repository's checkout into the
@@ -770,7 +760,6 @@ startless_record() { # [FIELDS_JSON] — the pane and server alone, plus FIELDS
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
     "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$OVERSEER_PANE" --argjson f "$fields" \
       '{server:$s,pane:$p,window:"@7",launch_line:"claude -n overseer"} + $f')" >/dev/null)
-  record_native_start claude s1
 }
 recorded_field() { # FIELD
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee ".overseer.$1 // \"none\"")

@@ -624,7 +624,6 @@ copilot_child() { # NAME ARM [HOOK] [RECORD_KIND] [NATIVE_LIB]
   judge_says "$BELOW_MARK_LINE"
   if [ "${4:-full}" = harness-only ]; then
     (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee '.overseer.harness = "pi" | .overseer.home = null | del(.overseer.session_id)' >/dev/null)
-    record_native_start copilot s1
   else
     bind_overseer claude "$OVERSEER_HOME_DIR" parent
   fi
@@ -682,7 +681,7 @@ for child_arm in deliver stop usage start; do
   assert_eq "$CHILD_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
     "$child_arm: the recorded harness alone refuses a child before the first session binding"
   assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-    'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=oversee launch alternative=shell-pane start then oversee register|1' \
+    'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=oversee register|1' \
     'the harness-only refusal gives one stderr diagnostic'
 done
 wake_mutant native-harness-control '    and ((.harness // "") == "" or .harness == $harness)' '    and true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"

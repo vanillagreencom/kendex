@@ -3269,195 +3269,7 @@ new_plain_session() { # NAME
   install_arms
 }
 
-# A launched harness sits below the pane shell and overseer-run's shell.
-# These ancestry inputs drive the real SessionStart row writer; a nested
-# standalone CLI has another harness between it and that same pane.
-FIRST_NATIVE_BIN="$TMP_ROOT/first-native-bin"
-mkdir -p "$FIRST_NATIVE_BIN"
-cat > "$FIRST_NATIVE_BIN/ps" <<'PS'
-#!/bin/sh
-case "$*" in
-  '-o comm= -p '*)
-    : > "$NATIVE_SCAN"
-    case "${NATIVE_PANE_SHAPE:-unread}" in
-      shell) printf 'bash\n' ;;
-      direct) printf 'native-harness\n' ;;
-      *) exit 1 ;;
-    esac ;;
-  '-o ppid= -o comm= -p '*)
-    : > "$NATIVE_SCAN"
-    case "${NATIVE_ANCESTRY:-unread}" in
-      top) printf '7000 native-harness\n' ;;
-      nested)
-        if [ "${*##* }" = 7001 ]; then printf '7000 native-harness\n'; else printf '7001 native-harness\n'; fi ;;
-      pane) printf '7000 bash\n' ;;
-      *) exit 1 ;;
-    esac ;;
-  *) exec "$NATIVE_REAL_PS" "$@" ;;
-esac
-PS
-cat > "$FIRST_NATIVE_BIN/grep" <<'GREP'
-#!/bin/sh
-case "$*" in
-  *'"event":"SessionStart"'*)
-    : > "$NATIVE_SCAN"
-    [ "${NATIVE_SCAN_DENY:-0}" = 0 ] || exit 2 ;;
-esac
-exec "$NATIVE_REAL_GREP" "$@"
-GREP
-chmod +x "$FIRST_NATIVE_BIN/ps" "$FIRST_NATIVE_BIN/grep"
-FIRST_NATIVE_PS=$(command -v ps)
-FIRST_NATIVE_GREP=$(command -v grep)
-first_native_lifecycle() { # NAME HARNESS SHAPE EVIDENCE CHILD_ARM [HOOK] [LIB]
-  named_session "$1" "${6:-$HOOK}"
-  local harness="$2" shape="$3" evidence="$4" child_arm="$5" hook_dir=.claude before state_before judged_before row_file
-  [ "$harness" != codex ] || hook_dir=.codex
-  mkdir -p "$LANE/$hook_dir/skills" "$LANE/tmp/lane-mail/overseer"
-  if [ "$hook_dir" != .claude ]; then
-    ln -s ../../.agents/skills/orch "$LANE/$hook_dir/skills/orch"
-    ln -s ../../.agents/skills/mailbox "$LANE/$hook_dir/skills/mailbox"
-  fi
-  install_hook "${6:-$HOOK}" "$LANE/$hook_dir/hooks/lane-mail-check.sh"
-  if [ -n "${7:-}" ]; then
-    hole_install lib/overseer-launch.sh "$LANE/.agents/skills/orch/scripts"
-    cp -- "$7" "$LANE/.agents/skills/orch/scripts/lib/overseer-launch.sh"
-  fi
-  # The real launch/registration writer clears the neutral fixture's binding.
-  (cd "$LANE" && env "${SESSION_ENV[@]}" "$BASH" -euo pipefail -c '
-    SCRIPT_DIR=$1 DEP_ERR=$2
-    . "$1/lib/lane-context.sh" && . "$1/lib/overseer-launch.sh"
-    ol_record_read
-    ol_identity "$3" "$4" "$4" "" "" "$PWD"
-    ol_record_write tmux "$TMUX_PANE" @7 "$TMUX_SERVER_ID" "$OL_IDENTITY"
-  ' _ "$REPO_ROOT/skills/orch/scripts" "$TMP_ROOT/first-write.err" "$harness" "$OVERSEER_HOME_DIR")
-  CALL_ENV=("${SESSION_ENV[@]}" "CODEX_HOME=$OVERSEER_HOME_DIR" "PATH=$FIRST_NATIVE_BIN:$TMUX_BIN:$PATH"
-    "NATIVE_REAL_PS=$FIRST_NATIVE_PS" "NATIVE_REAL_GREP=$FIRST_NATIVE_GREP" "NATIVE_SCAN=$TMP_ROOT/native-scan"
-    TMUX_PANE_PID=7000 "NATIVE_PANE_SHAPE=$shape" NATIVE_ANCESTRY=top)
-  CASE_HOOK="$LANE/$hook_dir/hooks/lane-mail-check.sh"
-  row_file="$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl"
-  [ "$shape" != direct ] || CALL_ENV+=(NATIVE_ANCESTRY=pane)
-  # A SessionStart before the mailbox exists writes no row. A direct-exec
-  # parent's writer also writes none because its pane process is not counted.
-  if [ "$evidence" = none ] && [ "$shape" = shell ]; then
-    rmdir "$LANE/tmp/lane-mail/overseer"
-  fi
-  ARM_ARGS=(row SessionStart)
-  run_payload "$(jq -nc --arg cwd "$LANE" \
-    '{session_id:"parent-native",hook_event_name:"SessionStart",source:"startup",cwd:$cwd}')"
-  mkdir -p "$LANE/tmp/lane-mail/overseer"
-  if [ "$shape" = direct ]; then
-    assert_eq "RC=$RC row=$([ -e "$row_file" ] && echo present || echo none)" \
-      'RC=0 row=none' 'the direct-exec parent writes no SessionStart row'
-    # The owner table includes an existing parent row. It is an input to the
-    # reader, not a claim that this direct-exec writer can produce one.
-    [ "$evidence" != start ] || record_native_start "$harness" parent-native
-  elif [ "$evidence" = start ]; then
-    assert_eq "RC=$RC row=$(jq -r .session_id "$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl")" \
-      'RC=0 row=parent-native' 'the real top-level start writer persists the parent native ID'
-  else
-    assert_eq "$([ -e "$row_file" ] && echo present || echo none)" none 'a start before its mailbox exists leaves no evidence'
-  fi
-  # An ordinary first shell PreToolUse does not bind the overseer.
-  ARM_ARGS=(halt)
-  run_payload '{"session_id":"parent-native","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"codex exec Reply"}}'
-  assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id // "none"')" none \
-    'the parent first shell hook leaves the native binding empty'
-  printf '%s\n' '{"session_id":"parent-native","tokens":null,"gap":"transcript-unnamed"}' > "$LANE/tmp/lane-mail/overseer/context.json"
-  printf 'parent-native\tlane-mail-check: transcript-unnamed=none\n' > "$LANE/tmp/lane-mail/overseer/context-told"
-  peer_send 'First binding parent only.'
-  # The reader's peek creates the empty cursor and lock even without moving
-  # it. Establish them before snapshots so observing unread mail adds no file.
-  overseer_unread 'First binding parent only.' >/dev/null
-  before=$(overseer_snapshot)
-  state_before=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)
-  judged_before=$(judge_calls)
-  if [ "$shape" = direct ]; then CALL_ENV+=(NATIVE_ANCESTRY=top); else CALL_ENV+=(NATIVE_ANCESTRY=nested); fi
-  ARM_ARGS=(row SessionStart)
-  run_payload "$(jq -nc --arg cwd "$LANE" \
-    '{session_id:"child-native",hook_event_name:"SessionStart",source:"startup",cwd:$cwd}')"
-  if [ "$shape" = direct ]; then
-    assert_eq "RC=$RC row=$(jq -r .session_id "$row_file" | tail -n 1)" \
-      'RC=0 row=child-native' 'the real direct-pane child writer emits the row that cannot authorize binding'
-    if [ "$evidence" = none ]; then
-      # The owner table also requires the absent-row input. Removing this
-      # fixture row isolates that input from the matching-child-row cases.
-      rm -f -- "$row_file"
-      assert_eq "$([ -e "$row_file" ] && echo present || echo none)" none \
-        'the direct-pane row-less call carries no persisted native evidence'
-    fi
-    # The existing row writer is outside the identity gate. Preserve this
-    # emitted row too while checking every refused delivery side effect.
-    before=$(overseer_snapshot)
-  else
-    assert_eq "$([ "$before" = "$(overseer_snapshot)" ] && echo unchanged || echo changed)" unchanged \
-      'the nested child start leaves shell-pane parent evidence unchanged'
-  fi
-  ARM_ARGS=("$child_arm")
-  run_payload "$(jq -nc --arg event "$([ "$child_arm" = stop ] && echo Stop || echo PostToolUse)" \
-    '{session_id:"child-native",hook_event_name:$event,tool_name:"Bash",tool_input:{command:"git status"},stop_hook_active:false}')"
-  FIRST_NATIVE_RESULT="RC=$RC unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ] && echo same || echo changed) stdout=$([ ! -s "$TMP_ROOT/stdout" ] && echo empty || echo context) judged=$(( $(judge_calls) - judged_before )) unread=$(overseer_unread 'First binding parent only.')"
-  if [ -z "${7:-}" ]; then
-    assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-      "lane-mail-check: session-unbound=child-native harness=$harness home=$OVERSEER_HOME_DIR remedy=oversee launch alternative=shell-pane start then oversee register|1" \
-      'the unbound child receives only the keyed launch recovery on stderr'
-    CALL_ENV+=(NATIVE_ANCESTRY=top)
-    [ "$shape" != direct ] || CALL_ENV+=(NATIVE_ANCESTRY=pane)
-    ARM_ARGS=(deliver)
-    run_payload '{"session_id":"parent-native","tool_name":"Bash","tool_input":{"command":"codex exec Reply"}}'
-    if [ "$shape" != shell ] || [ "$evidence" != start ]; then
-      assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") first=$(first_line) unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no)" \
-        "RC=0 stdout= first=lane-mail-check: session-unbound=parent-native harness=$harness home=$OVERSEER_HOME_DIR remedy=oversee launch alternative=shell-pane start then oversee register unchanged=yes" \
-        'the unsupported initial parent changes no record and receives the shell-pane recovery'
-      CALL_ENV+=(NATIVE_ANCESTRY=top NATIVE_PANE_SHAPE=shell)
-      ARM_ARGS=(row SessionStart)
-      run_payload "$(jq -nc --arg cwd "$LANE" \
-        '{session_id:"parent-native",hook_event_name:"SessionStart",source:"resume",cwd:$cwd}')"
-      (cd "$LANE" && env -u ORCH_STATE_DIR "${CALL_ENV[@]}" "HOME=$OFFLINE_HOME" "LANES_HOME=$OFFLINE_HOME" \
-        "$REPO_ROOT/skills/orch/scripts/oversee" register > "$TMP_ROOT/first-register.out" 2> "$TMP_ROOT/first-register.err")
-      ARM_ARGS=(deliver)
-      run_payload '{"session_id":"parent-native","tool_name":"Bash","tool_input":{"command":"git status"}}'
-    fi
-    assert_eq "$(context_line)|$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer.session_id)|$(overseer_unread 'First binding parent only.')" \
-      'PostToolUse lane-mail-check: unread=1|parent-native|0' 'the proven parent binds on return and receives its note'
-    rm -f -- "$TMP_ROOT/native-scan"
-    CALL_ENV+=(NATIVE_SCAN_DENY=1 NATIVE_ANCESTRY=unread NATIVE_PANE_SHAPE=unread)
-    run_payload '{"session_id":"parent-native","tool_name":"Bash","tool_input":{"command":"git status"}}'
-    assert_eq "$(context_line)|$([ -e "$TMP_ROOT/native-scan" ] && echo scanned || echo untouched)" \
-      '-|untouched' 'a known native binding delivers once and scans no start row or ancestry'
-  fi
-  ARM_ARGS=()
-  CALL_ENV=()
-}
-while IFS='|' read -r first_harness first_shape first_evidence first_arm; do
-  first_native_lifecycle "native_first_${first_harness}_${first_shape}_${first_evidence}_$first_arm" "$first_harness" "$first_shape" "$first_evidence" "$first_arm"
-  assert_eq "$FIRST_NATIVE_RESULT" 'RC=0 unchanged=yes state=same stdout=empty judged=0 unread=1' \
-    "$first_harness $first_shape $first_evidence $first_arm: a child before the parent changes no mail, cursor, context, gap, told record or fleet binding"
-done <<'ROWS'
-codex|shell|start|deliver
-codex|shell|start|stop
-claude|shell|start|deliver
-codex|shell|none|deliver
-claude|shell|none|stop
-codex|direct|start|deliver
-codex|direct|start|stop
-claude|direct|none|deliver
-claude|direct|none|stop
-claude|unread|start|stop
-ROWS
 NATIVE_BIND_RULE=$(sed -n '/^    and ((.session_id /p' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh")
-# Restore the baseline's initial-binding acceptance without requiring a
-# feature-branch Git object in future clones or after a squash merge.
-wake_mutant native-first-binding-control "$NATIVE_BIND_RULE" "    and ((.session_id // \"\") == \"\" or .session_id == \$session);'" "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-first_native_lifecycle native_first_base_control codex shell start deliver "$HOOK" "$MUTANT_PATH"
-assert_eq "$([ "$FIRST_NATIVE_RESULT" = 'RC=0 unchanged=yes state=same stdout=empty judged=0 unread=1' ] && echo preserved || echo changed)" changed \
-  'control: baseline initial-binding acceptance binds the child first and breaks the same lifecycle isolation assertion'
-first_native_lifecycle native_first_rowless_control codex shell none deliver "$HOOK" "$MUTANT_PATH"
-assert_eq "$([ "$FIRST_NATIVE_RESULT" = 'RC=0 unchanged=yes state=same stdout=empty judged=0 unread=1' ] && echo preserved || echo changed)" changed \
-  'control: accepting initial binding without persisted evidence breaks row-less isolation'
-wake_mutant native-first-pane-control '  is_bare_shell "${pane_comm##*/}" || return 1' '  : # pane shape unchecked' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-first_native_lifecycle native_first_direct_control codex direct start deliver "$HOOK" "$MUTANT_PATH"
-assert_eq "$([ "$FIRST_NATIVE_RESULT" = 'RC=0 unchanged=yes state=same stdout=empty judged=0 unread=1' ] && echo preserved || echo changed)" changed \
-  'control: trusting a direct-pane child row breaks the same lifecycle isolation assertion'
 
 # Native payloads carry the session id even when a child inherits the pane.
 identity_child() { # NAME HOME SESSION ARM [HOOK] [NATIVE_LIB]
@@ -3478,7 +3290,6 @@ identity_child() { # NAME HOME SESSION ARM [HOOK] [NATIVE_LIB]
   peer_send 'Native session only.'
   if [ -z "$3" ]; then
     bind_overseer claude "$OVERSEER_HOME_DIR" ""
-    record_native_start claude ""
   fi
   local before state_before judged_before
   judged_before=$(judge_calls)
@@ -3495,7 +3306,6 @@ identity_child() { # NAME HOME SESSION ARM [HOOK] [NATIVE_LIB]
 binding_failed() { # NAME ARM [HOOK]
   named_session "$1" "${3:-$HOOK}"
   bind_overseer claude "$OVERSEER_HOME_DIR" ""
-  record_native_start claude s1
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   printf '%s\n' '{"session_id":"s1","tokens":1000}' > "$LANE/tmp/lane-mail/overseer/context.json"
   printf '%s\n' 's1 previous-gap' > "$LANE/tmp/lane-mail/overseer/context-told"
@@ -3515,13 +3325,8 @@ binding_failed() { # NAME ARM [HOOK]
       || [ "$state_before" != "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ]; then
       BINDING_RESULT=changed
     fi
-    if [ "$failed_session" = s1 ]; then
-      assert_eq "RC=$RC failed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE" || :) cause=$(grep -c 'workflow-state: lock-failed lock-file=x' "$ERR_FILE" || :)" \
-        'RC=0 failed=1 cause=1' 'the failed parent binding retains its writer error'
-    else
-      assert_eq "RC=$RC unbound=$(grep -c '^lane-mail-check: session-unbound=child ' "$ERR_FILE" || :)" \
-        'RC=0 unbound=1' 'the child cannot replace the parent while its binding write is unavailable'
-    fi
+    assert_eq "RC=$RC failed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE" || :) cause=$(grep -c 'workflow-state: lock-failed lock-file=x' "$ERR_FILE" || :)" \
+      'RC=0 failed=1 cause=1' "$failed_session: a failed binding retains its writer error"
   done
 }
 for failed_arm in deliver stop; do
@@ -3543,10 +3348,8 @@ for identity_case in home session missing; do
     identity_child "native_${identity_case}_${identity_arm}" "$identity_home" "$identity_session" "$identity_arm"
     assert_eq "$IDENTITY_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
       "$identity_arm: a Claude child with another $identity_case changes no mail, context, gap or fleet record"
-    identity_remedy='oversee register'
-    [ "$identity_case" != missing ] || identity_remedy='oversee launch alternative=shell-pane start then oversee register'
     assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-      "lane-mail-check: session-unbound=${identity_session:-none} harness=claude home=$OVERSEER_HOME_DIR remedy=$identity_remedy|1" \
+      "lane-mail-check: session-unbound=${identity_session:-none} harness=claude home=$OVERSEER_HOME_DIR remedy=oversee register|1" \
       "the child receives one diagnostic on stderr and no context"
   done
 done
@@ -3559,7 +3362,7 @@ for identity_case in home session missing; do
       wake_mutant native-session-control "$NATIVE_BIND_RULE" "    and true;'" "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
       identity_home=$OVERSEER_HOME_DIR identity_session=child ;;
     missing)
-      wake_mutant native-missing-control '  def ol_native_match($harness; $home; $session; $native): $session != ""' '  def ol_native_match($harness; $home; $session; $native): true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
+      wake_mutant native-missing-control '  def ol_native_match($harness; $home; $session): $session != ""' '  def ol_native_match($harness; $home; $session): true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
       identity_home=$OVERSEER_HOME_DIR identity_session="" ;;
   esac
   identity_child "native_control_$identity_case" "$identity_home" "$identity_session" deliver "$HOOK" "$MUTANT_PATH"
@@ -3574,7 +3377,6 @@ successor_transition() { # NAME CALLER ARM [HOOK]
   overseer_transcript
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   write_transcript "$TRANSCRIPT" 100000
-  record_native_start claude s1
   local next_pane before state_before judged_before state_path
   for next_pane in "$OVERSEER_PANE" %4; do
     (cd "$LANE" && "$BASH" -euo pipefail -c '
@@ -3616,7 +3418,6 @@ successor_transition() { # NAME CALLER ARM [HOOK]
   CALL_ENV=()
   TRANSITION_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cksum < "$state_path")" ] && echo same || echo changed) writes=$(grep -cE '^(update|set|init)$' "$STATE_LOG" || :) judged=$(( $(judge_calls) - judged_before )) unread=$(overseer_unread 'Successor transition only.')"
   # The new pane can bind through the unchanged healer and deliver once.
-  record_native_start claude successor %4
   CALL_ENV=("${SESSION_ENV[@]}" 'TMUX_PANE=%4')
   ARM_ARGS=(deliver)
   run_payload '{"session_id":"successor","tool_name":"Bash","tool_input":{"command":"git status"}}'
@@ -3633,13 +3434,9 @@ while IFS='|' read -r transition_session transition_arm; do
   successor_transition "native_transition_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm"
   assert_eq "$TRANSITION_RESULT" 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' \
     "$transition_arm: old $transition_session preserves mail, cursor, context, gaps and fleet state before the successor binds"
-  # The child's native mismatch now refuses before the pane rule. The former
-  # native owner isolates that rule without a second mismatch masking it.
-  if [ "$transition_session" = s1 ]; then
-    successor_transition "native_transition_control_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm" "$TRANSITION_CONTROL"
-    assert_eq "$([ "$TRANSITION_RESULT" = 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' ] && echo accepted || echo rejected)" rejected \
-      "control: disabling only the absent-binding rule breaks the same old $transition_session $transition_arm assertion"
-  fi
+  successor_transition "native_transition_control_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm" "$TRANSITION_CONTROL"
+  assert_eq "$([ "$TRANSITION_RESULT" = 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' ] && echo accepted || echo rejected)" rejected \
+    "control: disabling only the absent-binding rule breaks the same old $transition_session $transition_arm assertion"
 done <<'ROWS'
 s1|deliver
 child|deliver
@@ -3675,7 +3472,6 @@ assert_eq "$([ "$old_pane_before" = "$(overseer_snapshot)" ] && echo yes || echo
 
 named_session native_pi_child
 bind_overseer pi "$OVERSEER_HOME_DIR" ""
-record_native_start pi s1
 mkdir -p "$LANE/.pi/skills" "$LANE/tmp/lane-mail/overseer"
 ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
 ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
@@ -3701,7 +3497,6 @@ assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$pi_before" = 
 
 named_session native_bound
 bind_overseer claude "$OVERSEER_HOME_DIR" ""
-record_native_start claude s1
 mkdir -p "$LANE/tmp/lane-mail/overseer"
 overseer_transcript
 write_transcript "$TRANSCRIPT" 100000
@@ -3717,7 +3512,6 @@ assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get o
 CALL_ENV=("${SESSION_ENV[@]}")
 ARM_ARGS=(start)
 run_payload '{"session_id":"resumed","source":"resume"}'
-record_native_start claude resumed
 ARM_ARGS=()
 (cd "$LANE" && env -u ORCH_STATE_DIR -u CODEX_HOME -u COPILOT_HOME \
   "${SESSION_ENV[@]}" "HOME=$OFFLINE_HOME" "LANES_HOME=$OFFLINE_HOME" \
