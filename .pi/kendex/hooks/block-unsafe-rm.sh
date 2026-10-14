@@ -153,6 +153,13 @@ REDIRECT='([[:digit:]]*|\{[[:alpha:]_][[:alnum:]_]*\})(&>[>]?|[<>]&|>>|<<<|<<-|<
 SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"
 UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 
+# Git rejects an empty pathspec and paths outside its repository. Remove only
+# its rm prefix; a plain rm elsewhere still reaches both operand checks.
+GIT_RM="${RM_EDGE}git(${GAP}+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path)${GAP}+${WORD}|${GAP}+-[^${ENDERS}${SPACE_ANY}]*)*${GAP}+rm($|[${ENDERS}${SPACE_ANY}])"
+while [[ $COMMAND =~ $GIT_RM ]]; do
+  COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/ }
+done
+
 # The harness has no shared-root ownership check.
 # With HOME=/shared/home, rm -rf /shared/home/* is a refused direct glob.
 SHARED_NAMES='(TMPDIR|TMP|TEMP|AGENT_TMPDIR|HOME)'

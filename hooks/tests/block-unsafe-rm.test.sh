@@ -117,6 +117,27 @@ skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
   "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
   'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
 
+# Agents use git rm to remove tracked paths. These tool payloads are scanned,
+# never run; a following plain rm must retain its own refusal.
+git_rm_rows() {
+  first_table 'git cached variable|command|0|-|git rm --cached "$f"
+git directory variable|command|0|-|git -C repo rm -r "$d"
+git shared variable|command|0|-|git rm -r "$TMPDIR"/*
+git shared literal|command|0|-|git --no-pager -c core.quotePath=false rm /shared/home/*
+plain variable pair|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$X"
+sudo variable pair|command|2|block-unsafe-rm: refused=recursive-rm|sudo rm -rf $X
+shared variable pair|command|2|block-unsafe-rm: refused=shared-root|rm -rf "$TMPDIR"/*
+git then plain variable|command|2|block-unsafe-rm: refused=recursive-rm|git rm --cached "$f"; rm -rf "$X"
+git then shared variable|command|2|block-unsafe-rm: refused=shared-root|git -C repo rm -r "$d" && rm -rf "$TMPDIR"/*
+plain then git|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$X"; git rm --cached "$f"
+git newline plain|command|2|block-unsafe-rm: refused=recursive-rm|git rm --cached "$f"\nrm -rf "$X"
+'
+}
+git_rm_rows
+skill_load_control git-rm-prefix "$HOOK" 'while [[ $COMMAND =~ $GIT_RM ]]; do' \
+  '  break' HOOK git_rm_rows 'git cached variable' 'git directory variable' \
+  'git shared variable' 'git shared literal'
+
 # Agents redirect cleanup output and copy descriptors in Bash tool calls.
 # Each operator crosses its whole target before the scan resumes at operands.
 redirection_rows() {
