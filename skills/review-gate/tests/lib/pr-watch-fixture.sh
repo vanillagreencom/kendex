@@ -61,6 +61,8 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 #   STUB_COMMITS        the PR's listed commit count (default 1)
 #   STUB_CI_RAW         check-runs pages for the head commit
 #   STUB_CI_MORE        "yes" -> the CI suites answer another page
+#   STUB_CI_SUITE_FILTER_EMPTY "yes" -> the suite-name filter returns no
+#                       suites, as fleet#1298 did despite its CI check run
 #   STUB_READY_AT, STUB_REOPENED_AT, STUB_REREQUEST_AT  one timeline event
 #   STUB_TIMELINE_RAW   the timeline nodes as given
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -161,7 +163,12 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
     elif $ENV.STUB_READY_AT then [{createdAt: $ENV.STUB_READY_AT}]
     else [] end)};
   [try inputs catch "unparsable"] as $ci_pages
-  | def node: if type != "object" then . else . as $r
+  | def ci_suites:
+      (if $kind == "round" then $request | fromjson | .query else $query end) as $q
+      | if $ENV.STUB_CI_SUITE_FILTER_EMPTY == "yes"
+           and ($q | test("checkSuites\\([^)]*checkName:"))
+        then [] else $ci_pages | map(suite) end;
+  def node: if type != "object" then . else . as $r
     | (if has("number") then {number} else {} end)
       + (if has("state") then {state: (.state | if . == "open" then "OPEN" elif . == "closed" then "CLOSED" else . end)} else {} end)
       + (if has("draft") then {isDraft: .draft} else {} end)
@@ -178,7 +185,7 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
          commits: {totalCount: (($ENV.STUB_COMMITS // "1") | tonumber), nodes: [{commit: {
            oid: (if $ENV.STUB_HEAD_AFTER then opt($ENV.STUB_HEAD_AFTER) else $r.head.sha? end),
            committedDate: opt($ENV.STUB_HEAD_DATE // "2026-01-01T00:00:00Z"),
-           checkSuites: {pageInfo: {hasNextPage: ($ENV.STUB_CI_MORE == "yes")}, nodes: ($ci_pages | map(suite))}}}]},
+           checkSuites: {pageInfo: {hasNextPage: ($ENV.STUB_CI_MORE == "yes")}, nodes: ci_suites}}}]},
          timelineItems: timeline}
     end;
   (if $kind == "list" then
@@ -270,6 +277,7 @@ run_watch() {
 #   rc               exit status
 #   kinds            the kind column of every finding line, in order, or none
 #                    (the tab-separated output is the contract --help states)
+#   subjects         PR number and head prefix of each finding, or none
 #   threads          the count a threads-open line reports, or `overflow`
 #   queued_notes     finding lines carrying the queued dequeue note
 #   protocol         whole stdout record, tabs as ~, spaces as +, lines as ;
@@ -282,6 +290,7 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       kinds) value="$(awk -F'\t' 'NF >= 3 {print $3}' <<<"$OUT" | paste -sd, - || true)"; value="${value:-none}" ;;
+      subjects) value="$(awk -F'\t' 'NF >= 3 {print $1 "~" $2}' <<<"$OUT" | paste -sd, -)"; value="${value:-none}" ;;
       threads)
         if grep -q 'threads-open.*overflow' <<<"$OUT"; then value=overflow
         else value="$(grep -o '[0-9]* unresolved review thread' <<<"$OUT" | head -1 | grep -o '^[0-9]*' || true)"; value="${value:-none}"; fi

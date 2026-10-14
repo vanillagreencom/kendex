@@ -105,6 +105,30 @@ REFRESH_ROW="$(pr_row 7 open armed false "$NOW" | jq -c '.head.ref="kendex/refre
 REFRESH_PRS="[$REFRESH_ROW]"
 CI_GREEN="$(jq -cn --arg head "$HEAD_A" '{check_runs:[{name:"CI",head_sha:$head,status:"completed",conclusion:"success"}]}')"
 REFRESH_ENV="STUB_OPEN_PRS=$REFRESH_PRS;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$NOW;STUB_CI_RAW=$CI_GREEN"
+# Fleet#1298: an armed force-pushed head, empty app suites and successful CI.
+# Its suite-name-filtered GraphQL read returned no suites; the same head read
+# without that filter returned CI. These responses came from the live API.
+FLEET_HEAD=ed24149ea5bf4f1cc29eedd37c3dcf474be219c8
+FLEET_ROW="$(jq -c --arg head "$FLEET_HEAD" '.number=1298 | .head.sha=$head' <<<"$REFRESH_ROW")"
+FLEET_GREEN="$(jq -c --arg head "$FLEET_HEAD" '.check_runs[0].head_sha=$head' <<<"$CI_GREEN")"
+FLEET_ENV="STUB_OPEN_PRS=[$FLEET_ROW];STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=2026-10-13T20:31:24Z;STUB_CI_SUITE_FILTER_EMPTY=yes"
+for version in live base-query; do
+  expected="rc=1 kinds=refresh-ready subjects=1298~ed24149e"
+  if [[ "$version" == base-query ]]; then
+    mutant_watch refresh-suite-filter 's#checkSuites(first:10)#checkSuites(first:10,filterBy:{checkName:"CI"})#' 'checkSuites(first:10)'
+    expected="rc=0 kinds=none subjects=none"
+  fi
+  for mode in listing named paginated; do
+    args=""
+    pages=""
+    case "$mode" in
+      named) args=1298 ;;
+      paginated) pages="STUB_THREADS_PAGES=2;" ;;
+    esac
+    table "fleet final head $version $mode|$args|$FLEET_ENV;${pages}STUB_CI_RAW={\"check_runs\":[]} {\"check_runs\":[]} {\"check_runs\":[]} {\"check_runs\":[]} $FLEET_GREEN|$expected"
+  done
+done
+WATCH_BIN="$LIVE_WATCH"
 table "a push during pagination cannot approve the old refresh head||$REFRESH_ENV;$PAGED;STUB_ROUND_HEAD=$HEAD_B|rc=1 kinds=head-moved"
 table \
   "a fresh green refresh reports immediately|--awaiting-after 3600|$REFRESH_ENV|rc=1 kinds=refresh-ready" \

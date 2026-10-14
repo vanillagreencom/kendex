@@ -202,10 +202,12 @@ fi
 # that lands during the request shows as a head commit that is not the PR's
 # head, which reads as head-moved. The reduction is one jq program; nothing
 # here starts a process per pull request or per output line.
+# CheckSuiteFilter names suites, not their check runs. Select CI inside each
+# suite so a GitHub Actions aggregate remains visible.
 PR_STATE_FIELDS='number state isDraft headRefOid headRefName createdAt author{login __typename}
   autoMergeRequest{mergeMethod} isInMergeQueue mergeQueueEntry{position} reviewDecision
   commits(last:1){totalCount nodes{commit{oid committedDate
-    checkSuites(first:10,filterBy:{checkName:"CI"}){pageInfo{hasNextPage}
+    checkSuites(first:10){pageInfo{hasNextPage}
       nodes{checkRuns(first:20,filterBy:{checkName:"CI",checkType:LATEST}){pageInfo{hasNextPage} nodes{name status conclusion}}}}}}}
   timelineItems(last:10,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT,REVIEW_REQUESTED_EVENT]){nodes{
     ... on ReadyForReviewEvent{createdAt} ... on ReopenedEvent{createdAt} ... on ReviewRequestedEvent{createdAt}}}'
