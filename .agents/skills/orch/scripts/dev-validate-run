@@ -102,7 +102,10 @@
 #       separately for an open pull request. With --base it also previews
 #       selection and applies the same ci resolution as a real range start.
 #       --require-proof SHA asks for merge proof for a recorded restack skip's
-#       validated head. It requires --base and starts no run. A genuine pass
+#       validated head. It starts no run. Its restack input is the merge base
+#       of HEAD and the locally fetched base branch that resolve-base-branch
+#       names, or --base when supplied as a locally readable ancestry input.
+#       It never needs GitHub's unfetched current base commit. A genuine pass
 #       candidate for SHA keeps the accepted tree-equivalence reuse rule.
 #       Otherwise only admitted required CI (pending until the exact-head CI
 #       wait or queue proves it), or an applicable full local pass counts.
@@ -695,7 +698,6 @@ done
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
 [[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
 [[ -z "$proof_head" || "$mode" == resolve ]] || die option-unused option=--require-proof "mode=$mode"
-[[ -z "$proof_head" || "$base_given" == true ]] || die required option=--base
 case "$mode" in
   start|stop|resolve|last-pass|live)
     [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
@@ -849,7 +851,7 @@ ci_runs_validation() {
 }
 
 # --- Resolve: the mode a range run records here, read-only -------------------
-if [[ "$mode" == resolve && "$base_given" == false ]]; then
+if [[ "$mode" == resolve && "$base_given" == false && -z "$proof_head" ]]; then
   cd "$worktree"
   resolve_range_mode
   printf 'validate-mode=%s\n' "$validate_mode"
@@ -878,6 +880,13 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   ci_admission_attempted=false
   selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
     || die unreadable-setting setting=DEV_VALIDATE_SELECTION_CMD
+  if [[ -n "$proof_head" ]]; then
+    if [[ "$base_given" == false ]]; then
+      proof_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")" || die proof-base-unresolved
+      base="origin/$proof_branch"
+    fi
+    base="$(git merge-base HEAD "$base")" || die proof-base-unresolved "base=$base"
+  fi
   if [[ "$validate_mode" != full ]]; then
     base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
     # A base a rebase left off the branch is recorded whichever mode runs: a

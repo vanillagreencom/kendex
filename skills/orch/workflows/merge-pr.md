@@ -261,17 +261,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the gate mode is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: a retarget can change the class or the base's approval rule without moving the head, so the fresh answers carry the micro tier and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 8.
 
-   **Restack proof.** Read the current head's recorded skip. `dev-validate-run --help` owns the proof rule. A reused tree alone supplies no passing validation. Run this block before either merge route:
-
-   ```bash
-   RESTACK_SKIPS="$(.agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.restack_skips // []')" || exit $?
-   RESTACK_PROOF_HEAD="$(jq -r --arg head [PREPARED_HEAD] '[.[] | select(.head == $head)] | last | .validated_head // empty' <<<"$RESTACK_SKIPS")" || exit $?
-   if [[ -n "$RESTACK_PROOF_HEAD" ]]; then
-     .agents/skills/orch/scripts/dev-validate-run --resolve-mode --require-proof "$RESTACK_PROOF_HEAD" --worktree [WORKTREE_PATH] --base [PREPARED_BASE] || exit $?
-   fi
-   ```
-
-   Keep the owner's `validation-proof=` line with the merge decision. A nonzero exit records `validation-proof-missing` and takes § 1's stop and unarm route. A CI answer stays pending until the existing exact-head CI wait or queue proves it. This read starts no validation.
+   **Restack proof.** Run the proof block at [merge-pr-restack.md step 3](merge-pr-restack.md#merge-pr-restack-cycle), with this step's `[WORKTREE_PATH]`, `[STATE_KEY]` and `[PREPARED_HEAD]`, before either merge route. Keep the owner's `validation-proof=` line with the merge decision. A nonzero exit records `validation-proof-missing` and takes § 1's stop and unarm route. A CI answer stays pending until the existing exact-head CI wait or queue proves it.
 
    **Merge route.** `pr-merge` picks the route, and no step here judges it: it merges past the queue with `--admin` bound to the prepared head and exits `0`, or takes the queue and exits `75`, naming the cause on its `merge-route:` line (`pr-merge --help` § Merge route). Take the direct attempt below first. [submit-pr.md](submit-pr.md) § 2 step 5 arms at creation only a PR this route takes through the queue; where GitHub has already queued a PR, the attempt answers exit `75`. An item whose workflow state carries `pr_approval.forced`, and a PR on § 3.2's `unknown:` path, whose direct attempt would refuse on that issue, take the explicit `--auto --queue` arm below instead, which never passes `--admin`.
 

@@ -392,15 +392,26 @@ assert_eq "$none_rc" 0 'control: discarding the pending run mode permits an unco
 
 # Exercise the merge block before a direct attempt or queue arm. The workflow
 # reads real skip state and calls the shipped proof owner; only GitHub is stubbed.
-MERGE_DOC="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
-merge_proof() { # WT [SCRIPTS]
-  local block wt="$1" scripts="${2:-$REPO_ROOT/skills/orch/scripts}"
-  block="$(awk '/^   ```bash/ {inside=1; block=""; next} /^   ```/ && inside {if (index(block, "RESTACK_SKIPS=")) {printf "%s", block; exit} inside=0} inside {block=block $0 ORS}' "$MERGE_DOC")"
-  [[ -n "$block" ]] || return 2
+merge_proof() { # WT [SCRIPTS] [merge|submit]
+  local block wt="$1" scripts="${2:-$REPO_ROOT/skills/orch/scripts}" range= first=0 last=9
+  if [[ "${3:-merge}" == submit ]]; then
+    # Use the caller's actual range, including its omission of step 4.
+    range="$(sed -n '/worktree-push-base-conflict/ {s/.*steps \([0-9]\)-\([0-9]\).*/\1 \2/p;}' "$SUBMIT_DOC")"
+    [[ "$range" =~ ^[0-9]\ [0-9]$ ]] || return 2
+    read -r first last <<<"$range"
+    live "$RESTACK_DOC" "$PUSH" "$wt" main - || return $?
+  fi
+  block="$(awk -v first="$first" -v last="$last" '
+    /^[0-9]+\. / {step=$1+0}
+    /^   ```bash/ {inside=1; block=""; next}
+    /^   ```/ && inside {if (step >= first && step <= last && index(block, "RESTACK_SKIPS=")) {printf "%s", block; exit} inside=0}
+    inside {block=block $0 ORS}
+  ' "$RESTACK_DOC")"
+  [[ -n "$block" || "${3:-merge}" == submit ]] || return 2
   block="${block//.agents\/skills\/orch\/scripts\//$scripts/}"
   block="${block//\[STATE_KEY\]/KEN-1}"
   block="${block//\[PREPARED_HEAD\]/$(git -C "$wt" rev-parse HEAD)}"
-  block="${block//\[PREPARED_BASE\]/$(git -C "$wt" rev-parse origin/main)}"
+  block="${block//\[PREPARED_BASE\]/${PROOF_LIVE_BASE:-$(git -C "$wt" rev-parse origin/main)}}"
   block="${block//\[WORKTREE_PATH\]/$wt}"
   (cd "$wt" && env -u ORCH_STATE_DIR -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_SELECTION_CMD \
     -u ORCH_PR_ORDER PATH="$TMP_ROOT/ci-bin:$PATH" "$BASH" -euo pipefail -c "$block"$'\n''echo merge-admitted')
@@ -415,6 +426,8 @@ record_skip() { # WT LINE
 }
 MUTANT_PROOF="$(mutant_scripts missing-proof-refusal dev-validate-run)" || fixture_failed proof-control
 mutate_file "$MUTANT_PROOF/dev-validate-run" $'    exit 1\n  fi\n  # Read against an empty default' $'    : # exit 1\n    exit 0\n  fi\n  # Read against an empty default'
+# The submission route uses the real guarded push with only network replaced.
+printf '#!/bin/sh\nexit 0\n' > "$NETWORK_PUSH"
 for cause in timeout host; do
   PROOF_WT="$(make_worktree "proof-$cause")" || fixture_failed proof-worktree
   printf 'HARNESS_CI_QUEUE_PATHS = "queued/**"\nDEV_VALIDATE_FINDING_PREFIX = "guard: "\n' >> "$PROOF_WT/kendex.settings.toml"
@@ -453,16 +466,18 @@ for cause in timeout host; do
     sed '/^DEV_VALIDATE_CI_CONTEXT =/d' "$PROOF_WT/kendex.settings.toml" > "$PROOF_WT/settings.next"
     mv "$PROOF_WT/settings.next" "$PROOF_WT/kendex.settings.toml"
     [[ "$PROOF_CI_WORLD" == empty ]] || printf 'DEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$PROOF_WT/kendex.settings.toml"
-    proof_rc=0
-    OUT="$(merge_proof "$PROOF_WT")" || proof_rc=$?
-    if [[ "$want" == ci ]]; then
-      assert_contains "$OUT" "validation-proof=ci verdict=pending head=$(git -C "$PROOF_WT" rev-parse HEAD)" "$cause admits required exact-head validation CI"
-      assert_eq "$proof_rc ${OUT##*$'\n'}" '0 merge-admitted' "$cause admits the existing CI route"
-    else
-      assert_eq "$proof_rc ${OUT##*$'\n'}" "1 validation-proof=missing ci-fallback=$want" "$cause holds merge and queue for $PROOF_CI_WORLD CI"
-      CONTROL_OUT="$(merge_proof "$PROOF_WT" "$MUTANT_PROOF")" || fixture_failed proof-control-run
-      assert_eq "${CONTROL_OUT##*$'\n'}" merge-admitted 'control: removing refusal while retaining invocation permits uncovered merge'
-    fi
+    for route in merge submit; do
+      proof_rc=0
+      OUT="$(merge_proof "$PROOF_WT" "$REPO_ROOT/skills/orch/scripts" "$route")" || proof_rc=$?
+      if [[ "$want" == ci ]]; then
+        assert_contains "$OUT" "validation-proof=ci verdict=pending head=$(git -C "$PROOF_WT" rev-parse HEAD)" "$cause $route admits required exact-head validation CI"
+        assert_eq "$proof_rc ${OUT##*$'\n'}" '0 merge-admitted' "$cause $route admits the existing CI route"
+      else
+        assert_eq "$proof_rc ${OUT##*$'\n'}" "1 validation-proof=missing ci-fallback=$want" "$cause $route holds merge and queue for $PROOF_CI_WORLD CI"
+        CONTROL_OUT="$(merge_proof "$PROOF_WT" "$MUTANT_PROOF" "$route")" || fixture_failed proof-control-run
+        assert_eq "${CONTROL_OUT##*$'\n'}" merge-admitted 'control: removing refusal while retaining invocation permits uncovered merge'
+      fi
+    done
   done
   # A changed pushed head reads its own skip and needs its own proof.
   git -C "$PROOF_WT" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m pushed-head
@@ -513,6 +528,45 @@ for cause in timeout host; do
   record_skip "$PROOF_WT" "$SKIP_LINE"
   OUT="$(merge_proof "$PROOF_WT")" || fixture_failed pass-proof-read
   assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'a genuine-pass-backed skip retains accepted equivalence reuse'
+  if [[ "$cause" == host ]]; then
+    # GitHub can report a base commit before this worktree fetches it.
+    base_before="$(git -C "$PROOF_WT" rev-parse origin/main)"
+    producer="$TMP_ROOT/base-producer"
+    git clone -q --no-hardlinks "$PROOF_WT" "$producer"
+    git -C "$producer" config gc.auto 0
+    git -C "$producer" config maintenance.auto false
+    git -C "$producer" checkout -qB main "$base_before"
+    printf 'new base\n' > "$producer/base-next.sh"
+    git -C "$producer" add base-next.sh
+    git -C "$producer" -c user.name=t -c user.email=t@example.com commit -qm base-next
+    PROOF_LIVE_BASE="$(git -C "$producer" rev-parse HEAD)"
+    export PROOF_LIVE_BASE
+    object_rc=0
+    git -C "$PROOF_WT" cat-file -e "$PROOF_LIVE_BASE^{commit}" 2>/dev/null || object_rc=$?
+    assert_eq "$object_rc" 128 'the live GitHub base object is absent locally'
+    OUT="$(merge_proof "$PROOF_WT")" || fixture_failed unfetched-base-proof
+    assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'an unfetched current base cannot discard a genuine restack proof'
+    git -C "$PROOF_WT" fetch -q "$producer" main:refs/remotes/origin/main
+    OUT="$(merge_proof "$PROOF_WT")" || fixture_failed advanced-base-proof
+    assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'advancing the known origin base preserves the integrated restack proof'
+    validated="$(sed -n 's/.* validated-head=\([^ ]*\).*/\1/p' <<<"$SKIP_LINE")"
+    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --resolve-mode --require-proof "$validated" --worktree "$PROOF_WT" --base origin/main)" || fixture_failed explicit-base-proof
+    assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'an explicit locally readable ancestry input also survives base advance'
+    # A stacked base uses the same configured branch as the restack resolver.
+    git -C "$producer" checkout -qb feature/parent "$base_before"
+    printf 'parent\n' > "$producer/parent.sh"
+    git -C "$producer" add parent.sh
+    git -C "$producer" -c user.name=t -c user.email=t@example.com commit -qm parent
+    git -C "$PROOF_WT" fetch -q "$producer" feature/parent:refs/remotes/origin/feature/parent
+    git -C "$PROOF_WT" -c user.name=t -c user.email=t@example.com rebase -q origin/feature/parent
+    SKIP_LINE="$(live "$RESTACK_DOC" "$SKIP" "$PROOF_WT" feature/parent -)" || fixture_failed stacked-skip
+    record_skip "$PROOF_WT" "$SKIP_LINE"
+    OUT="$(WORKTREE_DEFAULT_BRANCH=feature/parent merge_proof "$PROOF_WT")" || fixture_failed stacked-base-proof
+    assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'the proof owner honors the configured stacked restack base'
+    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --resolve-mode --require-proof "$validated" --worktree "$PROOF_WT" --base origin/feature/parent)" || fixture_failed explicit-stacked-proof
+    assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'explicit stacked ancestry preserves the genuine passing route'
+    unset PROOF_LIVE_BASE
+  fi
 done
 unset PROOF_EXIT PROOF_CI_WORLD
 

@@ -1,1 +1,1 @@
-- Hold merge and queue admission when a reused restack tree has no passing local validation or required validation CI proof.
+- Require local or required-CI proof before a reused restack tree can enter the queue or merge, including submission returns and a base that advances after the restack.
