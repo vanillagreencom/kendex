@@ -24,6 +24,7 @@ install_copilot_hooks() { # DIR [JUDGE]
   printf '{}\n' > "$1/lane-mail-check.json"
 }
 new_usage_lane() { # NAME ITEM [JUDGE]
+  CALL_ENV=("HOME=$COP_HOME")
   new_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
   install_copilot_hooks "$LANE/.github/hooks" "${3:-$HOOK}"
@@ -222,6 +223,7 @@ assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=150000 21760
 
 echo "=== the overseer ==="
 new_usage_overseer() { # NAME [JUDGE]
+  CALL_ENV=("HOME=$COP_HOME" "COPILOT_HOME=$TMP_ROOT")
   new_lane "$1" main
   unmark_lanes
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
@@ -255,11 +257,12 @@ assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
 usage 199000 272000
 assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
   "nor is a session outside tmux"
-# An overseer the fleet record lost writes a gap record at its turn end; named
-# again, its turn end reads that record as no reading, never as room.
+# An overseer whose known native binding still matches writes a lost-pane
+# gap at its turn end; named again, it reads that record as no reading.
 # overseer_named PANE: the fleet record names PANE as the overseer's.
 overseer_named() { # PANE
   record_overseer "$1" "$OVERSEER_SERVER" "$TMP_ROOT"
+  bind_overseer copilot "$TMP_ROOT" s1
 }
 # LOST is the lost turn end's first line and record; the run left is the
 # turn end after it.

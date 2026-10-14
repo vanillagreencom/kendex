@@ -2085,7 +2085,8 @@ stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
   "a fleet state recording no overseer names nobody, so nobody is judged"
 
-# The overseer the fleet record lost: the record names another pane, while the
+# The overseer the fleet record lost: its native binding still matches, but
+# the record names another pane, while the
 # overseer's context record names this one, which only its own turn ends
 # write. Its turn end is judged on no mark, reports the gap under its own key
 # with the recorded pane key under it, and still writes the context record,
@@ -2097,6 +2098,7 @@ judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 record_overseer %4 "$OVERSEER_SERVER"
+bind_overseer claude "$OVERSEER_HOME_DIR" s1
 unrecorded_rows() { # CALLER_PANE
   # shellcheck disable=SC2046
   stop_at "$TRANSCRIPT" false $(overseer_env "$1")
@@ -2123,6 +2125,7 @@ record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 record_overseer %4 "$OVERSEER_SERVER"
+bind_overseer claude "$OVERSEER_HOME_DIR" s1
 assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
   "RC=0 first=- recorded=0 judged=2 record=600000 null $OVERSEER_SERVER $OVERSEER_PANE" \
   "control: a hook that skips the lost overseer leaves its record standing, stale and silent"
@@ -3360,6 +3363,80 @@ for identity_case in home session missing; do
   assert_eq "$([ "$IDENTITY_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
     "control: dropping the $identity_case rule fails the unchanged-mail assertion"
 done
+
+# Launch and registration write a new pane before its first native hook.
+# Drive that writer, then call from the previous pane before the successor binds.
+successor_transition() { # NAME CALLER ARM [HOOK]
+  named_session "$1" "${4:-$HOOK}"
+  overseer_transcript
+  mkdir -p "$LANE/tmp/lane-mail/overseer"
+  write_transcript "$TRANSCRIPT" 100000
+  local next_pane before state_before judged_before state_path
+  for next_pane in "$OVERSEER_PANE" %4; do
+    (cd "$LANE" && "$BASH" -euo pipefail -c '
+      unset ORCH_STATE_DIR
+      TMUX=fake TMUX_PANE=$3 TMUX_SERVER_ID=$5 TMUX_SERVER_START=$6
+      PATH="$7:$PATH"
+      export TMUX TMUX_PANE TMUX_SERVER_ID TMUX_SERVER_START PATH
+      SCRIPT_DIR=$1 DEP_ERR=$2
+      . "$SCRIPT_DIR/lib/lane-context.sh"
+      . "$SCRIPT_DIR/lib/overseer-launch.sh"
+      identity=$(jq -nc --arg home "$4" --arg cwd "$PWD" \
+        "{harness:\"claude\",home:\$home,cwd:\$cwd}")
+      OL_PRIOR=$("$SCRIPT_DIR/workflow-state" get oversee .overseer)
+      ol_record_write tmux "$3" @7 "$5" "$identity"
+      ' _ "$REPO_ROOT/skills/orch/scripts" "$TMP_ROOT/transition.err" "$next_pane" "$OVERSEER_HOME_DIR" "$OVERSEER_SERVER" "$OVERSEER_SERVER_START" "$TMUX_BIN")
+    if [ "$next_pane" = "$OVERSEER_PANE" ]; then
+      CALL_ENV=("${SESSION_ENV[@]}")
+      ARM_ARGS=(deliver)
+      run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Bash",tool_input:{command:"git status"}}')"
+      ARM_ARGS=()
+      CALL_ENV=()
+      assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id')|$(jq -r '[.session_id,.tokens]|@csv' "$LANE/tmp/lane-mail/overseer/context.json")" \
+        's1|"s1",100000' 'the recorded pane binds first and writes its native reading'
+    fi
+  done
+  assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '[.overseer.generation,.overseer.pane,.overseer.session_id]|@csv')" \
+    '2,"%4",' 'the real successor writer advances the generation and clears the native binding'
+  printf '%s\n' 's1 previous-gap' > "$LANE/tmp/lane-mail/overseer/context-told"
+  peer_send 'Successor transition only.'
+  state_stub delegate
+  before=$(overseer_snapshot)
+  state_path=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee)
+  state_before=$(cksum < "$state_path")
+  judged_before=$(judge_calls)
+  CALL_ENV=("${SESSION_ENV[@]}")
+  ARM_ARGS=("$3")
+  run_payload "$(jq -nc --arg s "$2" --arg p "$TRANSCRIPT" '{session_id:$s,transcript_path:$p,stop_hook_active:false,tool_name:"Bash",tool_input:{command:"git status"}}')"
+  ARM_ARGS=()
+  CALL_ENV=()
+  TRANSITION_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cksum < "$state_path")" ] && echo same || echo changed) writes=$(grep -cE '^(update|set|init)$' "$STATE_LOG" || :) judged=$(( $(judge_calls) - judged_before )) unread=$(overseer_unread 'Successor transition only.')"
+  # The new pane can bind through the unchanged healer and deliver once.
+  CALL_ENV=("${SESSION_ENV[@]}" 'TMUX_PANE=%4')
+  ARM_ARGS=(deliver)
+  run_payload '{"session_id":"successor","tool_name":"Bash","tool_input":{"command":"git status"}}'
+  assert_eq "$(context_line)|$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer.session_id)|$(overseer_unread 'Successor transition only.')" \
+    'PostToolUse lane-mail-check: unread=1|successor|0' 'the successor pane binds its native session and receives the waiting note'
+  run_payload '{"session_id":"successor","tool_name":"Bash","tool_input":{"command":"git status"}}'
+  assert_eq "$(context_line)" - 'the successor receives the note only once'
+  ARM_ARGS=()
+  CALL_ENV=()
+}
+wake_mutant native-transition-control '      [ -n "$RECORDED_SESSION" ] || return 1' '      :'
+TRANSITION_CONTROL=$MUTANT_PATH
+while IFS='|' read -r transition_session transition_arm; do
+  successor_transition "native_transition_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm"
+  assert_eq "$TRANSITION_RESULT" 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' \
+    "$transition_arm: old $transition_session preserves mail, cursor, context, gaps and fleet state before the successor binds"
+  successor_transition "native_transition_control_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm" "$TRANSITION_CONTROL"
+  assert_eq "$([ "$TRANSITION_RESULT" = 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' ] && echo accepted || echo rejected)" rejected \
+    "control: disabling only the absent-binding rule breaks the same old $transition_session $transition_arm assertion"
+done <<'ROWS'
+s1|deliver
+child|deliver
+s1|stop
+child|stop
+ROWS
 
 named_session native_old_pane_child
 bind_overseer claude "$OVERSEER_HOME_DIR" successor

@@ -361,13 +361,14 @@ pi_tool_rows control_overseer_tool_pi_windowless '{}' "$VARIANT_PATH"
 assert_eq "$PI_TOOL" "context=PostToolUse lane-mail-check: window-unread=pi-claude/m window=null" \
   "control: a hook that reads a windowless Pi tool call records it with no window and tells it unread"
 
-# The overseer the fleet record lost, its pane named by the context record and
-# not by the fleet record, is told so once at its tool call, as a gap.
+# The overseer whose known native binding still matches but whose pane only
+# the context record names is told so once at its tool call, as a gap.
 lost_tool_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
   write_transcript "$TRANSCRIPT" 100000
   overseer_tool "$TRANSCRIPT"
   record_overseer %4 "$OVERSEER_SERVER"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s1
   overseer_tool "$TRANSCRIPT"
   LOST_TOOL="$(context_line) $(tool_record)"
 }
