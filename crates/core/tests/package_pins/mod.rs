@@ -166,7 +166,7 @@ fn installed_body(w: &World, name: &str) -> String {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_pinned_item_holds_while_the_source_moves() {
+fn a_pinned_item_holds_while_the_source_moves_and_reports_the_update() {
     let w = world();
     write_skill(&w.upstream, "gh", "", "Version one.");
     let first = commit(&w.upstream, "one");
@@ -193,6 +193,11 @@ fn a_pinned_item_holds_while_the_source_moves() {
     let entry = &lock.entries[&entry_key(ItemKind::Skill, "gh", HarnessId::Claude)];
     assert_eq!(entry.source_commit.as_deref(), Some(first.as_str()));
     assert!(entry.rendered_hash.is_some());
+
+    let updates = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = updates.rows.iter().find(|row| row.name == "gh").unwrap();
+    assert!(row.update_available);
+    assert!(row.pinned);
 
     // Unpinned control: the same refresh moves it.
     declare(&w, "[skills.gh]\nsource = \"cat\"\n");

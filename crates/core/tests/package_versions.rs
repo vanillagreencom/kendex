@@ -207,36 +207,6 @@ fn updates_report_only_packages_whose_files_moved() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_held_package_still_reports_its_update_and_holds_on_disk() {
-    let w = world();
-    write_skill(&w.upstream, "gh", "One.");
-    let first = commit(&w.upstream, "one");
-    declare(
-        &w,
-        "",
-        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n"),
-    );
-    sync_and_apply(&w);
-
-    write_skill(&w.upstream, "gh", "Two.");
-    commit(&w.upstream, "two");
-    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-        .unwrap()
-        .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
-    let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan).unwrap();
-
-    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
-    let gh = rows.iter().find(|row| row.name == "gh").unwrap();
-    assert!(gh.update_available, "a hold never hides what it holds back");
-    assert!(gh.pinned);
-    let body = fs::read_to_string(w.home.join("app/.agents/skills/gh/SKILL.md")).unwrap();
-    assert!(body.contains("One."), "held content stays held");
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
 fn ignoring_updates_is_a_settings_write_and_rows_stay_visible() {
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
@@ -585,17 +555,54 @@ fn history_world() -> HistoryWorld {
     }
 }
 
+#[allow(clippy::unwrap_used)]
+fn assert_complete_versions(fixture: &HistoryWorld, trace: &Path) {
+    let w = &fixture.world;
+    fs::write(trace, "").unwrap();
+    let versions = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        [fixture.tip.as_str(), fixture.first.as_str()]
+    );
+    assert_eq!(
+        versions
+            .iter()
+            .map(|row| (&row.id, &row.date, &row.summary, row.label.as_deref()))
+            .collect::<Vec<_>>(),
+        fixture
+            .complete
+            .iter()
+            .map(|row| (
+                &row.commit,
+                &row.date,
+                &row.summary,
+                row.tags.first().map(String::as_str)
+            ))
+            .collect::<Vec<_>>()
+    );
+    let calls = fs::read_to_string(trace).unwrap();
+    assert!(calls.split("\0\0").any(|call| {
+        let args: Vec<&str> = call.split('\0').collect();
+        args.contains(&"log") && args.windows(2).any(|pair| pair == ["--max-count", "200"])
+    }));
+}
+
 /// The disposable Git recorder observes real calls because core has no
 /// injected Git runner. Updates must project the same facts as Versions.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn updates_projects_versions_without_reading_complete_timelines() {
+fn updates_read_bounded_history_and_versions_read_complete_history() {
     let Some(trace) = crate::test_util::git_recorded_test(
         module_path!(),
-        "updates_projects_versions_without_reading_complete_timelines",
+        "updates_read_bounded_history_and_versions_read_complete_history",
     ) else {
         return;
     };
+    let fixture = history_world();
+    assert_complete_versions(&fixture, &trace);
     let HistoryWorld {
         world: w,
         first,
@@ -603,7 +610,7 @@ fn updates_projects_versions_without_reading_complete_timelines() {
         tip,
         mirror,
         complete,
-    } = history_world();
+    } = fixture;
     let subtree = Path::new("skills/gh");
     let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
     let missing = "f".repeat(40);
@@ -683,45 +690,6 @@ fn updates_projects_versions_without_reading_complete_timelines() {
             "{case}: Updates read a complete timeline: {logs:?}"
         );
     }
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn versions_retains_complete_timeline_reads() {
-    let Some(trace) = crate::test_util::git_recorded_test(
-        module_path!(),
-        "versions_retains_complete_timeline_reads",
-    ) else {
-        return;
-    };
-    let fixture = history_world();
-    let w = &fixture.world;
-    let complete = &fixture.complete;
-    fs::write(&trace, "").unwrap();
-    let versions = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
-    assert_eq!(
-        versions
-            .iter()
-            .map(|row| (&row.id, &row.date, &row.summary, row.label.as_deref()))
-            .collect::<Vec<_>>(),
-        complete
-            .iter()
-            .map(|row| (
-                &row.commit,
-                &row.date,
-                &row.summary,
-                row.tags.first().map(String::as_str)
-            ))
-            .collect::<Vec<_>>()
-    );
-    let calls = fs::read_to_string(&trace).unwrap();
-    assert!(
-        calls.split("\0\0").any(|call| {
-            let args: Vec<&str> = call.split('\0').collect();
-            args.contains(&"log") && args.windows(2).any(|pair| pair == ["--max-count", "200"])
-        }),
-        "Versions must request its complete timeline"
-    );
 }
 
 #[test]

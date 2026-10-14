@@ -54,11 +54,10 @@ fn a_tool_cache_in_a_skill_render_plans_nothing() {
     assert_eq!(row.cause, Some(DriftCause::LocalEdit), "{row:?}");
 }
 
-/// A newer upstream is written over a cached render rather than held as
-/// an edit.
+/// Caches neither hold a newer upstream nor prevent its later removal.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_cached_skill_render_takes_a_newer_upstream() {
+fn a_cached_skill_render_takes_a_newer_upstream_and_can_be_removed() {
     let w = world();
     let render = installed(&w);
     plant_caches(&render);
@@ -68,6 +67,11 @@ fn a_cached_skill_render_takes_a_newer_upstream() {
     sync_and_apply(&w);
     let skill = fs::read_to_string(render.join("SKILL.md")).unwrap();
     assert!(skill.contains("Two."), "{skill}");
+
+    plant_caches(&render);
+    let report = orphan_cleanup(&w).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(!render.exists(), "{}", render.display());
 }
 
 /// The plan of the orphan cleanup a refresh runs, once `gh` is no longer
@@ -89,21 +93,6 @@ fn orphan_cleanup(w: &World) -> kendex_core::error::Result<kendex_core::engine::
             ..PlanOptions::current()
         },
     )
-}
-
-/// The orphan cleanup takes a cached render whole: an automatic removal
-/// holds only a render that is not the bytes kendex wrote, and a cache
-/// does not make it one.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_orphan_cleanup_takes_a_cached_skill_render() {
-    let w = world();
-    let render = installed(&w);
-    plant_caches(&render);
-
-    let report = orphan_cleanup(&w).unwrap();
-    apply::execute(&w.env, &report.plan).unwrap();
-    assert!(!render.exists(), "{}", render.display());
 }
 
 /// A `.git` inside a render is a person's repository, not a cache: a newer
