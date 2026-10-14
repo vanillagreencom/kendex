@@ -70,7 +70,7 @@
 # It writes the record's `cycle` object, appends one `cycle` row to the fleet
 # log, and prints the same line:
 #   cycle item=ITEM pr=N class=C tier=T target=S merge_group=S ci_head=S ci_clean=S lane=S actual=S open=S verdict=V
-#     phase=P phase_secs=S cause=W bot_wait=S thread_fix=S paused=S missing=A,B
+#     phase=P phase_secs=S cause=W bot_wait=S draft=S thread_fix=S paused=S missing=A,B
 #     review=N fix=N bot=N full_validations=N pr_rounds=N escaped=B refixed=B
 # (one line). A value it could not read prints `-`.
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
@@ -114,19 +114,22 @@
 #                           `pauses`, and a `parked` still standing, which runs
 #                           on past the gap; a record whose pauses do not read
 #                           refuses as pauses-unreadable
-#               bot_wait    the rest of the time after a push up to the next
+#               draft       unpaused time before the last ready_for_review
+#                           event at or before the gate, read from ready_times
+#               bot_wait    the rest of the time after ready and a push up to
+#                           the next
 #                           bot review: the bot reviewing the push
 #               thread_fix  the rest of the time after a bot review up to the
 #                           next push or the gate: the lane working the threads
-#             the gap opens in the wait the latest push or bot review before
-#             it opened, bot_wait where there is neither
+#             draft takes unpaused time before ready; after ready, the gap
+#             uses the latest push or bot review, bot_wait where neither exists.
 #             pushes and bot reviews are pr-timeline's `push_times`, the
 #             head branch's push log, and `bot_review_times`. Null while
 #             the phase is, where gate_green falls outside the span, or
 #             where pr-timeline's `push_times` is null:
 #             no head branch named, or no push in its log for the life the
 #             PR opened in
-#   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
+#   cause     the largest gate wait, the earlier of bot_wait, draft, thread_fix and
 #             paused winning a tie, where the phase is gate_green. Where the
 #             phase is ci_green, the largest part of its gap split at
 #             pr-timeline's last_push: work, the rounds pushed before the
@@ -188,13 +191,14 @@
 # recorded lane, in the order of the target table, then unclassified; with no
 # fleet state yet it prints nothing and exits 0. report prints the same rows
 # and writes nothing, for a reader without write access to the fleet state:
-#   rollup class=C items=N median=S p90=S lane_median=S open_median=S miss_share=M/N misses=N review=N fix=N bot=N
+#   rollup class=C items=N median=S p90=S lane_median=S open_median=S miss_share=M/N misses=N draft=S review=N fix=N bot=N
 #     full_validations=N rounds_unread=N escaped=N refixed=N pr_rounds=N
 #     pr_rounds_unread=N round_median=S fix_median=S rounds_untimed=N
 # lane_median and open_median are nearest-rank medians of lane_secs and open.
 # miss_share is the fraction of measured lane_secs over the class base,
 # or - with no measured lane time or no class base. Old records with no
 # lane_secs enter neither its median nor its miss share.
+# draft sums the recorded draft seconds; it prints - when none are recorded.
 # median and p90 are nearest-rank over the measured launch-to-merge seconds;
 # the round figures are sums over the records that carry rounds, and
 # rounds_unread counts the records that do not. pr_rounds is the nearest-rank
@@ -350,6 +354,7 @@ if [[ "$VERB" != record ]]; then
           | if ($measured | length) == 0 or $targets[$class] == null then "-"
             else "\($measured | map(select(. > $targets[$class])) | length)/\($measured | length)" end)"
       + " misses=\([$c[] | select(.verdict == "miss")] | length)"
+      + " draft=\([$c[] | .gate_waits.draft // empty] | add | n)"
       + " review=\(sum(.review) | n) fix=\(sum(.fix) | n) bot=\(sum(.bot) | n)"
       + " full_validations=\(sum(.full_validations) | n)"
       + " rounds_unread=\([$c[] | select(.rounds == null)] | length)"
@@ -567,9 +572,9 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" \
   --arg class_reason "$class_reason" --arg evidence "$class_evidence" "$CYCLE_DEFS"'
   # The gate waits of the gap FROM..TO, epoch seconds: an instant a pause
-  # covers is paused, any other is the wait the latest push or bot review at
-  # or before it opened, bot_wait where neither came yet. A push and a bot
-  # review in one second read the push first.
+  # covers is paused; before ready, any other is draft. After ready, the
+  # latest push or bot review sets the wait, bot_wait where neither came yet.
+  # A push and a bot review in one second read the push first.
   # The same union measures gate holds, merge holds and the time a check
   # ran. This local calculation adds no merge policy or new lane record.
   def covered_seconds($spans; $from; $to):
@@ -580,12 +585,15 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
     | [$union[] | .b - .a] | add // 0;
   def paused_seconds($from; $to): covered_seconds($pauses; $from; $to);
   def gate_waits($from; $to):
-    ([$t.push_times[] | {at: fromdate, wait: "bot_wait"}] + [$t.bot_review_times[] | {at: fromdate, wait: "thread_fix"}]
+    ([$t.ready_times[]? | fromdate | select(. <= $to)] | max) as $ready
+    | ([$t.push_times[] | {at: fromdate, wait: "bot_wait"}] + [$t.bot_review_times[] | {at: fromdate, wait: "thread_fix"}]
+       + (if $ready == null then [] else [{at: $ready, wait: "bot_wait"}] end)
      | sort_by(.at, .wait)) as $events
     | ([{at: $from, wait: ([$events[] | select(.at <= $from)] | last | .wait // "bot_wait")}]
        + [$events[] | select(.at > $from and .at < $to)] + [{at: $to}])
-    | [range(1; length) as $i | {wait: .[$i - 1].wait, secs: ((.[$i].at - .[$i - 1].at) - paused_seconds(.[$i - 1].at; .[$i].at))}]
+    | [range(1; length) as $i | {wait: (if $ready != null and .[$i - 1].at < $ready then "draft" else .[$i - 1].wait end), secs: ((.[$i].at - .[$i - 1].at) - paused_seconds(.[$i - 1].at; .[$i].at))}]
     | {bot_wait: ([.[] | select(.wait == "bot_wait") | .secs] | add // 0),
+       draft: ([.[] | select(.wait == "draft") | .secs] | add // 0),
        thread_fix: ([.[] | select(.wait == "thread_fix") | .secs] | add // 0),
        paused: paused_seconds($from; $to)};
   $t.stamps as $s
@@ -668,7 +676,7 @@ line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end
   + " class=\(.class | n) tier=\(.tier | n) target=\(.target | n)"
   + " merge_group=\(.merge_group | n) ci_head=\(.ci_head | n) ci_clean=\(.ci_clean | n) lane=\(.lane_secs | n)"
   + " actual=\(.actual | n) open=\(.open | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
-  + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) thread_fix=\(.gate_waits.thread_fix | n)"
+  + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) draft=\(.gate_waits.draft | n) thread_fix=\(.gate_waits.thread_fix | n)"
   + " paused=\(.gate_waits.paused | n)"
   + " missing=\(if .missing == [] then "-" else .missing | join(",") end)"
   + " review=\(.rounds.review | n) fix=\(.rounds.fix | n) bot=\(.rounds.bot | n)"
