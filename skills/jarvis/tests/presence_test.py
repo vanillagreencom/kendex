@@ -1,11 +1,13 @@
 """Real native hook writes, injected clock, and the existing inspector API."""
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import select
 import subprocess
 import tempfile
 import unittest
@@ -47,6 +49,13 @@ class Presence(unittest.TestCase):
             path.mkdir(parents=True)
             path.joinpath("scripts").symlink_to(REPO / "skills" / name / "scripts", target_is_directory=True)
         remote_hold = remote / "hold"
+        local_slack = root / ".agents/skills/slack"
+        local_slack.mkdir(parents=True, exist_ok=True)
+        if not local_slack.joinpath("scripts").exists():
+            local_slack.joinpath("scripts").symlink_to(REPO / "skills/slack/scripts", target_is_directory=True)
+        remote_slack = remote / ".agents/skills/slack"
+        remote_slack.mkdir(parents=True)
+        remote_slack.joinpath("scripts").symlink_to(REPO / "skills/slack/scripts", target_is_directory=True)
         remote.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
         failure = scratch / "fail-host"
         executable("ssh", '[ ! -f "$FAIL_HOST" ] || exit 1\ncd "$REMOTE_ROOT" || exit\nPRESENCE_ROOT=$REMOTE_ROOT; export PRESENCE_ROOT\nexec '+BASH+' -s\n')
@@ -57,6 +66,9 @@ class Presence(unittest.TestCase):
         settings = dict(JARVIS_LOG_DIR=str(scratch / "log"), JARVIS_CONTROL_HOST="host", JARVIS_WAKE_SETTLE_SECS="0")
         with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = module.Watch(root, BASH, settings)
+            def renew():
+                for side in ("local", "host"):
+                    watch.accept_presence(side, watch.presence(side))
             def hook(name, extra=None):
                 payload = dict(session_id="s1", transcript_path=transcript, cwd=str(root),
                                source="startup", model="claude-opus-5-5", tool_name="Bash",
@@ -80,7 +92,7 @@ class Presence(unittest.TestCase):
                 for hold in (root / "hold", remote_hold):
                     if hold.exists():
                         os.utime(hold, (1, 1))
-                watch.tick(epoch+elapsed, watch.acquire(epoch+elapsed))
+                renew()
                 for hold in (root / "hold", remote_hold):
                     self.assertLess(epoch + elapsed - hold.stat().st_mtime, 120)
                     self.assertEqual(hold.stat().st_mtime, epoch + elapsed)
@@ -88,8 +100,8 @@ class Presence(unittest.TestCase):
             def no_renew(at):
                 for hold in (root / "hold", remote_hold):
                     os.utime(hold, (1, 1))
-                watch.next_presence = 0
-                watch.tick(at, watch.acquire(at))
+                clock.write_text(str(at))
+                renew()
                 for hold in (root / "hold", remote_hold):
                     self.assertEqual(hold.stat().st_mtime, 1)
                 module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
@@ -114,22 +126,86 @@ class Presence(unittest.TestCase):
             subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = "s1"'],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             failure.touch()
-            for elapsed in (600, 720):
+            for elapsed in (600, 601, 720, 721):
                 clock.write_text(str(epoch+elapsed))
                 hook("lane-mail-deliver.sh")
+                if elapsed % 120 == 0:
+                    renew()
                 watch.tick(epoch+elapsed, watch.acquire(epoch+elapsed))
                 module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
             self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 1)
             failure.unlink()
+            # A successful ordinary mail poll cannot confirm a hold renewal.
+            watch.tick(epoch+722, watch.acquire(epoch+722))
+            self.assertTrue(watch.state["presence_failures"]["host"])
+            watch = module.Watch(root, BASH, settings)
+            failure.touch()
+            clock.write_text(str(epoch+723))
+            renew()
+            self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 1)
+            failure.unlink()
             clock.write_text(str(epoch+840))
             hook("lane-mail-deliver.sh")
-            watch.tick(epoch+840, watch.acquire(epoch+840))
+            renew()
             module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
             failure.touch()
             clock.write_text(str(epoch+960))
             hook("lane-mail-deliver.sh")
-            watch.tick(epoch+960, watch.acquire(epoch+960))
+            renew()
             self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 2)
+            failure.unlink()
+            # Block the real mailbox events command after its start
+            # acknowledgement. Presence must keep running in the same owner.
+            installed = root / ".agents/skills/mailbox/scripts"
+            installed.unlink()
+            installed.mkdir()
+            installed.joinpath("lib").symlink_to(REPO / "skills/mailbox/scripts/lib", target_is_directory=True)
+            ready, release = scratch / "ready", scratch / "release"
+            os.mkfifo(ready)
+            os.mkfifo(release)
+            once = scratch / "blocked-once"
+            import shlex
+            script = installed / "lane-mail"
+            script.write_text('#!/bin/sh\nif [ "$1" = events ] && [ ! -e '+shlex.quote(str(once))+' ]; then\n'+
+                              'touch '+shlex.quote(str(once))+'\nprintf ready > '+shlex.quote(str(ready))+'\n'+
+                              'read -r ack < '+shlex.quote(str(release))+'\nfi\nexec '+
+                              shlex.quote(str(REPO / "skills/mailbox/scripts/lane-mail"))+' "$@"\n')
+            script.chmod(0o755)
+            watch.cursors = {}
+            watch.state["cursors"] = watch.cursors
+            watch.next_presence = {}
+            read_fd = os.open(ready, os.O_RDONLY | os.O_NONBLOCK)
+            with ThreadPoolExecutor(max_workers=3) as passes:
+                pending = passes.submit(watch.acquire, epoch+1080)
+                try:
+                    self.assertTrue(select.select([read_fd], [], [], 30)[0])
+                    self.assertEqual(os.read(read_fd, 5), b"ready")
+                    for elapsed in (1080, 1200, 1320, 1440):
+                        clock.write_text(str(epoch+elapsed))
+                        hook("lane-mail-deliver.sh")
+                        pending = watch._poll(passes, pending, epoch+elapsed)
+                        for work in list(watch.presence_pending.values()):
+                            work.result(timeout=30)
+                        pending = watch._poll(passes, pending, epoch+elapsed)
+                        self.assertFalse(pending.done())
+                        for hold in (root / "hold", remote_hold):
+                            self.assertEqual(hold.stat().st_mtime, epoch+elapsed)
+                        module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
+                    state.write_text("gone")
+                    clock.write_text(str(epoch+1560))
+                    pending = watch._poll(passes, pending, epoch+1560)
+                    for work in list(watch.presence_pending.values()):
+                        work.result(timeout=30)
+                    pending = watch._poll(passes, pending, epoch+1560)
+                    for hold in (root / "hold", remote_hold):
+                        self.assertEqual(hold.stat().st_mtime, epoch+1440)
+                finally:
+                    with release.open("w") as out:
+                        out.write("ack\n")
+                    os.close(read_fd)
+                watch.tick(epoch+1560, pending.result(timeout=30))
+                for hold in (root / "hold", remote_hold):
+                    self.assertEqual(hold.stat().st_mtime, epoch+1440)
 
     def test_instrument_control(self):
         module = load()

@@ -52,7 +52,7 @@ jarvis_live() {
 case "${1:-}" in
   config)
     jarvis_load "$2"
-    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","SLACK_JARVIS_SESSION_FILE")}))'
+    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS")}))'
     ;;
   common-root)
     source "$MAILBOX_LIB/common-root.sh"

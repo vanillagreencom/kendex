@@ -24,7 +24,7 @@ class Declaration(World):
         catalog.joinpath("SKILL.md").write_text(declaration)
         # These neutral siblings meet declaration dependencies. This fixture runs
         # no Jarvis script and does not exercise their runtime implementations.
-        for sibling in ("mailbox", "orch"):
+        for sibling in ("mailbox", "orch", "slack"):
             path = project / "catalog/skills" / sibling
             path.mkdir()
             path.joinpath("SKILL.md").write_text('---\nname: '+sibling+'\ndescription: fixture sibling\n---\nFixture.\n')

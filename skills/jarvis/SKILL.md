@@ -5,7 +5,7 @@ summary: "Guides a delegated desktop assistant through user decisions, checked r
 license: MIT
 user-invocable: true
 dependencies:
-  required: [mailbox, orch]
+  required: [mailbox, orch, slack]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
     - command: agent-browser

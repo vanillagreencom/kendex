@@ -4,9 +4,9 @@ Read when starting, recovering or extending the event producer in the [session w
 
 ## Input log
 
-`watch-loop` appends complete local and host passes to `events.log` under `JARVIS_LOG_DIR`. Its `batch.json` retains logical read progress, deferred block spans and an immutable current send. Keep both files across restart. Each simultaneous Jarvis home needs a separate log directory.
+`watch-loop` appends changed local and host passes to `events.log` under `JARVIS_LOG_DIR`. Unchanged cursor-only results add no log entry. Its `batch.json` retains logical read progress, deferred block spans, an immutable current send and a cursor checkpoint. Restart recovers later cursors from the log after that checkpoint. Keep both files across restart. Each simultaneous Jarvis home needs a separate log directory.
 
-An `EVENT` line opens a block. The next `EVENT` line or `cursor:` line closes it. An unfinished final block waits for its closing boundary. Consumer checks append complete blocks under an exclusive advisory lock on the event log inode. Write each append in full before releasing that lock. End the append with `cursor: {"side":"consumer","roots":{}}` when no next event closes its last block. Consumer checks send no mailbox batch and change no batch state.
+An `EVENT` line opens a block. The next `EVENT` line or `cursor:` line closes it. LF is the physical line separator. An unfinished final block waits for its closing boundary. Consumer checks append complete blocks under an exclusive advisory lock on the event log inode. Write each append in full before releasing that lock. End the append with `cursor: {"side":"consumer","roots":{}}` when no next event closes its last block. Consumer checks send no mailbox batch and change no batch state.
 
 ```text
 EVENT mail repo=NAME file=to-lane
@@ -18,7 +18,7 @@ TEXT
 cursor: {"side":"consumer","roots":{}}
 ```
 
-Mail text is limited to 4000 characters. A space protects quoted text lines that begin with `EVENT ` or `cursor:`. Consumer checks use the same rule for their text. Other supported headers are `EVENT overseer-unread`, `EVENT root-unreachable`, `EVENT presence-renew-failed` and `EVENT timeout`. Timeout blocks are skipped. The pass cursor is a public protocol record. Consumers do not edit its root positions.
+Mail text is limited to 4000 characters. Control characters use JSON string escapes. A space protects quoted text lines that begin with `EVENT ` or `cursor:`. Metadata and diagnostic values stay on one physical line. Their spaces and non-ASCII characters use JSON escapes as well. Consumer checks use the same rule for their text. Other supported headers are `EVENT overseer-unread`, `EVENT root-unreachable`, `EVENT presence-renew-failed` and `EVENT timeout`. Timeout blocks are skipped. The pass cursor is a public protocol record. Consumers do not edit its root positions.
 
 ## Delivery
 
@@ -30,6 +30,6 @@ The home mailbox writer receives one directive with a retained delivery key. A r
 
 ## Presence
 
-The loop checks presence every 120 seconds. It renews the existing Slack hold only when the recorded server, start, pane and native session match a live session and its matching hook context is younger than 300 seconds. Tool calls and turn ends update that context through the existing hooks. A stopped or unbound session renews nothing. Unknown native delivery health supplies no extra renewal permission.
+The loop schedules presence every 120 seconds independently of mail acquisition. Before each hold touch, it checks that the recorded server, start, pane and native session match a live session and its matching hook context is younger than 300 seconds. The host requests that current permission after it resolves each hold path. Tool calls and turn ends update context through the existing hooks. A stopped or unbound session renews nothing. An unavailable native probe denies renewal and leaves mail delivery active. Unknown native delivery health supplies no extra renewal permission.
 
-Each root reads `SLACK_JARVIS_SESSION_FILE` through its existing settings reader. An empty path creates no hold. The path can be absolute, begin with `~/`, or be relative to that root. Its parent directory must exist. Local and host renewals use the machine that owns the root. A failed renewal reports once until a successful retry clears the failure.
+Each root resolves `SLACK_JARVIS_SESSION_FILE` through the Slack package's presence-settings owner. That owner preserves supported old-name fallback and new-name precedence. An empty path creates no hold. The path can be absolute, begin with `~/`, or be relative to that root. Its parent directory must exist. Local and host renewals use the machine that owns the root. A failed renewal reports once until a successful renewal clears that failure. Ordinary mail polls neither clear nor replace renewal failures.

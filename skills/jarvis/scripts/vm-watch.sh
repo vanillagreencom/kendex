@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: vm-watch.sh [--home PATH] [--side NAME] [--cursor JSON] [--renew]
+# Usage: vm-watch.sh [--home PATH] [--side NAME] [--cursor JSON] [--presence]
 # One mail pass. The complete output ends with its public cursor record.
 set -euo pipefail
 SCRIPT_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"

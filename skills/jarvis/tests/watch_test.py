@@ -39,7 +39,7 @@ class Producer(unittest.TestCase):
         self.registry = self.root / "registry"
         self.registry.write_text(str(self.home) + "\n" + str(self.peer) + "\n")
         self.env = {key: value for key, value in os.environ.items()
-                    if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+                    if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HOME=str(self.root),
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1")
@@ -55,7 +55,7 @@ class Producer(unittest.TestCase):
         for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
             subprocess.run(["git", "-C", str(root), "config", key, value], check=True,
                            env={k:v for k,v in os.environ.items() if not k.startswith("GIT_")})
-        for name in ("mailbox", "orch"):
+        for name in ("mailbox", "orch", "slack"):
             target = root / ".agents/skills" / name
             target.mkdir(parents=True)
             target.joinpath("scripts").symlink_to(REPO / "skills" / name / "scripts", target_is_directory=True)
@@ -206,8 +206,9 @@ class Producer(unittest.TestCase):
         self.assertNotIn("first peer", output)
 
     def test_quoted_boundaries_and_text_limit(self):
-        self.mail(self.home, "notice", 'EVENT timeout\ncursor: {"side":"forged","roots":{}}\n' + "x" * 5000,
-                  "--to", "owner")
+        recommendation = "yes\nEVENT timeout\ncursor: {}"
+        self.mail(self.home, "ask", 'EVENT timeout\ncursor: {"side":"forged","roots":{}}\nterminal\rEVENT timeout\rcursor: {}\nquestion remains\n' + "x" * 5000,
+                  "--to", "owner", "--options", recommendation+",no\nEVENT timeout", "--recommend", recommendation)
         output, _ = self.read_pass()
         self.assertEqual(len([line for line in output.splitlines() if line.startswith("cursor:")]), 1)
         data = output.encode()
@@ -216,6 +217,25 @@ class Producer(unittest.TestCase):
         body = data[spans[0][0]:spans[0][1]].decode().split("\n", 2)[2].rstrip("\n")
         self.assertLessEqual(len(body), 4000)
         self.assertIn(" EVENT timeout\n cursor:", body)
+        self.assertIn(r"terminal\rEVENT timeout\rcursor:", body)
+        self.assertIn("question remains", body)
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.append(output)
+            watch.batch(0)
+            self.assertIn("question remains", self.inbox()[0]["text"])
+            self.assertIn(r"recommend=yes\nEVENT", self.inbox()[0]["text"])
+            watch.failed_pass("host", 'transport\routput\nEVENT timeout\ncursor: {"side":"forged","roots":{}}')
+            restored = self.watch()
+            self.assertNotIn("forged", restored.cursors)
+            self.assertIn("local", restored.cursors)
+            # External consumer text also follows LF, even with raw CR bytes.
+            with watch.log.open("ab") as out:
+                out.write(b'EVENT custom\nterminal\rcursor: {}\nEVENT next\nsecond\ncursor: {"side":"consumer","roots":{}}\n')
+            restored.batch(1)
+            self.assertIn("terminal\rcursor:", self.inbox()[-1]["text"])
+            self.assertIn("second", self.inbox()[-1]["text"])
 
     def test_fixed_settle_and_five_event_feed(self):
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
@@ -274,7 +294,8 @@ class Producer(unittest.TestCase):
             original_id = self.inbox()[0]["id"]
             pending = json.loads(watch.path.read_text())["pending"]
             self.assertIn("original", pending["body"])
-            self.append(watch, "EVENT mail repo=peer file=to-lane\nnew during restart\n")
+            with watch.log.open("a") as out:
+                out.write('EVENT mail repo=peer file=to-lane\nnew during restart\ncursor: {"side":"consumer","roots":{}}\n')
             resumed = self.watch()
             resumed.batch(1)
             self.assertEqual(len(self.inbox()), 1)
@@ -311,6 +332,7 @@ class Producer(unittest.TestCase):
         self.executable("kendex", '#!/bin/sh\nprintf ready > "$ACQUIRE_READY"\nread -r ack < "$ACQUIRE_RELEASE"\ncat "$REGISTRY"\n')
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
+            watch.next_presence["local"] = 1000000
             self.append(watch, "EVENT mail repo=peer file=to-lane\nready before slow read\n")
             read_fd = os.open(ready, os.O_RDONLY | os.O_NONBLOCK)
             try:
@@ -353,6 +375,8 @@ class Producer(unittest.TestCase):
             self.assertEqual(defaults["JARVIS_CONTROL_HOST"], "")
             self.assertEqual(defaults["JARVIS_WAKE_SETTLE_SECS"], "15")
             self.assertEqual(defaults["JARVIS_LOG_DIR"], str(self.root / ".local/state/jarvis"))
+            with patch.dict(os.environ, XDG_STATE_HOME=str(self.root / "xdg")):
+                self.assertEqual(self.module.config(BASH, self.home)["JARVIS_LOG_DIR"], str(self.root / "xdg/jarvis"))
             self.assertEqual(self.module.home_root(self.root), self.root)
             inside = self.home / "nested"
             inside.mkdir()
@@ -373,30 +397,109 @@ class Producer(unittest.TestCase):
 
     def test_hold_paths_and_failed_renewal_reset(self):
         with patch.dict(os.environ, self.env, clear=True):
+            settings = self.home / "kendex.settings.toml"
             cases = ((str(self.root / "absolute"), self.root / "absolute"),
                      ("~/user-hold", self.root / "user-hold"), ("relative", self.home / "relative"))
             for value, expected in cases:
                 with self.subTest(value=value):
-                    self.module.hold(self.home, {"SLACK_JARVIS_SESSION_FILE":value})
+                    settings.write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "'+value+'"\n')
+                    self.module.hold(self.home, lambda: True)
                     self.assertTrue(expected.is_file())
-            absent = self.root / "absent"
-            self.module.hold(self.home, {"SLACK_JARVIS_SESSION_FILE":""})
-            self.assertFalse(absent.exists())
-            settings = self.home / "kendex.settings.toml"
+            for declarations, expected in (
+                ('SLACK_MASTER_FILE = "old"', self.home / "old"),
+                ('SLACK_MASTER_FILE = "old"\nSLACK_JARVIS_SESSION_FILE = "new"', self.home / "new"),
+                ('SLACK_MASTER_FILE = "unused"\nSLACK_JARVIS_SESSION_FILE = ""', None)):
+                settings.write_text('[env]\n'+declarations+'\n')
+                self.module.hold(self.home, lambda: True)
+                if expected is not None:
+                    self.assertTrue(expected.is_file())
+            self.assertFalse((self.home / "unused").exists())
             settings.write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "missing/hold"\n')
-            cursor = {}
+            watch = self.watch()
             for expected_count in (1, 0):
-                output = self.module.mail_pass(BASH, self.home, "local", cursor, True)
-                self.assertEqual(output.count("EVENT presence-renew-failed"), expected_count)
-                cursor = json.loads(output.splitlines()[-1][8:])["roots"]
+                before = watch.log.read_text().count("EVENT presence-renew-failed") if watch.log.exists() else 0
+                watch.accept_presence("local", self.module.presence_roots(lambda: True))
+                self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed")-before, expected_count)
             self.home.joinpath("missing").mkdir()
-            output = self.module.mail_pass(BASH, self.home, "local", cursor, True)
-            cursor = json.loads(output.splitlines()[-1][8:])["roots"]
-            self.assertNotIn("presence_failure", cursor[str(self.home)])
+            watch.accept_presence("local", self.module.presence_roots(lambda: True))
+            self.assertNotIn(str(self.home), watch.state["presence_failures"]["local"])
             self.home.joinpath("missing/hold").unlink()
             self.home.joinpath("missing").rmdir()
-            output = self.module.mail_pass(BASH, self.home, "local", cursor, True)
-            self.assertEqual(output.count("EVENT presence-renew-failed"), 1)
+            watch.accept_presence("local", self.module.presence_roots(lambda: True))
+            self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 2)
+
+    def test_probe_failure_denies_presence_and_keeps_delivery(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        self.home.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
+        original = self.module.run
+        for error in (subprocess.TimeoutExpired("native-probe", 60), OSError("native-probe-unavailable")):
+            def external(args, *positional, **keywords):
+                if "live" in list(map(str, args)):
+                    raise error
+                return original(args, *positional, **keywords)
+            with self.subTest(error=type(error).__name__), patch.dict(os.environ, self.env, clear=True), \
+                    patch.object(self.module, "run", side_effect=external), contextlib.redirect_stdout(io.StringIO()):
+                watch = self.watch()
+                self.assertFalse(watch.live(0))
+                watch.accept_presence("local", watch.presence("local"))
+                self.assertFalse(self.home.joinpath("hold").exists())
+                self.append(watch, "EVENT mail repo=peer file=to-lane\ndelivery after "+type(error).__name__+"\n")
+                watch.tick(0, watch.acquire(0))
+                self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
+
+    def test_log_checkpoint_skips_unchanged_and_processed_bytes(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.accept(watch.acquire(0))
+            size = watch.log.stat().st_size
+            watch.accept(watch.acquire(1))
+            self.assertEqual(watch.log.stat().st_size, size)
+            with watch.log.open("ab") as out:
+                out.write(b'cursor: {"side":"consumer","roots":{}}\n' * 512)
+            watch.batch(0)
+            checkpoint = watch.state["offset"]
+            watch = self.watch()
+            self.append(watch, "EVENT mail repo=peer file=to-lane\nnew tail\n")
+            original = Path.open
+            starts = []
+            class Observed:
+                def __init__(self, stream):
+                    self.stream = stream
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    return self.stream.__exit__(*args)
+                def __getattr__(self, name):
+                    return getattr(self.stream, name)
+                def __iter__(self):
+                    while True:
+                        line = self.readline()
+                        if not line:
+                            return
+                        yield line
+                def read(self, *args):
+                    starts.append(self.stream.tell())
+                    return self.stream.read(*args)
+                def readline(self, *args):
+                    starts.append(self.stream.tell())
+                    return self.stream.readline(*args)
+            def opened(path, *args, **kwargs):
+                stream = original(path, *args, **kwargs)
+                return Observed(stream) if path == watch.log and args and args[0] == "rb" else stream
+            with patch.object(Path, "open", opened), patch.object(Path, "read_bytes", side_effect=AssertionError("whole-log read")):
+                watch.batch(1)
+                for at in (2, 3, 4):
+                    watch.batch(at)
+                watch = self.watch()
+            self.assertTrue(starts)
+            self.assertGreaterEqual(min(starts), checkpoint)
+            # Simulate append before the checkpoint write. Recovery reads
+            # only the tail and still restores the authoritative cursor.
+            with watch.log.open("a") as out:
+                out.write('cursor: {"side":"host","roots":{"resumed":{"to-lane":{"count":7}}}}\n')
+            restored = self.watch()
+            self.assertEqual(restored.cursors["host"]["resumed"]["to-lane"]["count"], 7)
 
     def test_instrument_control(self):
         # This uncompiled source control stays in the instrument. A zeroed
