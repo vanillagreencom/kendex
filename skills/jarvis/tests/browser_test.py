@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from desktop_world import World, load
 
@@ -43,12 +44,19 @@ class Browser(World):
 
     def test_platform_refusal(self):
         module = load("jarvis-browser")
-        with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", ["jarvis-browser", "https://example.org"]), \
-             patch.dict(os.environ, JARVIS_BROWSER_PROFILE=str(self.root / "profile"), JARVIS_BROWSER_COMMAND=str(self.executable("google-chrome"))), \
-             patch.object(module.os, "execv", side_effect=AssertionError("unsupported platform launched browser")):
-            with self.assertRaises(SystemExit) as refused:
-                module.main()
-        self.assertEqual(refused.exception.code, 2)
+        browser = str(self.executable("google-chrome"))
+        # A tool's platform must not change native stdlib executable lookup.
+        for available in (browser, None):
+            with self.subTest(browser=available), \
+                 patch.object(module, "sys", SimpleNamespace(platform="win32")), \
+                 patch.object(sys, "argv", ["jarvis-browser", "https://example.org"]), \
+                 patch.dict(os.environ, JARVIS_BROWSER_PROFILE=str(self.root / "profile"), JARVIS_BROWSER_COMMAND=browser), \
+                 patch.object(module.shutil, "which", return_value=available) as lookup, \
+                 patch.object(module.os, "execv", side_effect=AssertionError("unsupported platform launched browser")):
+                with self.assertRaises(SystemExit) as refused:
+                    module.main()
+                self.assertEqual(refused.exception.code, 2)
+                lookup.assert_not_called()
 
 
 if __name__ == "__main__":

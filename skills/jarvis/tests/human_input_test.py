@@ -57,15 +57,21 @@ class HumanInput(World):
         from unittest.mock import patch
         from desktop_world import load
         module = load("human-input")
-        for platform, display in (("darwin", "fixture-wayland"), ("linux", "")):
-            with self.subTest(platform=platform), patch.object(sys, "platform", platform), \
+        for platform, display, command in (
+            ("darwin", "fixture-wayland", "/fixture/wtype"),
+            ("darwin", "fixture-wayland", None),
+            ("linux", "", "/fixture/wtype"),
+            ("linux", "", None),
+        ):
+            with self.subTest(platform=platform, command=command), patch.object(module, "sys", SimpleNamespace(platform=platform)), \
                  patch.object(sys, "argv", ["human-input", "type"]), \
                  patch.dict(module.os.environ, WAYLAND_DISPLAY=display), \
-                 patch.object(module.shutil, "which", return_value="/fixture/wtype"), \
+                 patch.object(module.shutil, "which", return_value=command) as lookup, \
                  patch.object(module.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
                 with self.assertRaises(SystemExit) as refusal:
                     module.main()
                 self.assertEqual(refusal.exception.code, 2)
+                lookup.assert_not_called()
 
 
 if __name__ == "__main__":
