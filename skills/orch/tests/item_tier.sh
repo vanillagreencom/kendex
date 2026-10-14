@@ -91,6 +91,8 @@ ROWS=(
   "-|--production 1 --path AGENTS.md|tier=small brief=small cause=instruction-file rc=0|a root AGENTS.md Location is never micro"
   "-|--production $((SMALL_MAX + 1)) --path skills/x/SKILL.md|tier=standard brief=start cause=estimate-past-small rc=0|an instruction Location leaves a wider estimate alone"
   "-|--production $SMALL_MAX --floor small|tier=small brief=small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause"
+  "-|--production 1 --floor small|tier=small brief=small cause=floor class=small rc=0|a small floor raises a micro estimate"
+  "-|--production 1 --floor standard|tier=standard brief=start cause=floor class=standard rc=0|a standard floor raises a micro estimate"
   "-||rc=2|no input is a usage error"
   "-|--production 1x|rc=2|a malformed estimate is a usage error"
   "-|--floor tiny|rc=2|an unknown floor is a usage error"
@@ -220,15 +222,48 @@ done <<ROWS
 --production $((SMALL_MAX + 2)) --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 2)) estimate=$((SMALL_MAX + 2)) delta=$((SMALL_MAX + 1)) paths=0 rc=0|true
 --production 1 --body $TMP_ROOT/empty-body|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/empty-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
+--body $TMP_ROOT/empty-body|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=0 rc=0|true
+--body $TMP_ROOT/empty-body --path src/main.rs|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
+--body $TMP_ROOT/empty-body --path src/main.rs --path src/other.rs|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=2 rc=0|true
+--body $TMP_ROOT/empty-body --path skills/x/SKILL.md|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
+--body $TMP_ROOT/empty-body --path kendex.settings.toml|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
+--body $TMP_ROOT/empty-body --path src/main.rs --floor micro|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
+--body $TMP_ROOT/empty-body --path src/main.rs --floor small|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
+--body $TMP_ROOT/empty-body --path src/main.rs --floor standard|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
+--body $TMP_ROOT/bad-body --path src/main.rs|tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0|true
 --production 1 --body $TMP_ROOT/bad-body|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/missing|rc=2
 --body $TMP_ROOT/zero-test-body|tier=micro brief=micro cause=estimate-within-micro production=4 estimate=- delta=4 paths=0 rc=0|true
 --body $TMP_ROOT/zero-body|tier=micro brief=micro cause=estimate-within-micro production=0 estimate=- delta=0 paths=0 rc=0|true
+--body $TMP_ROOT/zero-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro production=0 estimate=- delta=0 paths=1 rc=0|true
 --body $TMP_ROOT/bare-body|tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 1)) estimate=- delta=$((SMALL_MAX + 1)) paths=0 rc=0|true
 --body $TMP_ROOT/bullet-location-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
 --body $TMP_ROOT/no-location-body|rc=1
 --production 1 --body $TMP_ROOT/no-location-body|rc=1
+--body $TMP_ROOT/no-location-body --path src/main.rs|rc=1
 ROWS
+
+# Must-fail control: keep the fallback but restore its path exclusion.
+cp -R "$LAYOUT" "$TMP_ROOT/path-exclusion"
+awk '/^if \[ -n "\$body" \] && \[ -z "\$delta" \] && \[ -z "\$production" \]; then$/ {
+  hits++; original = $0
+  sub(/; then$/, "")
+  print $0 " && [ \"${#paths[@]}\" -eq 0 ]; then # " original; next
+} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$TIER" >"$TMP_ROOT/path-exclusion/orch/scripts/item-tier"
+if cmp -s "$TIER" "$TMP_ROOT/path-exclusion/orch/scripts/item-tier"; then
+  echo 'FAIL: path exclusion control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/path-exclusion/orch/scripts/item-tier"
+"$BASH" -n "$TIER_BIN"
+if (PASS=0; FAIL=0; assert_eq "$(TIER_RAW=true run_tier - --body "$TMP_ROOT/empty-body" --path src/main.rs)" \
+  "tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1 rc=0" \
+  "missing-count fallback" >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "control path exclusion: the missing-count assertion stays green"
+else
+  pass "control path exclusion: the missing-count assertion turns red"
+fi
+unset TIER_BIN
 
 # A body naming no Location is refused with one stderr line, which the
 # overseer's launch reads, and no tier on stdout.

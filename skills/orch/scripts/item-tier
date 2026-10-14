@@ -28,7 +28,7 @@
 # header warns once on stderr, naming the line and these forms, and counts as
 # no delta. A body with no `**Location**` line is refused: its span is unjudged,
 # so the item goes back to filing for a per-subsystem split. A body with a
-# Location but no paths, estimate or valid delta launches standard.
+# Location but no estimate or valid delta launches standard, even with paths.
 # At least one of --production, --body, --floor and --base is required.
 # --repo (default .) is the judged checkout. HARNESS_CI_STANDARD_PATHS comes
 # from its main checkout's settings and floors matching paths at standard.
@@ -140,7 +140,7 @@ consider() { # CLASS CAUSE
   fi
 }
 
-if [ -n "$body" ] && [ -z "$delta" ] && [ -z "$production" ] && [ "${#paths[@]}" -eq 0 ]; then
+if [ -n "$body" ] && [ -z "$delta" ] && [ -z "$production" ]; then
   consider standard body-without-tier-inputs
 fi
 

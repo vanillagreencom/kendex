@@ -1,0 +1,1 @@
+- Return the standard tier for a scoped item with supplied paths when its production estimate and valid Expected delta are absent.
