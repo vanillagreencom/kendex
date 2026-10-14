@@ -127,7 +127,10 @@ write    prints the rows and writes the same bytes to the path
          passed on to it, then sends the owner the report notice,
          `lane-mail notice --item overseer --to owner --attach <that file>`
          with the summary file's text as its text, so a relay carries the
-         file to the owner. The summary is the notice's text alone, never
+         file to the owner. Open the summary with the repository's outcome
+         readings, each with its date and source, reused from existing
+         evidence comments and rulings. Use no Landed-count opening.
+         The summary is the notice's text alone, never
          in the file or the print: the relay posts it as the file's Slack
          comment, in Slack's mrkdwn markup, which Markdown does not read
          the same way. The new file is

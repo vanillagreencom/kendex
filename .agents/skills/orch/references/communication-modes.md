@@ -136,7 +136,7 @@ Next: [WHAT STARTS AFTER THAT]
 Waiting on you: [EACH OPEN QUESTION WITH WHAT ITS DEADLINE DOES AND WHEN, THEN EACH LANE BLOCKER, OR none]
 ```
 
-Under `engineer` a report is the same shape with the session's own vocabulary. The chat and the report file keep these rows. The owner's written summary takes [§ Owner messages](#owner-messages), not these rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which `dev-artifact-check` and `worktree-push` write, so the owner sees what each round's and each restack's validation cost, and from its `restack_skips`, which [`merge-pr-restack.md`](../workflows/merge-pr-restack.md) step 2 writes, so the owner sees each restack that skipped its re-test, counted apart from the runs. The Rounds row uses the five counts defined in [oversee-events.md § lane-long](oversee-events.md#event-kinds). It reads `Rounds: none` with no running lane. The Escapes line is `oversee-report --help`'s count, so the owner sees whether one review cycle before the pull request lets more defects through. A bug issue counts only through its `Regressed-by: #N` line, which [issue-description-template.md](../../project-management/templates/issue-description-template.md) writes where the pull request that caused the defect is known; an issue that names a pull request only as its source is not an escape. The Use 1 line counts the fleet log's `use1` rows, which the overseer writes under [copilot-head-notices.md § Use 1 rows](copilot-head-notices.md#use-1-rows), one row per head approved through a Copilot head notice or the `awaiting-stale` fallback, so the owner sees each such head's route: approved by Copilot on re-request, overseer fallback, or declines on an unchanged head. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat.
+Under `engineer` a report is the same shape with the session's own vocabulary. The chat and the report file keep these rows. The owner's written summary takes [§ Owner messages](#owner-messages), not these rows. It opens with the repository's outcome readings, each with its date and source, reused from existing evidence comments and rulings. It opens with no Landed count. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which `dev-artifact-check` and `worktree-push` write, so the owner sees what each round's and each restack's validation cost, and from its `restack_skips`, which [`merge-pr-restack.md`](../workflows/merge-pr-restack.md) step 2 writes, so the owner sees each restack that skipped its re-test, counted apart from the runs. The Rounds row uses the five counts defined in [oversee-events.md § lane-long](oversee-events.md#event-kinds). It reads `Rounds: none` with no running lane. The Escapes line is `oversee-report --help`'s count, so the owner sees whether one review cycle before the pull request lets more defects through. A bug issue counts only through its `Regressed-by: #N` line, which [issue-description-template.md](../../project-management/templates/issue-description-template.md) writes where the pull request that caused the defect is known; an issue that names a pull request only as its source is not an escape. The Use 1 line counts the fleet log's `use1` rows, which the overseer writes under [copilot-head-notices.md § Use 1 rows](copilot-head-notices.md#use-1-rows), one row per head approved through a Copilot head notice or the `awaiting-stale` fallback, so the owner sees each such head's route: approved by Copilot on re-request, overseer fallback, or declines on an unchanged head. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat.
 
 ## Owner-only verification
 
@@ -196,8 +196,8 @@ A text sent beside a file, the comment of `slack post --file` or the `report-due
 
 - Put one item per line, at most 20 words. A line may carry two links.
 - Put a blank line before each label. Each label stands alone: **Landed**, **Running**, **Blocked**, **Waiting on you**.
-- Put each figure, such as account headroom or a count, on its own line. Put rule 10's headroom lines in their own group under the opening line.
-- Use at most `ORCH_REPORT_SUMMARY_LINES` item lines, default 20. Blank lines, labels and the opening line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
+- Put each figure, such as account headroom or a count, on its own line. Put rule 10's headroom lines in their own group after the opening outcome readings.
+- Use at most `ORCH_REPORT_SUMMARY_LINES` item lines, default 20. Blank lines, labels and the first opening line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
 - Use no table in an owner message.
 
 ### Owner summary template
@@ -205,10 +205,10 @@ A text sent beside a file, the comment of `slack post --file` or the `report-due
 Use this mrkdwn template for the report file's comment. For a post without a file, use the standard Markdown markup above. `scripts/oversee-report write` refuses a summary that breaks tracker links, the Waiting on you section, the word limit or the item-line cap before it sends; its `--help` defines each refusal.
 
 ```text
-[WHAT CHANGED FOR THE OWNER]
+[DATE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
+[DATE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
 
 [ACCOUNT HEADROOM FIGURE]
-[COUNT FIGURE]
 
 *Landed*
 - [OUTCOME] (<https://linear.app/vanillagreen/issue/KEY-N|KEY-N>)

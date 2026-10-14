@@ -351,7 +351,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Give every development remainder from a cut its own issue or bundle before completion. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's SKILL.md § Disposition states. Each box names its reading, location, why the branch cannot prove it, and a UTC deadline no later than three days after merge.
 
-   Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and use the completion command below. It sets Done when no post-merge box remains open, and Verifying otherwise, including when the integration already set Done. The merge lane never writes In Review or In Progress. The overseer records evidence and ticks each verified box. For a failed post-merge check, follow [oversee-events.md § Verification](../references/oversee-events.md).
+   Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and use the completion command below. It sets Done when no post-merge box remains open, and Verifying otherwise, including when the integration already set Done. The merge lane never writes In Review or In Progress. Box acceptance follows [SKILL.md § The Cycle, The overseer reads results](../SKILL.md#the-cycle). For a failed post-merge check, follow [oversee-events.md § Verification](../references/oversee-events.md).
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues get [ISSUE]
@@ -369,7 +369,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A rate-limited completion is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds, never recorded as a failed step.
 
-   Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box. The text cites the recorded proof. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. `[MET_BOXES]` names only boxes with recorded proof. A post-merge box the merged PR's own tests, CI or diff prove has that proof and closes here, not in Verifying. Use `all` only when every box has proof. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
+   Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box. The text cites the recorded proof. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. Select `[MET_BOXES]` under that acceptance rule. A post-merge box accepted from the merged PR's own tests, CI or diff closes here. Use `all` only when that rule accepts every box. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 
