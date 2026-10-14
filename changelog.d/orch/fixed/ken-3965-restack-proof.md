@@ -1,0 +1,1 @@
+- Hold merge and queue admission when a reused restack tree has no passing local validation or required validation CI proof.

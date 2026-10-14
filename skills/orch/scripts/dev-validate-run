@@ -95,12 +95,19 @@
 #       takes a receipt's mode, class base and wall time from it, a receipt's
 #       pass needs its pass and its no-verdict its no-verdict. Fix-round
 #       binding belongs to dev-return-write, per schemas/dev-return.md.
-#   dev-validate-run --resolve-mode --worktree PATH [--base REF]
+#   dev-validate-run --resolve-mode --worktree PATH [--base REF] [--require-proof SHA]
 #       Print a range request's mode, read-only and starting nothing. Without
 #       --base it resolves the local command: range, or full without a range
 #       command. dev-artifact-check uses that fallback mode and admits ci
 #       separately for an open pull request. With --base it also previews
 #       selection and applies the same ci resolution as a real range start.
+#       --require-proof SHA asks for merge proof for a recorded restack skip's
+#       validated head. It requires --base and starts no run. A genuine pass
+#       candidate for SHA keeps the accepted tree-equivalence reuse rule.
+#       Otherwise only admitted required CI (pending until the exact-head CI
+#       wait or queue proves it), or an applicable full local pass counts.
+#       Empty, unrequired or unreadable CI supplies no proof. A missing proof
+#       exits 1. Timeout and host no-verdict records never count as passes.
 #   dev-validate-run --last-pass --worktree PATH
 #       Print the newest run in that worktree that ran a full or range command
 #       to a pass or a finding-free no-verdict and whose start records the HEAD and tree it
@@ -281,6 +288,7 @@
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|battery|unreported verdict=pass|pending|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [tree=SHA] [validate-base-orphaned=SHA] [class-base=SHA] [seconds=N started-at=TIME ended-at=TIME] [ci-fallback=CAUSE] [ci-event=merge_group]   (--record)
 #   validate-mode=full|range|ci                                               (--resolve-mode)
+#   validation-proof=tree-pass|local-pass run-dir=PATH | validation-proof=ci verdict=pending head=SHA ci-event=EVENT | validation-proof=missing ci-fallback=CAUSE   (--require-proof)
 #   run-dir=… head=SHA tree=SHA [verdict=no-verdict]                           (--last-pass)
 #   last-pass=none | last-pass=red run-dir=…                                 (--last-pass, exit 1)
 #   run-dir=… pid=N                                                           (--live)
@@ -488,8 +496,8 @@ run_has_finding() { # RUN_DIR
 BOUND_RUN_DIR=""
 BOUND_RUN_EXIT=""
 PASS_RUN_DIR=""
-find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE FINDING_PREFIX TREE
-  local start_file dir secs line rc guard_exit ran started pass_start=-1 red_start=-1 order_unknown=false bound_start=-1
+find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE FINDING_PREFIX TREE [BRANCH_PROOF]
+  local start_file dir secs line rc guard_exit ran started pass_start=-1 red_start=-1 order_unknown=false bound_start=-1 proof_record
   BOUND_RUN_DIR="" BOUND_RUN_EXIT="" PASS_RUN_DIR=""
   for start_file in "$1"/tmp/dev-validate-*/start; do
     [[ -f "$start_file" ]] || continue
@@ -521,6 +529,13 @@ find_bound_run() { # WORKTREE TIMEOUT_SECS PATHS_FILE CMD CLASS DOCS_ONLY BASE F
     [[ "$(start_field "$start_file" finding-prefix)" == "$8" ]] || continue
     if [[ -n "$9" && "$(start_field "$start_file" tree)" == "$9" ]]; then
       if [[ "$line" =~ ^guard-exit=0\ at=[^\ ]+$ && "$started" =~ ^[0-9]+$ ]] && (( 10#$started > pass_start )); then
+        if [[ "${10:-false}" == true ]]; then
+          [[ "$(start_field "$start_file" validate-mode)" == full && "$(start_field "$start_file" scoped)" != true ]] || continue
+          if [[ -n "$(start_field "$start_file" class-base)" ]]; then
+            proof_record="$("$SCRIPT_DIR/dev-validate-run" --record --run-dir "$dir")" || continue
+            [[ " $proof_record " == *" selection=battery "* ]] || continue
+          fi
+        fi
         rc=0
         grep -Fxvq -f "$dir/paths" -- "$3" 2>/dev/null || rc=$?
         if (( rc == 1 )); then
@@ -635,6 +650,8 @@ validate_mode_given=false
 base_given=false
 attached=false
 fresh=false
+proof_head=""
+proof_given=false
 
 set_mode() { # FLAG NEW
   [[ -z "$mode" ]] || die mode-conflict "option=$1" "mode=$mode"
@@ -653,6 +670,7 @@ while (( $# > 0 )); do
     --child)    set_mode "$1" child; shift ;;
     --record)   set_mode "$1" record; shift ;;
     --resolve-mode) set_mode "$1" resolve; shift ;;
+    --require-proof) need "$1" $# "${2:-}"; once "$1" "$proof_given"; proof_given=true; proof_head="$2"; shift 2 ;;
     --last-pass) set_mode "$1" last-pass; shift ;;
     --live)     set_mode "$1" live; shift ;;
     --run-dir)  need "$1" $# "${2:-}"; once "$1" "$run_dir_given"; run_dir_given=true; run_dir="$2"; shift 2 ;;
@@ -676,6 +694,8 @@ done
 # than dropped, so no caller believes it set a bound this script then ignores.
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
 [[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
+[[ -z "$proof_head" || "$mode" == resolve ]] || die option-unused option=--require-proof "mode=$mode"
+[[ -z "$proof_head" || "$base_given" == true ]] || die required option=--base
 case "$mode" in
   start|stop|resolve|last-pass|live)
     [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
@@ -880,7 +900,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   classify "$class_base"
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
-  if [[ "$validate_mode" == ci || "$pr_order" == push-first ]]; then
+  if [[ "$validate_mode" == ci || "$pr_order" == push-first || -n "$proof_head" ]]; then
     ci_admission_attempted=true
     classify ""
     [[ "$requested_mode" == full ]] || validate_mode=range
@@ -956,7 +976,33 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   fi
   if [[ "$mode" == resolve ]]; then
     printf 'validate-mode=%s\n' "$validate_mode"
-    exit 0
+    [[ -n "$proof_head" ]] || exit 0
+    # restack-skip owns equivalence; its genuine pass remains sufficient.
+    candidate=""
+    if candidate="$("$SCRIPT_DIR/dev-validate-run" --last-pass --worktree "$worktree")" \
+      && [[ " $candidate " == *" head=$proof_head "* && " $candidate " != *" verdict=no-verdict "* ]] \
+      && "$SCRIPT_DIR/restack-skip" --worktree "$worktree" --base "$base" >/dev/null; then
+      printf 'validation-proof=tree-pass %s\n' "${candidate%% *}"
+      exit 0
+    fi
+    if [[ "$validate_mode" == ci ]]; then
+      printf 'validation-proof=ci verdict=pending head=%s ci-event=%s\n' "$(git rev-parse HEAD)" "$ci_event"
+      exit 0
+    fi
+    # A range pass or a scoped run cannot prove the full branch by existence.
+    # Use the same command/tree/selection/base reader as start, over the branch.
+    classify ""
+    cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")" || die unreadable-setting setting=DEV_VALIDATE_CMD
+    finding_prefix="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_FINDING_PREFIX "")" || die unreadable-setting setting=DEV_VALIDATE_FINDING_PREFIX
+    if [[ -n "${cmd//[[:space:]]/}" && -z "$class_fallback" ]]; then
+      find_bound_run "$worktree" 0 "$class_scratch/paths" "$cmd" "$class" "$docs_only" "" "$finding_prefix" "$snapshot_tree" true
+      if [[ -n "$PASS_RUN_DIR" ]]; then
+        printf 'validation-proof=local-pass run-dir=%s\n' "$PASS_RUN_DIR"
+        exit 0
+      fi
+    fi
+    printf 'validation-proof=missing ci-fallback=%s\n' "${ci_fallback:-class-uncovered}"
+    exit 1
   fi
   # Read against an empty default, never 3600: orch-env replaces a non-numeric
   # effective value with a numeric default of its own, so a setting of 90m would
