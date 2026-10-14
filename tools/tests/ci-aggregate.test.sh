@@ -896,12 +896,11 @@ while IFS='|' read -r row wf expected; do
   if grep -qx 'secrets: secret=cred.txt:1:aws-access-token' "$root/out"; then finding=yes; fi
   candidate=no
   [ ! -e "$root/runner/candidate-code-ran" ] || candidate=yes
-  trusted=no
-  if [ "$status:$finding:$candidate" = '1:yes:no' ]; then trusted=yes; fi
-  check "$row: credential refusal and candidate isolation" "$expected" "$trusted"
+  check "$row: scan exit, credential finding, and candidate execution" \
+    "$expected" "$status:$finding:$candidate"
 done <<ROWS
-trusted|$WORKFLOW|yes
-must-fail|$TMP/candidate-scanner.yml|no
+trusted|$WORKFLOW|1:yes:no
+must-fail|$TMP/candidate-scanner.yml|0:no:yes
 ROWS
 
 # Execute the decision step read from the workflow, not a second invocation
