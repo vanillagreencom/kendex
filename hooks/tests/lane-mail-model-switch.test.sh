@@ -14,6 +14,18 @@ cleanup_model_world() {
 }
 trap cleanup_model_world EXIT
 
+# Recursive mutant runs use the original detecting assertions, without
+# repeating unrelated worlds. An ordinary run still exercises every case.
+if [[ -n "${MODEL_CONTROL:-}" ]]; then
+  case "${MODEL_CONTROL_CASE:-}" in
+    matching|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge) ;;
+    *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
+  esac
+fi
+model_case() { # NAME
+  [[ -z "${MODEL_CONTROL:-}" || "${MODEL_CONTROL_CASE:-}" == "$1" ]]
+}
+
 model_world() { # NAME LAUNCHED [broken] [RECORDED FLAGS]
   new_lane "$1" KEN-3916
   install_hook "$COMPANION" "${CASE_HOOK%/*}/lane-mail-model-switch.sh"
@@ -68,6 +80,7 @@ await_recovery() {
 
 echo '=== model outcomes ==='
 while IFS='|' read -r name launched observed outcome cause; do
+  model_case "$name" || continue
   model_world "$name" "$launched"
   before=$(cat "$LANE/tmp/workflow-state-oversee.json")
   event "$observed"
@@ -94,6 +107,7 @@ launch-alias|best|claude-opus-4-8|unavailable|launch-unresolved
 observed-missing|claude-fable-5-1||unavailable|observed-unread
 ROWS
 
+if model_case no-fleet-record; then
 echo '=== unavailable fleet launch record ==='
 model_world no-fleet-record claude-fable-5-1
 rm -- "$LANE/tmp/workflow-state-oversee.json"
@@ -106,10 +120,13 @@ assert_eq "$(cat "$TMP_ROOT/stdout")" '' 'missing fleet record reports once'
 assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'unavailable launch evidence changes no process'
 kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 
+fi
+
 echo '=== unavailable dependency and association evidence ==='
 # The GUI producer records no launch process or native session on first open.
 # A missing adapter is an installed dependency failure, not a model match.
 for fault in gui gui-session adapter; do
+  model_case "$fault" || continue
   model_world "unavailable-$fault" claude-fable-5-1
   if [[ "$fault" == gui || "$fault" == gui-session ]]; then
     "$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
@@ -164,6 +181,7 @@ if [[ -z "${MODEL_CONTROL:-}" ]]; then
   kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 fi
 
+if model_case fresh-shell; then
 echo '=== detached recovery loads its dependencies ==='
 model_world fresh-shell claude-fable-5-1
 "$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
@@ -186,8 +204,11 @@ assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" 
 wait "$OWNED_CHILD" 2>/dev/null || :
 OWNED_CHILD=""
 
+fi
+
 echo '=== recovery validates before stopping ==='
 while IFS='|' read -r preparation launched original override expected_model; do
+  model_case "$preparation" || continue
   model_world "$preparation" "$launched" "$preparation" "--dangerously-skip-permissions $original --effort high"
   CALL_ENV+=("ANTHROPIC_DEFAULT_OPUS_MODEL=$override")
   # Existing emergency state must survive an unpushed round.
@@ -286,6 +307,7 @@ conflicting-selector|claude-opus-4-6|--model claude-opus-5-5[1m]||claude-opus-4-
 broken|claude-fable-5-1|--model claude-opus-4-8||claude-fable-5-1
 ROWS
 
+if model_case retired-callback; then
 echo '=== delayed recovery keeps replacements ==='
 for retired in pane server; do
   model_world "retired-$retired" claude-fable-5-1
@@ -299,6 +321,9 @@ for retired in pane server; do
   kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 done
 
+fi
+
+if model_case replaced-before-write; then
 model_world replaced-before-write claude-fable-5-1
 mv -- "$S/workflow-state" "$S/workflow-state.real"
 cat > "$S/workflow-state" <<'STATE'
@@ -315,7 +340,10 @@ assert_eq "$(switch_count)" 0 'a launch replacement before the locked write reco
 assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'a stale write cannot dispatch recovery'
 kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 
+fi
+
 for changed in launch session claimed; do
+  model_case "stale-$changed" || continue
   model_world "stale-$changed" claude-fable-5-1
   "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
     .lanes[0].model_check={session_id:"s1",outcome:"switched"}
@@ -332,6 +360,7 @@ for changed in launch session claimed; do
   kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 done
 
+if model_case missing-judge; then
 echo '=== missing companion judge ==='
 model_world missing-judge claude-fable-5-1
 rm -- "${CASE_HOOK%/*}/lane-mail-check.sh"
@@ -342,9 +371,11 @@ assert_eq "$(sed -n 's/^lane-mail-model-switch: judge=//p' "$TMP_ROOT/stdout")" 
   "${CASE_HOOK%/*}/lane-mail-check.sh" 'the companion reports its missing judge'
 kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 
+fi
+
 if [[ -z "${MODEL_CONTROL:-}" ]]; then
   echo '=== must-fail controls ==='
-  for rule in baseline comparison duplicate history callback claim roster unavailable server standing unbound notice; do
+  while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/control-$rule.sh"
     if [[ "$rule" == baseline ]]; then
       git -C "$REPO_ROOT" show b510440e4273d1cd168f381eb3d5b8d8a6aa693e:hooks/lane-mail-check.sh > "$control"
@@ -374,14 +405,27 @@ Path(target).write_text(changed)
 CONTROL
     fi
     status=0
-    MODEL_CONTROL=1 HOOK_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/control-$rule.log" 2>&1 || status=$?
+    MODEL_CONTROL=1 MODEL_CONTROL_CASE="$control_case" HOOK_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/control-$rule.log" 2>&1 || status=$?
     if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/control-$rule.log"; then
       assert_eq red red "$rule production control rejects the defect"
     else
       assert_eq "$status" red "$rule production control must fail"
     fi
-  done
-  for rule in stop pin binding selector selector-id words; do
+  done <<'CONTROLS'
+baseline|complete
+comparison|matching
+duplicate|complete
+history|complete
+callback|retired-callback
+claim|replaced-before-write
+roster|extended
+unavailable|no-fleet-record
+server|complete
+standing|complete
+unbound|gui-session
+notice|adapter
+CONTROLS
+  while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"
     python3 - "$REPO_ROOT/skills/orch/scripts/lib/lane-relaunch.sh" "$control" "$rule" <<'CONTROL'
 from pathlib import Path
@@ -402,13 +446,20 @@ assert changed != text
 Path(target).write_text(changed)
 CONTROL
     status=0
-    MODEL_CONTROL=1 MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
+    MODEL_CONTROL=1 MODEL_CONTROL_CASE="$control_case" MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
     if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/relaunch-$rule.log"; then
       assert_eq red red "$rule recovery control rejects the defect"
     else
       assert_eq "$status" red "$rule recovery control must fail"
     fi
-  done
+  done <<'CONTROLS'
+stop|fresh-shell
+pin|fresh-shell
+binding|stale-launch
+selector|extended
+selector-id|conflicting-selector
+words|extended
+CONTROLS
   control="$TMP_ROOT/companion-control.sh"
   python3 - "$COMPANION" "$control" <<'CONTROL'
 from pathlib import Path
@@ -422,12 +473,16 @@ assert changed != text
 Path(target).write_text(changed)
 CONTROL
   status=0
-  MODEL_CONTROL=1 COMPANION_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" > "$TMP_ROOT/companion-control.log" 2>&1 || status=$?
+  MODEL_CONTROL=1 MODEL_CONTROL_CASE=missing-judge COMPANION_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" > "$TMP_ROOT/companion-control.log" 2>&1 || status=$?
   if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/companion-control.log"; then
     assert_eq red red 'missing judge production control rejects the defect'
   else
     assert_eq "$status" red 'missing judge production control must fail'
   fi
+fi
+if [[ -n "${MODEL_CONTROL:-}" && "$((PASS + FAIL))" -eq 0 ]]; then
+  printf 'lane-mail-model-switch.test: control-case=no-assertions value=%s\n' "$MODEL_CONTROL_CASE" >&2
+  exit 1
 fi
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
