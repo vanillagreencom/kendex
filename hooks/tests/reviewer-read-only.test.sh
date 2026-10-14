@@ -176,7 +176,8 @@ stash_rows() {
   local want cmd first label
   while IFS='|' read -r want cmd; do
     label=$cmd
-    cmd=$(printf '%b' "$cmd")
+    cmd=$(printf '%b.' "$cmd")
+    cmd=${cmd%.}
     run_tool reviewer-security Bash command "$cmd"
     first='-'; [ "$want" = 0 ] || first='reviewer-read-only: refused=git-discard'
     assert_eq "rc=$rc first=$(first_line)" "rc=$want first=$first" "stash: $label"
@@ -189,6 +190,7 @@ stash_rows() {
 0|git\tstash\tlist
 0|git\t-C\trepo\tstash\tshow
 0|git  --no-pager  -c  core.quotePath=false  stash  list
+0|git stash list --format=.
 2|git stash\nlist
 2|git stash\nshow
 2|git -C repo stash\nlist
@@ -198,6 +200,12 @@ stash_rows() {
 2|git stash\n\nshow
 2|git stash\nlist; git stash\nshow
 2|git stash list\nshow
+2|git stash\ngit stash show list
+2|git stash\ngit stash list list
+2|git stash list\n
+2|git stash show\n\n
+2|\ngit stash list
+2|echo ready\ngit stash show
 0|git\nstash list
 0|git -C\nrepo stash show
 0|git -C repo\nstash list
@@ -224,16 +232,14 @@ stash_rows() {
 ROWS
 }
 stash_rows
-skill_load_control stash-reads "$HOOK" '    while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
-  "      GIT_DISCARD='a^'" HOOK stash_rows 'stash: git stash list; git stash pop' \
+skill_load_control stash-reads "$HOOK" '      while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
+  "        GIT_DISCARD='a^'" HOOK stash_rows 'stash: git stash list; git stash pop' \
   'stash: git stash show && git stash clear'
-skill_load_control stash-read-prefix "$HOOK" '    while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
-  '      break' HOOK stash_rows 'stash: git stash list' 'stash: git stash show'
-skill_load_control stash-read-newline "$HOOK" "    GIT_DISCARD_READ=\${GIT_DISCARD_READ//'[[:space:]]'/'[[:blank:]]'}" \
-  "    GIT_DISCARD_READ=\${GIT_DISCARD/'(checkout|restore|stash|clean|reset|switch)'/'stash[[:space:]]+(list|show)'}" \
-  HOOK stash_rows 'stash: git stash\nlist' 'stash: git stash\nshow' \
-  'stash: git -C repo stash\nlist' 'stash: git --no-pager stash\nshow' \
-  'stash: git -c core.quotePath=false stash\nlist'
+skill_load_control stash-read-prefix "$HOOK" '      while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
+  '        break' HOOK stash_rows 'stash: git stash list' 'stash: git stash show'
+skill_load_control stash-read-newline "$HOOK" "    if [[ \$COMMAND != *\$'\\n'* ]]; then" \
+  $'      :\n    fi\n    if true; then' HOOK stash_rows \
+  'stash: git stash\ngit stash show list' 'stash: git stash\ngit stash list list'
 
 for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
