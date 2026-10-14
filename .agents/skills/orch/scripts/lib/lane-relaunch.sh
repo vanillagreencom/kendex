@@ -76,8 +76,8 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
 }
 
 # The hook acquires one session's recovery under workflow-state's lock before
-# starting this outside the predecessor's process group. Stop first: checkout,
-# account or launch preparation failure must never keep fallback work alive.
+# starting this outside the predecessor's process group. Check the recovery
+# arguments before stopping it; account selection and launch follow the stop.
 lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
   local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
   fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),
@@ -93,6 +93,10 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
       else (.lanes[] | select(.item == $item)).model_check.recovery_started = true
         | {state:.,report:true} end' --arg item "$item" --arg session "$session" --argjson record "$record")" || return 1
   [[ "$claim" == true ]] || return 0
+  lane_recovery_args "$record" "$account" "$state_dir" "$SCRIPT_DIR/open-terminal" model-switched || {
+    printf 'lane-relaunch: model-recovery=prepare-failed item=%s cause=%s\n' "$item" "$LANE_RECOVERY_CAUSE" >&2
+    return 1
+  }
   if [[ "$host" == local ]]; then
     # Older launches recorded the pane but no process identity. Read that
     # identity once; a stale positive recorded identity never takes this path.
@@ -113,10 +117,6 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
   "$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update oversee \
     '(.lanes[] | select(.item == $item and .launched_at == $launch)) |= (.status = "stopped")' \
     --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
-  lane_recovery_args "$record" "$account" "$state_dir" "$SCRIPT_DIR/open-terminal" model-switched || {
-    printf 'lane-relaunch: model-recovery=prepare-failed item=%s cause=%s\n' "$item" "$LANE_RECOVERY_CAUSE" >&2
-    return 1
-  }
   export ORCH_TMUX_SESSION="$LANE_RECOVERY_SESSION"
   cd -- "$LANE_RECOVERY_CWD" || return 1
   "${LANE_RECOVERY_ARGS[@]}"
@@ -289,6 +289,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     scripts="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)" || exit 1
     . "$scripts/lib/lane-state.sh"
     . "$scripts/lib/lane-launch.sh"
+    . "$scripts/lib/lane-capabilities.sh"
     lane_model_recovery "$2" "$3" "$scripts" "$4"
     exit
   fi

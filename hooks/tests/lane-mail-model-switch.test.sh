@@ -164,7 +164,29 @@ if [[ -z "${MODEL_CONTROL:-}" ]]; then
   kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 fi
 
-echo '=== recovery stops before preparation ==='
+echo '=== detached recovery loads its dependencies ==='
+model_world fresh-shell claude-fable-5-1
+"$S/workflow-state" --state-dir "$LANE/tmp" update oversee \
+  '.lanes[0].model_check={session_id:"s1",outcome:"switched"}' >/dev/null
+status=0
+env -i "PATH=$TMUX_BIN:$PATH" "HOME=$OFFLINE_HOME" \
+  "MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" \
+  "$BASH" "$S/lib/lane-relaunch.sh" model-recovery "$record" "$LANE/tmp" s1 \
+  >"$TMP_ROOT/recovery.out" 2>"$ERR_FILE" || status=$?
+assert_eq "$status" 0 'fresh-shell recovery completes through its own dependencies'
+assert_eq "$(awk '/^--launch-flags$/{getline;print}' "$LANE/tmp/argv" 2>/dev/null || :)" \
+  '--dangerously-skip-permissions --model claude-fable-5-1 --effort high' \
+  'fresh-shell recovery launches the recorded model, permissions and effort'
+state=$(lane_process_state "$OWNED_CHILD")
+case "$state" in '' | Z) state=gone ;; esac
+assert_eq "$state" gone 'fresh-shell recovery stops its verified predecessor'
+assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped \
+  'fresh-shell recovery records the predecessor stop'
+[[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
+wait "$OWNED_CHILD" 2>/dev/null || :
+OWNED_CHILD=""
+
+echo '=== recovery validates before stopping ==='
 while IFS='|' read -r preparation launched original override expected_model; do
   model_world "$preparation" "$launched" "$preparation" "--dangerously-skip-permissions $original --effort high"
   CALL_ENV+=("ANTHROPIC_DEFAULT_OPUS_MODEL=$override")
@@ -199,7 +221,13 @@ while IFS='|' read -r preparation launched original override expected_model; do
     fi
     state=$(lane_process_state "$OWNED_CHILD")
     case "$state" in '' | Z) state=gone ;; esac
-    assert_eq "$state" gone "$preparation predecessor has stopped"
+    expected_status=stopped
+    if [[ "$preparation" == broken ]]; then
+      expected_status=running
+      assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$preparation preparation failure keeps predecessor running"
+    else
+      assert_eq "$state" gone "$preparation predecessor has stopped"
+    fi
     [[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
     wait "$OWNED_CHILD" 2>/dev/null || :
     OWNED_CHILD=""
@@ -213,7 +241,7 @@ while IFS='|' read -r preparation launched original override expected_model; do
     assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=a1"))' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation records unfinished agent"
     assert_eq "$(jq -r --arg p "$LANE/tmp/parent/subagents/agent-a1.jsonl" '.handoff.traps|any(contains("output="+$p))' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation keeps known agent output"
     assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=a2"))' "$LANE/tmp/workflow-state-KEN-3916.json")" false "$preparation omits retired agent"
-    assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped "$preparation remains recoverable"
+    assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" "$expected_status" "$preparation remains recoverable"
     if [[ "$preparation" == complete ]]; then
       # Native resume can retain s1. A later process must get its own action
       # and evidence, while a duplicate of launch-a remains suppressed.
