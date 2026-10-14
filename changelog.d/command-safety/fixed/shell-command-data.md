@@ -1,1 +1,1 @@
-- Shell command checks allow Python and cat data bodies, quoted arguments and env launchers while retaining dump refusals through launchers and compound input. Executable shell input conservatively refuses known environment descriptors and checks attached registered bodies before child replacements. Escaped named-variable input without environment descriptors remains allowed.
+- Permit one local quoted heredoc as data for direct cat or python3 commands while retaining the existing checks for executable commands and environment reads.
