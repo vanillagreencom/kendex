@@ -6,8 +6,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/lanes-fixture.sh"
 source "$TEST_DIR/lib/growth-state.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf -- "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "lanes-cache: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lanes-cache: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lanes-cache: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 LANES="$TEST_DIR/../scripts/lanes"
 PROVIDER="$TEST_DIR/fixtures/lane-host"
 new_home cache
@@ -137,6 +139,13 @@ cache_only_windows() { # empty|figure
       end' "$TMP_ROOT/out"
 }
 
+cache_only_assert_row() { # NAME EXPECTED
+  local windows=empty
+  assert_eq "$(cache_only_observed)" "$2 fetched=none tokens=0 providers=0" "cache-only $1 uses only its record"
+  [[ "$2" != *:10 ]] || windows=figure
+  assert_eq "$(cache_only_windows "$windows")" true "cache-only $1 reports every window, reset and headroom"
+}
+
 for row in 'fresh||ok:30:number:10' 'stale||unreachable:null:null:null' \
   'widened|--max-age 900|ok:30:number:10' 'ttl-zero||unreachable:null:null:null' \
   'reset||unreachable:null:null:null' 'refused||refused:null:number:null' \
@@ -187,10 +196,36 @@ for row in 'fresh||ok:30:number:10' 'stale||unreachable:null:null:null' \
   : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
   # args contains only the literal --max-age row above.
   cache_run "$state" "$policy" list --cache-only --json $args > "$TMP_ROOT/out"
-  assert_eq "$(cache_only_observed)" "$expected fetched=none tokens=0 providers=0" "cache-only $name uses only its record"
-  windows=empty; [[ "$expected" != *:10 ]] || windows=figure
-  assert_eq "$(cache_only_windows "$windows")" true "cache-only $name reports every window, reset and headroom"
+  cache_only_assert_row "$name" "$expected"
   [[ -z "$code" ]] || assert_contains "$(jq -r '.[] | select(.alias == "claude") | .detail' "$TMP_ROOT/out")" "HTTP $code" "cache-only $name preserves the refusal cause"
+done
+make_lane "$H" claude
+
+# Each normal row selects its own directory. Alternating real writers at one
+# path proves the same reader assertions reject another case's record.
+shared_state="$TMP_ROOT/cache-only-control-shared-record"
+cache_run "$shared_state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+for row in 'fresh|expired:null:number:null|token' 'fresh-token-403|ok:30:number:10|figure'; do
+  IFS='|' read -r name other_expected producer <<<"$row"
+  expected='ok:30:number:10'
+  if [[ "$producer" == token ]]; then
+    make_lane "$H" claude -3600
+    TOKEN_STATUS=403 cache_run "$shared_state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  else
+    expected='expired:null:number:null'
+    make_lane "$H" claude
+    cache_run "$shared_state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  fi
+  stage_cache_wall "$shared_state"
+  : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
+  cache_run "$shared_state" '' list --cache-only --json > "$TMP_ROOT/out"
+  assert_eq "$(cache_only_observed)" "$other_expected fetched=none tokens=0 providers=0" \
+    "shared-record control reaches the other case's $producer record"
+  rc=0
+  ( FAIL=0; cache_only_assert_row "$name" "$expected"; [[ "$FAIL" == 0 ]] ) \
+    > "$TMP_ROOT/cache-only-control-shared-$name.log" || rc=$?
+  assert_eq "$rc" 1 "cache-only $name reader rows reject the shared-record control" \
+    "$TMP_ROOT/cache-only-control-shared-$name.log"
 done
 make_lane "$H" claude
 
