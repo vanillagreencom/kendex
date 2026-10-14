@@ -2396,7 +2396,7 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
   "control: a read that takes any mode names the ci run"
 
 # --- The command's own preview resolves CI selection before launch -----------
-# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback
+# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback|PR order
 SELECTION_ROWS=(
   "a full all selection uses required PR CI|full|yes|all|rules|ci||all|no|absent|0"
   "a range all selection uses required PR CI|range|yes|all|rules|ci||all|no|absent|0"
@@ -2424,7 +2424,8 @@ SELECTION_ROWS=(
   "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no|full|0"
   "an unknown selection preserves local execution|full|yes|unknown|rules|full||unreported|no|full|0"
   "an all selection without required CI retains local execution|full|yes|all|unrequired|full||all|no|full|0|context-unrequired"
-  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||all|no|full|0|class-uncovered"
+  "an all selection CI does not cover runs scoped suites|full|yes|all-render|rules|full|true|subset|yes|absent|0|class-uncovered"
+  "a push-first pre-open uncovered all selection runs scoped suites|full|yes|all-render|pr-no-pr|full|true|subset|yes|absent|0|class-uncovered|push-first"
   "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-no-pr|full|true|subset|yes|absent|0|pr-not-open"
   "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-no-pr|range|true|subset|yes|absent|0|pr-not-open"
   "a closed PR full all selection runs scoped suites|full|yes|all|pr-closed|full|true|subset|yes|absent|0|pr-not-open"
@@ -2446,13 +2447,14 @@ SELECTION_ROWS=(
 )
 selection_rows() { # SCRIPT [LABEL]
   local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback expected_rc args n answer measured
-  local initial_fail="$FAIL"
+  local initial_fail="$FAIL" order
   n=0
   for row in "${SELECTION_ROWS[@]}"; do
-    IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc _ <<<"$row"
+    IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc _ order <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "proj-selection-$n" CI)"
+    [[ -z "$order" ]] || printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$proj/kendex.settings.toml"
     cat > "$proj/local-command" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >> local-launch
@@ -2535,7 +2537,7 @@ SH
 }
 SELECTION_GOT="$(selection_rows "$CI_SCRIPT")"
 for row in "${SELECTION_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base want_launch want_rc want_fallback <<<"$row"
+  IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base want_launch want_rc want_fallback _ <<<"$row"
   assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$SELECTION_GOT")" \
     "$want_mode|$want_scoped|$want_selection|$want_base|$want_launch|$want_rc|$want_fallback" "$label"
 done
@@ -2567,14 +2569,20 @@ selection_control 'inventing a selector when unset turns compatibility red' \
   '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD ""' '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "./selection"' \
   'an unset selector preserves local execution'
 selection_control 'omitting the pre-open scoped route turns its receipt red' \
-  '"$ci_fallback" == pr-not-open &&' '"$ci_fallback" == never &&' \
+  '"$ci_fallback" == pr-not-open ||' '"$ci_fallback" == never ||' \
   "a pre-open full all selection runs the selector's scoped suites"
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" \
+  '( "$ci_fallback" == pr-not-open || "$ci_fallback" == class-uncovered )' '"$ci_fallback" == pr-not-open'
+selection_base_got="$(selection_rows "$CI_SCRIPT.mutant" 'a push-first pre-open uncovered all selection runs scoped suites')"
+assert_eq "${selection_base_got#*$'\t'}" 'full||all|no|full|0|class-uncovered' \
+  'control: the base condition runs DEV_VALIDATE_CMD instead of scoped selection'
 selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
   'standard) return 0 ;;' 'standard|render) return 0 ;;' \
-  'an all selection CI does not cover retains local execution'
+  'an all selection CI does not cover runs scoped suites'
 selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
   'KEN-3495 standard fallback all range uses required PR CI'
@@ -2583,12 +2591,12 @@ selection_control 'rejecting a conservative standard fallback turns explicit CI 
   'a ci standard fallback all selection uses required PR CI'
 selection_control 'omitting the automatic class fallback turns its record red' \
   $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n' '' \
-  'an all selection CI does not cover retains local execution'
+  'an all selection CI does not cover runs scoped suites'
 for row in "${SELECTION_ROWS[@]}"; do
   IFS='|' read -r label requested _ selected _ _ _ _ _ want_launch want_rc _ <<<"$row"
   if [[ "$want_rc" == 1 && "$selected" == all ]]; then
     selection_control "treating an unread PR as pre-open turns $label red" \
-      '"$ci_fallback" == pr-not-open &&' '"$ci_fallback" == base-unresolved &&' "$label"
+      '"$ci_fallback" == pr-not-open ||' '"$ci_fallback" == base-unresolved ||' "$label"
   fi
   [[ "$want_launch" == absent && "$requested" != ci ]] || continue
   selection_control "launching the original command before preview turns $label red" \
