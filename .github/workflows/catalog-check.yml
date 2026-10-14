@@ -66,12 +66,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: catalog
       # inputs.ref selects the CI scripts. install-latest.sh selects the
       # latest released engine.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: vanillagreencom/kendex
           ref: ${{ inputs.ref }}
@@ -98,7 +98,7 @@ jobs:
           esac
       - name: Check out the prior catalog
         if: steps.prior.outputs.sha != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.prior.outputs.sha }}
           path: prior

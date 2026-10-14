@@ -228,7 +228,7 @@ patch_upload_order() { # WORKFLOW — sequence of the selector and patch upload
 }
 check "patch upload follows actual PR selection" 'select
 upload' "$(patch_upload_order "$WORKFLOW")"
-plant "$WORKFLOW" '        uses: actions/upload-artifact@v4' '        uses: actions/download-artifact@v4' "$TMP/no-patch-upload.yml" changes
+plant "$WORKFLOW" 'uses: actions/upload-artifact@' 'uses: actions/download-artifact@' "$TMP/no-patch-upload.yml" changes
 check "must-fail: no patch upload loses recorded coverage" select "$(patch_upload_order "$TMP/no-patch-upload.yml")"
 
 # A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
@@ -995,14 +995,14 @@ done
 concurrency_rows=0
 while IFS='|' read -r event group cancel; do
   concurrency_rows=$((concurrency_rows + 1))
-  concurrency_ctx="$(jq -cn --arg e "$event" '{github: {event_name: $e, run_id: 7}}
+  concurrency_ctx="$(jq -cn --arg e "$event" '{github: {workflow: "fixture-ci", event_name: $e, run_id: 7}}
     | if $e == "pull_request" then .github.event = {pull_request: {number: 42}} else . end')"
   check "a $event run's concurrency group and cancel" "$group $cancel" \
     "$(concurrency_value "$WORKFLOW" group "$concurrency_ctx") $(concurrency_value "$WORKFLOW" cancel-in-progress "$concurrency_ctx")"
 done <<'ROWS'
-pull_request|skill-tests-pull_request-42|true
-merge_group|skill-tests-merge_group-7|false
-push|skill-tests-push-7|false
+pull_request|fixture-ci-pull_request-42|true
+merge_group|fixture-ci-merge_group-7|false
+push|fixture-ci-push-7|false
 ROWS
 [ "$concurrency_rows" -ge 3 ] || { echo "the concurrency table read $concurrency_rows rows" >&2; exit 1; }
 plant "$WORKFLOW" "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" "cancel-in-progress: true" \

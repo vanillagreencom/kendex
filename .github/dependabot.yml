@@ -1,14 +1,19 @@
-# Dependabot security updates only. The overseer takes each security fix pull
-# request over through a lane (skills/orch/references/oversee-events.md
-# § Event kinds, security-alert). Version upgrades stay dep-radar's: pinned
+# Dependabot handles security updates and weekly action-pin version updates.
+# The overseer takes each security fix pull request over through a lane
+# (skills/orch/references/oversee-events.md
+# § Event kinds, security-alert). Other version upgrades stay dep-radar's: pinned
 # binaries, vendored forks and SDK majors with fallout.
 #
-# open-pull-requests-limit 0 turns version updates off, and the schedule each
-# entry must carry then opens nothing. Each group applies to security updates
+# For npm and Cargo, open-pull-requests-limit 0 turns version updates off.
+# Their required schedules open nothing. Each group applies to security updates
 # alone and, with no group-by, opens one pull request per manifest directory:
 # ui, each pi-extension, and the Cargo workspace.
 version: 2
 updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
   - package-ecosystem: npm
     directories:
       - /ui

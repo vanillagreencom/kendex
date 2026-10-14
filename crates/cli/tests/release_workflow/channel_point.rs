@@ -246,7 +246,7 @@ fn the_workflow_publishes_an_immutable_main_release_before_the_pointer() {
         assert!(classify.contains(part), "immutable tag omits {part}");
     }
     assert!(!classify.contains("release_ref=rolling-main"));
-    let publish = job_declaring(&release, "uses: softprops/action-gh-release@v2");
+    let publish = job_declaring(&release, "uses: softprops/action-gh-release@");
     let point = job_declaring(&release, "name: Point the rolling channel at this build");
     assert_ne!(publish, point);
     assert!(

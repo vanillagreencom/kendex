@@ -66,7 +66,7 @@ jobs:
       source-commit: ${{ steps.source.outputs.source-commit }}
       release-tag: ${{ steps.source.outputs.release-tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -169,19 +169,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source-commit }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: matrix.target == 'x86_64-apple-darwin'
         with:
           key: ${{ matrix.target }}
           save-if: ${{ needs.prepare.outputs.mode == 'main' }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Record the main build commit
@@ -378,7 +379,7 @@ jobs:
             version=${built##* }
           fi
           tools/release-digests "${{ matrix.target }}" "$version" dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: assets-${{ matrix.target }}
           path: dist/*
@@ -413,11 +414,11 @@ jobs:
       channel: ${{ steps.tag.outputs.channel }}
       main-build: ${{ steps.tag.outputs.main-build }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -627,7 +628,7 @@ jobs:
       # testing the update path end to end is the whole reason a tag like
       # v1.0.0-rc2 is cut. Publishing it reaches nobody who is not already
       # on a candidate — GitHub resolves "latest" past every pre-release.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/*
           tag_name: ${{ steps.tag.outputs.release-ref }}
@@ -646,7 +647,7 @@ jobs:
         run: gh workflow run publish-aur.yml --repo "$GITHUB_REPOSITORY" --ref main
       # The channel job writes only feed.json onto the fixed release. The
       # Linux CLI authenticates a main pointer and orders candidate versions.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manifests
           path: |
@@ -676,11 +677,11 @@ jobs:
       group: release-channel-${{ needs.publish.outputs.channel }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: manifests
           path: dist

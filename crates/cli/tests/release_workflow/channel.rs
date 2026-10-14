@@ -159,7 +159,7 @@ fn publish_inputs(ref_name: &str) -> (bool, bool) {
     let (code, prerelease, _) = classify(ref_name);
     assert_eq!(code, 0, "{ref_name} did not classify");
     let workflow = workflow();
-    let publish = step(&workflow, "uses: softprops/action-gh-release@v2");
+    let publish = step(&workflow, "uses: softprops/action-gh-release@");
     let input = |name: &str| {
         let line = publish
             .iter()
@@ -511,7 +511,7 @@ fn burst(group: Option<&str>, tags: usize) -> Vec<bool> {
 #[test]
 fn overlapping_tags_each_publish_their_release() {
     let workflow = workflow();
-    let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
+    let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@");
     let group = concurrency_value(&job(&workflow, publishing), "group", 4);
     assert!(
         group.is_some_and(|value| value.contains("github.run_id")),
@@ -539,7 +539,7 @@ fn overlapping_tags_each_publish_their_release() {
 #[test]
 fn later_pushes_never_cancel_running_builds_or_publication() {
     let workflow = workflow();
-    let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
+    let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@");
     let channel = job_declaring(&workflow, "name: Point the rolling channel at this build");
     let check = |workflow: &str| {
         for name in ["build", publishing, channel] {

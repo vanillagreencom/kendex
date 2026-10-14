@@ -128,7 +128,7 @@ env:
 # group or a push to main keys its group to its own run and cancels nothing:
 # cancelling a queue run would eject its entry.
 concurrency:
-  group: skill-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -152,6 +152,7 @@ jobs:
   # same on either event.
   changes:
     name: Classify the diff
+    # Main pushes run the complete catalog and CLI checks without classification.
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     # `actions: read` is what the action's proof reads this workflow's runs
@@ -186,6 +187,7 @@ jobs:
     env:
       # The event and its two endpoints, spelled once: the render-reach step
       # and the classify step must judge the same range.
+      # This job excludes pushes, so it needs no push endpoint fallback.
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
@@ -202,17 +204,17 @@ jobs:
       # `classifier` and `subject` are siblings under the root checkout rather
       # than nested inside the judged tree, so neither checkout writes into
       # the other.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: the classifier, from the default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: classifier
           persist-credentials: false
       - name: the tree under judgement
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           path: subject
@@ -223,6 +225,8 @@ jobs:
       # verdict the install and the refresh below would buy nothing. Read with
       # the default branch's copy, as the class is.
       - id: render-reach
+        # The source repository's harness inventory is available on the default
+        # branch. A failed inventory read must fail classification and run lanes.
         run: >-
           classifier/skills/harness-ci/scripts/harness-only
           --mode harness --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
@@ -300,7 +304,7 @@ jobs:
         run: tools/ci-job-set --event-parity
       - name: the pull request's macOS patch proof
         if: env.EVENT == 'pull_request' && steps.classify.outputs.record_dir != '' && steps.classify.outputs.patch_id != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         continue-on-error: true
         with:
           name: change-class-macos-proof-${{ steps.classify.outputs.patch_id }}
@@ -325,7 +329,7 @@ jobs:
       # The whole history: the secrets scan judges every commit the pull
       # request adds against that commit's own parents, which a shallow clone
       # has not fetched.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: candidate
           persist-credentials: false
@@ -367,15 +371,26 @@ jobs:
       # pull request adds, HEAD^1 of the merge commit being the base. gitleaks
       # installs in the same step, so the scan never runs without it, and the
       # notice records the seconds the step added, the install included.
+      # Unlike the source checkers above, credentials must use trusted code and
+      # policy: a pull request must not disable the scanner that judges it.
+      # This content-check job runs on every pull request, and CI holds its result.
+      # This catalog repository keeps source scripts under skills/, not .agents/.
+      - name: the credential guards, from the default branch
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: guards
+          persist-credentials: false
       - name: secrets (credential scan of the pull request diff)
         if: always() && github.event_name == 'pull_request'
         working-directory: candidate
         run: |
           start=$SECONDS
           status=0
-          skills/commit-guards/scripts/install-gitleaks "$RUNNER_TEMP/gitleaks" || status=$?
+          "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks" || status=$?
           if [ "$status" -eq 0 ]; then
-            PATH="$RUNNER_TEMP/gitleaks:$PATH" skills/commit-guards/scripts/secrets --against HEAD^1 || status=$?
+            PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/secrets" --against HEAD^1 --policy-root "$GITHUB_WORKSPACE/guards" || status=$?
           fi
           echo "::notice title=secrets scan::$((SECONDS - start)) seconds, gitleaks install included"
           exit "$status"
@@ -536,7 +551,7 @@ jobs:
           echo "RUN_ALL_JOB_SECS=$((CEILING_MINUTES * 60))" >>"$GITHUB_ENV"
           echo "RUN_ALL_DEADLINE_EPOCH=$((started + CEILING_MINUTES * 60 - 60))" >>"$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -694,9 +709,11 @@ jobs:
       # `tier-model`, and `refresh`, for refresh-consumer's held-render
       # rows. The macOS legs keep the binary-dependent skips. A pull request
       # restores the cache and never saves it.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+        with:
+          toolchain: stable
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         with:
           key: change-class-kendex
@@ -846,7 +863,7 @@ jobs:
       # 2.1.287, the first release with the callbacks the plugin uses, and the
       # npm package fetches its platform binary at install, so install scripts
       # run; the version check fails here on a launcher without one.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: matrix.shard == 'orch-rest'
         with:
           node-version: 22.19.0
@@ -1309,7 +1326,7 @@ jobs:
       # ---- shard: node — every node and bun suite here but the bridge's,
       # which the shard below runs -----------------------------------------
       # setup-node also serves the `pi-claude-bridge` shard's two steps below.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
         with:
           node-version: 22.19.0
@@ -1327,7 +1344,7 @@ jobs:
         if: matrix.shard == 'node'
         run: node --test pi-extensions/package-policy.test.mjs
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: matrix.shard == 'node'
         with:
           bun-version: 1.3.14
@@ -1591,8 +1608,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.19.0
       # `npm ci`, never `npm install`: a suite proving the app against
@@ -1630,7 +1647,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -1650,7 +1667,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -1701,8 +1718,10 @@ jobs:
       RUSTFLAGS: -C debuginfo=0
       CARGO_INCREMENTAL: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+        with:
+          toolchain: stable
       # THE load-bearing crate guard, the cargo twin of the shard guard above:
       # a workspace member the matrix does not name compiles under the lint
       # job's --workspace and is tested nowhere, while both required contexts
@@ -1727,7 +1746,7 @@ jobs:
       # commit made without the armed hook merges.
       - name: every test file is compiled by a harness
         run: tools/test-roster
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.crate }}
           save-if: ${{ github.event_name != 'pull_request' }}
@@ -1743,7 +1762,7 @@ jobs:
           sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y "${pkgs[@]}"
       # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
       # hook declared in kendex.toml firing under Pi — and skips without bun.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: matrix.crate == 'kendex-core'
         with:
           bun-version: 1.3.14
@@ -1807,8 +1826,10 @@ jobs:
     # The whole-crate jobs retain their compile + test + setup allowance.
     timeout-minutes: ${{ matrix.leg == 'render-lint' && 33 || matrix.leg == 'rest' && 38 || matrix.leg == 'verify-lock' && 37 || matrix.leg == 'apply-locked' && 38 || 40 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+        with:
+          toolchain: stable
       # The same guard as the Linux shard's, on this file's own crate lines.
       - name: crate matrix agrees with the workspace members
         run: |
@@ -1822,7 +1843,7 @@ jobs:
             declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
             diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
           done <<<"$lines"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # The leg is in the key because the kendex-cli legs compile
           # different target sets and would otherwise race one entry.
@@ -1830,7 +1851,7 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       # pi_carrier.rs is a unix test, so with bun installed it runs here too
       # instead of skipping on the platform the app ships on.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: matrix.crate == 'kendex-core'
         with:
           bun-version: 1.3.14
@@ -1990,11 +2011,12 @@ jobs:
       RUSTFLAGS: -C debuginfo=0
       CARGO_INCREMENTAL: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
+          toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: lint
           save-if: ${{ github.event_name != 'pull_request' }}
@@ -2030,9 +2052,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
       # rust-toolchain.toml overrides the toolchain the action installed, so
@@ -2058,9 +2082,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: compile
@@ -2110,12 +2136,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: System dependencies for the keychain store
         run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -2158,7 +2186,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      # This source repository proves tools/ci-aggregate on its own pull request.
+      # Review holds this candidate helper; consumers use the default-branch helper.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: every needed job succeeded

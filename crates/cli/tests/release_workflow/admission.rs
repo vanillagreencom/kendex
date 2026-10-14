@@ -1456,13 +1456,13 @@ fn check_admission_declarations(release: &str, aur: &str) {
         ("channel", "${{ github.sha }}"),
     ] {
         let owner = job(release, name).join("\n");
-        let checkout = step(&owner, "uses: actions/checkout@v4");
+        let checkout = step(&owner, "uses: actions/checkout@");
         let active_ref = checkout
             .iter()
             .find_map(|line| line.strip_prefix("          ref: "));
         assert_eq!(active_ref, Some(expected), "{name}");
     }
-    let publish = step(release, "uses: softprops/action-gh-release@v2");
+    let publish = step(release, "uses: softprops/action-gh-release@");
     assert!(
         publish
             .iter()
