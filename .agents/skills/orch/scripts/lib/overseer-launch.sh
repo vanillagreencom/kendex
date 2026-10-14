@@ -727,10 +727,10 @@ OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
     and ((.pane // .session // "") == $session)
     and .server_start == null;
   def ol_owns($server; $start; $session): ol_names($server; $start; $session) or ol_unstarted($server; $session);
-  def ol_native_match($harness; $home; $session): $session != ""
+  def ol_native_match($harness; $home; $session; $native): $session != ""
     and ((.harness // "") == "" or .harness == $harness)
     and ((.home // "") == "" or $home == "" or .home == $home)
-    and ((.session_id // "") == "" or .session_id == $session);'
+    and ((.session_id // "") as $bound | if $bound != "" then $bound == $session else $native.harness == $harness and ($native.session_id // "") == $session end);'
 
 # ol_session_start SERVER SESSION — the start ol_names judges SESSION on
 # SERVER by: tmux_server_start's for a pane. Returns 1, printing nothing, where
@@ -1250,23 +1250,55 @@ ol_record_current() { # SERVER PANE
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
 }
 
+# Initial native evidence from the pane's latest SessionStart, whose writer
+# excludes nested harnesses. Registration keeps that row, so a resumed session
+# can bind on its next hook. Without a row, only the existing top-level ancestry
+# proof can vouch for the caller's payload. Missing or unreadable evidence
+# establishes nothing; a manual direct-exec pane has no such ancestry proof.
+ol_native_evidence() { # DIR SERVER PANE HARNESS SESSION_ID [RECORD_SNAPSHOT]
+  local file pane_pid bound
+  bound="$(jq -r '.[0].session_id // ""' <<<"${6:-[null]}")" || return 1
+  if [[ -n "$bound" ]]; then
+    printf '%s\n' null
+    return 0
+  fi
+  file="$(session_rows_overseer_file "$1" "$2" "$3")" || return 1
+  session_rows_last "$file" SessionStart || return 1
+  if [[ -n "$SESSION_ROW" ]]; then
+    printf '%s\n' "$SESSION_ROW"
+    return 0
+  fi
+  # The ancestry owner counts shells through lane-state's shared definition.
+  # Without that dependency a missing function would count this shell as a harness.
+  source "${BASH_SOURCE[0]%/*}/lane-state.sh" || return 1
+  pane_pid="$(tmux display-message -p -t "$3" '#{pane_pid}' 2>/dev/null)" || return 1
+  session_rows_top_level "$pane_pid" || return 1
+  jq -cn --arg harness "$4" --arg session "${5:-}" '{harness:$harness, session_id:$session}'
+}
+
 # ol_record_heal SERVER PANE START HARNESS HOME SESSION_ID — the record naming the session
 # SERVER PANE on the server started at START, bound or unstarted (ol_owns),
 # given each fact it lacks and the session itself knows: START
 # as `server_start`, HARNESS as `harness`, and HOME, the directory the harness
 # variable of that session carries, as `home`, and its native SESSION_ID.
 # ol_native_match owns the recorded harness, readable home and native id rule.
+# A missing binding requires ol_native_evidence, never the first caller alone.
 # A missing native id or a record that no longer matches refuses the update.
+# The optional record snapshot is the hook's existing read. It avoids evidence
+# probes for a known binding. The update still checks the current record, so
+# a binding reset since that snapshot refuses instead of trusting the payload.
 # A fact the record already names stays. The
 # lane-mail-check hook runs it from the overseer's own turn end and tool calls,
 # so a record that lost the facts the transcript binding reads is filled from
 # the session they describe instead of leaving its context unread. An empty
 # HARNESS or HOME writes nothing for that field. Returns 1 with the writer's
 # words in DEP_ERR.
-ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID
+ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID [RECORD_SNAPSHOT]
+  local native
+  native="$(ol_native_evidence "$PWD" "$1" "$2" "$4" "${6:-}" "${7:-[null]}")" || native=null
   "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
-    --arg harness "$4" --arg home "$5" --arg session "${6:-}" "$OL_JQ_DEFS"'
-      if (.overseer | ol_owns($server; $start; $pane) and ol_native_match($harness; $home; $session))
+    --arg harness "$4" --arg home "$5" --arg session "${6:-}" --argjson native "$native" "$OL_JQ_DEFS"'
+      if (.overseer | ol_owns($server; $start; $pane) and ol_native_match($harness; $home; $session; $native))
       then .overseer |= (.server_start = ($start | tonumber)
         | if (.harness // "") == "" and $harness != "" then .harness = $harness else . end
         | if (.home // "") == "" and $home != "" then .home = $home else . end

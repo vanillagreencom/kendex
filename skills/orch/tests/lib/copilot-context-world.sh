@@ -41,6 +41,12 @@ export async function joinSession() {
 SDK
   printf '{"type":"session.start","data":{"sessionId":"s1"}}\n' > "$cop_home/session-state/s1/events.jsonl"
   payload="$(jq -nc --arg cwd "$root" '{sessionId:"s1",cwd:$cwd}')" || return 1
+  # This SDK fixture models an already-bound s1 and tests reader installation,
+  # not process ancestry or initial native authorization.
+  if [[ -f "$root/tmp/workflow-state-oversee.json" ]]; then
+    (cd -- "$root" && ORCH_STATE_DIR="$root/tmp" "$scripts/workflow-state" update oversee \
+      'if (.overseer | type) == "object" then .overseer.session_id = "s1" else . end' >/dev/null) || return 1
+  fi
   FLOW_START="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
     ORCH_STATE_DIR="$root/tmp" "$@" bash "$root/.github/hooks/lane-mail-start.sh" <<<"$payload")" || return 1
   : > "$root/tmp/flow.log"

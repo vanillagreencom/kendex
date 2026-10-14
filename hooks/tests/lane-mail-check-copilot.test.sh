@@ -624,6 +624,7 @@ copilot_child() { # NAME ARM [HOOK] [RECORD_KIND] [NATIVE_LIB]
   judge_says "$BELOW_MARK_LINE"
   if [ "${4:-full}" = harness-only ]; then
     (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee '.overseer.harness = "pi" | .overseer.home = null | del(.overseer.session_id)' >/dev/null)
+    record_native_start copilot s1
   else
     bind_overseer claude "$OVERSEER_HOME_DIR" parent
   fi
@@ -681,7 +682,7 @@ for child_arm in deliver stop usage start; do
   assert_eq "$CHILD_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
     "$child_arm: the recorded harness alone refuses a child before the first session binding"
   assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-    'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=oversee register|1' \
+    'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=oversee register after=top-level-SessionStart|1' \
     'the harness-only refusal gives one stderr diagnostic'
 done
 wake_mutant native-harness-control '    and ((.harness // "") == "" or .harness == $harness)' '    and true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
@@ -728,12 +729,13 @@ CALL_ENV=("HOME=$COP_HOME")
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unread=$(overseer_unread 'For the named session.')" "RC=0 stdout= unread=0" \
   "and marks it read, so its next prompt is handed nothing"
 
-# The overseer's tool-call judgement is the lead's alone. A Copilot call in
-# the named pane whose session no sessionStart recorded, a custom subagent's
-# as Copilot CLI 1.0.88 was measured sending it, is judged on nothing: it is
-# handed nothing and writes no context record for the overseer.
+# The overseer's tool-call judgement requires the Copilot lead cache even
+# when the native ID matches. A missing cache leaves that caller unknown,
+# judged on nothing and writing no overseer context record.
 unknown_tool_rows() { # NAME [JUDGE]
   new_copilot_named "$1" "${2:-$HOOK}"
+  # Isolate the missing lead-cache rule from a native-ID mismatch.
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee '.overseer.session_id = "c1"' >/dev/null)
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   CALL_ENV=("${COP_NAMED_ENV[@]}")
   COP_SESSION=c1

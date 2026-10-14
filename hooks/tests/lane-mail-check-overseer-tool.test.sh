@@ -189,6 +189,7 @@ assert_eq "RC=$RC context=$(context_line) start=$(recorded_field server_start) h
 # and is not told again while that gap stands; a clean reading clears it.
 told_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   local first second third
   overseer_tool "$TRANSCRIPT" s2
@@ -239,6 +240,7 @@ tool_context() {
 # not handed a standing gap again for it.
 other_pane_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   local first other
   overseer_tool "$TRANSCRIPT" s2
@@ -261,6 +263,7 @@ assert_eq "${OTHER#* second=}" "PostToolUse lane-mail-check: transcript-unowned=
 # in one context: a gap told once, and a reached mark, each above the note.
 mail_rides_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   peer_send 'Gap and note.'
   overseer_tool "$TRANSCRIPT" s2
@@ -287,6 +290,7 @@ assert_eq "$RIDES" \
 # and the gap is then told, so the next call hands nothing.
 told_refused_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
+  bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   peer_send 'Held by a refusal.'
   watch_stub
