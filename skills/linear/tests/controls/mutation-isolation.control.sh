@@ -6,8 +6,8 @@
 # 1. The check that a mutation reddened the assertion it named.
 control_expect "the misnamed report names the mutation and the assertion"
 control_replace tests/must-fail-controls.sh 1 \
-	'			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then' \
-	'			if false; then'
+	'				if [[ "$line" == "FAIL: ${wanted[i]}" ]]; then' \
+	'				if false; then'
 
 # 2. The check that no two mutations name one assertion.
 control_expect "the shared report names the assertion"
@@ -67,8 +67,8 @@ control_replace tests/must-fail-controls.sh 1 \
 #     made.
 control_expect "the prefix report names the assertion the mutation did not redden"
 control_replace tests/must-fail-controls.sh 1 \
-	'			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then' \
-	'			if ! grep -qF -- "$want" "$WORK/$stem.fails.$k"; then'
+	'				if [[ "$line" == "FAIL: ${wanted[i]}" ]]; then' \
+	'				if [[ "$line" == "FAIL: ${wanted[i]}"* ]]; then'
 
 # 11. The check for a control file. Without it the run reaches the control's
 #     source and dies there, a different verdict.

@@ -271,7 +271,8 @@ flush() {
 }
 
 # timed_suite ROOT SUITE OUT [WANTED]: SUITE run under the cap, with its
-# output in OUT. Mutations stop once every name in WANTED has reddened:
+# output in OUT and unmatched names returned in WANTED. Mutations stop once
+# every name in WANTED has reddened:
 # later suite work cannot change that evidence and can exhaust the CI bound.
 # In the background for the same
 # reason as run_job's body: a job stopped mid-run passes the TERM to
@@ -312,6 +313,13 @@ timed_suite() {
 	wait "$pid"
 	rc=$?
 	trap - TERM
+	if [[ "$#" -eq 4 ]]; then
+		if [[ "$remaining" -gt 0 ]]; then
+			printf '%s\n' "${wanted[@]}" >"$4" || die "cannot record unmatched assertions for $2"
+		else
+			: >"$4" || die "cannot record unmatched assertions for $2"
+		fi
+	fi
 	[[ "$stopped" -eq 0 ]] || return 1
 	return "$rc"
 }
@@ -351,11 +359,6 @@ apply_control() {
 # against the assertion it named rather than against the set being non-empty.
 fail_names() {
 	printf '%s\n' "$1" | sed -n 's/^FAIL: //p'
-}
-
-# fail_set OUTPUT FILE — fail_names, sorted and deduplicated, into FILE.
-fail_set() {
-	fail_names "$1" | LC_ALL=C sort -u >"$2"
 }
 
 # prepare_one SUITE STEM — a control's checks before its mutations run.
@@ -514,15 +517,12 @@ mutate_one() {
 		# instead, or on nothing the suite could name, fails here alike;
 		# a mutation with no assertion of its own to claim failed
 		# earlier, where the expectations were read.
-		fail_set "$out" "$WORK/$stem.fails.$k"
 		while IFS= read -r want; do
-			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then
-				printf 'WRONG    %-52s mutation %d did not redden: %s\n' \
-					"$suite" "$k" "$want"
-				printf '%s\n' "$out" | sed 's/^/         | /'
-				return 1
-			fi
-		done < <(grep "^$k	" "$CONTROL_EXPECT_FILE" | cut -f2-)
+			printf 'WRONG    %-52s mutation %d did not redden: %s\n' \
+				"$suite" "$k" "$want"
+			printf '%s\n' "$out" | sed 's/^/         | /'
+			return 1
+		done <"$root.wanted"
 	done
 }
 
