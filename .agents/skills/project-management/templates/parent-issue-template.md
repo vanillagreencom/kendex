@@ -1,6 +1,6 @@
 # Parent Issue Template
 
-A parent with children is a **container by default**: never orchestrated directly, never its own PR. Each child ships as its own PR and the container closes last.
+A parent with children is a **container by default**: never orchestrated directly, never its own PR. Each child ships as its own PR, and the container closes when its holder reads the shared outcome at its source.
 
 A **single-PR bundle** — one session, one PR covering every child — is the explicit opt-in exception, marked with `(one PR)` in the parent title. Promoting an existing issue to single-PR parent means retitling it. Prefer a leaf issue with an internal checklist over a single-PR bundle.
 

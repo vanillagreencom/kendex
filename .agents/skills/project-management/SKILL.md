@@ -80,6 +80,13 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
 
 ## Disposition
 
+- **Judge the approach.** At every filing and launch read, judge the approach against the item's own outcome sentence:
+  1. Why does this approach produce the stated outcome, and what source evidence will show it? An outcome sentence plus a measurement does not show the work helps.
+  2. Can we remove or simplify something instead of adding this? Name the existing owner or the simpler alternative and why it meets or fails the same need. Naming an owner alone is no answer. A new requirement is not forced into a removal.
+  3. Is this a workaround of a limit, a rule or a tool? If yes, does the limit or rule still have a reason? Correct or remove a stale rule in its owning place. Fix the cause. Escalate only a boundary the owner reserves. Apply [orch SKILL.md § Skill Rules](../orch/SKILL.md#skill-rules) and code-quality SKILL.md § Correctness and § Over-Engineering.
+  - Decide go, change or drop. Put the short cause-and-effect answer in the item's existing outcome, evidence or ruling text.
+  - Repair an item with a valid need and weak text on the same item from its source request. Keep its date. Drop it only when the need is absent, duplicated, satisfied or superseded.
+
 - **Creation bar.** File an issue only when all three hold:
   - it changes what a user or operator experiences, or blocks work that does;
   - no open issue, active branch, or one-line fix already covers it;
