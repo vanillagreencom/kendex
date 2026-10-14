@@ -971,7 +971,9 @@ recordfail_stub "$RECFAIL"
 OVERSEE_BIN="$RECFAIL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(keyed record-unwritten "$OUT" | sed -n 1p)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
   "1|oversee: record-unwritten field=overseer step=write|0|$FIRST_PRIOR" \
-  "a first launch whose record write the state refuses opens no overseer and keeps the prior record"# A record from an earlier tmux server naming a pane id this server reuses is
+  "a first launch whose record write the state refuses opens no overseer and keeps the prior record"
+
+# A record from an earlier tmux server naming a pane id this server reuses is
 # no live overseer: the launch opens the next generation over it, and a
 # --predecessor naming that pane is refused, the pane left running. One row
 # per way the record tells that server from this one: another server pid, and
