@@ -780,13 +780,14 @@ Symlink entries that shadow tracked content:
 
 info/exclude entries:
   The ignore entry setup writes for each symlinked path goes into the COMMON
-  git dir's info/exclude, which every checkout reads. New entries use '/<path>'.
+  git dir's info/exclude, which every checkout reads. Entries use '/<path>'.
   The leading slash limits the entry to the repository root. When the path
   holds tracked content, setup follows the entry with '!/<path>/' (a trailing-slash
   pattern matches a real directory but NOT a symlink pointing at one).
   Runtime-only paths keep the plain entry. The shape is re-evaluated on every
-  create/fix-links against both indexes, either one enough. Existing bare
-  patterns and other rules are preserved.
+  create/fix-links against both indexes, either one enough. Exact bare rules
+  and bare negations for configured WORKTREE_SYMLINKS entries are anchored
+  before a missing source or a healthy link can skip setup. Other rules stay.
 
 Git-hook auto-repair:
   create and fix-links install shared post-checkout, post-merge, and

@@ -49,7 +49,6 @@ MAIN=""
 WT=""
 ENTRY=""
 CHECK_PERMISSIONS=false
-SOURCE_ABSENT=false
 
 make_repo() {
   mkdir -p "$MAIN"
@@ -115,7 +114,6 @@ step() {
     bare-line) printf '%s\n' "$ENTRY" >"$MAIN/.git/info/exclude" ;;
     source-absent)
       must mv -- "$MAIN/$ENTRY" "$ROOT/moved-source"
-      SOURCE_ABSENT=true
       ;;
     foreign-patterns)
       printf '%s\n' '**/.claude/*' 'nested/runtime/ignored' '/runtime/cache' '!runtime/sub/' >>"$MAIN/.git/info/exclude"
@@ -164,7 +162,6 @@ build() {
   WT=""
   ENTRY=""
   CHECK_PERMISSIONS=false
-  SOURCE_ABSENT=false
   mkdir -p "$ROOT"
   for word in "$@"; do
     step "$word"
@@ -270,8 +267,12 @@ the negation stays while the worktree'\''s own index still tracks the file main 
 the negation goes once neither index tracks a file under the entry|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md sync-wt|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,/harness/state.json main=- stage=- wt=.env.local,.gitignore,base.txt,harness-><main>/harness wt-status=-
 a line another tool wrote into the exclude file stays, before ours|repo tracked-entry foreign-line|create tracked-check|0|wt:tracked-check|-|exclude=**/.claude/*,/harness,!/harness/,/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
 a root runtime link leaves new files in a nested tracked namesake visible and stageable|repo runtime-entry nested-entry|create nested-check|0|wt:nested-check|-|exclude=/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
-fix-links preserves existing bare rules and negations while adding the anchored entry|repo runtime-entry create:cut-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:cut-check|-|exclude=runtime,!runtime/,runtime,!runtime/,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/,/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
-creation with an absent source leaves existing bare rules effective|repo runtime-entry nested-entry bare-line source-absent|create absent-source|0|wt:absent-source|-|exclude=runtime main=- stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md wt-status=-
+creation migrates a bare rule with the source present and exposes nested new files|repo runtime-entry nested-entry bare-line foreign-patterns|create migrated-source|0|wt:migrated-source|-|exclude=/runtime,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/ main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
+fix-links migrates existing bare rules on a healthy link and exposes nested new files|repo runtime-entry nested-entry create:cut-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:cut-check|-|exclude=/runtime,/runtime,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/ main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
+creation migrates a bare rule with an absent source and exposes nested new files|repo runtime-entry nested-entry bare-line foreign-patterns source-absent|create absent-source|0|wt:absent-source|-|exclude=/runtime,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/ main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md wt-status=A  nested/runtime/new.md
+creation migrates bare negations with an absent source|repo runtime-entry legacy-lines foreign-patterns source-absent|create absent-negation|0|wt:absent-negation|-|exclude=/runtime,!/runtime/,/runtime,!/runtime/,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/ main=- stage=- wt=.env.local,base.txt wt-status=-
+hook repair migrates a bare rule before the healthy-link skip|repo runtime-entry nested-entry create:repair-check bare-line|repair-links <wt>|0|-|-|exclude=/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
+hook repair migrates a bare rule before the missing-source skip|repo runtime-entry nested-entry create:repair-check bare-line source-absent|repair-links <wt>|0|-|-|exclude=/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
 fix-links keeps shared exclusion permissions and foreign rules|repo runtime-entry create:shared-check foreign-line shared-exclude|fix-links <wt>|0|restored:shared-check|-|exclude=/runtime,**/.claude/* main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
 '
 
@@ -297,12 +298,27 @@ while IFS= read -r row; do
   if [[ "$CHECK_PERMISSIONS" == true ]]; then prefix='shared-mode=preserved '; fi
   if [[ -d "$MAIN/nested/runtime" ]]; then
     prefix='nested-status=?? nested/runtime/new.md staged=nested/runtime/new.md root-ignored=0 root-staged=- '
-    if [[ "$SOURCE_ABSENT" == true ]]; then prefix='nested-status= staged= root-ignored=0 root-staged=- '; fi
     prefix="$prefix$prefix"
   fi
   assert_eq "$(run "$command")" "${prefix}rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+# Similar user patterns, comments, CRLF and an unterminated final line are
+# bytes to preserve, even when a later normal setup pass reads the migration.
+for setup in present missing healthy; do
+  build "bytes-$setup" repo runtime-entry
+  if [[ "$setup" == healthy ]]; then step create:bytes-check; fi
+  if [[ "$setup" == missing ]]; then step source-absent; fi
+  printf 'runtime\nruntime/\n!runtime\n!/runtime\nruntime/sub/\r\n# user\n\nother' >"$MAIN/.git/info/exclude"
+  printf '/runtime\nruntime/\n!runtime\n!/runtime\nruntime/sub/\r\n# user\n\nother' >"$ROOT/expected-exclude"
+  command='create bytes-check'
+  if [[ "$setup" == healthy ]]; then command='fix-links <wt>'; fi
+  run "$command" >"$ROOT/bytes-result"
+  bytes_rc=0
+  cmp -s -- "$ROOT/expected-exclude" "$MAIN/.git/info/exclude" || bytes_rc=$?
+  assert_eq "$bytes_rc" 0 "$setup: nonmatching user rules keep every byte"
+done
 fi
 
 # Faults affect only the writer's dependency calls. Every other call uses the
@@ -466,12 +482,21 @@ outcome_case() {
       excluded="$(grep -xF -- "/$failed_path" "$MAIN/.git/info/exclude" 2>/dev/null)" || true
       assert_eq "$excluded" '' "$caller $route $fault: no completed first write"
     elif [[ "$fault" != cleanup ]]; then
-      excluded="$(grep -xF -- "$failed_path" "$MAIN/.git/info/exclude")" || true
-      assert_eq "$excluded" "$failed_path" "$caller $route $fault: existing rule retained"
+      local retained="$failed_path"
+      # These regular-writer reads follow a completed configured-rule migration.
+      if [[ "$failed_path" == runtime && ( "$caller" == symlink || "$caller" == materialized ) && ( "$fault" == filter || "$fault" == inspection ) ]]; then
+        retained="/$failed_path"
+      fi
+      excluded="$(grep -xF -- "$retained" "$MAIN/.git/info/exclude")" || true
+      assert_eq "$excluded" "$retained" "$caller $route $fault: rule retained after failed write"
       if [[ "$failed_path" == runtime ]]; then
         printf 'new\n' >"$MAIN/nested/runtime/new.md"
         stage="$(git -C "$MAIN" status --porcelain -- nested/runtime/new.md)"
-        assert_eq "$stage" '' "$caller $route $fault: existing bare rule stays effective"
+        if [[ "$retained" == "$failed_path" ]]; then
+          assert_eq "$stage" '' "$caller $route $fault: existing bare rule stays effective"
+        else
+          assert_eq "$stage" '?? nested/runtime/new.md' "$caller $route $fault: completed migration stays effective"
+        fi
       fi
     fi
   else
@@ -510,8 +535,7 @@ copy|fix-links|unchanged|permissions
 relative|fix-links|unchanged|permissions
 symlink|fix-links|missing|first-write
 symlink|create|written|-
-symlink|repair-links|written|-
-symlink|repair-links|unchanged|lookup'
+symlink|repair-links|written|-'
   for caller in symlink ignore-copy mkdir copy relative child-link; do
     OUTCOMES+=$'\n'"$caller|fix-links|failed|permissions"$'\n'"$caller|fix-links|failed|filter"
   done
@@ -540,10 +564,10 @@ fi
 # The child suite uses its own repositories and skips this control loop.
 CONTROLS=""
 if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 ]]; then CONTROLS='anchor
+merged-missing-source
 permissions'; fi
 if [[ "${WORKTREE_EXCLUDE_OUTCOME_CONTROL:-}" != 1 && "${WORKTREE_EXCLUDE_SKIP_OUTCOMES:-}" != 1 ]]; then
   CONTROLS+=$'\n''lookup
-preserve-existing
 empty
 read
 directory
@@ -569,11 +593,12 @@ if [[ -n "$CONTROLS" ]]; then
         old='  entry="/$path"'
         new='  entry="$path"'
         ;;
-      preserve-existing)
+      merged-missing-source)
         matrix_only=0
-        select_fault=cut-boundary
-        old='      grep -vxF -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?'
-        new='      grep -vxF -e "$path" -e "!$path/" -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?'
+        # KEN-3935 (b122ac556eab774a78cb09e38cf7da8b69094337) reached the
+        # writer only after finding a source. Restore that skip in the copy.
+        old='    exclude_from_worktree_index "$wt" "$path" migrate || return 1'
+        new='    if [[ -e "$PROJECT_ROOT/$path" ]]; then exclude_from_worktree_index "$wt" "$path" migrate || return 1; fi'
         ;;
       permissions)
         matrix_only=0
@@ -632,7 +657,7 @@ if [[ -n "$CONTROLS" ]]; then
         new='    printf '\''%s'\'' "$filtered" 2>/dev/null >> /dev/null || return 1'
         select_fault=first-write
         ;;
-      callers) expected_matches=5; select_fault='permissions filter' ;;
+      callers) expected_matches=6; select_fault='permissions filter' ;;
     esac
     if [[ -n "${WORKTREE_EXCLUDE_SELECT_FAULT:-}" ]]; then
       selected=false
