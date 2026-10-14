@@ -417,7 +417,7 @@ ATTEMPT_PAGES='{"total_count":1,"jobs":[{"name":"test","status":"completed","con
 ATTEMPT_META='{"run_started_at":"2026-09-20T10:47:00Z","status":"completed","conclusion":"success"}'
 stage_attempts() {
   gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
-  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=30' "$ATTEMPT_PAGES"
 }
 PR_SELECTOR='event url runAttempt'
 while IFS='@' read -r label edit pages_edit want; do
@@ -463,16 +463,35 @@ ATTEMPT_PAGES='{"total_count":1,"jobs":[{"name":"test","status":"completed","con
 run "$RERUN_HEAD" >/dev/null
 PR_SELECTOR='pullRequest(number'
 assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2$')" "1" "the latest attempt metadata is read once"
-assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2/jobs?per_page=100 --paginate')" "1" "the latest attempt's jobs are read once through all pages"
+assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2/jobs?per_page=30 --paginate')" "1" "the latest attempt's jobs are read once through all pages"
 ATTEMPT_PAGES='{"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}
 {"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:48:00Z","completed_at":"2026-09-20T11:10:00Z"}]}'
 run "$RERUN_HEAD" >/dev/null
 assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '1320' "all job pages count, including jobs with the same display name"
+# The merged #4996 run has 69 jobs: its large page fails with HTTP 502,
+# while default-sized pages return every job, including copied successes.
+large_attempt() {
+  stage_attempts() {
+    gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
+    gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' 1 'HTTP 502'
+    gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=30' \
+      "$(jq -cn --argjson partial "$PARTIAL_ATTEMPT" '
+        [range(69) | if . == 68 then $partial.jobs[1] else $partial.jobs[0] end] as $jobs
+        | range(0; 69; 30) as $offset | {total_count: 69, jobs: $jobs[$offset:$offset + 30]}')"
+  }
+  assert_eq "$(run "$RERUN_HEAD") $(jq -c '[.pr, .ci_head_clean_secs]' "$TMP_ROOT/stdout")" \
+    'rc=0 [42,900]' 'the merged rerun reads every smaller job page and prints its timeline'
+}
+large_attempt
+stage_attempts() {
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=30' "$ATTEMPT_PAGES"
+}
 ATTEMPT_PAGES='{"total_count":2,"jobs":[]}'
 assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "an incomplete attempt jobs response prints no timeline"
 stage_attempts() {
   gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
-  gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' 1 'HTTP 404'
+  gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=30' 1 'HTTP 404'
 }
 assert_eq "$(run "$RERUN_HEAD") $(cat "$TMP_ROOT/stdout")" 'rc=1 ' "an unreadable attempt jobs response prints no timeline"
 stage_attempts() { gh_stub_fail 'api-repos/owner/repo/actions/runs/1200/attempts/2' 1 'HTTP 404'; }
@@ -674,6 +693,15 @@ mutate() { # ANCHOR REPLACEMENT
   assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
 }
 
+mutate '/jobs?per_page=30' '/jobs?per_page=100'
+if (FAIL=0; large_attempt; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/jobs-control.out"; then
+  assert_eq 'accepted' 'refused' 'control: the large job page must fail the merged rerun case'
+else
+  assert_eq "$(grep -c '  FAIL  the merged rerun' "$TMP_ROOT/jobs-control.out")" '1' \
+    'control: the original large job page refuses the merged rerun timeline'
+fi
+stage_attempts() { :; }
+
 mutate 'ready_times: ([' 'draft_exit_times: (['
 if (FAIL=0; ready_rows; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/ready-control.out"; then
   FAIL=$((FAIL + 1))
@@ -721,7 +749,7 @@ assert_eq "$(jq -c .ci_head_clean_secs "$TMP_ROOT/stdout")" '2700' \
 
 stage_attempts() {
   gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
-  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=30' "$ATTEMPT_PAGES"
 }
 ATTEMPT_PAGES="$PARTIAL_ATTEMPT"
 mutate 'and (.started_at | fromdate) >= $start' 'and true'
@@ -742,7 +770,7 @@ mutate 'and .total_count == ($jobs | length)' 'and true'
 ATTEMPT_PAGES='{"total_count":2,"jobs":[]}'
 stage_attempts() {
   gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2' "$ATTEMPT_META"
-  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=100' "$ATTEMPT_PAGES"
+  gh_stub_answer 'api-repos/owner/repo/actions/runs/1200/attempts/2/jobs?per_page=30' "$ATTEMPT_PAGES"
 }
 assert_eq "$(run "$RERUN_HEAD") $(jq -c .pr "$TMP_ROOT/stdout")" 'rc=0 42' \
   "control: without the count check an incomplete jobs response prints a timeline"

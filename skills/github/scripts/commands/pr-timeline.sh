@@ -372,7 +372,9 @@ latest_attempt_checks() { # OWNER NAME
     while IFS=$'\t' read -r id attempt; do
         [ -n "$id" ] || continue
         latest=$(gh_rest "repos/$owner/$name/actions/runs/$id/attempts/$attempt") || return 1
-        pages=$(gh_rest "repos/$owner/$name/actions/runs/$id/attempts/$attempt/jobs?per_page=100" --paginate) || return 1
+        # Large job pages can fail with HTTP 502; keep GitHub's default page
+        # size while reading every page and checking the complete job count.
+        pages=$(gh_rest "repos/$owner/$name/actions/runs/$id/attempts/$attempt/jobs?per_page=30" --paginate) || return 1
         jobs=$(jq -ces --argjson latest "$latest" "$CI_RUN_JQ_DEFS"'
             def rest_check: {name, state: (if .status != "completed" then (.status | ascii_upcase)
                 elif .conclusion == "neutral" then "SKIPPED" else (.conclusion | ascii_upcase) end),
