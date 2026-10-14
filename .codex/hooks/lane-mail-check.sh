@@ -3047,6 +3047,8 @@ handoff_check() {
     fi
     handoff_sd=$sd
     handoff_recorded
+    # The fleet item is shared; only this session's handoff can be prior work.
+    if [ "$ROLE" = overseer ] && ! handoff_is_mine; then HANDOFF_RECORD=""; fi
     [ "$ROLE" != lane ] || [ -z "$HANDOFF_FILE" ] || handoff_sd=${HANDOFF_FILE%/*}
     claude_attached_agents emergency "$handoff_sd/workflow-state-$ITEM.json"
     handoff=$(jq -nc --arg branch "$BRANCH" --arg worktree "$ROOT" --arg agents "$AGENT_ROWS" \

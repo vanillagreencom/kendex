@@ -831,8 +831,8 @@ assert_eq "$RC|$CALLER_LISTED" "1|1" \
 # --- fixed original-model recovery ---------------------------------------
 # The hook writes model_check before detached dispatch. The production
 # launcher owns claiming, termination, replay, verification and rollback.
-recovery_row() { # SCRIPTS_DIR success|dialog|missing-model [CALLBACK_HOOK]
-  local dir="$1" outcome="$2" original extra callback_hook="${3:-}" deadline
+recovery_row() { # SCRIPTS_DIR success|dialog|missing-model [CALLBACK_HOOK] [PRIOR_HANDOFF]
+  local dir="$1" outcome="$2" original extra callback_hook="${3:-}" prior_handoff="${4:-none}" deadline
   rm -f -- "$TMP_ROOT/verify-dialog" "$TMP_ROOT/harness-args" "$TMP_ROOT/work/tmp/model-recovery.log"
   new_caller claude
   state "$(record "$CALLER_PANE" "$H/.eclaude" claude-fable-5-1 "$PENDING")"
@@ -871,6 +871,22 @@ recovery_row() { # SCRIPTS_DIR success|dialog|missing-model [CALLBACK_HOOK]
       ol_record_write tmux "$4" "$5" "$6" "$OL_IDENTITY" "$7"
     ' _ "$dir" "$TMP_ROOT/writer.err" "$H/.eclaude" "$ORIGINAL_PANE" \
       "$(tm display-message -p -t "$ORIGINAL_PANE" '#{window_id}')" "$SERVER_PID" "$original")
+    "$dir/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee \
+      '.child_sessions={runtime:{status:"active",agent_id:"current-agent"}}' >/dev/null
+    if [[ "$prior_handoff" != none ]]; then
+      extra="$(jq -nc --arg kind "$prior_handoff" --arg root "$TMP_ROOT/work" \
+        --arg key "$SERVER_PID $ORIGINAL_PANE" '
+        if $kind == "own" then
+          {session_id:"switched-session",pane_key:$key,remaining:["current work"],
+           merged:["current merge"],branch:"main",worktree:$root,open_pr:42,
+           traps:["own trap"],handoff_file:($root+"/tmp/current-handoff.md")}
+        else {traps:["attached-agent=predecessor-agent output=/retired/agent.jsonl"],
+              handoff_file:"/retired/handoff.md"}
+          + (if $kind == "foreign" then {session_id:"predecessor-session",pane_key:$key}
+             else {} end)
+        end')"
+      "$dir/workflow-state" --state-dir "$TMP_ROOT/work/tmp" set oversee handoff "$extra" >/dev/null
+    fi
     BEFORE_CALLBACK="$(jq -c . "$FLEET_STATE")"
     for observed in claude-fable-5-1 claude-opus-4-8; do
       RC=0
@@ -887,6 +903,17 @@ recovery_row() { # SCRIPTS_DIR success|dialog|missing-model [CALLBACK_HOOK]
     while [[ "$SECONDS" -lt "$deadline" ]] && ! grep -q '^oversee-succeed: successor-working ' "$TMP_ROOT/work/tmp/model-recovery.log" 2>/dev/null; do sleep 0.05; done
     assert_eq "$(jq '[.fleet_log[]?|select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'the overseer callback writes one switch row'
     assert_eq "$(jq -r '.handoff.written_at|type' "$FLEET_STATE")" string 'a fresh emergency handoff keeps the handoff writer timestamp'
+    if [[ "$prior_handoff" == own ]]; then
+      assert_eq "$(jq -c '.handoff|[.remaining,.merged,.open_pr,(.traps|index("own trap")!=null)]' "$FLEET_STATE")" \
+        '[["current work"],["current merge"],42,true]' 'own handoff keeps current work and traps'
+      assert_eq "$(jq -r '.handoff.handoff_file' "$FLEET_STATE")" "$TMP_ROOT/work/tmp/current-handoff.md" 'own handoff keeps its current file'
+    else
+      assert_eq "$(jq -c '.handoff|[(.remaining|type=="array" and length>0),.merged,.open_pr,has("handoff_file")]' "$FLEET_STATE")" \
+        '[true,[],null,false]' "$prior_handoff handoff takes fresh current work"
+    fi
+    assert_eq "$(jq -r '.handoff|.branch+"|"+.worktree' "$FLEET_STATE")" "main|$TMP_ROOT/work" "$prior_handoff handoff names the current branch and worktree"
+    assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=current-agent"))' "$FLEET_STATE")" true "$prior_handoff handoff keeps current attached agents"
+    assert_eq "$(jq -r '.handoff.traps|any(contains("predecessor-agent"))' "$FLEET_STATE")" false "$prior_handoff handoff excludes predecessor agents"
   else
     SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:claude-fable-5-2:low SUCCESSION_SETTING=off \
       run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --model-recovery-pane "$ORIGINAL_PANE" \
@@ -896,13 +923,29 @@ recovery_row() { # SCRIPTS_DIR success|dialog|missing-model [CALLBACK_HOOK]
   ORIGINAL_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$ORIGINAL_PANE" || true)"
 }
 RECOVERY_DIR="$(mutant_scripts recoveryrow)" || exit 1
-recovery_row "$RECOVERY_DIR" success "$SRC_DIR/../../../hooks/lane-mail-check.sh"
+for prior_handoff in none own foreign legacy; do
+  recovery_row "$RECOVERY_DIR" success "$SRC_DIR/../../../hooks/lane-mail-check.sh" "$prior_handoff"
+done
 assert_eq "$RC|$ORIGINAL_LISTED|$(jq -r '.overseer | [.harness, .account, .model, .effort, .launch_line] | join("|")' "$FLEET_STATE")" \
   "0|0|claude|$H/.eclaude|claude-fable-5-1|high|$ORIGINAL_LINE" \
   "model recovery stops the predecessor and replays its recorded account, model, effort and permission words with succession off" "$TMP_ROOT/err"
 assert_eq "$(cat -- "$TMP_ROOT/harness-args")" \
   "-n overseer --model fable-5-1 --effort high $PLAIN_LEAD $BYPASS $BRIEF|$H/.eclaude" \
   "the actual successor receives the original launch arguments despite conflicting preferences, pending identity and caller flags"
+OWNERSHIP_CTL="$TMP_ROOT/ownership-control.sh"
+cp "$SRC_DIR/../../../hooks/lane-mail-check.sh" "$OWNERSHIP_CTL"
+mutate_file "$OWNERSHIP_CTL" \
+  'if [ "$ROLE" = overseer ] && ! handoff_is_mine; then HANDOFF_RECORD=""; fi' \
+  'if false; then HANDOFF_RECORD=""; fi'
+control_rc=0
+(
+  FAIL=0
+  recovery_row "$RECOVERY_DIR" success "$OWNERSHIP_CTL" foreign
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/ownership-control.out" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 'control: bypassing handoff ownership fails the ordinary foreign-record assertions' "$TMP_ROOT/ownership-control.out"
+assert_contains "$(cat "$TMP_ROOT/ownership-control.out")" '  FAIL ' \
+  'control: handoff ownership fails an assertion rather than a command' "$TMP_ROOT/ownership-control.out"
 DISPATCH_CTL="$TMP_ROOT/dispatch-control.sh"
 cp "$SRC_DIR/../../../hooks/lane-mail-check.sh" "$DISPATCH_CTL"
 mutate_file "$DISPATCH_CTL" \
