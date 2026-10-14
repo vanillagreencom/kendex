@@ -4,7 +4,7 @@
 # The hook blocks a subagent's stop while a validation run it started is still
 # going: the worktree comes from a `dev-validate-run ... --worktree` command in
 # the subagent's own transcript, and whether a run there is still going comes
-# from `dev-validate-run --live`, run from the hook's own install. A
+# from orch's `dev-validate-run --live`, run from the hook's own install. A
 # continued stop lets a live run go only where the hook held that run and no
 # `--wait` call on it came after.
 # Each row installs the hook beside the orch scripts in one of the layouts a
@@ -12,11 +12,10 @@
 # the exit status, the keyed first line and, for a refusal naming a run, the
 # exact `--wait` command under it.
 #
-# The reader fixture reports a live run for one worktree and no live run for
-# the finished, gone and empty worktrees. Orch tests its own process reader;
-# these rows test the hook's use of its answer without process-table timing.
-# Transcripts carry the command as Claude Code records a Bash call that
-# outlasted its timeout (the call,
+# The worktrees are fixtures: one whose run directory names a pid still
+# running with a run child's argv, one whose run has its verdict, one whose
+# pid has exited, one with no run at all. Transcripts carry the command the
+# way Claude Code records a Bash call that outlasted its timeout (the call,
 # then a result naming only the background output file), the way a Codex
 # rollout records an exec_command call (the arguments as one JSON string), and
 # the way each harness records a stop this hook held (its stderr as a user
@@ -29,13 +28,22 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/dev-stop-check.sh}"
+ORCH="$(cd "$TEST_DIR/../../skills/orch" && pwd)"
 
 PASS=0
 FAIL=0
 TMP_ROOT="$(mktemp -d)" || { echo "dev-stop-check: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev-stop-check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev-stop-check: scratch=resolve-failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+PLANTED=""
+cleanup() {
+  if [ -n "$PLANTED" ]; then
+    kill -TERM "$PLANTED" 2>/dev/null || :
+    wait "$PLANTED" 2>/dev/null || :
+  fi
+  rm -rf -- "${TMP_ROOT:?}"
+}
+trap cleanup EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
 # shellcheck source=lib/assert.sh
@@ -55,10 +63,29 @@ plant_run() { # WORKTREE -> the run directory
 }
 WT_LIVE="$TMP_ROOT/wt.live"
 RUN_LIVE="$(plant_run "$WT_LIVE")"
+# The live child belongs to this fixture until cleanup. A fixed sleep ended
+# before late rows and controls on loaded macOS runners. The ready pipe
+# confirms that the child has acquired the argv the real reader checks.
+mkfifo "$TMP_ROOT/live-input" "$TMP_ROOT/live-ready"
+exec 8<>"$TMP_ROOT/live-input"
+perl -e '$| = 1; print "ready\n"; while (<STDIN>) {}' -- planted --child --run-dir "$RUN_LIVE" \
+  <"$TMP_ROOT/live-input" >"$TMP_ROOT/live-ready" 2>/dev/null &
+PLANTED=$!
+IFS= read -r READY <"$TMP_ROOT/live-ready"
+[ "$READY" = ready ] || { echo 'dev-stop-check: child=unready' >&2; exit 1; }
+printf '%s\n' "$PLANTED" >"$RUN_LIVE/pid"
 WT_DONE="$TMP_ROOT/wt.done"
+RUN_DONE="$(plant_run "$WT_DONE")"
+printf '%s\n' "$PLANTED" >"$RUN_DONE/pid"
+printf 'guard-exit=0 at=2026-10-06T15:02:00Z\n' >"$RUN_DONE/exit"
 WT_GONE="$TMP_ROOT/wt.gone"
+RUN_GONE="$(plant_run "$WT_GONE")"
+sleep 0 &
+GONE_PID=$!
+wait "$GONE_PID"
+printf '%s\n' "$GONE_PID" >"$RUN_GONE/pid"
 WT_EMPTY="$TMP_ROOT/wt.empty"
-mkdir -p "$WT_DONE/tmp" "$WT_GONE/tmp" "$WT_EMPTY/tmp"
+mkdir -p "$WT_EMPTY/tmp"
 WT_REMOVED="$TMP_ROOT/wt.removed"
 
 # --- The transcripts ---------------------------------------------------------
@@ -112,7 +139,7 @@ transcript live-then-done "$(claude_call "$WT_LIVE"; claude_call "$WT_DONE")"
 transcript none '{"type":"user","message":{"content":[{"type":"tool_result","content":"Run the BARE command .agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] in the foreground"}]}}'
 
 # --- The installs ------------------------------------------------------------
-# `orch` lays the hook beside the reader fixture, `bare` installs the hook
+# `orch` lays the hook beside the real orch skill, `bare` installs the hook
 # alone, and `failing` beside a dev-validate-run that cannot answer, each
 # under `.claude/`. `shared` installs it under `.codex/` beside the shared
 # `.agents/skills` tree, run from outside the repository. `codex` is that
@@ -152,12 +179,6 @@ stub_reader() { # PATH — a dev-validate-run that cannot answer
   printf '#!/usr/bin/env bash\necho "dev-validate-run: stub cannot read" >&2\nexit 2\n' >"$1"
   chmod +x "$1"
 }
-live_reader() { # PATH — the --live contract, independent of orch's process reader
-  mkdir -p "${1%/*}"
-  printf '#!/usr/bin/env bash\nset -euo pipefail\n[ "$#" -eq 3 ] && [ "$1" = --live ] && [ "$2" = --worktree ] || exit 2\ncase "$3" in\n  %q) printf "run-dir=%%s pid=fixture\\n" %q ;;\n  *) echo live=none; exit 1 ;;\nesac\n' \
-    "$WT_LIVE" "$RUN_LIVE" >"$1"
-  chmod +x "$1"
-}
 install_world() { # NAME
   local world="$TMP_ROOT/world.$1" hook reader
   hook="$(world_hook "$1")"
@@ -165,12 +186,14 @@ install_world() { # NAME
   mkdir -p "${hook%/*}"
   case "$1" in
     orch | shared | global)
-      live_reader "$reader"
+      mkdir -p "${reader%/orch/scripts/dev-validate-run}"
+      ln -s "$ORCH" "${reader%/scripts/dev-validate-run}"
       ;;
     failing) stub_reader "$reader" ;;
     codex)
       git init -q "$world"
-      live_reader "$reader"
+      mkdir -p "$world/.agents/skills"
+      ln -s "$ORCH" "$world/.agents/skills/orch"
       stub_reader "$world/skills/orch/scripts/dev-validate-run"
       ;;
   esac
@@ -206,11 +229,11 @@ run_hook() { # WORLD PAYLOAD [PATH]
   cp "$HOOK" "$hook"
   set +e
   if [ -n "${3:-}" ]; then
-    (cd "$cwd" && printf '%s' "$2" | env -i HOME="$home" PWD="$cwd" PATH="$3" \
-      GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH_BIN" "$hook") >/dev/null 2>"$ERR_FILE"
+    (cd "$cwd" && env -i HOME="$home" PWD="$cwd" PATH="$3" \
+      GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH_BIN" "$hook" <<<"$2") >/dev/null 2>"$ERR_FILE"
   else
-    (cd "$cwd" && printf '%s' "$2" | env HOME="$home" GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
-      "$BASH_BIN" "$hook") >/dev/null 2>"$ERR_FILE"
+    (cd "$cwd" && env HOME="$home" GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+      "$BASH_BIN" "$hook" <<<"$2") >/dev/null 2>"$ERR_FILE"
   fi
   rc=$?
   set -e
