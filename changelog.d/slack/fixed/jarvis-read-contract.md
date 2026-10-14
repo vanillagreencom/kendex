@@ -1,1 +1,1 @@
-- Correct the Jarvis read instructions to name the mailbox command that records which notices and questions Slack must skip after a hold.
+- Slack skips the notices and questions Jarvis read when a hold ends, including relays bound to a linked worktree.

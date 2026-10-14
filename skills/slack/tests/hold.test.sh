@@ -63,25 +63,37 @@ polls() { # ROOT: two completed polls, the first of which may predate a change
   done
 }
 
-# The Jarvis read uses the installed mailbox command. The control removes
-# only its write, so the same read succeeds but a resume posts both read items.
+# The Jarvis read uses the installed mailbox command. Controls remove its
+# write or read the marker from the bound checkout instead of the mailbox.
+# The read still succeeds, but a resume posts both read items.
 while read -r name logical control after; do
   R="$(sk_new_root "jarvis-read-$name")"
+  MAIL_ROOT="$R"
+  case "$name" in
+    linked|linked-reader-control)
+      git -C "$MAIL_ROOT" -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty -qm fixture || exit 1
+      R="$SK_TMP/linked hold-$name"
+      git -C "$MAIL_ROOT" worktree add --quiet --detach "$R" HEAD || exit 1
+      mkdir -p "$R/.agents/skills/mailbox" "$R/.agents/skills/orch" "$R/tmp"
+      ln -s "$SK_ROOT/skills/mailbox/scripts" "$R/.agents/skills/mailbox/scripts"
+      ln -s "$SK_ROOT/skills/orch/scripts" "$R/.agents/skills/orch/scripts"
+      ;;
+  esac
   sk_bind "$R"
   sk_poll "$R" "$HOLD"
   fresh
   PREFIX_ID=""
   if [ "$after" -gt 0 ]; then
     notice "$R" "prefix-$name" "Earlier notice in $name."
-    PREFIX_ID="$(last_id "$R")"
+    PREFIX_ID="$(last_id "$MAIL_ROOT")"
     PREFIX_OUT="$(cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer --after 0 --mark-read)" || exit 1
-    assert_eq "$(field "${PREFIX_OUT%%$'\n'*}" count)=$(cat "$(sk_box "$R")/to-overseer.seen")" "1=1" "$name: the earlier session read establishes its position"
+    assert_eq "$(field "${PREFIX_OUT%%$'\n'*}" count)=$(cat "$(sk_box "$MAIL_ROOT")/to-overseer.seen")" "1=1" "$name: the earlier session read establishes its position"
   fi
   notice "$R" "read-notice-$name" "Read notice in $name."
-  READ_NOTICE="$(last_id "$R")"
+  READ_NOTICE="$(last_id "$MAIL_ROOT")"
   READ_ASK="$(ask "$R" "read-ask-$name" "Read ask in $name?")"
   if [ "$name" = gapped ] || [ "$name" = incremental-gap ]; then
-    python3 - "$(sk_box "$R")/to-overseer.jsonl" <<'PY'
+    python3 - "$(sk_box "$MAIL_ROOT")/to-overseer.jsonl" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 rows = path.read_text().splitlines(keepends=True)
@@ -92,6 +104,10 @@ path.with_name(path.name + ".numbering").write_text(json.dumps(
      "lines": list(range(1, len(rows) * 2, 2))}) + "\n")
 PY
     [ "$?" -eq 0 ] || exit 1
+  fi
+  if [ "$control" = reader ]; then
+    sk_mutant linked-seen-path relay.py 'path = self\.mail\.box / "to-overseer\.seen"' \
+      'path = self.path / "tmp/lane-mail/overseer/to-overseer.seen" # \g<0>'
   fi
   if [ "$control" = yes ]; then
     rm -- "$R/.agents/skills/mailbox/scripts"
@@ -111,21 +127,28 @@ PY
   sk_poll "$R" "$HOLD"
   [ "$RC" -eq 0 ] || exit 1
   BEFORE=absent
-  [ ! -f "$(sk_box "$R")/to-overseer.seen" ] || BEFORE="$(cat "$(sk_box "$R")/to-overseer.seen")"
+  [ ! -f "$(sk_box "$MAIL_ROOT")/to-overseer.seen" ] || BEFORE="$(cat "$(sk_box "$MAIL_ROOT")/to-overseer.seen")"
   (cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer >/dev/null) || exit 1
   PROBE_MARKER=absent
-  [ ! -f "$(sk_box "$R")/to-overseer.seen" ] || PROBE_MARKER="$(cat "$(sk_box "$R")/to-overseer.seen")"
+  [ ! -f "$(sk_box "$MAIL_ROOT")/to-overseer.seen" ] || PROBE_MARKER="$(cat "$(sk_box "$MAIL_ROOT")/to-overseer.seen")"
   assert_eq "$PROBE_MARKER" "$BEFORE" "$name: the reachability probe records no session read"
   READ_OUT="$(cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer --after "$after" --mark-read)" || exit 1
   assert_eq "$(field "${READ_OUT%%$'\n'*}" count)" "$logical" "$name: Jarvis receives the logical snapshot count"
   assert_eq "$(jq -rs 'map(.id) | join(",")' <<<"${READ_OUT#*$'\n'}")" "$READ_NOTICE,$READ_ASK" "$name: Jarvis receives both read envelopes"
   MARKER=absent
-  [ ! -f "$(sk_box "$R")/to-overseer.seen" ] || MARKER="$(cat "$(sk_box "$R")/to-overseer.seen")"
+  [ ! -f "$(sk_box "$MAIL_ROOT")/to-overseer.seen" ] || MARKER="$(cat "$(sk_box "$MAIL_ROOT")/to-overseer.seen")"
   if [ "$control" = yes ]; then
     sk_assert_red "$MARKER" "$logical" "$name: removing the writer fails the same marker assertion"
     assert_eq "$MARKER" absent "$name: the read still succeeds without writing a marker"
   else
     assert_eq "$MARKER" "$logical" "$name: the real Jarvis read writes its logical count"
+  fi
+  if [ "$R" != "$MAIL_ROOT" ]; then
+    if [ -e "$(sk_box "$R")/to-overseer.seen" ]; then
+      bad "$name: the bound worktree has no read marker"
+    else
+      ok "$name: the bound worktree has no read marker"
+    fi
   fi
   notice "$R" "unread-notice-$name" "Unread notice in $name."
   stale
@@ -133,19 +156,22 @@ PY
   CH_R="$(sk_channel "$R")"
   RESUME_ROW="$RC=$(count "$CH_R" "Read notice in $name.")=$(count "$CH_R" "Read ask in $name?")=$(jq -r 'select(.t == "resume") | .skipped | join(",")' "$(sk_journal "$R")")"
   EXPECTED_SKIPPED="${PREFIX_ID:+$PREFIX_ID,}$READ_NOTICE,$READ_ASK"
-  if [ "$control" = yes ]; then
-    sk_assert_red "$RESUME_ROW" "0=0=0=$EXPECTED_SKIPPED" "$name: removing the writer fails the same resume assertion"
-    assert_eq "$RESUME_ROW" '0=1=1=' "$name: without the writer the resume skips nothing"
+  if [ "$control" = yes ] || [ "$control" = reader ]; then
+    sk_assert_red "$RESUME_ROW" "0=0=0=$EXPECTED_SKIPPED" "$name: removing the writer or reading the bound path fails the same resume assertion"
+    assert_eq "$RESUME_ROW" '0=1=1=' "$name: without the read marker the resume skips nothing"
   else
     assert_eq "$RESUME_ROW" "0=0=0=$EXPECTED_SKIPPED" "$name: resume skips the notices and asks Jarvis read"
   fi
   assert_eq "$(count "$CH_R" "Unread notice in $name.")" 1 "$name: a notice after the read still posts"
+  sk_bin_reset
 done <<'ROWS'
 plain 2 no 0
 gapped 5 no 0
 incremental 3 no 1
 incremental-gap 7 no 1
 writer-control 2 yes 0
+linked 3 no 1
+linked-reader-control 3 reader 1
 ROWS
 rm -- "$JARVIS_SESSION" || exit 1
 

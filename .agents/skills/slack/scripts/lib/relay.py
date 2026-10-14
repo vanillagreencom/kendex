@@ -812,7 +812,8 @@ class RootRelay:
     def jarvis_session_read(self, events: List[Dict]) -> Optional[int]:
         """The Jarvis session's seen line count, clamped to this mailbox snapshot;
         None when absent, unreadable or not a bare nonnegative integer."""
-        path = self.path / "tmp/lane-mail/overseer/to-overseer.seen"
+        assert self.mail.box is not None, "mailbox events must resolve the mailbox before its read marker"
+        path = self.mail.box / "to-overseer.seen"
         try:
             text = path.read_text().strip()
             if not text.isascii() or not text.isdecimal():
