@@ -387,21 +387,23 @@ mutate_file "$MUTANT_WATCH" 'containers="$(verifying_containers "$out")"' 'conta
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_not_contains "$(verification_lines)" 'verifying KEN-P box=1' "control loses the outcome when the caller omits its container" "$ERR"
 # Expected delta distinguishes the parent's own branch work from outcome reads.
-while IFS='|' read -r delta outcome owed_line; do
-  world "verifying_parent_$outcome"
-  jq --arg delta "$delta" '. +
-    [{id:"KEN-P", title:"Parent work", state:"Backlog", state_type:"backlog", parent_id:"",
+while IFS='|' read -r state delta outcome owed_line; do
+  world "verifying_parent_${state// /_}_$outcome"
+  jq --arg state "$state" --arg delta "$delta" '. +
+    [{id:"KEN-P", title:"Parent work", state:$state,
+      state_type:(if $state == "In Progress" then "started" else "backlog" end), parent_id:"",
       description: ($delta + "\n## Done when\n- [ ] Build attention\n- [ ] Build choice\n- [ ] Wire commands\n- [ ] Test behavior")}]
     + [range(1;5) | {id:("KEN-C" + tostring), state:"Done", state_type:"completed", parent_id:"KEN-P"}]' \
     "$STUB_DIR/tracker.out" >"$STUB_DIR/parent.json"
   mv -- "$STUB_DIR/parent.json" "$STUB_DIR/tracker.out"
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "rc=$RC $(verification_lines | grep -c '^verifying KEN-P .*trigger="outcome"' || true)" "rc=0 $outcome" "declared delta [$delta] selects outcome reads" "$ERR"
-  assert_eq "$(owed KEN-P)" "$owed_line" "declared delta [$delta] selects owed development" "$ERR"
+  assert_eq "rc=$RC $(verification_lines | grep -c '^verifying KEN-P .*trigger="outcome"' || true)" "rc=0 $outcome" "$state declared delta [$delta] selects outcome reads" "$ERR"
+  assert_eq "$(owed KEN-P)" "$owed_line" "$state declared delta [$delta] selects owed development" "$ERR"
 done <<'ROWS'
-|4|-
-**Expected delta**: 0 lines|4|-
-**Expected delta**: 300 lines, 200 test lines|0|owed KEN-P state=backlog priority=- lane=none verdict=queue
+Backlog||4|-
+Backlog|**Expected delta**: 0 lines|4|-
+Backlog|**Expected delta**: 300 lines, 200 test lines|0|-
+In Progress|**Expected delta**: 300 lines, 200 test lines|0|owed KEN-P state=in-progress priority=- lane=none verdict=queue
 ROWS
 MUTANT_DIR="$TMP_ROOT/parent-production"
 MUTANT_WATCH="$(mutant_scripts parent-production/orch oversee-watch)/oversee-watch" || exit 1
