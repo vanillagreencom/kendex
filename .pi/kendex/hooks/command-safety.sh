@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
-# summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. A reserved word in shell-head position ends ordinary selection. The complete unsupported suffix receives conservative known-dump detection and no filter permission. Exec and builtin use the same conservative policy. Their unsupported context remains active across later list commands and registered bodies before body recursion. Command-like data in those contexts can refuse. Pathname basenames, ordinary arguments and argv arrays do not establish reserved-word syntax. The check executes no submitted text. Conservative wrapper arguments retain only the recorded two-assignment launcher, its file-output form, and the two-unset launcher without output redirection. The same producer owns these decisions and the grouped file-writing set receipt. Ordinary quoted argument data retains the existing literal argument class for the recorded shell-script receiver; no words inside that string are recognized. Single- and double-quoted heredocs retain the existing literal cat file-writing class when their recorded body, stage and redirect facts match. No delimiter quote subtype or body recognition is added. Other conservative clean producer results, quoted data, removed bodies, interpreted executable strings, syntax prefixes, redirected targets and inherited input return to main's known-read refusal. Direct-head main permissions and existing stricter refusals remain. Registered heredoc input in a pipeline retains conservative known-read refusal across the complete original command and inherited input. Here-string input retains its existing execution checks. Recognized shells, eval and source commands check supplied literal input, including non-stdin descriptors. Optional registered bodies use main's complete original-command classification before receiving-body interpretation. Their receiving stage does not replace the original token order. Recognized receiving shells keep main's direct body decisions and their existing independent program checks. Unproved executable contexts, missing body identifiers and unread registered bodies refuse. Unquoted heredoc substitutions remain executable. Here-strings do not establish a heredoc body. Undecoded escaped delimiters refuse conservatively. ANSI-C escaped heads, producer operands and unsupported suffix words keep their existing refusal. Process substitutions, shell programs, transformed pipes and env split strings have no general interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
+# description: On harnesses that execute hooks, refuse recognized shell whole-environment reads unless a proven direct pipe filters named variables. Heredocs and here-strings are data unless a shell receives them; unquoted heredoc substitutions remain executable. This fixed check runs outside Git and before project policy. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# summary: Refuses recognized shell commands that print the whole environment and gives a filter that names a variable. Allows heredoc data and env launchers with a program. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow; unreadable policy support affects only the pattern check.
+# safety: The fixed check judges shell command heads, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; raw NUL reads need a literal NUL-to-newline tr conversion. Unknown producer options and transformed output cannot gain filter permission. Compound commands select their inner command heads. Quoted arguments are data; shell -c and eval string operands are checked as commands. An unquoted env argument uses the same launcher parse as a head, for any receiver or argument count. Shell-script wrappers retain checks of unquoted command arguments. Registered heredoc and here-string bodies are checked as commands only for shells, eval, source or dot receivers, directly or later in the same pipeline, including merged stdout/stderr pipes. Unquoted heredoc substitutions remain executable. Shell input checks include non-stdin descriptors. Exec and builtin contexts remain conservative because exec can retain input for later shell commands. Unproved executable contexts, missing body identifiers and unread registered bodies refuse. ANSI-C escaped heads and producer operands refuse without decoding. Process substitutions, transformed pipes and env split strings have no general interpretation guarantee. The check executes no submitted text and does not inspect unseen programs, aliases or runtime-built names. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -17,7 +17,7 @@ set -euo pipefail
 # Only a proven direct pipe grants permission. Nested syntax is detection
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The selector uses environment_dump's stage words and their kinds. Both
-# direct commands and unsupported suffixes need the same launcher decision.
+# direct commands and argument launchers need the same producer decision.
 environment_producer() { # command kind, optional unsupported context; updates program, pos and mode
     # Only these literal forwarding forms are part of the input contract.
     # Unsupported executable-string arguments get conservative detection.
@@ -31,7 +31,6 @@ environment_producer() { # command kind, optional unsupported context; updates p
       case "$program" in
         exec | builtin)
           if [ "$1" = shell ] && [ "${args[$((pos - 1))]}" = "$program" ]; then
-            [ -n "$unsupported" ] || main_start=$pos
             program=opaque; unsupported=1; compound=1
           fi
           break ;;
@@ -50,21 +49,6 @@ environment_producer() { # command kind, optional unsupported context; updates p
           done
           continue ;;
         env)
-          # Conservative forwarding keeps only the recorded assignment and
-          # two-unset launcher forms. Direct heads keep main's selection.
-          if [ -n "${2:-}" ] && [ "${2:-}" != conservative ]; then
-            if [ "$((${#args[@]} - pos))" -eq 4 ] &&
-               [ "${arg_kinds[$pos]}:${arg_kinds[$((pos + 1))]}:${arg_kinds[$((pos + 2))]}:${arg_kinds[$((pos + 3))]}" = literal:literal:literal:literal ] &&
-               [[ ${args[$pos]} =~ $name_re && ${args[$pos]} == *=* ]] &&
-               [[ ${args[$((pos + 1))]} =~ $name_re && ${args[$((pos + 1))]} == *=* ]]; then
-              :
-            elif [ "$((${#args[@]} - pos))" -eq 6 ] && [ -z "$output" ] &&
-                 [ "${args[$pos]}:${args[$((pos + 2))]}" = -u:-u ] &&
-                 [ "${arg_kinds[$pos]}:${arg_kinds[$((pos + 1))]}:${arg_kinds[$((pos + 2))]}:${arg_kinds[$((pos + 3))]}:${arg_kinds[$((pos + 4))]}:${arg_kinds[$((pos + 5))]}" = literal:literal:literal:literal:literal:literal ]; then
-              :
-            else mode=dump-unknown; return
-            fi
-          fi
           options_ended=""; null_output=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
@@ -98,8 +82,6 @@ environment_producer() { # command kind, optional unsupported context; updates p
       esac
     done
     producer_end=$pos
-    if [ -n "${2:-}" ] && [ "${2:-}" != conservative ] && [ "${args[0]:-}" = env ] && [ "$mode" = other ] &&
-       [ "${program_pos:-0}" -ne "$((${#args[@]} - 2))" ]; then mode=dump-unknown; return; fi
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
@@ -139,6 +121,7 @@ environment_producer() { # command kind, optional unsupported context; updates p
           esac
         done
         if [ -z "$named" ]; then
+          [ "$pos" -lt "${#args[@]}" ] || mode=dump-lines
           case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump-lines ;; esac
           if [ "$mode" = dump-lines ]; then
             for ((j=pos; j<${#args[@]}; j++)); do
@@ -152,13 +135,6 @@ environment_producer() { # command kind, optional unsupported context; updates p
         for ((j=pos; j<${#args[@]}; j++)); do [ "${arg_kinds[$j]}" != literal ] || named=1; done
         if [ -z "$named" ]; then
           if [ "$pos" -lt "${#args[@]}" ]; then mode=dump-unknown; else mode=dump-lines; fi
-        elif [ -n "${2:-}" ] && [ "${2:-}" != conservative ]; then
-          # The producer's clean result is retained only in the recorded
-          # receipt context. Stage and file-write facts stay at their owners.
-          if [ "${2:-}" != 1 ] || [ "$stage" -ne 1 ] || [ "${#starts[@]}" -ne 6 ] || [ -z "$pipeline" ] ||
-             [ "${file_outputs[0]:-}" != 1 ] || [ "${separators[0]}:${separators[1]}:${separators[2]}" != ';:;:|' ] ||
-             [ "$((${#args[@]} - pos))" -ne 2 ] || [ "${args[$pos]}:${args[$((pos + 1))]}" != -o:pipefail ] ||
-             [ "${arg_kinds[$pos]}:${arg_kinds[$((pos + 1))]}" != literal:literal ]; then mode=dump-unknown; fi
         fi ;;
       systemctl)
         for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump-lines; done
@@ -209,26 +185,23 @@ environment_producer() { # command kind, optional unsupported context; updates p
         fi
         if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
     esac
-    if [ -n "${2:-}" ] && [ "${2:-}" != conservative ] && [ "$mode" = other ]; then
-      case "$program" in printenv | export | declare | typeset) mode=dump-unknown ;; esac
-    fi
 }
 
 # An argument role requires an executable head. Reserved-word syntax and
 # assignment prefixes cannot turn a quoted executable into argument data.
 environment_head() { # command kind; updates pos, syntax_head and arg_roles
   local cursor state=head value
-  pos=${#args[@]}; syntax_head=""; head_start=0
+  pos=${#args[@]}; syntax_head=""
   for ((cursor=0; cursor<${#args[@]}; cursor++)); do
     arg_roles[cursor]=unknown
   done
   if [ "$1" = argv ]; then pos=0; return; fi
-  while [ "$head_start" -lt "${#args[@]}" ] && [[ ${args[$head_start]} =~ $name_re ]] && [[ ${args[$head_start]} == *=* ]]; do head_start=$((head_start + 1)); done
   for ((cursor=0; cursor<${#args[@]}; cursor++)); do
     value=${args[$cursor]}
     case "$state" in
       name) arg_roles[cursor]=syntax; state=body; continue ;;
       body | loop | conditional)
+        arg_roles[cursor]=syntax
         if [ "${arg_kinds[$cursor]}" = literal ] && [ -n "${arg_unquoted[$cursor]}" ]; then
           case "$value:$state" in '{:body' | do:loop) state=head; arg_roles[cursor]=syntax ;; esac
         fi
@@ -259,8 +232,8 @@ environment_head() { # command kind; updates pos, syntax_head and arg_roles
   done
 }
 
-# The directed cuts retain main's text test where executable evidence is
-# unproved. This grants no argument, body-data or direct-filter permission.
+# Exec descriptors and unresolved executable strings have no proven target.
+# Known dump text in those contexts cannot prove a named read or filter.
 environment_main_evidence() {
   local value evidence continuation=$'\\\n'
   local opaque_re='(^|[^A-Za-z0-9_])(env|printenv|set|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)|/proc/[^[:space:]]*/environ'
@@ -268,375 +241,6 @@ environment_main_evidence() {
     evidence=${value//"$continuation"/}
     evidence=${evidence//[\'\"\\]/}
     [[ ! $evidence =~ $opaque_re ]] || return 0
-  done
-  return 1
-}
-
-# Optional registered bodies use the complete command classifier. Its
-# original token order keeps the unsupported suffix at its source owner.
-environment_main_command() { # command kind; arguments are already decoded data
-  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1
-  local j start=0 end n fd target proc output input_redirect input_escaped pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head opaque_from
-  local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
-  local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
-  local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
-  local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
-  local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() origins=() evidence=()
-  local starts=() ends=() separators=() decisions=()
-  if [ "$1" = argv ]; then
-    tokens=(${command_argv[@]+"${command_argv[@]}"})
-    for ((i=0; i<${#tokens[@]}; i++)); do kinds[i]=literal; unquoted_words[i]=""; done
-  else
-    text=$command_text
-    text_length=${#text}
-    while [ "$i" -lt "$text_length" ]; do
-      case "$quote" in
-        "'") span_re=$single_span_re ;;
-        ansi) span_re=$ansi_span_re ;;
-        '"') span_re=$double_span_re ;;
-        *) span_re=$ordinary_span_re ;;
-      esac
-      # Copy literal spans once. Marker handlers keep the quote and routing
-      # decisions; growing a word byte by byte exceeds the hook budget.
-      if [[ ${text:$i} =~ $span_re ]]; then
-        span=${BASH_REMATCH[0]}; word=$word$span; active=1
-        i=$((i + ${#span}))
-        continue
-      fi
-      c=${text:$i:1}; i=$((i + 1)); next=${text:$i:1}
-      if [ "$quote" = ansi ]; then
-        case "$c" in
-          "'") quote="" ;;
-          '\') kind=ansi-escaped; word=$word$c$next; i=$((i + 1)) ;;
-          *) word=$word$c ;;
-        esac
-        continue
-      fi
-      if [ "$quote" = "'" ]; then
-        if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
-        continue
-      fi
-      if [ "$c" = '\' ]; then
-        if [ "$i" -ge "$text_length" ]; then kind=unknown; break; fi
-        i=$((i + 1))
-        [ "$next" = $'\n' ] || bare=""
-        if [ "$quote" = '"' ]; then
-          case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) word=$word$c ;; esac
-        fi
-        [ "$next" = $'\n' ] || { word=$word$next; active=1; }
-        continue
-      fi
-      # A substitution's known producer must remain visible inside double
-      # quotes. Saving only the enclosing quote grants no inner permission.
-      if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
-        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; compound=1
-        n=${#closers[@]}
-        if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
-          quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
-        else
-          saved_quotes[n]=$quote; quote=""
-          if [ "$c" = '$' ]; then closers[n]=')'; i=$((i + 1)); else closers[n]='`'; fi
-        fi
-        [ -z "$quote" ] || bare=""
-        unquoted_words[${#tokens[@]}]=""
-        tokens[${#tokens[@]}]=';'; kinds[${#kinds[@]}]=operator
-        continue
-      fi
-      if [ "$quote" = '"' ]; then
-        if [ "$c" = '"' ]; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
-        continue
-      fi
-      case "$c" in
-        "'" | '"') quote=$c; active=1; bare=""; continue ;;
-        '$')
-          case "$next" in
-            "'" | '"')
-              quote=$next; [ "$next" != "'" ] || quote=ansi
-              # Dollar arguments keep their conservative kind. Only the
-              # existing command-head selector can use the literal word.
-              [ "$kind" != literal ] || kind=dollar-literal
-              i=$((i + 1)) ;;
-            *) [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c ;;
-          esac
-          active=1; bare=""; continue ;;
-        '#')
-          if [ -z "$active" ]; then
-            if [[ ${text:$i} =~ $comment_span_re ]]; then
-              comment_span=${BASH_REMATCH[0]}; i=$((i + ${#comment_span}))
-            fi
-            continue
-          fi ;;
-      esac
-      case "$c" in
-        ' ' | $'\t' | $'\r' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>')
-          if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-          word=""; active=""; kind=literal; bare=1
-          case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
-          case "$c" in
-            '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
-            ')')
-              compound=1; n=${#closers[@]}
-              if [ "$n" -gt 0 ]; then quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'; fi
-              [ -z "$quote" ] || bare=""
-              c=';' ;;
-            $'\n') c=';' ;;
-            *)
-              case "$c$next" in
-                '&&' | '||' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
-              esac
-              [ "$c" != '<<' ] || compound=1 ;;
-          esac
-          unquoted_words[${#tokens[@]}]=""; tokens[${#tokens[@]}]=$c; kinds[${#kinds[@]}]=operator ;;
-        *) word=$word$c; active=1 ;;
-      esac
-    done
-    [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-  fi
-  n=${#tokens[@]}
-  for ((i=0; i<=n; i++)); do
-    if [ "$i" -lt "$n" ]; then
-      [ "${kinds[$i]}" = operator ] || continue
-      case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
-    fi
-    starts[stage]=$start; ends[stage]=$i
-    separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
-  done
-  for ((stage=0; stage<${#starts[@]}; stage++)); do
-    start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); origins=()
-    proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; opaque_from=""
-    for ((j=start; j<end; j++)); do
-      if [ "${kinds[$j]}" = operator ]; then
-        fd=""; n=${#args[@]}
-        if [ "$n" -gt 0 ] && [[ ${args[$((n - 1))]} =~ ^[0-9]+$ ]]; then
-          fd=${args[$((n - 1))]}; unset 'args[n-1]' 'arg_kinds[n-1]' 'arg_unquoted[n-1]' 'origins[n-1]'
-        fi
-        j=$((j + 1)); target=${tokens[$j]:-}
-        case "${tokens[$((j - 1))]}" in
-          '<')
-            input_redirect=1
-            [ "${kinds[$j]:-}" != ansi-escaped ] || input_escaped=1
-            [[ $target != /proc/*/environ ]] || proc=1 ;;
-          '<&' | '<<') input_redirect=1 ;;
-          '>' | '>>' | '>&') [ "$fd" = 2 ] || output=1 ;;
-          '&>') output=1 ;;
-        esac
-        continue
-      fi
-      n=${#args[@]}
-      args[n]=${tokens[$j]}; arg_kinds[n]=${kinds[$j]}; arg_unquoted[n]=${unquoted_words[$j]}; origins[n]=$j
-    done
-    pos=0
-    if [ "$1" = shell ]; then
-      while [ "$pos" -lt "${#args[@]}" ] && [[ ${args[$pos]} =~ $name_re ]] && [[ ${args[$pos]} == *=* ]]; do pos=$((pos + 1)); done
-    fi
-    syntax_head=""
-    if [ "$1" = shell ] && [ "$pos" -lt "${#args[@]}" ] && [ "${arg_kinds[$pos]}" = literal ]; then
-      # Reserved-word spelling ends selection, not merely one forwarding
-      # step. No function name, case pattern or option can restart it.
-      case "${args[$pos]}" in
-        if | then | elif | else | fi | time | for | in | until | while | do | done | case | 'coproc' | select | function | '{' | '}' | '[[' | ']]' | '!')
-          syntax_head=${arg_unquoted[$pos]} ;;
-        exec | builtin) syntax_head=1 ;;
-      esac
-    fi
-    if [ -n "$syntax_head" ]; then
-      program=opaque
-      opaque_from=$((origins[$pos] + 1))
-    fi
-    # Only these literal forwarding forms are part of the input contract.
-    # Unsupported executable-string arguments get conservative detection.
-    while [ "$program" != opaque ] && [ "$pos" -lt "${#args[@]}" ]; do
-      # ANSI-C escapes in a head have no decoder in this input contract.
-      # Refuse rather than permit an encoded environment producer.
-      [ "${arg_kinds[$pos]}" != ansi-escaped ] || return 0
-      [ "${arg_kinds[$pos]}" != dollar-literal ] || arg_kinds[pos]=literal
-      [ "${arg_kinds[$pos]}" = literal ] || break
-      program=${args[$pos]##*/}; pos=$((pos + 1))
-      case "$program" in
-        exec | builtin)
-          if [ "$1" = shell ] && [ "${args[$((pos - 1))]}" = "$program" ]; then
-            opaque_from=$((origins[$((pos - 1))] + 1)); program=opaque
-          fi
-          break ;;
-        command)
-          case "${args[$pos]:-}" in -v | -V) pos=${#args[@]}; break ;; -p) pos=$((pos + 1)) ;; esac
-          [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
-          continue ;;
-        sudo)
-          while [ "$pos" -lt "${#args[@]}" ]; do
-            case "${args[$pos]}" in
-              -u | -g | --user | --group) pos=$((pos + 2)) ;;
-              --user=* | --group=* | -n | -E | -H) pos=$((pos + 1)) ;;
-              --) pos=$((pos + 1)); break ;;
-              *) break ;;
-            esac
-          done
-          continue ;;
-        env)
-          options_ended=""; null_output=""
-          while [ "$pos" -lt "${#args[@]}" ]; do
-            value=${args[$pos]}
-            case "${arg_kinds[$pos]}" in dollar-literal | ansi-escaped) break ;; esac
-            # -- ends options, not the following assignment operands.
-            if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then pos=$((pos + 1)); continue; fi
-            [ -z "$options_ended" ] || break
-            case "$value" in
-              -i | --ignore-environment) pos=$((pos + 1)) ;;
-              -0 | --null) null_output=1; pos=$((pos + 1)) ;;
-              -u | --unset | -C | --chdir) pos=$((pos + 2)) ;;
-              --unset=* | --chdir=*) pos=$((pos + 1)) ;;
-              --help | --version) pos=${#args[@]}; program=""; break ;;
-              --) options_ended=1; pos=$((pos + 1)); continue ;;
-              -S | --split-string | --split-string=*) program=opaque; break ;;
-              -*) mode=dump-unknown; break ;;
-              *) break ;;
-            esac
-          done
-          if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then
-            mode=dump-lines; [ -z "$null_output" ] || mode=dump-nul
-          fi
-          if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then mode=dump-unknown; fi
-          [ "$program" = env ] && [ "$mode" = other ] || break
-          continue ;;
-        *) break ;;
-      esac
-    done
-    # Bash expands ANSI-C escapes after the harness submits command text.
-    # These producer operands cannot prove a safe name, flag or input path.
-    case "${program:-}" in
-      printenv | export | declare | typeset | set | systemctl | cat | tr | strings | xargs)
-        for ((j=pos; j<${#args[@]}; j++)); do
-          [ "${arg_kinds[$j]}" != ansi-escaped ] || return 0
-        done ;;
-    esac
-    case "${program:-}" in
-      cat | tr | strings | xargs) [ -z "$input_escaped" ] || return 0 ;;
-    esac
-    case "${program:-}" in
-      printenv)
-        named=""; options_ended=""; null_output=""; mode=dump-lines
-        for ((j=pos; j<${#args[@]}; j++)); do
-          value=${args[$j]}
-          [ "${arg_kinds[$j]}" = literal ] || mode=dump-unknown
-          if [ -z "$options_ended" ]; then
-            case "$value" in
-              --help | --version) named=1; continue ;;
-              -0 | --null) null_output=1; continue ;;
-              --) options_ended=1; continue ;;
-              -*) mode=dump-unknown; continue ;;
-            esac
-          fi
-          [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1
-        done
-        if [ "$mode" != dump-unknown ]; then
-          if [ -n "$named" ]; then mode=other; elif [ -n "$null_output" ]; then mode=dump-nul; fi
-        fi ;;
-      export | declare | typeset)
-        named=""; flags=""
-        for ((j=pos; j<${#args[@]}; j++)); do
-          value=${args[$j]}
-          case "$value" in -*) flags=$flags$value ;; *)
-            [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1 ;;
-          esac
-        done
-        if [ -z "$named" ]; then
-          case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump-lines ;; esac
-          if [ "$mode" = dump-lines ]; then
-            for ((j=pos; j<${#args[@]}; j++)); do
-              value=${args[$j]}
-              case "$value" in --) ;; -*) [[ $value =~ ^-[px]+$ ]] || mode=dump-unknown ;; *) mode=dump-unknown ;; esac
-            done
-          fi
-        fi ;;
-      set)
-        named=""
-        for ((j=pos; j<${#args[@]}; j++)); do [ "${arg_kinds[$j]}" != literal ] || named=1; done
-        if [ -z "$named" ]; then
-          if [ "$pos" -lt "${#args[@]}" ]; then mode=dump-unknown; else mode=dump-lines; fi
-        fi ;;
-      systemctl)
-        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != show-environment ] || mode=dump-lines; done
-        if [ "$mode" = dump-lines ]; then
-          for ((j=pos; j<${#args[@]}; j++)); do
-            case "${args[$j]}" in --user | --system | -- | show-environment) ;; *) mode=dump-unknown ;; esac
-          done
-        fi ;;
-      cat | tr | strings | xargs)
-        for ((j=pos; j<${#args[@]}; j++)); do [[ ${args[$j]} != /proc/*/environ ]] || proc=1; done
-        if [ -n "$proc" ]; then
-          case "$program" in
-            cat | strings)
-              mode=dump-nul; [ "$program" != strings ] || mode=dump-lines
-              for ((j=pos; j<${#args[@]}; j++)); do
-                [ "${args[$j]}" != -- ] || continue
-                [ "${arg_kinds[$j]}" = literal ] || mode=dump-unknown
-                [[ ${args[$j]} == /proc/*/environ ]] || mode=dump-unknown
-              done ;;
-            tr | xargs) mode=dump-unknown ;;
-          esac
-        fi
-        # Only this literal conversion proves separate newline records.
-        # Unknown transformations and flattened xargs output stay unknown.
-        if [ "$program" = tr ] && [ -z "$output" ] && [ "$((${#args[@]} - pos))" -eq 2 ] &&
-          [ "${arg_kinds[$pos]}:${arg_kinds[$((pos + 1))]}" = literal:literal ]; then
-          case "${args[$pos]}:${args[$((pos + 1))]}" in
-            '\0:\n' | '\000:\n')
-              if [ -n "$proc" ]; then mode=dump-lines; elif [ -z "$input_redirect" ]; then mode=convert; fi ;;
-          esac
-        fi ;;
-      grep)
-        filter_ok=1; pattern_count=0; pattern=""
-        for ((j=pos; j<${#args[@]}; j++)); do
-          value=${args[$j]}
-          [ "${arg_kinds[$j]}" = literal ] || filter_ok=""
-          case "$value" in
-            --) pos=$((j + 1)); break ;;
-            -e) j=$((j + 1)); value=${args[$j]:-}; [ "${arg_kinds[$j]:-}" = literal ] || filter_ok="" ;;
-            -*) [[ $value =~ ^-[EFq]+$ ]] || filter_ok=""; continue ;;
-          esac
-          pattern_count=$((pattern_count + 1)); pattern=$value
-        done
-        if [ "${value:-}" = -- ]; then
-          for ((j=pos; j<${#args[@]}; j++)); do
-            pattern_count=$((pattern_count + 1)); pattern=${args[$j]}; [ "${arg_kinds[$j]}" = literal ] || filter_ok=""
-          done
-        fi
-        if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
-      opaque | bash | sh | dash | zsh | ksh | eval | source | .)
-        evidence=()
-        if [ -n "$opaque_from" ]; then
-          mode=opaque-clean; compound=1
-          # Keep the suffix across list, pipe and brace boundaries. The
-          # selector cannot prove where an unsupported construct ends.
-          for ((j=opaque_from; j<${#tokens[@]}; j++)); do
-            [ "${kinds[$j]}" != ansi-escaped ] || mode=dump-unknown
-            evidence[${#evidence[@]}]=${tokens[$j]}
-          done
-        else
-          for ((j=pos; j<${#args[@]}; j++)); do evidence[${#evidence[@]}]=${args[$j]}; done
-        fi
-        for value in ${evidence[@]+"${evidence[@]}"}; do
-          if environment_main_evidence "$value"; then mode=dump-unknown; compound=1; fi
-        done ;;
-    esac
-    case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
-    decisions[stage]=$mode
-  done
-  for ((stage=0; stage<${#decisions[@]}; stage++)); do
-    case "${decisions[$stage]}" in
-      unrouted | dump-unknown) return 0 ;;
-      dump-lines | dump-nul)
-        [ -z "$compound" ] || return 0
-        j=$stage
-        if [ "${decisions[$stage]}" = dump-nul ]; then
-          if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != convert ]; then return 0; fi
-          j=$((j + 1))
-        fi
-        if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != filter ]; then return 0; fi ;;
-    esac
   done
   return 1
 }
@@ -695,9 +299,8 @@ environment_program_text() {
       esac ;;
   esac
   if [ -n "$source_pos" ]; then
-    # Parsed executable strings have no added permission. Keep main's
-    # evidence before recursion can classify an inner clean producer.
-    if environment_main_evidence "$source"; then mode=dump-unknown; return; fi
+    [ "$program" = opaque ] || stdin_program=""
+    if [ "$program" = opaque ] && environment_main_evidence "$source"; then mode=dump-unknown; return; fi
     cursor=${#executable_texts[@]}
     executable_texts[cursor]=$source; executable_stages[cursor]=$stage
   fi
@@ -706,17 +309,15 @@ environment_program_text() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd target proc output input_redirect input_escaped pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
-  local unsupported="" scan candidate limit producer_end code incoming_sources="" file_output file_body redirect_evidence head_start main_start
+  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source=""
+  local unsupported="" scan candidate limit producer_end code incoming_sources="" redirect_evidence
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() executable_texts=() executable_stages=()
-  local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() file_outputs=()
-  # Only a forwarded body can inherit its caller's registered heredoc origin.
-  [ "$#" -ge 3 ] || heredoc_input=""
+  local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=()
   [ "${2:-}" != conservative ] || compound=1
   if [ "$1" = argv ]; then
     tokens=(${command_argv[@]+"${command_argv[@]}"})
@@ -850,7 +451,7 @@ environment_dump() { # command kind; arguments are already decoded data
               done ;;
             *)
               case "$c$next" in
-                '&&' | '||' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
+                '&&' | '||' | '|''&' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
               esac
               if [ "$c" = '<<' ] && [ "${text:$i:1}" = '<' ]; then c='<<<'; i=$((i + 1)); fi
               if [ "$c" = '<<' ] && [ "$math_depth" -eq 0 ]; then
@@ -887,24 +488,18 @@ environment_dump() { # command kind; arguments are already decoded data
     n=${#literal_inputs[@]}; literal_inputs[n]=${!doc}
     incoming_sources="$incoming_sources $n"
   done
-  [ "${#heredocs[@]}" -eq 0 ] || heredoc_input=1
   n=${#tokens[@]}
   for ((i=0; i<=n; i++)); do
     if [ "$i" -lt "$n" ]; then
       [ "${kinds[$i]}" = operator ] || continue
-      [ "${tokens[$i]}" != '|' ] || pipeline=1
-      case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
+      case "${tokens[$i]}" in '|' | '|''&' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
     fi
     starts[stage]=$start; ends[stage]=$i
     separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
   done
-  # Heredoc input in a pipeline has no body-data permission. Main's known-read
-  # evidence covers the whole context without inferring its receiving path.
-  # The tokenizer snapshot survives body-local recursive input bindings.
-  if [ -n "$pipeline" ] && [ -n "$heredoc_input" ] && environment_main_evidence "$text" "${@:3}"; then return 0; fi
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); arg_roles=()
-    proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; file_output=""; file_body=""; redirect_evidence=""
+    proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; redirect_evidence=""
     for ((j=start; j<end; j++)); do
       if [ "${kinds[$j]}" = operator ]; then
         fd=""; n=${#args[@]}
@@ -922,18 +517,16 @@ environment_dump() { # command kind; arguments are already decoded data
             input_redirect=1
             doc=${body_ids[$((j - 1))]:-}
             [ -n "$doc" ] || return 0
-            if [ -z "$fd" ] && [ "${tokens[$((j - 1))]}" = '<<' ] &&
-               [ "${kinds[$j]:-}" = literal ] && [ -z "${heredoc_expand[$doc]}" ]; then file_body=1; fi
             data_source="$data_source $doc" ;;
           '<<<')
             input_redirect=1; doc=${#literal_inputs[@]}; literal_inputs[doc]=$target
             data_source="$data_source $doc" ;;
           '>')
             [ "$fd" = 2 ] || output=1
-            if [ -z "$fd" ] && [ "${kinds[$j]:-}" = literal ]; then file_output=1; fi ;;
+            ;;
           '>>')
             [ "$fd" = 2 ] || output=1
-            if [ -z "$fd" ] && [ "${kinds[$j]:-}" = literal ]; then file_output=append; fi ;;
+            ;;
           '>&') [ "$fd" = 2 ] || output=1 ;;
           '&>') output=1 ;;
         esac
@@ -943,98 +536,62 @@ environment_dump() { # command kind; arguments are already decoded data
       n=${#args[@]}
       args[n]=${tokens[$j]}; arg_kinds[n]=${kinds[$j]}; arg_unquoted[n]=${unquoted_words[$j]}
     done
-    # An empty recorded stage cannot prove how inherited input will execute.
-    # Existing boundaries select this main-refusal path before head parsing.
-    if [ -n "$incoming_sources" ] && [ "$stage" -gt 0 ] && [ "$start" -eq "$end" ] &&
-       [ "${separators[$((stage - 1))]}" = '|' ] && [ "${separators[$stage]}" = '&' ] &&
-       environment_main_evidence "${@:3}"; then return 0; fi
     environment_head "$1"
-    main_start=0
-    # Main excluded initial assignments before its first reserved head.
-    # Later unsupported stages remain part of that complete suffix.
-    [ -n "$unsupported" ] || main_start=$head_start
-    if [ -n "$syntax_head" ]; then unsupported=1; compound=1; fi
+    [ -z "$syntax_head" ] || compound=1
     if [ "$pos" -ge "${#args[@]}" ]; then
       program=opaque
     fi
-    environment_producer "$1" "$unsupported${2:-}"
+    environment_producer "$1" "$unsupported${2:-}$syntax_head"
     environment_program_text
-    file_outputs[stage]=$file_output
-    # The approved file-writing class keeps its existing equal facts.
-    # Every other registered body receives the complete original command.
-    for doc in $data_source; do
-      [ "$doc" -lt "${#heredocs[@]}" ] || continue
-      if [ -z "${2:-}" ] && [ "$program" = cat ] && [ "$mode" = other ] && [ "${#args[@]}" -eq 1 ] &&
-         [ "$file_output" = 1 ] && [ -n "$file_body" ] && [ -z "$redirect_evidence" ] &&
-         [ "${#heredocs[@]}" -eq 1 ] && [ "$start" -eq 0 ] && [ "$end" -eq 5 ] &&
-         [ "${#starts[@]}" -eq 2 ] && [ -z "$incoming_sources" ]; then continue; fi
-      local command_text=$text
-      if environment_main_command "$1"; then return 0; fi
-      break
-    done
     stage_stdin[stage]=$stdin_program; stage_sources[stage]=$data_source
     if [ -n "$program_pos" ]; then
       for ((j=0; j<program_pos; j++)); do arg_roles[j]=prefix; done
       arg_roles[$program_pos]=command
       for ((j=program_pos+1; j<${#args[@]}; j++)); do arg_roles[j]=argument; done
       [ -z "$source_pos" ] || arg_roles[$source_pos]=executable
+      if [ "$program" = command ]; then
+        for ((j=0; j<pos; j++)); do arg_roles[j]=prefix; done
+      fi
     fi
+    # Opaque exec/builtin contexts can retain descriptors for later commands.
+    # Shell-script wrappers can execute unquoted command arguments. Ordinary
+    # receivers share only the env launcher decision; quoted arguments are data.
+    [ -z "$unsupported" ] || [ -z "$redirect_evidence" ] || return 0
     scan=$unsupported
-    case "$program" in opaque | bash | sh | dash | zsh | ksh | eval | source | .) scan=1 ;; esac
-    if [ -n "$scan" ]; then
-      case "$mode" in dump-*) return 0 ;; esac
-      [ -z "$redirect_evidence" ] || return 0
-      stage_args=(${args[@]+"${args[@]}"}); stage_kinds=(${arg_kinds[@]+"${arg_kinds[@]}"})
-      stage_unquoted=(${arg_unquoted[@]+"${arg_unquoted[@]}"})
-      stage_roles=(${arg_roles[@]+"${arg_roles[@]}"})
-      for ((candidate=0; candidate<${#stage_args[@]}; candidate++)); do
+    case "$program" in opaque | bash | sh | dash | zsh | ksh | eval | source | . | nohup) scan=1 ;; esac
+    local head_mode=$mode
+    stage_args=(${args[@]+"${args[@]}"}); stage_kinds=(${arg_kinds[@]+"${arg_kinds[@]}"})
+    stage_unquoted=(${arg_unquoted[@]+"${arg_unquoted[@]}"})
+    stage_roles=(${arg_roles[@]+"${arg_roles[@]}"})
+    for ((candidate=0; candidate<${#stage_args[@]}; candidate++)); do
+      [ "${stage_roles[$candidate]}" != executable ] || continue
+      case "${stage_roles[$candidate]}" in prefix | command | syntax) continue ;; esac
+      value=${stage_args[$candidate]}
+      if [ -n "$unsupported" ]; then
         [ "${stage_kinds[$candidate]}" != ansi-escaped ] || return 0
-        [ "$candidate" -ge "$main_start" ] || continue
-        value=${stage_args[$candidate]}
-        case "${stage_roles[$candidate]}" in
-          prefix) [ -n "$unsupported" ] || continue ;;
-          command)
-            # The shared producer already refused optional conservative
-            # clean reads. Its retained receipt decision owns this command.
-            [ "$program" != set ] || continue ;;
-        esac
-        # The approved ordinary quoted-data class has the same recorded
-        # receiver, role and argument bounds. It recognizes no inner words.
-        if [ "$1" = shell ] && [ -z "${2:-}$compound" ] && [ "$program" = bash ] && [ -z "$source_pos" ] && [ -z "$syntax_head" ] &&
-           [ "${#stage_args[@]}" -eq 3 ] && [ "$candidate" -eq 2 ] && [ "${#starts[@]}" -eq 1 ] &&
-           [ "$start" -eq 0 ] && [ "$end" -eq 3 ] && [ "${stage_kinds[1]}" = literal ] &&
-           [ "${stage_roles[0]}:${stage_roles[1]}" = command:argument ] &&
-           [ "${stage_roles[$candidate]}" = argument ] && [ "${stage_kinds[$candidate]}" = literal ] &&
-           [ -z "${stage_unquoted[$candidate]}" ] && [ -z "$input_redirect$output" ]; then continue; fi
-        case "${value##*/}" in
-          env)
-            # The named wrapper receives launcher words as arguments. Other
-            # skipped prefixes and forwarded operands return to main.
-            if [ "$1" != shell ] || [ -n "${2:-}$compound" ] || [ "$program" != bash ] || [ -n "$source_pos$syntax_head" ] ||
-               [ "$candidate" -ne 2 ] || [ "${#starts[@]}" -ne 1 ] || [ -n "$input_redirect" ] ||
-               [ "$start" -ne 0 ] || [ "${stage_kinds[1]}" != literal ] ||
-               [ "${stage_roles[0]}:${stage_roles[1]}" != command:argument ] ||
-               [ "${stage_roles[$candidate]}" != argument ] ||
-               ! { { [ "${#stage_args[@]}" -eq 7 ] && { { [ "$end" -eq 7 ] && [ -z "$output" ]; } || { [ "$end" -eq 9 ] && [ "$file_output" = 1 ]; }; }; } ||
-                   { [ "${#stage_args[@]}" -eq 9 ] && [ "$end" -eq 9 ] && [ -z "$output" ]; }; }; then
-              if environment_main_evidence "$value"; then return 0; fi
-              continue
-            fi ;;
-          *) if environment_main_evidence "$value"; then return 0; fi; continue ;;
-        esac
-        limit=${#stage_args[@]}
-        args=("${stage_args[@]:candidate:limit-candidate}")
-        arg_kinds=("${stage_kinds[@]:candidate:limit-candidate}")
-        arg_unquoted=("${stage_unquoted[@]:candidate:limit-candidate}")
-        program=""; pos=0; mode=other; producer_end=0; program_pos=""
-        environment_producer shell "$scan"
-        environment_program_text
-        [ -z "$stdin_program" ] || stage_stdin[stage]=1
-        case "$mode" in dump-*) return 0 ;; esac
-        [ "$producer_end" -le 1 ] || candidate=$((candidate + producer_end - 2))
-      done
-      mode=opaque-clean
-    fi
+        if environment_main_evidence "$value"; then return 0; fi
+        continue
+      fi
+      [ "$1" = shell ] || continue
+      [ -n "${stage_unquoted[$candidate]}" ] || continue
+      case "${value##*/}" in
+        env) ;;
+        printenv | set | export | declare | typeset | systemctl | cat | tr | strings | xargs | bash | sh | dash | zsh | ksh | eval | source | .)
+          [ -n "$scan" ] || continue ;;
+        *) continue ;;
+      esac
+      limit=${#stage_args[@]}
+      args=("${stage_args[@]:candidate:limit-candidate}")
+      arg_kinds=("${stage_kinds[@]:candidate:limit-candidate}")
+      arg_unquoted=("${stage_unquoted[@]:candidate:limit-candidate}")
+      program=""; pos=0; mode=other; producer_end=0; program_pos=""
+      environment_producer shell conservative
+      environment_program_text
+      [ -z "$stdin_program" ] || stage_stdin[stage]=1
+      case "$mode" in dump-*) return 0 ;; esac
+      [ "$producer_end" -le 1 ] || candidate=$((candidate + producer_end - 2))
+    done
+    mode=$head_mode
     case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
   done
@@ -1042,7 +599,7 @@ environment_dump() { # command kind; arguments are already decoded data
     data_source=${stage_sources[$stage]}
     # Keep every known literal body through redirects and pipe stages. Proving
     # descriptor routing or an unseen script's input use is outside this check.
-    if [ "$stage" -gt 0 ] && [ "${separators[$((stage - 1))]}" = '|' ]; then
+    if [ "$stage" -gt 0 ] && { [ "${separators[$((stage - 1))]}" = '|' ] || [ "${separators[$((stage - 1))]}" = '|''&' ]; }; then
       data_source="$data_source $piped_source"
     fi
     data_source="$data_source $incoming_sources"
@@ -1065,15 +622,6 @@ environment_dump() { # command kind; arguments are already decoded data
     piped_source=$data_source
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
-    # The retained set decision also needs the recorded closing group and
-    # status file write. Future-stage collector facts are now available.
-    if [ "${decisions[$stage]}" = opaque-clean ] && [ "$stage" -eq 1 ] && [ "${#starts[@]}" -eq 6 ]; then
-      if [ "${tokens[${starts[1]}]:-}" = set ] &&
-         { [ "${tokens[0]:-}" != '{' ] || [ "${tokens[${starts[5]}]:-}" != '}' ] ||
-           [ "${tokens[${starts[4]}]:-}" != printf ] || [ "${file_outputs[4]:-}" != append ]; }; then
-        if environment_main_evidence "${tokens[${starts[1]}]:-}"; then return 0; fi
-      fi
-    fi
     case "${decisions[$stage]}" in
       unrouted | dump-unknown) return 0 ;;
       dump-lines | dump-nul)

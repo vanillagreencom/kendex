@@ -1,0 +1,1 @@
+- Allows source edits and prose in heredocs, quoted argument data, and env launchers through wrappers. Keeps refusal for recognized shell environment dumps and executable shell input.
