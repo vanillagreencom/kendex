@@ -117,6 +117,8 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
     # mark. Its Stop row and context record must still land.
     judge_says "$CONTEXT_MARK_LINE"
     wake_row_process_table
+    # This row-writer process map ends at this synthetic pane boundary.
+    CALL_ENV+=("TMUX_PANE_PID=$OVERSEER_SERVER")
     mkdir -p "$LANE/tmp/lane-mail/overseer"
   fi
   record_key="wake-record=${WAKE_STATE%/*}/oversee-watch.pid"

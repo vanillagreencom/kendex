@@ -1250,30 +1250,26 @@ ol_record_current() { # SERVER PANE
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
 }
 
-# Initial native evidence from the pane's latest SessionStart, whose writer
-# excludes nested harnesses. Registration keeps that row, so a resumed session
-# can bind on its next hook. Without a row, only the existing top-level ancestry
-# proof can vouch for the caller's payload. Missing or unreadable evidence
-# establishes nothing; a manual direct-exec pane has no such ancestry proof.
-ol_native_evidence() { # DIR SERVER PANE HARNESS SESSION_ID [RECORD_SNAPSHOT]
-  local file pane_pid bound
-  bound="$(jq -r '.[0].session_id // ""' <<<"${6:-[null]}")" || return 1
+# SessionStart rows have no producer PID. Only a shell pane gives their
+# writer the boundary that excludes a nested harness. A direct-exec pane's
+# child can write such a row, so that row cannot establish initial ownership.
+# Registration preserves the supported launch's row for its next native hook.
+ol_native_evidence() { # DIR SERVER PANE [RECORD_SNAPSHOT]
+  local file pane_pid pane_comm bound
+  bound="$(jq -r '.[0].session_id // ""' <<<"${4:-[null]}")" || return 1
   if [[ -n "$bound" ]]; then
     printf '%s\n' null
     return 0
   fi
-  file="$(session_rows_overseer_file "$1" "$2" "$3")" || return 1
-  session_rows_last "$file" SessionStart || return 1
-  if [[ -n "$SESSION_ROW" ]]; then
-    printf '%s\n' "$SESSION_ROW"
-    return 0
-  fi
-  # The ancestry owner counts shells through lane-state's shared definition.
-  # Without that dependency a missing function would count this shell as a harness.
   source "${BASH_SOURCE[0]%/*}/lane-state.sh" || return 1
   pane_pid="$(tmux display-message -p -t "$3" '#{pane_pid}' 2>/dev/null)" || return 1
-  session_rows_top_level "$pane_pid" || return 1
-  jq -cn --arg harness "$4" --arg session "${5:-}" '{harness:$harness, session_id:$session}'
+  pane_comm="$(ps -o comm= -p "$pane_pid" 2>/dev/null)" || return 1
+  read -r pane_comm <<<"$pane_comm"
+  is_bare_shell "${pane_comm##*/}" || return 1
+  file="$(session_rows_overseer_file "$1" "$2" "$3")" || return 1
+  session_rows_last "$file" SessionStart || return 1
+  [[ -n "$SESSION_ROW" ]] || return 1
+  printf '%s\n' "$SESSION_ROW"
 }
 
 # ol_record_heal SERVER PANE START HARNESS HOME SESSION_ID — the record naming the session
@@ -1295,7 +1291,7 @@ ol_native_evidence() { # DIR SERVER PANE HARNESS SESSION_ID [RECORD_SNAPSHOT]
 # words in DEP_ERR.
 ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID [RECORD_SNAPSHOT]
   local native
-  native="$(ol_native_evidence "$PWD" "$1" "$2" "$4" "${6:-}" "${7:-[null]}")" || native=null
+  native="$(ol_native_evidence "$PWD" "$1" "$2" "${7:-[null]}")" || native=null
   "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
     --arg harness "$4" --arg home "$5" --arg session "${6:-}" --argjson native "$native" "$OL_JQ_DEFS"'
       if (.overseer | ol_owns($server; $start; $pane) and ol_native_match($harness; $home; $session; $native))

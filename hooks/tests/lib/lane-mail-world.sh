@@ -380,6 +380,9 @@ send() { # ITEM TEXT [--re MSGID]
 # $TMUX_PANE.
 TMUX_BIN="$TMP_ROOT/tmux-bin"
 mkdir -p "$TMUX_BIN"
+# This suite owns the shell until its fixtures and hook calls finish.
+TMUX_PANE_PID=$$
+export TMUX_PANE_PID
 cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
 #!/bin/sh
 # `display-message -p -t <pane> '#{pid}'`, and `'#{pid} #{start_time}'` for
@@ -395,6 +398,7 @@ case "$*" in
   *'#{window_id}'*) printf '%s\n' '@7' ;;
   *'#{pane_current_path}'*) pwd -P ;;
   *'#{pane_current_command}'*) printf '%s\n' claude ;;
+  *'#{pane_pid}'*) printf '%s\n' "$TMUX_PANE_PID" ;;
   *) printf '%s\n' "$TMUX_SERVER_ID" ;;
 esac
 TMUXSTUB
