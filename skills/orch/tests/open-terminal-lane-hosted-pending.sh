@@ -163,11 +163,12 @@ fi
 exit "$rc"
 STUB
 chmod +x "$RECOVERY_PROVIDER"
-recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH] [ROUTE] [SCOPE] [STOP]
+recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH] [ROUTE] [SCOPE] [STOP] [CAPACITY]
   local name="$1" harness="$2" verb="$3" path="$4" step="$5" retry_ssh="${7:-neutral}" state env_list first_starts retry_starts record first_queries retry_queries
   local route="${8:-same}" scope="${9:-fleet}" stop="${10:-0}" pending_query='.lanes[0].prepare' saved_prepare brief replay_line replay_rc=0
   local fleet_args=() first_args=() retry_args=()
   local create_line native_env pool=short
+  local capacity="${11:-isolated}"
   state="$TMP_ROOT/recovery-$name"; mkdir -p "$state/disk/srv/lane" "$state/disk/pi/packages/@vanillagreen/pi-hooks/extensions"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$state/disk/srv/lane/.git"
   printf '%s\n' '{"compaction":{"enabled":false}}' > "$state/disk/pi/settings.json"
@@ -182,6 +183,9 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH
   create_line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tpi-root=/pi'
   [[ "$step" != wait ]] || { create_line+=$'\tstate=preparing'; pool=""; }
   env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;RECOVERY_BLOCK_POOL=$pool;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=0;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=$create_line;$HARNESS_UP"
+  # Recovery uses the same pane and claim store that its first launch wrote.
+  # The cap owner must deduplicate that live claim through the held record.
+  [[ "$capacity" != held ]] || env_list+=";OVERSEE_WATCH_STATE_DIR=$state;OT_TMUX_PANES=$state/panes"
   if [[ "$harness" == codex ]]; then env_list+=';flags=-m gpt-6-astra -c model_reasoning_effort=high'
   else env_list+=";ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"; fi
   native_env="$env_list"
@@ -205,6 +209,10 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH
   fi
   saved_prepare="$(jq -c "$pending_query" "$record")"
   [[ "$route" == same ]] || assert_eq "$(jq -r '.command_route' <<<"$saved_prepare")" "$([[ "$route" == native ]] && echo custom || echo native)" "the $step checkpoint records its command route"
+  if [[ "$capacity" == held ]]; then
+    assert_eq "$(awk -F '\t' -v fleet="$record" '$4 == "KEN-3241" && $6 == fleet {print $4 ":" $8}' "$state/claims/"*.claim)" \
+      'KEN-3241:ssh' 'the accepted selection keeps its production pane claim in the same full fleet'
+  fi
   rm -f "$state/home/.cache/orch/lane-host-slots/$pool/slot.$$"
   [[ "$retry_ssh" != failed ]] || env_list+=';OT_HANDOFF_SSH_STATUS=255'
   # Preparation can finish while its caller holds a busy wait checkpoint.
@@ -254,8 +262,8 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH
       'first_queries=1 retry_queries=0 stops=0' 'a saved selection completes without rereading handoff or stopping its harness'
   fi
 }
-while IFS='|' read -r name harness verb path step retry_ssh route scope stop; do
-  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}" "${route:-same}" "${scope:-fleet}" "${stop:-0}"
+while IFS='|' read -r name harness verb path step retry_ssh route scope stop capacity; do
+  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}" "${route:-same}" "${scope:-fleet}" "${stop:-0}" "${capacity:-isolated}"
 done <<'ROWS'
 codex-put|codex|create|--repo|marker
 codex-cat|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection
@@ -264,10 +272,10 @@ pi-settings|pi|create|--repo|marker
 pi-carrier|pi|cat|/srv/lane/.pi/settings.json|marker
 route-wait|codex|create|--repo|wait||custom
 route-marker|codex|create|--repo|marker||custom
-route-selection|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom
+route-selection|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|fleet|0|held
 route-wait-failed|codex|create|--repo|wait||custom|fleet|1
 route-marker-failed|codex|create|--repo|marker||custom|fleet|1
-route-selection-failed|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|fleet|1
+route-selection-failed|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|fleet|1|held
 route-wait-none|codex|create|--repo|wait||custom|none
 route-marker-none|codex|create|--repo|marker||custom|none
 route-selection-none|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|none
@@ -276,6 +284,14 @@ route-native|codex|create|--repo|marker||native
 ROWS
 
 RECOVERY_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-command-capacity/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-command-capacity/orch"
+mutate_file "$OPEN_TERMINAL" '    host_command_restart=pending' '    host_command_restart=pending; host_launch_resume admitted || return 1'
+RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
+recovery_case route-capacity-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' neutral custom fleet 0 held > "$TMP_ROOT/command-capacity-control.out"
+RECOVERY_CAPACITY_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"
+assert_eq "$RECOVERY_CAPACITY_CONTROL" 2 'control: retiring the held record before admission blocks the fresh brief at the fleet cap'
+OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-command-route/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-command-route/orch"
 mutate_file "$OPEN_TERMINAL" '(.command_route // "native") == (if $command == "" then "native" else "custom" end)' 'true'

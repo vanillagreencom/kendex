@@ -2836,7 +2836,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
     stands)
-      [[ "$HOST_RELAUNCH" != true || "$host_command_restarted" == true ]] || host_harness_stop || return 1
+      [[ "$HOST_RELAUNCH" != true || "$host_command_restart" == completed ]] || host_harness_stop || return 1
       [[ "$HOST_RELAUNCH" != true ]] || RELAUNCH_HANDOFF_DIR="${LANE_HANDOFF_FILE%/*}"
       ot_message session-retired "item=$1" "harness=$HARNESS"
       RELAUNCH_ROUTE=fresh HOST_SELECTION_FILE=""
@@ -3132,8 +3132,15 @@ host_launch_pending() { # STEP
   fi
 }
 
-host_launch_resume() {
+host_launch_resume() { # [admitted]
   local key="$wt_id" query='.host_launch' pending
+  if [[ "${1:-}" == admitted ]]; then
+    [[ "$host_command_restart" == pending ]] || return 0
+    host_harness_stop || return 1
+    host_launch_ready completed || return 1
+    host_command_restart=completed
+    return 0
+  fi
   host_pending_step="" host_line="" host_pending_since="" host_pending_pane="" host_pending_server="" host_pending_session="" host_pending_record=""
   if [[ "$FLEET" == true ]]; then
     key=oversee
@@ -3152,9 +3159,9 @@ host_launch_resume() {
   if ! jq -e --arg command "$CMD_TEMPLATE" \
     '(.command_route // "native") == (if $command == "" then "native" else "custom" end)' <<<"$pending" >/dev/null; then
     [[ "$RELAUNCH" == true ]] || { ot_message host-launch-mismatch "item=$item" >&2; return 1; }
-    host_harness_stop || return 1
-    host_launch_ready completed || return 1
-    host_command_restarted=true
+    # Its live pane claim still occupies capacity after checkpoint cleanup.
+    # Keep the held record until the existing cap owner admits replacement.
+    host_command_restart=pending
     return 0
   fi
   host_line="$(jq -r '.line // empty' <<<"$pending")" || return 1
@@ -3705,7 +3712,7 @@ for raw in "${ITEMS[@]}"; do
     break
   fi
   LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" HOST_PANE_LAUNCH=unstarted
-  host_pending_step="" host_line="" host_command_restarted=false
+  host_pending_step="" host_line="" host_command_restart=none
   if [[ "$LANE_HOST" != local ]]; then
     host_launch_resume || { failed=$((failed + 1)); continue; }
   fi
@@ -3721,6 +3728,9 @@ for raw in "${ITEMS[@]}"; do
     ot_message overseer-unjudged cause=state-read state=oversee >&2
     failed=$((failed + 1))
     break
+  fi
+  if [[ "$LANE_HOST" != local ]]; then
+    host_launch_resume admitted || { failed=$((failed + 1)); continue; }
   fi
   if [[ "$HOST_LAUNCH" == cloud-session ]]; then
     cloud_rc=0
@@ -3841,7 +3851,7 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$LANE_HOST" != local ]]; then
     # Stop does not remove saved sessions. The custom command below still
     # takes its own fresh route, after create reconnects the stopped harness.
-    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restarted" != true ]] && ! host_harness_stop; then
+    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restart" != completed ]] && ! host_harness_stop; then
       failed=$((failed + 1))
       continue
     fi
