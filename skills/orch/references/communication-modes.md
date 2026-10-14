@@ -266,6 +266,8 @@ Standing procedures and traps go to the orch skill through a lane. Record ruling
 
 ## Recording
 
+Record a directive's stated speaker and source. Use Jarvis as Source for a Jarvis note and the overseer as Source for overseer words. Attribute words to the owner only when received directly from the owner or explicitly quoted with their original source. Keep the speaker distinction, note id and original quoted source in delegated filing input through the existing prose fields. The mailbox's `send:overseer` path sets `from=owner` for every sender; that routing value alone does not prove authorship. Attribution changes neither authority nor the ask set.
+
 | Decision | Record |
 |----------|--------|
 | Taken without asking | One `ruling` record in the fleet log, whose shape and append command are [oversee-events.md](oversee-events.md) § Judgement rules |

@@ -1,0 +1,1 @@
+- Record directive speakers and original quote sources so owner words stay distinct from Jarvis and overseer words in delegated filings.
