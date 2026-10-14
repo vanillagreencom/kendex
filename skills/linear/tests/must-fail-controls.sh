@@ -270,19 +270,49 @@ flush() {
 	done
 }
 
-# timed_suite ROOT SUITE OUT — SUITE run from the copy at ROOT under the cap,
-# its output in OUT, returning its status. In the background for the same
+# timed_suite ROOT SUITE OUT [WANTED]: SUITE run under the cap, with its
+# output in OUT. Mutations stop once every name in WANTED has reddened:
+# later suite work cannot change that evidence and can exhaust the CI bound.
+# In the background for the same
 # reason as run_job's body: a job stopped mid-run passes the TERM to
 # `timeout`, which passes it to the suite, and the job ends there rather than
 # going on to stage a copy under a scratch the runner has removed.
 timed_suite() {
-	local pid="" rc
+	local pid="" rc line i remaining=0 stopped=0
+	local -a wanted=()
 	trap '[[ -z $pid ]] || kill -TERM "$pid" 2>/dev/null; exit 143' TERM
-	timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &
-	pid=$!
+	if [[ "$#" -eq 4 ]]; then
+		while IFS= read -r line; do
+			wanted+=("$line")
+			remaining=$((remaining + 1))
+		done <"$4"
+		[[ "$remaining" -gt 0 ]] || die "no wanted assertions for $2"
+		: >"$3"
+		exec 4< <(exec timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)
+		pid=$!
+		while IFS= read -r -u 4 line || [[ -n "$line" ]]; do
+			printf '%s\n' "$line" >>"$3"
+			for i in "${!wanted[@]}"; do
+				if [[ "$line" == "FAIL: ${wanted[i]}" ]]; then
+					unset 'wanted[i]'
+					remaining=$((remaining - 1))
+				fi
+			done
+			if [[ "$remaining" -eq 0 ]]; then
+				stopped=1
+				kill -TERM "$pid" 2>/dev/null
+				break
+			fi
+		done
+		exec 4<&-
+	else
+		timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &
+		pid=$!
+	fi
 	wait "$pid"
 	rc=$?
 	trap - TERM
+	[[ "$stopped" -eq 0 ]] || return 1
 	return "$rc"
 }
 
@@ -460,7 +490,9 @@ mutate_one() {
 			return 1
 		fi
 
-		timed_suite "$root" "$suite" "$root.out"
+		grep "^$k	" "$CONTROL_EXPECT_FILE" | cut -f2- >"$root.wanted" ||
+			die "cannot read wanted assertions for $suite mutation $k"
+		timed_suite "$root" "$suite" "$root.out" "$root.wanted"
 		rc=$?
 		out="$(<"$root.out")" || die "cannot read the output of $suite"
 		if [[ "$rc" -eq 0 ]]; then

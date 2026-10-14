@@ -150,6 +150,12 @@ control_replace scripts/c.sh 1 '"'"'C=1'"'"' '"'"'C=2'"'"'' ;;
     # The run reddens on the clock rather than on the mutation.
     capped) body='control_expect "a is one"
 control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; sleep 2'"'"'' ;;
+    # Duplicate and unrelated FAIL lines cannot complete the wanted set.
+    # Once both wanted names print, the remaining timer work is unused.
+    early) body='control_expect "a is one"
+control_expect "b is one"
+control_replace tests/alpha.test.sh 1 '\''exit "$rc"'\'' \
+    '\''echo "FAIL: a is one"; echo "FAIL: a is one"; echo "FAIL: unrelated"; echo "FAIL: b is one"; sleep 2; exit 1'\''' ;;
     # A control is arbitrary bash with CONTROL_ROOT set: this one writes under
     # it directly, so the edit rides the counting pass and every mutation pass.
     ungated) body='control_expect "a is one"
@@ -223,6 +229,7 @@ the green report names its suite|plain|green|-|verdicts|rc=1;GREEN alpha.test.sh
 a control whose first mutation finishes last is judged on it|plain|late|-|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
 a slot one job frees is refilled while another still runs|plain|refill|10|verdicts|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
 the timeout report names the mutation and the cap|plain|capped|1|verdicts|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
+a mutation stops after all wanted names redden before the cap|plain|early|1|verdicts|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
 the ungated report says what it refuses|plain|ungated|-|verdicts|rc=1;UNGATED alpha.test.sh control edits its copy outside a numbered mutation;1 controls, 1 failing, 0 orphaned
 the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|verdicts|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
 the trailing report names the expectation nothing claims|plain|trailing|-|verdicts|rc=1;NOEXPECT alpha.test.sh an expectation follows the last mutation and names none: c is one;1 controls, 1 failing, 0 orphaned

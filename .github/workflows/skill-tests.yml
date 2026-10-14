@@ -1157,11 +1157,8 @@ jobs:
             --battery skills/preflight/tests "${linear[@]}" "${bot[@]}" "${preflight[@]}" || fail=1
           exit "$fail"
       # ---- shards: linear-controls-a, linear-controls-b: the linear control
-      # battery, which the step above skips. KEN-3762 measured 74 controls
-      # across 506 preparation and mutation jobs with four worker slots:
-      # 868.848s wall time. Stem checksum parity assigns 1592.633s of job
-      # time to a and 1830.015s to b. The halves have 33 and 41 controls:
-      # work time determines the split, rather than equal file counts.
+      # battery, which the step above skips. Stem cksum parity assigns each
+      # control to a or b without weighting its work time.
       # Both need Bash 4, so the macOS leg excludes them.
       - name: linear must-fail controls
         if: matrix.shard == 'linear-controls-a'

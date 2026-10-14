@@ -117,3 +117,10 @@ control_expect "a slot one job frees is refilled while another still runs"
 control_replace tests/must-fail-controls.sh 1 \
 	'	while [[ "$RUNNING" -ge "$CONTROL_JOBS" ]]; do' \
 	'	[[ "$RUNNING" -lt "$CONTROL_JOBS" ]] || drain; while false; do'
+
+# 18. Keep reading after all wanted names print, so the fixture's remaining
+#     work reaches the cap and the early-stop row reports TIMEOUT.
+control_expect "a mutation stops after all wanted names redden before the cap"
+control_replace tests/must-fail-controls.sh 1 \
+	'			if [[ "$remaining" -eq 0 ]]; then' \
+	'			if false; then'
