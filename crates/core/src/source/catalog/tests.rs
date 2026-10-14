@@ -580,7 +580,12 @@ fn declared_skill_refusals_are_breaking_and_keep_accepted_siblings() {
             declarations.push(serde_json::json!("heygen-avatar"));
         }
         let (_tmp, sealed) = declared_fixture("./", Some(serde_json::json!(declarations)));
-        for folder in ["nul", "first/review", "second/review", "second/REVIEW"] {
+        let mut folders = vec!["first/review", "second/review", "second/REVIEW"];
+        // Win32 cannot create `nul`; its declaration still tests marker refusal there.
+        if !cfg!(windows) {
+            folders.push("nul");
+        }
+        for folder in folders {
             write(
                 sealed.root(),
                 &format!("{folder}/SKILL.md"),
