@@ -172,7 +172,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
     assert_eq!(
         ledger(&printed),
         format!(
-            "{}: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety · details folded",
+            "{}: refreshed 4 changes · skipped 1 item on conflict · flagged 2 items on safety · details folded",
             kendex_core::paths::slashed(&project)
         ),
         "{printed}"
@@ -233,7 +233,7 @@ fn a_clean_refresh_ends_on_the_count_and_a_clean_scan() {
     assert_eq!(
         ledger(&printed),
         format!(
-            "{}: refreshed 2 changes · safety: clean · details folded",
+            "{}: refreshed 3 changes · safety: clean · details folded",
             kendex_core::paths::slashed(&project)
         ),
         "a clean run reports its writes, its clean scan and that it left detail out, and no outcome it does not have: {printed}"

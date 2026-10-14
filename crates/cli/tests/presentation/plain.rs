@@ -123,7 +123,7 @@ fn a_failure_after_the_write_still_records_and_reports_it() {
         "the installer did not fail: {printed}"
     );
     assert!(
-        printed.contains("applied 2 changes"),
+        printed.contains("applied 3 changes"),
         "the run said nothing about what it wrote: {printed}"
     );
     let drift = Env::host_rooted(home.clone()).drift_dir();

@@ -5,11 +5,13 @@
 //! ignore rule keeps the record out of git clones without one, while the
 //! tracked tree still carries the rendered skills, the inventory and the
 //! Pi packages the manifest declares; one `refresh` has to settle those
-//! packages itself and leave the tree it cloned: a remote lane, a CI job
+//! packages itself and preserve their rendered bytes: a remote lane, a CI job
 //! and a new machine all start here, and each of them scripts that one
 //! command with `--yes`. It settles after consent, and never by running a
 //! process: a package whose install runs npm is the person's to install
 //! through `update-pi`.
+//! Without the record, an existing true default grants no settings ownership.
+//! Its inventory row leaves while the package rows stay.
 //!
 //! A consumer's first refresh after upgrading kendex starts from a tree an
 //! earlier version rendered and recorded, and settles it the same way.
@@ -276,11 +278,11 @@ fn a_clone_carrying_the_committed_record_has_nothing_to_settle() {
 /// system configuration of the GitHub Actions Windows runner, the clone
 /// holds every text file with CRLF. Git honours the setting on every
 /// platform, so that row builds the same checkout here, and the files
-/// kendex lays out again on refresh have to keep the bytes git wrote or
-/// `git status` reports each of them modified with an empty diff.
+/// kendex lays out again on refresh keep the bytes git wrote. Only the
+/// settings inventory row leaves, since this clone carries no ownership record.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
+fn a_recordless_clone_preserves_render_bytes_and_releases_unproved_scope_settings() {
     for autocrlf in ["false", "true"] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
@@ -290,6 +292,11 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
             &format!("[core]\nautocrlf = {autocrlf}\n"),
         );
         let clone = fresh_clone(&home, &origin);
+        let inventory = clone.join(".kendex-generated.json");
+        let before: Vec<String> = serde_json::from_slice(&fs::read(&inventory).unwrap()).unwrap();
+        assert!(before.iter().any(|path| path == ".claude/settings.json"));
+        let settings = clone.join(".claude/settings.json");
+        let settings_before = fs::read(&settings).unwrap();
 
         let refreshed = kendex(
             &home,
@@ -301,11 +308,24 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         assert_eq!(refreshed.status.code(), Some(0), "{output}");
         assert_eq!(
             git(&home, &clone, &["status", "--porcelain"]),
-            "",
+            " M .kendex-generated.json\n",
             "autocrlf={autocrlf}: {output}"
         );
+        let after: Vec<String> = serde_json::from_slice(&fs::read(&inventory).unwrap()).unwrap();
+        assert_eq!(
+            after,
+            before
+                .into_iter()
+                .filter(|path| path != ".claude/settings.json")
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(fs::read(&settings).unwrap(), settings_before);
         assert!(!output.contains("settling added"), "{output}");
         let lock = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+        assert_eq!(
+            lock.claude_project_default,
+            Some(kendex_core::lock::ClaudeProjectDefault::Released)
+        );
         let recorded = lock
             .entries
             .values()
@@ -423,6 +443,13 @@ fn a_stale_committed_skill_keeps_its_inventory_with_or_without_a_lock() {
         let args = ["refresh", "--scope", "project", "--yes", "--leave"];
         let recovered = kendex(&home, &clone, &args);
         assert_eq!(recovered.status.code(), Some(0), "{}", said(&recovered));
+        // Settle the recordless clone's inventory before testing source drift.
+        git(&home, &clone, &["add", ".kendex-generated.json"]);
+        git(
+            &home,
+            &clone,
+            &["commit", "-q", "-m", "release unproved settings"],
+        );
         let lock = clone.join(".kendex-lock.json");
         if !has_lock {
             fs::remove_file(lock).unwrap();

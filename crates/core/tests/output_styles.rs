@@ -437,7 +437,11 @@ fn selection_acquisition_follows_enable_and_composed_replacement() {
                     assert_eq!(
                         fs::read_to_string(&selected).unwrap(),
                         if owner == "removed" {
-                            "{\"model\":\"opus\"}\n"
+                            if !global && transition == "first-disabled" {
+                                "{\"model\":\"opus\",\"switchModelsOnFlag\":true}\n"
+                            } else {
+                                "{\"model\":\"opus\"}\n"
+                            }
                         } else {
                             user
                         }

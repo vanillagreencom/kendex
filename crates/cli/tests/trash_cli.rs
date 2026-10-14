@@ -253,7 +253,7 @@ fn refresh_and_remove_close_on_the_pass_too() {
             &["refresh", "-y", "--scope", "project"],
             "up to date",
         ),
-        ("remove", &["remove", "deploy"], "removed 3 changes"),
+        ("remove", &["remove", "deploy"], "removed 4 changes"),
     ];
     for (verb, args, closing) in rows {
         let (_tmp, home) = fixture();
@@ -368,7 +368,7 @@ fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
     );
     assert!(!removed.status.success(), "{}", said(&removed));
     let text = said(&removed);
-    assert!(text.contains("removed 3 changes"), "{text}");
+    assert!(text.contains("removed 4 changes"), "{text}");
     assert!(text.contains("trash: removed 1 older entry"), "{text}");
     let trash_line = text
         .lines()

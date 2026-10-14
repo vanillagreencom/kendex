@@ -34,11 +34,46 @@ fn claude_project_settings_default_preserves_existing_keys_and_choices() {
         }
         let removed_value: Value = serde_json::from_str(&removed).expect("removed JSON");
         assert_eq!(removed_value, expected_removed);
+        if existing.is_none() {
+            assert_eq!(removed, current.to_string());
+        }
         assert_eq!(
             ConfigEdit::RemoveClaudeProjectDefaults
                 .apply(&removed)
                 .expect("repeated removal"),
             removed
+        );
+    }
+    for before in [
+        "{\"env\": {\"MINE\": \"1\"}}\n",
+        "{\r\n\t\"model\": \"opus\",\r\n\t\"nested\": [true, {\"x\": \"}\\\"\"}]\r\n}\r\n",
+        " { \"m\\u006fdel\": \"opus\" } ",
+        "{}",
+        "{ \n}\n",
+    ] {
+        let inserted = ConfigEdit::ClaudeProjectDefaults.apply(before).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&inserted).unwrap()["switchModelsOnFlag"],
+            true
+        );
+        assert_eq!(
+            ConfigEdit::RemoveClaudeProjectDefaults
+                .apply(&inserted)
+                .unwrap(),
+            before
+        );
+    }
+    for before in [
+        "{\"switchModelsOnFlag\":true,\"model\":\"opus\"}\n",
+        "{\"model\":\"opus\",\"switchModelsOnFlag\":true}\n",
+        "{\"switchModelsOnFlag\":false,\"switchModelsOnFlag\":true,\"model\":\"opus\"}\n",
+        "{\"switchModelsOnFlag\":true,\"model\":\"opus\",\"switchModelsOnFlag\":true}\n",
+    ] {
+        assert_eq!(
+            ConfigEdit::RemoveClaudeProjectDefaults
+                .apply(before)
+                .unwrap(),
+            "{\"model\":\"opus\"}\n"
         );
     }
 }

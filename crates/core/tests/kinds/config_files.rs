@@ -139,23 +139,39 @@ fn an_unreadable_opencode_config_is_the_registrations_conflict_not_a_sweep_error
 /// — named, with the file — while the rest of the scope still plans.
 #[test]
 fn an_unreadable_settings_file_is_one_conflict_not_a_scope_error() {
-    let f = fixture("[hooks.guard]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n");
-    fs::write(settings(&f), "{ // my note\n  \"model\": \"opus\"\n}\n").unwrap();
-    let report = audit(&f.env, &f.scope).unwrap();
-    let conflict = report
-        .drift
-        .iter()
-        .find(|row| row.name == "guard")
-        .expect("the hook is reported");
-    assert_eq!(conflict.state, DriftState::Conflict);
-    assert!(
-        conflict.detail.contains("settings.json"),
-        "{}",
-        conflict.detail
-    );
-    assert!(report.plan.ops.iter().any(|op| op.line().contains("ship")));
-    assert!(
-        !report.plan.ops.iter().any(|op| op.line().contains("guard")),
-        "a hook that cannot register does not half-install"
-    );
+    for current in [
+        "{ // my note\n  \"model\": \"opus\"\n}\n",
+        "[]\n",
+        "{\"hooks\":\n",
+    ] {
+        for owned in [false, true] {
+            let f =
+                fixture("[hooks.guard]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n");
+            if owned {
+                apply_now(&f);
+                fs::remove_file(f.project.join(".claude/commands/ship.md")).unwrap();
+            }
+            fs::write(settings(&f), current).unwrap();
+            let report = audit(&f.env, &f.scope).unwrap();
+            let conflicts: Vec<_> = report
+                .drift
+                .iter()
+                .filter(|row| row.state == DriftState::Conflict)
+                .collect();
+            assert_eq!(conflicts.len(), 1, "{current:?}");
+            assert_eq!(conflicts[0].name, "guard");
+            assert!(report.plan.ops.iter().any(|op| op.line().contains("ship")));
+            assert!(
+                !report.plan.ops.iter().any(|op| op.line().contains("guard")),
+                "a hook that cannot register does not half-install"
+            );
+            assert_eq!(
+                report.record.claude_project_default,
+                owned.then_some(kendex_core::lock::ClaudeProjectDefault::Owned)
+            );
+            assert_eq!(report.generated.shared.contains(&settings(&f)), owned);
+            kendex_core::apply::execute(&f.env, &report.plan).unwrap();
+            assert_eq!(fs::read_to_string(settings(&f)).unwrap(), current);
+        }
+    }
 }

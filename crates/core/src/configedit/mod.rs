@@ -353,10 +353,13 @@ impl ConfigEdit {
                 } else {
                     json_edit.apply_json(object)?;
                 }
-                if let Some(key) = selection_key
-                    && root.get(key).cloned() == selection
-                {
-                    return Ok(current.to_owned());
+                if let Some(key) = selection_key {
+                    if root.get(key).cloned() == selection {
+                        return Ok(current.to_owned());
+                    }
+                    if !current.trim().is_empty() {
+                        return edit_json_selection(current, key, root.get(key));
+                    }
                 }
                 let mut text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
                 text.push('\n');
@@ -524,6 +527,104 @@ impl ConfigEdit {
             }
             _ => return None,
         })
+    }
+}
+
+/// The settings document also belongs to the harness and the person.
+/// Selection edits change only their member and its separator, so acquiring
+/// and releasing a default preserves every unrelated byte.
+fn edit_json_selection(current: &str, key: &str, value: Option<&Value>) -> Result<String, String> {
+    let members = json_member_spans(current)?;
+    let mut written = current.to_owned();
+    if let Some(value) = value {
+        let offset = members
+            .last()
+            .map_or_else(
+                || current.find('{').map(|start| start + 1),
+                |(_, _, end)| Some(*end),
+            )
+            .ok_or("config root is not a JSON object")?;
+        let separator = if members.is_empty() { "" } else { "," };
+        let before: Value = serde_json::from_str(current).map_err(|e| e.to_string())?;
+        let canonical = serde_json::to_string_pretty(&before).map_err(|e| e.to_string())? + "\n";
+        // Other registrations serialize this layout. Keep it stable so their
+        // next comparison does not attribute our insertion to a user edit.
+        let member = if !members.is_empty() && current == canonical {
+            format!(",\n  \"{key}\": {value}")
+        } else {
+            format!("{separator}\"{key}\":{value}")
+        };
+        written.insert_str(offset, &member);
+        return Ok(written);
+    }
+    let mut removals = Vec::new();
+    let mut index = 0;
+    while index < members.len() {
+        if members[index].0 != key {
+            index += 1;
+            continue;
+        }
+        let first = index;
+        while index < members.len() && members[index].0 == key {
+            index += 1;
+        }
+        let start = if first == 0 {
+            members[first].1
+        } else {
+            members[first - 1].2
+        };
+        let end = if first == 0 && index < members.len() {
+            members[index].1
+        } else {
+            members[index - 1].2
+        };
+        removals.push(start..end);
+    }
+    for range in removals.into_iter().rev() {
+        written.replace_range(range, "");
+    }
+    Ok(written)
+}
+
+/// serde_json reads each top-level key and value. Its byte offsets locate
+/// edits without a second JSON grammar or serialization of the other keys.
+fn json_member_spans(current: &str) -> Result<Vec<(String, usize, usize)>, String> {
+    let mut offset = current
+        .find('{')
+        .ok_or("config root is not a JSON object")?
+        + 1;
+    let mut members = Vec::new();
+    loop {
+        offset = current.len() - current[offset..].trim_start().len();
+        if current.as_bytes().get(offset) == Some(&b'}') {
+            return Ok(members);
+        }
+        let start = offset;
+        let mut keys = serde_json::Deserializer::from_str(&current[offset..]).into_iter::<String>();
+        let key = keys
+            .next()
+            .ok_or("missing JSON member")?
+            .map_err(|e| e.to_string())?;
+        offset += keys.byte_offset();
+        offset = current.len() - current[offset..].trim_start().len();
+        if current.as_bytes().get(offset) != Some(&b':') {
+            return Err("missing JSON member separator".into());
+        }
+        offset += 1;
+        let mut values = serde_json::Deserializer::from_str(&current[offset..])
+            .into_iter::<serde::de::IgnoredAny>();
+        values
+            .next()
+            .ok_or("missing JSON value")?
+            .map_err(|e| e.to_string())?;
+        offset += values.byte_offset();
+        members.push((key, start, offset));
+        offset = current.len() - current[offset..].trim_start().len();
+        match current.as_bytes().get(offset) {
+            Some(b',') => offset += 1,
+            Some(b'}') => return Ok(members),
+            _ => return Err("missing JSON member separator".into()),
+        }
     }
 }
 

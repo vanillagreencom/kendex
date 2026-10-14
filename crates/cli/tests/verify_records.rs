@@ -2173,32 +2173,34 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
                 foreign,
                 "{kind}-{case}"
             );
-            let (output, document) = verify_from(&world.home, &project, "project", Some(base));
             assert_eq!(
-                output.status.success(),
-                case != "unapplied-false",
-                "{kind}-{case}: {}",
-                said(&output)
-            );
-            assert_eq!(
-                row(&document, "record", RECORD, None).unwrap().state,
-                if case == "unapplied-false" {
-                    State::Failed
+                report.scope_positions,
+                if ownership == Some(Owned) {
+                    vec![kendex_core::engine::Position {
+                        path: settings.clone(),
+                        owns: kendex_core::engine::Owns::Keys,
+                    }]
                 } else {
-                    State::Ok
+                    Vec::new()
                 },
                 "{kind}-{case}"
             );
-            let expected_positions = if ownership == Some(Owned) {
-                vec![("record", RECORD, ".claude/settings.json", foreign)]
-            } else {
-                Vec::new()
-            };
-            assert_eq!(
-                keys_positions(&document),
-                expected_positions,
-                "{kind}-{case}"
-            );
+            // These CLI rows cover each ownership and comparison category.
+            // Empty-document variations use the same production replay above.
+            if matches!(
+                case,
+                "insert"
+                    | "user-false"
+                    | "user-true"
+                    | "removed-default-only"
+                    | "unapplied-false"
+                    | "foreign"
+                    | "unreadable"
+            ) {
+                assert_claude_scope_verification(
+                    &world, &project, kind, case, ownership, foreign, base,
+                );
+            }
             if case.starts_with("removed") || case == "disabled-default-only" {
                 assert!(
                     matches!(report.generated.recorded, kendex_core::engine::Recorded::Known(ref paths) if paths.contains(&settings))
@@ -2206,6 +2208,45 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
             }
         }
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_claude_scope_verification(
+    world: &World,
+    project: &Path,
+    kind: &str,
+    case: &str,
+    ownership: Option<kendex_core::lock::ClaudeProjectDefault>,
+    foreign: Option<Foreign>,
+    base: &str,
+) {
+    use kendex_core::lock::ClaudeProjectDefault::Owned;
+    let (output, document) = verify_from(&world.home, project, "project", Some(base));
+    assert_eq!(
+        output.status.success(),
+        case != "unapplied-false",
+        "{kind}-{case}: {}",
+        said(&output)
+    );
+    assert_eq!(
+        row(&document, "record", RECORD, None).unwrap().state,
+        if case == "unapplied-false" {
+            State::Failed
+        } else {
+            State::Ok
+        },
+        "{kind}-{case}"
+    );
+    let expected_positions = if ownership == Some(Owned) {
+        vec![("record", RECORD, ".claude/settings.json", foreign)]
+    } else {
+        Vec::new()
+    };
+    assert_eq!(
+        keys_positions(&document),
+        expected_positions,
+        "{kind}-{case}"
+    );
 }
 
 const CLAUDE_DEFAULT_REPLAY_CASES: &[ClaudeDefaultReplayCase] = {

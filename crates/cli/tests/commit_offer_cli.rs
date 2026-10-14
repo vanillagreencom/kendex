@@ -215,7 +215,7 @@ fn without_a_terminal_the_line_names_the_flags_and_leave_says_nothing() {
     assert!(output.status.success(), "{text}");
     assert!(
         text.contains(
-            "4 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
+            "5 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
         ),
         "{text}"
     );
@@ -236,9 +236,9 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     let project = project(&tmp);
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 4 files as "), "{text}");
+    assert!(text.contains("committed 5 files as "), "{text}");
     assert!(
-        text.contains(" · committed 4 files"),
+        text.contains(" · committed 5 files"),
         "no ledger part: {text}"
     );
     assert!(
@@ -261,7 +261,7 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     fs::write(project.join("AGENTS.md"), "# app\n\nmore\n").unwrap();
     let (output, text) = apply(&home, &project, &["--commit", "--message", "docs: renders"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 4 files as "), "{text}");
+    assert!(text.contains("committed 5 files as "), "{text}");
     assert_eq!(head_subject(&project), "docs: renders");
     assert!(
         git(&project, &["status", "--porcelain"]).contains(" M AGENTS.md"),
@@ -1296,10 +1296,10 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let bare = origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--push"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 4 files as "), "{text}");
+    assert!(text.contains("committed 5 files as "), "{text}");
     assert!(text.contains("pushed to origin/main"), "{text}");
     assert!(
-        text.contains(" · committed and pushed 4 files"),
+        text.contains(" · committed and pushed 5 files"),
         "no ledger part: {text}"
     );
     assert_eq!(
@@ -1321,7 +1321,7 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let before = git(&project, &["rev-parse", "HEAD"]);
     let (output, text) = apply(&home, &project, &["--push"]);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("committed 4 files as "), "{text}");
+    assert!(text.contains("committed 5 files as "), "{text}");
     assert!(text.contains("the push was refused"), "{text}");
     assert!(text.contains("git said:"), "{text}");
     assert!(
@@ -1589,7 +1589,7 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
     origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--pull-request"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 4 files as "), "{text}");
+    assert!(text.contains("committed 5 files as "), "{text}");
     assert!(text.contains(" on kendex/renders"), "{text}");
     assert!(text.contains("pushed to origin/kendex/renders"), "{text}");
     assert!(
@@ -1601,7 +1601,7 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
         "{text}"
     );
     assert!(
-        text.contains(" · committed 4 files, pull request open"),
+        text.contains(" · committed 5 files, pull request open"),
         "no ledger part: {text}"
     );
     assert!(home.join("fake-bin/calls").exists(), "gh was never asked");
@@ -1697,7 +1697,7 @@ fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
     assert!(
-        text.contains("4 files kendex wrote are not committed; a merge is in progress"),
+        text.contains("5 files kendex wrote are not committed; a merge is in progress"),
         "{text}"
     );
     fs::remove_file(project.join(".git/MERGE_HEAD")).unwrap();

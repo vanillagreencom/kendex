@@ -1047,10 +1047,11 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
     assert_eq!(
         read_paths(),
         vec![
+            ".claude/settings.json".to_owned(),
             ".kendex-generated.json".to_owned(),
             ".kendex-lock.json".to_owned()
         ],
-        "nothing rendered leaves the two companions"
+        "the retained Claude installation keeps its scope defaults"
     );
 }
 
