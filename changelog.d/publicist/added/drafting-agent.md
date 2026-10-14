@@ -1,1 +1,1 @@
-- Add a publicist agent that drafts product videos, posts and outreach and waits for the user's recorded approval before each send.
+- Add a publicist agent that drafts product videos, posts and outreach and waits for the user's recorded approval before each send. Publisher setup requires consumer approval and verified licences at checked commits.
