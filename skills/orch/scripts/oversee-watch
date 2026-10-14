@@ -307,7 +307,11 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   overseer-mark<TAB><server> <pane><TAB><kind>|<passes since it was reported>
 #   overseer-dead<TAB><server> <pane><TAB><count>|pending:<N>|reported
 #   overseer-walled<TAB><server> <pane><TAB><count>|pending:<N>|reported
+#   overseer-walled<TAB><server> <pane><TAB>reserve:pending:<N>|reserve:reported
 #   overseer-context-gap<TAB><server> <pane><TAB><gap>|told|alerted
+# A reserve value keeps the coordinator live. A measured below-mark result
+# clears it; an unread or unmeasured result keeps it. A real failure clears
+# the reserve value before starting its own recovery attempts.
 # overseer-dead (harness gone) and overseer-walled (account spent, harness
 # running) are one machinery in two rows, so a pane flipping between the two
 # starts its count over rather than counting a wall towards a death.
@@ -3096,17 +3100,17 @@ observe_lanes() {
 # ---------------------------------------------------------------------------
 
 # Set once a successor holds the window of the overseer this pass recovered,
-# dead or walled: the pass then ends at exit 3 without running the checks
-# below it, so the mail the successor is meant to drain is not drained here
-# first.
+# dead, walled or at its launch reserve: the pass then ends at exit 3 without
+# running the checks below it, so the mail the successor is meant to drain is
+# not drained here first.
 OVERSEER_SUCCEEDED=0
 # Initial launch plus one later retry. This internal ceiling prevents a pane
-# read dead or walled from launching successors forever when the host cannot
+# recovery from launching successors forever when the host cannot
 # start one.
 OVERSEER_RELAUNCH_ATTEMPTS=2
-# Repeat mode stops on notice-only recovery, an exhausted retry, or a
-# recovery the fleet has no account for. A direct single pass keeps its
-# documented status 0 for those outcomes.
+# Repeat mode stops on notice-only, exhausted or blocked recovery after a
+# death or wall. Reserve recovery keeps repeat mode live. A direct single
+# pass keeps its documented status 0 for those outcomes.
 OVERSEER_STOP=0
 # The launch line for this pass, as the fleet state holds it or as this pass
 # recorded it.
@@ -3863,7 +3867,13 @@ check_overseer() {
     # A working overseer is the only one with marks to judge: neither a dead
     # nor a walled one runs a turn, so its context and its account settle
     # nothing and its case is the event the branch below carries.
-    overseer_mark_check "$rows" "$identity" "$pane"
+    if [[ "$ov_case" == reserve ]]; then
+      # Automatic reserve recovery owns succession, including its retry.
+      rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
+      OVERSEER_MARK_ROWS="$rows"
+    else
+      overseer_mark_check "$rows" "$identity" "$pane"
+    fi
     overseer_context_check "$pane" "$identity"
     lane_row_commit "$OVERSEER_MARK_ROWS"
     [[ "$ov_case" == reserve ]] || return 0
@@ -3877,12 +3887,8 @@ check_overseer() {
   # is one session recovered from one case, and a count carried across the two
   # would fire a death on a threshold a wall ran up.
   rows="$(lane_row_clear "$other" "$rows" "$identity")"
-  # A standing mark belongs to the session that reached it, and that session is
-  # the one just read dead or walled. `overseer_mark_check` is the only place a
-  # mark row is cleared and this path never runs it, so without this the row is
-  # committed back on every such pass: a replacement in this same pane would
-  # then read the old session's repeat count and wait out its remainder before
-  # its own first crossing is reported.
+  # Recovery retires the prior session's mark, so a replacement in this pane
+  # receives its own first crossing without waiting on the prior repeat count.
   if [[ "$ov_case" != reserve ]]; then
     rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
     rows="$(lane_row_clear overseer-context-gap "$rows" "$identity")"

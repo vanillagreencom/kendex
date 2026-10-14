@@ -304,12 +304,15 @@ while IFS='|' read -r label pane_state launch_rc setting expected_rc attempts no
   state_with "$LINE"
   printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
   printf '%s\n' "$launch_rc" > "$STUB_DIR/succeed.rc"
+  reserve_marks=0
   for pass in 1 2 3; do
-    run TMUX_PANE="$PANE" ORCH_OVERSEER_SUCCESSION="$setting" -- --max-loops 1
+    run TMUX_PANE="$PANE" ORCH_OVERSEER_SUCCESSION="$setting" ORCH_OVERSEER_MARK_REPEAT=1 -- --max-loops 1
+    current_marks="$(marks_seen)" || exit 1
+    reserve_marks=$((reserve_marks + current_marks))
     [[ "$RC" != 3 ]] || break
   done
-  assert_eq "rc=$RC attempts=$(succeed_calls --walled-pane) mail=$(mailbox_lines) walls=$(grep -c '^EVENT overseer-walled ' <<<"$OUT" || true)" \
-    "rc=$expected_rc attempts=$attempts mail=$notices walls=0" "reserve outcome: $label" "$ERR"
+  assert_eq "rc=$RC attempts=$(succeed_calls --walled-pane) mail=$(mailbox_lines) walls=$(grep -c '^EVENT overseer-walled ' <<<"$OUT" || true) manual=$reserve_marks" \
+    "rc=$expected_rc attempts=$attempts mail=$notices walls=0 manual=0" "reserve outcome: $label" "$ERR"
 done <<'ROWS'
 refused|idle|3|on|0|1|2
 banner|walled|3|on|0|1|2
@@ -416,8 +419,22 @@ reserve_repeat() { # TARGET NAME
     'lane=1 owner=3 deadline=1' 'same repeat owner delivers lane mail, owner mail and the ask deadline after refusal' "$STUB_DIR/repeat.err"
   assert_eq "capacity=$(grep -c '^oversee-watch: overseer-capacity-blocked ' "$STUB_DIR/repeat.err" || true) handover=$(succeed_calls --dead-pane)" \
     'capacity=1 handover=1' 'reserve capacity notice is bounded and later exit recovery succeeds' "$STUB_DIR/repeat.err"
+  assert_eq "$(marks_seen)" 0 'automatic reserve recovery sends no parallel manual succession event' "$STUB_DIR/repeat.err"
 }
 reserve_repeat .agents/skills/orch/scripts/oversee-watch reserve_repeat
+MARK_CTL="$(mutant_scripts reserve-mark-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reserve-mark-ctl/github"
+mutate_file "$MARK_CTL/oversee-watch" \
+  '    if [[ "$ov_case" == reserve ]]; then
+      # Automatic reserve recovery owns succession, including its retry.' \
+  '    if [[ "$ov_case" == reserve ]] && false; then
+      # Automatic reserve recovery owns succession, including its retry.'
+CONTROL_RC=0
+( PASS=0 FAIL=0; reserve_repeat "$MARK_CTL/oversee-watch" reserve_mark_control; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/reserve-mark-control.log" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'control: restoring ordinary marks during reserve recovery fails the single-owner assertion'
+assert_eq "$(grep -c '^EVENT overseer-mark ' "$TMP_ROOT/cases/reserve_mark_control/repeat.out" || true)" 1 \
+  'control reaches automatic reserve recovery and emits the conflicting manual event'
 RESERVE_CTL="$(mutant_scripts reserve-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reserve-ctl/github"
 mutate_file "$RESERVE_CTL/oversee-watch" \

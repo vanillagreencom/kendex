@@ -32,20 +32,21 @@
 #   those two judges a mark: the overseer's death is the trigger, not its
 #   context or its account.
 #
-#   `--walled-pane` serves an overseer whose ACCOUNT is spent. That overseer is
-#   not dead: its harness is still running, so its launch record answers for
+#   `--walled-pane` serves an overseer whose ACCOUNT is spent or has reached
+#   its launch reserve. Its harness is still running, so its launch record answers for
 #   its harness, account, model and directory where it names that pane, and
 #   --harness, its foreground command and its context reading where it names
 #   none, exactly as a live caller's do, and no
-#   recorded line is needed to launch its successor. What it cannot do is take
-#   a turn, so it never reaches the mark judgement that would hand it over.
-#   This mode is therefore the succession with the WALL in place of the mark:
+#   recorded line is needed to launch its successor. A spent account cannot
+#   take a turn. A reserve coordinator remains live, and the watch owns its
+#   bounded succession attempt. This mode uses the caller's recovery reason
+#   in place of a mark:
 #   no mark is judged, the preference is walked as step 3 walks it, ending in
 #   the caller entry, which keeps this session's own harness, model, effort
 #   and permission flags, and `lanes pick` names the account, never the one
-#   the walled pane is spending. `--dead-pane` cannot serve it, because that mode deliberately
-#   picks no lane — the recorded line IS its choice, and for a walled overseer
-#   that line names the account that just walled.
+#   the current pane is spending. `--dead-pane` cannot serve it, because that mode deliberately
+#   picks no lane: the recorded line IS its choice, and here that line names
+#   the account the successor must leave.
 #
 #   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
 #   fleet state's `overseer` object (../schemas/workflow-state.md § Oversee state
