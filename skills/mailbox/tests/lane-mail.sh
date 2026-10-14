@@ -55,6 +55,7 @@ if [[ -z ${MAILBOX_UNDER_TEST:-} ]]; then
   rc=0
   env MAILBOX_UNDER_TEST="$TMP_ROOT/control" "$BASH" "$ROOT/skills/mailbox/tests/lane-mail.sh" > "$TMP_ROOT/control.log" 2>&1 || rc=$?
   assert_eq "$rc" 1 'relative-open control fails the same assertions'
+  assert_file_contains "$TMP_ROOT/control.log" 'lane-mail: file-unreadable=tmp/message with spaces' 'relative-open control reaches the message-file refusal'
 fi
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]
