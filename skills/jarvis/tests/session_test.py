@@ -2,11 +2,13 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout, redirect_stderr
 import io
+import errno
 import runpy
 from unittest.mock import patch
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -647,7 +649,7 @@ class SessionContract(unittest.TestCase):
                         data = json.loads(Path(source).read_text())
                         if data.get("terminal") and not injected:
                             injected.append(True)
-                            raise OSError("fixture ownership write refused")
+                            raise OSError(errno.EIO, "fixture ownership write refused")
                         return replace(source, destination)
                     open_file = Path.open
                     class RefusedBrief:
@@ -659,13 +661,16 @@ class SessionContract(unittest.TestCase):
                             self.stream.close()
                         def write(self, content):
                             injected.append(True)
-                            raise OSError("fixture brief write refused")
+                            raise OSError(errno.EIO, "fixture brief write refused")
                     def refuse_brief(path, *arguments, **options):
                         stream = open_file(path, *arguments, **options)
                         if path.name == "start-" + str(request["generation"]) + ".txt" and arguments == ("x",):
                             return RefusedBrief(stream)
                         return stream
-                    with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+                    errors = io.StringIO()
+                    # CI reads these structured fields. Capture intentional
+                    # failures so its log exposes only unexpected failures.
+                    with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True), redirect_stderr(errors):
                         runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
                         if failure == "brief-write":
                             with patch.object(Path, "open", refuse_brief), self.assertRaises(OSError):
@@ -673,6 +678,11 @@ class SessionContract(unittest.TestCase):
                         else:
                             with patch.object(os, "replace", refuse_first_ownership), self.assertRaises(OSError):
                                 runtime["Session"](self.home).worker("start", request["generation"])
+                    diagnostic = re.search(r'jarvis-session: worker-failed operation=("(?:[^"\\]|\\.)*") cause=OSError errno=EIO message=("(?:[^"\\]|\\.)*")', errors.getvalue())
+                    self.assertIsNotNone(diagnostic, errors.getvalue())
+                    self.assertEqual(json.loads(diagnostic[1]), 'stream.write(launch["brief"])' if failure == "brief-write" else "os.replace(name, self.path)")
+                    message = json.loads(diagnostic[2])
+                    self.assertIn("fixture brief write refused" if failure == "brief-write" else "fixture ownership write refused", message)
                     self.assertEqual(injected, [True])
                     self.assertEqual(list(self.record.parent.glob("start-*.txt")), [])
                     if retained:

@@ -1,0 +1,1 @@
+- Jarvis session failure logs name the failed operation, errno, and error message.

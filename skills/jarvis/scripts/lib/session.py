@@ -1,6 +1,7 @@
 """One controller per home. SessionStart supplies the native identity."""
 
 import argparse
+import errno
 from contextlib import contextmanager
 import hashlib
 import json
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import uuid
 
 
@@ -64,17 +66,24 @@ class Session:
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
+        self.operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
         result = subprocess.run(argv, input=input, text=True, capture_output=True,
                                 cwd=self.home, env=env or self.env, timeout=remaining)
         if check and result.returncode:
-            operation = argv[5] if argv[0] == "tmux" else Path(argv[0]).name
-            print("jarvis-session: operation=" + operation + " exit=" + str(result.returncode), file=sys.stderr)
+            print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, file=sys.stderr)
             raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
         return result
+
+    def failure_log(self, key, failure):
+        frame = next(frame for frame in reversed(traceback.extract_tb(failure.__traceback__)) if frame.filename == __file__)
+        operation = self.operation if frame.name == "run" else frame.line or frame.name
+        print(f"jarvis-session: {key} operation={json.dumps(operation)} cause={type(failure).__name__}"
+              + (f" errno={errno.errorcode.get(failure.errno, failure.errno)}" if isinstance(failure, OSError) else "")
+              + " message=" + json.dumps(str(failure)), file=sys.stderr)
 
     def backend(self, verb, *args, check=True):
         return self.run([BASH, str(BACKEND), verb, *map(str, args)], check=check)
@@ -293,7 +302,7 @@ class Session:
                 try:
                     self.end_owned(record)
                 except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
-                    print("jarvis-session: abandoned-cleanup-failed cause=" + type(failure).__name__, file=sys.stderr)
+                    self.failure_log("abandoned-cleanup-failed", failure)
                     if not self.terminal(record):
                         raise
                     record = self.retain_live(record, record)
@@ -491,7 +500,7 @@ class Session:
                         return
                 time.sleep(0.2)
         except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
-            print("jarvis-session: worker-failed cause=" + type(failure).__name__, file=sys.stderr)
+            self.failure_log("worker-failed", failure)
             if verb == "start" and (isinstance(failure, subprocess.TimeoutExpired) or time.monotonic() >= self.deadline):
                 failure = Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
             self.deadline = time.monotonic() + CALL_SECONDS
@@ -500,7 +509,7 @@ class Session:
                     try:
                         self.end_owned(acquired)
                     except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
-                        print("jarvis-session: cleanup-failed cause=" + type(teardown).__name__, file=sys.stderr)
+                        self.failure_log("cleanup-failed", teardown)
                 record = self.read()
                 if not self._current_request(record, generation, verb):
                     raise
@@ -509,7 +518,7 @@ class Session:
                     try:
                         self.end_owned(acquired or record)
                     except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
-                        print("jarvis-session: cleanup-failed cause=" + type(teardown).__name__, file=sys.stderr)
+                        self.failure_log("cleanup-failed", teardown)
                 if acquired and self.terminal(acquired):
                     record.update({key: acquired[key] for key in
                                    ("terminal", "server_pid", "server_started_at", "pending", "effective_home", "account_var")})
