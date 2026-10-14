@@ -239,15 +239,39 @@ refused = path_read(root / 'failed-root/orch/scripts', {}, True)
 result('common-root dependency failure: path refuses', refused[0], 1)
 result('common-root dependency failure: no path printed', len(refused[1]), 0)
 
-(root / 'work/.env.local').write_text('cd /\ntrap ":" EXIT\n')
-isolated = subprocess.run([bash, '-c', '''
-source "$SCRIPT_DIR/workflow-state"
+def caller_read(tree):
+    dep_err = root / 'caller-dependency.err'
+    dep_err.write_bytes(b'')
+    answer = subprocess.run([bash, '-c', '''
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
 before_dir=$PWD; before_trap=$(trap -p EXIT); before_options=$-
-path=$(workflow_state_path oversee) || exit 1
-[[ $PWD == "$before_dir" && $(trap -p EXIT) == "$before_trap" && $- == "$before_options" ]]
-''', 'fixture'], cwd=root / 'work',
-    env={**env, 'PROJECT_ROOT': str(root / 'work'), 'SCRIPT_DIR': str(scripts)}, capture_output=True)
-result('path initialization: reader state isolated', isolated.returncode, 0)
+rc=0
+ol_record_current 123 %1 || rc=$?
+[[ $PWD == "$before_dir" && $(trap -p EXIT) == "$before_trap" && $- == "$before_options" ]] || exit 99
+exit "$rc"
+''', 'fixture'], cwd=root / 'work', env={**env, 'PROJECT_ROOT': str(root / 'work'),
+    'SCRIPT_DIR': str(tree), 'DEP_ERR': str(dep_err)}, capture_output=True, timeout=30)
+    return answer.returncode, answer.stdout, answer.stderr, dep_err.read_bytes()
+
+# kendex_source_env_file forwards private-file output to stderr. The caller
+# hides path diagnostics and keeps the private file's shell changes isolated.
+printing_config = "printf '%s\\n' private-loader-message\ncd /\ntrap ':' EXIT\nset -f\n"
+for name, config, record, status in [
+    ('printing-private-file', printing_config, identity, 0),
+    ('printing-loader-failure', printing_config + 'return 1\n', identity, 1),
+    ('printing-record-error', printing_config, 'invalid', 2),
+]:
+    (root / 'work/.env.local').write_text(config)
+    record_file.write_text('{ invalid\n' if record == 'invalid' else json.dumps({'overseer': record}) + '\n')
+    actual = caller_read(scripts)
+    result(name + ': caller status and reader state', actual[0], status)
+    result(name + ': caller stdout empty', len(actual[1]), 0)
+    result(name + ': path stderr suppressed', len(actual[2]), 0)
+    result(name + ': record diagnostic retained', int(bool(actual[3])), int(status == 2))
+    if baseline:
+        before = caller_read(root / 'base/orch/scripts')
+        for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes', 'record diagnostic bytes')):
+            result(name + ': base ' + field, int(actual[i] == before[i]), 1)
 (root / 'work/.env.local').unlink()
 
 # Restore the removed executable lookup in a private copy. It must retain
@@ -255,7 +279,7 @@ result('path initialization: reader state isolated', isolated.returncode, 0)
 shutil.copytree(root / 'candidate', root / 'path-mutant')
 path = root / 'path-mutant/orch/scripts/lib/overseer-launch.sh'
 text = path.read_text()
-old = 'state_file="$(source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee)" 2>/dev/null'
+old = 'state_file="$( { source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee; } 2>/dev/null)"'
 new = 'state_file="$("$SCRIPT_DIR/workflow-state" path oversee 2>/dev/null)"'
 assert text.count(old) == 1, (path, old)
 path.write_text(text.replace(old, new))
@@ -266,6 +290,20 @@ for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
     result('path cost control: same ' + field, int(path_control[i] == complete[i]), 1)
 assert path_control[4] is not None, 'control caller-record workload was not reached'
 result('path cost control: rejects executable lookup', int(path_control[4][1] >= PATH_BOUND), 1)
+result('path cost control: rejects caller-record bound', int(path_control[4][0] >= RECORD_BOUND), 1)
+
+# Reuse the private lookup copy to restore the assignment redirection that
+# leaves substitution stderr exposed. The real caller must expose that fault.
+text = path.read_text()
+leaky = 'state_file="$(source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee)" 2>/dev/null'
+assert text.count(new) == 1, (path, new)
+path.write_text(text.replace(new, leaky))
+assert path.read_text() != text
+(root / 'work/.env.local').write_text(printing_config)
+leak_control = caller_read(root / 'path-mutant/orch/scripts')
+result('path stderr control: caller succeeds and reader unchanged', leak_control[0], 0)
+result('path stderr control: rejects escaped diagnostics', int(bool(leak_control[2])), 1)
+(root / 'work/.env.local').unlink()
 
 # Restore the redundant source initialization on a private tree. This puts the
 # removed cost back without changing the named account workload or its result.
