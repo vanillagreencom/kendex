@@ -1,0 +1,1 @@
+- Keep the Verifying pass running when one item's merge evidence cannot be read. Report that item's cause and save every other due row.

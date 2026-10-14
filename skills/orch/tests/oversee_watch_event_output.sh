@@ -56,6 +56,35 @@ event_sequence events
 event_contract
 assert_contains "$(cat "$STUB_DIR/log")" 'EVENT lane-asking gh-1' 'the second pass is an event block'
 
+# A per-item read failure must leave other due rows committed. The overseer
+# consumes the stderr cause and EVENT keys across successive long passes.
+unread_merge_sequence() {
+  output_world "$1"
+  jq '. + [{id:"KEN-2",state:"Verifying",priority:2,
+    description:"## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +72h"}]' \
+    "$STUB_DIR/tracker.out" > "$STUB_DIR/items.json"
+  mv -- "$STUB_DIR/items.json" "$STUB_DIR/tracker.out"
+  local phase
+  for phase in first second; do
+    output_pass
+    printf '%s\n' "$RC" > "$STUB_DIR/$phase.rc"
+    cp "$STUB_DIR/out" "$STUB_DIR/$phase.out"
+    cp "$STUB_DIR/err" "$STUB_DIR/$phase.err"
+    cp "$STATE_DIR/owner_repo__none" "$STUB_DIR/$phase.state"
+  done
+}
+unread_merge_contract() {
+  local phase
+  for phase in first second; do
+    assert_eq "$(cat "$STUB_DIR/$phase.rc")" 0 "$phase unread merge pass completes" "$STUB_DIR/$phase.err"
+    assert_eq "$(grep -cx 'verifying-merge-unread issue=KEN-2' "$STUB_DIR/$phase.err" || true)" 1 \
+      "$phase reports the unread item's cause once"
+    assert_not_contains "$(cat "$STUB_DIR/$phase.out")" 'verifying-deadline KEN-2' "$phase never emits an unread deadline"
+    assert_contains "$(cat "$STUB_DIR/$phase.state")" $'verifying-deadline\tKEN-1\tbox=1' "$phase commits the other due row"
+  done
+  assert_eq "$(grep -c '^EVENT verifying-deadline KEN-1 ' "$STUB_DIR/first.out" || true)" 1 'the other due item wakes on its first pass'
+  assert_eq "$(grep -c '^EVENT verifying-deadline KEN-1 ' "$STUB_DIR/second.out" || true)" 0 'the second pass does not repeat the committed due event'
+}
 # A cleared key must rise again even though its row was printed earlier.
 printf '0\n' > "$STUB_DIR/prwatch.rc"
 output_pass
@@ -63,6 +92,9 @@ assert_contains "$OUT" 'EVENT heartbeat' 'a cleared reducer key permits a quiet 
 printf '1\n' > "$STUB_DIR/prwatch.rc"
 output_pass
 assert_eq "$(awk -F'\t' '$1 == "owner/repo"' <<<"$OUT")" "$DISARMED"$'\n'"$THREADS" 'recurring cleared keys print again'
+
+unread_merge_sequence unread_merge
+unread_merge_contract
 
 # Waiting and completed rows use the existing deadline row. Completion wakes
 # once, then another event carries none of its standing boxes=0 context.
@@ -169,6 +201,7 @@ while IFS='@' read -r name file old new contract; do
   ( FAIL=0; "${contract}_contract"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/output-$name.log" || control_rc=$?
   assert_eq "$control_rc" 1 "control: $name reddens the output contract"
 done <<'ROWS'
+unread_merge@oversee-watch@[[ "$rc" -eq 1 || "$rc" -eq 2 ]]@[[ "$rc" -eq 1 ]]@unread_merge
 verifying_repeat@oversee-watch@[[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"@event
 pr_repeat@lib/pr-watch-pass.sh@[[ -z "$event_out" ]] || printf '%s' "$event_out"@[[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"@event
 completion_repeat@oversee-watch@[[ "$prior" != "$key" ]] || continue@[[ "$prior" != "$key" || "$key" == boxes=0 ]] || continue@completion
