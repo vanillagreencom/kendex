@@ -1,6 +1,6 @@
 ---
 name: reviewer-test
-description: Test coverage and quality reviewer. Verifies coverage, detects vacuous tests and missing must-fail controls, audits assertion tightness and test wiring.
+description: Test protection and cost reviewer. Repairs needed evidence, suggests removal of tests with no protection, and accepts justified omissions.
 model: standard
 role: reviewer
 effort: high
@@ -12,7 +12,7 @@ tags: [review, testing]
 
 ## Scope
 
-Coverage of changed paths (branches, error paths, boundaries), test quality, determinism, environment assumptions. Leave the underlying product bug to `reviewer-correctness`. You report the missing or weak test. Demand tests that catch real bugs, not coverage theater.
+Judge protection against cost under `.agents/skills/code-quality/SKILL.md` § Tests. Review test quality, determinism and environment assumptions. Leave the underlying product bug to `reviewer-correctness`. Suggest removal of a test with no protection as a `fix`. Repair weak evidence where protection matters. Accept an omission the pull request body justifies.
 
 ## Discipline
 
@@ -30,8 +30,8 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 - **Wiring**: a new test file is only real if a runner invokes it. Verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
 - **Clock and progress**: apply `.agents/skills/code-quality/SKILL.md` § Tests. Inject time for logic and require progress evidence for concurrency. Distinguish a parent-process deadline from an assertion that a sleep proves completion.
-- Mutation-validate only the tests the diff adds or changes, or in a re-review the tests the fix diff adds or changes, each by the reviewer skill's § Mutation-Stability Pairing.
+- Mutation-validate only new or changed instruments, once per instrument, by the reviewer skill's § Mutation-Stability Pairing.
 
 ## Output
 
-Coverage gaps, vacuous tests, missing must-fail controls, unwired suites → `blockers[]`. Quality improvements, nice-to-have tests, a subset case to delete → `suggestions[]`.
+Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, → `suggestions[]` with category `fix` to remove it. Accept a justified omission.

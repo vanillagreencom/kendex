@@ -7,7 +7,7 @@ Code-writing rules for AI coding agents. Repository owners use this skill to sup
 - Define how agents handle errors and remove unused code.
 - Set structure rules for resource ownership and exports, abstraction rules for shared decisions, and a rule to build on another system through its own interface.
 - Keep fixture interfaces out of shipped APIs while permitting private test access.
-- Require checks to fail on the defects they claim to catch, one control for each independent rule a guard enforces.
+- Judge tests by their protection against run time and upkeep. Prove a new or changed instrument can fail once.
 - Set test rules for defect controls, typed results, progress evidence and checks selected from what a change affects.
 - Load Rust, Bash and TypeScript rules only for the stack being changed, and the UI polish bar and screenshot set only for a changed view.
 - Direct markdown work to the docs-writing skill.

@@ -1,0 +1,1 @@
+- Align review-bot test requests and validator guidance with protection against cost and one control for a new or changed instrument.

@@ -172,7 +172,7 @@ Built-in palette roles are `primary`, `success`, `danger`, `warning`. Fonts load
 
 ### Cache staleness
 
-Before writing cached or mirrored UI state, enumerate every mutation path that can stale it. Extend the existing global event path rather than adding a parallel subscription for the same event family; add at least one regression test per non-obvious invalidation or source-window gate.
+Before writing cached or mirrored UI state, enumerate every mutation path that can stale it. Extend the existing global event path rather than adding a parallel subscription for the same event family. Admit regression tests for stale cache behavior under code-quality § Tests.
 
 ## Architecture
 

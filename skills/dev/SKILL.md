@@ -46,7 +46,7 @@ For an item spanning domains, split the delegation by domain. If the selected ag
 - Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change, and a committed render of a source file you changed traces to whatever its source traces to. Two exceptions:
   - the mechanical enablers of landing it ride without tracing to it: locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime;
   - a defect the change introduces or arms is in scope by definition, unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
-- Every behavior change ships with a test that runs against the script or program enforcing it, at the smallest surface that fails. A workflow sentence ships no test. A test that drives a second implementation or stubs the function under test does not count. Message assertions follow [code-quality § Tests](../code-quality/SKILL.md#tests).
+- A behavior change ships with the test code-quality admits; the pull request body names an omitted test and the judgement. A workflow sentence ships no test. A test that drives a second implementation or stubs the function under test does not count. Message assertions follow [code-quality § Tests](../code-quality/SKILL.md#tests).
 - A review finding adds a case only when it names a behaviour no existing case reaches. Otherwise it tightens the existing case's assertion, and the item reasoning names that case.
 - A second fix round on the same function's guard is recurrence: redesign the rule under test so the class is unrepresentable, and fold the family of cases into one table. Fix an item with an `Owner:` line at that owner, with one table whose rows cover every state the owner can be in.
 - A test whose premise died is deleted whole in the commit that kills the premise, and the PR body names the deletion.
@@ -87,7 +87,7 @@ The Codex caller follows [orch codex-runtime.md § Delegated round wait](../orch
 
 ## Validation
 
-The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). For that gate, run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and the per-rule control for production gate and guard changes.
+The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). For that gate, run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and verification of the controls code-quality § Tests requires.
 
 A test or sandbox run outside that gate, such as a nested-session smoke run or one test file run alone while investigating, is an investigation run and names its question first. Before it starts, append `Run N: question: <what this run decides>; expect: <the result that answers yes or no>` to the round notes, `[WORKTREE_PATH]/tmp/run-notes-[ARTIFACT_KEY]-[DEV_ROUND_ID].md`; after it, append `Run N: answer: <yes|no|inconclusive> <one line>`. A run with no question line is not started. A second `inconclusive` in a row on one question sends the agent back to the code and logs, never to a third run. Every run the gate lists is exempt, its must-fail controls and scoped-suite fallback included.
 

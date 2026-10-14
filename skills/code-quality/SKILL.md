@@ -65,8 +65,10 @@ Apply the must-fail control requirement in [§ Tests](#tests). Mutate a disposab
 
 ## Tests
 
-- A surface is a coherent contract or state machine. The stack reference defines its test placement. Each changed surface with a test takes at least one must-fail control that turns that test red. The control belongs to the instrument, not to each row.
-- A new or modified production gate, guard or check takes one must-fail control per independent rule. Plant a defect that reaches that rule and observe the check reject it. Rows for the same rule share a control. A defect for one rule cannot prove another. Follow [§ Prove Your Guards](#prove-your-guards) for control mechanics.
+- A test is kept for the protection it gives, judged against its cost (run time and upkeep).
+- A must-fail control proves a new or changed instrument once. It is not owed per surface, per independent rule or per row. Follow [§ Prove Your Guards](#prove-your-guards) for control mechanics.
+- No test is admitted or required by its file name, suite name or label.
+- A surface is a coherent contract or state machine. The stack reference defines its test placement.
 - Write the required controls with the new or changed check. Ship them in its first commit. A control using input, a fixture or an uncompiled source copy stays in the test and runs with it. A control requiring a compiled-source edit is shown once and recorded in the commit message; its absence from the current test file proves no omission.
 - If no production edit can redden the test, state why and what the test establishes. Assert the guarantee, not the mechanism used to provide it.
 - No test asserts human-readable wording in messages, docs, help text or comments. Assert typed categories, error kinds or structured fields. The only exception is output another program parses: test its machine-read line or format and name that consumer. Delete pins on the test harness's own configuration.

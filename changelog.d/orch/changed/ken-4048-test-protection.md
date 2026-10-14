@@ -1,0 +1,1 @@
+- Judge test findings by needed protection against cost. Accept justified omissions and remove tests that protect nothing.

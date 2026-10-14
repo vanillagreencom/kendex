@@ -28,8 +28,11 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 |--------|----------|
 | Small, quick to apply | `fix` |
 | Doc or reference updates for changed code | `fix`, always, regardless of size |
-| Test coverage added to an existing test | `fix` when the diff changes behavior no test exercises (the repository's rendered review doctrine, `.github/instructions/code-review.md`); otherwise `decline` |
-| Test coverage needing a new file, suite, or scenarios | `issue` when the untested path can fail in real usage without a test reddening, the failure named; else `decline` |
+| Test protection added to an existing test | `fix` when the protection justifies its cost under code-quality § Tests; otherwise `decline` |
+| Test protection needing a new file, suite, or scenarios | `issue` when a named reachable failure needs protection that justifies its cost under code-quality § Tests and clears § Filing bar; otherwise `decline` |
+| A test with no protection | `fix` suggestion to remove it |
+| Weak evidence where protection matters | Repair the needed evidence under code-quality § Tests |
+| An omitted test the pull request body justifies | Accept the omission; `decline` a request that the judgement already answers |
 | Performance fix inside touched code | `fix` |
 | Performance work needing benchmarks | `issue` |
 | Architectural or cross-component change | `issue` |
