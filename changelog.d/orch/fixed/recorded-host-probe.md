@@ -1,0 +1,1 @@
+- Hosted lane state checks retain the provider's failure message when the caller has no host setting.

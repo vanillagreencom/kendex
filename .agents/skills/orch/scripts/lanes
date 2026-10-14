@@ -361,7 +361,7 @@
 #          the same silence from here. `gone` is the judge's answer for a
 #          window a caller has already found absent, which this verb never
 #          asserts, so it is not among the words printed here. Where
-#          ORCH_LANE_HOST names a provider, `lane-host touch` then says whether
+#          the lane's resolved host names a provider, `lane-host touch` says whether
 #          the HOST answers; a failed probe prints `lanes: host-unreachable`
 #          on stderr with the provider's own message, one lane-host refused at
 #          its per-home cap `lanes: lane-host-busy`, and either leaves the state
@@ -4445,10 +4445,10 @@ case "$SUB" in
 		# session is still running on the remote host. lane-mail's failed read
 		# says `host-unreachable` for this same probe and asserts no lane state
 		# either.
-		if [[ "$LANE_STATE_ANSWER" == unjudged && "${ORCH_LANE_HOST:-local}" != local && -z "$LANE_PANE_SCREEN" ]]; then
+		if [[ "$LANE_STATE_ANSWER" == unjudged && "$state_host" != local && -z "$LANE_PANE_SCREEN" ]]; then
 			probe_rc=0
 			# The provider knows the item, never the session a window sits in.
-			probe_err="$("$SCRIPT_DIR/lane-host" touch --item "${LANE_ARG#*:}" 2>&1 >/dev/null)" || probe_rc=$?
+			probe_err="$(ORCH_LANE_HOST="$state_host" "$SCRIPT_DIR/lane-host" touch --item "${LANE_ARG#*:}" 2>&1 >/dev/null)" || probe_rc=$?
 			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
 				printf '%s\n' "$probe_err" >&2
 				message lane-host-busy touch "$LANE_ARG" >&2

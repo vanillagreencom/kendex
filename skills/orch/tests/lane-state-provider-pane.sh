@@ -87,5 +87,35 @@ CONTROL_COUNT="$(grep -c '^capture --item issue-2 ' "$STUB_DIR/host.log" || true
 CONTROL_RED="$(FAIL=0; assert_eq "$CONTROL_COUNT" 1 control >/dev/null; printf '%s' "$FAIL")"
 assert_eq "$CONTROL_RED" 1 'the one-capture assertion rejects a caller that drops observation metadata'
 
+# The overseer reads the diagnostic key and the provider's failure line.
+# Keep the failed touch private to this row; other provider cases remain neutral.
+PROBE_PROVIDER="$STUB_DIR/probe-provider"
+cp -p -- "$PROVIDER" "$PROBE_PROVIDER"
+mutate_file "$PROBE_PROVIDER" 'touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;' \
+  'touch) printf "%s\n" "$LANE_HOST_STUB_CAPTURE_ERROR" >&2; exit 7 ;;'
+export LANE_HOST_STUB_CAPTURE_ERROR='lane-host-fixture: read-failed cause=connection-lost'
+export LANE_HOST_STUB_CAPABILITIES="$CAPS" LANE_HOST_STUB_CAPTURE_STATUS=7
+record="$(jq -cn --arg host "$PROBE_PROVIDER" '{item:"issue-2",window:"gh-2",host:$host,harness:"codex",status:"running"}')"
+"$SCRIPT_DIR/workflow-state" set oversee lanes "[$record]" >/dev/null
+MUTANT_DIR="$(mutant_scripts probe-control/orch lanes)"
+orch_fixture_shared_libs "${MUTANT_DIR%/scripts}"
+mutate_file "$MUTANT_DIR/lanes" '"$LANE_STATE_ANSWER" == unjudged && "$state_host" != local' \
+  '"$LANE_STATE_ANSWER" == unjudged && "${ORCH_LANE_HOST:-local}" != local'
+mutate_file "$MUTANT_DIR/lanes" 'probe_err="$(ORCH_LANE_HOST="$state_host" "$SCRIPT_DIR/lane-host" touch' \
+  'probe_err="$("$SCRIPT_DIR/lane-host" touch'
+for row in "$SCRIPTS_DIR|0" "$MUTANT_DIR|1"; do
+  IFS='|' read -r probe_scripts want_red <<< "$row"
+  export OVERSEE_WATCH_STATE_DIR="$STUB_DIR/probe-$want_red"
+  probe_rc=0
+  state="$(env -u ORCH_LANE_HOST "$probe_scripts/lanes" state gh-2 2>"$STUB_DIR/probe.err")" || probe_rc=$?
+  assert_eq "$state" unjudged 'a recorded host with no ambient provider retains unjudged'
+  assert_eq "$probe_rc" 0 'the failed advisory probe retains exit 0'
+  PROBE_RED="$(FAIL=0; assert_file_contains "$STUB_DIR/probe.err" "$LANE_HOST_STUB_CAPTURE_ERROR" 'recorded host failure reaches the overseer' >/dev/null; printf '%s' "$FAIL")"
+  assert_eq "$PROBE_RED" "$want_red" 'the recorded-host diagnostic assertion rejects the pre-fix control'
+  if [[ "$want_red" == 0 ]]; then
+    assert_file_contains "$STUB_DIR/probe.err" 'lanes: host-unreachable item=gh-2 state=unjudged' 'the overseer receives the unavailable-host category'
+  fi
+done
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
