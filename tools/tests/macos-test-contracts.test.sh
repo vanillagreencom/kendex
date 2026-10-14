@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: macOS suite eligibility, classification discovery and native replacement.
+# Surface: macOS suite eligibility, unknown retention and native replacement.
 # Inputs: tools/macos-test-contracts{,.json}, skills/orch/tests/run-all.sh,
 # skills/github/tests/native-contracts.test.sh and the runner's sourced libraries.
 set -euo pipefail
@@ -48,8 +48,7 @@ class NativeContracts(unittest.TestCase):
         return subprocess.run([str(self.owner), mode], input="\n".join(paths),
                               cwd=self.root, capture_output=True, text=True, timeout=60)
 
-    def test_classification_and_discovery(self):
-        self.assertEqual(self.call("--check").returncode, 0)
+    def test_reviewed_classification(self):
         expected = list(self.contracts)[:3]
         answer = self.call("--filter", self.contracts)
         self.assertEqual((answer.returncode, answer.stdout.splitlines()), (0, expected))
@@ -57,15 +56,46 @@ class NativeContracts(unittest.TestCase):
         self.save()
         self.assertNotEqual(self.call("--filter", self.contracts).stdout.splitlines(), expected)
 
-    def test_unknown_and_absent_suites_refuse(self):
+    def test_unknown_suites_remain_selected_without_universe_equality(self):
         future = "skills/demo/tests/future.sh"
         (self.root / future).touch()
-        self.assertEqual(self.call("--check").returncode, 2)
+        expected = [*list(self.contracts)[:3], future]
         answer = self.call("--filter", [*self.contracts, future])
-        self.assertEqual((answer.returncode, answer.stdout), (2, ""))
-        (self.root / future).unlink()
-        (self.root / next(iter(self.contracts))).unlink()
-        self.assertEqual(self.call("--check").returncode, 2)
+        self.assertEqual((answer.returncode, answer.stdout.splitlines()), (0, expected))
+        original = self.owner.read_text()
+        needle = 'contracts.get(relative, "unresolved")'
+        self.assertEqual(original.count(needle), 1)
+        self.owner.write_text(original.replace(needle, 'contracts.get(relative, "linux-duplicate")'))
+        answer = self.call("--filter", [*self.contracts, future])
+        with self.assertRaises(AssertionError):
+            self.assertEqual((answer.returncode, answer.stdout.splitlines()), (0, expected))
+        self.owner.write_text(original)
+        absent = next(iter(self.contracts))
+        (self.root / absent).unlink()
+        current = [path for path in [*self.contracts, future] if (self.root / path).is_file()]
+        answer = self.call("--filter", current)
+        self.assertEqual((answer.returncode, answer.stdout.splitlines()), (0, expected[1:]))
+
+    def test_required_evidence_and_path_failures_remain(self):
+        for defect, key in (("absent", "declaration-unreadable"),
+                            ("unreadable", "declaration-unreadable"),
+                            ("classification", "classification-invalid"),
+                            ("outside", "suite-outside-root")):
+            with self.subTest(defect=defect):
+                self.save()
+                paths = list(self.contracts)
+                if defect == "absent":
+                    self.owner.with_suffix(".json").unlink()
+                elif defect == "unreadable":
+                    self.owner.with_suffix(".json").write_text("{")
+                elif defect == "classification":
+                    invalid = self.data | {"contracts": self.contracts | {paths[0]: "invalid"}}
+                    self.owner.with_suffix(".json").write_text(json.dumps(invalid))
+                else:
+                    paths.append(str(self.root.parent / "outside.sh"))
+                answer = self.call("--filter", paths)
+                self.assertEqual((answer.returncode, answer.stdout), (2, ""))
+                self.assertTrue(answer.stderr.startswith("macos-test-contracts: " + key + "="))
 
     def test_native_replacement_must_exist_and_remain_native(self):
         source = "skills/demo/tests/mixed.sh"
@@ -97,10 +127,12 @@ class NativeContracts(unittest.TestCase):
         environment = os.environ | {"RUN_ALL_NATIVE_CONTRACTS": str(self.owner)}
         native = self.root / "skills/demo/tests/native.sh"
         native.write_text('[ -z "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 1\n' + native.read_text())
+        (self.root / "skills/demo/tests/future.sh").write_text("exit 0\n")
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)
         self.assertEqual(answer.returncode, 0, answer.stderr)
         started = {line.removeprefix("start suite=") for line in answer.stdout.splitlines() if line.startswith("start suite=")}
-        self.assertEqual(started, {"native", "mixed", "unresolved"})
+        expected = {"native", "mixed", "unresolved", "future"}
+        self.assertEqual(started, expected)
         runner = self.root / files[0]
         original = runner.read_text()
         self.assertEqual(original.count('unset RUN_ALL_NATIVE_CONTRACTS'), 1)
@@ -108,10 +140,16 @@ class NativeContracts(unittest.TestCase):
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)
         self.assertEqual(answer.returncode, 1)
         runner.write_text(original)
-        (self.root / "skills/demo/tests/future.sh").write_text("exit 0\n")
+        owner_source = self.owner.read_text()
+        needle = 'contracts.get(relative, "unresolved")'
+        self.assertEqual(owner_source.count(needle), 1)
+        self.owner.write_text(owner_source.replace(needle, 'contracts.get(relative, "linux-duplicate")'))
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)
-        self.assertEqual(answer.returncode, 2)
-        self.assertNotIn("start suite=", answer.stdout)
+        self.assertEqual(answer.returncode, 0, answer.stderr)
+        started = {line.removeprefix("start suite=") for line in answer.stdout.splitlines() if line.startswith("start suite=")}
+        with self.assertRaises(AssertionError):
+            self.assertEqual(started, expected)
+        self.owner.write_text(owner_source)
         # Removing the profile is the control for the real runner boundary.
         environment.pop("RUN_ALL_NATIVE_CONTRACTS")
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)

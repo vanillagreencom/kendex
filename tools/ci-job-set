@@ -389,6 +389,7 @@ want_shard() { # SHARD...
 # is its. tools/tests/orch-shard-partition.test.sh holds this table to those
 # steps, suite by suite.
 want_package() { # PACKAGE
+  local suite
   case "$1" in
     skills/orch) want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest ;;
     skills/github) want_shard orch-rest ;;
@@ -399,7 +400,11 @@ want_package() { # PACKAGE
     skills/worktree) want_shard worktree worktree-restack ;;
     skills/slack) want_shard slack ;;
     skills/mailbox) want_shard mailbox ;;
-    skills/deep-research) want_shard node ;;
+    skills/deep-research)
+      want_shard node
+      for suite in skills/deep-research/tests/*.sh; do
+        [ ! -f "$suite" ] || { want_shard rest; break; }
+      done ;;
     skills/*) want_shard rest ;;
     tools) want_shard guards-tools guards-tools-tail ;;
     # pi-hooks' suite runs real hooks by a path it builds from each hook's

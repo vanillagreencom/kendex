@@ -21,7 +21,7 @@
 #
 # RUN_ALL_NATIVE_CONTRACTS, when set, names the repository's eligibility
 # command. It reads discovered suite paths and returns the native subset.
-# Unknown suites refuse before launch. Linux leaves this input unset.
+# Unknown suites remain selected until reviewed. Linux leaves this input unset.
 #
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
@@ -217,6 +217,8 @@ shard_of() { # BASE
       oversee_watch_lifecycle|oversee_watch_overseer_marks|oversee_watch_overseer_mail|open-terminal-lane-hosted-cap|open-terminal-lane-hosted-pending) OWNING_SHARD=orch-rest; return ;;
       oversee_watch_overseer_wall|open-terminal-lane-hosted-pi) OWNING_SHARD=orch-oversee-succeed; return ;;
       open-terminal-lane-hosted-copilot|open-terminal-lane-hosted-codex) OWNING_SHARD=orch-oversee; return ;;
+      oversee_watch_overseer*)
+        if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then OWNING_SHARD=orch-oversee; return; fi ;;
     esac
   fi
   case "$1" in

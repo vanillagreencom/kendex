@@ -2,7 +2,6 @@
 """Native eligibility for the existing Skill Tests runner and shard selector.
 
 --filter reads suite paths on stdin and prints the retained paths in order.
---check compares the declaration with the complete discovered shell universe.
 --linux-only-shards prints the shard exclusions consumed by ci-job-set.
 The declarations carry no measured durations. KEN-4013 holds the audit evidence.
 """
@@ -21,7 +20,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--filter", action="store_true")
-    mode.add_argument("--check", action="store_true")
     mode.add_argument("--linux-only-shards", action="store_true")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = parser.parse_args()
@@ -39,21 +37,6 @@ def main():
     if args.linux_only_shards:
         print(" ".join(declared["linux_only_shards"]))
         return
-    if args.check:
-        suites = {str(path.relative_to(root))
-                  for pattern in ("skills/*/tests/*.sh", "tools/tests/*.test.sh",
-                                  "hooks/tests/*.sh", "refresh/tests/*.test.sh")
-                  for path in root.glob(pattern) if path.name != "run-all.sh"}
-        if not suites:
-            refuse("universe-empty", root)
-        unknown = suites - contracts.keys()
-        stale = contracts.keys() - suites
-        if unknown:
-            refuse("unclassified", ",".join(sorted(unknown)))
-        if stale:
-            refuse("suite-absent", ",".join(sorted(stale)))
-        print(f"macos-test-contracts: classified={len(suites)}")
-        return
     retained = []
     words = sys.stdin.read().splitlines()
     selected = {(root / word).resolve() for word in words}
@@ -63,9 +46,7 @@ def main():
             relative = str((root / path).resolve().relative_to(root))
         except ValueError:
             refuse("suite-outside-root", word)
-        if relative not in contracts:
-            refuse("unclassified", relative)
-        if contracts[relative] in {"native", "mixed", "unresolved"}:
+        if contracts.get(relative, "unresolved") in {"native", "mixed", "unresolved"}:
             replacement = declared["native_replacements"].get(relative)
             if replacement:
                 if (contracts.get(replacement) != "native" or not (root / replacement).is_file()

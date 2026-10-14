@@ -41,7 +41,7 @@
 #      shard the matrix declares runs some suite. The must-fail arm sends one
 #      package to another shard.
 #   4d. the per-OS partition: every suite stays selected exactly once on each
-#      original runner, including linear's shell-version-dependent roster.
+#      original runner, including linear's reviewed native eligibility.
 #      The omission and duplication controls run on each runner's claims.
 #   4c. the macOS exclusions — tools/ci-job-set's Linux-only shard list
 #      matches the main-push macOS matrix's exclusions, and the merge
@@ -1138,7 +1138,7 @@ fi
 # --- 4e. The linear control halves cover every discovered stem once -------
 # GitHub invokes both selectors. These fixtures replace the suites and their
 # mutations, but keep the production runner's discovery and selection intact.
-# Bash 3 cannot run linear's battery; the workflow excludes it on macOS.
+# The control driver needs Bash 4; its two jobs remain Linux-only.
 if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
   LINEAR_RUNNER=skills/linear/tests/must-fail-controls.sh
   LINEAR_FIXTURE="$TMP/linear"
@@ -1249,10 +1249,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       roster_block "$f" || continue
       shard="$(one_shard "$(cat "${f%.sh}.cond")")"
       [[ -n "$shard" ]] || continue
-      # Bash's version array is readonly. This disposable runner copy injects
-      # the major version to exercise linear's actual roster branch on Linux.
-      sed 's/${BASH_VERSINFO\[0\]}/${PARTITION_BASH_MAJOR}/g' "$f" > "$dir/runner"
-      ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" PARTITION_BASH_MAJOR="${major:-${BASH_VERSINFO[0]}}" PATH="$SHIM:$PATH" "$BASH" "$dir/runner" ) 2>/dev/null |
+      ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
@@ -1372,14 +1369,16 @@ worktree|worktree suites|skills/worktree/tests|worktree_output_prune
 worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
 POOLED
 
-unselected_owners() { # <ci-job-set> <owners file> [repository] ; `shard<tab>path` the selection misses
-  local job_set="$1" repository="${3:-$ROOT}" shard path out="$TMP/owner-selection"
+unselected_owners() { # <ci-job-set> <owners file> [repository] [field] ; missed `shard<tab>path`
+  local job_set="$1" repository="${3:-$ROOT}" field="${4:-}" shard path selected out="$TMP/owner-selection"
   while IFS=$'\t' read -r shard path; do
     : > "$out"
     ( cd "$repository" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
       GITHUB_OUTPUT="$out" "$job_set" --event-parity ) 2>/dev/null ||
       { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; continue; }
-    grep -qF "\"$shard\"" "$out" || printf '%s\t%s\n' "$shard" "$path"
+    selected="$(cat "$out")"
+    [[ -z "$field" ]] || selected="$(sed -n "s/^$field=//p" "$out")"
+    grep -qF "\"$shard\"" <<< "$selected" || printf '%s\t%s\n' "$shard" "$path"
   done < "$2"
 }
 
@@ -1516,7 +1515,6 @@ check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-c
   "$(comm -12 <(queue_fallback_shards "$TMP/queue-linux.yml") <(linux_only_shards "$JOB_SET"))"
 
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
-"$ROOT/tools/macos-test-contracts" --check || exit 1
 # Linux runs every shell suite. The native eligibility owner defines the
 # macOS subset. Actual workflow discovery must cover each eligible file once.
 # The roster jobs are the Linux job and the main-push macOS job; the merge
@@ -1582,8 +1580,6 @@ sed 's/steps: \*skill-suite-steps/steps: []/' "$WORKFLOW" > "$TMP/mac-empty.yml"
 check "must-fail: a macOS job with no shared steps loses its suite alias" \
   $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: []\nskill-suites-macos-queue: []' \
   "$(shared_steps "$TMP/mac-empty.yml")"
-check "the linear roster has one injectable shell-version branch" "1" \
-  "$(grep -cF 'if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then' "$WORKFLOW")"
 
 os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   local wf="$1" os="$2" major="$3" excluded="" owners="$TMP/os-owners"
@@ -1612,7 +1608,6 @@ for os in ubuntu-latest macos-latest; do
   [[ "$os" != macos-latest ]] || major=3
   cp "$UNIV" "$TMP/os-universe"
   for f in "$ROOT"/skills/linear/tests/*.sh; do
-    [[ "$major" != 3 || "$f" == */bash4-runtime-contract.test.sh ]] || continue
     printf '%s\n' "${f#"$ROOT/"}" >> "$TMP/os-universe"
   done
   sort -o "$TMP/os-universe" "$TMP/os-universe"
@@ -1641,6 +1636,108 @@ for os in ubuntu-latest macos-latest; do
     fi
   fi
 done
+
+# Unknown additions use actual workflow discovery and per-path selection.
+# The input families include the removed empty-shard seams.
+rm -- "$PART/skills"
+cp -R "$POOL/skills" "$PART/skills"
+rm -- "$PART/tools/tests"
+cp -R "$POOL/tools/tests" "$PART/tools/tests"
+rm -- "$PART/hooks" "$PART/refresh"
+cp -R "$POOL/hooks" "$PART/hooks"
+cp -R "$POOL/refresh" "$PART/refresh"
+UNION_RUNS="$TMP/unknown-union-runs"
+PARTITION_POOL_CLAIMS="$TMP/unknown-pool-claims"
+mkdir -p "$UNION_RUNS" "$PARTITION_POOL_CLAIMS"
+: > "$TMP/unknown-paths"
+: > "$TMP/unknown-linux-owners"
+: > "$TMP/unknown-macos-owners"
+while IFS='|' read -r path linux_owner macos_owner; do
+  for tree in "$PART" "$POOL" "$GITHUB_SELECT"; do
+    mkdir -p "$tree/${path%/*}"
+    printf '#!/usr/bin/env bash\n' > "$tree/$path"
+  done
+  case "$path" in
+    skills/orch/tests/*) printf '#!/usr/bin/env bash\n' > "$SANDBOX/${path##*/}" ;;
+  esac
+  printf '%s\n' "$path" >> "$TMP/unknown-paths"
+  printf '%s\t%s\n' "$linux_owner" "$path" >> "$TMP/unknown-linux-owners"
+  printf '%s\t%s\n' "$macos_owner" "$path" >> "$TMP/unknown-macos-owners"
+done <<'UNKNOWN'
+skills/orch/tests/oversee_watch_overseer_future.sh|orch-oversee-watch|orch-oversee
+skills/worktree/tests/worktree_future_restack.sh|worktree-restack|worktree
+tools/tests/native-future.test.sh|guards-tools|guards-tools
+skills/commit-guards/tests/pre-push-future.test.sh|guards-commit|guards-commit
+skills/linear/tests/native-future.test.sh|linear|linear
+skills/deep-research/tests/native-future.sh|rest|rest
+skills/slack/tests/worker-stall.test.sh|slack|slack
+UNKNOWN
+sort -o "$TMP/unknown-paths" "$TMP/unknown-paths"
+git -C "$GITHUB_SELECT" add .
+cp "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set"
+for os in ubuntu-latest macos-latest; do
+  major=4; platform=linux
+  [[ "$os" != macos-latest ]] || { major=3; platform=macos; }
+  cp "$TMP/unknown-paths" "$TMP/os-universe"
+  os_claims "$WORKFLOW" "$os" "$major" > "$TMP/unknown-claims"
+  check "unknown families execute exactly once on $os" \
+    "$(cat "$TMP/unknown-paths")" "$(cat "$TMP/unknown-claims")"
+  while IFS=$'\t' read -r owner path; do
+    check "unknown $path reaches $owner on $os" "$owner"$'\t'"$path" \
+      "$(grep -xF "$owner"$'\t'"$path" "$TMP/os-owners")"
+  done < "$TMP/unknown-$platform-owners"
+done
+check "unknown Mac families select their retained jobs with event parity" "" \
+  "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/unknown-macos-owners" "$GITHUB_SELECT" queue_macos_shards)"
+
+needle='            case "$base" in *restack*) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || continue ;; esac'
+NEEDLE="$needle" REPLACEMENT='            case "$base" in *restack*) continue ;; esac' \
+  awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
+  "$WORKFLOW" > "$TMP/unknown-restack.yml" || bad "restack retention control changed no workflow owner"
+os_claims "$TMP/unknown-restack.yml" macos-latest 3 > "$TMP/unknown-restack-claims"
+check "must-fail: the old restack filter loses its unresolved suite" \
+  skills/worktree/tests/worktree_future_restack.sh \
+  "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-restack-claims")"
+
+NEEDLE='          set -- skills/linear/tests/*.sh' REPLACEMENT='          set -- skills/linear/tests/*.sh; set -- skills/linear/tests/bash4-runtime-contract.test.sh' \
+  awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
+  "$WORKFLOW" > "$TMP/unknown-linear.yml" || bad "linear retention control changed no workflow owner"
+os_claims "$TMP/unknown-linear.yml" macos-latest 3 > "$TMP/unknown-linear-claims"
+check "must-fail: the old linear roster loses its unresolved suite" \
+  skills/linear/tests/native-future.test.sh \
+  "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
+
+needle='        if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then OWNING_SHARD=orch-oversee; return; fi ;;'
+NEEDLE="$needle" REPLACEMENT='        if false; then OWNING_SHARD=orch-oversee; return; fi ;;' \
+  awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
+  "$TEST_DIR/run-all.sh" > "$SANDBOX/run-all.sh" || bad "orch retention control changed no runner owner"
+UNION_RUNS="$TMP/unknown-orch-control"
+mkdir -p "$UNION_RUNS"
+os_claims "$WORKFLOW" macos-latest 3 > "$TMP/unknown-orch-claims"
+check "must-fail: the old watch route loses its unresolved suite" \
+  skills/orch/tests/oversee_watch_overseer_future.sh \
+  "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-orch-claims")"
+cp "$TEST_DIR/run-all.sh" "$SANDBOX/run-all.sh"
+
+sed 's/want_shard rest; break;/:; break;/' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set"
+edited "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set" unknown-package-selector
+check "must-fail: node-only package selection misses its unresolved shell suite" \
+  $'rest\tskills/deep-research/tests/native-future.sh' \
+  "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/unknown-macos-owners" "$GITHUB_SELECT" queue_macos_shards)"
+
+for owner in "$POOL/tools/macos-test-contracts" "$TMP/routing/tools/macos-test-contracts"; do
+  sed 's/contracts.get(relative, "unresolved")/contracts.get(relative, "linux-duplicate")/' \
+    "$ROOT/tools/macos-test-contracts" > "$owner"
+  edited "$ROOT/tools/macos-test-contracts" "$owner" unknown-retention
+done
+UNION_RUNS="$TMP/unknown-drop-union"
+PARTITION_POOL_CLAIMS="$TMP/unknown-drop-pool"
+mkdir -p "$UNION_RUNS" "$PARTITION_POOL_CLAIMS"
+os_claims "$WORKFLOW" macos-latest 3 > "$TMP/unknown-drop-claims"
+check "must-fail: dropping unknown eligibility loses every unresolved family" \
+  "$(cat "$TMP/unknown-paths")" "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-drop-claims")"
+cp "$ROOT/tools/macos-test-contracts" "$POOL/tools/macos-test-contracts"
+cp "$ROOT/tools/macos-test-contracts" "$TMP/routing/tools/macos-test-contracts"
 
 fi
 

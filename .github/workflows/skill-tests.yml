@@ -1110,17 +1110,13 @@ jobs:
       # packages that balance the shard against the guard shards ----------
       # The linear CLI's contract is Bash 4 or newer (skills/linear/scripts
       # is tools/bash32-lint's NO_SCAN entry), so under Bash 3 its suites
-      # cannot pass and the one that runs is the contract suite, which under
-      # that shell proves the preflight diagnostic the contract promises.
+      # cannot pass. The native eligibility owner excludes the reviewed
+      # Bash 4 suites while retaining the runtime contract and unknown work.
       - name: linear, bot-instructions and preflight suites
         if: matrix.shard == 'linear'
         run: |
           set -u
-          if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
-            set -- skills/linear/tests/bash4-runtime-contract.test.sh
-          else
-            set -- skills/linear/tests/*.sh
-          fi
+          set -- skills/linear/tests/*.sh
           linear=()
           bot=()
           preflight=()
@@ -1171,7 +1167,7 @@ jobs:
           set --
           for t in skills/worktree/tests/*.sh; do
             base="${t##*/}"
-            case "$base" in *restack*) continue ;; esac
+            case "$base" in *restack*) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || continue ;; esac
             set -- "$@" "=${base%.sh}"
           done
           # The held-mutex row must reach the guard before its outer timeout.
