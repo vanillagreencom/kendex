@@ -2426,6 +2426,7 @@ SELECTION_ROWS=(
   "an all selection without required CI retains local execution|full|yes|all|unrequired|full||all|no|full|0|context-unrequired"
   "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||all|no|full|0|class-uncovered"
   "a push-first pre-open uncovered all selection runs scoped suites|full|yes|all-render|pr-no-pr|full|true|subset|yes|absent|0|class-uncovered|push-first"
+  "a push-first pre-open uncovered range all selection runs scoped suites|range|yes|all-render|pr-no-pr|range|true|subset|yes|absent|0|class-uncovered|push-first"
   "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-no-pr|full|true|subset|yes|absent|0|pr-not-open"
   "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-no-pr|range|true|subset|yes|absent|0|pr-not-open"
   "a closed PR full all selection runs scoped suites|full|yes|all|pr-closed|full|true|subset|yes|absent|0|pr-not-open"
@@ -2446,7 +2447,7 @@ SELECTION_ROWS=(
   "a range URI failure keeps the original failure|range|yes|all|pr-uri|range||all|yes|range|1|base-unresolved"
 )
 selection_rows() { # SCRIPT [LABEL]
-  local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback expected_rc args n answer measured
+  local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback got_verdict expected_rc args n answer measured
   local initial_fail="$FAIL" order
   n=0
   for row in "${SELECTION_ROWS[@]}"; do
@@ -2503,6 +2504,7 @@ SH
     RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER="$answer" STUB_DOCS=false STUB_MEASURED="$measured" \
       STUB_SELECTION="$selection" STUB_LOCAL_EXIT="$expected_rc" run_script "$1" --worktree "$proj" --poll 1 ${args[@]+"${args[@]}"}
     got_rc="$RC"
+    got_verdict="$(verdict_of "$OUT")"
     if [[ "$selection" == guard-scans ]]; then
       assert_eq "$(sed -n '/^selection=/p' "$proj/guard-preview")" selection=subset \
         "$label: tools/guard produces the subset" "$ERR"
@@ -2516,6 +2518,8 @@ SH
     got_selection="$(record_field selection "$OUT")"
     got_fallback="$(record_field ci-fallback "$OUT")"
     if [[ "$got_scoped" == true ]]; then
+      assert_eq "$got_verdict" 'state=done guard-exit=0 validate=pass' \
+        "$label: scoped execution reaches a passing verdict" "$ERR"
       assert_eq "$(record_field scoped "$OUT") $(record_field class-base "$OUT")" \
         "true $(git -C "$proj" rev-parse HEAD)" "$label: scoped receipt cannot stand for the whole battery" "$ERR"
     fi
@@ -2574,9 +2578,16 @@ selection_control 'omitting the pre-open scoped route turns its receipt red' \
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" \
   '( "$ci_fallback" == pr-not-open || ( "$pr_order" == push-first && "$ci_fallback" == class-uncovered ) )' '"$ci_fallback" == pr-not-open'
-selection_base_got="$(selection_rows "$CI_SCRIPT.mutant" 'a push-first pre-open uncovered all selection runs scoped suites')"
-assert_eq "${selection_base_got#*$'\t'}" 'full||all|no|full|0|class-uncovered' \
-  'control: the base condition runs DEV_VALIDATE_CMD instead of scoped selection'
+for row in "${SELECTION_ROWS[@]}"; do
+  IFS='|' read -r label requested _ selected _ _ _ _ _ _ _ _ order <<<"$row"
+  [[ "$order" == push-first && "$selected" == all-render ]] || continue
+  selection_base_got="$(selection_rows "$CI_SCRIPT.mutant" "$label")"
+  selection_base_range=no
+  [[ "$requested" != range ]] || selection_base_range=yes
+  assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$selection_base_got")" \
+    "$requested||all|$selection_base_range|$requested|0|class-uncovered" \
+    "control: the base condition runs the original $requested command instead of scoped selection"
+done
 selection_control 'ignoring publication order scopes a review-first full run' \
   '( "$pr_order" == push-first && "$ci_fallback" == class-uncovered )' '"$ci_fallback" == class-uncovered' \
   'an all selection CI does not cover retains local execution'
