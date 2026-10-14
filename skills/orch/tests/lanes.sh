@@ -1808,8 +1808,9 @@ LANES="$saved_lanes"
 assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
   "control: dropping the displaced first sample loses the measured rate"
 
-# Timer wiring needs real elapsed time here: freezing SECONDS would hide the
-# epoch read's delay. All other date forms keep their real-clock behavior.
+# Timer initialization keeps real SECONDS through the epoch read's delay.
+# After that boundary the clock is held, so a scheduler pause cannot erase
+# the base control's future stamp before the assertions or cache read.
 DELAYED_CLOCK_BIN="$TMP_ROOT/delayed-clock-bin"; mkdir -p "$DELAYED_CLOCK_BIN"
 cat > "$DELAYED_CLOCK_BIN/date" <<'STUBEOF'
 #!/usr/bin/env bash
@@ -1821,7 +1822,20 @@ exec "$STUB_REAL_DATE" "$@"
 STUBEOF
 chmod +x "$DELAYED_CLOCK_BIN/date"
 
-delayed_epoch_rate() { # STATE
+DELAYED_CLOCK_ENV="$TMP_ROOT/delayed-clock-env"
+HELD_CLOCK_ENV="$TMP_ROOT/delayed-clock-held-env"
+virtual_clock_bash_env "$HELD_CLOCK_ENV"
+virtual_clock_bash_env "$DELAYED_CLOCK_ENV"
+# The first command after RUN_NOW returns still has the real elapsed clock.
+# An origin already present includes the delayed read; otherwise the reset
+# that follows starts it at the sampled epoch. Preserve that observed offset
+# in the existing clock injection instead of freezing initialization itself.
+mutate_file "$DELAYED_CLOCK_ENV" $'trap \'if [[ "$BASH_COMMAND" == tick_wait' \
+  $'trap \'if [[ -n "${RUN_NOW:-}" && -z "${_delayed_epoch_captured:-}" ]]; then\n  _delayed_epoch_captured=1\n  DELAYED_CLOCK_OFFSET=0\n  if [[ -n "${RUN_STARTED_SECONDS:-}" ]]; then\n    DELAYED_CLOCK_OFFSET=$((SECONDS - RUN_STARTED_SECONDS))\n  fi\n  printf "%s" "$RUN_NOW" > "$STUB_CLOCK"\nfi\nif [[ "$BASH_COMMAND" == tick_wait'
+mutate_file "$DELAYED_CLOCK_ENV" 'SECONDS=$((_virtual_now - RUN_NOW + RUN_STARTED_SECONDS))' \
+  'SECONDS=$((_virtual_now - RUN_NOW + RUN_STARTED_SECONDS + DELAYED_CLOCK_OFFSET))'
+
+delayed_epoch_rate() { # STATE POST_FETCH_PAUSE
   local state="$1" at now
   claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
@@ -1830,14 +1844,16 @@ delayed_epoch_rate() { # STATE
   age_usage_record "$state" "$H/.claude" 600
   claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV= PATH="$DELAYED_CLOCK_BIN:$CLAIM_BIN:$PATH" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV="$DELAYED_CLOCK_ENV" PATH="$DELAYED_CLOCK_BIN:$CLAIM_BIN:$PATH" \
     "$LANES" list --harness claude --json --no-cache >/dev/null
+  # This is time outside the observed process, like a descheduled CI test.
+  "$STUB_REAL_SLEEP" "$2"
   at="$(jq -r '.fetched_at' "$state"/usage/*.json)" || exit 1
-  now="$("$STUB_REAL_DATE" +%s)" || exit 1
+  now="$(cat "$STUB_CLOCK")" || exit 1
   DELAYED_SAMPLE_FUTURE=no
   [[ "$at" -le "$now" ]] || DELAYED_SAMPLE_FUTURE=yes
   OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV= PATH="$CLAIM_BIN:$PATH" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV="$HELD_CLOCK_ENV" PATH="$CLOCK_BIN:$CLAIM_BIN:$PATH" \
     "$LANES" list --harness claude --json)" || exit 1
 }
 
@@ -1846,17 +1862,19 @@ mutate_file "$epoch_control/lanes" \
   $'RUN_NOW="$(date +%s)" || die time-failed\nSECONDS=0\nRUN_STARTED_SECONDS=$SECONDS' \
   $'SECONDS=0\nRUN_STARTED_SECONDS=$SECONDS\nRUN_NOW="$(date +%s)" || die time-failed'
 saved_lanes="$LANES"
-while IFS='|' read -r mode future rate; do
+while IFS='|' read -r mode pause future rate; do
   case "$mode" in
     fixed) LANES="$saved_lanes" ;;
     base) LANES="$epoch_control/lanes" ;;
   esac
-  delayed_epoch_rate "$TMP_ROOT/delayed-epoch-$mode"
+  delayed_epoch_rate "$TMP_ROOT/delayed-epoch-$mode-$pause" "$pause"
   assert_eq "$DELAYED_SAMPLE_FUTURE $(jq -r '.[0].usage_rate_state' <<<"$OUT")" \
-    "$future $rate" "$mode: a delayed epoch read stamps current usage and the next cache read keeps its rate"
+    "$future $rate" "$mode: delayed-epoch sample and cache rate after a $pause s scheduler pause"
 done <<'ROWS'
-fixed|no|measured
-base|yes|samples-too-close
+fixed|0|no|measured
+fixed|3|no|measured
+base|0|yes|samples-too-close
+base|3|yes|samples-too-close
 ROWS
 LANES="$saved_lanes"
 
