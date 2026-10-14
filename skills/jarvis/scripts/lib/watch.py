@@ -174,7 +174,7 @@ def project_roots():
 
 def presence_roots(permitted):
     if not permitted():
-        return [("local", "skipped", None)]
+        return [(None, "skipped", None)]
     results = []
     for root in project_roots():
         try:
@@ -475,13 +475,13 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
 
     def presence(self, side):
         if not self.live():
-            return [(side, "skipped", None)]
+            return [(None, "skipped", None)]
         try:
             return self._presence(side)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             if not self.live():
-                return [(side, "skipped", None)]
-            return [(side, "failed", failure("presence-" + side, error).record)]
+                return [(None, "skipped", None)]
+            return [(None, "failed", failure("presence-" + side, error).record)]
 
     def _presence(self, side):
         permitted = self.live
@@ -583,13 +583,17 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         if any(status == "ok" for _, status, _ in results) and all(status != "failed" for _, status, _ in results):
             failures.pop(side, None)
         for root, status, cause in results:
+            # A whole-side result has no target. Its storage key is scope,
+            # never a root identity passed to the event serializer.
+            scope = root if root is not None else side
             if status == "ok":
-                failures.pop(root, None)
+                failures.pop(scope, None)
             elif status == "failed":
-                if root not in failures:
-                    self.append(pass_output(side, self.cursors.get(side, {}), [(None,
-                        event("presence-renew-failed", repo=Path(root).name, side=side, cause=cause["detail"]))]))
-                    failures[root] = cause
+                if scope not in failures:
+                    self.append(pass_output(side, self.cursors.get(side, {}), [(root,
+                        event("presence-renew-failed", repo=Path(root).name if root is not None else side,
+                              side=side, cause=cause["detail"]))]))
+                    failures[scope] = cause
             elif status != "skipped":
                 raise RuntimeError("presence-status-invalid")
         self.save()

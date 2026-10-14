@@ -326,6 +326,70 @@ class Producer(unittest.TestCase):
             watch.batch(2)
             self.assertIn("open fragment", self.inbox()[2]["text"])
 
+            # The existing presence producers supply the finite target table.
+            equal = self.project("another/home")
+            self.registry.write_text("\n".join(map(str, (self.home, equal, self.peer))) + "\n")
+            for root in (self.home, equal, self.peer):
+                root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "missing/hold"\n')
+            local = {root: (root, status, cause) for root, status, cause in self.module.presence_roots(lambda: True)}
+            self.assertTrue(all(status == "failed" for _, status, _ in local.values()))
+            self.executable("ssh", '#!/bin/sh\nexec '+BASH+' -s\n')
+            self.settings["JARVIS_CONTROL_HOST"] = "host.example"
+            probe = self.watch()
+            with patch.object(probe, "live", return_value=True):
+                host = {root: (root, status, cause) for root, status, cause in probe.presence("host")}
+                self.executable("kendex", '#!/bin/sh\nexit 2\n')
+                local_phase = probe.presence("local")[0]
+                self.executable("ssh", '#!/bin/sh\nexit 2\n')
+                host_phase = probe.presence("host")[0]
+            self.assertEqual(local_phase[:2], (None, "failed"))
+            self.assertEqual(host_phase[:2], (None, "failed"))
+            rows = (("local", local[str(self.home)], ["local", str(self.home)]),
+                    ("local", local[str(equal)], ["local", str(equal)]),
+                    ("host", host[str(self.home)], ["host", str(self.home)]),
+                    ("host", host[str(self.peer)], ["host", str(self.peer)]),
+                    ("local", local_phase, None), ("host", host_phase, None))
+            for index, (side, result, expected_origin) in enumerate(rows):
+                with self.subTest(side=side, target=result[0]):
+                    self.settings["JARVIS_LOG_DIR"] = str(self.root / ("origin-%s" % index))
+                    watch = self.watch()
+                    # Leave one byte free. This forces the later warning to
+                    # remain behind a complete home block before restart.
+                    header = "EVENT custom\n"
+                    filler = header + "o" * (self.module.CAP - len(header.encode()) - 2) + "\n"
+                    peer = "EVENT custom\npeer traffic\n"
+                    watch.append(self.module.pass_output("local", {}, [(self.home, filler), (None, peer)]))
+                    watch.accept_presence(side, [result])
+                    warning = watch.state["spans"][-1]
+                    origin = warning[2] if len(warning) == 3 else None
+                    self.assertEqual(origin, expected_origin, "presence origin")
+                    scope = result[0] if result[0] is not None else side
+                    standing = json.loads(json.dumps(watch.state["presence_failures"][side]))
+                    size = watch.log.stat().st_size
+                    changed_detail = dict(result[2], detail="another extraction path")
+                    watch.accept_presence(side, [(result[0], "failed", changed_detail)])
+                    watch.accept_presence(side, [(result[0], "skipped", None)])
+                    watch.accept([("local", self.module.pass_output("local", {}, []), None)])
+                    self.assertEqual(watch.log.stat().st_size, size)
+                    self.assertEqual(watch.state["presence_failures"][side], standing)
+                    watch.batch(0)
+                    self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
+                    self.assertIn(warning, watch.state["spans"])
+                    watch = self.watch()
+                    self.assertIn(warning, watch.state["spans"])
+                    watch.batch(1)
+                    body = self.inbox()[-1]["text"]
+                    if expected_origin == ["local", str(self.home)]:
+                        self.assertTrue(body.startswith("EVENT presence-renew-failed"))
+                    else:
+                        self.assertTrue(body.startswith(peer))
+                    self.assertIn("EVENT presence-renew-failed", body)
+                    if result[0] is not None:
+                        watch.accept_presence(side, [(str(self.root / "other-success"), "ok", None)])
+                        self.assertIn(scope, watch.state["presence_failures"][side])
+                    watch.accept_presence(side, [(result[0], "ok", None)])
+                    self.assertNotIn(scope, watch.state["presence_failures"][side])
+
     def test_saved_selection_after_append_restart(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
@@ -346,6 +410,10 @@ class Producer(unittest.TestCase):
             new_owner = self.module.mail_pass(BASH, self.home, "local", {})
             with watch.log.open("a") as out:
                 out.write(new_owner)
+            staged = self.watch()
+            warning = self.module.Failure("presence-hold", "OSError", 2, "warning during pending send").record
+            staged.accept_presence("local", [(str(self.home), "failed", warning)])
+            self.assertEqual(json.loads(staged.path.read_text())["pending"], pending)
             resumed = self.watch()
             resumed.batch(1)
             self.assertEqual(len(self.inbox()), 1)
@@ -354,6 +422,7 @@ class Producer(unittest.TestCase):
             self.assertEqual(len(self.inbox()), 2)
             self.assertIn("new during restart", self.inbox()[1]["text"])
             self.assertNotIn("original", self.inbox()[1]["text"])
+            self.assertIn("EVENT presence-renew-failed", self.inbox()[1]["text"])
 
     def test_failed_send_retains_selection(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -485,7 +554,7 @@ class Producer(unittest.TestCase):
                     self.assertTrue((root / "caller-hold").exists())
             # No initial permission means no discovery or settings attempt.
             with patch.object(self.module, "checked", side_effect=AssertionError("external work without permission")):
-                self.assertEqual(self.module.presence_roots(lambda: False)[0][1], "skipped")
+                self.assertEqual(self.module.presence_roots(lambda: False), [(None, "skipped", None)])
             # End after the unchanged reader acknowledges its blocking load.
             ready, release = self.root / "settings-ready", self.root / "settings-release"
             os.mkfifo(ready)
@@ -500,14 +569,15 @@ class Producer(unittest.TestCase):
                 release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
                 try:
                     with ThreadPoolExecutor(max_workers=1) as work:
-                        pending = work.submit(self.module.hold, self.home, lambda: permission[0])
+                        pending = work.submit(self.module.presence_roots, lambda: permission[0])
                         try:
                             self.assertTrue(select.select([read_fd], [], [], 30)[0])
                             self.assertEqual(os.read(read_fd, 5), b"ready")
                             permission[0] = False
                         finally:
                             os.write(release_fd, b"ack\n")
-                        self.assertEqual(pending.result(timeout=30), "skipped")
+                        results = pending.result(timeout=30)
+                        self.assertEqual(results, [(str(root), "skipped", None) for root in (self.home, self.peer)])
                 finally:
                     os.close(read_fd)
                     os.close(release_fd)
@@ -540,7 +610,9 @@ class Producer(unittest.TestCase):
                     patch.object(self.module, "run", side_effect=external), contextlib.redirect_stdout(io.StringIO()):
                 watch = self.watch()
                 self.assertFalse(watch.live(0))
-                watch.accept_presence("local", watch.presence("local"))
+                results = watch.presence("local")
+                self.assertEqual(results, [(None, "skipped", None)])
+                watch.accept_presence("local", results)
                 self.assertFalse(self.home.joinpath("hold").exists())
                 self.append(watch, "EVENT mail repo=peer file=to-lane\ndelivery after "+type(error).__name__+"\n")
                 watch.tick(0, watch.acquire(0))
@@ -622,6 +694,25 @@ class Producer(unittest.TestCase):
             self.module = load(path)
             with self.assertRaises(AssertionError):
                 self.test_fixed_settle_and_five_event_feed()
+        # Drop only the supplied target at the changed boundary. The same
+        # finite table must reject this mutation through its origin assertion.
+        with tempfile.TemporaryDirectory() as folder:
+            source = (SCRIPTS / "lib/watch.py").read_text()
+            old = '[(root,\n                        event("presence-renew-failed"'
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, '[(None,\n                        event("presence-renew-failed"')
+            self.assertNotEqual(source, mutant)
+            path = Path(folder) / "watch.py"
+            path.write_text(mutant)
+            case = Producer(methodName="test_priority_cap_boundaries_and_timeout")
+            case.setUp()
+            try:
+                case.module = load(path)
+                case.module.LIB = SCRIPTS / "lib"
+                with self.assertRaisesRegex(AssertionError, "presence origin"):
+                    case.test_priority_cap_boundaries_and_timeout()
+            finally:
+                case.doCleanups()
 
 
 if __name__ == "__main__":
