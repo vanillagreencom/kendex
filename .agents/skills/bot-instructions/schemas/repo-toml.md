@@ -77,7 +77,7 @@ One pattern is written once and handed to Copilot's comma-separated `applyTo`, C
 
 Stating the dialect as a character class rather than as a list of banned sequences is deliberate. A glob is rendered into files whose grammars are line-oriented or comment-bearing: one holding a newline becomes two lines in `.macroscope/ignore.md`, where every line is a pattern, so a second line reading `**` takes the whole repo out of Macroscope's review while each line on its own is a valid glob and every validator passes. One holding `#` becomes a comment in `.coderabbit.yaml`. A ban list closes the shapes someone thought of; a character class closes the rest.
 
-**Path shape, on top of the class.** Refused: an empty glob, a leading `/`, a trailing `/`, a `..` component, and an empty component. Each is its own clause, so each ships its own control.
+**Path shape, on top of the class.** Refused: an empty glob, a leading `/`, a trailing `/`, a `..` component, and an empty component. Admit test protection under `validators.md` § Controls.
 
 The class catches none of them. `.` and `/` are both permitted characters, so `../**` and `/src/**` are made of nothing but allowed bytes; and the class constrains which characters may appear rather than requiring one to, so `""` satisfies it and everything else stated here.
 

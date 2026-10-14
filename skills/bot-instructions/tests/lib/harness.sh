@@ -1,8 +1,7 @@
 # Shared fixture builder and assertions for the bot-instructions suites.
 #
-# § Controls fixes what these have to prove: one red control per rejection
-# clause, each asserting on that validator's OWN identity and never on the
-# run's exit code.
+# Assert the validator's own structured identity. The command runs all
+# validators, so its exit code alone can pass for the wrong rejection.
 #
 # Sourced, never executed: no mode bit, per this repo's CI convention.
 

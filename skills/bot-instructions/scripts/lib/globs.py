@@ -42,8 +42,7 @@ NAMED_REJECTS = (
 def check(glob, where):
     """Refuse a glob outside the dialect. Returns None; raises the message.
 
-    Each refusal below is its own clause with its own control, per
-    `validators.md` § Controls. The class catches none of the path-shape
+    The class catches none of the path-shape
     clauses: `.` and `/` are permitted characters, so `../**` and `/src/**`
     are made of nothing but allowed bytes.
     """
