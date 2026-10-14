@@ -494,7 +494,8 @@ alone_order() { # DIR [FROM TO] ; start order of a fresh runner in DIR, FROM edi
 }
 assert_eq "$(alone_order "$TMP_ROOT/alone-runner/tests")" "rc=0 started=$O zzz-pool aaa-alone mmm-alone " \
   "--alone runs each suite it names after the rest, and the runner's own ALONE name runs pooled"
-assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '  ALONE=()' '  ALONE=("$2/'"$O"'.sh")')" "rc=0 started=zzz-pool aaa-alone mmm-alone $O " \
+# The runner compares resolved file paths, so plant isolation after resolution.
+assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '    TEST_DIRS+=("$TEST_DIR")' '    TEST_DIRS+=("$TEST_DIR"); ALONE+=("$TEST_DIR/'"$O"'.sh")')" "rc=0 started=zzz-pool aaa-alone mmm-alone $O " \
   "control: the runner's own list kept holds back the other tree's same-named suite"
 assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$TEST_DIR/$2.sh")' ':')" "rc=0 started=aaa-alone mmm-alone $O zzz-pool " \
   "control: --alone left unread runs every suite pooled"

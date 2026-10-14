@@ -31,7 +31,8 @@
 # rejector. Two runs whose arguments are
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
-# run rather than in neither. CI's orch shards are that partition.
+# run rather than in neither. --shard uses shard_of instead of name filters.
+# Its macOS table spreads suites across the existing CI worker pools.
 #
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
@@ -84,9 +85,11 @@
 # `last line: none`. A hang therefore fails the run under the suite's name
 # before the job's ceiling cancels the run with no name.
 #
-# The `<tree> tests:` verdict line follows the total, <tree> being the name
-# of the battery directory's parent, `orch` with no --battery, and on a red
-# run one `  - <name>` line per red suite follows the verdict.
+# The `<tree> tests:` verdict line follows the total. With one battery,
+# <tree> is the battery directory's parent, `orch` with no --battery.
+# Repeated --battery arguments print `batteries tests:` and report every
+# suite as `<tree>--<base>`. On a red run one `  - <name>` line per red suite
+# follows the verdict.
 #
 # `seconds` is the suite's own wall time, and the total's is the whole run's.
 # `pass` and `fail` are the counts from the last summary line the suite
@@ -266,7 +269,7 @@ wanted() { # BASE
   [ "$keep" -eq 1 ]
 }
 
-alone() { # BASE
+alone() { # FILE
   local name
   [ "${#ALONE[@]}" -gt 0 ] || return 1
   for name in "${ALONE[@]}"; do

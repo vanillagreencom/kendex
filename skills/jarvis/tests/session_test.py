@@ -151,12 +151,18 @@ class SessionContract(unittest.TestCase):
         self.assertLess(time.monotonic() - start, 60)
         return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
 
-    def wait(self, state="running", reason=None, seconds=20):
+    def wait(self, state="running", reason=None, seconds=20, persisted_stop=False):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             answer, _ = self.call("status")
             if answer["state"] == state and (reason is None or answer["reason"] == reason):
-                return answer
+                # Public stopped status can precede the stop owner's write.
+                # Acquisition subcases must await its saved release too.
+                if not persisted_stop:
+                    return answer
+                saved = json.loads(self.record.read_text())
+                if saved["state"] == "stopped" and saved["terminal"] is None:
+                    return answer
             # tmux can disappear between ownership reads during failed-start
             # cleanup. Unknown ownership is a refusal until the final write.
             transient_cleanup = reason != "record-unreadable" and (answer["state"], answer["reason"]) == ("blocked", "record-unreadable")
@@ -678,19 +684,19 @@ class SessionContract(unittest.TestCase):
                         retained.unlink()
                         (self.root / "bin/tmux").unlink()
                         self.call("stop")
-                        self.wait("stopped")
+                        self.wait("stopped", persisted_stop=True)
                 saved = json.loads(self.record.read_text())
                 self.assertIsNone(saved["terminal"])
                 self.assertEqual(subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"],
                                                capture_output=True, env=self.env).returncode, 1)
                 self.call("stop")
-                self.wait("stopped")
+                self.wait("stopped", persisted_stop=True)
                 self.call("start", mode="new" if mode == "new" else "resume")
                 self.wait()
                 if previous:
                     self.assertEqual(self.started()[-1]["id"], previous)
                 self.call("stop")
-                self.wait("stopped")
+                self.wait("stopped", persisted_stop=True)
 
     def test_unrelated_session_conflicts(self):
         subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, "new-session", "-d", "-s", "jarvis",
