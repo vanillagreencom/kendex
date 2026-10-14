@@ -27,13 +27,15 @@ chmod +x "$TMP_ROOT/bin/date"
 make_fetcher "$TMP_ROOT/fetch"
 CONTROL="$(mutant_scripts reset-control lanes)"
 mutate_file "$CONTROL/lanes" '$reset != null and $reset <= $now' 'false and $reset != null and $reset <= $now'
+ELAPSED="$(mutant_scripts elapsed-clock lanes)"
+mutate_file "$ELAPSED/lanes" 'RUN_STARTED_SECONDS=$SECONDS' 'RUN_STARTED_SECONDS=$SECONDS; SECONDS=${FAKE_ELAPSED:-0}'
 BASE=1790812800
 
 cache_run() { # SCRIPT NOW COMMAND...
   local script="$1" instant="$2"
   shift 2
   (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" REAL_DATE="$REAL_DATE" FAKE_NOW="$instant" \
-    LANES_HOME="$H" ORCH_LANE_DIRS="$DIRS" \
+    LANES_HOME="$H" ORCH_LANE_DIRS="$DIRS" FAKE_ELAPSED="${elapsed:-0}" \
     FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FETCH_LOG="$H/fetch.log" \
     OVERSEE_WATCH_STATE_DIR="$H/store" ORCH_STATE_DIR="$H/state" \
     ORCH_LANE_HOST="$HOST" LANE_HOST_STUB_ACCOUNTS="$H/accounts" LANE_HOST_STUB_LOG="$H/host.log" \
@@ -73,7 +75,7 @@ stage_usage() { # FAMILY BUCKET PCT RESET
   esac
 }
 
-# name|producer|bucket|share|reset offset from fetch|refetch|caller max-age|script
+# name|producer|bucket|share|reset offset from fetch|refetch|caller max-age|script|elapsed
 # The default row fetches 60 seconds before reset and reads 30 seconds after it.
 for row in \
   "weekly-default|claude|weekly|100|60|yes||$LANES" \
@@ -83,7 +85,9 @@ for row in \
   "fractional-use|claude|weekly|0.1|60|yes||$LANES" \
   "at-reset|claude|weekly|100|90|yes||$LANES" \
   "wider-age|claude|weekly|100|60|yes|1000|$LANES" \
-  "future-reset|claude|weekly|100|91|no||$LANES" \
+  "future-reset|claude|weekly|100|14400|no||$LANES" \
+  "future-reset-elapsed|claude|weekly|100|14400|no||$ELAPSED/lanes|30" \
+  "control-future-reset|claude|weekly|100|91|no||$ELAPSED/lanes|2" \
   "zero-use|claude|weekly|0|60|no||$LANES" \
   "unknown-reset|claude|weekly|100|unknown|no||$LANES" \
   "codex-session|codex|session|100|60|yes||$LANES" \
@@ -97,7 +101,7 @@ for row in \
   "host-zero|host|weekly|0|60|no||$LANES" \
   "control-local|claude|weekly|100|60|yes||$CONTROL/lanes" \
   "control-host|host|weekly|100|60|yes||$CONTROL/lanes"; do
-  IFS='|' read -r name family bucket pct offset refresh max_age script <<<"$row"
+  IFS='|' read -r name family bucket pct offset refresh max_age script elapsed <<<"$row"
   new_home "$name"
   make_lane "$H" claude
   make_codex_lane "$H/.codex"
@@ -141,7 +145,10 @@ for row in \
   got="$after:$reported"
   want="$calls:no"
   [[ "$refresh" != yes ]] || want="$((calls + 1)):yes"
-  if [[ "$name" == control-* ]]; then
+  if [[ "$name" == control-future-reset ]]; then
+    assert_eq "$got" "$((calls + 1)):yes" "$name reaches the reset after added elapsed time"
+    [[ "$got" != "$want" ]] && pass "$name turns the future-reset assertion red" || fail "$name did not reach the reset boundary"
+  elif [[ "$name" == control-* ]]; then
     assert_eq "$got" "$calls:no" "$name serves the old figure when the reset check is disabled"
     [[ "$got" != "$want" ]] && pass "$name turns the refetch assertion red" || fail "$name did not reach the reset check"
   else
