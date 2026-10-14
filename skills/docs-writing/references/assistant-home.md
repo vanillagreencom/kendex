@@ -20,8 +20,8 @@ Use Jarvis `references/decisions.md` § Authority to decide whether the grant pe
 
 **Rewritten procedure**:
 
-- Start: read each draft request's original record, then prepare its draft. Keep a check unresolved when its record is unreadable.
-- Event: read the new request's original record before preparing its draft. Keep an unread record unresolved.
+- Start: review draft requests at session start. Before preparing a draft, read the request's original record. If the record is unreadable, leave the check unresolved.
+- Event: review draft requests on each request event. Before preparing a draft, read the request's original record. If the record is unreadable, leave the check unresolved.
 - Hand-over: identify each unread record and its next read before control transfers, using Jarvis `references/long-session.md` § Handoff.
 
 Source: [source procedure](#recurring-workflow). This keeps the reading prerequisite in each mode. Jarvis `references/long-session.md` § Homes owns session prerequisites and record destinations.
