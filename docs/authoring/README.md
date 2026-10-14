@@ -28,6 +28,10 @@ my-marketplace/
 - A skill's identity is its directory name; a `SKILL.md` whose `name:` disagrees with its folder is a check finding.
 - Executable kinds are never guessed: hooks, commands and MCP servers install only from a repository that declares kendex's layout (any parseable `kendex.toml` does) or from a plugin registry. A `hooks/` folder in an undeclared repository is repository tooling, not installable content.
 
+A `.claude-plugin/marketplace.json` registry can place a plugin at `.` or `./`, the repository root, or at a nested local directory. An entry's `skills` can name one skill folder or list folders as strings or objects with a string `path`. Each folder must hold its own `SKILL.md`. These paths are relative to the plugin's source directory. Absolute paths, parent components (`..`) and symlinks are refused.
+
+A declared `skills` list selects only those folders. An empty list selects none. Without `skills`, kendex reads the plugin's `skills/<name>/SKILL.md` layout. Each skill installs under `<plugin>/<folder-name>`; object `name` and `invoke` fields do not replace that identity. Select it with `kendex add OWNER/REPO --skill PLUGIN/FOLDER`.
+
 ## kendex.toml
 
 ```toml
@@ -73,7 +77,7 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 
 ## What each kind needs
 
-- Skill: `skills/<name>/SKILL.md` with frontmatter `name` (matching the folder) and `description`; extra files in the folder ship with it.
+- Skill: `skills/<name>/SKILL.md`, or a declared plugin skill folder, with frontmatter `name` (matching the folder) and `description`; extra files in the folder ship with it.
 - Agent: `agents/<name>.md` with frontmatter `name` and `description`; optional `model`, `color`, tool allow and deny lists, and `tracked-outputs`, file paths it commits (`reports/<slug>.md`); `kendex verify` warns when an installing project ignores one.
 - Hook: `hooks/<name>.sh` with a comment header naming `event`, an optional `matcher`, and a `description`.
 - Command: `commands/<name>.md` with frontmatter `description`.

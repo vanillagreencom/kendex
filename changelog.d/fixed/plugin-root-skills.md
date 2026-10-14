@@ -1,0 +1,1 @@
+- Install plugin-registry skills from the repository root and from declared skill folders, using their plugin-qualified names.

@@ -30,25 +30,6 @@ fn kind_dir(kind: ItemKind) -> Option<(&'static str, Option<&'static str>)> {
     }
 }
 
-/// The path an item of this kind takes inside a plugin, whether or not it
-/// exists.
-fn item_path(sealed: &SealedSource, entry: &PluginEntry, kind: ItemKind, leaf: &str) -> PathBuf {
-    let (dir, marker) = kind_dir(kind).unwrap_or_default();
-    let base = sealed.root().join(&entry.dir).join(dir);
-    match marker {
-        Some(_) => base.join(leaf),
-        None => base.join(format!("{leaf}.md")),
-    }
-}
-
-/// Whether that path is really an item of this kind.
-fn exists(sealed: &SealedSource, path: &std::path::Path, kind: ItemKind) -> bool {
-    match kind_dir(kind).and_then(|(_, marker)| marker) {
-        Some(marker) => sealed.is_file(&path.join(marker)),
-        None => sealed.is_file(path),
-    }
-}
-
 /// Where a `<plugin>/<item>` name resolves to, or `None` when this catalog
 /// carries no such item. A name whose plugin the registry never validated
 /// resolves nowhere — that is what makes the registry, not the directory
@@ -61,9 +42,9 @@ pub fn find(
 ) -> Option<PathBuf> {
     let (plugin, leaf) = names::split(name)?;
     let entry = registry.entry(plugin)?;
-    kind_dir(kind)?;
-    let path = item_path(sealed, entry, kind, leaf);
-    exists(sealed, &path, kind).then_some(path)
+    offered(sealed, entry, kind, &mut Vec::new())
+        .into_iter()
+        .find_map(|(name, path)| (name == leaf).then_some(path))
 }
 
 /// Every item of this kind the catalog offers, named as it is declared. A
@@ -72,24 +53,30 @@ pub fn find(
 pub fn items(sealed: &SealedSource, registry: &Registry, kind: ItemKind) -> Vec<String> {
     let mut names = Vec::new();
     for entry in &registry.plugins {
-        for leaf in leaves(sealed, entry, kind) {
-            if names::segment_problem(&leaf).is_none() {
-                names.push(format!("{}/{leaf}", entry.name));
-            }
+        for (leaf, _) in offered(sealed, entry, kind, &mut Vec::new()) {
+            names.push(format!("{}/{leaf}", entry.name));
         }
     }
     names.sort();
     names
 }
 
-/// The item names one plugin's kind directory holds, whether or not each is
-/// a name that can be installed.
-fn leaves(sealed: &SealedSource, entry: &PluginEntry, kind: ItemKind) -> Vec<String> {
+/// Every readable item path, from declared skill folders or the default layout.
+fn item_paths(
+    sealed: &SealedSource,
+    entry: &PluginEntry,
+    kind: ItemKind,
+) -> Vec<(String, PathBuf)> {
     let Some((dir, marker)) = kind_dir(kind) else {
         return Vec::new();
     };
-    let Ok(paths) = sealed.entries(&sealed.root().join(&entry.dir).join(dir)) else {
-        return Vec::new();
+    let base = sealed.root().join(&entry.dir);
+    let paths = match (kind, &entry.skills) {
+        (ItemKind::Skill, Some(skills)) => skills.iter().map(|path| base.join(path)).collect(),
+        _ => match sealed.entries(&base.join(dir)) {
+            Ok(paths) => paths,
+            Err(_) => return Vec::new(),
+        },
     };
     let mut leaves = Vec::new();
     for path in paths {
@@ -102,10 +89,43 @@ fn leaves(sealed: &SealedSource, entry: &PluginEntry, kind: ItemKind) -> Vec<Str
             None => None,
         };
         if let Some(leaf) = leaf.and_then(|leaf| leaf.to_str()) {
-            leaves.push(leaf.to_owned());
+            leaves.push((leaf.to_owned(), path));
         }
     }
     leaves
+}
+
+fn offered(
+    sealed: &SealedSource,
+    entry: &PluginEntry,
+    kind: ItemKind,
+    findings: &mut Vec<CatalogFinding>,
+) -> Vec<(String, PathBuf)> {
+    let mut offered: Vec<(String, PathBuf)> = Vec::new();
+    for (leaf, path) in item_paths(sealed, entry, kind) {
+        let at = format!("{}/{}", crate::paths::slashed(&entry.dir), kind.name());
+        if let Some(problem) = names::segment_problem(&leaf) {
+            findings.push(CatalogFinding::new(
+                at,
+                format!("`{}` cannot be installed: {problem}", names::shown(&leaf)),
+                "rename it in the catalog",
+            ));
+            continue;
+        }
+        if let Some((other, _)) = offered
+            .iter()
+            .find(|(other, _)| names::fold(other) == names::fold(&leaf))
+        {
+            findings.push(CatalogFinding::new(
+                at,
+                format!("`{leaf}` and `{other}` are the same name once a filesystem has folded case and trailing dots: one would overwrite the other"),
+                "rename one of them so they differ by more than case",
+            ));
+            continue;
+        }
+        offered.push((leaf, path));
+    }
+    offered
 }
 
 /// One item a plugin ships.
@@ -183,31 +203,7 @@ fn group(
     check_manifest(sealed, entry, &at, findings)?;
     let mut members = Vec::new();
     for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
-        let mut seen: Vec<String> = Vec::new();
-        for leaf in leaves(sealed, entry, kind) {
-            let at = format!("{at}/{}", kind.name());
-            if let Some(problem) = names::segment_problem(&leaf) {
-                findings.push(CatalogFinding::new(
-                    at,
-                    format!("`{}` cannot be installed: {problem}", names::shown(&leaf)),
-                    "rename it in the catalog",
-                ));
-                continue;
-            }
-            if let Some(other) = seen
-                .iter()
-                .find(|other| names::fold(other) == names::fold(&leaf))
-            {
-                findings.push(CatalogFinding::new(
-                    at,
-                    format!(
-                        "`{leaf}` and `{other}` are the same name once a filesystem has folded case and trailing dots — one would overwrite the other"
-                    ),
-                    "rename one of them so they differ by more than case",
-                ));
-                continue;
-            }
-            seen.push(leaf.clone());
+        for (leaf, _) in offered(sealed, entry, kind, findings) {
             members.push(CatalogItem {
                 kind,
                 name: format!("{}/{leaf}", entry.name),

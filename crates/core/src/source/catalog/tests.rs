@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::source::plugin_registry::read;
+use crate::test_util::rooted;
 
 const REGISTRY: &str = r#"{
   "name": "workflows",
@@ -265,4 +266,217 @@ fn a_symlinked_plugin_component_is_never_read_through() {
             .iter()
             .any(|name| name.ends_with("leak"))
     );
+}
+
+fn declared_fixture(source: &str, skills: Option<Value>) -> (tempfile::TempDir, SealedSource) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = rooted(&tmp);
+    let root = home.join("catalog");
+    let mut plugin = serde_json::json!({"name": "heygen", "source": source});
+    if let Some(skills) = skills {
+        plugin["skills"] = skills;
+    }
+    write(
+        &root,
+        ".claude-plugin/marketplace.json",
+        &serde_json::json!({
+            "name": "heygen", "owner": {"name": "HeyGen"}, "plugins": [plugin]
+        })
+        .to_string(),
+    );
+    for leaf in ["heygen-avatar", "heygen-video", "skills/unlisted"] {
+        write(
+            &root,
+            &format!("{source}/{leaf}/SKILL.md"),
+            &format!(
+                "---\nname: {}\ndescription: create media\n---\nmedia body\n",
+                leaf.rsplit('/').next().expect("leaf")
+            ),
+        );
+    }
+    let sealed = SealedSource::open(&root).expect("open");
+    (tmp, sealed)
+}
+
+#[test]
+fn declared_skill_paths_agree_across_index_lookup_and_metadata() {
+    for (source, skills, expected) in [
+        (
+            "./",
+            Some(serde_json::json!([
+                {"name": "avatar", "path": "heygen-avatar", "invoke": "/heygen:avatar"},
+                {"name": "video", "path": "heygen-video"}
+            ])),
+            vec!["heygen/heygen-avatar", "heygen/heygen-video"],
+        ),
+        (
+            ".",
+            Some(serde_json::json!(["heygen-avatar", "./heygen-video"])),
+            vec!["heygen/heygen-avatar", "heygen/heygen-video"],
+        ),
+        (
+            "plugins/media",
+            Some(serde_json::json!("heygen-avatar")),
+            vec!["heygen/heygen-avatar"],
+        ),
+        ("plugins/media", None, vec!["heygen/unlisted"]),
+        ("./", Some(serde_json::json!([])), vec![]),
+    ] {
+        let (_tmp, sealed) = declared_fixture(source, skills);
+        let registry = read(&sealed).expect("read").expect("registry");
+        assert!(registry.findings.is_empty(), "{source}");
+        assert_eq!(
+            items(&sealed, &registry, ItemKind::Skill),
+            expected,
+            "{source}"
+        );
+        let index = crate::source::index::index(&sealed, "heygen").expect("index");
+        assert_eq!(
+            index
+                .packages
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{source}"
+        );
+        let meta = metadata(&sealed).expect("metadata").expect("registry");
+        assert_eq!(
+            meta.groups[0]
+                .members
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{source}"
+        );
+        for name in [
+            "heygen/heygen-avatar",
+            "heygen/heygen-video",
+            "heygen/unlisted",
+            "heygen/avatar",
+        ] {
+            let path = find(&sealed, &registry, ItemKind::Skill, name);
+            assert_eq!(path.is_some(), expected.contains(&name), "{source}: {name}");
+            if let Some(path) = path {
+                let leaf = name.split('/').nth(1).expect("leaf");
+                let folder = if leaf == "unlisted" {
+                    "skills/unlisted"
+                } else {
+                    leaf
+                };
+                assert_eq!(path, sealed.root().join(source).join(folder));
+                assert!(
+                    sealed
+                        .read_to_string(&path.join("SKILL.md"))
+                        .expect("marker")
+                        .contains("media body")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn declared_unsafe_or_missing_skill_paths_are_named_and_do_not_hide_siblings() {
+    for path in ["../outside", "/outside", "./../outside", "missing"] {
+        let (_tmp, sealed) =
+            declared_fixture("./", Some(serde_json::json!([path, "heygen-avatar"])));
+        let registry = read(&sealed).expect("read").expect("registry");
+        assert_eq!(
+            items(&sealed, &registry, ItemKind::Skill),
+            ["heygen/heygen-avatar"]
+        );
+        assert_eq!(
+            registry
+                .findings
+                .iter()
+                .map(|f| f.location.as_str())
+                .collect::<Vec<_>>(),
+            [format!(
+                ".claude-plugin/marketplace.json: heygen: skills[{path}]"
+            )]
+        );
+        assert!(find(&sealed, &registry, ItemKind::Skill, "heygen/outside").is_none());
+    }
+}
+
+#[test]
+fn an_empty_plugin_source_is_refused() {
+    let (_tmp, sealed) = declared_fixture(".", None);
+    write(
+        sealed.root(),
+        ".claude-plugin/marketplace.json",
+        r#"{"name":"heygen","owner":{"name":"HeyGen"},"plugins":[{"name":"heygen","source":""}]}"#,
+    );
+    let registry = read(&sealed).expect("read").expect("registry");
+    assert!(registry.plugins.is_empty());
+    assert_eq!(
+        registry
+            .findings
+            .iter()
+            .map(|f| f.location.as_str())
+            .collect::<Vec<_>>(),
+        [".claude-plugin/marketplace.json: heygen"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn declared_skills_keep_the_sealed_reader_for_links() {
+    use std::os::unix::fs::symlink;
+    for linked in ["directory", "marker", "content"] {
+        let (_tmp, sealed) =
+            declared_fixture("./", Some(serde_json::json!(["linked", "heygen-avatar"])));
+        let root = sealed.root();
+        match linked {
+            "directory" => symlink(root.join("heygen-video"), root.join("linked")).expect("link"),
+            "marker" => {
+                std::fs::create_dir(root.join("linked")).expect("mkdir");
+                symlink(
+                    root.join("heygen-video/SKILL.md"),
+                    root.join("linked/SKILL.md"),
+                )
+                .expect("link");
+            }
+            "content" => {
+                write(
+                    root,
+                    "linked/SKILL.md",
+                    "---\nname: linked\ndescription: media\n---\n",
+                );
+                symlink(
+                    root.join("heygen-video/SKILL.md"),
+                    root.join("linked/data.md"),
+                )
+                .expect("link");
+            }
+            _ => unreachable!(),
+        }
+        let registry = read(&sealed).expect("read").expect("registry");
+        let path = find(&sealed, &registry, ItemKind::Skill, "heygen/linked");
+        if linked == "content" {
+            assert!(matches!(
+                sealed.collect_skill_tree(&path.expect("skill")),
+                Err(crate::error::CoreError::SourceEscape { .. })
+            ));
+        } else {
+            assert!(path.is_none());
+            let index = crate::source::index::index(&sealed, "heygen").expect("index");
+            assert_eq!(
+                index
+                    .packages
+                    .iter()
+                    .map(|item| item.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["heygen/heygen-avatar"]
+            );
+            assert!(
+                registry
+                    .findings
+                    .iter()
+                    .any(|f| f.location.ends_with("skills[linked]"))
+            );
+        }
+    }
 }

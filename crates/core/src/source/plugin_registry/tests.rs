@@ -184,3 +184,24 @@ fn a_registry_with_no_owner_is_read_and_told_about_it() {
         )]
     );
 }
+
+#[test]
+fn local_directory_paths_allow_the_root_and_refuse_parent_or_absolute_paths() {
+    for (path, expected) in [
+        (".", Some("")),
+        ("./", Some("")),
+        ("./plugins/./media", Some("plugins/media")),
+        ("", None),
+        ("../outside", None),
+        ("./../outside", None),
+        ("/outside", None),
+    ] {
+        let mut registry = Registry::default();
+        assert_eq!(
+            relative_dir(REGISTRY, "media", path, &mut registry),
+            expected.map(PathBuf::from),
+            "{path}"
+        );
+        assert_eq!(registry.findings.is_empty(), expected.is_some(), "{path}");
+    }
+}

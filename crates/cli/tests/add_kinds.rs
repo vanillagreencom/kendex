@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::Path;
@@ -131,4 +131,71 @@ fn a_global_pi_extension_flag_gets_the_carrier_explanation() {
     assert!(!output.status.success());
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(said.contains("not installable on its own"), "{said}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn add_selects_one_declared_root_skill_by_its_plugin_qualified_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project_with_catalog(&home);
+    let catalog = home.join("catalog");
+    write(
+        &catalog,
+        ".claude-plugin/marketplace.json",
+        r#"{
+        "name": "heygen", "owner": {"name": "HeyGen"}, "plugins": [{
+            "name": "heygen", "source": "./", "skills": [
+                {"name": "avatar", "path": "heygen-avatar", "invoke": "/heygen:avatar"},
+                {"name": "video", "path": "heygen-video"}
+            ]
+        }]
+    }"#,
+    );
+    for leaf in ["heygen-avatar", "heygen-video"] {
+        write(
+            &catalog,
+            &format!("{leaf}/SKILL.md"),
+            &format!("---\nname: {leaf}\ndescription: create media\n---\n{leaf} body\n"),
+        );
+    }
+    let output = kendex(
+        &home,
+        &project,
+        &[
+            "add",
+            "cat",
+            "--skill",
+            "heygen/heygen-avatar",
+            "--throwaway",
+            "-y",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest: toml::Value =
+        toml::from_str(&fs::read_to_string(project.join("kendex.toml")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["skills"]["heygen/heygen-avatar"]["source"].as_str(),
+        Some("cat")
+    );
+    assert!(manifest["skills"].get("heygen/heygen-video").is_none());
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(project.join(".kendex-lock.json")).unwrap())
+            .unwrap();
+    assert!(lock["entries"]["skill:heygen/heygen-avatar:claude"].is_object());
+    assert!(
+        lock["entries"]
+            .get("skill:heygen/heygen-video:claude")
+            .is_none()
+    );
+    assert!(
+        fs::read_to_string(project.join(".claude/skills/heygen__heygen-avatar/SKILL.md"))
+            .unwrap()
+            .contains("heygen-avatar body")
+    );
+    assert!(!project.join(".claude/skills/heygen__heygen-video").exists());
 }
