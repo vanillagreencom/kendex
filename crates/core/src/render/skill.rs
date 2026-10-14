@@ -93,19 +93,12 @@ pub fn render_skill(
     name: &str,
 ) -> Result<(Rendered, SkillText)> {
     let instructions = skill_instructions(manifest, name);
-    let (rendered, read_as) = with_instructions(sealed, source_dir, instructions.as_deref())?;
-    let mut files = rendered.into_files();
-    for (rel, bytes) in &mut files {
-        if rel == Path::new(SKILL_FILE) {
-            *bytes = bounded_description(&String::from_utf8_lossy(bytes)).into_bytes();
-        }
-    }
-    Ok((Rendered::new(files), read_as))
+    with_instructions(sealed, source_dir, instructions.as_deref())
 }
 
 /// Shared skill directories must fit older Codex loaders too. Only the
 /// rendered description changes; source bytes and the body stay intact.
-fn bounded_description(text: &str) -> String {
+pub(crate) fn bounded_description(text: &str) -> String {
     let Ok((yaml, _)) = crate::frontmatter::split(text) else {
         return text.to_owned();
     };
@@ -325,7 +318,12 @@ mod tests {
                     + &body;
                 std::fs::write(src.join(SKILL_FILE), &text).unwrap();
                 let sealed = SealedSource::open(&root).unwrap();
-                let (rendered, _) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+                let (source, _) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+                let rendered = Rendered::new(vec![(
+                    PathBuf::from(SKILL_FILE),
+                    bounded_description(std::str::from_utf8(&source.files()[0].1).unwrap())
+                        .into_bytes(),
+                )]);
                 let mut harnesses = HarnessId::ALL;
                 harnesses.swap(0, 1);
                 for harness in harnesses {

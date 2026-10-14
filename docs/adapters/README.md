@@ -54,7 +54,7 @@ A surface is one of four shapes, declared per kind and scope by each adapter (`S
 
 The shared skills tree is `.agents/skills` under the scope's own root: the project's, or the home directory. Every harness but Claude Code reads the project's, and every one but Claude Code and Antigravity reads `~/.agents/skills`, so one rendered tree serves them all at either scope and a per-harness directory stays on the surface list for what is already there and for a copy delivery. A harness that does not read the shared tree gets a link in its own directory onto it when the bytes match — relative in a project, absolute globally. An adapter claims only its own namespace; a cross-read is reported as an input to effective state, never as a second installation.
 
-For every harness, kendex cuts a skill description over 1024 characters at the last sentence end within that limit (`.`, `!` or `?` followed by whitespace or the end of the description). With no sentence end, it uses the last word boundary. A word longer than the limit is cut at the character limit. The body and the publisher's file stay unchanged (`crates/core/src/render/skill.rs`).
+For every harness, kendex cuts a delivered copy's skill description over 1024 characters at the last sentence end within that limit (`.`, `!` or `?` followed by whitespace or the end of the description). With no sentence end, it uses the last word boundary. A word longer than the limit is cut at the character limit. The body and the publisher's file stay unchanged. An in-place source keeps its authored description; kendex changes only its managed instruction block (`crates/core/src/render/skill.rs`, `crates/core/src/engine/desired_skill.rs`).
 
 ## Hook commands
 

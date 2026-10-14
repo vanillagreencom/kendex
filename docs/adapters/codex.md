@@ -29,7 +29,7 @@ Codex reads three skill roots at user level: the shared `~/.agents/skills`, `~/.
 
 ## Format
 
-- Skill description at most 1024 characters after the [shared description cut](README.md#surface-shapes). No body cap.
+- A delivered skill copy's description is at most 1024 characters after the [shared description cut](README.md#surface-shapes). An in-place source keeps its authored description. No body cap.
 - Name rule `Any`; namespace separator `__`.
 - MCP transports: stdio and streamable HTTP, never SSE, and an SSE declaration is refused for this harness with that reason. A server is its own `[mcp_servers.<name>]` table, written through a `toml_edit` pass that keeps the file's comments, ordering and other tables (`crates/core/src/configedit/codex_mcp.rs`): `command` and `args` for a stdio server, `url` for a streamable-HTTP one, no `type`. Codex reads an `env` value literally and passes a parent variable through by its own name under `env_vars`, so a catalog `env` table becomes that list, and a `$NAME` reference that would land under another key is refused with the name to use. Switching off writes `enabled = false` on the table and switching on takes it away, so the declaration stays until removal. A project's file loads only once Codex trusts the project, which the TUI grants an undecided local project on first launch; `codex mcp add` writes the user file alone and rewrites its whole `mcp_servers` table, so kendex does not go through it.
 - Agent file: TOML, `<name>.toml`. Fields written: `name`, `nickname_candidates`, `description`, `model`, `model_reasoning_effort`, `sandbox_mode`, and `developer_instructions` as a triple-quoted string carrying the whole prompt (`crates/core/src/render/agent/codex.rs`).

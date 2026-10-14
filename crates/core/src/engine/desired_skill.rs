@@ -5,7 +5,7 @@ use crate::hash::{hash_files, in_place_installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::render::skill::{SKILL_FILE, SkillText, render_skill};
+use crate::render::skill::{SKILL_FILE, SkillText, bounded_description, render_skill};
 
 use super::desired::{
     Artifact, Desired, DesiredState, IN_PLACE_DISABLED, ItemCtx, effective_method, in_place_source,
@@ -425,17 +425,23 @@ fn render_variant(
     let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // The planning manifest already normalizes managed instructions. Keep
     // the authored tree with only that block for a destination at the source;
-    // whole-tree label normalization belongs to rendered copies alone.
+    // Description limits and whole-tree label normalization belong to copies.
     let source_files = rendered.files().to_vec();
     let files = rendered
         .into_files()
         .into_iter()
         .map(|(path, bytes)| {
             let bytes = match std::str::from_utf8(&bytes) {
-                Ok(text) => state
-                    .agent_names
-                    .labels(text, &format!("{}: {}", ctx.name, path.display()))
-                    .into_bytes(),
+                Ok(text) => {
+                    let text = state
+                        .agent_names
+                        .labels(text, &format!("{}: {}", ctx.name, path.display()));
+                    if path == std::path::Path::new(SKILL_FILE) {
+                        bounded_description(&text).into_bytes()
+                    } else {
+                        text.into_bytes()
+                    }
+                }
                 Err(_) => bytes,
             };
             (path, bytes)

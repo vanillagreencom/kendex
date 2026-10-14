@@ -40,30 +40,18 @@ use kendex_core::engine::{DriftState, PlanOptions, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
-/// Collection follows the accepted delivery tree, including a native tree
-/// or a repaired copy beside a refused native group.
+/// Collection follows an accepted source tree or a separately delivered copy.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn command_collection_uses_accepted_native_and_copy_trees() {
-    for (harnesses, method, repaired, long_description, delivered) in [
-        ("\"codex\"", "symlink", false, false, false),
-        ("\"claude\", \"codex\"", "symlink", false, false, false),
-        ("\"claude\"", "copy", true, false, true),
-        ("\"codex\", \"claude\"", "symlink", true, true, true),
+    for (harnesses, method, repaired, delivered) in [
+        ("\"codex\"", "symlink", false, false),
+        ("\"claude\", \"codex\"", "symlink", false, false),
+        ("\"claude\"", "copy", true, true),
     ] {
         let world = world();
         world.declare_as("deploy", harnesses, method, None);
-        // Codex refuses the long description. Claude accepts the delivered
-        // tree, so a refused first group must not hide its command list.
-        let description = if long_description {
-            "x".repeat(1025)
-        } else {
-            "ship it".to_owned()
-        };
-        let text = format!(
-            "---\nname: deploy\ndescription: {description}\ndependencies:\n  commands:\n    - command: kendex-fixture-cut-required\n      purpose: Render pages\n      floor: '1.2.0'\n      packages: {{brew: cut-tool, npm: cut-tool}}\n    - command: kendex-fixture-cut-optional\n      purpose: Read credentials\n      optional: true\n---\nOwned source.\n"
-        );
-        let mut authored = text.into_bytes();
+        let mut authored = "---\nname: deploy\ndescription: ship it\ndependencies:\n  commands:\n    - command: kendex-fixture-cut-required\n      purpose: Render pages\n      floor: '1.2.0'\n      packages: {brew: cut-tool, npm: cut-tool}\n    - command: kendex-fixture-cut-optional\n      purpose: Read credentials\n      optional: true\n---\nOwned source.\n".as_bytes().to_vec();
         if repaired {
             authored.extend_from_slice(b"Caf\xe9.\n");
         }
@@ -115,28 +103,6 @@ fn command_collection_uses_accepted_native_and_copy_trees() {
                 world
                     .read(&copy.join("SKILL.md"))
                     .ends_with("Caf\u{FFFD}.\n")
-            );
-        }
-        if long_description {
-            assert!(
-                report
-                    .drift
-                    .iter()
-                    .any(|row| row.kind == kendex_core::model::ItemKind::Skill
-                        && row.name == "deploy"
-                        && row.harness == kendex_core::model::HarnessId::Codex
-                        && row.state == DriftState::Conflict)
-            );
-            assert!(
-                lock.entries
-                    .values()
-                    .any(|entry| entry.harness == kendex_core::model::HarnessId::Claude)
-            );
-            assert!(
-                !lock
-                    .entries
-                    .values()
-                    .any(|entry| entry.harness == kendex_core::model::HarnessId::Codex)
             );
         }
     }
@@ -319,44 +285,103 @@ fn drift_rows(report: &kendex_core::engine::EngineReport) -> Vec<(String, String
 #[test]
 #[allow(clippy::unwrap_used)]
 fn apply_writes_the_instructions_block_and_nothing_else() {
-    let world = world();
-
-    world.apply();
-
-    let skill = world.read(&world.skill_file());
-    assert_eq!(
-        skill,
-        kendex_core::render::skill::inject_instructions(
-            AUTHORED,
-            Some(
-                "<!-- kendex:shared-instructions:start -->\nshared rule\n<!-- kendex:shared-instructions:end -->"
-            )
-        ),
-        "{skill}"
+    use kendex_core::model::HarnessId::{Claude, Codex, Copilot, Pi};
+    let sentence = format!("{}. ", "a".repeat(498));
+    let long = format!(
+        "---\nname: deploy\ndescription: |-\n  {}\n---\nOwned source.\n",
+        sentence.repeat(3)
     );
-    assert!(skill.ends_with("Owned source.\n"), "{skill}");
-    assert_eq!(world.read(&world.source().join("reference.md")), REFERENCE);
-    assert!(world.project.join(".claude/skills/deploy").is_symlink());
-    let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
-    let entries: Vec<_> = lock
-        .entries
-        .values()
-        .filter(|entry| entry.name == "deploy")
-        .collect();
-    assert_eq!(entries.len(), 3, "{:?}", lock.entries.keys());
-    for entry in entries {
-        assert_eq!(entry.rendered_hash, None, "{}", entry.harness.name());
-        assert!(
-            entry
-                .emitted
-                .as_ref()
-                .is_none_or(|emitted| !emitted.paths.contains(&world.source())),
-            "{}: {:?}",
-            entry.harness.name(),
-            entry.emitted
+    let cut = format!("{sentence}{}.", "a".repeat(498));
+    let usual = [Claude, Codex, Pi];
+    let claude = [Claude];
+    let four = [Claude, Codex, Pi, Copilot];
+    let rule = Some("shared rule");
+    for (authored, instructions, method, expected_members) in [
+        (AUTHORED, rule, "symlink", usual.as_slice()),
+        (long.as_str(), None, "symlink", claude.as_slice()),
+        (long.as_str(), None, "symlink", four.as_slice()),
+        (long.as_str(), rule, "symlink", four.as_slice()),
+        (long.as_str(), None, "copy", four.as_slice()),
+    ] {
+        let harnesses = expected_members
+            .iter()
+            .map(|harness| format!("\"{}\"", harness.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let world = world();
+        world.declare_as("deploy", &harnesses, method, instructions);
+        fs::write(world.skill_file(), authored).unwrap();
+        let report = world.apply();
+        let expected_source = match instructions {
+            None => authored.to_owned(),
+            Some(_) => kendex_core::render::skill::inject_instructions(
+                authored,
+                Some(
+                    "<!-- kendex:shared-instructions:start -->\nshared rule\n<!-- kendex:shared-instructions:end -->",
+                ),
+            ),
+        };
+        assert_eq!(
+            world.read(&world.skill_file()),
+            expected_source,
+            "{harnesses} {method}"
         );
+        assert_eq!(world.read(&world.source().join("reference.md")), REFERENCE);
+        assert_eq!(
+            world.project.join(".claude/skills/deploy").is_symlink(),
+            method == "symlink"
+        );
+        let lock = kendex_core::lock::load(&world.lock_path()).unwrap();
+        let mut actual_members = lock
+            .entries
+            .values()
+            .filter(|entry| entry.name == "deploy")
+            .map(|entry| entry.harness)
+            .collect::<Vec<_>>();
+        actual_members.sort();
+        let mut expected_members = expected_members.to_vec();
+        expected_members.sort();
+        assert_eq!(actual_members, expected_members);
+        for entry in lock.entries.values().filter(|entry| entry.name == "deploy") {
+            let delivered = method == "copy" && [Claude, Copilot].contains(&entry.harness);
+            assert_eq!(
+                entry.rendered_hash.is_some(),
+                delivered,
+                "{}",
+                entry.harness.name()
+            );
+            assert!(
+                entry
+                    .emitted
+                    .as_ref()
+                    .is_none_or(|emitted| !emitted.paths.contains(&world.source()))
+            );
+            if delivered {
+                let copy = entry
+                    .emitted
+                    .as_ref()
+                    .unwrap()
+                    .paths
+                    .iter()
+                    .find(|path| path.join("SKILL.md").is_file())
+                    .unwrap();
+                let delivered = world.read(&copy.join("SKILL.md"));
+                let (yaml, body) = kendex_core::frontmatter::split(&delivered).unwrap();
+                let parsed = kendex_core::frontmatter::parse_tolerant(yaml).unwrap();
+                assert_eq!(
+                    parsed
+                        .map
+                        .get("description")
+                        .and_then(kendex_core::frontmatter::Value::as_str),
+                    Some(cut.as_str())
+                );
+                assert_eq!(body, "Owned source.\n");
+                assert!(report.generated.whole.contains(&copy.join("SKILL.md")));
+                assert!(!report.generated.whole.contains(&world.skill_file()));
+            }
+        }
+        assert_eq!(world.check_text(), "");
     }
-    assert_eq!(world.check_text(), "");
 }
 
 /// Adopt declares these authored files as an in-place source. Alias
