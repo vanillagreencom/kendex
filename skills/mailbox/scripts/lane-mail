@@ -354,7 +354,7 @@ Options:
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
   --state-dir PATH
-                send and pending: the fleet state whose record names the lane
+                send only: the fleet state whose record names the lane
   --to WHO      `owner` or `peer`: the audience field of an overseer ask or
                 notice, which a peer ask writes as `peer` itself, and the
                 filter `pending` keeps
@@ -471,16 +471,15 @@ cannot both append: the second checks the first row while it holds that lock
 and refuses with its id. A mailbox read failure refuses the write as
 `write-failed` locally or `host-append` on a provider, never as an empty mailbox.
 
-A local --root must be a checkout's physical top-level directory; another
-value refuses as `root-not-checkout`. A send writes a mailbox of the caller's
-own repository alone, its own lanes and its own overseer mailbox: a checkout
-whose common root is not the caller's refuses as `lane-foreign`. `peer` is the
-only cross-repository write. A hosted mailbox root is outside that ownership
-check: its path is on another host. A session send always checks repository
-ownership from the recorded mail_root, which can be inside its checkout.
-`pending` can read a removed local worktree when the lane's fleet record
-names that exact root and carries its merged pull request. Pass --state-dir
-when the caller selected a fleet outside the default state directory.
+A local --root used to write mailbox envelopes must be a checkout's physical
+top-level directory; another value refuses as `root-not-checkout`. Reads,
+including their cursor and watcher records, keep their existing root behavior.
+A send writes a mailbox of the caller's own repository alone, its own lanes
+and its own overseer mailbox: a checkout whose common root is not the caller's
+refuses as `lane-foreign`. `peer` is the only cross-repository write. A hosted
+mailbox root is outside that ownership check: its path is on another host.
+A session send always checks repository ownership from the recorded mail_root,
+which can be inside its checkout.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
 outside the alphabet, a lock, a write or a host that failed; 69
@@ -807,7 +806,7 @@ for given in $OPTS_GIVEN; do
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
-    --state-dir) case "$VERB" in send | pending) ;; *) refuse option-unknown --state-dir ;; esac ;;
+    --state-dir) [ "$VERB" = send ] || refuse option-unknown --state-dir ;;
   esac
 done
 
@@ -971,7 +970,7 @@ lm_send_record() { # RESULT CAUSE
   credit="$(ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/lanes" list --harness claude --local --json 2>/dev/null |
     jq -c --arg dir "$account" '[.[] | select(.config_dir == $dir) | .credits | objects | {remaining_dollars, locked_reason}] | first // "unread"')" ||
     credit='"unread"'
-  "$ORCH_SCRIPTS/workflow-state" ${LM_LANE_STATE_ARGS[@]+"${LM_LANE_STATE_ARGS[@]}"} update oversee \
+  "$ORCH_SCRIPTS/workflow-state" ${state_args[@]+"${state_args[@]}"} update oversee \
     --arg item "$ITEM" --arg result "$1" --arg text "$2" --argjson credit "$credit" \
     '(.lanes[] | select(.item == $item)).directive_send = {at: (now | floor), result: $result, text: ($text | .[0:300]), credit: $credit}' \
     >/dev/null 2>"$WORK_DIR/state.err" ||
@@ -989,25 +988,19 @@ lm_send_record() { # RESULT CAUSE
 # CLI under the record's account, which answers {ok, session_id, url}. Such a
 # lane never asks, so an answer has nothing to reach, and no hook enforces a
 # halt there.
-lm_lane_record() {
-  local exists
-  # The session receipt must go to the same fleet state as the record read.
-  LM_LANE_STATE_ARGS=()
-  [ -z "$STATE_DIR" ] || LM_LANE_STATE_ARGS=(--state-dir "$STATE_DIR")
-  if ! exists="$("$ORCH_SCRIPTS/workflow-state" ${LM_LANE_STATE_ARGS[@]+"${LM_LANE_STATE_ARGS[@]}"} exists --json oversee)" ||
-    ! exists="$(jq -er '.exists | tostring' <<<"$exists")"; then
-    return 1
-  fi
-  LM_LANE_RECORD='{}'
-  if [ "$exists" = true ]; then
-    LM_LANE_RECORD="$("$ORCH_SCRIPTS/workflow-state" ${LM_LANE_STATE_ARGS[@]+"${LM_LANE_STATE_ARGS[@]}"} get oversee \
-      '[.lanes[]? | objects | select(.item == "'"$ITEM"'")] | first // {}')" || return 1
-  fi
-}
 lm_send_channel() {
-  local rc=0 record host channel files harness account session root out answer cause
-  lm_lane_record 2>"$WORK_DIR/state.err" || refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
-  record="$LM_LANE_RECORD"
+  local state_args=() rc=0 exists record host channel files harness account session root out answer cause
+  [ -z "$STATE_DIR" ] || state_args=(--state-dir "$STATE_DIR")
+  if ! exists="$("$ORCH_SCRIPTS/workflow-state" ${state_args[@]+"${state_args[@]}"} exists --json oversee 2>"$WORK_DIR/state.err")" ||
+    ! exists="$(jq -er '.exists | tostring' <<<"$exists")"; then
+    refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
+  fi
+  record='{}'
+  if [ "$exists" = true ]; then
+    record="$("$ORCH_SCRIPTS/workflow-state" ${state_args[@]+"${state_args[@]}"} get oversee \
+      '[.lanes[]? | objects | select(.item == "'"$ITEM"'")] | first // {}' 2>"$WORK_DIR/state.err")" ||
+      refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
+  fi
   if [ "$record" = '{}' ]; then
     [ -z "$STATE_DIR" ] || refuse lane-unrecorded "$ITEM" "state-dir=$STATE_DIR"
     return 0
@@ -1185,42 +1178,40 @@ fi
 # another repository's overseer mailbox is the cross-repository write `peer`
 # exists to be. A root that resolves to no common root at all is refused with
 # them, so an unreadable checkout is no way in. Hosted mailbox destinations
-# use the lane record's remote-root check. Session record ownership uses this
-# check with either host flag state.
+# use the lane record's remote-root check. Session ownership is checked under
+# either host flag, including recorded paths inside a checkout.
 lm_root_own() { # ROOT own|checkout
   local top canonical
-  # --root selects a mailbox base; a session record can name a directory
-  # inside its checkout. This local input distinction needs no decision record.
   if [ "$2" = checkout ]; then
-    # lane-close and oversee-report read pending on a merged lane's recorded
-    # worktree after merge close-out removes it. Only that missing read root
-    # keeps the fleet's recorded-root contract; an existing mailbox directory
-    # still has to be a checkout top level.
-    if [ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]] &&
-      [ -x "$ORCH_SCRIPTS/workflow-state" ] && lm_lane_record 2>/dev/null &&
-      jq -e --arg root "$1" '.mail_root == $root and
-        (.host == null or .host == "local") and (.cycle.pr | type == "number")' <<<"$LM_LANE_RECORD" >/dev/null 2>&1; then
-      return 0
-    fi
-    top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
-    canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
-    [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
-    if [ -z "$top" ] || [ "$canonical" != "$top" ]; then
-      printf 'lane-mail: root-not-checkout=%s top=%s\n' "$1" "$top" >&2
-      exit 2
-    fi
+    # Cursor and liveness records belong to the read paths. Only envelope
+    # writers need checkout validation; its Git processes cannot burden reads.
+    case "$VERB" in
+      ask | notice | send | resolve | compact | peer)
+        top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
+        canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
+        [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
+        if [ -z "$top" ] || [ "$canonical" != "$top" ]; then
+          printf 'lane-mail: root-not-checkout=%s top=%s\n' "$1" "$top" >&2
+          exit 2
+        fi
+        ;;
+    esac
   fi
   if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; then
     LANE_ROOT="$(mailbox_common_root "$1" 2>/dev/null)" || LANE_ROOT=""
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
 }
-if [ "$HOST" -eq 0 ] && [ "$VERB" != peer ]; then
-  if [[ "$OPTS_GIVEN" == *"--root$NL"* ]]; then
+if [ "$HOST" -eq 0 ]; then
+  if [ "$VERB" = peer ] || [[ "$OPTS_GIVEN" == *"--root$NL"* ]]; then
     lm_root_own "$ROOT" checkout
   elif [ "$VERB" = send ] || [ "$VERB" = resolve ]; then
     lm_root_own "$ROOT" own
   fi
+fi
+if [ "$VERB" = peer ]; then
+  # Either peer route can append to the sender's local delivery record.
+  lm_root_own "$OWN_ROOT" checkout
 fi
 
 # The mailbox a verb reads or writes. A peer exchange moves it once: the same

@@ -1,1 +1,1 @@
-- Refuse mistaken local mailbox directories as checkout roots, while keeping reads of recorded merged worktrees and repository ownership checks for cloud sessions.
+- Refuse mistaken local mailbox directories before writing messages, while preserving mailbox read costs and repository ownership checks for cloud sessions.

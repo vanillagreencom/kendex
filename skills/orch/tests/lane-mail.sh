@@ -115,57 +115,44 @@ for root in "$LANE" "$TMP_ROOT/root-link" omitted; do
     "0=Checkout $root?" "$root: an ask lands in the worktree mailbox"
 done
 
-recorded_root() { # CASE EXPECTED_EXIT [default|selected]
-  local kind="$1" expected="$2" root="$TMP_ROOT/record-$1" recorded scope="${3:-default}" state args=()
-  LANE="$TMP_ROOT/root_base"
-  state="$LANE/tmp/workflow-state-oversee.json"
-  if [[ "$scope" == selected ]]; then
-    mkdir -p "$TMP_ROOT/selected-fleet"
-    printf '{"lanes":[]}\n' > "$state"
-    state="$TMP_ROOT/selected-fleet/workflow-state-oversee.json"
-    args=(--state-dir "$TMP_ROOT/selected-fleet")
-  fi
-  case "$kind" in
-    directory) root="$LANE/tmp/lane-mail"; mkdir -p "$root" ;;
-    link) ln -s "$TMP_ROOT/removed-link-target" "$root"; [[ -L "$root" ]] || exit 1 ;;
-    *)
-      git -C "$LANE" worktree add -q --detach "$root"
-      git -C "$LANE" worktree remove -f "$root"
-      ;;
+# Each envelope writer selects the same root owner before any mailbox effect.
+for verb in ask notice send resolve compact; do
+  args=()
+  case "$verb" in
+    ask | notice) args=(--file "$(text root 'Which checkout?')") ;;
+    send) args=(--directive --file "$(text root 'Which checkout?')") ;;
+    resolve) args=(--id missing) ;;
   esac
-  recorded="$root"
-  [[ "$kind" != mismatched ]] || recorded="$TMP_ROOT/another-removed-root"
-  jq -n --arg root "$recorded" '{lanes: [{item: "KEN-1", host: null, mail_root: $root, cycle: {pr: 1}}]}' \
-    > "$state"
-  case "$kind" in
-    unrecorded) printf '{"lanes":[]}\n' > "$state" ;;
-    unmerged) jq 'del(.lanes[0].cycle)' "$state" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$state" ;;
-    hosted-record) jq '.lanes[0].host = "ssh"' "$state" > "$TMP_ROOT/record-next"; mv "$TMP_ROOT/record-next" "$state" ;;
-    unreadable) printf 'not JSON\n' > "$state" ;;
-  esac
-  if [[ "$kind" == write ]]; then
-    lm ask --item KEN-1 --root "$root" --file "$(text record 'A removed root cannot receive an ask.')"
-  else
-    lm pending --item KEN-1 --root "$root" ${args[@]+"${args[@]}"}
-  fi
-  assert_eq "$RC=$OUT" "$expected=" "$kind: the recorded-root contract controls the result"
-  if [[ "$expected" == 2 ]]; then
-    assert_eq "${ERR%% top=*}" "lane-mail: root-not-checkout=$root" "$kind: an invalid explicit root keeps its refusal key"
-    assert_eq "$(wc -l < "$TMP_ROOT/err" | tr -d ' ')" 1 "$kind: the root refusal is one line"
-  else
-    assert_eq "$ERR" '' "$kind: a recorded merged worktree reads empty after removal"
-  fi
-  if [[ "$kind" == write ]]; then
-    assert_eq "$([[ -e "$root" ]] && echo written || echo untouched)" untouched "a refused removed root creates no mailbox"
-    rm -rf -- "$root"
-  fi
-  [[ "$kind" != link ]] || rm -- "$root"
-}
-for scope in default selected; do
-  for row in removed:0 unrecorded:2 unmerged:2 mismatched:2 directory:2 link:2 write:2 unreadable:2 hosted-record:2; do
-    recorded_root "${row%:*}" "${row#*:}" "$scope"
-  done
+  item=KEN-1
+  [[ "$verb" != resolve && "$verb" != compact ]] || item=overseer
+  lm "$verb" --item "$item" --root tmp/lane-mail ${args[@]+"${args[@]}"}
+  assert_eq "$RC=${ERR%% top=*}" '2=lane-mail: root-not-checkout=tmp/lane-mail' \
+    "$verb: a mailbox directory cannot receive envelope writes"
+  assert_eq "$([ -e "$LANE/tmp/lane-mail/tmp" ] && echo written || echo untouched)" untouched \
+    "$verb: the refusal creates no nested mailbox"
 done
+root_reads() {
+  mkdir -p "$TMP_ROOT/read-directory"
+  for verb in pending drain inbox events watch; do
+    args=()
+    [[ "$verb" != drain ]] || args=(--after 0)
+    [[ "$verb" != inbox ]] || args=(--peek)
+    if [[ "$verb" == watch ]]; then
+      args=(--once)
+      printf '{"id":"read-wake","kind":"directive","text":"Wake"}\n' > "$TMP_ROOT/read-directory/tmp/lane-mail/KEN-1/to-lane.jsonl"
+    fi
+    lm "$verb" --item KEN-1 --root "$TMP_ROOT/read-directory" ${args[@]+"${args[@]}"}
+    assert_eq "$RC=$ERR" '0=' "$verb: reads keep their existing directory root contract"
+  done
+  clock_lm wait --item KEN-1 --root "$TMP_ROOT/read-directory" --id missing --timeout 1 --interval 1
+  assert_eq "$RC" 124 'wait: a read timeout keeps its existing directory root contract'
+}
+root_reads
+lm ask --item KEN-1 --root "$TMP_ROOT/removed-write-root" --file "$(text root 'Which checkout?')"
+assert_eq "$RC=${ERR%% top=*}" "2=lane-mail: root-not-checkout=$TMP_ROOT/removed-write-root" \
+  'a missing root cannot receive an envelope write'
+assert_eq "$([[ -e "$TMP_ROOT/removed-write-root" ]] && echo written || echo untouched)" untouched \
+  'a refused missing root creates no mailbox'
 
 new_lane envelope
 lm ask --item KEN-1 --file "$(text q 'Cut the scanner?')" --options cut,keep
@@ -1547,27 +1534,13 @@ assert_eq "$ROOT_ASSERT_RC" 1 "control: removing the checkout check fails the sa
 assert_eq "$(jq -r '.text' "$LANE/tmp/lane-mail/tmp/lane-mail/KEN-1/to-overseer.jsonl")" 'Which checkout?' \
   "control: the old root behavior writes the question where no overseer reads"
 
-for rule in removed matching merged missing read host; do
-  # shellcheck disable=SC2016  # Mutations use literal production text.
-  case "$rule" in
-    removed) old='if [ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]] &&'; new='if false && [ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]] &&'; row=removed:0 ;;
-    matching) old='.mail_root == $root and'; new='true and'; row=mismatched:2 ;;
-    merged) old='(.cycle.pr | type == "number")'; new='true'; row=unmerged:2 ;;
-    missing) old='[[ ! -e "$1" && ! -L "$1" ]]'; new='true'; row=directory:2 ;;
-    read) old='[ "$VERB" = pending ] && [[ ! -e "$1" && ! -L "$1" ]]'; new='true && [[ ! -e "$1" && ! -L "$1" ]]'; row=write:2 ;;
-    host) old='(.host == null or .host == "local")'; new='true'; row=hosted-record:2 ;;
-  esac
-  mutant "recorded-root-$rule" "$old" "$new"
-  ROOT_ASSERT_RC=0
-  ( FAIL=0; recorded_root "${row%:*}" "${row#*:}"; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/record-control-$rule.out" || ROOT_ASSERT_RC=$?
-  assert_eq "$ROOT_ASSERT_RC" 1 "control: the $rule root defect fails the same recorded-root assertions"
-done
-
 # shellcheck disable=SC2016  # Mutations use literal production text.
-mutant unselected-record 'LM_LANE_STATE_ARGS=(--state-dir "$STATE_DIR")' ': # LM_LANE_STATE_ARGS=(--state-dir "$STATE_DIR")'
+mutant checked-reads 'ask | notice | send | resolve | compact | peer)' \
+  'ask | notice | send | resolve | compact | peer | pending | drain | inbox | events | watch | wait)'
+LANE="$TMP_ROOT/root-lane"
 ROOT_ASSERT_RC=0
-( FAIL=0; recorded_root removed 0 selected; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/record-state-control.out" || ROOT_ASSERT_RC=$?
-assert_eq "$ROOT_ASSERT_RC" 1 'control: ignoring the selected state fails the same removed-root assertions'
+( FAIL=0; root_reads; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/read-root-control.out" || ROOT_ASSERT_RC=$?
+assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to reads fails the same read-root assertions'
 
 new_lane control_wait_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Read once?')"

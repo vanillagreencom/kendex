@@ -36,21 +36,18 @@ def run(script, root, bash, counting, control=False):
         counter.install(count_dir, os.environ["PATH"], bash)
     for index, row in enumerate(rows):
         case = Path(root) / str(index)
+        world.prepare(case, row["state"])
         env = {key: os.environ[key] for key in ("HOME", "PATH", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
         args = [bash, script, *row["args"], "--item", "KEN-1"]
-        caller = world.reader_case(case, row["state"], env, row.get("settings", False),
-                                   row.get("root", "explicit"))
+        caller = case
         limit = 8
         if row.get("root") in ("default", "newline"):
+            caller = world.reader_case(case, row["state"], env, row.get("settings", False), row["root"])
             if row["args"][0] != "inbox":
                 # The owner accepted the snapshot and newline-read exceptions.
                 limit += int(row.get("settings", False)) + 2 * int(row["root"] == "newline")
         else:
             args.extend(("--root", str(case)))
-            if row["args"][0] == "inbox":
-                # Explicit inbox reaches ten processes with Git's top-level
-                # lookup and the two physical-path resolutions.
-                limit = 10
         if counting:
             # Each launch has a fresh measurement. Wrapper files describe the
             # same PATH for the entire run and need no per-case installation.

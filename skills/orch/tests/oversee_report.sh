@@ -1414,36 +1414,5 @@ REPORT_UNDER_TEST="$TRACKER_REPORT_MUTANT" run -- render --state "$CASE/state.js
 assert_eq "$RC|$(first_err)" '2|oversee-report: owner-asks=overseer' \
   'control: issue presence fails the unconfirmed chat report assertion'
 
-selected_fleet_report() { # CASE BASENAME
-  new_case "$1"
-  git -C "$CASE" init -q
-  git -C "$CASE" config gc.auto 0
-  git -C "$CASE" config maintenance.auto false
-  git -C "$CASE" -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false commit -q --allow-empty -m root
-  git -C "$CASE" worktree add -q --detach "$CASE/removed"
-  git -C "$CASE" worktree remove -f "$CASE/removed"
-  fleet '' "$(lane KEN-2 running | jq -c --arg root "$CASE/removed" '.mail_root = $root | .cycle = {pr: 1}')"
-  issue KEN-2 'Title 2' 'Outcome 2'
-  mkdir -p "$TMP_ROOT/$1-fleet"
-  mv "$CASE/state.json" "$TMP_ROOT/$1-fleet/$2"
-  [[ "$2" == workflow-state-oversee.json ]] || printf '{"lanes":[]}\n' > "$TMP_ROOT/$1-fleet/workflow-state-oversee.json"
-  run "OVERSEE_REPORT_LANE_MAIL=$OVERSEE_REPORT_REAL_LANE_MAIL" -- render \
-    --state "$TMP_ROOT/$1-fleet/$2" --repo owner/repo
-  assert_eq "$RC|$(first_err)" '0|' 'a report forwards the selected external fleet to the real removed-root mailbox reader'
-}
-for basename in workflow-state-oversee.json fleet.json; do
-  selected_fleet_report "selected-$basename" "$basename"
-done
-SELECTED_REPORT="$(mutant_scripts selected-fleet-report/orch oversee-report)/oversee-report" || exit 1
-ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/selected-fleet-report/github"
-# shellcheck disable=SC2016  # Mutations use literal production text.
-mutate_file "$SELECTED_REPORT" 'args=(pending --item "$item" --root "$root" --state-dir "$WORK_DIR")' \
-  'args=(pending --item "$item" --root "$root")'
-if (FAIL=0; REPORT_UNDER_TEST="$SELECTED_REPORT" selected_fleet_report unselected-fleet fleet.json; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/selected-fleet-report.out"; then
-  fail 'the report mutation did not redden the selected-fleet row'
-else
-  assert_file_contains "$TMP_ROOT/selected-fleet-report.out" '  FAIL  ' 'the real-reader row rejects lost fleet state selection'
-fi
-
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -142,9 +142,7 @@ if [[ "$1 $2 $3 $4 $5 $6" == "notice --item overseer --to owner --attach" && "$8
   exit 0
 fi
 [[ "$1 $2" == "pending --item" ]] || { echo "unexpected lane-mail call: $*" >&2; exit 2; }
-[[ "${6:-}" == --state-dir && -f "${7:-}/workflow-state-oversee.json" ]] \
-  || { echo "lane-mail stub: selected fleet snapshot is absent" >&2; exit 9; }
-want="--root /w/$3 --state-dir $7"; host=""
+want="--root /w/$3"; host=""
 [[ ! -f "$CASE/hosted-$3" ]] || { host="$(cat "$CASE/hosted-$3")"; want+=" --host"; }
 [[ "${*:4}" == "$want" && "${ORCH_LANE_HOST:-}" == "$host" ]] \
   || { echo "lane-mail stub: wrong route for $3: ${*:4} host=${ORCH_LANE_HOST:-}" >&2; exit 9; }

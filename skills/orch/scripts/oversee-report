@@ -482,9 +482,6 @@ if ! STATE_JSON="$(jq -c 'select(type == "object" and ((.lanes // []) | type) ==
   refuse state "$STATE"
 fi
 [[ -n "$STATE_JSON" ]] || refuse state "$STATE"
-# Mailbox and cycle readers use one selected snapshot, so a concurrent fleet
-# write cannot give the report's sections different records.
-printf '%s\n' "$STATE_JSON" > "$WORK_DIR/workflow-state-oversee.json" || refuse state "$STATE"
 # NOW is read before any list, and a report covers merges before it alone: a
 # written report is stamped NOW, so a merge the lists could not yet see falls
 # in the next one, and every merge inside the lookback below in exactly one.
@@ -779,7 +776,7 @@ running_lanes() {
   while IFS=$'\x1f' read -r item host root; do
     [[ -n "$item" ]] || continue
     [[ -n "$root" ]] || refuse state "$STATE"
-    args=(pending --item "$item" --root "$root" --state-dir "$WORK_DIR")
+    args=(pending --item "$item" --root "$root")
     [[ -z "$host" ]] || args+=(--host)
     # A refusal naming this lane marks its row, as the heartbeat's `failing`
     # does; any other failure, a missing or crashed helper too, refuses. A
@@ -891,6 +888,9 @@ render() {
     landed_name="Landed (since $cut_since, earlier merges not listed)"
   fi
   table "$landed_name" "$rows"
+  # Use the cycle owner on this report's snapshot, so a concurrent fleet
+  # write cannot give the two sections different records.
+  printf '%s\n' "$STATE_JSON" > "$WORK_DIR/workflow-state-oversee.json" || refuse state "$STATE"
   list="$("$SCRIPT_DIR/oversee-cycle" --state-dir "$WORK_DIR" report 2>"$WORK_DIR/cycle.err")" \
     || refuse state "$STATE" "$(cat "$WORK_DIR/cycle.err")"
   awk '/^rollup / {
