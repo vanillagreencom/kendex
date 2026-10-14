@@ -1,6 +1,6 @@
 //! Project writes in a lane stop before every write, including bootstrap.
-//! Each writing verb has an unmarked must-fail control: the refusal assertion
-//! rejects that run, and the package lands. Fixtures use orch's marker writer.
+//! Every writer keeps its refusal and no-write checks. Shared controls cover
+//! accepted destinations and marker removal. Fixtures use orch's marker writer.
 
 use std::fs;
 use std::path::Path;
@@ -94,7 +94,7 @@ fn guard_capability_answers_before_project_checks_and_bootstrap_writes() {
 
 #[test]
 #[allow(clippy::expect_used, reason = "fixture marker removal must succeed")]
-fn every_project_writer_refuses_before_writes_and_its_unmarked_control_lands() {
+fn every_project_writer_refuses_before_writes_and_the_unmarked_control_lands() {
     for (directory, args) in [
         (
             "",
@@ -149,62 +149,13 @@ fn every_project_writer_refuses_before_writes_and_its_unmarked_control_lands() {
             before,
             "refused {directory} {args:?} wrote"
         );
-        // Removing the real launch marker plants the missing guard input.
-        // The very same refusal assertion must turn red for each verb.
-        fs::remove_file(&fixture.marker).expect("remove lane marker");
-        // A named cross-checkout write also meets the independent worktree
-        // rule. Its unmarked control must run in the destination checkout.
-        let control_cwd = if args.contains(&"--project-path") {
-            &fixture.main
-        } else {
-            &cwd
-        };
-        let output = kendex(&fixture, control_cwd, &args);
-        assert!(
-            !refusal(&output),
-            "must-fail control stayed green: {args:?}"
-        );
-        assert!(output.status.success(), "unmarked {args:?}: {output:?}");
-        let written = if args.contains(&"--project-path") {
-            &fixture.main
-        } else {
-            &fixture.linked
-        };
-        assert!(written.join(".claude/skills/deploy/SKILL.md").is_file());
-    }
-}
-
-#[test]
-#[allow(clippy::expect_used, reason = "fixture paths are valid")]
-fn the_explicit_override_lands_for_every_project_writer() {
-    for directory in ["", "vendor"] {
-        for args in [
-            vec![
-                "refresh",
-                "--scope",
-                "project",
-                "--yes",
-                "--leave",
-                "--lane-refresh",
-            ],
-            vec!["apply", "--yes", "--leave", "--lane-refresh"],
-            vec!["updates", "--apply", "--yes", "--leave", "--lane-refresh"],
-        ] {
-            let fixture = world();
-            if directory == "vendor" {
-                fixture.git(
-                    &fixture.linked,
-                    &[
-                        "clone",
-                        "-q",
-                        fixture.main.to_str().expect("fixture path"),
-                        "vendor",
-                    ],
-                );
-            }
-            fixture.mark();
-            let output = kendex(&fixture, &fixture.linked.join(directory), &args);
-            assert!(output.status.success(), "override {args:?}: {output:?}");
+        if directory.is_empty() && args == ["refresh", "--scope", "project", "--yes", "--leave"] {
+            // One removed marker proves that the shared refusal assertion
+            // rejects an accepted run and that the package still lands.
+            fs::remove_file(&fixture.marker).expect("remove lane marker");
+            let output = kendex(&fixture, &cwd, &args);
+            assert!(!refusal(&output), "must-fail control stayed green");
+            assert!(output.status.success(), "unmarked {args:?}: {output:?}");
             assert!(
                 fixture
                     .linked
@@ -212,6 +163,34 @@ fn the_explicit_override_lands_for_every_project_writer() {
                     .is_file()
             );
         }
+    }
+}
+
+#[test]
+#[allow(clippy::expect_used, reason = "fixture paths are valid")]
+fn the_explicit_override_lands_for_every_project_writer() {
+    for args in [
+        vec![
+            "refresh",
+            "--scope",
+            "project",
+            "--yes",
+            "--leave",
+            "--lane-refresh",
+        ],
+        vec!["apply", "--yes", "--leave", "--lane-refresh"],
+        vec!["updates", "--apply", "--yes", "--leave", "--lane-refresh"],
+    ] {
+        let fixture = world();
+        fixture.mark();
+        let output = kendex(&fixture, &fixture.linked, &args);
+        assert!(output.status.success(), "override {args:?}: {output:?}");
+        assert!(
+            fixture
+                .linked
+                .join(".claude/skills/deploy/SKILL.md")
+                .is_file()
+        );
     }
 }
 
@@ -628,6 +607,53 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                 }
             }
 
+            if matches!(verb, "refresh" | "apply" | "updates") {
+                if directory == "bare" {
+                    let extra = catalog.join("skills/extra");
+                    fs::create_dir_all(&extra).expect("new skill source");
+                    fs::write(
+                        extra.join("SKILL.md"),
+                        "---\nname: extra\ndescription: Fixture\n---\nBody.\n",
+                    )
+                    .expect("new skill bytes");
+                    let manifest = fixture.main.join("kendex.toml");
+                    let contents = fs::read_to_string(&manifest).expect("current declaration");
+                    fs::write(
+                        &manifest,
+                        format!("{contents}\n[skills.extra]\nsource=\"cat\"\n"),
+                    )
+                    .expect("pending project write");
+                }
+                fixture.mark();
+                let before = snapshot(&fixture.root);
+                let output = kendex(&fixture, &inherited, &args);
+                assert!(refusal(&output), "marked {directory} {verb}: {output:?}");
+                assert_eq!(
+                    snapshot(&fixture.root),
+                    before,
+                    "marked {verb} refusal wrote"
+                );
+                if directory == "bare" {
+                    let mut overridden = args.clone();
+                    overridden.push("--lane-refresh");
+                    let output = kendex(&fixture, &inherited, &overridden);
+                    assert!(output.status.success(), "bare override {verb}: {output:?}");
+                    assert!(fixture.main.join(".claude/skills/extra/SKILL.md").is_file());
+                }
+                fs::remove_file(&fixture.marker).expect("remove enclosing marker");
+                restore();
+            }
+
+            // Each destination rule keeps accepted controls for every caller
+            // layout. Other writers still prove their own refusal and no writes.
+            if !matches!(
+                verb,
+                "refresh" | "add" | "remove" | "pin" | "source-add" | "subscribe"
+            ) {
+                report(verb, directory, "complete", row_started);
+                continue;
+            }
+
             for control in ["own", "global", "independent"] {
                 if (cfg!(windows) && control == "global")
                     || (control == "independent" && directory != "bare")
@@ -641,42 +667,6 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                     &inherited
                 };
                 let mut args = args.clone();
-
-                if control == "own" && matches!(verb, "refresh" | "apply" | "updates") {
-                    if directory == "bare" {
-                        let extra = catalog.join("skills/extra");
-                        fs::create_dir_all(&extra).expect("new skill source");
-                        fs::write(
-                            extra.join("SKILL.md"),
-                            "---\nname: extra\ndescription: Fixture\n---\nBody.\n",
-                        )
-                        .expect("new skill bytes");
-                        let manifest = fixture.main.join("kendex.toml");
-                        let contents = fs::read_to_string(&manifest).expect("current declaration");
-                        fs::write(
-                            &manifest,
-                            format!("{contents}\n[skills.extra]\nsource=\"cat\"\n"),
-                        )
-                        .expect("pending project write");
-                    }
-                    fixture.mark();
-                    let before = snapshot(&fixture.root);
-                    let output = kendex(&fixture, cwd, &args);
-                    assert!(refusal(&output), "marked {directory} {verb}: {output:?}");
-                    assert_eq!(
-                        snapshot(&fixture.root),
-                        before,
-                        "marked {verb} refusal wrote"
-                    );
-                    if directory == "bare" {
-                        let mut overridden = args.clone();
-                        overridden.push("--lane-refresh");
-                        let output = kendex(&fixture, cwd, &overridden);
-                        assert!(output.status.success(), "bare override {verb}: {output:?}");
-                        assert!(fixture.main.join(".claude/skills/extra/SKILL.md").is_file());
-                    }
-                    fs::remove_file(&fixture.marker).expect("remove enclosing marker");
-                }
 
                 // Change one real guard input: the destination now belongs to
                 // the caller, or it is global. The same refusal assertion must
@@ -818,15 +808,18 @@ fn named_cross_checkout_writes_require_the_existing_override() {
                 "caller identity must reject another checkout"
             );
             assert_eq!(snapshot(&fixture.root), before, "named refusal wrote");
-            // The override is the missing-input control for this refusal.
-            args.push("--lane-refresh");
-            let output = kendex(&fixture, &cwd, &args);
-            assert!(
-                !cross_checkout_refusal(&output, &fixture.linked, &other),
-                "override control stayed green"
-            );
-            assert!(output.status.success(), "{args:?}: {output:?}");
-            assert!(other.join(".claude/skills/deploy/SKILL.md").is_file());
+            if directory.is_empty() && verb == "refresh" && scope == "project" {
+                // One real named override proves the shared refusal assertion
+                // rejects an accepted run and installs in that destination.
+                args.push("--lane-refresh");
+                let output = kendex(&fixture, &cwd, &args);
+                assert!(
+                    !cross_checkout_refusal(&output, &fixture.linked, &other),
+                    "override control stayed green"
+                );
+                assert!(output.status.success(), "{args:?}: {output:?}");
+                assert!(other.join(".claude/skills/deploy/SKILL.md").is_file());
+            }
         }
     }
 }

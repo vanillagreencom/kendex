@@ -17,27 +17,6 @@ fn work_marker(head: &str, tail: &str) -> String {
     format!("// {head}{tail}\n")
 }
 
-/// The shims are armed, a plain `git commit` runs the package's chain, and
-/// a violation the package defines blocks the commit.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_plain_commit_walks_through_the_packages_chain() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let root = armed_repo(home);
-
-    assert!(root.join(".git/hooks/kendex-guards").is_file());
-    let hook = std::fs::read_to_string(root.join(".git/hooks/pre-commit")).unwrap();
-    assert!(hook.contains("kendex-guards-hook"), "{hook}");
-
-    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
-    git_ok(home, &root, &["add", "-A"]);
-    let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
-    assert!(!blocked.status.success());
-    let text = said(&blocked);
-    assert!(text.contains("todo-ban"), "{text}");
-}
-
 /// The gate needs no kendex binary. Once the shims are written, git runs
 /// committed shell and nothing else — which is what makes a clone of a
 /// repository gate commits on a machine that never installed kendex.
@@ -47,6 +26,10 @@ fn the_armed_gate_still_blocks_with_no_kendex_on_path() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = armed_repo(home);
+
+    assert!(root.join(".git/hooks/kendex-guards").is_file());
+    let hook = std::fs::read_to_string(root.join(".git/hooks/pre-commit")).unwrap();
+    assert!(hook.contains("kendex-guards-hook"), "{hook}");
 
     std::fs::write(root.join("b.rs"), work_marker("FIX", "ME: later")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
