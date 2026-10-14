@@ -347,7 +347,7 @@ class RootRelay:
         self.replaced_session_file = ""
         self.api = api
         self.clock = clock
-        self.mail = LaneMail(path)
+        self._mail: Optional[LaneMail] = None
         self.binding = read_binding(path)
         self.state: State = read_journal(path)
         self.journal = Journal(path, self.state)
@@ -386,6 +386,12 @@ class RootRelay:
     @property
     def channel(self) -> str:
         return self.binding.channel
+
+    @property
+    def mail(self) -> LaneMail:
+        if self._mail is None:
+            self._mail = LaneMail(self.path)
+        return self._mail
 
     def owners_current(self) -> None:
         """The setting is the authority: a binding resolved from another
@@ -591,16 +597,12 @@ class RootRelay:
             self.journal.append(t="resolved", id=thread.envelope, reason="thread_not_found")
         return missing
 
-    def on_message(self, message: Dict, bot_user: str) -> None:
+    def on_message(self, message: Dict, bot_user: str, active: bool = True) -> None:
         """One live message event, without a thread-age or parent-origin gate."""
         ts = str(message["ts"])
-        self.pending_live[ts] = message
-        self.ready()
-        thread_ts = str(message.get("thread_ts") or ts)
-        if thread_ts == ts:
-            self.bind_file_share(message)
-        self.handle(message, bot_user, path="live")
-        self.pending_live.pop(ts)
+        self.handle(message, bot_user, path="live", active=active)
+        if active:
+            self.pending_live.pop(ts, None)
 
     def bind_file_share(self, message: Dict) -> None:
         for item in message.get("files") or []:
@@ -636,7 +638,8 @@ class RootRelay:
             self.journal.append(t="thread", ts=thread.ts, seen=replies[-1]["ts"])
         return True
 
-    def handle(self, message: Dict, bot_user: str, path: str = "catch-up", page: Optional[Page] = None) -> None:
+    def handle(self, message: Dict, bot_user: str, path: str = "catch-up", page: Optional[Page] = None,
+               active: bool = True) -> None:
         ts = str(message["ts"])
         # The journal skips a stamp it already carried; lane-mail's locked
         # check judges any stamp the journal lost, the crash between the
@@ -648,6 +651,13 @@ class RootRelay:
         if message.get("subtype") not in ROUTED_SUBTYPES:
             return
         thread_ts = str(message.get("thread_ts") or ts)
+        if path == "live":
+            self.pending_live[ts] = message
+            if not active:
+                return
+            self.ready()
+            if thread_ts == ts:
+                self.bind_file_share(message)
         user = str(message.get("user", ""))
         if user not in self.binding.owner_ids.values():
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=NOT_OWNER)
@@ -1172,8 +1182,15 @@ class Relay:
     def start_root(self, path: Path) -> bool:
         root = None
         try:
+            previous = self.by_channel.get(self.channels[path])
             root = RootRelay(path, self.settings, load_presence(path), self.api, self.clock)
+            if previous is not None:
+                root.pending_live = previous.pending_live
             self.claim_channel(path, root.channel)
+            # Keep event acceptance and held deliveries at their root even
+            # when its mailbox command is absent during an install update.
+            self.by_channel[root.channel] = root
+            root._mail = LaneMail(path)
             root.lock.acquire()
             root.prepare_hold()
             if self.socket is not None:
@@ -1325,7 +1342,7 @@ class Relay:
         waits for a later poll. The reader stops before the queue is
         delivered, so nothing is acknowledged after; a delivery refused then
         leaves the connection closed for the loop to open again."""
-        if self.socket is None or any(root.pending_live for root in self.roots):
+        if self.socket is None or any(root.pending_live for root in self.by_channel.values()):
             return False
         assert self.reader is not None, "an open connection has a reader"
         self.stop_reader.set()
@@ -1344,7 +1361,7 @@ class Relay:
         self.set_connection("reconnecting")
         for root in self.roots:
             root.journal.append(t="disconnect", at=self.since, reason="reload")
-        return not any(root.pending_live for root in self.roots)
+        return not any(root.pending_live for root in self.by_channel.values())
 
     def set_connection(self, connection: str) -> None:
         """The connection state as the next status record shows it; `since`
@@ -1467,7 +1484,7 @@ class Relay:
         if event.get("type") != "message" or root is None:
             return
         try:
-            root.on_message(event, self.bot_user)
+            root.on_message(event, self.bot_user, active=root in self.roots)
         except Refusal as err:
             self.root_failed(root, err)
             root.due = set()

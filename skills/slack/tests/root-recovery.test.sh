@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Surface: per-root relay start and poll recovery. Inputs: slack/scripts/lib/**,
 # mailbox/scripts/lib/** and slack/tests/lib/**. The fake API records real posts.
-# Controls remove start isolation, poll isolation, retries or diagnostic memory.
+# Controls remove isolation, retries or diagnostic memory and restore the
+# pre-cut inactive retention and main's inactive event drop.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -304,6 +305,121 @@ jarvis initial production
 jarvis initial control
 jarvis retry production
 jarvis retry control
+ROWS
+
+# Inactive roots keep accepted live replies, but ignore edits and deletions
+# before holding a delivery. The controls restore the two historical failures.
+while read -r subtype mode; do
+  BAD_ROOT="$(sk_new_root "inactive-$subtype-$mode")"
+  GOOD_ROOT="$(sk_new_root "active-$subtype-$mode")"
+  for ROOT in "$BAD_ROOT" "$GOOD_ROOT"; do sk_bind "$ROOT"; sk_poll "$ROOT"; done
+  case "$mode" in
+    pre-cut)
+      sk_mutant pre-cut relay.py '(    def handle\([\s\S]*?        ts = str\(message\["ts"\]\)\n)' '\1        if path == "live":\n            self.pending_live[ts] = message\n            if not active:\n                return\n'
+      ;;
+    main)
+      sk_mutant main-drop relay.py 'if event.get\("type"\) != "message" or root is None:' 'if event.get("type") != "message" or root is None or root not in self.roots:'
+      ;;
+  esac
+  cat > "$SK_TMP/inactive-probe.py" <<'PY'
+import json, pathlib, subprocess, sys, time, urllib.request
+if sys.argv[1] != "--child":
+    result = subprocess.run([sys.executable, __file__, "--child", *sys.argv[1:]], timeout=60)
+    sys.exit(result.returncode)
+del sys.argv[1]
+sys.path.insert(0, sys.argv[1])
+from api import Slack
+from relay import Relay
+from settings import load
+bad, good = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+subtype = sys.argv[4]
+settings = load()
+api = Slack(settings.token, settings.api_url)
+channel = json.loads((bad / "tmp/slack/binding.json").read_text())["channel"]
+# This parent is beyond catch-up's history horizon. Only live retention can
+# recover its reply once the mailbox command returns.
+parent = api.post("_test/message", channel=channel, user="U001", text="Old parent.",
+                  ts="%.6f" % (time.time() - 8 * 86400))["ts"]
+scripts = bad / ".agents/skills/mailbox/scripts"
+source = scripts.resolve()
+scripts.unlink()
+relay = None
+try:
+    relay = Relay([bad, good], settings, api)
+    assert [root.path for root in relay.roots] == [good]
+    app = Slack(settings.app_token, settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
+    assert relay.open(app)
+    fields = {} if subtype == "reply" else {"subtype": subtype}
+    stamp = api.post("_test/message", channel=channel, user="U001", text="Outage reply.",
+                     thread_ts=parent, **fields)["ts"]
+    envelope = relay.incoming.get(timeout=10)
+    assert envelope["payload"]["event"]["ts"] == stamp
+    # The child process deadline bounds this acknowledgement barrier.
+    while True:
+        with urllib.request.urlopen(settings.api_url + "/_test/state") as response:
+            state = json.load(response)
+        if envelope["envelope_id"] in state["acks"]:
+            break
+    relay.deliver(envelope)
+    if subtype == "reply":
+        relay.deliver(envelope)
+        scripts.symlink_to(source)
+        assert relay.poll_once()
+        assert relay.poll_once()
+        events = [json.loads(line) for line in (bad / "tmp/lane-mail/overseer/to-lane.jsonl").read_text().splitlines()] if (bad / "tmp/lane-mail/overseer/to-lane.jsonl").exists() else []
+        delivered = [event for event in events if event.get("delivery_id") == channel + ":" + stamp]
+        print(json.dumps({"count": len(delivered), "text": [event["text"] for event in delivered]}))
+    else:
+        # Drive the production two-reading reload decision while the root
+        # stays inactive, then close the real socket through its reload path.
+        with pathlib.Path(sys.argv[1], "relay.py").open("a") as stream:
+            stream.write("\n# package update\n")
+        assert not relay.poll_once()
+        assert not relay.poll_once()
+        assert relay.settled
+        print(json.dumps({"reload": relay.close_for_reload(), "inactive": bad not in [root.path for root in relay.roots]}))
+finally:
+    if not scripts.exists():
+        scripts.symlink_to(source)
+    if relay is not None:
+        relay.stop_reader.set()
+        if relay.reader is not None:
+            relay.reader.join(timeout=10)
+            assert not relay.reader.is_alive()
+        for root in relay.by_channel.values():
+            root.hold_lock.release()
+            root.lock.release()
+PY
+  # Each row needs a disposable source, including the package-update row.
+  [ "$mode" != production ] || sk_copy "inactive-$subtype"
+  RC=0
+  OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    python3 "$SK_TMP/inactive-probe.py" "${SK_BIN%/*}/lib" "$BAD_ROOT" "$GOOD_ROOT" "$subtype")" || RC=$?
+  assert_eq "$RC" 0 "$subtype/$mode: the acknowledged event reaches the production delivery and recovery path"
+  RESULT="$(printf '%s\n' "$OUT" | tail -n 1)"
+  if [ "$subtype" = reply ]; then
+    GOT="$(jq -c '[.count,.text]' <<<"$RESULT")"
+    WANT='[1,["Outage reply."]]'
+  else
+    GOT="$(jq -c '[.reload,.inactive]' <<<"$RESULT")"
+    WANT='[true,true]'
+  fi
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" "$WANT" "$subtype: ignored events permit reload and an outage reply arrives once"
+  else
+    sk_assert_red "$GOT" "$WANT" "$subtype/$mode: the historical behavior fails the same outcome assertion"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+message_changed production
+message_changed pre-cut
+message_deleted production
+message_deleted pre-cut
+reply production
+reply main
 ROWS
 
 sk_summary

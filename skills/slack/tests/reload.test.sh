@@ -326,7 +326,7 @@ sk_assert_red "$(field "$LINE" state)" "failing" "control: the refusal kept out 
 sk_relay_stop
 
 fresh churn
-sk_mutant churn relay.py 'if self\.socket is None or any\(root\.pending_live for root in self\.roots\):' 'if self.socket is None:'
+sk_mutant churn relay.py 'if self\.socket is None or any\(root\.pending_live for root in self\.by_channel.values\(\)\):' 'if self.socket is None:'
 mailer
 start
 held
@@ -347,7 +347,7 @@ sk_assert_red "$(landed "$ROOT" "$OC:$RT" 60)" "held across the reload" \
 sk_relay_stop
 
 fresh unheld
-sk_mutant unheld relay.py 'return not any\(root\.pending_live for root in self\.roots\)' 'return True'
+sk_mutant unheld relay.py 'return not any\(root\.pending_live for root in self\.by_channel.values\(\)\)' 'return True'
 mailer
 start
 settling held
