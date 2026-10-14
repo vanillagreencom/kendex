@@ -14,7 +14,7 @@ cleanup_model_world() {
 }
 trap cleanup_model_world EXIT
 
-model_world() { # NAME LAUNCHED [broken]
+model_world() { # NAME LAUNCHED [broken] [RECORDED FLAGS]
   new_lane "$1" KEN-3916
   install_hook "$COMPANION" "${CASE_HOOK%/*}/lane-mail-model-switch.sh"
   mkdir -p "$LANE/tmp/lane-mail/KEN-3916"
@@ -41,10 +41,11 @@ LAUNCH
   "$S/workflow-state" --state-dir "$LANE/tmp" init oversee >/dev/null
   record=$(jq -nc --arg item KEN-3916 --arg model "$2" --arg cwd "$LANE" \
     --arg pid "$OWNED_CHILD" --arg start "$START" --arg account "$OFFLINE_HOME" \
-    --arg broken "${3:-}" --argjson server "$OVERSEER_SERVER" '{item:$item,harness:"claude",session_id:"s1",model:$model,
+    --arg broken "${3:-}" --arg flags "${4:---dangerously-skip-permissions --model claude-opus-4-8 --effort high}" \
+    --argjson server "$OVERSEER_SERVER" '{item:$item,harness:"claude",session_id:"s1",model:$model,
       effort:"high",account:$account,status:"running",tracker:"linear",launched_at:"launch-a",
       launch:{pid:$pid,start:$start,pane:"%1",server:$server},recovery:(if $broken == "broken" then null else
-      {cwd:$cwd,flags:"--dangerously-skip-permissions --model claude-opus-4-8 --effort high",refresh:false,session:"model-test"} end)}')
+      {cwd:$cwd,flags:$flags,refresh:false,session:"model-test"} end)}')
   "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
   CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" ANTHROPIC_BASE_URL= \
     ANTHROPIC_DEFAULT_FABLE_MODEL= ANTHROPIC_DEFAULT_OPUS_MODEL= ANTHROPIC_DEFAULT_SONNET_MODEL= ANTHROPIC_DEFAULT_HAIKU_MODEL= \
@@ -164,8 +165,9 @@ if [[ -z "${MODEL_CONTROL:-}" ]]; then
 fi
 
 echo '=== recovery stops before preparation ==='
-for preparation in complete broken; do
-  model_world "$preparation" claude-fable-5-1 "$preparation"
+while IFS='|' read -r preparation launched original override expected_model; do
+  model_world "$preparation" "$launched" "$preparation" "--dangerously-skip-permissions $original --effort high"
+  CALL_ENV+=("ANTHROPIC_DEFAULT_OPUS_MODEL=$override")
   # Existing emergency state must survive an unpushed round.
   "$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
   "$S/workflow-state" --state-dir "$LANE/tmp" update KEN-3916 '.dev_round="unfinished"' >/dev/null
@@ -183,10 +185,10 @@ for preparation in complete broken; do
   event claude-opus-4-8 "$extra"
   assert_eq "$(switch_count)" 1 "$preparation switch is recorded"
   if [[ "$(switch_count)" == 1 ]]; then
-    if [[ "$preparation" == complete ]]; then
+    if [[ "$preparation" != broken ]]; then
       await_recovery || FAIL=$((FAIL + 1))
       assert_eq "$(awk '/^--launch-flags$/{getline;print}' "$LANE/tmp/argv")" \
-        '--dangerously-skip-permissions --model claude-fable-5-1 --effort high' 'replacement keeps permissions and effort'
+        "--dangerously-skip-permissions --model $expected_model --effort high" "$preparation replacement keeps model selectors, permissions and effort"
     else
       deadline=$((SECONDS + 15))
       while ! [[ -f "$LANE/tmp/model-recovery-KEN-3916.log" ]] || \
@@ -203,8 +205,8 @@ for preparation in complete broken; do
     OWNED_CHILD=""
     event claude-opus-4-8
     assert_eq "$(switch_count)" 1 "$preparation repeated delivery writes no second record"
-    assert_eq "$(jq -c '.fleet_log[]|select(.kind=="model-switched")|[.session_id,.launched,.observed,(.at|type)]' "$LANE/tmp/workflow-state-oversee.json")" \
-      '["s1","claude-fable-5-1","claude-opus-4-8","string"]' "$preparation switch has launch, observation and writer time"
+    assert_eq "$(jq -r '.fleet_log[]|select(.kind=="model-switched")|[.session_id,.launched,.observed,(.at|type)]|join("|")' "$LANE/tmp/workflow-state-oversee.json")" \
+      "s1|$launched|claude-opus-4-8|string" "$preparation switch has launch, observation and writer time"
     assert_eq "$(jq -r '.dev_round' "$LANE/tmp/workflow-state-KEN-3916.json")" unfinished "$preparation keeps unfinished round"
     assert_eq "$(jq -c '.handoff | [.remaining,.merged,.open_pr,(.traps|index("standing trap")!=null)]' "$LANE/tmp/workflow-state-KEN-3916.json")" \
       '[["old"],["landed"],42,true]' "$preparation retains standing handoff work"
@@ -244,7 +246,17 @@ for preparation in complete broken; do
     fi
   fi
   if [[ -n "$OWNED_CHILD" ]]; then kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""; fi
-done
+done <<'ROWS'
+complete|claude-fable-5-1|--model claude-opus-4-8||claude-fable-5-1
+extended|claude-opus-4-6|--model claude-opus-4-6[1m]||claude-opus-4-6[1m]
+uppercase-selector|claude-opus-4-6|--model CLAUDE-OPUS-4-6[1M]||claude-opus-4-6[1m]
+version-selector|claude-opus-4-6|--model=opus-4-6[1m]|claude-opus-5-5|claude-opus-4-6[1m]
+record-version|opus-4-6|--model opus-4-6[1m]||claude-opus-4-6[1m]
+changed-family|claude-opus-4-6|--model opus[1m]|claude-opus-5-5|claude-opus-4-6[1m]
+changed-default|claude-opus-4-6|--model opus|claude-opus-5-5|claude-opus-4-6
+conflicting-selector|claude-opus-4-6|--model claude-opus-5-5[1m]||claude-opus-4-6
+broken|claude-fable-5-1|--model claude-opus-4-8||claude-fable-5-1
+ROWS
 
 echo '=== delayed recovery keeps replacements ==='
 for retired in pane server; do
@@ -341,7 +353,7 @@ CONTROL
       assert_eq "$status" red "$rule production control must fail"
     fi
   done
-  for rule in stop pin binding; do
+  for rule in stop pin binding selector selector-id words; do
     control="$TMP_ROOT/relaunch-$rule.sh"
     python3 - "$REPO_ROOT/skills/orch/scripts/lib/lane-relaunch.sh" "$control" "$rule" <<'CONTROL'
 from pathlib import Path
@@ -352,6 +364,9 @@ old, new = {
     "stop": ('lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {', 'true || {'),
     "pin": ('if [[ "${5:-}" == model-switched ]]; then', 'if false; then'),
     "binding": ('[[ "$claim" == true ]] || return 0', ':'),
+    "selector": ('model="${model}[1m]"', 'model="$model"'),
+    "selector-id": ('&& ( -z "$launch_id" || "$launch_id" == "$model" )', '&& true'),
+    "words": ('eval "choice_words=($choice)" || return 1', 'choice_words=("$choice")'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
