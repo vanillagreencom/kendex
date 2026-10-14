@@ -1,0 +1,1 @@
+- Overseer triage accepts issues without a project when a complete live read finds no team projects.
