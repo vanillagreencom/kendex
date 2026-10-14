@@ -1,0 +1,1 @@
+- Rewrites preserve each claim's authorizing source, exceptions and evidence status. Assistant-home examples keep policy, memory and handoffs with their owning contracts.

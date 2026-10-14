@@ -18,7 +18,7 @@ tags: [docs]
 
 A repository's internal design documentation holds what the code cannot show: the principle behind a design, the rule an agent could break without noticing, a decision with its reason, a convention that differs from a tool default, and a pointer to the canonical code. Everything else lives in the code, its comments, the tests and git history.
 
-This skill governs repository markdown and documentation HTML. It states one writing standard, one repository layout, what each file type holds, and the finished example an author reads before writing one.
+This skill governs repository markdown and documentation HTML. It states one writing standard, one repository layout, what each file type holds, and the finished example an author reads before writing one. Policy and operating documents also follow § Writing.
 
 Do not hand-copy code-owned inventories or defaults. A reference may define a contract not declared elsewhere, or explain semantics beside a link to its declaration. A generated reference may show declared values. A claim that a checker enforces something names the checker.
 
@@ -63,7 +63,7 @@ This is the default repository layout. A rewrite moves what it finds onto it. A 
 | `.github/instructions/*.instructions.md` | Copilot features that support matching path instructions | path rules; bot-instructions owns the render and cloud-agent exclusion | yes, written by kendex |
 | `.github/instructions/code-review.md` | review agents following the generated pointer | shared review doctrine; bot-instructions owns the render, not a native Copilot instruction file | yes, written by kendex |
 
-Nothing else lives under `docs/`. A plan, a research report, a measurement or a handoff is tracker or `tmp/` content (§ Plans and research). Product content a repository ships to its users, such as a help site, legal pages or an adapter reference, stays and is named in that repository's `AGENTS.md`. A skill's reference docs stay in its `references/`.
+Nothing else lives under `docs/`. A software implementation plan, research report, measurement or handoff is tracker or `tmp/` content (§ Plans and research). An assistant home's policy, memory and session records keep their owning locations and reading routes; when writing or rewriting those records, read [references/assistant-home.md](references/assistant-home.md). Product content a repository ships to its users, such as a help site, legal pages or an adapter reference, stays and is named in that repository's `AGENTS.md`. A skill's reference docs stay in its `references/`.
 
 ### Reference rules
 
@@ -182,15 +182,15 @@ The `changelog-entries` lane owns the shape, and its release-version rule, the c
 
 ## Plans and research
 
-A plan, a research report, a measurement or a handoff is not repository content. Write it under `tmp/` and attach it to the tracker issue it serves. Research that is the evidence behind a constraint still in force is attached to that constraint's issue, verified readable, and the constraint links to it; every other research file is deleted when its work lands.
+A software implementation plan, research report, measurement or handoff is not repository content. Write it under `tmp/` and attach it to the tracker issue it serves. Research that is the evidence behind a constraint still in force is attached to that constraint's issue, verified readable, and the constraint links to it; every other research file is deleted when its work lands. An assistant home's sourced memory and live handoff follow their owning contracts, not this software-artifact rule.
 
 ## Format
 
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it.
 - Relative links in Markdown must resolve. The commit-guards skill's CHECKS.md § md-refs owns the checked forms.
-- Keep history out of agent-loaded markdown so each load carries current instructions. This is writing guidance.
+- Keep release and implementation narration out of agent-loaded markdown. Keep dates, attribution, source links and supersession that establish a current rule or qualify its evidence.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim it touches against the code. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [behaviour-spec.md](examples/behaviour-spec.md), [human-page.md](examples/human-page.md), [skill-entry.md](examples/skill-entry.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).
+A focused change edits the affected text and verifies each claim against its owning source. Use code where code owns the claim. Preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [behaviour-spec.md](examples/behaviour-spec.md), [human-page.md](examples/human-page.md), [skill-entry.md](examples/skill-entry.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).
