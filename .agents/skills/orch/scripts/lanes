@@ -71,8 +71,10 @@
 #         matters because `expired` is the one word an operator answers by
 #         logging in again, or for a Codex lane by the codex command its
 #         `detail` names — `open-terminal` turns it into that remedy line — so
-#         it goes only to a login proven dead and to those Codex outcomes, and
-#         every refusal an endpoint answered names its HTTP code in `detail`.
+#         it goes only to a login proven dead and to those Codex outcomes.
+#         An endpoint refusal names its HTTP code in `detail` unless a Claude
+#         usage 401 or 403 has a profile that confirms an ended plan. That
+#         detail names the free plan and canceled subscription.
 #         Where ORCH_LANE_HOST names a provider that implements the OPTIONAL
 #         `accounts` verb, its answer is merged in: one further row per account
 #         the PROVIDER holds a credential for, carrying the windows read
