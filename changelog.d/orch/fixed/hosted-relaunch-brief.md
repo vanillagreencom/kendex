@@ -1,1 +1,1 @@
-- Hosted relaunches start a fresh session after a handoff or with a custom command, so the new brief runs instead of returning to the previous full-context session.
+- Hosted relaunches stop the prior harness and start a fresh session after a handoff, with a custom command, or across a harness switch, so the new brief runs.

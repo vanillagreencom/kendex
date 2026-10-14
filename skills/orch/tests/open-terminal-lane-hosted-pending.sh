@@ -159,16 +159,17 @@ if [[ "$1" == "$RECOVERY_BLOCK_VERB" && "${4:-}" == "$RECOVERY_BLOCK_PATH" && ! 
   : > "$HOME/.cache/orch/lane-host-slots/$RECOVERY_BLOCK_POOL/slot.$RECOVERY_OWNER"
 fi
 # Successful retirement releases the accepted session for another create.
-[[ "$1" != stop || "$rc" -ne 0 ]] || rm -f -- "${RECOVERY_CREATED:?}"
+[[ "$1" != stop || "$rc" -ne 0 || "${5:-}" != "$(cat "$RECOVERY_LIVE")" ]] || rm -f -- "${RECOVERY_CREATED:?}"
 exit "$rc"
 STUB
 chmod +x "$RECOVERY_PROVIDER"
-recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH] [ROUTE] [SCOPE] [STOP] [CAPACITY]
+recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH] [ROUTE] [SCOPE] [STOP] [CAPACITY] [PRIOR_HARNESS]
   local name="$1" harness="$2" verb="$3" path="$4" step="$5" retry_ssh="${7:-neutral}" state env_list first_starts retry_starts record first_queries retry_queries
   local route="${8:-same}" scope="${9:-fleet}" stop="${10:-0}" pending_query='.lanes[0].prepare' saved_prepare brief replay_line replay_rc=0
   local fleet_args=() first_args=() retry_args=()
   local create_line native_env pool=short
   local capacity="${11:-isolated}"
+  local prior="${12:-$harness}"
   state="$TMP_ROOT/recovery-$name"; mkdir -p "$state/disk/srv/lane" "$state/disk/pi/packages/@vanillagreen/pi-hooks/extensions"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$state/disk/srv/lane/.git"
   printf '%s\n' '{"compaction":{"enabled":false}}' > "$state/disk/pi/settings.json"
@@ -180,9 +181,13 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH
   if [[ "$name" == codex-cat* && "$scope" == fleet ]]; then
     jq -n '{lanes:[{item:"KEN-3241",harness:"codex",account:"previous",model:"previous-model",effort:"low",status:"stopped"}]}' >"$record"
   fi
+  if [[ "$prior" != "$harness" ]]; then
+    jq -n --arg prior "$prior" '{lanes:[{item:"KEN-3241",harness:$prior,status:"running"}]}' > "$record"
+  fi
+  printf '%s\n' "$prior" > "$state/live-harness"
   create_line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tpi-root=/pi'
   [[ "$step" != wait ]] || { create_line+=$'\tstate=preparing'; pool=""; }
-  env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;RECOVERY_BLOCK_POOL=$pool;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=0;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=$create_line;$HARNESS_UP"
+  env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_LIVE=$state/live-harness;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;RECOVERY_BLOCK_POOL=$pool;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=0;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=$create_line;$HARNESS_UP"
   # Recovery uses the same pane and claim store that its first launch wrote.
   # The cap owner must deduplicate that live claim through the held record.
   [[ "$capacity" != held ]] || env_list+=";OVERSEE_WATCH_STATE_DIR=$state;OT_TMUX_PANES=$state/panes"
@@ -262,18 +267,18 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH
       'first_queries=1 retry_queries=0 stops=0' 'a saved selection completes without rereading handoff or stopping its harness'
   fi
 }
-while IFS='|' read -r name harness verb path step retry_ssh route scope stop capacity; do
-  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}" "${route:-same}" "${scope:-fleet}" "${stop:-0}" "${capacity:-isolated}"
+while IFS='|' read -r name harness verb path step retry_ssh route scope stop capacity prior; do
+  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}" "${route:-same}" "${scope:-fleet}" "${stop:-0}" "${capacity:-isolated}" "${prior:-$harness}"
 done <<'ROWS'
 codex-put|codex|create|--repo|marker
 codex-cat|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection
 codex-cat-ssh|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection|failed
 pi-settings|pi|create|--repo|marker
 pi-carrier|pi|cat|/srv/lane/.pi/settings.json|marker
-route-wait|codex|create|--repo|wait||custom
+route-wait|codex|create|--repo|wait||custom|fleet|0|isolated|claude
 route-marker|codex|create|--repo|marker||custom
 route-selection|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|fleet|0|held
-route-wait-failed|codex|create|--repo|wait||custom|fleet|1
+route-wait-failed|codex|create|--repo|wait||custom|fleet|1|isolated|claude
 route-marker-failed|codex|create|--repo|marker||custom|fleet|1
 route-selection-failed|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|fleet|1|held
 route-wait-none|codex|create|--repo|wait||custom|none
@@ -302,7 +307,7 @@ assert_eq "$RECOVERY_ROUTE_CONTROL" 2 'control: accepting a native checkpoint dr
 OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-command-stop/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-command-stop/orch"
-mutate_file "$OPEN_TERMINAL" '    host_harness_stop || return 1' '    true || return 1'
+mutate_file "$OPEN_TERMINAL" '    host_harness_stop prior || return 1' '    true || return 1'
 RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
 recovery_case route-stop-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' neutral custom fleet 1 > "$TMP_ROOT/command-stop-control.out"
 RECOVERY_ROUTE_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"

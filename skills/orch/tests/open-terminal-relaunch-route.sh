@@ -58,7 +58,7 @@ cat > "$RELAUNCH_PROVIDER" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 "$RELAUNCH_FIXTURE" "$@"
-[[ "$1" != stop ]] || rm -f -- "$RELAUNCH_LIVE"
+[[ "$1" != stop || "${5:-}" != "$(cat "$RELAUNCH_LIVE")" ]] || rm -f -- "$RELAUNCH_LIVE"
 [[ "$1" != wait ]] || touch "$RELAUNCH_READY"
 EOF
 chmod +x "$RELAUNCH_PROVIDER"
@@ -123,7 +123,7 @@ run_ot() {
   local -a selection_env=(LANE_HOST_STUB_SELECTION=resume)
   local -a command_args=(--launch-flags "$flags")
   [[ -z "$RUN_CMD" ]] || command_args=(--cmd "$RUN_CMD")
-  : > "$RUN/live"
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "KEN-1") | .harness] | first' > "$RUN/live"
   : > "$RUN/saved-session"
   local judge_root="$RUN/judge" handoff_dir replay_sandbox="$RUN/remote/srv/lane"
   if [[ "$HANDOFF_CASE" != neutral ]]; then
@@ -314,6 +314,8 @@ run_ot codex "$HARNESS_SCREEN" claude
 assert_eq "rc=$RC switched=$(said '^open-terminal: harness-switched item=KEN-1 harness=claude recorded=codex') continue=$(remote | grep -c -- '--continue') fresh=$(remote | grep -c "exec claude -n KEN-1 .*/orch start KEN-1")" \
   "rc=0 switched=1 continue=0 fresh=1" \
   "a record naming codex under a claude relaunch renders the start brief and no --continue"
+assert_eq "stop=$(grep -c '^stop --item KEN-1 --harness codex ' "$RUN/host.log" || true) live=$([[ -f "$RUN/live" ]] && echo yes || echo no)" \
+  'stop=1 live=no' 'a native harness switch retires the recorded harness'
 # That switched relaunch carries its brief, so a pane that never shows a
 # harness fails the brief check, which the harness-screen wait does not cover.
 run_ot codex - claude
@@ -379,10 +381,10 @@ echo "=== hosted retirement starts a new session with its brief ==="
 CUSTOM_BRIEF=$'Fresh work: preserve spaces.\nRead the issue.'
 CUSTOM_BRIEF_FILE="$TMP_ROOT/custom-brief"
 printf '%s\n' "$CUSTOM_BRIEF" > "$CUSTOM_BRIEF_FILE"
-custom_case() {
-  local line arg brief=0 runs=0 sandbox replay_rc=0
+custom_case() { # [RECORDED_HARNESS]
+  local line arg brief=0 runs=0 sandbox replay_rc=0 recorded="${1:-claude}"
   RUN_CMD="claude --model opus --effort high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" RUN_ARGS=(--brief-file "$CUSTOM_BRIEF_FILE")
-  run_ot claude "$HARNESS_SCREEN" claude
+  run_ot "$recorded" "$HARNESS_SCREEN" claude
   RUN_CMD="" RUN_ARGS=()
   sandbox="$RUN/custom-sandbox"
   mkdir -p "$sandbox"
@@ -419,7 +421,7 @@ standing_case() { # [route-only]
       'the launcher judge sees the same handoff consumed by the successor'
   fi
 }
-custom_case
+for recorded in claude codex; do custom_case "$recorded"; done
 for HANDOFF_CASE in stands settings private; do standing_case; done
 HANDOFF_CASE=neutral
 # Remote settings and the worktree fallback use the same production judge
@@ -499,11 +501,16 @@ SAVED_FAIL="$FAIL"; FAIL=0
 read_refusal_case 'neutral|ssh' > "$TMP_ROOT/read-control.out"
 READ_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
 assert_eq "$READ_CONTROL" 1 'control: treating a failed remote read as absence turns the refusal row red'
-control failed-stop 'host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?' 'host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?; rc=0'
+control failed-stop 'host_transport stop --item "$wt_id" --harness "$target" || rc=$?' 'host_transport stop --item "$wt_id" --harness "$target" || rc=$?; rc=0'
 SAVED_FAIL="$FAIL"; FAIL=0
 stop_refusal_case 1 > "$TMP_ROOT/stop-control.out"
 STOP_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
 assert_eq "$STOP_CONTROL" 2 'control: ignoring failed stops turns both launch refusals red'
+control prior-target '[[ "$LANE_RECORD_VALUE" == absent ]] || target="$LANE_RECORD_VALUE"' '[[ "$LANE_RECORD_VALUE" == absent ]] || target="$HARNESS"'
+SAVED_FAIL="$FAIL"; FAIL=0
+custom_case codex > "$TMP_ROOT/target-control.out"
+TARGET_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
+assert_eq "$TARGET_CONTROL" 1 'control: stopping the requested harness leaves the prior harness live and loses its replacement brief'
 RUN_ENV=() HANDOFF_CASE=neutral
 OPEN_TERMINAL="$SHIPPED"
 control switch '"$LANE_RECORD_VALUE" != "$HARNESS" ]]' '"$LANE_RECORD_VALUE" == "$HARNESS-never" ]]'

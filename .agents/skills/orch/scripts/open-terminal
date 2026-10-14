@@ -2800,9 +2800,15 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # hosted launch hands its wait to. Its result is unknown until the host starts
 # the harness; launch_finish reads that result.
 RELAUNCH_ROUTE=resume HOST_SELECTION_FILE="" RELAUNCH_HANDOFF_DIR=""
-host_harness_stop() {
-  local rc=0
-  host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?
+host_harness_stop() { # [prior]
+  local rc=0 target="$HARNESS"
+  # Retirement precedes replacement of the record's harness. Cleanup follows
+  # launch and must name the requested successor instead.
+  if [[ "${1:-}" == prior && "$FLEET" == true ]]; then
+    lane_record_read "$wt_id" harness || return 1
+    [[ "$LANE_RECORD_VALUE" == absent ]] || target="$LANE_RECORD_VALUE"
+  fi
+  host_transport stop --item "$wt_id" --harness "$target" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
   ot_message host-stop-failed "item=$item" "exit=$rc" >&2
   return 1
@@ -2813,6 +2819,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   LANE_RECORD_VALUE=absent
   [[ "$FLEET" != true ]] || lane_record_read "$2" harness || return 1
   if [[ "$LANE_RECORD_VALUE" != absent && "$LANE_RECORD_VALUE" != "$HARNESS" ]]; then
+    [[ "$HOST_RELAUNCH" != true || "$host_command_restart" == completed ]] || host_harness_stop prior || return 1
     ot_message harness-switched "item=$1" "harness=$HARNESS" "recorded=$LANE_RECORD_VALUE"
     RELAUNCH_ROUTE=fresh
     return 0
@@ -2836,7 +2843,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
     stands)
-      [[ "$HOST_RELAUNCH" != true || "$host_command_restart" == completed ]] || host_harness_stop || return 1
+      [[ "$HOST_RELAUNCH" != true || "$host_command_restart" == completed ]] || host_harness_stop prior || return 1
       [[ "$HOST_RELAUNCH" != true ]] || RELAUNCH_HANDOFF_DIR="${LANE_HANDOFF_FILE%/*}"
       ot_message session-retired "item=$1" "harness=$HARNESS"
       RELAUNCH_ROUTE=fresh HOST_SELECTION_FILE=""
@@ -3136,7 +3143,7 @@ host_launch_resume() { # [admitted]
   local key="$wt_id" query='.host_launch' pending
   if [[ "${1:-}" == admitted ]]; then
     [[ "$host_command_restart" == pending ]] || return 0
-    host_harness_stop || return 1
+    host_harness_stop prior || return 1
     host_launch_ready completed || return 1
     host_command_restart=completed
     return 0
@@ -3851,7 +3858,7 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$LANE_HOST" != local ]]; then
     # Stop does not remove saved sessions. The custom command below still
     # takes its own fresh route, after create reconnects the stopped harness.
-    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restart" != completed ]] && ! host_harness_stop; then
+    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restart" != completed ]] && ! host_harness_stop prior; then
       failed=$((failed + 1))
       continue
     fi
