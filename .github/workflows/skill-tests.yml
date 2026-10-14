@@ -329,11 +329,40 @@ jobs:
       # The whole history: the secrets scan judges every commit the pull
       # request adds against that commit's own parents, which a shallow clone
       # has not fetched.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: candidate-checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: candidate
           persist-credentials: false
           fetch-depth: 0
+      # The commit lane's credential scan over the lines each commit of the
+      # pull request adds, HEAD^1 of the merge commit being the base. gitleaks
+      # installs in the same step, so the scan never runs without it, and the
+      # notice records the seconds the step added, the install included.
+      # Scan before candidate scripts: they can change the scanner executable
+      # in the shared runner directory. Trusted code and policy alone cannot
+      # protect a scan that runs after candidate code.
+      # This content-check job runs on every pull request, and CI holds its result.
+      # This catalog repository keeps source scripts under skills/, not .agents/.
+      - name: the credential guards, from the default branch
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: guards
+          persist-credentials: false
+      - name: secrets (credential scan of the pull request diff)
+        if: always() && github.event_name == 'pull_request'
+        working-directory: candidate
+        run: |
+          start=$SECONDS
+          status=0
+          "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks" || status=$?
+          if [ "$status" -eq 0 ]; then
+            PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/secrets" --against HEAD^1 --policy-root "$GITHUB_WORKSPACE/guards" || status=$?
+          fi
+          echo "::notice title=secrets scan::$((SECONDS - start)) seconds, gitleaks install included"
+          exit "$status"
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
       # Independent branches can allocate the same decision ID. Check the
@@ -367,33 +396,6 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         working-directory: candidate
         run: skills/commit-guards/scripts/todo-ban
-      # The commit lane's credential scan over the lines each commit of the
-      # pull request adds, HEAD^1 of the merge commit being the base. gitleaks
-      # installs in the same step, so the scan never runs without it, and the
-      # notice records the seconds the step added, the install included.
-      # Unlike the source checkers above, credentials must use trusted code and
-      # policy: a pull request must not disable the scanner that judges it.
-      # This content-check job runs on every pull request, and CI holds its result.
-      # This catalog repository keeps source scripts under skills/, not .agents/.
-      - name: the credential guards, from the default branch
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: guards
-          persist-credentials: false
-      - name: secrets (credential scan of the pull request diff)
-        if: always() && github.event_name == 'pull_request'
-        working-directory: candidate
-        run: |
-          start=$SECONDS
-          status=0
-          "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks" || status=$?
-          if [ "$status" -eq 0 ]; then
-            PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/secrets" --against HEAD^1 --policy-root "$GITHUB_WORKSPACE/guards" || status=$?
-          fi
-          echo "::notice title=secrets scan::$((SECONDS - start)) seconds, gitleaks install included"
-          exit "$status"
       # The commit lane's changelog check over the whole change, its package
       # version rule included. The commit chain runs the copy in the
       # committing worktree, so a branch cut before a rule landed commits
