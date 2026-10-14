@@ -19,19 +19,22 @@ use crate::source_read::SealedSource;
 
 use super::plugin_registry::{CatalogFinding, PLUGIN_MANIFEST, PluginEntry, Registry};
 
-/// One registry read owns the accepted item paths and their name findings.
+/// One registry read owns the accepted item paths.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Offers {
     items: BTreeMap<ItemKind, BTreeMap<String, PathBuf>>,
-    findings: Vec<CatalogFinding>,
 }
 
-pub(super) fn read_offers(sealed: &SealedSource, entry: &PluginEntry) -> Offers {
+pub(super) fn read_offers(
+    sealed: &SealedSource,
+    entry: &PluginEntry,
+    findings: &mut Vec<CatalogFinding>,
+) -> Offers {
     let mut offers = Offers::default();
     for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
         offers
             .items
-            .insert(kind, offered(sealed, entry, kind, &mut offers.findings));
+            .insert(kind, offered(sealed, entry, kind, findings));
     }
     offers
 }
@@ -223,7 +226,6 @@ fn group(
 ) -> Result<CatalogGroup> {
     let at = crate::paths::slashed(&entry.dir);
     check_manifest(sealed, entry, &at, findings)?;
-    findings.extend(entry.offers.findings.iter().cloned());
     let mut members = Vec::new();
     for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
         if let Some(items) = entry.offers.items.get(&kind) {

@@ -44,7 +44,7 @@ const MAX_NEST: usize = 3;
 
 /// More skills than any real catalog ships; past it the walk stops with a
 /// finding rather than letting a hostile tree soak the scan.
-const MAX_SKILLS: usize = 512;
+pub(super) const MAX_SKILLS: usize = 512;
 
 /// The first bytes of a git-lfs pointer file — the content is elsewhere.
 const LFS_POINTER: &str = "version https://git-lfs.github.com/spec/";

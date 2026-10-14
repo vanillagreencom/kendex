@@ -1,1 +1,1 @@
-- Install plugin-registry skills from the repository root and from declared skill folders, using their plugin-qualified names. Read each plugin's item list once for catalog lookups.
+- Install plugin-registry skills from the repository root and from declared skill folders, using their plugin-qualified names. Read each plugin's item list once for catalog lookups. Catalog checks report rejected items and fail when a declared skill cannot install. Repeated skill declarations count toward the catalog's skill limit.

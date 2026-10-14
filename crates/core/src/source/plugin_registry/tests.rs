@@ -196,12 +196,14 @@ fn local_directory_paths_allow_the_root_and_refuse_parent_or_absolute_paths() {
         ("./../outside", None),
         ("/outside", None),
     ] {
-        let mut registry = Registry::default();
+        let resolved = relative_dir(REGISTRY, "media", path);
         assert_eq!(
-            relative_dir(REGISTRY, "media", path, &mut registry),
-            expected.map(PathBuf::from),
+            resolved.as_ref().ok(),
+            expected.map(PathBuf::from).as_ref(),
             "{path}"
         );
-        assert_eq!(registry.findings.is_empty(), expected.is_some(), "{path}");
+        if let Err(finding) = resolved {
+            assert!(!finding.breakage, "{path}");
+        }
     }
 }

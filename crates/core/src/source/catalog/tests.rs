@@ -224,17 +224,49 @@ fn item_names_a_filesystem_would_fold_together_are_reported_not_installed() {
     let meta = metadata(&sealed)
         .expect("read")
         .expect("plugin-registry-shaped");
-    let problems: Vec<&str> = meta.findings.iter().map(|f| f.problem.as_str()).collect();
-
-    if case_sensitive {
-        assert!(
-            problems.iter().any(|p| p.contains("folded case")),
-            "{problems:?}"
-        );
-    }
-    assert!(
-        problems.iter().any(|p| p.contains("reserved device name")),
-        "{problems:?}"
+    let expected_findings = if case_sensitive { 2 } else { 1 };
+    let at = "plugins/data-science/agent";
+    assert_eq!(
+        registry
+            .findings
+            .iter()
+            .filter(|finding| finding.location == at)
+            .count(),
+        expected_findings
+    );
+    assert_eq!(
+        meta.findings
+            .iter()
+            .filter(|finding| finding.location == at)
+            .count(),
+        expected_findings
+    );
+    let config = crate::source::source_config(&sealed, "workflows").expect("config");
+    assert_eq!(
+        config
+            .findings()
+            .filter(|finding| finding.location == at)
+            .count(),
+        expected_findings
+    );
+    let check = crate::check_catalog::check_with(&sealed, &config, "workflows").expect("check");
+    assert_eq!(
+        check
+            .catalog
+            .iter()
+            .filter(|finding| finding.file == at)
+            .count(),
+        expected_findings
+    );
+    assert!(check.failing(true) > 0);
+    let index = crate::source::index::index(&sealed, "workflows").expect("index");
+    assert_eq!(
+        index
+            .findings
+            .iter()
+            .filter(|finding| finding.location == at)
+            .count(),
+        expected_findings
     );
     // The offered list holds one of the two folded names, never both.
     let agents = items(&sealed, &registry, ItemKind::Agent);
@@ -439,9 +471,18 @@ fn declared_skill_paths_agree_across_index_lookup_and_metadata() {
 
 #[test]
 fn declared_unsafe_or_missing_skill_paths_are_named_and_do_not_hide_siblings() {
-    for path in ["../outside", "/outside", "./../outside", "missing"] {
-        let (_tmp, sealed) =
-            declared_fixture("./", Some(serde_json::json!([path, "heygen-avatar"])));
+    for (declaration, location) in [
+        (serde_json::json!("../outside"), "skills[../outside]"),
+        (serde_json::json!("/outside"), "skills[/outside]"),
+        (serde_json::json!("./../outside"), "skills[./../outside]"),
+        (serde_json::json!("missing"), "skills[missing]"),
+        (serde_json::json!(""), "skills[]"),
+        (serde_json::json!({"name": "missing-path"}), ""),
+    ] {
+        let (_tmp, sealed) = declared_fixture(
+            "./",
+            Some(serde_json::json!([declaration, "heygen-avatar"])),
+        );
         let registry = read(&sealed).expect("read").expect("registry");
         assert_eq!(
             items(&sealed, &registry, ItemKind::Skill),
@@ -454,8 +495,27 @@ fn declared_unsafe_or_missing_skill_paths_are_named_and_do_not_hide_siblings() {
                 .map(|f| f.location.as_str())
                 .collect::<Vec<_>>(),
             [format!(
-                ".claude-plugin/marketplace.json: heygen: skills[{path}]"
+                ".claude-plugin/marketplace.json: heygen{}",
+                if location.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {location}")
+                }
             )]
+        );
+        assert!(registry.findings[0].breakage);
+        let config = crate::source::source_config(&sealed, "heygen").expect("config");
+        let check = crate::check_catalog::check_with(&sealed, &config, "heygen").expect("check");
+        assert_eq!(check.failing(false), 1);
+        let index = crate::source::index::index(&sealed, "heygen").expect("index");
+        assert_eq!(index.checked.breakage, 1);
+        assert_eq!(
+            index
+                .packages
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            ["heygen/heygen-avatar"]
         );
         assert!(find(&sealed, &registry, ItemKind::Skill, "heygen/outside").is_none());
     }
@@ -471,6 +531,7 @@ fn an_empty_plugin_source_is_refused() {
     );
     let registry = read(&sealed).expect("read").expect("registry");
     assert!(registry.plugins.is_empty());
+    assert!(!registry.findings[0].breakage);
     assert_eq!(
         registry
             .findings
@@ -479,6 +540,58 @@ fn an_empty_plugin_source_is_refused() {
             .collect::<Vec<_>>(),
         [".claude-plugin/marketplace.json: heygen"]
     );
+}
+
+#[test]
+fn skill_declarations_share_the_discovery_allowance_across_plugins() {
+    let limit = crate::source::discover::MAX_SKILLS;
+    let (_tmp, sealed) = declared_fixture("./", None);
+    let first_count = limit / 2;
+    let mut first = vec![serde_json::json!("heygen-avatar"); first_count];
+    first[1] = serde_json::json!({"name": "missing-path"});
+    let mut second = vec![serde_json::json!("../outside"); limit - first_count];
+    second[0] = serde_json::json!("heygen-video");
+    second.extend([
+        serde_json::json!("heygen-avatar"),
+        serde_json::json!({"name": "not-read"}),
+    ]);
+    write(
+        sealed.root(),
+        ".claude-plugin/marketplace.json",
+        &serde_json::json!({
+            "name": "heygen", "owner": {"name": "HeyGen"}, "plugins": [
+                {"name": "first", "source": "./", "skills": first},
+                {"name": "second", "source": "./", "skills": second},
+                {"name": "exhausted", "source": "./", "skills": ["heygen-avatar"]}
+            ]
+        })
+        .to_string(),
+    );
+    let registry = read(&sealed).expect("read").expect("registry");
+    assert_eq!(
+        items(&sealed, &registry, ItemKind::Skill),
+        ["first/heygen-avatar", "second/heygen-video"]
+    );
+    let exhaustion: Vec<_> = registry
+        .findings
+        .iter()
+        .filter(|finding| finding.location == ".claude-plugin/marketplace.json: skills")
+        .collect();
+    assert_eq!(exhaustion.len(), 1);
+    assert!(exhaustion[0].breakage);
+    assert!(registry.findings.len() <= limit + 1);
+    assert!(!registry.findings.iter().any(|finding| {
+        finding
+            .location
+            .starts_with(".claude-plugin/marketplace.json: exhausted")
+    }));
+    for name in [
+        "second/heygen-avatar",
+        "exhausted/heygen-avatar",
+        "exhausted/unlisted",
+    ] {
+        assert!(find(&sealed, &registry, ItemKind::Skill, name).is_none());
+    }
 }
 
 #[cfg(unix)]

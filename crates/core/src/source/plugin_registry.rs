@@ -159,13 +159,20 @@ fn parse(sealed: &SealedSource, text: &str) -> Registry {
         ));
         return registry;
     };
+    let mut skill_allowance = Some(super::discover::MAX_SKILLS);
     for (index, entry) in entries.iter().enumerate() {
-        read_entry(sealed, index, entry, &mut registry);
+        read_entry(sealed, index, entry, &mut registry, &mut skill_allowance);
     }
     registry
 }
 
-fn read_entry(sealed: &SealedSource, index: usize, entry: &Value, registry: &mut Registry) {
+fn read_entry(
+    sealed: &SealedSource,
+    index: usize,
+    entry: &Value,
+    registry: &mut Registry,
+    skill_allowance: &mut Option<usize>,
+) {
     let at = format!("{REGISTRY}: plugins[{index}]");
     let Some(name) = string(entry, "name") else {
         registry.findings.push(CatalogFinding::new(
@@ -223,7 +230,15 @@ fn read_entry(sealed: &SealedSource, index: usize, entry: &Value, registry: &mut
         ));
         return;
     }
-    let skills = skill_dirs(sealed, &at, &name, &dir, entry.get("skills"), registry);
+    let skills = skill_dirs(
+        sealed,
+        &at,
+        &name,
+        &dir,
+        entry.get("skills"),
+        registry,
+        skill_allowance,
+    );
     let mut plugin = PluginEntry {
         name,
         dir,
@@ -245,7 +260,7 @@ fn read_entry(sealed: &SealedSource, index: usize, entry: &Value, registry: &mut
             })
             .unwrap_or_default(),
     };
-    plugin.offers = super::catalog::read_offers(sealed, &plugin);
+    plugin.offers = super::catalog::read_offers(sealed, &plugin, &mut registry.findings);
     registry.plugins.push(plugin);
 }
 
@@ -278,7 +293,13 @@ fn local_dir(at: &str, name: &str, entry: &Value, registry: &mut Registry) -> Op
             elsewhere("another location on the web", registry);
             None
         }
-        Some(Value::String(path)) => relative_dir(at, name, path, registry),
+        Some(Value::String(path)) => match relative_dir(at, name, path) {
+            Ok(dir) => Some(dir),
+            Err(finding) => {
+                registry.findings.push(finding);
+                None
+            }
+        },
         Some(_) => {
             registry.findings.push(CatalogFinding::new(
                 at,
@@ -290,14 +311,13 @@ fn local_dir(at: &str, name: &str, entry: &Value, registry: &mut Registry) -> Op
     }
 }
 
-fn relative_dir(at: &str, name: &str, path: &str, registry: &mut Registry) -> Option<PathBuf> {
+fn relative_dir(at: &str, name: &str, path: &str) -> std::result::Result<PathBuf, CatalogFinding> {
     if path.is_empty() {
-        registry.findings.push(CatalogFinding::new(
+        return Err(CatalogFinding::new(
             at,
             format!("`{name}` declares an empty directory path"),
             "name a local directory; use `./` for the repository root",
         ));
-        return None;
     }
     let hostile = Path::new(path).is_absolute()
         || Path::new(path).components().any(|c| {
@@ -307,7 +327,7 @@ fn relative_dir(at: &str, name: &str, path: &str, registry: &mut Registry) -> Op
             )
         });
     if hostile {
-        registry.findings.push(CatalogFinding::new(
+        return Err(CatalogFinding::new(
             at,
             format!(
                 "`{name}` points at `{}`, which leads out of the catalog",
@@ -315,20 +335,17 @@ fn relative_dir(at: &str, name: &str, path: &str, registry: &mut Registry) -> Op
             ),
             format!("point it at a directory inside the catalog, such as `./plugins/{name}`"),
         ));
-        return None;
     }
-    Some(
-        Path::new(path)
-            .components()
-            .filter_map(|component| match component {
-                std::path::Component::Normal(part) => Some(part),
-                std::path::Component::CurDir
-                | std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_) => None,
-            })
-            .collect(),
-    )
+    Ok(Path::new(path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part),
+            std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => None,
+        })
+        .collect())
 }
 
 fn skill_dirs(
@@ -338,6 +355,7 @@ fn skill_dirs(
     dir: &Path,
     value: Option<&Value>,
     registry: &mut Registry,
+    skill_allowance: &mut Option<usize>,
 ) -> Option<Vec<PathBuf>> {
     let value = value?;
     // Claude marketplaces emit strings; HeyGen also emits objects with `path`.
@@ -347,34 +365,57 @@ fn skill_dirs(
     };
     let mut skills = Vec::new();
     for declaration in declarations {
-        let path = declaration
-            .as_str()
-            .or_else(|| declaration.get("path").and_then(Value::as_str));
-        let Some(path) = path else {
-            registry.findings.push(CatalogFinding::new(
-                at,
-                "a skill declaration has no string path",
-                "name a skill folder with a string or an object containing `path`",
-            ));
-            continue;
-        };
-        let at = format!("{at}: skills[{}]", names::shown(path));
-        let Some(relative) = relative_dir(&at, name, path, registry) else {
-            continue;
-        };
-        let marker = sealed.root().join(dir).join(&relative).join("SKILL.md");
-        if let Err(problem) = sealed.read_to_string(&marker) {
-            registry.findings.push(CatalogFinding::new(
-                &at,
-                format!(
-                    "skill path `{}` has no readable SKILL.md: {problem}",
-                    names::shown(path)
-                ),
-                "point the declaration at a skill folder with a readable SKILL.md",
-            ));
-            continue;
+        // Foreign registries can repeat valid or refused paths. Count their
+        // work before any read or retained per-declaration diagnostic.
+        match skill_allowance {
+            Some(remaining) if *remaining > 0 => *remaining -= 1,
+            Some(_) => {
+                registry.findings.push(
+                    CatalogFinding::new(
+                        format!("{REGISTRY}: skills"),
+                        format!(
+                            "more than {} skill declarations; the rest are not read",
+                            super::discover::MAX_SKILLS
+                        ),
+                        "reduce the registry's skill declarations",
+                    )
+                    .breaking(),
+                );
+                *skill_allowance = None;
+                break;
+            }
+            None => break,
         }
-        skills.push(relative);
+        let resolved: std::result::Result<PathBuf, CatalogFinding> = (|| {
+            let path = declaration
+                .as_str()
+                .or_else(|| declaration.get("path").and_then(Value::as_str))
+                .ok_or_else(|| {
+                    CatalogFinding::new(
+                        at,
+                        "a skill declaration has no string path",
+                        "name a skill folder with a string or an object containing `path`",
+                    )
+                })?;
+            let at = format!("{at}: skills[{}]", names::shown(path));
+            let relative = relative_dir(&at, name, path)?;
+            let marker = sealed.root().join(dir).join(&relative).join("SKILL.md");
+            sealed.read_to_string(&marker).map_err(|problem| {
+                CatalogFinding::new(
+                    &at,
+                    format!(
+                        "skill path `{}` has no readable SKILL.md: {problem}",
+                        names::shown(path)
+                    ),
+                    "point the declaration at a skill folder with a readable SKILL.md",
+                )
+            })?;
+            Ok(relative)
+        })();
+        match resolved {
+            Ok(relative) => skills.push(relative),
+            Err(finding) => registry.findings.push(finding.breaking()),
+        }
     }
     Some(skills)
 }
