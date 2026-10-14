@@ -54,6 +54,26 @@ esac
 TMUXSTUB
 chmod +x "$TMUX_BIN/tmux"
 
+# Synthetic process identities exercise ancestry, never process liveness.
+# All other cases use the host's process table and owned Perl children.
+PS_BIN="$(command -v ps)"
+export PS_BIN
+cat > "$TMUX_BIN/ps" <<'PSSTUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[ -n "${SESSION_ROWS_ANCESTRY:-}" ] || exec "$PS_BIN" "$@"
+pid="${!#}"
+while IFS='|' read -r id parent comm args; do
+  [ "$id" = "$pid" ] || continue
+  [ "$comm" != unreadable ] || exit 1
+  case "$*" in *args=*) printf '%s\n' "$args" ;; *) printf '%s %s\n' "$parent" "$comm" ;; esac
+  exit 0
+done < "$SESSION_ROWS_ANCESTRY"
+# The hook shell begins the walk at its real $$, before the synthetic ids.
+printf '9101 bash\n'
+PSSTUB
+chmod +x "$TMUX_BIN/ps"
+
 # A main checkout on `main`, with the orch install and the hooks under
 # .claude, and the overseer mailbox directory the fleet makes. CHECKOUT is the
 # repository, ROWS the file the session in pane %9 on server 7000 writes.
@@ -90,6 +110,10 @@ RC=0
 # standing in for the harness, forking COMMAND. NESTED=1 puts a second such
 # process between them, a harness another harness started in the same pane.
 in_pane() { # COMMAND...
+  if [ -n "${SESSION_ROWS_ANCESTRY:-}" ]; then
+    TMUX_PANE_PID=9000 "$@"
+    return
+  fi
   local harness=(perl -e 'exit(system(@ARGV) >> 8)' --)
   [ "${NESTED:-0}" -eq 0 ] || harness+=(perl -e 'exit(system(@ARGV) >> 8)' --)
   bash -c 'TMUX_PANE_PID=$$ "$@"; exit $?' pane-shell "${harness[@]}" "$@"
@@ -213,6 +237,91 @@ new_checkout nested
 NESTED=1 run session-end-row "$END"
 assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=0" \
   "a harness nested in the pane's own harness writes no row"
+
+# The installed npm command is a symlink to @openai/codex/bin/codex.js.
+# These fixtures provide that path identity only. They execute no launcher.
+LAUNCHER="$TMP_ROOT/install/lib/node_modules/@openai/codex/bin/codex.js"
+mkdir -p "${LAUNCHER%/*}" "$TMP_ROOT/install/bin"
+: > "$LAUNCHER"
+ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$TMP_ROOT/install/bin/codex"
+ANCESTRY_START='{"hook_event_name":"SessionStart","session_id":"lead-native","cwd":"/native/work","model":"native-model"}'
+ANCESTRY_NESTED='{"hook_event_name":"SessionStart","session_id":"nested-native","cwd":"/nested/work","model":"nested-model"}'
+ancestry_cases() { # [LIBRARY_COPY]
+  local mutant="${1:-}" label chain accepted id parent kind rest comm args before
+  while IFS='|' read -r label chain accepted; do
+    new_checkout "ancestry_${mutant:+control_}$label" .codex/hooks
+    if [ -n "$mutant" ]; then
+      rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
+      cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+      cp -- "$mutant" "$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
+    fi
+    # Every rejection starts with a lead identity written by the real owner.
+    run session-start-row "$ANCESTRY_START" CODEX_HOME=/accounts/native
+    before="$(cat -- "$ROWS")"
+    ANCESTRY_FILE="$TMP_ROOT/ancestry"
+    : > "$ANCESTRY_FILE"
+    id=9101
+    rest="$chain,"
+    while [ -n "$rest" ]; do
+      kind="${rest%%,*}"; rest="${rest#*,}"
+      parent=$((id + 1))
+      [ -n "$rest" ] || parent=9000
+      case "$kind" in
+        native) comm=codex; args=/native/codex ;;
+        launcher) comm=node; args="node $LAUNCHER" ;;
+        mainthread) comm=node-MainThread; args="node $LAUNCHER" ;;
+        command) comm=node; args="node $TMP_ROOT/install/bin/codex exec" ;;
+        unrelated) comm=node; args="node $TMP_ROOT/unrelated.js" ;;
+        nonnode) comm=perl; args="perl $LAUNCHER" ;;
+        missing) comm=node; args="node $TMP_ROOT/absent/@openai/codex/bin/codex.js" ;;
+        shell) comm=bash; args=bash ;;
+        other) comm=perl; args=perl ;;
+        unreadable) comm=unreadable; args= ;;
+        *) return 1 ;;
+      esac
+      printf '%s|%s|%s|%s\n' "$id" "$parent" "$comm" "$args" >> "$ANCESTRY_FILE"
+      id="$parent"
+    done
+    run session-start-row "$ANCESTRY_NESTED" "SESSION_ROWS_ANCESTRY=$ANCESTRY_FILE" CODEX_HOME=/accounts/native
+    assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=$accepted" "ancestry $label writer outcome"
+    if [ "$accepted" -eq 2 ]; then
+      assert_eq "$(last_row '[.session_id, .harness, .account, .model, .cwd] | join(",")')" \
+        "nested-native,codex,/accounts/native,nested-model,/nested/work" "ancestry $label native identity"
+    else
+      assert_eq "$(cat -- "$ROWS")" "$before" "ancestry $label preserves lead"
+    fi
+  done <<'ANCESTRY'
+native|native|2
+installed_script|native,launcher,shell|2
+installed_node_main_thread|native,mainthread,shell|2
+installed_command|native,command,shell|2
+nested_native|native,shell,native,launcher|1
+second_launcher_pair|native,launcher,shell,native,launcher|1
+under_other_harness|native,launcher,shell,other|1
+unrelated_node|native,unrelated,shell|1
+other_script_runner|native,nonnode,shell|1
+missing_launcher|native,missing,shell|1
+indirect_launcher|native,shell,launcher|1
+unreadable_parent|native,unreadable|1
+other_lead|other,shell|2
+other_nested|other,shell,other|1
+ANCESTRY
+}
+ancestry_cases
+
+# Broadly admitting another non-shell ancestor must fail the same writer
+# assertions. The mutant retains the original condition as its first arm.
+ANCESTRY_MUTANT="$TMP_ROOT/ancestry-mutant.sh"
+cp "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh" "$ANCESTRY_MUTANT"
+ANCESTRY_RULE='  [ "$harnesses" -eq 1 ]'
+assert_eq "$(grep -c -x -F -- "$ANCESTRY_RULE" "$ANCESTRY_MUTANT")" 1 "ancestry control finds the harness bound"
+ANCESTRY_RULE="$ANCESTRY_RULE" perl -i -pe 's/^\Q$ENV{ANCESTRY_RULE}\E$/  [ "\$harnesses" -eq 1 ] || [ "\$harnesses" -eq 2 ]/' "$ANCESTRY_MUTANT"
+assert_eq "$(grep -c -x -F -- "$ANCESTRY_RULE" "$ANCESTRY_MUTANT" || true)" 0 "ancestry control changed the harness bound"
+CONTROL_RC=0
+CONTROL_OUT="$(PASS=0; FAIL=0; ancestry_cases "$ANCESTRY_MUTANT"; [ "$FAIL" -eq 0 ])" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 "ancestry control fails the writer contract"
+assert_eq "$(grep -c '^  FAIL  ancestry unrelated_node preserves lead$' <<<"$CONTROL_OUT")" 1 \
+  "ancestry control detects the unrelated Node overwriting the lead"
 
 # The harness a row names is the one the hook's install directory names.
 new_checkout codex_install .codex/hooks

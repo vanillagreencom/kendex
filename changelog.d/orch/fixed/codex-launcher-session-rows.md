@@ -1,0 +1,1 @@
+- Record the lead Codex session's identity when the installed Node launcher starts its native process. Nested sessions still leave the lead identity unchanged.

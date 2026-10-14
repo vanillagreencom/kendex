@@ -224,11 +224,34 @@ session_rows_start() { # FILE [SINCE]
   IFS="$sep" read -r SR_HARNESS SR_ACCOUNT SR_MODEL SR_CWD <<<"$fields"
 }
 
-# session_rows_top_level PANE_PID — 0 where exactly one process that is not a
-# shell stands between this process and PANE_PID, the pane's own shell: the
+# A Node parent counts with its native Codex child only when its script is
+# the installed @openai/codex launcher. SessionStart supplies identity, but
+# only process ancestry can tell whether that session leads this pane.
+session_rows_codex_launcher() { # PID
+  local args executable script link hops=0
+  args="$(ps -o args= -p "$1" 2>/dev/null)" || return 1
+  read -r executable script _ <<<"$args"
+  # Node can rename comm to node-MainThread; argv still names its executable.
+  [ "${executable##*/}" = node ] || return 1
+  case "$script" in /*) ;; *) return 1 ;; esac
+  while [ -L "$script" ]; do
+    hops=$((hops + 1))
+    [ "$hops" -le 40 ] && link="$(readlink -- "$script")" || return 1
+    case "$link" in /*) script="$link" ;; *) script="${script%/*}/$link" ;; esac
+  done
+  [ -f "$script" ] || return 1
+  script="$(cd -P -- "${script%/*}" && printf '%s/%s\n' "$PWD" "${script##*/}")" || return 1
+  case "$script" in */@openai/codex/bin/codex.js) return 0 ;; *) return 1 ;; esac
+}
+
+# session_rows_top_level PANE_PID: 0 where exactly one harness stands
+# between this process and PANE_PID, the pane's own shell: the
 # harness that ran this hook, directly under that shell or under the shells
 # and exec'd wrappers a launch puts there (overseer-run, env). A harness
-# nested under another, which the other one's tool shell started, has two;
+# nested under another, which the other one's tool shell started, has two.
+# Codex's installed Node launcher and its direct native child count as one;
+# any other non-shell process counts separately. The walk continues above
+# the launcher, so another harness still excludes a nested session;
 # a process under no such pane never reaches it. Exit 1 for either, and for a
 # process table `ps` could not read, which is no evidence of a top-level
 # session. A harness that is the pane's process itself (`tmux new-window
@@ -237,13 +260,21 @@ session_rows_start() { # FILE [SINCE]
 # the pane fallback; a launched overseer is typed into the pane's shell and is
 # not that shape. The shell set is lib/lane-state.sh's is_bare_shell.
 session_rows_top_level() { # PANE_PID
-  local pid="$$" line ppid comm harnesses=0 steps=0
+  local pid="$$" line ppid comm child="" harnesses=0 steps=0
   while [ "$pid" != "$1" ]; do
     [ "$steps" -lt 64 ] && [ "$pid" -gt 1 ] || return 1
     line="$(ps -o ppid= -o comm= -p "$pid" 2>/dev/null)" || return 1
     read -r ppid comm <<<"$line"
     [ -n "$ppid" ] || return 1
-    is_bare_shell "${comm##*/}" || harnesses=$((harnesses + 1))
+    comm="${comm##*/}"
+    if is_bare_shell "$comm"; then
+      :
+    elif [ "$child" = codex ] && session_rows_codex_launcher "$pid"; then
+      :
+    else
+      harnesses=$((harnesses + 1))
+    fi
+    child="$comm"
     pid="$ppid"
     steps=$((steps + 1))
   done
