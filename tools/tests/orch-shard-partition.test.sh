@@ -177,11 +177,12 @@ partition_cargo_steps() { # <workflow> ; mode, compile order and condition of di
 if [[ "$mode" != cargo ]]; then
 
 # --- The sandbox: the real roster, none of the real work --------------------
-SANDBOX="$TMP/orch/tests"
-mkdir -p "$SANDBOX/lib" "$TMP/orch/scripts/lib" "$TMP/github/scripts/lib"
+SANDBOX="$TMP/routing/skills/orch/tests"
+mkdir -p "$SANDBOX/lib" "$TMP/routing/skills/orch/scripts/lib" "$TMP/routing/skills/github/scripts/lib" "$TMP/routing/tools"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/routing/tools/"
 cp "$TEST_DIR/run-all.sh" "$SANDBOX/run-all.sh"
-cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TMP/orch/scripts/lib/lane-state.sh"
-cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$TMP/github/scripts/lib/group-leader.sh"
+cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TMP/routing/skills/orch/scripts/lib/lane-state.sh"
+cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$TMP/routing/skills/github/scripts/lib/group-leader.sh"
 printf '#!/usr/bin/env bash\n: # the sandbox clears nothing; its suites are empty\n' \
   > "$SANDBOX/lib/git-env.sh"
 roster=""
@@ -195,7 +196,9 @@ done
 roster="$(printf '%s' "$roster" | sort)"
 
 selected() { # selected <filter>... ; the suite names that ran, sorted
-  RUNNER_OS="${PARTITION_RUNNER_OS:-Linux}" bash "$SANDBOX/run-all.sh" "$@" 2>/dev/null |
+  local native=""
+  [[ "${PARTITION_NATIVE:-false}" != true ]] || native="$TMP/routing/tools/macos-test-contracts"
+  RUN_ALL_NATIVE_CONTRACTS="$native" RUNNER_OS="${PARTITION_RUNNER_OS:-Linux}" bash "$SANDBOX/run-all.sh" "$@" 2>/dev/null |
     sed -n 's/^──── \(.*\) ────$/\1/p' | sort
 }
 status_of() { # status_of <filter>... ; the exit status, output discarded
@@ -224,7 +227,7 @@ check "an empty argument refuses instead of running everything" \
 check "a filter matching no suite exits non-zero" \
   "1" "$(status_of no-suite-carries-this-name)"
 
-# --- 2. The partition the workflow ships ------------------------------------
+# --- 2. The routing partition before native eligibility --------------------
 # Each shard's arguments are read from the workflow, so a shard whose filter
 # is edited there is judged here by what that filter now selects.
 #
@@ -252,7 +255,10 @@ excluded_shards() { # WORKFLOW OS ; shards excluded from that runner's roster
 shard_filters() { # WORKFLOW ; `|<argument string>` per shard on this platform
   local wf="$1" os=ubuntu-latest excluded job cond wd run shard
   [[ "${PARTITION_RUNNER_OS:-Linux}" != macOS ]] || os=macos-latest
-  excluded="$(excluded_shards "$wf" "$os")"
+  # Routing covers every name before native eligibility; section 4d tests
+  # the executed native subset and the matrix exclusions together.
+  excluded=""
+  [[ "${PARTITION_NATIVE:-false}" != true ]] || excluded="$(excluded_shards "$wf" "$os")"
   one_line_steps "$wf" | while IFS=$'\037' read -r job cond wd run; do
     [[ "$run" == 'bash skills/orch/tests/run-all.sh'* ]] || continue
     [[ "$run" != 'bash skills/orch/tests/run-all.sh --battery '* ]] || continue
@@ -271,7 +277,7 @@ mkdir -p "$UNION_RUNS"
 union_of() { # union_of <argument string>... ; names selected, duplicates kept
   local args kept
   for args in "$@"; do
-    kept="$UNION_RUNS/${PARTITION_RUNNER_OS:-Linux}-$(printf '%s' "$args" | cksum | tr ' ' '-')"
+    kept="$UNION_RUNS/${PARTITION_RUNNER_OS:-Linux}-${PARTITION_NATIVE:-false}-$(printf '%s' "$args" | cksum | tr ' ' '-')"
     if [[ ! -f "$kept" || "$(head -n 1 "$kept")" != "|$args" ]]; then
       (
         set -f
@@ -320,7 +326,7 @@ if [[ "${#shard_args[@]}" -lt 2 ]]; then
   printf 'pass: %d   fail: %d\n' "$PASS" "$((FAIL + 1))"
   exit 1
 fi
-ok "the workflow runs the $PARTITION_RUNNER_OS battery as ${#shard_args[@]} shards"
+ok "the workflow declares ${#shard_args[@]} $PARTITION_RUNNER_OS routing calls"
 check "every suite is claimed by one of the workflow's orch shards on $PARTITION_RUNNER_OS" \
   "" "$(missing_from "${shard_args[@]}")"
 check "no suite is claimed by two of them on $PARTITION_RUNNER_OS" "" "$(shared_by "${shard_args[@]}")"
@@ -518,6 +524,7 @@ cp "$TEST_DIR/lib/git-env.sh" "$POOL/skills/orch/tests/lib/git-env.sh"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$POOL/skills/orch/scripts/lib/lane-state.sh"
 cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$POOL/skills/github/scripts/lib/group-leader.sh"
 cp "$ROOT/tools/tests/run-all.sh" "$POOL/tools/tests/run-all.sh"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$POOL/tools/"
 for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh "$ROOT"/hooks/tests/*.sh "$ROOT"/refresh/tests/*.test.sh; do
   [[ "${f##*/}" != run-all.sh ]] || continue
   path="${f#"$ROOT"/}"
@@ -545,7 +552,7 @@ if [[ -n "$battery" ]]; then
     [[ "$prior" != --battery ]] || batteries+=("$word")
     prior="$word"
   done
-  key="$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
+  key="${RUN_ALL_NATIVE_CONTRACTS:+native}-$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
   cache="$PARTITION_POOL_CLAIMS/$key"
   if [[ ! -f "$cache" ]]; then
     # No job deadline or inherited pool bound applies to empty fixture suites.
@@ -1232,8 +1239,8 @@ JOB_SET="$ROOT/tools/ci-job-set"
 
 suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by directory or every file
   local wf="$1" mode="${2-directories}" major="${3-}" dir="$TMP/owner-blocks" f shard cond wd run word
-  local PARTITION_RUNNER_OS=Linux os=ubuntu-latest excluded
-  [[ "$major" != 3 ]] || { PARTITION_RUNNER_OS=macOS; os=macos-latest; }
+  local PARTITION_RUNNER_OS=Linux PARTITION_NATIVE=false os=ubuntu-latest excluded native=""
+  [[ "$major" != 3 ]] || { PARTITION_RUNNER_OS=macOS; PARTITION_NATIVE=true; os=macos-latest; native="$POOL/tools/macos-test-contracts"; }
   excluded="$(excluded_shards "$wf" "$os")"
   cp "$wf" "$PART/.github/workflows/skill-tests.yml"
   split_run_blocks "$wf" "$dir"
@@ -1245,7 +1252,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       # Bash's version array is readonly. This disposable runner copy injects
       # the major version to exercise linear's actual roster branch on Linux.
       sed 's/${BASH_VERSINFO\[0\]}/${PARTITION_BASH_MAJOR}/g' "$f" > "$dir/runner"
-      ( cd "$PART" && PARTITION_BASH_MAJOR="${major:-${BASH_VERSINFO[0]}}" PATH="$SHIM:$PATH" "$BASH" "$dir/runner" ) 2>/dev/null |
+      ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" PARTITION_BASH_MAJOR="${major:-${BASH_VERSINFO[0]}}" PATH="$SHIM:$PATH" "$BASH" "$dir/runner" ) 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
@@ -1391,8 +1398,13 @@ check "ci-job-set selects the shard running each suite for a diff to that suite"
 # direct package mapping in the selector control.
 for major in 4 3; do
   suite_owners "$WORKFLOW" files "$major" > "$TMP/github-platform-owners"
+  grep '^skills/github/tests/' "$UNIV" > "$TMP/github-expected"
+  if [[ "$major" == 3 ]]; then
+    "$ROOT/tools/macos-test-contracts" --filter <"$TMP/github-expected" >"$TMP/github-native-expected" || exit 1
+    mv "$TMP/github-native-expected" "$TMP/github-expected"
+  fi
   check "GitHub suites belong only to orch-rest under Bash $major" \
-    "$(sed -n 's%^skills/github/tests/%orch-rest\tskills/github/tests/%p' "$UNIV")" \
+    "$(sed 's%^%orch-rest\t%' "$TMP/github-expected")" \
     "$(awk -F '\t' '$2 ~ /^skills\/github\/tests\// {print}' "$TMP/github-platform-owners" | sort)"
 done
 GITHUB_SELECT="$(mktemp -d)" || { bad "GitHub selector scratch allocation failed"; exit 1; }
@@ -1403,6 +1415,7 @@ mkdir -p "$GITHUB_SELECT/tools/lib" "$GITHUB_SELECT/skills/github/tests"
 cp "$PART/tools/rust-reads" "$GITHUB_SELECT/tools/rust-reads"
 cp "$ROOT/tools/lib/skill-requirements.awk" "$GITHUB_SELECT/tools/lib/skill-requirements.awk"
 cp "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$GITHUB_SELECT/tools/"
 printf '#!/usr/bin/env bash\n' > "$GITHUB_SELECT/skills/github/tests/pr-view.test.sh"
 git -C "$GITHUB_SELECT" init -q
 git -C "$GITHUB_SELECT" add skills/github/tests/pr-view.test.sh
@@ -1427,6 +1440,7 @@ check "must-fail: routing GitHub back to rest names its unselected orch-rest sui
 # the Slack rows alone, and every other row's selection is the check's above,
 # so the control hands the mutant those rows and wants each of them back.
 mkdir -p "$TMP/owner-tools"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/owner-tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
 cp -R "$ROOT/tools/lib" "$TMP/owner-tools/lib"
 awk '$0 ~ /^    skills\/slack\) want_shard slack ;;$/ { n++; next } { print } END { exit n != 1 }' \
@@ -1463,7 +1477,7 @@ macos_excluded_shards() { # macos_excluded_shards <workflow>
   excluded_shards "$1" macos-latest
 }
 linux_only_shards() { # linux_only_shards <ci-job-set>
-  sed -n 's/^LINUX_ONLY_SHARDS="\(.*\)"$/\1/p' "$1" | tr ' ' '\n' | grep . | sort -u
+  "$ROOT/tools/macos-test-contracts" --linux-only-shards | tr ' ' '\n' | grep . | sort -u
 }
 excluded="$(macos_excluded_shards "$WORKFLOW")"
 grep -qx node <<< "$excluded" ||
@@ -1502,9 +1516,9 @@ check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-c
   "$(comm -12 <(queue_fallback_shards "$TMP/queue-linux.yml") <(linux_only_shards "$JOB_SET"))"
 
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
-# Linux runs every shell suite. macOS runs the same files except linear's
-# Bash-4-only suites, whose existing runtime-contract suite runs under Bash 3.
-# The matrix's exclusions must not remove a shell roster on either runner.
+"$ROOT/tools/macos-test-contracts" --check || exit 1
+# Linux runs every shell suite. The native eligibility owner defines the
+# macOS subset. Actual workflow discovery must cover each eligible file once.
 # The roster jobs are the Linux job and the main-push macOS job; the merge
 # queue's macOS legs run a subset of shards and are no roster.
 roster_os() { # WORKFLOW — the os of each roster job's matrix, one per line
@@ -1602,9 +1616,13 @@ for os in ubuntu-latest macos-latest; do
     printf '%s\n' "${f#"$ROOT/"}" >> "$TMP/os-universe"
   done
   sort -o "$TMP/os-universe" "$TMP/os-universe"
+  if [[ "$os" == macos-latest ]]; then
+    "$ROOT/tools/macos-test-contracts" --filter <"$TMP/os-universe" >"$TMP/native-universe" || exit 1
+    mv "$TMP/native-universe" "$TMP/os-universe"
+  fi
   [[ -s "$TMP/os-universe" ]] || { bad "the suite discovery is empty for $os"; continue; }
   os_claims "$WORKFLOW" "$os" "$major" > "$TMP/os-claims"
-  check "every original suite runs exactly once on $os" \
+  check "every eligible suite runs exactly once on $os" \
     "$(cat "$TMP/os-universe")" "$(cat "$TMP/os-claims")"
   printf 'coverage: os=%s suites=%s\n' "$os" "$(wc -l < "$TMP/os-universe" | tr -d ' ')"
   os_claims "$wf_drop" "$os" "$major" > "$TMP/os-drop"

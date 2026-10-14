@@ -459,6 +459,9 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   silent)
     stage_stub "$MW/bin" five '3.2.57(1)-release' 'exit 0' || return 1
     ;;
+  native-provider)
+    stage_stub "$MW/bin" five '3.2.57(1)-release' "$(pass_protocol 0 0)" || return 1
+    ;;
   clean-nonzero)
     stage_stub "$MW/bin" five '3.2.57(1)-release' "$(pass_protocol 0 3)" || return 1
     ;;
@@ -688,5 +691,35 @@ case "$RUNTIMES" in
   bad "the lane names one container runtime, so no row proves a second is reached" "$RUNTIMES"
   ;;
 esac
+
+# The focused native entry must use the host provider, never a container
+# that proves the same grammar on Linux. These rows exercise provider routing;
+# section 2 exercises the real parser grammar.
+for rule in host arguments; do
+  case "$rule" in
+    host) mutate second; argv=(); expected=absent
+      needle='  [ "$PROVIDER_CHECK" = no ] || die native-provider absent' ;;
+    arguments) mutate native-provider; argv=("$MW/world"); expected=arguments
+      needle='  [ "$#" -eq 0 ] || die native-provider arguments' ;;
+  esac
+  RC=0
+  PATH="$MPATH" "$MUTANT" --provider-check ${argv[@]+"${argv[@]}"} >"$W/stdout" 2>"$W/stderr" || RC=$?
+  if [ "$RC" -eq 2 ] && grep -qx "bash32-parse: native-provider=$expected" "$W/stderr"; then
+    ok "native provider refuses $rule"
+  else
+    bad "native provider refuses $rule" "rc=$RC $(cat "$W/stderr")"
+  fi
+  [ "$(grep -Fxc -- "$needle" "$MUTANT")" -eq 1 ] || exit 1
+  awk -v needle="$needle" '$0 == needle { $0 = "  : || { " $0 "; }" } { print }' "$MUTANT" >"$MW/control"
+  ! cmp -s "$MUTANT" "$MW/control" || exit 1
+  chmod +x "$MW/control"
+  RC=0
+  PATH="$MPATH" "$MW/control" --provider-check ${argv[@]+"${argv[@]}"} >"$W/stdout" 2>"$W/stderr" || RC=$?
+  if [ "$RC" -eq 0 ]; then
+    ok "control: removing the $rule refusal defeats its provider oracle"
+  else
+    bad "control: removing the $rule refusal defeats its provider oracle" "rc=$RC $(cat "$W/stderr")"
+  fi
+done
 
 verdict

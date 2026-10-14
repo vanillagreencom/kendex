@@ -19,6 +19,9 @@
 # parsed on its own; § the extractor states how, and what that reaches.
 #
 # Usage: tools/bash32-parse [--list] [DIR...]
+#   --provider-check
+#                 check this parser alone with the host's real Bash 3.2;
+#                 Linux retains the complete covered-tree parse.
 #   no argument   parse the covered set below
 #   DIR...        parse those directories instead, each inside this repository
 #   --list        print the covered set the discovery resolved to
@@ -132,6 +135,8 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of 
     echo "tools/bash32-lint could not list the files to parse; it exited with that status and its own words follow." ;;
   no-files)
     echo "the file list came back empty, so nothing would have been parsed." ;;
+  native-provider)
+    echo "the focused native check requires Bash 3.2 on the host." ;;
   no-bash32)
     echo "no real Bash 3.2 could be reached: 'absent' is a host with neither a Bash 3.2 nor any of the container runtimes this file names, and a list of names is the runtimes that are installed and did not deliver ${IMAGE}, each with its own words below. Install one of those runtimes, or run this on a host whose bash is 3.2." ;;
   short)
@@ -582,6 +587,12 @@ if [ "${1-}" = "--check" ]; then
 fi
 
 LIST_ONLY=no
+PROVIDER_CHECK=no
+if [ "${1-}" = --provider-check ]; then
+  PROVIDER_CHECK=yes
+  shift
+  [ "$#" -eq 0 ] || die native-provider arguments
+fi
 if [ "${1-}" = "--list" ]; then
   LIST_ONLY=yes
   shift
@@ -629,7 +640,7 @@ done
 
 cd -- "$ROOT" || die unenterable "$ROOT"
 
-if [ -z "$dirs" ]; then
+if [ -z "$dirs" ] && [ "$PROVIDER_CHECK" = no ]; then
   roster=""
   status=0
   roster="$("$LINT" --list 2>/dev/null)" || status=$?
@@ -657,7 +668,11 @@ fi
 listing=""
 status=0
 # shellcheck disable=SC2086 # the roster carries one directory per word
-listing="$("$LINT" --files $dirs 2>/dev/null)" || status=$?
+if [ "$PROVIDER_CHECK" = yes ]; then
+  listing="$SELF"
+else
+  listing="$("$LINT" --files $dirs 2>/dev/null)" || status=$?
+fi
 if [ "$status" -ne 0 ]; then
   # shellcheck disable=SC2086 # the roster carries one directory per word
   die_cause listing "$status" "$("$LINT" --files $dirs 2>&1 >/dev/null)"
@@ -722,6 +737,7 @@ for c in $CANDIDATES; do
   fi
 done
 if [ -z "$MODE" ]; then
+  [ "$PROVIDER_CHECK" = no ] || die native-provider absent
   # Each runtime that resolves is asked for the image's version before the
   # tree is handed to it, so one that cannot deliver it is named as that
   # rather than as a pass that answered strangely — and is passed over, not

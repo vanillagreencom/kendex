@@ -42,6 +42,7 @@ ROWS
 # than --event-parity is refused.
 mkdir -p "$TMP/parity/tools"
 cp -R "$ROOT/tools/lib" "$TMP/parity/tools/lib"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/parity/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/parity/tools/rust-reads"
 sed 's/^      macos_shard "\$shards" || macos=false$/&; [ "$event" = merge_group ] || macos=false/' \
   "$JOB_SET" >"$TMP/parity/tools/ci-job-set"

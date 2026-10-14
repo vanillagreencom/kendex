@@ -111,7 +111,7 @@ ORCH='"orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed"
 # exclusions held to the workflow by orch-shard-partition.test.sh.
 macos_shards() { # SHARDS: the macOS-capable members in the same order
   local excluded
-  excluded="$(sed -n 's/^LINUX_ONLY_SHARDS="\(.*\)"$/\1/p' "$JOB_SET" | jq -Rc 'split(" ")')" || return 1
+  excluded="$("$ROOT/tools/macos-test-contracts" --linux-only-shards | jq -Rc 'split(" ")')" || return 1
   jq -ce --argjson excluded "$excluded" '[.[] | select(. as $shard | $excluded | index($shard) | not)]' <<<"$1"
 }
 QUEUE_ALL="$(macos_shards "$ROSTER")"

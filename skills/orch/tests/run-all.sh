@@ -19,6 +19,10 @@
 #   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #
+# RUN_ALL_NATIVE_CONTRACTS, when set, names the repository's eligibility
+# command. It reads discovered suite paths and returns the native subset.
+# Unknown suites refuse before launch. Linux leaves this input unset.
+#
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
 # runs that tree's suites this way. The ALONE list below names this
@@ -282,12 +286,31 @@ SUITES=()
 SUITE_FILES=()
 LATER=()
 LATER_FILES=()
+NATIVE_FILES=''
+if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
+  candidates=()
+  for TEST_DIR in "${TEST_DIRS[@]}"; do
+    for test_file in "$TEST_DIR"/*.sh; do
+      [[ -f "$test_file" && "${test_file##*/}" != run-all.sh ]] || continue
+      wanted "$(basename "$test_file" .sh)" || continue
+      candidates+=("$test_file")
+    done
+  done
+  if [ "${#candidates[@]}" -gt 0 ]; then
+    NATIVE_FILES="$(printf '%s\n' "${candidates[@]}" | "$RUN_ALL_NATIVE_CONTRACTS" --filter)" || exit 2
+  fi
+fi
+PROFILE_SELECTED=0
 for TEST_DIR in "${TEST_DIRS[@]}"; do
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
   wanted "$base" || continue
+  PROFILE_SELECTED=$((PROFILE_SELECTED + 1))
+  if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
+    case $'\n'"$NATIVE_FILES"$'\n' in *$'\n'"$test_file"$'\n'*) ;; *) continue ;; esac
+  fi
   suite="$base"
   [ "${#TEST_DIRS[@]}" -eq 1 ] || suite="$(basename "$(dirname "$TEST_DIR")")--$base"
   if alone "$test_file"; then
@@ -303,6 +326,10 @@ POOLED=${#SUITES[@]}
 RUN=${#SUITES[@]}
 
 if [[ "$RUN" -eq 0 ]]; then
+  if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] && [ "$PROFILE_SELECTED" -gt 0 ]; then
+    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
+    exit 0
+  fi
   if [[ -n "$FILTER" ]]; then
     echo "run-all.sh: no test scripts matched filter '$FILTER' under $TEST_DIR" >&2
   else
@@ -311,6 +338,9 @@ if [[ "$RUN" -eq 0 ]]; then
   exit 1
 fi
 
+# Eligibility belongs to this invocation. A suite's nested fixture runner
+# has its own suite universe and must not inherit this repository profile.
+unset RUN_ALL_NATIVE_CONTRACTS
 JOBS="$(nproc 2>/dev/null)" || JOBS=4
 case "$JOBS" in
   '' | *[!0-9]* | 0) echo "run-all.sh: nproc printed '$JOBS', not a worker count" >&2; exit 1 ;;

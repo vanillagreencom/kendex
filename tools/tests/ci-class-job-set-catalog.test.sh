@@ -66,6 +66,7 @@ smoke=true' "$(catalog_bits "$(SELECT_IN="$READ_WORLD" selection trivial true do
 # as the positive table; the copy must fail at least one of them.
 mkdir -p "$TMP/catalog/tools"
 cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/catalog/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
 catalog_copy="$TMP/catalog/tools/ci-job-set"
 for rule in inputs compiled scope skip proof; do
@@ -99,6 +100,7 @@ done
 # prose included; the control drops that rule.
 mkdir -p "$TMP/standard/tools"
 cp -R "$ROOT/tools/lib" "$TMP/standard/tools/lib"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/standard/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/standard/tools/rust-reads"
 sed '/\[ "\$class:\$docs" != standard:false \] /d' "$JOB_SET" >"$TMP/standard/tools/ci-job-set"
 chmod +x "$TMP/standard/tools/ci-job-set"
@@ -123,7 +125,7 @@ s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legal
 s/if (.*) build = 1/build = 1/|micro|docs/a.md|$READ_PROSE_ROW
 s/if (.*) build = 1/if (path !~ ENVIRON["PROSE"]) build = 1/|micro|tools/x|$TOOL_ROW
 s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
-s/\(ci-aggregate.rust-reads)\)[$]/\1/|standard|tools/ci-job-set.orig|$TOOL_ROW
+s/\(macos-test-contracts..json)\)[$]/\1/|standard|tools/ci-job-set.orig|$TOOL_ROW
 s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$READ_PROSE_ROW
 CONTROLS
 

@@ -195,7 +195,7 @@ check "the PR actually selected no macOS shell shard" 'macos_shards=[]' \
   "$(printf '%s\n' "$prior_record" | grep '^macos_shards=')"
 printf 'read ui/src/proof-fixture.ts\n' >"$ADVANCED_WORLD/tools/tests/base-reader.test.sh"
 git -C "$ADVANCED_WORLD" add tools/tests/base-reader.test.sh
-advanced_expected="$(measured both true true false '["guards-tools","guards-tools-tail"]' '["guards-tools","guards-tools-tail"]')"
+advanced_expected="$(measured both true true false '["guards-tools","guards-tools-tail"]' '["guards-tools"]')"
 advanced_expected="${advanced_expected/cargo_macos=true/cargo_macos=false}"
 check "new base reader retains its untested macOS shard" "$advanced_expected" \
   "$(SELECT_IN="$ADVANCED_WORLD" SELECT_EVENT=merge_group SELECT_MACOS_PROOF="$prior_record" selection micro false "$advanced_path")"

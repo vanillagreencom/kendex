@@ -85,7 +85,7 @@ lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
 build_names() { # SCRIPT — the names its build list declares
   awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
 }
-SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads tools/lib/skill-requirements.awk"
+SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads tools/macos-test-contracts tools/macos-test-contracts.json tools/lib/skill-requirements.awk"
 NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
 pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
@@ -100,6 +100,7 @@ while IFS= read -r p; do
 done <<<"$sources"
 mkdir -p "$TMP/member/tools"
 cp -R "$ROOT/tools/lib" "$TMP/member/tools/lib"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/member/tools/"
 sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
 sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
 chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
@@ -119,6 +120,7 @@ ROWS
 # from the render row.
 mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
 [ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }

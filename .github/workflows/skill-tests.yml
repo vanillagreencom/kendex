@@ -511,6 +511,8 @@ jobs:
     # claude-model-classes.sh, whose core contract rows ask a real kendex
     # tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
+      # REVISIT(D026): one profile serves every real macOS battery invocation.
+      RUN_ALL_NATIVE_CONTRACTS: ${{ matrix.os == 'macos-latest' && format('{0}/tools/macos-test-contracts', github.workspace) || '' }}
       RUN_ALL_REVIEW_SECS: ${{ matrix.os == 'macos-latest' && '600' || '300' }}
       RUN_ALL_MARGIN_PERCENT: '125'
       RUN_ALL_SHARD: ${{ matrix.shard }}
@@ -662,6 +664,7 @@ jobs:
           EOF
           [ "$n" -eq 2 ] || { echo "the probe table read $n rows, not 2"; exit 1; }
           tools/bash32-lint "$dir"
+          tools/bash32-parse --provider-check || exit $?
           exit "$fail"
 
       - name: shard names agree with the matrix
@@ -862,7 +865,7 @@ jobs:
 
       - name: GitHub suites
         if: matrix.shard == 'orch-rest'
-        run: bash skills/orch/tests/run-all.sh --battery skills/github/tests --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test
+        run: bash skills/orch/tests/run-all.sh --battery skills/github/tests --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test --alone native-contracts.test
 
 
       # A failure is announced twice: inline where it happened, and in a
@@ -933,15 +936,9 @@ jobs:
         if: matrix.shard == 'guards-scans'
         run: tools/bash32-lint
 
-      # One parse pass under a real Bash 3.2 over that roster and tools/. On
-      # the Linux leg the shell comes from the bash:3.2 image under the
-      # runner's Docker; on the macOS leg the PATH set above already leads to
-      # /bin/bash 3.2 and no container is started. `tools/guard --full` also
-      # runs this lane when explicitly requested. Development completion uses
-      # a range and leaves this parse to CI. These are independent entries of one
-      # matrix with no ordering between them, so neither is guaranteed to run
-      # first; the Linux one is the faster by the figures above and normally
-      # answers sooner.
+      # Linux parses the complete covered roster through the pinned real
+      # Bash 3.2 image. The native provider probe checks the Mac interpreter.
+      # Local tools/guard --full also runs the complete parse.
       - name: bash32-parse (every covered tree parses under Bash 3.2)
         if: matrix.shard == 'guards-scans'
         run: tools/bash32-parse
@@ -1298,7 +1295,7 @@ jobs:
             fi
             set --
             case "$x" in
-              github) set -- --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test ;;
+              github) set -- --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test --alone native-contracts.test ;;
               harness-ci) set -- --alone wiring-errors.test ;;
               orch) set -- --alone open-terminal-lane --alone oversee_watch_lifecycle ;;
               reviewer) set -- --alone mutation-stability.test ;;
@@ -1542,8 +1539,8 @@ jobs:
       matrix:
         shard: *skill-suite-shards
         os: [macos-latest]
-        # node and pi-claude-bridge contain no shell suites, and
-        # Both linear control halves run the linear suites, which need Bash 4.
+        # The native eligibility owner declares unsupported and empty shards.
+        # The partition proof holds these exclusions to its actual native files.
         exclude:
           - os: macos-latest
             shard: node
@@ -1553,6 +1550,16 @@ jobs:
             shard: linear-controls-a
           - os: macos-latest
             shard: linear-controls-b
+          - os: macos-latest
+            shard: orch-oversee-watch
+          - os: macos-latest
+            shard: worktree-restack
+          - os: macos-latest
+            shard: guards-scans
+          - os: macos-latest
+            shard: guards-tools-tail
+          - os: macos-latest
+            shard: guards-commit-tail
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
@@ -1572,7 +1579,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "worktree", "worktree-restack", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout

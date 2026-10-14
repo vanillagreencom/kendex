@@ -208,14 +208,27 @@ run_table() {
 
 VIEW="pr view --json number,state"
 
+native_view_contract() {
+  run_table "native bounded children" "\
+the auth preflight outliving its bound exits 124|auth-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|auth
+a selected token's user probe outliving the bound exits 124 too|env:GH_TOKEN=ghs_VALIDBOT123 api-user-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|user,user
+gh pr view outliving its bound exits 124|pr:hang env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=0.2|json|124|status=gh_timeout|0|auth,$VIEW
+op outliving its bound exits 3 with the timeout status and the auth preflight's detail|file:bot-op auth:fail op:slow env:KENDEX_GITHUB_OP_TIMEOUT=0.2|json|3|status=token_resolution_timeout detail=gh auth failed|1|auth
+"
+}
+if [[ "${1-}" == --native ]]; then
+  native_view_contract
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+native_view_contract
+
 run_table "the bounds, the ladder and the answer" "\
 a branch with no PR exits 1 with the structured status and gh's detail|pr:no_pr|json|1|status=no_pr detail=no pull requests found for branch \"feature/no-pr\"|0|auth,$VIEW
 gh pr view refusing the credential exits 3 with the auth status|pr:auth|json|3|status=auth_error detail=HTTP 401: Bad credentials|0|auth,$VIEW
-the auth preflight outliving its bound exits 124|auth-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|auth
 a leading-zero auth bound is read|env:KENDEX_GITHUB_AUTH_TIMEOUT=08|json|0|pr=42|0|auth,$VIEW
-a selected token's user probe outliving the bound exits 124 too|env:GH_TOKEN=ghs_VALIDBOT123 api-user-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|user,user
 a selected token ignores a failing keyring status|env:GH_TOKEN=ghs_VALIDBOT123 status:fail|json|0|pr=42|0|user,$VIEW
-gh pr view outliving its bound exits 124|pr:hang env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=0.2|json|124|status=gh_timeout|0|auth,$VIEW
 a leading-zero gh bound is read|env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=09|json|0|pr=42|0|auth,$VIEW
 an unreadable auth bound is refused by name before any call, exit 2|env:KENDEX_GITHUB_AUTH_TIMEOUT=2.55|json|2|status=bad_timeout names=KENDEX_GITHUB_AUTH_TIMEOUT detail=2.55|0|-
 an unreadable op bound too|env:KENDEX_GITHUB_OP_TIMEOUT=2.55|json|2|status=bad_timeout names=KENDEX_GITHUB_OP_TIMEOUT detail=2.55|0|-
@@ -224,7 +237,6 @@ an inherited op reference in GH_TOKEN is tried once, then the keyring answers|en
 the same in GITHUB_TOKEN|env:GITHUB_TOKEN=op://vault/github/user|json|0|pr=42|1|auth,$VIEW
 a leading-zero op bound is read|file:bot-op token-only op:ok env:KENDEX_GITHUB_OP_TIMEOUT=08|json|0|pr=42|1|user,$VIEW
 a reference op cannot resolve, with no keyring behind it, exits 3|file:bot-op auth:fail op:fail|json|3|status=token_resolution_failed detail=1Password item not available|1|auth
-op outliving its bound exits 3 with the timeout status and the auth preflight's detail|file:bot-op auth:fail op:slow env:KENDEX_GITHUB_OP_TIMEOUT=0.2|json|3|status=token_resolution_timeout detail=gh auth failed|1|auth
 the plain answer|-|json|0|pr=42|0|auth,$VIEW
 "
 

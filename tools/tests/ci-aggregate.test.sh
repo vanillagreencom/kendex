@@ -620,6 +620,7 @@ ROWS
 # Restoring the old subset must omit the orch-rest leg before either event.
 mkdir -p "$TMP/subset/tools"
 cp -R "$ROOT/tools/lib" "$TMP/subset/tools/lib"
+cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/subset/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/subset/tools/rust-reads"
 sed '/^queue=""$/,/^fi$/s/for shard in \$SHARDS/for shard in orch-terminal orch-oversee-succeed guards-tools/' \
   "$JOB_SET" >"$TMP/subset/tools/ci-job-set"

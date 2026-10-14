@@ -15,6 +15,48 @@ set -euo pipefail
 # shellcheck source=lib/pr-merge-world.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pr-merge-world.sh"
 
+# The old-call control waits for a later jq call to prove gh closed the
+# request reader. Its marker keeps stderr inside the assertion's lifetime.
+native_merge_contract() {
+  local WORKFLOW_CHECK="view:state,view:mergeable,checks,view:head,view:reviews"
+  command -v jq >"$TMPDIR/bin/real-jq"
+  cat >"$TMPDIR/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+real_jq=$(cat "${0%/*}/real-jq")
+if [[ -n "${STUB_JQ_REQUEST_MARKER:-}" ]]; then
+    if [[ "${1:-}" == -cn && "${2:-}" == --argjson && "${3:-}" == ids ]]; then
+        if [[ "${STUB_JQ_REQUEST_ASYNC:-false}" == true ]]; then
+            while [[ ! -f "$STUB_JQ_REQUEST_MARKER.released" ]]; do sleep 0.01; done
+        fi
+        rc=0
+        # jq must report EPIPE instead of dying on SIGPIPE on this platform.
+        (trap '' PIPE; sleep 0.1; exec "$real_jq" "$@") || rc=$?
+        : >"$STUB_JQ_REQUEST_MARKER.done"
+        exit "$rc"
+    fi
+    if [[ -f "$STUB_JQ_REQUEST_MARKER.waiting" ]]; then
+        : >"$STUB_JQ_REQUEST_MARKER.released"
+        while [[ ! -f "$STUB_JQ_REQUEST_MARKER.done" ]]; do sleep 0.01; done
+        rm -f -- "$STUB_JQ_REQUEST_MARKER.waiting" "$STUB_JQ_REQUEST_MARKER.done" "$STUB_JQ_REQUEST_MARKER.released"
+    fi
+fi
+exec "$real_jq" "$@"
+EOF
+  chmod +x "$TMPDIR/bin/jq"
+  mutant_copy workflow-request-pipe '                if ! request=$(jq -cn --argjson ids "$nodes" '\''{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}'\'') \' '                if ! files=$(gh api graphql --input <(STUB_JQ_REQUEST_ASYNC=true jq -cn --argjson ids "$nodes" '\''{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}'\'') 2>/dev/null) \' lib/ci-run-correlation.sh >/dev/null
+  run_table "the native closed request pipe" "\
+source metadata that cannot be read refuses|checks:workflow-green workflow:source-unreadable env:STUB_JQ_REQUEST_MARKER=$TMPDIR/workflow-request|check|0|merge=false transient=true $OPEN runs=- issues=[ci_fetch_failed: Required workflow evidence unavailable] warnings=[] $KEYS|blocked;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>|check-mutant:workflow-request-pipe
+"
+  assert_contains "$(cat "$TMPDIR/stderr")" 'jq: error: writing output failed: Broken pipe' 'the old request writer fails on the closed gh input'
+}
+if [[ "${1-}" == --native ]]; then
+  native_merge_contract
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+
 # ci-classify-refusal and orch merge-pr consume the unknown: issue prefix.
 # The cause field distinguishes GitHub's UNKNOWN answer from an unreadable read.
 printf '\n \t\ngh: Server Error (HTTP 502)\nsecond diagnostic\n' >"$TMPDIR/mergeable.err"
@@ -104,35 +146,6 @@ a silent failure names gh and its exit code|state-err:silent4|check|0|merge=fals
 # Required workflow names come from its head run's check suite, not its file
 # name or display name. An unfinished run has only partial job evidence.
 WORKFLOW_CHECK="view:state,view:mergeable,checks,view:head,view:reviews"
-# Only the unreadable-source row delays the request writer. The old-call
-# control waits for a later jq call to prove gh has closed the reader. Its
-# completion marker keeps stderr from arriving after the row.
-command -v jq >"$TMPDIR/bin/real-jq"
-cat >"$TMPDIR/bin/jq" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-real_jq=$(cat "${0%/*}/real-jq")
-if [[ -n "${STUB_JQ_REQUEST_MARKER:-}" ]]; then
-    if [[ "${1:-}" == -cn && "${2:-}" == --argjson && "${3:-}" == ids ]]; then
-        if [[ "${STUB_JQ_REQUEST_ASYNC:-false}" == true ]]; then
-            while [[ ! -f "$STUB_JQ_REQUEST_MARKER.released" ]]; do sleep 0.01; done
-        fi
-        rc=0
-        # jq must report EPIPE instead of dying on SIGPIPE on this platform.
-        (trap '' PIPE; sleep 0.1; exec "$real_jq" "$@") || rc=$?
-        : >"$STUB_JQ_REQUEST_MARKER.done"
-        exit "$rc"
-    fi
-    if [[ -f "$STUB_JQ_REQUEST_MARKER.waiting" ]]; then
-        : >"$STUB_JQ_REQUEST_MARKER.released"
-        while [[ ! -f "$STUB_JQ_REQUEST_MARKER.done" ]]; do sleep 0.01; done
-        rm -f -- "$STUB_JQ_REQUEST_MARKER.waiting" "$STUB_JQ_REQUEST_MARKER.done" "$STUB_JQ_REQUEST_MARKER.released"
-    fi
-fi
-exec "$real_jq" "$@"
-EOF
-chmod +x "$TMPDIR/bin/jq"
-mutant_copy workflow-request-pipe '                if ! request=$(jq -cn --argjson ids "$nodes" '\''{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}'\'') \' '                if ! files=$(gh api graphql --input <(STUB_JQ_REQUEST_ASYNC=true jq -cn --argjson ids "$nodes" '\''{query: "query($ids:[ID!]!) { nodes(ids:$ids) { ... on CheckSuite { id databaseId workflowRun { databaseId runAttempt file { path repositoryName repositoryFileUrl viewerCanReadRepository } } } } }", variables:{ids:$ids}}'\'') 2>/dev/null) \' lib/ci-run-correlation.sh >/dev/null
 mutant_copy workflow-drop '                --argjson repository_id "$repo_id" --arg head "$head" '\''$bindings + [{definition: $definition.rule, consumer: {repository_id: $repository_id, head: $head}, runs: $runs}]'\'') || return 1' '                --argjson repository_id "$repo_id" --arg head "$head" '\''$bindings + [{definition: $definition.rule, consumer: {repository_id: $repository_id, head: $head}, runs: []}]'\'') || return 1' lib/ci-run-correlation.sh >/dev/null
 mutant_copy workflow-unfinished '                | if length == 0 or any(.[]; .status != "completed") then {state: "pending"}' '                | if length == 0 or any(.[]; .status != "completed") then {state: "ready", runs: map({id, suite_id: .check_suite_id})}' lib/ci-run-correlation.sh >/dev/null
 mutant_copy workflow-wrong-suite '                  else {state: "ready", runs: map({id, suite_id: .check_suite_id})} end' '                  else {state: "ready", runs: map({id, suite_id: .repository.id})} end' lib/ci-run-correlation.sh >/dev/null
@@ -194,9 +207,8 @@ a failed optional job with a required job name stays optional|checks:workflow-sa
 a pending optional job with a required job name stays optional|checks:workflow-same-pending checks-exit:8 workflow:same-name|check|0|merge=true transient=false $OPEN runs=500,600 issues=[] warnings=[] $KEYS|mergeable;head-run: 500,600|calls=$WORKFLOW_CHECK auth=<unset>
 a queued optional job with a required job name stays optional|checks:workflow-same-queued checks-exit:8 workflow:same-name|check|0|merge=true transient=false $OPEN runs=500,600 issues=[] warnings=[] $KEYS|mergeable;head-run: 500,600|calls=$WORKFLOW_CHECK auth=<unset>
 an unchanged workflow decision survives a clean control fixture|checks:workflow-green workflow:matched|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] $KEYS|mergeable;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>|same:check-mutant:workflow-harmless
-source metadata that cannot be read refuses|checks:workflow-green workflow:source-unreadable env:STUB_JQ_REQUEST_MARKER=$TMPDIR/workflow-request|check|0|merge=false transient=true $OPEN runs=- issues=[ci_fetch_failed: Required workflow evidence unavailable] warnings=[] $KEYS|blocked;head-run: none|calls=$WORKFLOW_CHECK auth=<unset>|check-mutant:workflow-request-pipe
 "
-assert_contains "$(cat "$TMPDIR/stderr")" 'jq: error: writing output failed: Broken pipe' 'the old request writer fails on the closed gh input'
+native_merge_contract
 
 WORKFLOW_HEAD=737bce791577e140436490e0fed5751bb5144a61
 run_table "required workflows at the exact merge head" "\

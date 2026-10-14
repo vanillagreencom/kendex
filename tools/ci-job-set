@@ -180,12 +180,10 @@ LANES="shell_shards shell_os $JOBS"
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
 SHARDS="review-gate refresh orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge"
-# The shards the main-push matrix never runs on macOS, nothing in them running
-# under its Bash 3.2: node and pi-claude-bridge hold no bash, and both linear
-# control halves run the linear suites, which need Bash 4. Their
-# `exclude:` rows, which tools/tests/orch-shard-partition.test.sh holds to
-# this list. The selector uses them for its macOS runner arithmetic.
-LINUX_ONLY_SHARDS="node pi-claude-bridge linear-controls-a linear-controls-b"
+# The native eligibility owner declares empty and unsupported macOS shards.
+# The ownership proof compares those declarations with actual suite coverage
+# and the workflow matrix. Linux keeps the complete SHARDS roster.
+LINUX_ONLY_SHARDS="$("$TOOLS_DIR/macos-test-contracts" --linux-only-shards)" || exit 2
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
@@ -252,7 +250,7 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 PROSE='\.(md|markdown)$'
 # What defines the lanes: the workflows and actions that run them, and the
 # scripts that select them.
-LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$|tools/lib/skill-requirements\.awk$)'
+LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads|macos-test-contracts|macos-test-contracts\.json)$|tools/lib/skill-requirements\.awk$)'
 # kendex.toml uses the explicit default layout in source/config.rs and
 # source/layout.rs. The release check also reads Git ignore rules. Smoke
 # builds its own catalog in cli_smoke.rs; its compiled inputs come from
