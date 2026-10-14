@@ -857,7 +857,7 @@ new_lane refusals
 lm ask --item ../escape --file "$(text q 'x')"
 assert_eq "$RC=$ERR" "2=lane-mail: item-invalid=../escape" "an item outside its alphabet never reaches a path"
 lm ask --item KEN-1 --file "$TMP_ROOT/absent.txt"
-assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$TMP_ROOT/absent.txt" "an unreadable message file is refused"
+assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$TMP_ROOT/absent.txt resolved=$TMP_ROOT/absent.txt" "an unreadable message file is refused"
 lm ask --item KEN-1
 assert_eq "$RC=$ERR" "2=lane-mail: option-required=--file" "ask requires its message file"
 lm wait --item KEN-1
