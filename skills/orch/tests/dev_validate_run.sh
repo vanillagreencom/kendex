@@ -2454,7 +2454,7 @@ selection_rows() { # SCRIPT [LABEL]
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "proj-selection-$n" CI)"
-    [[ -z "$order" ]] || printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$proj/kendex.settings.toml"
+    sed -i.bak "s/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = \"${order:-review-first}\"/" "$proj/kendex.settings.toml"
     cat > "$proj/local-command" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >> local-launch
