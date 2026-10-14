@@ -235,6 +235,25 @@ cat > "$1/ghostty" <<'STUBEOF'
 exit 0
 STUBEOF
 chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty" "$1/sleep"
+# Synchronous handoff reads use SSH, independently of the terminal prefix.
+# A neutral host has no handoff. Integration rows execute the real judge in
+# an isolated remote worktree, with no control-host state environment.
+cat > "$1/ssh" <<'STUBEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$OT_TMUX_LOG.handoff"
+[[ "$*" == *'workflow-state handoff-standing '* ]] || exit 2
+[[ -z "${OT_HANDOFF_READY_FILE:-}" || -f "$OT_HANDOFF_READY_FILE" ]] || exit 1
+[[ "${OT_HANDOFF_SSH_STATUS:-0}" == 0 ]] || { printf 'ssh-fixture: failed\n' >&2; exit "$OT_HANDOFF_SSH_STATUS"; }
+if [[ -n "${OT_HANDOFF_ANSWER:-}" ]]; then printf '%s\n' "$OT_HANDOFF_ANSWER"; exit 0; fi
+if [[ -n "${OT_HANDOFF_WORKTREE:-}" ]]; then
+  line="${!#}"
+  line="${line//\/srv\/lane/$OT_HANDOFF_WORKTREE}"
+  exec env -i PATH="$PATH" HOME="$OT_HANDOFF_WORKTREE" "$BASH" -c "$line"
+fi
+printf 'workflow-state: handoff-standing=none\n'
+STUBEOF
+chmod +x "$1/ssh"
 }
 
 # Read the remote command from a pane log and remove the two shell-quote

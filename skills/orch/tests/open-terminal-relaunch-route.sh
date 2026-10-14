@@ -37,6 +37,8 @@ source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/lanes-fixture.sh"
 # shellcheck source=lib/open-terminal-stubs.sh
 source "$TEST_DIR/lib/open-terminal-stubs.sh"
+# shellcheck source=lib/question-off.sh
+source "$TEST_DIR/lib/question-off.sh"
 # mutant_scripts and mutate_file, the two halves of each control.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -48,6 +50,16 @@ standard_home home
 OT_STUB_BIN="$TMP_ROOT/ot-bin"
 ot_stub_bin "$OT_STUB_BIN"
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
+# A stop ends the live process, while its saved transcript stays on disk.
+RELAUNCH_PROVIDER="$TMP_ROOT/relaunch-provider"
+cat > "$RELAUNCH_PROVIDER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+"$RELAUNCH_FIXTURE" "$@"
+[[ "$1" != stop ]] || rm -f -- "$RELAUNCH_LIVE"
+[[ "$1" != wait ]] || touch "$RELAUNCH_READY"
+EOF
+chmod +x "$RELAUNCH_PROVIDER"
 # The screen a working claude draws, which pane_harness_up reads as a harness.
 HARNESS_SCREEN="$TMP_ROOT/harness-screen"
 printf 'Working (esc to interrupt)\n' > "$HARNESS_SCREEN"
@@ -60,7 +72,9 @@ HARNESS_BIN="$TMP_ROOT/harness-bin"
 mkdir -p "$HARNESS_BIN"
 cat > "$HARNESS_BIN/claude" <<'EOF'
 #!/usr/bin/env bash
+[[ -z "${RELAUNCH_LIVE:-}" || ! -e "$RELAUNCH_LIVE" ]] || exit 0
 printf '%s\n' "$*" >> "$CLAUDE_LOG"
+[[ -z "${CLAUDE_ARGS_LOG:-}" ]] || printf '%s\0' __run__ "$@" >> "$CLAUDE_ARGS_LOG"
 case " $* " in *' --continue '*) echo 'No conversation found to continue' >&2; exit "$CLAUDE_CONTINUE_RC" ;; esac
 exit 0
 EOF
@@ -73,7 +87,7 @@ RUN_SEQ=0
 # previous run left. SCREEN is the harness screen file, `-` for a pane that
 # never draws one. RUN_ENV holds any further stub settings for the run. Sets
 # OUT, RC and RUN.
-RUN_ENV=() RUN_ARGS=() SEED_LANES='[]' SELECT_KIND=-
+RUN_ENV=() RUN_ARGS=() SEED_LANES='[]' SELECT_KIND=- HANDOFF_CASE=neutral RUN_CMD="" REQUIRE_PREPARED=false
 run_ot() {
   local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
@@ -105,53 +119,80 @@ run_ot() {
     exit 1
   fi
   local -a selection_env=(LANE_HOST_STUB_SELECTION=resume)
+  local -a command_args=(--launch-flags "$flags")
+  [[ -z "$RUN_CMD" ]] || command_args=(--cmd "$RUN_CMD")
+  : > "$RUN/live"
+  : > "$RUN/saved-session"
+  local judge_root="$RUN/judge" handoff_dir
+  if [[ "$HANDOFF_CASE" != neutral ]]; then
+    mkdir -p "$judge_root/clone"
+    git init -q "$judge_root/clone"
+    git -C "$judge_root/clone" config gc.auto 0
+    git -C "$judge_root/clone" config maintenance.auto false
+    git -C "$judge_root/clone" -c user.name=Test -c user.email=test@example.invalid commit -qm seed --allow-empty
+    git -C "$judge_root/clone" worktree add -q "$judge_root/lane" -b lane
+    mkdir -p "$judge_root/lane/.agents/skills/orch"
+    [[ "$HANDOFF_CASE" == judge-missing ]] || ln -s "$SCRIPTS_DIR" "$judge_root/lane/.agents/skills/orch/scripts"
+    orch_fixture_shared_libs "$judge_root/lane/.agents/skills/orch"
+    handoff_dir="$judge_root/lane/tmp"
+    case "$HANDOFF_CASE" in
+      settings | private)
+        handoff_dir="$judge_root/clone/state-remote"
+        if [[ "$HANDOFF_CASE" == settings ]]; then
+          printf '[env]\nORCH_STATE_DIR = "state-remote"\n' > "$judge_root/lane/kendex.settings.toml"
+        else printf 'ORCH_STATE_DIR=state-remote\n' > "$judge_root/lane/.env.local"; fi
+        # The first state location holds no handoff. The judge must search
+        # both, as start's handoff read does, rather than taking one file.
+        mkdir -p "$judge_root/lane/tmp"
+        printf '{}\n' > "$judge_root/lane/tmp/workflow-state-KEN-1.json"
+        ;;
+    esac
+    mkdir -p "$handoff_dir"
+    case "$HANDOFF_CASE" in
+      none) ;;
+      unreadable) printf '{broken\n' > "$handoff_dir/workflow-state-KEN-1.json" ;;
+      resumed) printf '{"handoff":{"at":"2026-10-01T00:00:00Z","resumed_at":"2026-10-01T00:01:00Z"}}\n' > "$handoff_dir/workflow-state-KEN-1.json" ;;
+      *) printf '{"handoff":{"at":"2026-10-01T00:00:00Z","reason":"context","remaining":"Continue work"}}\n' > "$handoff_dir/workflow-state-KEN-1.json" ;;
+    esac
+    selection_env+=(OT_HANDOFF_WORKTREE="$judge_root/lane")
+  fi
   if [[ "$SELECT_KIND" != - ]]; then
     selection_env=(LANE_HOST_STUB_SELECTION= OT_REPLAY_LIB="$TEST_DIR/lib/open-terminal-stubs.sh"
       OT_REPLAY_SCRIPTS="${OPEN_TERMINAL%/*}" OT_REPLAY_RUN="$RUN/inline" OT_REPLAY_HARNESS="$harness"
       OT_REPLAY_KIND="$SELECT_KIND" OT_REPLAY_SANDBOX="$RUN/remote/srv/lane" OT_REPLAY_ITEM=KEN-1)
     mkdir -p "$RUN/inline"
+    [[ "$HANDOFF_CASE" == neutral ]] || selection_env+=(OT_HANDOFF_WORKTREE="$judge_root/lane")
   fi
+  [[ "$REQUIRE_PREPARED" != true ]] || selection_env+=(OT_HANDOFF_READY_FILE="$RUN/ready")
   OUT="$(env LINEAR_TEAM= LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_MAX_PCT=95 ORCH_LANE_ALIASES=eclaude=work ORCH_LANE_COPILOT_POOL="$pool" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host.log" LANE_HOST_STUB_CREATE_LINE="$create_line" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 OT_HARNESS_SCREEN="$screen" "${selection_env[@]}" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
-    "$OPEN_TERMINAL" --state-dir "$RUN/state" --host "$HOST_STUB" --repo o/r --relaunch \
-    --harness "$harness" --lane "$lane" --launch-flags "$flags" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} KEN-1 2>&1)"
+    RELAUNCH_FIXTURE="$HOST_STUB" RELAUNCH_LIVE="$RUN/live" RELAUNCH_READY="$RUN/ready" \
+    "$OPEN_TERMINAL" --state-dir "$RUN/state" --host "$RELAUNCH_PROVIDER" --repo o/r --relaunch \
+    --harness "$harness" --lane "$lane" "${command_args[@]}" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} KEN-1 2>&1)"
   RC=$?
   printf '%s\n' "$OUT" > "$RUN/launcher.out"
 }
 # The remote command the run typed into its ssh session.
-remote() { grep -m1 '^exec bash -lc ' "$RUN/tmux.log" || echo none; }
+remote() {
+  awk '/^exec bash -lc / { copying=1 } copying && /^paste-buffer / { exit } copying { print; found=1 } END { if (!found) print "none" }' "$RUN/tmux.log"
+}
 said() { grep -c -- "$1" <<<"$OUT" || true; }
 launched() { sed -n 's/.*summary launched=\([0-9]*\).*/\1/p' <<<"$OUT"; }
 closed() { grep -c '^kill-window ' "$RUN/tmux.log" || true; }
 status() { "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "KEN-1") | .status] | first // "none"'; }
 recorded() { "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "KEN-1") | "\(.status) \(.harness)"] | first // "none"'; }
-# settled — recorded once the background job has left preparing. The job runs
-# after open-terminal returns, so this polls, 20 seconds at most.
-settled() {
-  local now=""
-  for _ in $(seq 80); do
-    now="$(recorded)"
-    [[ "$now" == preparing* ]] || break
-    sleep 0.25
-  done
-  printf '%s' "$now"
-}
 # prepared_fail RECORDED HARNESS — a relaunch of KEN-1 on HARNESS over a record
 # naming RECORDED whose host answers state=preparing and whose wait then fails.
-# Sets HELD, the record while the job waits at its gate, and SETTLED, the
-# record once the job wrote its outcome.
+# Sets HELD to the record after the failed preparation.
 PREPARING_LINE=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tstate=preparing'
 prepared_fail() {
-  local gate="$TMP_ROOT/gate-$((RUN_SEQ + 1))"
-  RUN_ENV=(LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" LANE_HOST_STUB_WAIT_GATE="$gate" LANE_HOST_STUB_WAIT_STATUS=1)
+  RUN_ENV=(LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" LANE_HOST_STUB_WAIT_STATUS=1)
   run_ot "$1" - "$2"
   RUN_ENV=()
   HELD="$(recorded)"
-  touch "$gate"
-  SETTLED="$(settled)"
 }
 # replay RC — runs the typed remote command against the stub claude, its
 # `--continue` exiting RC, in a sandbox of its own, and prints each claude run
@@ -272,11 +313,10 @@ assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-st
 run_ot - "$HARNESS_SCREEN" codex
 assert_eq "switched=$(said 'harness-switched') resume=$(remote | grep -c 'lane-relaunch.sh codex')" "switched=0 resume=1" \
   "a codex relaunch after a failed claude relaunch over a codex record resumes codex"
-# The same failure on a host still preparing: the background job's preparing
-# and stopped records both still name codex.
+# A preparation failure leaves the previous harness record in place.
 prepared_fail codex claude
-assert_eq "rc=$RC held=$HELD settled=$SETTLED" "rc=0 held=preparing codex settled=stopped codex" \
-  "a claude relaunch handed to the background job whose host wait fails leaves the record naming codex"
+assert_eq "rc=$RC held=$HELD launched=$(launched)" "rc=1 held=running codex launched=0" \
+  "a failed preparation preserves the previous harness record and starts no successor"
 # The same switch the other way reaches codex's start brief, never its
 # promptless resume or the note that resume owes a pasted line.
 run_ot claude "$HARNESS_SCREEN" codex
@@ -323,6 +363,88 @@ assert_eq "rc=$RC failed=$(said '^open-terminal: tmux-failed operation=continuat
   'rc=1 failed=1 account=last-account closed=0' \
   'a failed automatic continuation reports the failed write and retains the surviving window'
 
+echo "=== hosted retirement starts a new session with its brief ==="
+CUSTOM_BRIEF=$'Fresh work: preserve spaces.\nRead the issue.'
+CUSTOM_BRIEF_FILE="$TMP_ROOT/custom-brief"
+printf '%s\n' "$CUSTOM_BRIEF" > "$CUSTOM_BRIEF_FILE"
+custom_case() {
+  local line arg brief=0 runs=0 sandbox replay_rc=0
+  RUN_CMD="claude --model opus --effort high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" RUN_ARGS=(--brief-file "$CUSTOM_BRIEF_FILE")
+  run_ot claude "$HARNESS_SCREEN" claude
+  RUN_CMD="" RUN_ARGS=()
+  sandbox="$RUN/custom-sandbox"
+  mkdir -p "$sandbox"
+  : > "$RUN/claude.log"
+  : > "$RUN/claude-args"
+  line="$(remote)"
+  line="${line/#exec bash -lc /bash -c }"
+  line="${line/cd \/srv\/lane /cd $sandbox }"
+  env -i PATH="$HARNESS_BIN:$PATH" HOME="$RUN" RELAUNCH_LIVE="$RUN/live" \
+    CLAUDE_LOG="$RUN/claude.log" CLAUDE_ARGS_LOG="$RUN/claude-args" CLAUDE_CONTINUE_RC=0 "$BASH" -c "$line" > "$RUN/custom.out" 2>&1 || replay_rc=$?
+  while IFS= read -r -d '' arg; do
+    [[ "$arg" != __run__ ]] || runs=$((runs + 1))
+    [[ "$arg" != "$CUSTOM_BRIEF" ]] || brief=$((brief + 1))
+  done < "$RUN/claude-args"
+  CUSTOM_RESULT="rc=$RC replay=$replay_rc order=$(awk '$1 == "stop" || $1 == "create" { printf "%s%s", sep, $1; sep="," }' "$RUN/host.log") runs=$runs brief=$brief saved=$([[ -f "$RUN/saved-session" ]] && echo yes || echo no)"
+  assert_eq "$CUSTOM_RESULT" 'rc=0 replay=0 order=stop,create runs=1 brief=1 saved=yes' \
+    'a custom relaunch stops before create and runs the exact brief in a fresh session' "$RUN/launcher.out"
+}
+standing_case() {
+  SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
+  STANDING_RESULT="rc=$RC retired=$(said '^open-terminal: session-retired item=KEN-1 harness=codex$') stop=$(grep -c '^stop ' "$RUN/host.log" || true) $(cat "$RUN/inline/replay.out")"
+  assert_eq "$STANDING_RESULT" 'rc=0 retired=1 stop=1 rc=0 runs=1 resume=0 fresh=1 target=0' \
+    'a standing remote handoff starts fresh even with a saved matching transcript' "$RUN/launcher.out"
+  local query=""
+  [[ ! -f "$RUN/tmux.log.handoff" ]] || query="$(cat "$RUN/tmux.log.handoff")"
+  assert_not_contains "$query" "$RUN/state" 'the handoff query sends no caller state directory'
+}
+custom_case
+for HANDOFF_CASE in stands settings private; do standing_case; done
+HANDOFF_CASE=neutral
+# Remote settings and the worktree fallback use the same production judge
+# that start.md calls. Confirmed absence and a resumed record keep native resume.
+for HANDOFF_CASE in none resumed; do
+  SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
+  assert_eq "rc=$RC retired=$(said '^open-terminal: session-retired ') stop=$(grep -c '^stop ' "$RUN/host.log" || true) $(cat "$RUN/inline/replay.out")" \
+    'rc=0 retired=0 stop=0 rc=0 runs=1 resume=1 fresh=0 target=1' 'no standing record keeps resume-or-fresh'
+done
+HANDOFF_CASE=stands REQUIRE_PREPARED=true RUN_ENV=(LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE")
+standing_case
+assert_contains "$(awk '$1 == "create" || $1 == "wait" || $1 == "stop" { printf "%s%s", sep, $1; sep="," }' "$RUN/host.log")" \
+  'create,wait,stop' 'accepted preparation completes before retirement'
+RUN_ENV=() HANDOFF_CASE=neutral REQUIRE_PREPARED=false
+read_refusal_case() { # HANDOFF_CASE|FAILED_OPERATION
+  local row="$1"
+  HANDOFF_CASE="${row%%|*}" RUN_ENV=()
+  case "${row#*|}" in
+    ssh) RUN_ENV=(OT_HANDOFF_SSH_STATUS=255) ;;
+    invalid) RUN_ENV=(OT_HANDOFF_ANSWER='workflow-state: handoff-standing=unknown') ;;
+    recordless) RUN_ENV=(OT_HANDOFF_ANSWER='workflow-state: handoff-standing=stands') ;;
+  esac
+  run_ot codex "$HARNESS_SCREEN" codex
+  assert_eq "rc=$RC launched=$(launched) unreadable=$(said '^open-terminal: handoff-unreadable ') stop=$(grep -c '^stop ' "$RUN/host.log" || true)" \
+    'rc=1 launched=0 unreadable=1 stop=0' "${row#*|} read failure refuses launch"
+}
+for row in 'unreadable|record' 'judge-missing|judge' 'neutral|ssh' 'neutral|invalid' 'neutral|recordless'; do
+  read_refusal_case "$row"
+done
+RUN_ENV=() HANDOFF_CASE=neutral
+stop_refusal_case() { # STOP_STATUS
+  local stop_status="$1"
+  RUN_ENV=(LANE_HOST_STUB_STOP_STATUS="$stop_status")
+  RUN_CMD="claude --model opus --effort high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" RUN_ARGS=(--brief-file "$CUSTOM_BRIEF_FILE")
+  run_ot claude "$HARNESS_SCREEN" claude
+  assert_eq "rc=$RC creates=$(grep -c '^create ' "$RUN/host.log" || true) launched=$(launched)" \
+    'rc=1 creates=0 launched=0' "custom stop exit $stop_status refuses create"
+  RUN_CMD="" RUN_ARGS=() HANDOFF_CASE=stands
+  run_ot codex "$HARNESS_SCREEN" codex
+  assert_eq "rc=$RC launched=$(launched) stopped=$(said '^open-terminal: host-stop-failed ')" \
+    'rc=1 launched=0 stopped=1' "handoff stop exit $stop_status refuses launch"
+  HANDOFF_CASE=neutral
+}
+for stop_status in 1 75; do stop_refusal_case "$stop_status"; done
+RUN_ENV=()
+
 echo "=== controls ==="
 # One mutant per rule. Each keeps the text it edits and removes the behaviour.
 SHIPPED="$OPEN_TERMINAL"
@@ -333,6 +455,28 @@ control() { # NAME OLD NEW [FILE]
   orch_fixture_shared_libs "$TMP_ROOT/ctl-$1/orch"
   mutate_file "$scripts/$file" "$2" "$3"
 }
+control custom-retirement '"$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line"' '"$RELAUNCH" == false && -n "$CMD_TEMPLATE" && -z "$host_line"'
+SAVED_FAIL="$FAIL"; FAIL=0
+custom_case > "$TMP_ROOT/custom-control.out"
+CUSTOM_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
+assert_eq "$CUSTOM_CONTROL" 1 'control: the main custom route keeps the live session and drops its brief'
+control hosted-handoff '    lane_handoff_standing "$3" "" ssh -T -o BatchMode=yes -- "$ssh_target" "$judge"' '    LANE_HANDOFF_STATE=none; false && lane_handoff_standing "$3" "" ssh -T -o BatchMode=yes -- "$ssh_target" "$judge"'
+SAVED_FAIL="$FAIL"; FAIL=0
+HANDOFF_CASE=stands standing_case > "$TMP_ROOT/handoff-control.out"
+HANDOFF_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
+assert_eq "$HANDOFF_CONTROL" 1 'control: the main hosted route resumes the saved full-context transcript'
+control failed-read '    none) return 0 ;;' '    none | unreadable) return 0 ;;'
+SAVED_FAIL="$FAIL"; FAIL=0
+read_refusal_case 'neutral|ssh' > "$TMP_ROOT/read-control.out"
+READ_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
+assert_eq "$READ_CONTROL" 1 'control: treating a failed remote read as absence turns the refusal row red'
+control failed-stop 'host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?' 'host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?; rc=0'
+SAVED_FAIL="$FAIL"; FAIL=0
+stop_refusal_case 1 > "$TMP_ROOT/stop-control.out"
+STOP_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
+assert_eq "$STOP_CONTROL" 2 'control: ignoring failed stops turns both launch refusals red'
+RUN_ENV=() HANDOFF_CASE=neutral
+OPEN_TERMINAL="$SHIPPED"
 control switch '"$LANE_RECORD_VALUE" != "$HARNESS" ]]' '"$LANE_RECORD_VALUE" == "$HARNESS-never" ]]'
 run_ot codex "$HARNESS_SCREEN" claude
 assert_eq "continue=$(remote | grep -c -- '--continue') launched=$(launched)" "continue=1 launched=1" \
@@ -452,8 +596,7 @@ control fields 'if .status == "running" or .prepare.step == "selection" then . e
 run_ot codex - claude
 run_ot - "$HARNESS_SCREEN" codex
 switched="$(said 'harness-switched')"
-prepared_fail codex claude
-assert_eq "switched=$switched held=$HELD settled=$SETTLED" "switched=1 held=preparing claude settled=stopped claude" \
+assert_eq "switched=$switched" "switched=1" \
   "control: a relaunch record that rewrites the harness before it takes names claude and turns the next codex relaunch into a harness switch"
 control close '  tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
   lane_record_write' '  tmux_window_close "$UNTAKEN_PANE" "$title" || true

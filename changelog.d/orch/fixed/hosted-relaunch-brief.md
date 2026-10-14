@@ -1,0 +1,1 @@
+- Hosted relaunches start a fresh session after a handoff or with a custom command, so the new brief runs instead of returning to the previous full-context session.
