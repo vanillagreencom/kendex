@@ -1,0 +1,1 @@
+- The succession handoff template excludes rulings, filing history and Verifying readings from the Progress log. It names the fleet log for rulings and filing history, and tracker items for Verifying readings.

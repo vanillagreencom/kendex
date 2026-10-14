@@ -253,7 +253,7 @@ In flight: [EACH TRACKER ID WITH ONE NEXT ACTION]
 [EACH TEMPORARY OWNER INSTRUCTION, ITS SOURCE, RECORDED TIME AND END EVENT; LINK THE HOME OF A STANDING RULE]
 
 ## Progress log
-[CURRENT SESSION'S OPEN PROGRESS ONLY: ONE LINE PER ACTION WITH ITS TIME, OPERATION, OBSERVED RESULT AND DECISION REASON]
+[CURRENT SESSION'S OPEN PROGRESS ONLY: ONE LINE PER ACTION WITH ITS TIME, OPERATION, OBSERVED RESULT AND DECISION REASON; EXCLUDE RULINGS AND FILING HISTORY (FLEET LOG), AND VERIFYING READINGS (THEIR TRACKER ITEMS)]
 ```
 
 The handoff is a current snapshot. At every rewrite, replace the file, never prepend. Use the exact UTC write time and the writer's fleet generation. For live self-succession, `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. Dead and walled recovery use the existing handoff plus bounded live records, even when the handoff is stale or absent: their callers cannot write a live snapshot. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
