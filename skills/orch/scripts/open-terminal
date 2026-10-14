@@ -2836,7 +2836,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
     stands)
-      [[ "$HOST_RELAUNCH" != true ]] || host_harness_stop || return 1
+      [[ "$HOST_RELAUNCH" != true || "$host_command_restarted" == true ]] || host_harness_stop || return 1
       [[ "$HOST_RELAUNCH" != true ]] || RELAUNCH_HANDOFF_DIR="${LANE_HANDOFF_FILE%/*}"
       ot_message session-retired "item=$1" "harness=$HARNESS"
       RELAUNCH_ROUTE=fresh HOST_SELECTION_FILE=""
@@ -3114,10 +3114,11 @@ host_launch_pending() { # STEP
   local pending
   pending="$(jq -cn --arg line "$host_line" --arg host "$LANE_HOST" --arg step "$1" --arg since "$launched_at" \
     --arg account "$LANE_ENV" --arg harness "$HARNESS" --argjson relaunch "$RELAUNCH" \
-    --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" \
+    --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg command "$CMD_TEMPLATE" \
     --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg session "$LAUNCH_SESSION" \
     '{status: "preparing", host: $host, line: $line, step: $step, since: $since,
-      account: $account, harness: $harness, relaunch: $relaunch}
+      account: $account, harness: $harness, relaunch: $relaunch,
+      command_route: (if $command == "" then "native" else "custom" end)}
       + (if $step == "selection" then {pane: $pane, server: $server, session: $session, model: $model, effort: $effort} else {} end)')" || return 1
   # A selection retry already names a started harness. New invocation flags
   # cannot change its identity while it finishes the same record.
@@ -3146,6 +3147,16 @@ host_launch_resume() {
     ot_message host-launch-mismatch "item=$item" >&2
     return 1
   fi
+  # An older checkpoint has no route tag. Treat it as native so a custom
+  # recovery cannot reuse an already started native harness.
+  if ! jq -e --arg command "$CMD_TEMPLATE" \
+    '(.command_route // "native") == (if $command == "" then "native" else "custom" end)' <<<"$pending" >/dev/null; then
+    [[ "$RELAUNCH" == true ]] || { ot_message host-launch-mismatch "item=$item" >&2; return 1; }
+    host_harness_stop || return 1
+    host_launch_ready completed || return 1
+    host_command_restarted=true
+    return 0
+  fi
   host_line="$(jq -r '.line // empty' <<<"$pending")" || return 1
   host_pending_step="$(jq -r '.step // empty' <<<"$pending")" || return 1
   host_pending_since="$(jq -r '.since // empty' <<<"$pending")" || return 1
@@ -3157,10 +3168,11 @@ host_launch_resume() {
 
 # Only a completed launch or confirmed cleanup can retire its checkpoint.
 host_launch_ready() { # completed|failed
-  local outcome="$1" mail_root="$remote_path"
+  local outcome="$1" mail_root
   case "$outcome" in
     completed) ;;
     failed)
+      mail_root="$remote_path"
       if [[ "${HOST_PANE:-local}" == verb ]]; then
         case "${HOST_PANE_LAUNCH:-unstarted}" in
           unjudged) return 1 ;;
@@ -3693,7 +3705,7 @@ for raw in "${ITEMS[@]}"; do
     break
   fi
   LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" HOST_PANE_LAUNCH=unstarted
-  host_pending_step="" host_line=""
+  host_pending_step="" host_line="" host_command_restarted=false
   if [[ "$LANE_HOST" != local ]]; then
     host_launch_resume || { failed=$((failed + 1)); continue; }
   fi
@@ -3829,7 +3841,7 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$LANE_HOST" != local ]]; then
     # Stop does not remove saved sessions. The custom command below still
     # takes its own fresh route, after create reconnects the stopped harness.
-    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" ]] && ! host_harness_stop; then
+    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restarted" != true ]] && ! host_harness_stop; then
       failed=$((failed + 1))
       continue
     fi

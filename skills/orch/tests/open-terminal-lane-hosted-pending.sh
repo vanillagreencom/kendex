@@ -141,7 +141,7 @@ terminal_case terminal-control wait control
 assert_eq "$TERMINAL_RESULT" "rc=1 creates=1 pending=true" "control: skipping terminal cleanup retains an invalid continuation"
 OPEN_TERMINAL="$PENDING_OT_SHIPPED"
 
-# The real dispatcher refuses the next short call after a provider effect
+# The real dispatcher refuses the next call after a provider effect
 # occupies its pool. The blocked call itself never reaches the provider.
 RECOVERY_PROVIDER="$TMP_ROOT/recovery-provider"
 cat > "$RECOVERY_PROVIDER" <<'STUB'
@@ -155,40 +155,91 @@ rc=0
 "$RECOVERY_STUB" "$@" || rc=$?
 if [[ "$1" == "$RECOVERY_BLOCK_VERB" && "${4:-}" == "$RECOVERY_BLOCK_PATH" && ! -f "$RECOVERY_BLOCKED" ]]; then
   : > "$RECOVERY_BLOCKED"
-  mkdir -p "$HOME/.cache/orch/lane-host-slots/short"
-  : > "$HOME/.cache/orch/lane-host-slots/short/slot.$RECOVERY_OWNER"
+  mkdir -p "$HOME/.cache/orch/lane-host-slots/$RECOVERY_BLOCK_POOL"
+  : > "$HOME/.cache/orch/lane-host-slots/$RECOVERY_BLOCK_POOL/slot.$RECOVERY_OWNER"
 fi
+# Successful retirement releases the accepted session for another create.
+[[ "$1" != stop || "$rc" -ne 0 ]] || rm -f -- "${RECOVERY_CREATED:?}"
 exit "$rc"
 STUB
 chmod +x "$RECOVERY_PROVIDER"
-recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH]
+recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH] [ROUTE] [SCOPE] [STOP]
   local name="$1" harness="$2" verb="$3" path="$4" step="$5" retry_ssh="${7:-neutral}" state env_list first_starts retry_starts record first_queries retry_queries
+  local route="${8:-same}" scope="${9:-fleet}" stop="${10:-0}" pending_query='.lanes[0].prepare' saved_prepare brief replay_line replay_rc=0
+  local fleet_args=() first_args=() retry_args=()
+  local create_line native_env pool=short
   state="$TMP_ROOT/recovery-$name"; mkdir -p "$state/disk/srv/lane" "$state/disk/pi/packages/@vanillagreen/pi-hooks/extensions"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$state/disk/srv/lane/.git"
   printf '%s\n' '{"compaction":{"enabled":false}}' > "$state/disk/pi/settings.json"
   printf '%s\n' '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}' > "$state/disk/pi/packages/@vanillagreen/pi-hooks/package.json"
   printf 'export const f = { context_window: 1 };\n' > "$state/disk/pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
   record="$state/workflow-state-oversee.json"
-  if [[ "$name" == codex-cat* ]]; then
+  fleet_args=(--state-dir "$state")
+  if [[ "$scope" == none ]]; then record="$state/workflow-state-KEN-3241.json"; pending_query='.host_launch'; fleet_args=(); fi
+  if [[ "$name" == codex-cat* && "$scope" == fleet ]]; then
     jq -n '{lanes:[{item:"KEN-3241",harness:"codex",account:"previous",model:"previous-model",effort:"low",status:"stopped"}]}' >"$record"
   fi
-  env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane"$'\t'"remote-prefix=exec bash -lc"$'\t'"pi-root=/pi;$HARNESS_UP"
+  create_line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tpi-root=/pi'
+  [[ "$step" != wait ]] || { create_line+=$'\tstate=preparing'; pool=""; }
+  env_list="HOME=$state/home;ORCH_STATE_DIR=$state;ORCH_OVERSEER_LANES=1;ORCH_LANE_ALIASES=eclaude=work;RECOVERY_STUB=$HOST_STUB;RECOVERY_CREATED=$state/created;RECOVERY_BLOCKED=$state/blocked;RECOVERY_OWNER=$$;RECOVERY_BLOCK_VERB=$verb;RECOVERY_BLOCK_PATH=$path;RECOVERY_BLOCK_POOL=$pool;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=0;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;LANE_HOST_STUB_LOG=$state/calls;LANE_HOST_STUB_DIR=$state/disk;LANE_HOST_STUB_SELECTION=fresh;LANE_HOST_STUB_CREATE_LINE=$create_line;$HARNESS_UP"
   if [[ "$harness" == codex ]]; then env_list+=';flags=-m gpt-6-astra -c model_reasoning_effort=high'
   else env_list+=";ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"; fi
-  run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch KEN-3241
+  native_env="$env_list"
+  if [[ "$route" == native ]]; then
+    brief="route-fixture $name"
+    printf '%s\n' "$brief" > "$state/brief"
+    env_list+=";cmd=codex -m gpt-6-astra -c model_reasoning_effort=high {brief} $COMPACTION_OFF_ALL"
+    first_args=(--brief-file "$state/brief")
+  fi
+  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch ${first_args[@]+"${first_args[@]}"} KEN-3241
+  printf '%s\n' "$OUT" > "$state/first.out"
   first_starts="$(typed "clear; ssh 'lane.example'")"; first_starts="${first_starts:-0}"
   first_queries=0
   [[ ! -f "$RUN/tmux.log.handoff" ]] || first_queries="$(wc -l < "$RUN/tmux.log.handoff" | tr -d '[:space:]')"
-  assert_eq "rc=$RC step=$(jq -r '.lanes[0].prepare.step' "$record") failed=$(awk '$2 == "summary" { for (i=3;i<=NF;i++) if ($i ~ /^failed=/) print $i }' <<<"$OUT")" \
-    "rc=0 step=$step failed=failed=0" "dispatcher busy during $name retains the accepted preparation"
-  if [[ "$name" == codex-cat* ]]; then
+  assert_eq "rc=$RC step=$(jq -r "$pending_query.step" "$record") failed=$(awk '$2 == "summary" { for (i=3;i<=NF;i++) if ($i ~ /^failed=/) print $i }' <<<"$OUT")" \
+    "rc=0 step=$step failed=failed=0" "dispatcher busy during $name retains the accepted preparation" "$state/first.out"
+  if [[ "$name" == codex-cat* && "$scope" == fleet ]]; then
     assert_eq "$(jq -r '.lanes[0] | [.account,.model,.effort] | join(":")' "$record")" \
       "$H/.eclaude:gpt-6-astra:high" 'the started selection replaces the previous launch identity'
     env_list="${env_list/flags=-m gpt-6-astra -c model_reasoning_effort=high/flags=-m gpt-6.1-sol -c model_reasoning_effort=medium}"
   fi
-  rm -f "$state/home/.cache/orch/lane-host-slots/short/slot.$$"
+  saved_prepare="$(jq -c "$pending_query" "$record")"
+  [[ "$route" == same ]] || assert_eq "$(jq -r '.command_route' <<<"$saved_prepare")" "$([[ "$route" == native ]] && echo custom || echo native)" "the $step checkpoint records its command route"
+  rm -f "$state/home/.cache/orch/lane-host-slots/$pool/slot.$$"
   [[ "$retry_ssh" != failed ]] || env_list+=';OT_HANDOFF_SSH_STATUS=255'
-  run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch KEN-3241
+  # Preparation can finish while its caller holds a busy wait checkpoint.
+  [[ "$route" == same ]] || env_list="${env_list/$'\tstate=preparing'/}"
+  if [[ "$route" == custom ]]; then
+    brief="route-fixture $name"
+    printf '%s\n' "$brief" > "$state/brief"
+    env_list+=";cmd=codex -m gpt-6.1-sol -c model_reasoning_effort=medium {brief} $COMPACTION_OFF_ALL"
+    retry_args=(--brief-file "$state/brief")
+  elif [[ "$route" == native ]]; then
+    env_list="$native_env"
+  fi
+  env_list+=";LANE_HOST_STUB_STOP_STATUS=$stop"
+  run_ot "$env_list" ${fleet_args[@]+"${fleet_args[@]}"} --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch ${retry_args[@]+"${retry_args[@]}"} KEN-3241
+  printf '%s\n' "$OUT" > "$state/retry.out"
+  if [[ "$route" != same ]]; then
+    if [[ "$stop" != 0 ]]; then
+      assert_eq "rc=$RC creates=$(grep -c '^create ' "$state/calls") stops=$(grep -c '^stop ' "$state/calls" || true) held=$([[ -f "$state/created" ]] && echo true || echo false) pending=$(jq -c "$pending_query" "$record")" \
+        "rc=1 creates=1 stops=1 held=true pending=$saved_prepare" "failed stop retains the $scope $step checkpoint and accepted session" "$state/retry.out"
+    else
+      assert_eq "rc=$RC order=$(awk '$1 == "create" || $1 == "stop" {print $1}' "$state/calls" | paste -sd: -) pending=$(jq -r "$pending_query == null" "$record")" \
+        "rc=0 order=$([[ "$route" == native ]] && echo stop:)create:stop:create pending=true" "a changed route stops before replacing the $scope $step checkpoint" "$state/retry.out"
+      replay_line="$(grep -m1 '^exec bash -lc ' "$RUN/tmux.log")" || replay_line=""
+      if [[ -n "$replay_line" ]]; then
+        ot_replay_relaunch "$replay_line" "$SCRIPTS_DIR" "$state/replay" codex matching 0 KEN-3241 > "$state/replay-result" || replay_rc=$?
+      else replay_rc=1; fi
+      if [[ "$route" == custom ]]; then
+        assert_eq "rc=$replay_rc delivered=$(jq -Rrs --arg brief "$brief" 'split("\u0000") | map(select(. == $brief)) | length' "$state/replay/harness.log" 2>/dev/null) resume=$(jq -Rrs 'split("\u0000") | map(select(. == "resume")) | length' "$state/replay/harness.log" 2>/dev/null)" \
+          'rc=0 delivered=1 resume=0' "the $scope $step restart runs the requested brief in a fresh harness"
+      else
+        assert_contains "$(cat "$state/replay-result" 2>/dev/null)" 'resume=1 fresh=0 target=1' 'custom-to-native restart keeps native resume-or-fresh with no handoff'
+      fi
+    fi
+    return 0
+  fi
   retry_starts="$(typed "clear; ssh 'lane.example'")"; retry_starts="${retry_starts:-0}"
   retry_queries=0
   [[ ! -f "$RUN/tmux.log.handoff" ]] || retry_queries="$(wc -l < "$RUN/tmux.log.handoff" | tr -d '[:space:]')"
@@ -203,17 +254,44 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH
       'first_queries=1 retry_queries=0 stops=0' 'a saved selection completes without rereading handoff or stopping its harness'
   fi
 }
-while IFS='|' read -r name harness verb path step retry_ssh; do
-  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}"
+while IFS='|' read -r name harness verb path step retry_ssh route scope stop; do
+  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}" "${route:-same}" "${scope:-fleet}" "${stop:-0}"
 done <<'ROWS'
 codex-put|codex|create|--repo|marker
 codex-cat|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection
 codex-cat-ssh|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection|failed
 pi-settings|pi|create|--repo|marker
 pi-carrier|pi|cat|/srv/lane/.pi/settings.json|marker
+route-wait|codex|create|--repo|wait||custom
+route-marker|codex|create|--repo|marker||custom
+route-selection|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom
+route-wait-failed|codex|create|--repo|wait||custom|fleet|1
+route-marker-failed|codex|create|--repo|marker||custom|fleet|1
+route-selection-failed|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|fleet|1
+route-wait-none|codex|create|--repo|wait||custom|none
+route-marker-none|codex|create|--repo|marker||custom|none
+route-selection-none|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|none
+route-selection-none-failed|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection||custom|none|1
+route-native|codex|create|--repo|marker||native
 ROWS
 
 RECOVERY_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-command-route/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-command-route/orch"
+mutate_file "$OPEN_TERMINAL" '(.command_route // "native") == (if $command == "" then "native" else "custom" end)' 'true'
+RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
+recovery_case route-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' neutral custom > "$TMP_ROOT/command-route-control.out"
+RECOVERY_ROUTE_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"
+assert_eq "$RECOVERY_ROUTE_CONTROL" 2 'control: accepting a native checkpoint drops the custom fresh brief'
+OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
+OPEN_TERMINAL="$(mutant_scripts ctl-command-stop/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-command-stop/orch"
+mutate_file "$OPEN_TERMINAL" '    host_harness_stop || return 1' '    true || return 1'
+RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
+recovery_case route-stop-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' neutral custom fleet 1 > "$TMP_ROOT/command-stop-control.out"
+RECOVERY_ROUTE_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"
+assert_eq "$RECOVERY_ROUTE_CONTROL" 1 'control: clearing the checkpoint without successful stop loses recovery'
+OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-selection-handoff/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-selection-handoff/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$host_pending_step" != selection ]] || return 0' '[[ "$host_pending_step" != selection ]] || true'
