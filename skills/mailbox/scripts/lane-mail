@@ -169,7 +169,7 @@ Overseer side:
               ones the watch resolves. Either
               reads no cursor, since no directive is printed, so a cursor
               read that missed refuses neither
-  events --item ITEM [--box to-lane|to-overseer [--after N]]
+  events --item ITEM [--box to-lane|to-overseer [--after N]] [--mark-read]
               print public envelopes of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
               `line` its logical line number and `count` that file's logical
@@ -182,7 +182,10 @@ Overseer side:
               whose `line` is past --after N (0 when not given), in file
               order. Logical numbers survive compaction, so a watcher keeps
               each box's last `line` or `count` and passes it back as N.
-              Moves no cursor and marks nothing: a relay keeps its own record
+              --mark-read is the Jarvis read: local --item overseer with
+              --box to-overseer and no --after. After printing the snapshot,
+              atomically save its logical count in to-overseer.seen for the
+              Slack relay's hold resume. Without it, mark nothing: a relay keeps its own record
               of what it carried, keyed by envelope id, and needs neither
               a line cursor nor an acknowledgement
 
@@ -662,6 +665,7 @@ REPO=""
 HOST=0
 AFTER=""
 EVENT_BOX=""
+MARK_READ=0
 MSGID=""
 TIMEOUT=0
 INTERVAL=5
@@ -713,6 +717,7 @@ while [ "$#" -gt 0 ]; do
     --repo) need_val "$@"; REPO="$2"; shift 2 ;;
     --after) need_val "$@"; AFTER="$2"; shift 2 ;;
     --box) need_val "$@"; EVENT_BOX="$2"; shift 2 ;;
+    --mark-read) MARK_READ=1; shift ;;
     --id) need_val "$@"; MSGID="$2"; shift 2 ;;
     --re) need_val "$@"; MSGID="$2"; shift 2 ;;
     --timeout) need_val "$@"; TIMEOUT="$2"; shift 2 ;;
@@ -807,6 +812,9 @@ for given in $OPTS_GIVEN; do
     --box)
       [ "$VERB" = events ] || refuse option-unknown --box
       case "$EVENT_BOX" in to-lane | to-overseer) ;; *) refuse box-invalid "$EVENT_BOX" ;; esac ;;
+    --mark-read)
+      [ "$VERB:$ITEM:$EVENT_BOX:$HOST" = events:overseer:to-overseer:0 ] || refuse option-unknown --mark-read
+      [ -z "$AFTER" ] || refuse option-conflict '--mark-read,--after' ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in ask | send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
     --thread-ts | --parent)
@@ -2319,6 +2327,12 @@ case "$VERB" in
       lm_terminated "$WORK_DIR/events.raw" "$WORK_DIR/events.jsonl"
       lm_header "$WORK_DIR/events.jsonl"
       lm_objects "$WORK_DIR/events.jsonl" "$EVENT_BOX" "$AFTER" || refuse file-unreadable "$EVENT_FILE"
+      if [ "$MARK_READ" -eq 1 ]; then
+        COUNT="$(lm_count "$WORK_DIR/events.jsonl")" || refuse file-unreadable "$EVENT_FILE"
+        mkdir -p -- "$BOX" || refuse write-failed "$BOX"
+        python3 "$SCRIPT_DIR/lib/lane-mail-store.py" cursor-put "$BOX/to-overseer.seen" "$COUNT" 2>"$WORK_DIR/store.err" ||
+          refuse write-failed "$BOX/to-overseer.seen" "$(cat -- "$WORK_DIR/store.err")"
+      fi
       exit 0
     fi
     lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"

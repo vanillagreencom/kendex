@@ -461,7 +461,7 @@ sk_age_file() {
   python3 -c 'import os, sys, time; t = time.time() - int(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"
 }
 
-# sk_jarvis_read ROOT COUNT — the file the Jarvis session's watch writes after drain.
+# sk_jarvis_read ROOT COUNT: plant the marker for relay-reader cases.
 sk_jarvis_read() { printf '%s\n' "$2" > "$(sk_box "$1")/to-overseer.seen"; }
 
 # sk_age_resume ROOT AT — the last resume moved to an age boundary.

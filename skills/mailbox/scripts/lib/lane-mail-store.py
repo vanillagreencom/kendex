@@ -225,7 +225,7 @@ def read_snapshot(fd, path):
 
 
 def cursor_put(path, count):
-    """Replace the cursor while the caller retains its separate lock inode."""
+    """Atomically replace a line count without replacing any reader lock inode."""
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
         scratch = Path(stream.name)
         try:
@@ -450,6 +450,8 @@ def main():
             print(f"{error.key}\x1f{error.path}")
     elif op == "snapshot":
         snapshot(int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+    elif op == "cursor-put":
+        cursor_put(Path(sys.argv[2]), int(sys.argv[3]))
     elif op == "read":
         try:
             read_mail(Path(sys.argv[2]), *sys.argv[3:])

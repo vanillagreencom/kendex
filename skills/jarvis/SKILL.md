@@ -118,7 +118,7 @@ The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.m
 
 At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints, a `(worktree of [MAIN])` line by `[MAIN]`:
 
-- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer` with the folder as the working directory. Exit 0 is reachable; a mailbox nobody has written yet prints no envelope at exit 0.
+- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer --mark-read` with the folder as the working directory. Read the returned owner notices and asks. The command records this read for the Slack relay's hold resume. Exit 0 is reachable; a mailbox nobody has written yet prints no envelope at exit 0.
 - Anything else is unreachable. Its cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed, such as `command-missing python3` or `file-unreadable`.
 - A folder with no mailbox script but with `.agents/skills/orch/` has an orch older than the mailbox package. Its cause is "refresh needed", and the offer is `kendex refresh` in that folder.
 
