@@ -1518,7 +1518,7 @@ text_reads() { # FILE...
     FNR == 1 { in_agent = 0; reading = 0; block = ""; block_hits = 0; admitted = 0 }
     {
       sub(/\r$/, "")
-      if ($0 == "claude_attached_agents() {") in_agent = 1
+      if ($0 ~ /^claude_attached_agents\(\) \{([[:space:]]*#.*)?$/) in_agent = 1
       hit = ($0 ~ /asks_the_person|transcript_turn_start|transcript_final_line|select\(\.type == "text"\)|\.message\.content.*\.text/)
       forbidden += hit
       quote = sprintf("%c", 39)

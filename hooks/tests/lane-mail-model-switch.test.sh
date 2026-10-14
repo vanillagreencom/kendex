@@ -192,7 +192,7 @@ while IFS='|' read -r preparation launched original override expected_model; do
     else
       deadline=$((SECONDS + 15))
       while ! [[ -f "$LANE/tmp/model-recovery-KEN-3916.log" ]] || \
-        ! rg -q '^lane-relaunch: model-recovery=prepare-failed ' "$LANE/tmp/model-recovery-KEN-3916.log"; do
+        ! grep -q '^lane-relaunch: model-recovery=prepare-failed ' "$LANE/tmp/model-recovery-KEN-3916.log"; do
         [[ "$SECONDS" -lt "$deadline" ]] || break
         sleep 0.05
       done
@@ -347,7 +347,7 @@ CONTROL
     fi
     status=0
     MODEL_CONTROL=1 HOOK_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/control-$rule.log" 2>&1 || status=$?
-    if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/control-$rule.log"; then
+    if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/control-$rule.log"; then
       assert_eq red red "$rule production control rejects the defect"
     else
       assert_eq "$status" red "$rule production control must fail"
@@ -375,7 +375,7 @@ Path(target).write_text(changed)
 CONTROL
     status=0
     MODEL_CONTROL=1 MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
-    if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/relaunch-$rule.log"; then
+    if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/relaunch-$rule.log"; then
       assert_eq red red "$rule recovery control rejects the defect"
     else
       assert_eq "$status" red "$rule recovery control must fail"
@@ -395,7 +395,7 @@ Path(target).write_text(changed)
 CONTROL
   status=0
   MODEL_CONTROL=1 COMPANION_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" > "$TMP_ROOT/companion-control.log" 2>&1 || status=$?
-  if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/companion-control.log"; then
+  if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/companion-control.log"; then
     assert_eq red red 'missing judge production control rejects the defect'
   else
     assert_eq "$status" red 'missing judge production control must fail'

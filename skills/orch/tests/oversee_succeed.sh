@@ -596,7 +596,7 @@ for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2;
 # hands to the successor, here that none runs on the fleet state
 # (oversee_succeed_watch.sh holds the handover itself).
 assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|; s/watch-started .*/watch-started/' | tr '\n' ';')|$(recorded claude)" \
-  "0 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=account-config;${UNOBSERVED_LINE}oversee-succeed: watch-started;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
+  "0 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=account-config;${UNOBSERVED_LINE}oversee-succeed: watch-started;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
   "success in the caller's own pane: successor at the base index, caller window gone"
 
 # The record that succession wrote before the successor's first turn, over the
@@ -610,14 +610,14 @@ assert_eq "runtime=$(orec runtime) generation=$(orec generation) account=$(orec 
 # built with, and no pending successor: the one this launch wrote before its
 # window opened is the session the record now names.
 assert_eq "harness=$(orec harness) home=$(orec home) model=$(orec model) effort=$(orec effort) cwd=$(orec cwd) pending=$(orec pending)" \
-  "harness=claude home=$H/.claude model=fable effort=high cwd=$(tm display-message -p -t "$SUCC_REC_PANE" '#{pane_current_path}') pending=none" \
+  "harness=claude home=$H/.claude model=claude-fable-5-1 effort=high cwd=$(tm display-message -p -t "$SUCC_REC_PANE" '#{pane_current_path}') pending=none" \
   "the successor record carries its launch identity and drops the pending successor"
 
 # The successor's own record carries the line it was launched with, which a
 # later dead-overseer relaunch replays. The pending line written before the
 # window opened is oversee_succeed_record.sh's row.
 assert_eq "$(recorded_line)" \
-  "$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
+  "$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "a succession records the line it launched, for a later dead-overseer relaunch"
 # The succession's context arm, run from outside the caller's pane on the
 # reading the turn-end hook hands it: a caller past the context mark on an
@@ -627,7 +627,7 @@ assert_eq "$(recorded_line)" \
 new_caller "$MARK"
 run_succeed walkcontext 'claude:fable:high' -- --dangerously-skip-permissions
 assert_eq "$RC|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "0|no|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;$BRIEF;" \
+  "0|no|1|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;$BRIEF;" \
   "a caller past the context mark with account room hands over to a successor on that mark"
 WALKCTL="$(mutant_scripts walkctl oversee-succeed)" || exit 1
 mutate_file "$WALKCTL/oversee-succeed" '  elif [[ "$CONTEXT_STATE" == due ]]; then' '  elif false; then'
@@ -748,7 +748,7 @@ claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed same-harness-restricted 'claude:fable:high' -- \
   --model caller-model --effort low --permission-mode dontAsk --verbose
 assert_eq "$RC|$(overseers)|$(recorded claude)" \
-  "0|1|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--permission-mode;dontAsk;--verbose;$BRIEF;" \
+  "0|1|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;--permission-mode;dontAsk;--verbose;$BRIEF;" \
   "a same-harness named entry preserves the restricted permission spelling"
 ENTRY_SAME_LINE="$(recorded_line)"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
@@ -764,7 +764,7 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-to-claude 'claude:fable:hig
   --dangerously-bypass-approvals-and-sandbox --verbose
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;$CLAUDE_COMPACT;$BRIEF;|none" \
+  "0|1|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;--dangerously-skip-permissions;$CLAUDE_COMPACT;$BRIEF;|none" \
   "a codex caller picking claude carries claude's permission word and no codex word, its update setting included"
 ENTRY_CLAUDE_LINE="$(recorded_line)"
 
@@ -919,7 +919,7 @@ codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 new_caller "$MARK"
 run_succeed callerflags '' -- --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(overseers)|$(recorded claude)" \
-  "0|1|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;" \
+  "0|1|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;--model;claude-fable-5-1;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;" \
   "the caller entry carries the caller's model, effort and permission words whole"
 new_caller "$MARK"
 run_succeed attachedcaller '' -- --model=sonnet --effort high --permission-mode bypassPermissions --verbose
@@ -947,7 +947,7 @@ roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joi
     "$(launch_choice_effort "$1" "$words" '')"
 }
 assert_eq "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)|$(roundtrip copilot claude-fable-5.1 high)" \
-  "fable;high|gpt-6-astra;high|grok-5;|sonnet;high|claude-fable-5.1;high" \
+  "claude-fable-5-1;high|gpt-6-astra;high|grok-5;|sonnet;high|claude-fable-5.1;high" \
   "every row's written words read back as the model and effort they were written from"
 # A claude successor on the sonnet or haiku alias is written with the model id,
 # which no ANTHROPIC_DEFAULT_*_MODEL pin moves; another harness keeps its word.
@@ -1032,7 +1032,7 @@ new_caller "$UNDER_MARK"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed headroom 'claude:fable:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "account headroom under the trigger: succession fires under the context mark, on the picked lane"
 
 # The empty preference keeps the caller's own harness and passes no model or
@@ -2773,7 +2773,7 @@ HEADROOM_PCT=60 run_succeed headroomset 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a non-default trigger is read: 50 headroom fires the account mark at 60"
 
 # The trigger's own boundary, caller side. `at or below` is the documented
@@ -2783,7 +2783,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed calleratbound 'claude:fable:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "caller at exactly the trigger fires the account mark"
 
 new_caller "$UNDER_MARK"
@@ -2819,7 +2819,7 @@ run_succeed defaultfloor 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "the shipped default opens the successor on a candidate at 7 percent headroom"
 
 # The same boundary on the pick side: the only candidate sits exactly at the
@@ -2839,7 +2839,7 @@ run_succeed pickabovebound 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a candidate one percent above the trigger is chosen"
 
 # An account nothing could measure is its own state, never a healthy one. With
@@ -2950,7 +2950,7 @@ run_succeed matchedbucket 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a spent window scoped to the model this overseer runs fires the account mark"
 
 # The model reaches the account mark on every claude tier, not only the ones
@@ -3010,7 +3010,7 @@ run_succeed bindingfloor 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a lane with room for the entry's model and none outside it is opened on"
 
 # Which reading the pick is held to is lib/lane-context.sh's answer, because it
@@ -3142,7 +3142,7 @@ succeed_shim() {
 new_caller "$MARK"
 succeed_shim shim 'claude:fable:high'
 assert_eq "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=account-config|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;|none" \
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=account-config|$BIN/4claude|lane=;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;|none" \
   "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix"
 
 # A successor stopped at a folder-trust dialog is reported as that, with the
@@ -3211,7 +3211,7 @@ RC=0
 OUT="$(exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.$QLANE" \
   "$TMP_ROOT/succeed-env" quoted 'claude:fable:high' 2>&1)" || RC=$?
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.$QLANE;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|lane=$H/.$QLANE;-n;overseer;--model;claude-fable-5-1;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
   "a lane directory carrying an apostrophe is quoted for the pane shell and reaches the harness"
 
 # ── The account the pane is really on ───────────────────────────────────────
@@ -3468,7 +3468,7 @@ new_caller "$MARK"
 walled_world
 run_succeed walledflags '' --walled-pane "$CALLER_PANE" -- --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(recorded claude)|$(recorded codex)" \
-  "0|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;|none" \
+  "0|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;--model;claude-fable-5-1;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;|none" \
   "--walled-pane's caller entry keeps this session's own model, effort and permission words"
 
 # The one account this recovery may never open on is the one it is recovering

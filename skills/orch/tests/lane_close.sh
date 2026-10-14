@@ -1689,6 +1689,7 @@ for name in ("lane_record_write", "host_launch_pending"):
 pathlib.Path(sys.argv[2]).write_text("\n".join(parts))
 PY
 selection_state() ( # [WRITERS] [STEP]
+  source "$TEST_DIR/../scripts/lib/lane-launch.sh"
   WORKFLOW_STATE="$SCRIPTS/workflow-state"
   LANE_HOST=/host LANE_ENV=CODEX_HOME=/lane HARNESS=codex RELAUNCH=false
   FLEET=true RECORD_MODE="${SELECTION_RECORD_MODE:-launch}" wt_id=KEN-1 title=KEN-1 remote_path="$MAIL_ROOT"

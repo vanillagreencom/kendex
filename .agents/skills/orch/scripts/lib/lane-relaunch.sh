@@ -79,12 +79,12 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
 # starting this outside the predecessor's process group. Stop first: checkout,
 # account or launch preparation failure must never keep fallback work alive.
 lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
-  local record="$1" state_dir="$2" scripts="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
+  local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
   fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),
     (.launch.pid // ""), (.launch.start // ""), (.wake.pid // ""),
     (.wake.start // ""), (.account // "")] | join("\u001f")' <<<"$record")" || return 1
   IFS=$'\x1f' read -r item host harness pane pid start wake_pid wake_start account <<<"$fields"
-  claim="$("$scripts/workflow-state" --state-dir "$state_dir" update-report oversee '
+  claim="$("$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update-report oversee '
     first(.lanes[]? | select(.item == $item)) as $current
     | if $current.launch != $record.launch or $current.launched_at != $record.launched_at
         or $current.session_id != $record.session_id or $current.model_check.session_id != $session
@@ -107,13 +107,13 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
       return 1
     }
   else
-    out="$(ORCH_LANE_HOST="$host" "$scripts/lane-host" stop --item "$item" --harness "$harness")" || return 1
+    out="$(ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" stop --item "$item" --harness "$harness")" || return 1
     [[ "$out" =~ ^stopped\ item=([^\ ]+)\ processes=([0-9]+)$ && "${BASH_REMATCH[1]}" == "$item" ]] || return 1
   fi
-  "$scripts/workflow-state" --state-dir "$state_dir" update oversee \
+  "$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update oversee \
     '(.lanes[] | select(.item == $item and .launched_at == $launch)) |= (.status = "stopped")' \
     --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
-  lane_recovery_args "$record" "$account" "$state_dir" "$scripts/open-terminal" model-switched || {
+  lane_recovery_args "$record" "$account" "$state_dir" "$SCRIPT_DIR/open-terminal" model-switched || {
     printf 'lane-relaunch: model-recovery=prepare-failed item=%s cause=%s\n' "$item" "$LANE_RECOVERY_CAUSE" >&2
     return 1
   }

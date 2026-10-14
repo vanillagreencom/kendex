@@ -26,6 +26,8 @@ SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # reaches the line without this file spelling it.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$TEST_DIR/../scripts/lib/lane-launch.sh"
+# shellcheck source=../scripts/lib/lane-state.sh
+source "$TEST_DIR/../scripts/lib/lane-state.sh"
 # The env words a rendered line opens with, clearing the launching session's
 # identity (LANE_LAUNCH_SCRUB).
 printf -v SCRUB_ENV -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
@@ -43,7 +45,9 @@ LEAD="${LEAD% }"
 # shellcheck source=../scripts/lib/lane-context.sh
 source "$TEST_DIR/../scripts/lib/lane-context.sh"
 
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo "oversee-succeed-record: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee-succeed-record: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee-succeed-record: scratch=resolve-failed" >&2; exit 1; }
 SOCK="oversee-succeed-record-$$"
 cleanup() {
   [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
@@ -1018,7 +1022,12 @@ for outcome in dialog missing-model; do
   assert_eq "$RC|$ORIGINAL_LISTED|$(jq -r '.overseer | [.model, .effort, .launch_line] | join("|")' "$FLEET_STATE")" \
     "1|0|claude-fable-5-1|high|$ORIGINAL_LINE" \
     "failed $outcome recovery leaves the fallback stopped and retains the original-model record" "$TMP_ROOT/err"
-  assert_eq "$(tm display-message -p -t "$RECOVERY_PANE" '#{pane_current_command}')" sh \
+  pane_fields="$(tm display-message -p -t "$RECOVERY_PANE" '#{pane_dead} #{pane_current_command} #{pane_pid}')"
+  read -r pane_dead pane_command pane_pid <<<"$pane_fields"
+  shell_rc=0 program_rc=0
+  is_bare_shell "$pane_command" || shell_rc=$?
+  pane_runs_program "$pane_pid" || program_rc=$?
+  assert_eq "$pane_dead|$shell_rc|$program_rc" '0|0|1' \
     "failed $outcome recovery retains an empty shell for dead-session retry"
 done
 rm -f -- "$TMP_ROOT/verify-dialog"

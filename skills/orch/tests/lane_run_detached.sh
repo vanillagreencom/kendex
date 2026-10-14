@@ -98,7 +98,7 @@ p.write_text(changed)
 CONTROL
   status=0
   DETACHED_CONTROL=1 LIB_UNDER_TEST="$control/lane-launch.sh" "$BASH" "${BASH_SOURCE[0]}" > "$TMP_ROOT/control.log" 2>&1 || status=$?
-  if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/control.log"; then pass 'omitted group separation control fails'; else fail 'omitted group separation control fails'; fi
+  if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/control.log"; then pass 'omitted group separation control fails'; else fail 'omitted group separation control fails'; fi
   for dependency in library perl; do
     control="$TMP_ROOT/control-$dependency/orch/scripts/lib"
     mkdir -p "$control" "$TMP_ROOT/control-$dependency/github/scripts/lib"
@@ -121,7 +121,7 @@ p.write_text(changed)
 CONTROL
     status=0
     DETACHED_CONTROL=1 LIB_UNDER_TEST="$control/lane-launch.sh" "$BASH" "${BASH_SOURCE[0]}" > "$TMP_ROOT/control-$dependency.log" 2>&1 || status=$?
-    if [[ "$status" != 0 ]] && rg -q '^  FAIL ' "$TMP_ROOT/control-$dependency.log"; then pass "$dependency failure reported as success control fails"; else fail "$dependency failure reported as success control fails"; fi
+    if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/control-$dependency.log"; then pass "$dependency failure reported as success control fails"; else fail "$dependency failure reported as success control fails"; fi
   done
 fi
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"

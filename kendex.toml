@@ -71,6 +71,7 @@ hooks = [
   "reviewer-stop-check",
   "dev-stop-check",
   "lane-mail-check",
+  "lane-mail-model-switch",
   "lane-mail-deliver",
   "lane-mail-halt",
   "session-start-row",

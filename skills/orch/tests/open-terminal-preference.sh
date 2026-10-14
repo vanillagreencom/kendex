@@ -168,9 +168,9 @@ done
 printf '%s\n' \
   'flags|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high' \
   'cmd|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high' \
-  'flags||claude|fable|claude:fable:high' \
-  'flags|--permission-mode dontAsk|claude|fable|claude:fable:high' \
-  'flags|--dangerously-skip-permissions --permission-mode dontAsk|claude|fable|claude:fable:high' \
+  'flags||claude|claude-fable-5-1|claude:fable:high' \
+  'flags|--permission-mode dontAsk|claude|claude-fable-5-1|claude:fable:high' \
+  'flags|--dangerously-skip-permissions --permission-mode dontAsk|claude|claude-fable-5-1|claude:fable:high' \
   > "$TMP_ROOT/permission-rows"
 expected_source_bypass='--dangerously-skip-permissions'
 while IFS='|' read -r mode flags want model entry; do
@@ -315,13 +315,13 @@ for surface in batch wait; do
     done <<<"$(sed -n '/^clear; /p' "$RUN/tmux" 2>/dev/null || true)"
     records="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes | map([.item,.harness,.model,.preference_entry,(.pick.account // "none" | split("/") | last),(.pick.claims | tostring)] | join(":")) | join(",")' | tr -d '\"')"
     if [[ "$surface:$control" == batch:live ]]; then
-      want='0|fable:high,opus:medium,|CC-11:claude:fable:claude:fable:high:.claude:0,CC-12:claude:opus:claude:opus:medium:.claude:1'
+      want='0|claude-fable-5-1:high,claude-opus-5-5:medium,|CC-11:claude:claude-fable-5-1:claude:fable:high:.claude:0,CC-12:claude:claude-opus-5-5:claude:opus:medium:.claude:1'
     elif [[ "$surface:$control" == batch:unkept ]]; then
-      want='0|fable:high,opus:medium,|CC-11:claude:fable:claude:fable:high:none:null,CC-12:claude:opus:claude:opus:medium:none:null'
+      want='0|claude-fable-5-1:high,claude-opus-5-5:medium,|CC-11:claude:claude-fable-5-1:claude:fable:high:none:null,CC-12:claude:claude-opus-5-5:claude:opus:medium:none:null'
     elif [[ "$surface:$control" == batch:mutant ]]; then
-      want='1|fable:high,|CC-11:claude:fable:claude:fable:high:.claude:0'
+      want='1|claude-fable-5-1:high,|CC-11:claude:claude-fable-5-1:claude:fable:high:.claude:0'
     elif [[ "$control" == live ]]; then
-      want='0|opus:medium,|CC-12:claude:opus:claude:opus:medium:.claude:1'
+      want='0|claude-opus-5-5:medium,|CC-12:claude:claude-opus-5-5:claude:opus:medium:.claude:1'
     else
       want='1||'
     fi

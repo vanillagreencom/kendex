@@ -1202,7 +1202,7 @@ rm -f -- "${COP_ACCOUNT:?}/config.json"
 
 # The halt arm judging the marks: an account read then runs before a tool
 # call, outside the deadline the halt decision has to land in.
-mutant halt-judges-marks -e 's@^  \[ "\$ARM" = stop \] && \[ "\$CALLER" = lead \] || return 0$@  [ "$CALLER" != subagent ] || return 0@'
+mutant halt-judges-marks -e 's@^  { \[ "\$ARM" = stop \] || \[ "\$ARM" = model-switch \]; } && \[ "\$CALLER" = lead \] || return 0$@  [ "$CALLER" != subagent ] || return 0@'
 new_copilot_lane control_cop_local ken-218 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-218"
 CONTROL_ENV_CALLS="$TMP_ROOT/copilot-control-env-calls"
