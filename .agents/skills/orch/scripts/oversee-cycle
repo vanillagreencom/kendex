@@ -430,12 +430,10 @@ case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 # an earlier run of a relaunched item is never read as this one's. The path
 # is the rest of the row, since a fleet directory may hold spaces and the
 # provider prints it unescaped as the line's last field.
-rounds=null stages=null refusals=null rounds_unread=""
+rounds=null stages=null rounds_unread=""
 if ! read_lane_state; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
-  refusals="$(jq -c '.repeat_refusals // []' <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" \
-    || refuse state-unreadable "$ITEM" "$WORK/state.err"
   stages="$(jq -c '.stages // null' <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" \
     || { stages=null; rounds_unread="$WORK/state.err"; }
   rounds="$(jq -c '{review: ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0)),
@@ -568,7 +566,7 @@ negatives="$(jq -r --arg item "$ITEM" "$CYCLE_DEFS"'.rounds // [] | .[] | select
   | "oversee-cycle: negative-interval item=\($item) kind=\(.kind) head=\(.head) secs=\(.secs)"' <<<"$timeline")" \
   || refuse timeline-failed "${PR:-$COMMIT}"
 
-cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson stages "$stages" --argjson pauses "$pauses" --argjson refusals "$refusals" \
+cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson stages "$stages" --argjson pauses "$pauses" \
   --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" \
   --arg class_reason "$class_reason" --arg evidence "$class_evidence" "$CYCLE_DEFS"'
   # The gate waits of the gap FROM..TO, epoch seconds: an instant a pause
@@ -653,7 +651,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
                    elif $group > 0 and $group >= $rest then "merge_group"
                    else $t.merge_decision.route end
              else null end),
-     missing: $missing, rounds: $rounds, stages: $stages, repeat_refusals: $refusals,
+     missing: $missing, rounds: $rounds, stages: $stages,
      pr_rounds: ($t.rounds | if . == null then null else map(.secs |= interval) end),
      escaped: (if $class == null or $tier == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))
@@ -683,8 +681,7 @@ line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end
   + " full_validations=\(.rounds.full_validations | n)"
   + " pr_rounds=\(if .pr_rounds == null then null else [.pr_rounds[] | select(.kind == "review")] | length end | n)"
   + " escaped=\(.escaped | n) tier_inputs=\(.tier_inputs | n)"
-  + " class_reason=\(.class_reason | n) escape_cause=\(.escape_cause | n) refixed=\(.refixed | n)"
-  + " refusals=\(if .repeat_refusals == null then null else .repeat_refusals | length end | n)"' <<<"$cycle")"
+  + " class_reason=\(.class_reason | n) escape_cause=\(.escape_cause | n) refixed=\(.refixed | n)"' <<<"$cycle")"
 log_row "$ITEM" "$line"
 printf '%s\n' "$line"
 [[ -z "$class_cause" ]] || printf 'oversee-cycle: class-unread cause=%s\n' "$class_cause" >&2

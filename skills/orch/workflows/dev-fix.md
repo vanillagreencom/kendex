@@ -136,7 +136,7 @@ Before stamping or delegating the round, check its base:
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
-   A `repeat-location` exit takes [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence). Add its answer to the items file and retry the same round id: the refusal wrote no round record. Every other nonzero exit names a usage or environment failure. Report it and stop.
+   A nonzero exit names a usage or environment failure. Report it and stop.
 
    When a reviewer or the orchestrator decides a cut, mint a fresh round id, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`:
 

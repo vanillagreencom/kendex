@@ -30,9 +30,9 @@
 # fixture that reaches the finding. When the item text is shell-hostile —
 # real review blocks routinely carry backticks and quotes, and a finding's
 # text never crosses argv (../SKILL.md § Harness-Safe Shell) — the orchestrator instead
-# builds a JSON array of {n, text, reach, recurrence?} with its harness file-write tool and
+# builds a JSON array of {n, text, reach} with its harness file-write tool and
 # passes it as --items-file (mutually exclusive with --item; same
-# n/text/reach rules, recurrence is preserved, other extra keys are dropped).
+# n/text/reach rules, extra keys are dropped).
 #
 # REACH names the producer that makes the finding possible. An item with no
 # reach is a `Declined:`
@@ -69,7 +69,6 @@
 # its path. Usage/validation errors exit 2.
 
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Path-safe token grammar for --issue / --round-id: no '/', no '..', no
 # whitespace, so a value can never escape the tmp/ directory. Shared verbatim
@@ -172,13 +171,6 @@ message() {
       printf 'dev-round-write: invalid-items items-file=%s\n' "$items_file"
       printf '%s\n' "--items-file '$items_file' must be a non-empty JSON array of {n, text, reach} — integer n >= 0, unique, non-empty text, non-empty reach naming the producer that reaches the finding"
       ;;
-    patched-state)
-      printf 'dev-round-write: patched-state issue=%s\n' "$issue"
-      printf '%s\n' 'workflow-state could not read patched_causes'
-      ;;
-    repeat-location)
-      printf 'dev-round-write: repeat-location n=%s location=%s commit=%s\n' "$1" "$2" "$3"
-      ;;
     missing-items)
       printf 'dev-round-write: missing-items option=%s\n' "--item"
       printf '%s\n' "at least one --item (or --items-file) is required: a fix round with no delegated items has nothing to persist"
@@ -232,19 +224,7 @@ references/finding-disposition.md are the orchestrator's judgement, applied
 before the round is delegated. TEXT is the item's full formatted block verbatim
 (non-empty plain text, no backticks); for shell-hostile text pass
 --items-file JSON_PATH, a JSON array of {n, text, reach} built with the harness
-file-write tool (mutually exclusive with --item, same rules). An optional
-recurrence is one non-blank line, preserved in the record; other extra keys
-are dropped. The location is the text after the second | on text's first line.
-The owner is the text after Owner: on the first later line that begins with it.
-Before writing, workflow-state get reads this issue's patched_causes once.
-A shared location/owner key after trimming blanks requires
-recurrence: structural-close or why this finding has a different cause.
-Empty, TBD and general values are not keys. An entry without owner still
-matches by location. --item has no recurrence field: a repeat uses
---items-file. An unanswered repeat exits 2 with repeat-location and writes
-no round record. It appends repeat_refusals rows; the next written round
-sets next_fix_elsewhere false for recurrence or a shared key, true otherwise.
-Unreadable state exits 2 with patched-state. --cut skips this check.
+file-write tool (mutually exclusive with --item, same rules). Extra keys are dropped.
 A round's record is immutable: an identical re-invocation is an idempotent
 success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
@@ -427,12 +407,7 @@ if [[ "$items_file_given" == "true" ]]; then
           and ((.text? | type) == "string")
           and ((.text | gsub("[[:space:]]"; "")) != "")
           and ((.reach? | type) == "string")
-          and ((.reach | gsub("[[:space:]]"; "")) != "")
-          and (if has("recurrence") then
-            ((.recurrence | type) == "string")
-            and ((.recurrence | gsub("[[:space:]]"; "")) != "")
-            and (.recurrence | test("[\r\n]") | not)
-          else true end))
+          and ((.reach | gsub("[[:space:]]"; "")) != ""))
     and (([.[].n] | length) == ([.[].n] | unique | length))
   ' "$items_file" >/dev/null 2>&1 \
     || die invalid-items "$@"
@@ -442,7 +417,7 @@ if [[ "$items_file_given" == "true" ]]; then
     check_reach "$(jq -r --argjson i "$i" '.[$i].n' "$items_file")" \
       "$(jq -r --argjson i "$i" '.[$i].reach' "$items_file")"
   done
-  items_json="$(jq 'map({n, text, reach} + (if has("recurrence") then {recurrence} else {} end))' "$items_file")"
+  items_json="$(jq 'map({n, text, reach})' "$items_file")"
 else
   (( ${#item_n[@]} > 0 )) \
     || die missing-items "$@"
@@ -456,28 +431,6 @@ else
         '{n: $n, text: $text, reach: $reach}'
     done | jq -s '.'
   )"
-fi
-
-# Every fix source stamps here; the workflows append keys from these headers.
-if [[ "$cut" == false ]]; then
-  patched_causes="$("$SCRIPT_DIR/workflow-state" get "$issue" '.pr_comment_review.patched_causes // []' 2>/dev/null)" \
-    || die patched-state
-  repeats="$(jq -L "$SCRIPT_DIR/lib" -c --argjson patches "$patched_causes" '
-    include "cause-keys";
-    .[] | select(has("recurrence") | not) as $item
-    | first($patches[] | . as $patch | shared_cause_key($item; $patch) as $key
-        | {n: $item.n, location: $key, commit}) // empty
-  ' <<<"$items_json")" || die patched-state
-  if [[ -n "$repeats" ]]; then
-    repeat="${repeats%%$'\n'*}"
-    # Keep the existing stamp diagnostic first, including if the audit write fails.
-    message repeat-location "$(jq -r '.n' <<<"$repeat")" "$(jq -r '.location' <<<"$repeat")" "$(jq -r '.commit' <<<"$repeat")" >&2
-    refused_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || die patched-state
-    "$SCRIPT_DIR/workflow-state" update "$issue" --argjson repeats "$(jq -s . <<<"$repeats")" --arg round "$round_id" --arg at "$refused_at" '
-      .repeat_refusals = ((.repeat_refusals // []) + [$repeats[] | {item: .n, round_id: $round, location, at: $at}])
-    ' >/dev/null || die patched-state
-    exit 2
-  fi
 fi
 
 # --- Protected additions: one blank-separated path list ---
@@ -564,31 +517,12 @@ same_record() {
 # ln(2) fails with EEXIST atomically, so exactly one contender places the
 # record; every other lands in the comparison branch below, where an
 # identical retry is idempotent and a divergent one refuses.
-placed=false
 if [[ "$out_exists" == "true" ]]; then
   same_record "$tmp" "$out" \
     || die record-conflict "$@"
 elif ! ln "$tmp" "$out" 2>/dev/null; then
   same_record "$tmp" "$out" \
     || die record-race "$@"
-else
-  placed=true
-fi
-
-audit_exists=false
-if [[ "$placed" == true ]]; then
-  audit_exists="$("$SCRIPT_DIR/workflow-state" exists --json "$issue" | jq -r '.exists')" || die patched-state
-fi
-if [[ "$audit_exists" == true ]]; then
-  cause_defs="$(cat "$SCRIPT_DIR/lib/cause-keys.jq")" || die patched-state
-  "$SCRIPT_DIR/workflow-state" update "$issue" --argjson items "$items_json" "$cause_defs"'
-  if .repeat_refusals == null then . else
-    .repeat_refusals |= map(if has("next_fix_elsewhere") then . else
-      . as $refusal | .next_fix_elsewhere = (any($items[];
-        has("recurrence") or ([shared_cause_key(.; $refusal)] | length > 0)) | not)
-    end)
-  end
-' >/dev/null || die patched-state
 fi
 
 rm -f "$tmp"
