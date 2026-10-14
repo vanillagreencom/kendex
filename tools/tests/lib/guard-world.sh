@@ -135,6 +135,7 @@ cp "$REPO/tools/bash32-parse" "$MUTANT_TOOLS/bash32-parse"
 cp "$REPO/tools/test-roster" "$MUTANT_TOOLS/test-roster"
 cp "$REPO/tools/shipped-refs" "$MUTANT_TOOLS/shipped-refs"
 cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
+cp "$REPO/tools/macos-test-contracts" "$REPO/tools/macos-test-contracts.json" "$MUTANT_TOOLS/"
 cp "$REPO/tools/rust-reads" "$MUTANT_TOOLS/rust-reads"
 cp -R "$REPO/tools/lib" "$MUTANT_TOOLS/lib"
 mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied

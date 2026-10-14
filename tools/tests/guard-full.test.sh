@@ -1503,6 +1503,7 @@ LANE_BIN="$TMP/lane-bin"
 mkdir -p "$LANE_TOOLS" "$LANE_BIN"
 cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
 cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" \
+  "$REPO/tools/macos-test-contracts" "$REPO/tools/macos-test-contracts.json" \
   "$REPO/tools/rust-reads" "$REPO/tools/shipped-refs" "$LANE_TOOLS/"
 cp -R "$REPO/tools/lib" "$LANE_TOOLS/lib"
 printf '#!/usr/bin/env bash\necho "stub: bash32-parse"\n' >"$LANE_TOOLS/bash32-parse"
