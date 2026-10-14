@@ -1,1 +1,1 @@
-- Shell command checks allow data bodies and quoted arguments, while retaining environment dump refusals through documented launchers, compound input, piped exec and inherited process descriptors.
+- Shell command checks allow data bodies and quoted arguments while refusing environment reads through documented launchers, compound input and live shell descriptor paths, including reader replacements and case arm line breaks.

@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized shell whole-environment reads unless a proven direct pipe filters named variables. Heredocs and here-strings are data unless a shell receives them; unquoted heredoc substitutions remain executable. This fixed check runs outside Git and before project policy. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized shell commands that print the whole environment and gives a filter that names a variable. Allows heredoc data and env launchers with a program. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow; unreadable policy support affects only the pattern check.
-# safety: The fixed check judges shell command heads, supported documented launcher prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; raw NUL reads need a literal NUL-to-newline tr conversion. Unknown producer options and transformed output cannot gain filter permission. Compound commands select their inner command heads. Quoted arguments are data; shell -c and eval string operands are checked as commands. An unquoted env argument uses the same launcher parse as a head, for any receiver or argument count. Shell-script wrappers retain checks of unquoted command arguments. Registered heredoc and here-string bodies are checked as commands only for shells, eval, source or dot receivers, directly or later in the same pipeline, including merged stdout/stderr pipes. Unquoted heredoc substitutions remain executable. Shell input checks include non-stdin descriptors. Exec and builtin contexts remain conservative after direct, piped and inherited input joins because exec can retain descriptors for later shell commands. Compound commands retain registered bodies and descriptors through their contained commands and nested groups, ending with the group. Closing redirects supply input before producer selection. Executable strings inherit known process-environment input descriptors; literal copies and moves preserve that input, and replacement streams clear it. Descriptor aliases use the same input facts; process-ID aliases require a live receiving-process reference, not a quoted literal or argv expansion. Unproved executable contexts, missing body identifiers and unread registered bodies refuse. ANSI-C escaped heads and producer operands refuse without decoding. Process substitutions, transformed pipes and env split strings have no general interpretation guarantee. The check executes no submitted text and does not inspect unseen programs, aliases or runtime-built names. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: The fixed check judges shell command heads, supported documented launcher prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; raw NUL reads need a literal NUL-to-newline tr conversion. Unknown producer options and transformed output cannot gain filter permission. Compound commands select their inner command heads. Quoted arguments are data; shell -c and eval string operands are checked as commands. An unquoted env argument uses the same launcher parse as a head, for any receiver or argument count. Shell-script wrappers retain checks of unquoted command arguments. Registered heredoc and here-string bodies are checked as commands only for shells, eval, source or dot receivers, directly or later in the same pipeline, including merged stdout/stderr pipes. Unquoted heredoc substitutions remain executable. Shell input checks include non-stdin descriptors. Exec and builtin contexts remain conservative after direct, piped and inherited input joins because exec can retain descriptors for later shell commands. Compound commands retain registered bodies and descriptors through their contained commands and nested groups, ending with the group. Closing redirects supply input before producer selection. Executable strings inherit known process-environment input descriptors; literal copies and moves preserve that input, and replacement streams clear it. Descriptor aliases select their source before consulting input facts. Live process-ID references retain distinct invoking-shell and expansion-shell input; reader replacements cannot erase shell input. The lexer preserves live references across ordinary quotes and executable-source fragments. Literal dollar text and argv data do not prove live identity. Actual case arm terminators remain distinct from ordinary line breaks. Unproved executable contexts, missing body identifiers and unread registered bodies refuse. ANSI-C escaped heads and producer operands refuse without decoding. Process substitutions, transformed pipes and env split strings have no general interpretation guarantee. The check executes no submitted text and does not inspect unseen programs, aliases or runtime-built names. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -18,9 +18,9 @@ set -euo pipefail
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The selector uses environment_dump's stage words and their kinds. Both
 # direct commands and argument launchers need the same producer decision.
-environment_input_origin() { # path and token kind; reads the input owner's descriptor facts
-    local input_fd
-    input_alias_fd=""
+environment_input_origin() { # decoded path, token kind and reference fragments
+    local input_fd reference rest offset owner="reader"
+    input_alias_fd=""; input_alias_proc_fds=$input_proc_fds; input_alias_body_fds=$input_body_fds
     [[ $1 != /proc/*/environ ]] || return 0
     case "$1" in
       /dev/stdin) input_fd=0 ;;
@@ -28,18 +28,49 @@ environment_input_origin() { # path and token kind; reads the input owner's desc
       /dev/stderr) input_fd=2 ;;
       /dev/fd/* | /proc/self/fd/* | /proc/thread-self/fd/*) input_fd=${1##*/} ;;
       /proc/'$$'/fd/* | /proc/'$BASH''PID'/fd/* | /proc/'${BASH''PID}'/fd/*)
-        [ -n "${3:-}" ] || return 1
+        owner=""
+        for reference in ${3:-}; do
+          offset=${reference%%:*}; rest=${reference#*:}
+          [ "$offset" != 6 ] || owner=${rest#*:}
+        done
+        [ -n "$owner" ] && [ "$owner" != expanded ] || return 1
         input_fd=${1##*/} ;;
       *) return 1 ;;
     esac
+    case "$owner" in
+      reader) ;;
+      invoking) input_alias_proc_fds=$invoking_proc_fds; input_alias_body_fds=$invoking_body_fds ;;
+      current) input_alias_proc_fds=$shell_proc_fds; input_alias_body_fds=$shell_body_fds ;;
+      fixed~*)
+        rest=${owner#*~}; input_alias_proc_fds=${rest%%~*}; input_alias_body_fds=${rest#*~}
+        input_alias_proc_fds=${input_alias_proc_fds//,/ }; input_alias_body_fds=${input_alias_body_fds//,/ } ;;
+      *) return 1 ;;
+    esac
     if [[ $input_fd =~ ^[0-9]+$ ]]; then
-      input_fd=$((10#$input_fd))
-      input_alias_fd=$input_fd
-      [[ $input_proc_fds == *" $input_fd "* ]]
+      input_fd=$((10#$input_fd)); input_alias_fd=$input_fd
+      [[ $input_alias_proc_fds == *" $input_fd "* ]]
     else
       [ "$2" = literal ] || input_alias_fd=unknown
-      [ "$2" != literal ] && [ "$input_proc_fds" != ' ' ]
+      [ "$2" != literal ] && [ "$input_alias_proc_fds" != ' ' ]
     fi
+}
+
+# A fragment keeps the process that expanded it when a new shell receives it.
+# The encoded origin is a submitted-input snapshot, never a runtime PID lookup.
+environment_reference_fragments() { # argument references, source offset, receiver
+  local reference rest offset width owner origins bodies
+  for reference in $1; do
+    offset=${reference%%:*}; rest=${reference#*:}; width=${rest%%:*}; owner=${rest#*:}
+    if [ "$3" != eval ]; then
+      case "$owner" in
+        invoking) origins=$invoking_proc_fds; bodies=$invoking_body_fds ;;
+        current) origins=$shell_proc_fds; bodies=$shell_body_fds ;;
+        *) source_references="$source_references $((offset + $2)):$width:$owner"; continue ;;
+      esac
+      owner="fixed~${origins// /,}~${bodies// /,}"
+    fi
+    source_references="$source_references $((offset + $2)):$width:$owner"
+  done
 }
 
 environment_producer() { # command kind, optional unsupported context; updates program, pos and mode
@@ -215,6 +246,11 @@ environment_producer() { # command kind, optional unsupported context; updates p
       cat | tr | strings | xargs)
         for ((j=pos; j<${#args[@]}; j++)); do
           if environment_input_origin "${args[$j]}" "${arg_kinds[$j]}" "${arg_self[$j]:-}"; then proc=1; fi
+          if [ -n "$input_alias_fd" ]; then
+            for body_entry in $input_alias_body_fds; do
+              [ "${body_entry%%:*}" != "$input_alias_fd" ] || data_source="$data_source ${body_entry#*:}"
+            done
+          fi
         done
         if [ -n "$proc" ]; then
           case "$program" in
@@ -333,7 +369,7 @@ environment_main_evidence() {
 # after -c. Known literal input stays conservative for every shell invocation;
 # script operands and redirects do not prove that the body is unused.
 environment_program_text() {
-  local cursor=$pos source="" options_ended="" wants_string="" value text="" unproved=""
+  local cursor=$pos source="" options_ended="" wants_string="" value text="" unproved="" source_references="" source_offset=0
   stdin_program=""; source_pos=""
   case "$program" in
     bash | sh | dash | zsh | ksh)
@@ -361,12 +397,17 @@ environment_program_text() {
             -*) cursor=$((cursor + 1)); continue ;;
           esac
         fi
-        if [ -n "$wants_string" ]; then source=$value; source_pos=$cursor; fi
+        if [ -n "$wants_string" ]; then
+          source=$value; source_pos=$cursor
+          environment_reference_fragments "${arg_self[$cursor]:-}" 0 "$program"
+        fi
         break
       done ;;
     eval)
       stdin_program=1
       for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+        source_offset=$((${#source} + ${#text}))
+        environment_reference_fragments "${arg_self[$cursor]:-}" "$source_offset" eval
         source=$source$text${args[$cursor]}; text=' '
         [ "${arg_kinds[$cursor]}" = literal ] || unproved=1
       done
@@ -386,8 +427,7 @@ environment_program_text() {
     if [ "$program" = opaque ] && environment_main_evidence "$source"; then mode=dump-unknown; return; fi
     cursor=${#executable_texts[@]}
     executable_texts[cursor]=$source; executable_stages[cursor]=$stage
-    executable_aliases[cursor]=0
-    if [ "$alias_expansions" != 0 ] && [ "${arg_kinds[$source_pos]:-}" = literal ] && [ -z "$unproved" ]; then executable_aliases[cursor]=1; fi
+    executable_references[cursor]=$source_references; executable_receivers[cursor]=$program
   fi
 }
 
@@ -403,18 +443,19 @@ environment_input_replace() {
 
 environment_input_copy() { # destination descriptor and literal source, optionally moved
   local destination=$1 source_fd=$2 entry copied="" origin=""
+  local copy_proc_fds=${3-$input_proc_fds} copy_body_fds=${4-$input_body_fds}
   case "$source_fd" in
     -) ;;
     *)
       if [[ $source_fd =~ ^[0-9]+-?$ ]]; then
         source_fd=$((10#${source_fd%-}))
-        [[ $input_proc_fds != *" $source_fd "* ]] || origin=1
-        for entry in $input_body_fds; do
+        [[ $copy_proc_fds != *" $source_fd "* ]] || origin=1
+        for entry in $copy_body_fds; do
           [ "${entry%%:*}" != "$source_fd" ] || copied="$copied $destination:${entry#*:}"
         done
       else
-        [ "$input_proc_fds" = ' ' ] || origin=1
-        for entry in $input_body_fds; do copied="$copied $destination:${entry#*:}"; done
+        [ "$copy_proc_fds" = ' ' ] || origin=1
+        for entry in $copy_body_fds; do copied="$copied $destination:${entry#*:}"; done
       fi ;;
   esac
   environment_input_replace "$destination"
@@ -442,7 +483,7 @@ environment_stage_input() {
             input_origin=""
             if environment_input_origin "$target" "${kinds[$j]:-literal}" "${self_words[$j]:-}"; then input_origin=1; fi
             fd=${fd:-0}
-            if [ -n "$input_alias_fd" ]; then environment_input_copy "$fd" "$input_alias_fd"
+            if [ -n "$input_alias_fd" ]; then environment_input_copy "$fd" "$input_alias_fd" "$input_alias_proc_fds" "$input_alias_body_fds"
             else
               environment_input_replace "$fd"
               [ -z "$input_origin" ] || input_proc_fds="$input_proc_fds$fd "
@@ -472,6 +513,10 @@ environment_stage_input() {
             ;;
           '&>') output=1; environment_input_replace 1; environment_input_replace 2 ;;
         esac
+        if [ "$input_changes_shell" = 1 ]; then
+          shell_proc_fds=$input_proc_fds; shell_body_fds=$input_body_fds
+          if [ "$shell_is_invoking" = 1 ]; then invoking_proc_fds=$shell_proc_fds; invoking_body_fds=$shell_body_fds; fi
+        fi
         if environment_main_evidence "$target"; then redirect_evidence=1; fi
         continue
       fi
@@ -485,15 +530,23 @@ environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted="" self_reference=""
   local j start=0 end n fd target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source=""
-  local unsupported="" scan candidate limit producer_end code redirect_evidence input_origin input_alias_fd
+  local unsupported="" scan candidate limit producer_end code redirect_evidence input_origin input_alias_fd input_alias_proc_fds input_alias_body_fds
   local inherited_proc_fds=' ' input_proc_fds input_body_fds="" inherited_body_fds="" body_entry body_fd body_cursor=0
-  local group marker parent group_kind scope last owner
-  local group_stack=() group_types=() group_first=() group_last=() group_parents=() group_close_start=() group_close_end=() group_proc=() group_bodies=() stage_scope=() token_stages=() case_body=()
+  local group marker parent group_kind scope last owner child_context
+  local group_stack=() group_types=() group_first=() group_last=() group_parents=() group_close_start=() group_close_end=() group_proc=() group_bodies=() group_shell_proc=() group_invoking_proc=() group_shell_bodies=() group_invoking_bodies=() group_same_shell=() stage_scope=() token_stages=() case_body=()
   [ "$#" -lt 2 ] || inherited_proc_fds=${environment_input_fds:- }
   local environment_input_fds=$inherited_proc_fds
-  local alias_expansions=1
-  [ "$#" -lt 2 ] || alias_expansions=${environment_alias_expansions:-1}
-  local environment_alias_expansions=$alias_expansions
+  local inherited_shell_proc=$inherited_proc_fds inherited_invoking_proc=$inherited_proc_fds inherited_same_shell=1
+  local shell_proc_fds invoking_proc_fds shell_body_fds="" invoking_body_fds="" shell_is_invoking=1 input_changes_shell=0
+  local inherited_shell_bodies="" inherited_invoking_bodies=""
+  local reference_source="" reference_offset reference_width reference_owner reference_rest reference_entry
+  [ "$#" -lt 2 ] || [ "$1" = expansions ] || reference_source=${environment_reference_source:-}
+  local parameter_re='^\$([A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})'
+  if [ "$#" -ge 2 ] && [ "${environment_receiver:-shell}" = eval ]; then
+    inherited_shell_proc=${environment_shell_proc:-$inherited_proc_fds}; inherited_invoking_proc=${environment_invoking_proc:-$inherited_proc_fds}
+    inherited_shell_bodies=${environment_shell_bodies:-}; inherited_invoking_bodies=${environment_invoking_bodies:-}
+    inherited_same_shell=${environment_same_shell:-1}
+  fi
   local environment_received_body_descriptors=(${environment_input_body_descriptors:+$environment_input_body_descriptors})
   local environment_input_body_descriptors=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0
@@ -501,8 +554,10 @@ environment_dump() { # command kind; arguments are already decoded data
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
-  local tokens=() kinds=() unquoted_words=() self_words=() token_groups=() saved_quotes=() closers=() closer_types=() args=() arg_kinds=() arg_unquoted=() arg_self=() arg_indices=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() stage_self=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() stage_proc_fds=() stage_body_fds=() executable_texts=() executable_stages=() executable_aliases=()
-  local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=()
+  local tokens=() kinds=() unquoted_words=() self_words=() token_groups=() saved_quotes=() closers=() closer_types=() args=() arg_kinds=() arg_unquoted=() arg_self=() arg_indices=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() stage_self=() heredocs=() heredoc_pool=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() stage_proc_fds=() stage_body_fds=() stage_shell_proc=() stage_invoking_proc=() stage_shell_bodies=() stage_invoking_bodies=() stage_same_shell=() stage_local=() stage_receivers=() executable_texts=() executable_stages=() executable_references=() executable_receivers=()
+  local starts=() ends=() separators=() decisions=() input_bodies=()
+  # Recursive source fragments share body identifiers with their origin snapshots.
+  if [ "$#" -lt 2 ]; then local literal_inputs=(); fi
   [ "${2:-}" != conservative ] || compound=1
   if [ "$1" = argv ]; then
     tokens=(${command_argv[@]+"${command_argv[@]}"})
@@ -569,10 +624,20 @@ environment_dump() { # command kind; arguments are already decoded data
         tokens[${#tokens[@]}]=';'; kinds[${#kinds[@]}]=operator
         continue
       fi
-      if [ "$alias_expansions" != 0 ] && [ "$c" = '$' ] && [ "$word" = /proc/ ]; then
-        case "${text:$((i - 1))}" in
-          '$$'/* | '$BASH''PID'/* | '${BASH''PID}'/*) self_reference=1 ;;
-        esac
+      if [ "$c" = '$' ]; then
+        reference_width=0; reference_owner=expanded
+        if [ "$next" = '$' ]; then reference_width=2; reference_owner=invoking
+        elif [[ ${text:$((i - 1))} =~ $parameter_re ]]; then
+          reference_width=${#BASH_REMATCH[0]}
+          case "${BASH_REMATCH[1]}" in 'BASH''PID' | '{BASH''PID}') reference_owner=current ;; esac
+        fi
+        if [ "$reference_width" -gt 0 ]; then
+          for reference_entry in $reference_source; do
+            reference_offset=${reference_entry%%:*}; reference_rest=${reference_entry#*:}
+            if [ "$reference_offset" = "$((i - 1))" ]; then reference_owner=${reference_rest#*:}; break; fi
+          done
+          self_reference="$self_reference ${#word}:$reference_width:$reference_owner"
+        fi
       fi
       if [ "$quote" = '"' ]; then
         if [ "$c" = '"' ] && { [ "$1" != expansions ] || [ "${#closers[@]}" -ne 0 ]; }; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
@@ -604,9 +669,10 @@ environment_dump() { # command kind; arguments are already decoded data
           if [ -n "$heredoc_op" ] && [ -n "$active" ]; then
             [ "$kind" != ansi-escaped ] || return 0
             doc=${#heredocs[@]}
+            body_ids[$heredoc_origin]=${#literal_inputs[@]}; literal_inputs[${#literal_inputs[@]}]=""
             heredocs[doc]=$word; heredoc_tabs[doc]=$heredoc_op
             heredoc_expand[doc]=""; [ -n "$quoted" ] || heredoc_expand[doc]=1
-            body_ids[$heredoc_origin]=$doc
+            heredoc_pool[doc]=${body_ids[$heredoc_origin]}
             heredoc_op=""
           fi
           if [ -n "$active" ]; then
@@ -643,11 +709,17 @@ environment_dump() { # command kind; arguments are already decoded data
                   body=$body$line$'\n'
                 done
                 [ -n "$found" ] || return 0
-                heredoc_bodies[doc]=$body
+                heredoc_bodies[doc]=$body; literal_inputs[${heredoc_pool[$doc]}]=$body
               done ;;
             *)
               case "$c$next" in
-                '&&' | '||' | '|''&' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
+                ';;' | ';''&' | '&&' | '||' | '|''&' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
+              esac
+              case "$c" in
+                ';;' | ';''&')
+                  if [ "$c" = ';;' ] && [ "${text:$i:1}" = '&' ]; then i=$((i + 1)); fi
+                  # Newlines are list separators, never evidence of an arm end.
+                  token_groups[${#tokens[@]}]=arm-end; c=';' ;;
               esac
               if [ "$c" = '<<' ] && [ "${text:$i:1}" = '<' ]; then c='<<<'; i=$((i + 1)); fi
               if [ "$c" = '<<' ] && [ "$math_depth" -eq 0 ]; then
@@ -679,7 +751,6 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
     }
   done
-  literal_inputs=(${heredoc_bodies[@]+"${heredoc_bodies[@]}"})
   for ((doc=3; doc<=$#; doc++)); do
     n=${#literal_inputs[@]}; literal_inputs[n]=${!doc}
     body_fd=0
@@ -693,6 +764,9 @@ environment_dump() { # command kind; arguments are already decoded data
       doc=${#literal_inputs[@]}; literal_inputs[doc]=${tokens[$((i + 1))]:-}; body_ids[i]=$doc
     fi
   done
+  if [ "$#" -lt 2 ] || [ "${environment_receiver:-shell}" != eval ]; then
+    inherited_shell_bodies=$inherited_body_fds; inherited_invoking_bodies=$inherited_body_fds
+  fi
   n=${#tokens[@]}
   for ((i=0; i<=n; i++)); do
     if [ "$i" -lt "$n" ]; then
@@ -707,14 +781,19 @@ environment_dump() { # command kind; arguments are already decoded data
   # markers survive tokenization so closing redirects retain their owner.
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; input_proc_fds=' '; input_body_fds=""
+    shell_proc_fds=' '; invoking_proc_fds=' '; shell_body_fds=""; invoking_body_fds=""; input_changes_shell=0
     if ! environment_stage_input; then return 0; fi
     environment_head "$1"
+    program=""; mode=other
+    environment_producer "$1" "$unsupported${2:-}$syntax_head"
+    stage_local[stage]=0; stage_receivers[stage]=$program
+    case "$program" in eval | source | .) stage_local[stage]=1 ;; esac
   done
   for ((i=0; i<${#tokens[@]}; i++)); do
     n=${#group_stack[@]}; owner=-1
     [ "$n" -eq 0 ] || owner=${group_stack[$((n - 1))]}
     if [ "$owner" -ge 0 ] && [ "${group_types[$owner]}" = case ]; then
-      if [ "${kinds[$i]}" = operator ] && [ "${kinds[$((i - 1))]:-}" = operator ] && [ -z "${token_groups[$i]:-}${token_groups[$((i - 1))]:-}" ] && [ "${tokens[$i]}" = ';' ] && [ "${tokens[$((i - 1))]:-}" = ';' ]; then case_body[owner]=""; fi
+      [ "${token_groups[$i]:-}" != arm-end ] || case_body[owner]=""
       case "${token_groups[$i]:-}:${case_body[$owner]}" in
         open:paren:) continue ;;
         close:paren:) case_body[owner]=1; continue ;;
@@ -747,33 +826,58 @@ environment_dump() { # command kind; arguments are already decoded data
     for ((group=0; group<${#group_types[@]}; group++)); do
       [ "${group_first[$group]}" = "$stage" ] || continue
       parent=${group_parents[$group]}
-      if [ "$parent" -ge 0 ]; then input_proc_fds=${group_proc[$parent]}; input_body_fds=${group_bodies[$parent]}
-      else input_proc_fds=$inherited_proc_fds; input_body_fds=$inherited_body_fds
+      if [ "$parent" -ge 0 ]; then
+        input_proc_fds=${group_proc[$parent]}; input_body_fds=${group_bodies[$parent]}
+        shell_proc_fds=${group_shell_proc[$parent]}; shell_body_fds=${group_shell_bodies[$parent]}
+        invoking_proc_fds=${group_invoking_proc[$parent]}; invoking_body_fds=${group_invoking_bodies[$parent]}; shell_is_invoking=${group_same_shell[$parent]}
+      else
+        input_proc_fds=$inherited_proc_fds; input_body_fds=$inherited_body_fds
+        shell_proc_fds=$inherited_shell_proc; shell_body_fds=$inherited_shell_bodies
+        invoking_proc_fds=$inherited_invoking_proc; invoking_body_fds=$inherited_invoking_bodies; shell_is_invoking=$inherited_same_shell
       fi
+      input_changes_shell=1
+      [ "${group_types[$group]}" != paren ] || shell_is_invoking=0
       if [ "$stage" -gt 0 ]; then
         case "${separators[$((stage - 1))]}" in '|' | '|''&')
-          environment_input_replace 0
+          shell_is_invoking=0; environment_input_replace 0
           for doc in $piped_source; do input_body_fds="$input_body_fds 0:$doc"; done ;;
         esac
       fi
       last=${group_last[$group]}
-      case "${separators[$last]}" in '|' | '|''&') environment_input_replace 1 ;; esac
+      # A pipeline has its own expansion shell; $$ keeps the invoking shell.
+      case "${separators[$last]}" in '|' | '|''&') shell_is_invoking=0; environment_input_replace 1 ;; esac
+      shell_proc_fds=$input_proc_fds; shell_body_fds=$input_body_fds
       start=${group_close_start[$group]}; end=${group_close_end[$group]}
       if ! environment_stage_input; then return 0; fi
       [ "${separators[$last]}" != '|''&' ] || environment_input_copy 2 1
+      shell_proc_fds=$input_proc_fds; shell_body_fds=$input_body_fds
+      [ "$shell_is_invoking" != 1 ] || { invoking_proc_fds=$shell_proc_fds; invoking_body_fds=$shell_body_fds; }
       group_proc[group]=$input_proc_fds; group_bodies[group]=$input_body_fds
+      group_shell_proc[group]=$shell_proc_fds; group_shell_bodies[group]=$shell_body_fds
+      group_invoking_proc[group]=$invoking_proc_fds; group_invoking_bodies[group]=$invoking_body_fds; group_same_shell[group]=$shell_is_invoking
     done
     scope=${stage_scope[$stage]}
-    if [ "$scope" -ge 0 ]; then input_proc_fds=${group_proc[$scope]}; input_body_fds=${group_bodies[$scope]}
-    else input_proc_fds=$inherited_proc_fds; input_body_fds=$inherited_body_fds
+    if [ "$scope" -ge 0 ]; then
+      input_proc_fds=${group_proc[$scope]}; input_body_fds=${group_bodies[$scope]}
+      shell_proc_fds=${group_shell_proc[$scope]}; shell_body_fds=${group_shell_bodies[$scope]}
+      invoking_proc_fds=${group_invoking_proc[$scope]}; invoking_body_fds=${group_invoking_bodies[$scope]}; shell_is_invoking=${group_same_shell[$scope]}
+    else
+      input_proc_fds=$inherited_proc_fds; input_body_fds=$inherited_body_fds
+      shell_proc_fds=$inherited_shell_proc; shell_body_fds=$inherited_shell_bodies
+      invoking_proc_fds=$inherited_invoking_proc; invoking_body_fds=$inherited_invoking_bodies; shell_is_invoking=$inherited_same_shell
     fi
-    case "${separators[$stage]}" in '|' | '|''&') environment_input_replace 1 ;; esac
+    child_context=0
+    case "${separators[$stage]}" in '|' | '|''&') child_context=1; environment_input_replace 1 ;; esac
     if [ "$stage" -gt 0 ]; then
       case "${separators[$((stage - 1))]}" in '|' | '|''&')
-        environment_input_replace 0
+        child_context=1; environment_input_replace 0
         for doc in $piped_source; do input_body_fds="$input_body_fds 0:$doc"; done ;;
       esac
     fi
+    [ "$child_context" = 0 ] || {
+      shell_is_invoking=0; shell_proc_fds=$input_proc_fds; shell_body_fds=$input_body_fds
+    }
+    input_changes_shell=${stage_local[$stage]}
     start=${starts[$stage]}; end=${ends[$stage]}
     # Closing redirects were applied once to the compound lifetime above.
     if [ "$scope" -ge 0 ] && [ "$stage" = "${group_last[$scope]}" ]; then end=${group_close_start[$scope]}; fi
@@ -785,6 +889,8 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     [[ $input_proc_fds != *" 0 "* ]] || proc=1
     stage_proc_fds[stage]=$input_proc_fds; stage_body_fds[stage]=$input_body_fds
+    stage_shell_proc[stage]=$shell_proc_fds; stage_shell_bodies[stage]=$shell_body_fds
+    stage_invoking_proc[stage]=$invoking_proc_fds; stage_invoking_bodies[stage]=$invoking_body_fds; stage_same_shell[stage]=$shell_is_invoking
     environment_head "$1"
     [ -z "$syntax_head" ] || compound=1
     environment_producer "$1" "$unsupported${2:-}$syntax_head"
@@ -847,6 +953,9 @@ environment_dump() { # command kind; arguments are already decoded data
     # Exec can retain descriptors, so unproved input cannot gain data permission.
     if [ "${stage_stdin[$stage]}" = opaque ] && { [ -n "${data_source// /}" ] || [ "${stage_proc_fds[$stage]}" != ' ' ]; }; then return 0; fi
     local environment_input_fds=${stage_proc_fds[$stage]}
+    local environment_shell_proc=${stage_shell_proc[$stage]} environment_shell_bodies=${stage_shell_bodies[$stage]}
+    local environment_invoking_proc=${stage_invoking_proc[$stage]} environment_invoking_bodies=${stage_invoking_bodies[$stage]} environment_same_shell=${stage_same_shell[$stage]}
+    local environment_receiver environment_reference_source
     input_bodies=(); environment_input_body_descriptors=""
     for body_entry in ${stage_body_fds[$stage]}; do
       doc=${body_entry#*:}; input_bodies[${#input_bodies[@]}]=${literal_inputs[$doc]}
@@ -856,10 +965,12 @@ environment_dump() { # command kind; arguments are already decoded data
     for ((code=0; code<${#executable_texts[@]}; code++)); do
       [ "${executable_stages[$code]}" -eq "$stage" ] || continue
       local command_text=${executable_texts[$code]}
-      local environment_alias_expansions=${executable_aliases[$code]}
+      environment_receiver=${executable_receivers[$code]}; environment_reference_source=${executable_references[$code]}
       if environment_dump shell conservative ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
     done
     if [ "${stage_stdin[$stage]}" = 1 ]; then
+      environment_receiver=${stage_receivers[$stage]}; environment_reference_source=""
+      case "$environment_receiver" in source | .) environment_receiver=eval ;; esac
       # These identifiers come only from the proved registry. Keep bodies
       # independent: quotes in one program cannot hide another program.
       for doc in $data_source; do
