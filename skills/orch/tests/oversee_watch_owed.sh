@@ -905,7 +905,7 @@ while IFS='|' read -r name setup; do
     oid) jq 'map(.mergeCommit.oid = null)' "$STUB_DIR/merged.json" >"$STUB_DIR/invalid-oid.json"; mv -- "$STUB_DIR/invalid-oid.json" "$STUB_DIR/merged.json" ;;
   esac
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "rc=$RC status=$(box_status) key=$(grep -c '^oversee-watch: verifying-release-unread ' "$ERR" || true)" 'rc=2 status= key=1' "$name compare evidence refuses instead of waiting" "$ERR"
+  assert_eq "rc=$RC lines=$(verification_lines) events=$(verification_events) key=$(grep -Ec '^verifying-release-unread .*issue=KEN-1( |$)' "$ERR" || true)" 'rc=0 lines= events= key=1' "$name compare evidence skips its unread item with the original cause" "$ERR"
 done <<'ROWS'
 read|fail
 missing_status|missing
@@ -948,9 +948,9 @@ while IFS='@' read -r name setup old new; do
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   mutate_verifying "$MUTANT_WATCH" "$old" "$new"
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "$RC" 2 "$name refuses unreadable containment evidence" "$ERR"
+  assert_eq "rc=$RC lines=$(verification_lines) events=$(verification_events) key=$(grep -Ec '^verifying-release-unread .*issue=KEN-1( |$)' "$ERR" || true)" 'rc=0 lines= events= key=1' "$name skips unreadable containment evidence with the original cause" "$ERR"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "control: $name bypasses its evidence guard" "$ERR"
+  assert_eq "rc=$RC $(box_status) key=$(grep -c '^verifying-release-unread ' "$ERR" || true)" 'rc=0 status=due key=0' "control: $name fabricates a due row from unreadable containment evidence" "$ERR"
 done <<'ROWS'
 failed_read@failed@|| { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo" "tag=$tag"; return 2; }@|| comparison=behind
 malformed_status@malformed@*) verifying_error verifying-release-unread "issue=$id" "repo=$repo" "tag=$tag" "status=$comparison"; return 2 ;;@*) continue ;;
@@ -991,7 +991,7 @@ while IFS='|' read -r name setup key; do
     merge) echo '[]' >"$STUB_DIR/merged.json" ;;
   esac
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "rc=$RC status=$(box_status) key=$(grep -c "^oversee-watch: $key " "$ERR" || true)" 'rc=2 status= key=1' "unread $name refuses instead of waiting" "$ERR"
+  assert_eq "rc=$RC lines=$(verification_lines) events=$(verification_events) key=$(grep -Ec "^$key .*issue=KEN-1( |$)" "$ERR" || true)" 'rc=0 lines= events= key=1' "unread $name skips its item with the original cause" "$ERR"
 done <<'ROWS'
 read|fail|verifying-release-unread
 shape|invalid|verifying-release-unread
@@ -1018,7 +1018,7 @@ draft|select(.isDraft == false)|select(true)
 ROWS
 
 # Each release-read guard has a control at its own failing input.
-while IFS='@' read -r name fixture old new; do
+while IFS='@' read -r name fixture status key old new; do
   release_world "release_guard_$name"
   case "$fixture" in
     shape) echo '{}' >"$STUB_DIR/releases.owner_releases.json" ;;
@@ -1034,16 +1034,20 @@ while IFS='@' read -r name fixture old new; do
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   mutate_verifying "$MUTANT_WATCH" "$old" "$new"
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "$RC" 2 "$name guard refuses incomplete evidence" "$ERR"
+  assert_eq "rc=$RC lines=$(verification_lines) events=$(verification_events) key=$(grep -Ec "^$key .*issue=KEN-1( |$)" "$ERR" || true)" 'rc=0 lines= events= key=1' "$name guard skips incomplete evidence with the original cause" "$ERR"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "$RC" 0 "control: $name bypasses its evidence guard" "$ERR"
+  if [[ "$status" == waiting ]]; then
+    WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+    assert_contains "$OUT" 'EVENT heartbeat' "control: $name exposes its fabricated waiting row at heartbeat" "$ERR"
+  fi
+  assert_eq "rc=$RC $(box_status) key=$(grep -c "^$key " "$ERR" || true)" "rc=0 status=$status key=0" "control: $name fabricates $status from incomplete evidence" "$ERR"
 done <<'ROWS'
-shape@shape@if type != "array" or length >= $limit then@if false or length >= $limit then
-page@page@or length >= $limit@or false
-time@time@todateiso8601 == $stamp@true
-draft@draft@(.isDraft | type) != "boolean"@false
-tag@tag@(.tagName | type) != "string"@false
-merge@merge@[[ "$merged" != null ]]@[[ true ]]
+shape@shape@waiting@verifying-release-unread@if type != "array" or length >= $limit then@if false or length >= $limit then
+page@page@due@verifying-release-unread@or length >= $limit@or false
+time@time@due@verifying-release-unread@todateiso8601 == $stamp@true
+draft@draft@waiting@verifying-release-unread@(.isDraft | type) != "boolean"@false
+tag@tag@waiting@verifying-release-unread@(.tagName | type) != "string"@false
+merge@merge@waiting@verifying-merge-unread@[[ "$merged" != null ]]@[[ "$merged" != null ]] || merged="$now"
 ROWS
 release_world release_read_control
 touch "$STUB_DIR/release-fail"
