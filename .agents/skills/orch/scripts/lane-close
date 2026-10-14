@@ -531,7 +531,7 @@ update_status() { # STATUS
 refuse_unanswered_ask() {
   local out rc=0 summary ask_count ask_id epoch now age=unknown args
   [[ -x "$LANE_MAIL" ]] || { message record-invalid "item=$ITEM" "field=lane-mail" >&2; exit 1; }
-  args=(pending --item "$ITEM" --root "$mail_root")
+  args=(pending --item "$ITEM" --root "$mail_root" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})
   [[ -z "$host" ]] || args+=(--host)
   out="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}")" || rc=$?
   [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] \

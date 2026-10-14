@@ -259,6 +259,7 @@ cat >"$FIXTURE/skills/mailbox/scripts/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s host=%s\n' "$*" "${ORCH_LANE_HOST-unset}" >>"$LANE_CLOSE_MAIL_CALLS"
+if [[ -n "${LANE_CLOSE_REAL_MAIL:-}" ]]; then exec "$LANE_CLOSE_REAL_MAIL" "$@"; fi
 if [[ "${LANE_CLOSE_MAIL_STATUS:-0}" -ne 0 ]]; then
   printf 'lane-mail: mail-read-failed=%s\n' "${5-}" >&2
   exit "$LANE_CLOSE_MAIL_STATUS"
@@ -1363,6 +1364,38 @@ MUTANT="$(mutant lane-close-merged-open-busy '    4) message lane-host-busy "ite
 merged_open_row "$MUTANT" 7 hosted-busy
 assert_eq "$(grep -o '^rc=[0-9]* busy=[0-9]* live=[0-9]* unread=[0-9]*' <<<"$MERGED_OPEN")" 'rc=1 busy=0 live=0 unread=1' \
   'control: without the busy arm a capped read refuses as a failed read, not lane-host-busy'
+
+echo '=== a removed local worktree uses the watch-selected fleet for the real mailbox read ==='
+# oversee-watch forwards its selected fleet directory to lane-close. The real
+# mailbox reader must use that record after merge removes the lane worktree.
+SELECTOR_REPO="$TMP_ROOT/selector-repo"
+SELECTOR_ROOT="$TMP_ROOT/selector-worktree"
+SELECTOR_FLEET="$TMP_ROOT/selector-fleet"
+SELECTOR_DEFAULT="$TMP_ROOT/selector-default"
+mkdir -p "$SELECTOR_REPO" "$SELECTOR_FLEET" "$SELECTOR_DEFAULT"
+git -C "$SELECTOR_REPO" init -q
+git -C "$SELECTOR_REPO" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m seed
+git -C "$SELECTOR_REPO" worktree add -q -b selector "$SELECTOR_ROOT"
+git -C "$SELECTOR_REPO" worktree remove "$SELECTOR_ROOT"
+printf '{"lanes":[]}\n' >"$SELECTOR_DEFAULT/workflow-state-oversee.json"
+selected_mail_row() { # SCRIPT
+  local STATE="$SELECTOR_FLEET/workflow-state-oversee.json"
+  MAIL_ROOT="$SELECTOR_ROOT" write_state running claude ''
+  jq '.lanes[0].cycle = {pr: 7}' "$STATE" >"$STATE.next"
+  mv -- "$STATE.next" "$STATE"
+  : >"$ROWS"; printf '\n' >"$SCREEN"
+  proc_table_write "$PROC_TABLE"
+  ORCH_STATE_DIR="$SELECTOR_DEFAULT" LANE_CLOSE_REAL_MAIL="$TEST_DIR/../../mailbox/scripts/lane-mail" \
+    PATH="$LOCAL_PATH" run_close "$1" --state-dir "$SELECTOR_FLEET"
+  SELECTED_MAIL_GOT="rc=$RC read=$(grep -c '^lane-close: mail-read-failed ' <<<"$ERR" || true) root=$(grep -c '^lane-mail: root-not-checkout=' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+selected_mail_row "$SCRIPT"
+assert_eq "$SELECTED_MAIL_GOT" 'rc=0 read=0 root=0 host=0 status=done' \
+  'a removed worktree closes through the real reader using only its selected merged record'
+MUTANT="$(mutant lane-close-mail-selector '  args=(pending --item "$ITEM" --root "$mail_root" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})' '  args=(pending --item "$ITEM" --root "$mail_root")')"
+selected_mail_row "$MUTANT"
+assert_eq "$SELECTED_MAIL_GOT" 'rc=1 read=1 root=1 host=0 status=running' \
+  'control: dropping the selected fleet refuses the real mailbox read and keeps the lane running'
 
 echo '=== a stopped sandbox answering 4 without the removed-worktree line refuses ==='
 write_state running claude /host; write_panes python; claude_screen
