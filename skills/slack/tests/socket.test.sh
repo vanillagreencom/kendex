@@ -616,7 +616,7 @@ sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 sk_bin_reset
 
-sk_mutant events relay.py 'root\.on_message\(event, self\.bot_user\)' 'pass'
+sk_mutant events relay.py 'root\.on_message\(event, self\.bot_user, active=root in self\.roots\)' 'pass'
 relay "$DELTA"
 TS4="$(sk_inject "$DC" U001 'unread event')"
 assert_eq "$(landed "$DELTA" "$DC:$TS4" 30)" "" "control: events unread, a message does not land within the short bound"
@@ -653,7 +653,7 @@ sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 sk_bin_reset
 
-sk_mutant event-age relay.py '        if thread_ts == ts:\n            self.bind_file_share\(message\)' '        if thread_ts != ts and float(thread_ts) < self.settings.horizon(self.clock()):\n            return\n        if thread_ts == ts:\n            self.bind_file_share(message)'
+sk_mutant event-age relay.py '        if active and thread_ts == ts:\n            self.bind_file_share\(message\)' '        if thread_ts != ts and float(thread_ts) < self.settings.horizon(self.clock()):\n            return\n        if active and thread_ts == ts:\n            self.bind_file_share(message)'
 relay "$BETA"
 OR2="$(sk_inject C002 U001 'late under the old one' "$OLD")"
 assert_eq "$(landed "$BETA" "C002:$OR2")" "" "control: the obsolete live age gate loses the old-thread reply"
@@ -679,5 +679,81 @@ awaited reconnect_polled "$GAMMA" "$POLLED_AT" >/dev/null
 assert_eq "$(state_link "$GAMMA")" "failing connected" "control: the connection error kept past a reconnect, the refreshed relay's row reads failing"
 sk_relay_stop
 sk_bin_reset
+
+# A report's bot share supplies its thread binding before event acceptance.
+# The owner reply must retain the mailbox report reference without reconnect.
+for mode in production unbound; do
+  if [ "$mode" = unbound ]; then
+    sk_mutant report-unbound relay.py '        if active and thread_ts == ts:\n            self.bind_file_share\(message\)' '        if active and thread_ts == ts:\n            pass'
+  fi
+  REPORT_ROOT="$(sk_new_root "live-report-$mode")"
+  sk_bind "$REPORT_ROOT"
+  sk_poll "$REPORT_ROOT"
+  mkdir -p "$REPORT_ROOT/tmp/progress-reports"
+  printf 'Full report body.\n' > "$REPORT_ROOT/tmp/progress-reports/report.md"
+  sk_lm "$REPORT_ROOT" notice --item overseer --to owner --attach "$REPORT_ROOT/tmp/progress-reports/report.md" \
+    --file "$(sk_text "report-$mode" 'Live report.')" > "$SK_TMP/report.out"
+  REPORT_ID="$(field "$(cat "$SK_TMP/report.out")" id)"
+  cat > "$SK_TMP/report-probe.py" <<'PY'
+import json, pathlib, subprocess, sys
+if sys.argv[1] != "--child":
+    result = subprocess.run([sys.executable, __file__, "--child", *sys.argv[1:]], timeout=60)
+    sys.exit(result.returncode)
+del sys.argv[1]
+sys.path.insert(0, sys.argv[1])
+from api import Slack
+from relay import Relay
+from settings import load
+path, report_id = pathlib.Path(sys.argv[2]), sys.argv[3]
+settings = load()
+api = Slack(settings.token, settings.api_url)
+listener = Relay([path], settings, api)
+app = Slack(settings.app_token, settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
+try:
+    assert listener.open(app)
+    assert listener.poll_once()
+    root = listener.roots[0]
+    assert root.due is None
+    share = listener.incoming.get(timeout=10)
+    event = share["payload"]["event"]
+    assert event.get("bot_id") or event.get("user") == listener.bot_user
+    assert event["files"]
+    listener.deliver(share)
+    bound = root.state.post_thread(report_id) == event["ts"]
+    pending = bool(root.state.pending_files)
+    stamp = api.post("_test/message", channel=root.channel, user="U001", text="Approved report.",
+                     thread_ts=event["ts"])["ts"]
+    reply = listener.incoming.get(timeout=10)
+    assert reply["payload"]["event"]["ts"] == stamp
+    listener.deliver(reply)
+    listener.deliver(reply)
+    directives = [entry for entry in root.mail.events() if entry.get("delivery_id") == root.channel + ":" + stamp]
+    print(json.dumps({"bound": bound, "pending": pending, "count": len(directives),
+                      "report": [entry.get("parent", {}).get("envelope") == report_id for entry in directives],
+                      "held": bool(root.pending_live), "catch_up_due": root.due is not None}))
+finally:
+    listener.stop_reader.set()
+    if listener.reader is not None:
+        listener.reader.join(timeout=10)
+        assert not listener.reader.is_alive()
+    for root in listener.by_channel.values():
+        root.hold_lock.release()
+        root.lock.release()
+PY
+  RC=0
+  OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    python3 "$SK_TMP/report-probe.py" "${SK_BIN%/*}/lib" "$REPORT_ROOT" "$REPORT_ID")" || RC=$?
+  assert_eq "$RC" 0 "$mode: the report share and owner reply use the connected socket path"
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -c '[.bound,.pending,.count,.report,.held,.catch_up_due]')"
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" '[true,false,1,[true],false,false]' 'a live bot report share binds before the owner reply reaches the mailbox once with its report reference'
+  else
+    sk_assert_red "$GOT" '[true,false,1,[true],false,false]' 'control: removing live report binding loses the report reference without a reconnect'
+  fi
+  sk_bin_reset
+done
 
 sk_summary

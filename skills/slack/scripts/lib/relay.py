@@ -600,6 +600,9 @@ class RootRelay:
     def on_message(self, message: Dict, bot_user: str, active: bool = True) -> None:
         """One live message event, without a thread-age or parent-origin gate."""
         ts = str(message["ts"])
+        thread_ts = str(message.get("thread_ts") or ts)
+        if active and thread_ts == ts:
+            self.bind_file_share(message)
         self.handle(message, bot_user, path="live", active=active)
         if active:
             self.pending_live.pop(ts, None)
@@ -656,8 +659,6 @@ class RootRelay:
             if not active:
                 return
             self.ready()
-            if thread_ts == ts:
-                self.bind_file_share(message)
         user = str(message.get("user", ""))
         if user not in self.binding.owner_ids.values():
             self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=NOT_OWNER)
