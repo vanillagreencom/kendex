@@ -531,6 +531,13 @@ fn declared_refusal_cases() -> Vec<DeclaredRefusal> {
         ),
         (
             None,
+            serde_json::json!("./"),
+            "skills[./]",
+            "heygen-avatar",
+            "heygen-avatar",
+        ),
+        (
+            None,
             serde_json::json!({"name": "missing-path"}),
             "",
             "heygen-avatar",
@@ -580,6 +587,13 @@ fn declared_skill_refusals_are_breaking_and_keep_accepted_siblings() {
             declarations.push(serde_json::json!("heygen-avatar"));
         }
         let (_tmp, sealed) = declared_fixture("./", Some(serde_json::json!(declarations)));
+        if location == "skills[./]" {
+            write(
+                sealed.root(),
+                "SKILL.md",
+                "---\nname: catalog\ndescription: root skill\n---\nroot body\n",
+            );
+        }
         let mut folders = vec!["first/review", "second/review", "second/REVIEW"];
         // Win32 cannot create `nul`; its declaration still tests marker refusal there.
         if !cfg!(windows) {

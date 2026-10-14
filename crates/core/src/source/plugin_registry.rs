@@ -396,6 +396,13 @@ fn skill_dirs(
                 })?;
             let at = format!("{at}: skills[{}]", names::shown(path));
             let relative = relative_dir(&at, name, path)?;
+            if relative.as_os_str().is_empty() {
+                return Err(CatalogFinding::new(
+                    &at,
+                    "a declared skill path names the plugin root rather than a named skill folder",
+                    "name a skill folder beneath the plugin source directory",
+                ));
+            }
             let folder = sealed.root().join(dir).join(&relative);
             let marker = folder.join("SKILL.md");
             sealed.read_to_string(&marker).map_err(|problem| {
