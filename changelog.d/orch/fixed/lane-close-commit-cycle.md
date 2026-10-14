@@ -1,0 +1,1 @@
+- Close an idle lane after a recorded direct push and worktree removal while its item stays open for acceptance.

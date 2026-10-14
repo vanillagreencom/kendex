@@ -588,9 +588,12 @@ close_absent_record() { # MAIL_STATUS
   exit 1
 }
 
-# Whether the record carries the cycle oversee-cycle writes at the merge of the
-# item's pull request.
-record_merged() { jq -e '.cycle.pr? | numbers' <<<"$record" >/dev/null 2>&1; }
+# A direct-push cycle proves delivery only when its push time was read.
+record_merged() {
+  jq -e '(.cycle.pr? | type == "number") or
+    ((.cycle.commit? | strings | length > 0) and
+     (.cycle.stamps.merged? | strings | length > 0))' <<<"$record" >/dev/null 2>&1
+}
 
 # Whether the lane's worktree, the record's mail_root, is gone, which is what
 # says a recorded merge was the lane's last work: the record keeps its cycle
@@ -618,7 +621,7 @@ worktree_gone() {
   esac
 }
 
-# Whether the item's pull request merged, which a full close of a completed
+# Whether the item's delivery landed, which a full close of a completed
 # item tells the provider through close --merged. Two readings, in order: the
 # record's cycle, which oversee-cycle writes at the merge and which is the
 # usual evidence for a hosted lane, whose branch this checkout does not hold;
