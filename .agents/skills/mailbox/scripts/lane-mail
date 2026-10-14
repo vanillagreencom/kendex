@@ -18,7 +18,7 @@
 # The Receipt section of usage() owns
 # what counts as a repeat, and nothing here restates it.
 # An owner ask in the overseer mailbox is closed by `resolve` alone, exactly
-# once, under the same lock the append takes, and a send carrying a delivery
+# once, under the same lock the append takes, and an ask or send carrying a delivery
 # id lands once under that lock too; usage() § Owner channel owns both rules.
 # Text crosses a file, never argv.
 # Bash 3.2-safe: tools/bash32-lint scans this directory.
@@ -268,10 +268,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               An answer leaves the ask pending until resolve closes it.
               The lock judges repeats before closure, so a replay after close
               still names its original answer. New answers after close refuse.
-  send --item ITEM ... --delivery-id KEY
-              a send whose envelope carries KEY, the sender's own name for
+  ask|send --item ITEM ... --delivery-id KEY
+              an ask or send whose envelope carries KEY, the sender's own name for
               this delivery. Under the mailbox lock a KEY the file already
-              holds refuses the send as `delivery-repeated=<KEY> id=<id>`,
+              holds refuses it as `delivery-repeated=<KEY> id=<id>`,
               naming the envelope that landed, so a retry after a crash
               between the append and the sender's mark lands nothing twice.
               Local only: a hosted append passes through a provider that
@@ -370,7 +370,7 @@ Options:
   --text PATH   resolve only: the owner's answer, read as --file is
   --default     resolve only: close at deadline; recommend only if unanswered
   --delivery-id KEY
-                send and resolve only: the sender's name for this delivery
+                ask, send and resolve only: the sender's name for this delivery
   --thread-ts TS --parent PATH
                 send --item overseer --directive only: the thread pointer
   --timeout S   seconds before `wait` exits 124; 0 never times out
@@ -444,7 +444,7 @@ the same envelope again. The repeat rules below apply locally and on hosts
 whose append library has the repeat guard.
 
 A send, ask or notice repeating an envelope the mailbox already holds is a retry of a delivery
-that landed, not a second message. A send carrying --delivery-id is judged by
+that landed, not a second message. An ask or send carrying --delivery-id is judged by
 that key alone, under the lock, and never by this window. What is compared is the envelope whole,
 every field of it but the id it is minted with and the stamp, which the window
 judges instead; a generated deadline is compared as its offset from the stamp.
@@ -802,7 +802,7 @@ for given in $OPTS_GIVEN; do
       [ "$VERB" = events ] || refuse option-unknown --box
       case "$EVENT_BOX" in to-lane | to-overseer) ;; *) refuse box-invalid "$EVENT_BOX" ;; esac ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
-    --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
+    --delivery-id) case "$VERB" in ask | send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
@@ -1691,7 +1691,7 @@ lm_append_local() { # FILE LINE [GUARD]
 # closed any fragment, and leaves what it found in the work directory for the
 # verb's refusal to name.
 
-# The envelope already carrying this send's delivery id, its id into
+# The envelope already carrying this delivery id, its id into
 # WORK_DIR/delivery.earlier; refuses where one stands.
 lm_guard_delivery() { # FILE
   jq -r -R --arg key "$DELIVERY_ID" '(fromjson? // empty) | objects
@@ -2159,6 +2159,13 @@ case "$VERB" in
       lm_append_local "$TO_OVERSEER" "$LINE" lm_guard_owner_notice || {
         REFUSE_EXTRA="id=$(cat -- "$WORK_DIR/notice.earlier")"
         refuse owner-notice-repeated "$ITEM"
+      }
+    elif [ -n "$DELIVERY_ID" ]; then
+      # A restarted asker uses send's existing key guard so the relay sees
+      # no new ask, and the original tracker deadline and outcome stay intact.
+      lm_append_local "$TO_OVERSEER" "$LINE" lm_guard_delivery || {
+        REFUSE_EXTRA="id=$(cat -- "$WORK_DIR/delivery.earlier")"
+        refuse delivery-repeated "$DELIVERY_ID"
       }
     else
       lm_append_local "$TO_OVERSEER" "$LINE"

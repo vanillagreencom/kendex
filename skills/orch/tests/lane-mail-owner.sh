@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lane-mail's owner channel: the typed fields an overseer ask and notice carry,
-# `resolve` closing an owner ask exactly once, `--delivery-id` landing a send
+# `resolve` closing an owner ask exactly once, `--delivery-id` landing an ask or send
 # once under the lock, `events` reading both files, and `pending --to` and
 # `--due`. Each case builds an overseer checkout under TMP_ROOT and drives the
 # real script; the lane-side verbs are tests/lane-mail.sh. The must-fail
@@ -184,6 +184,42 @@ recommend|Retry?|yes,no|no||5
 options|Retry?|yes,no,later|yes||5
 text|Other?|yes,no|yes||5
 expired|Retry?|yes,no|yes||61
+ROWS
+# A restarted overseer retries the same ask after the minute window. The
+# unkeyed row is the control: the same retry appends a second ask. The relay
+# consumes these ask envelopes, so no second envelope means no second thread.
+while IFS='|' read -r name retry_key words want; do
+  new_repo "ask_delivery_$name"
+  lm ask --item overseer --to owner --options yes,no --recommend yes \
+    --delivery-id ask:restart --file "$(text q 'Retry?')"
+  FIRST_ASK="${OUT#id=}"
+  FIRST_LINE="$(cat -- "$BOX/to-overseer.jsonl")"
+  assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.delivery_id')" "0=ask:restart" \
+    "$name: the first ask carries its delivery key"
+  sleep 61
+  key_args=()
+  [[ -z "$retry_key" ]] || key_args=(--delivery-id "$retry_key")
+  lm ask --item overseer --to owner --options yes,no --recommend yes \
+    ${key_args[@]+"${key_args[@]}"} --file "$(text q "$words")"
+  control_rc=0
+  # The first line of the keyed refusal is lane-mail's machine-read contract.
+  (FAIL=0
+    assert_eq "$RC=$ERR=$(field "$BOX/to-overseer.jsonl" 'select(.kind == "ask") | .id')" \
+      "2=lane-mail: delivery-repeated=ask:restart id=$FIRST_ASK=$FIRST_ASK" \
+      'a keyed retry names the first ask and leaves one ask envelope'
+    assert_eq "$(cat -- "$BOX/to-overseer.jsonl")" "$FIRST_LINE" \
+      'a keyed retry preserves the original timestamp and deadline'
+    [[ "$FAIL" -eq 0 ]]
+  ) >"$TMP_ROOT/ask-delivery-assertion" || control_rc=$?
+  assert_eq "$control_rc" "$want" "$name: the same retry assertion judges the key" "$TMP_ROOT/ask-delivery-assertion"
+  if [[ "$want" == 1 ]]; then
+    assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'select(.kind == "ask") | .id' | wc -l | tr -d ' ')" \
+      "0=2" 'control: the retry without a key appends a second ask after the minute'
+  fi
+done <<'ROWS'
+keyed|ask:restart|Retry?|0
+changed-text|ask:restart|Other?|0
+unkeyed||Retry?|1
 ROWS
 new_repo control_ask_retry
 owner_ask 'Retry?' yes,no yes
