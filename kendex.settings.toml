@@ -150,6 +150,8 @@ ORCH_WAKE_START = ""
 # judges, the binding bucket or with --model that model's window.
 ORCH_LANE_MAX_PCT = "95"
 
+ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
+
 # The overseer moves before its account walls when its current binding bucket
 # reaches 5 percent headroom, its projected wall is within 20 minutes, or the
 # qualifying-account trigger fires by the rule oversee-succeed --help states.
