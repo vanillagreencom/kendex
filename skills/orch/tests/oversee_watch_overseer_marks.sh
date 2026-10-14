@@ -194,6 +194,36 @@ run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=1" \
   "and the same-pane replacement is told its own crossing at once" "$ERR"
 
+# A reserve episode clears only on a measured below-mark result. Failed or
+# unmeasured readings keep the bounded refusal, and the next real crossing
+# starts a new episode. The shared parser must clear an omitted reserve field.
+overseer_case reserve_lifts idle
+touch "$STUB_DIR/repeat-child"
+state_with "$LINE"
+printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+printf '3\n' > "$STUB_DIR/succeed.rc"
+run TMUX_PANE="$PANE" -- --max-loops 1
+reserve_lifted=no
+for reading in unmeasured unread reserve below reserve wall; do
+  rm -f -- "${STUB_DIR:?}/succeed.check-rc"
+  case "$reading" in
+    unmeasured) printf '%s\n' 'oversee-succeed: mark-unmeasured kind=headroom reason=headroom-none succession=on' > "$STUB_DIR/succeed.check" ;;
+    unread) printf '2\n' > "$STUB_DIR/succeed.check-rc" ;;
+    reserve) printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check" ;;
+    below) mark_lifts ;;
+    wall) wall_confirmed ;;
+  esac
+  run TMUX_PANE="$PANE" -- --max-loops 1
+  case "$reading" in
+    unmeasured|unread) expected=1 ;;
+    below) expected=1 ;;
+    wall) expected=3 ;;
+    reserve) expected=1; [[ "$reserve_lifted" != yes ]] || expected=2 ;;
+  esac
+  assert_eq "$(succeed_calls --walled-pane)" "$expected" "reserve episode after $reading" "$ERR"
+  [[ "$reading" != below ]] || reserve_lifted=yes
+done
+
 # --- one reading per PASS, not per process -------------------------------
 # A single invocation runs up to --max-loops passes an --interval apart, so a
 # judgement memoised for the process would answer every later pass with the

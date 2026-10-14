@@ -142,7 +142,9 @@
 #        answer, exit 0 and launch nothing. Under --check-marks a mark that IS reached
 #        prints `mark-reached` and a reading that could not be taken prints
 #        `mark-unmeasured`, either of which ends the run there; a reached mark
-#        otherwise falls through to step 3.
+#        otherwise falls through to step 3. A headroom mark adds
+#        `reserve_only=true` when the account pick refused a launch but
+#        positive spendable Codex credits remain. The launch floor is unchanged.
 #     3. Walk ORCH_OVERSEER_PREFERENCE through lib/overseer-launch.sh's
 #        parser. kendex.settings.toml.example § Fleet owns the entry grammar
 #        and numeric model selection and eligibility. The walk uses
@@ -412,7 +414,8 @@
 #   --line-file PATH The recorded launch line, read whole, one trailing newline
 #                    dropped. Required with --dead-pane and refused without it
 #   --walled-pane PANE
-#                    The tmux pane of an overseer whose account is spent, in
+#                    The tmux pane of an overseer whose account is spent or
+#                    has reached its launch reserve, in
 #                    place of the caller's own. No mark is judged and no
 #                    recorded line is read: its launch record answers for its
 #                    harness, account, model and directory where it names the
@@ -633,6 +636,8 @@ source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/lane-model.sh
+source "$SCRIPT_DIR/lib/lane-model.sh"
 # The launch steps shared with `oversee launch`: the walk, the flags, the
 # command, the runtime's create, the session record, the verification and the
 # stop.
@@ -1074,6 +1079,7 @@ case "$CALLER_ACCOUNT_HARNESS" in
 esac
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS="" CALLER_STATUS="" CALLER_DETAIL=""
+CALLER_RESERVE_ONLY=false
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
 if (( JUDGES )); then
   # An account `lanes` does not measure is one nothing measured, its exit 4.
@@ -1092,7 +1098,7 @@ if (( JUDGES )); then
       # unreadable rather than standing in a zero and reading as full room.
       # `alias` is the account label every lane report names an account by,
       # the same field `lanes context` puts in its own account column.
-      caller_row="$(jq -r '[ (.wall // ""), (.alias // ""), (.binding_resets_at // ""), (.usage_rate_state // ""), (.projected_wall_minutes // "") ] | @tsv' \
+      caller_row="$(jq -r "$LANE_MODEL_JQ"'[ (.wall // ""), (.alias // ""), (.binding_resets_at // ""), (.usage_rate_state // ""), (.projected_wall_minutes // ""), credit_room(0) ] | @tsv' \
         <<<"$caller_record" 2>"$DEP_ERR")" || caller_row=""
       # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
       # drops a leading one and an unmeasured lane's empty wall would shift
@@ -1102,7 +1108,10 @@ if (( JUDGES )); then
       CALLER_ACCOUNT="${caller_rest%%$'\t'*}"; caller_rest="${caller_rest#*$'\t'}"
       CALLER_RESETS="${caller_rest%%$'\t'*}"; caller_rest="${caller_rest#*$'\t'}"
       RATE_STATE="${caller_rest%%$'\t'*}"
-      WALL_PROJECTED="${caller_rest#*$'\t'}"
+      caller_rest="${caller_rest#*$'\t'}"
+      WALL_PROJECTED="${caller_rest%%$'\t'*}"
+      # A refused launch can leave spendable credits below its reserve.
+      (( caller_rc != 3 )) || CALLER_RESERVE_ONLY="${caller_rest#*$'\t'}"
       if matches "$caller_wall" '^[0-9]{1,3}$'; then
         CALLER_HEADROOM=$((100 - 10#$caller_wall))
         HEADROOM_FIELD="$CALLER_HEADROOM"
@@ -1374,8 +1383,11 @@ fi
 # Actual succession keeps account priority when choosing a successor.
 if [[ "$MODE" == check ]]; then
   if [[ "$MARK_KIND" == headroom ]]; then
+    reserve_fields=()
+    [[ "$CALLER_RESERVE_ONLY" != true ]] || reserve_fields+=(reserve_only=true)
     message mark-reached kind=headroom "value=$CALLER_HEADROOM" "mark=$HEADROOM_TRIGGER" \
-      "succession=$SUCCESSION" "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"
+      "succession=$SUCCESSION" "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}" \
+      ${reserve_fields[@]+"${reserve_fields[@]}"}
   elif [[ "$MARK_KIND" == rate ]]; then
     message mark-reached kind=rate "value=$WALL_PROJECTED" "mark=$WALL_MINUTES" \
       "succession=$SUCCESSION" "account=${CALLER_ACCOUNT:-unknown}"

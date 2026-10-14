@@ -191,6 +191,34 @@ judged() {
 
 echo "=== oversee-succeed: the caller's launch record ==="
 
+# The existing Codex usage reader supplies the credit flags to the account
+# pick. Only positive, spendable credits distinguish a launch reserve.
+while IFS='|' read -r label credits control used expected; do
+  new_caller
+  state "$(record "$CALLER_PANE" "$H/.codex" gpt-5 '{"harness":"codex"}')"
+  jq -n --argjson credits "$credits" --argjson control "$control" --argjson used "$used" \
+    '{rate_limit: {primary_window: {used_percent: $used, reset_at: 1785000000, limit_window_seconds: 18000}},
+      credits: $credits, spend_control: $control}' > "$FIXTURE_DIR/.codex.json"
+  run_succeed "CODEX_HOME=$H/.codex" --check-marks
+  first="$(sed -n 1p <<<"$OUT")" || exit 1
+  reserve=false
+  [[ " $first " != *' reserve_only=true '* ]] || reserve=true
+  assert_eq "$RC|$(judged)|$reserve" "$expected" "credit judgement: $label" "$TMP_ROOT/err"
+done <<'ROWS'
+reserve|{"balance":"1","has_credits":true,"overage_limit_reached":false}|{"reached":false}|100|0|mark-reached kind=headroom value=0|true
+floor-cleared|{"balance":"62300","has_credits":true,"overage_limit_reached":false}|{"reached":false}|100|0|account-below-mark headroom=0|false
+exhausted|{"balance":"0","has_credits":true,"overage_limit_reached":false}|{"reached":false}|100|0|mark-reached kind=headroom value=0|false
+negative|{"balance":"-1","has_credits":true,"overage_limit_reached":false}|{"reached":false}|100|0|mark-reached kind=headroom value=0|false
+no-credits|{"balance":"1","has_credits":false,"overage_limit_reached":false}|{"reached":false}|100|0|mark-reached kind=headroom value=0|false
+overage|{"balance":"1","has_credits":true,"overage_limit_reached":true}|{"reached":false}|100|0|mark-reached kind=headroom value=0|false
+spend-control|{"balance":"1","has_credits":true,"overage_limit_reached":false}|{"reached":true}|100|0|mark-reached kind=headroom value=0|false
+absent|null|null|100|0|mark-reached kind=headroom value=0|false
+unknown-control|{"balance":"1","has_credits":true,"overage_limit_reached":false}|null|100|0|mark-reached kind=headroom value=0|false
+plan-room|{"balance":"1","has_credits":true,"overage_limit_reached":false}|{"reached":false}|20|0|account-below-mark headroom=80|false
+ROWS
+jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
+  > "$FIXTURE_DIR/.codex.json"
+
 # --- the judgement --------------------------------------------------------
 # Each row names every source that disagrees: the context reading in the
 # overseer mailbox, the account variable, a note in that mailbox, the current

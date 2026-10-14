@@ -107,12 +107,13 @@ The long pass's events, checked and reported in this order:
                              standing unless its account measures room, its
                              message, or message=unrecorded, under the line; from `account`, a live
                              session whose own account judgement reads
-                             mark-reached kind=headroom value=0, account
+                             mark-reached kind=headroom value=0 without
+                             reserve_only=true, account
                              and reset under the line; both on the first pass that
                              reads them. Or, from the `pane` fallback, on N
                              consecutive passes read by the same judge AND
                              that judgement reading mark-reached
-                             kind=headroom: the harness is still running
+                             kind=headroom without reserve_only=true: the harness is still running
                              and its ACCOUNT is spent. Such a session
                              takes no turn, so it answers no lane, reads no
                              mail and cannot hand itself over — a fleet as
@@ -139,6 +140,16 @@ The long pass's events, checked and reported in this order:
                              account=unknown and resets=none. Login recovery
                              has no usage reset: sign in to an account, then
                              start a fresh overseer by hand
+  EVENT overseer-reserve <pane> window=<window> passes=1 succession=<on|off> source=<source>
+                             Positive spendable credits remain below the
+                             launch reserve. The coordinator stays live.
+                             The existing successor route runs once, with
+                             its bounded retry for launch failures. Refusal,
+                             exhaustion or succession off keeps this watch
+                             reading mail, lane checks and ask deadlines.
+                             Capacity notices reach the fleet log and the
+                             overseer mailbox. A successful successor ends
+                             the old watch through its usual handover.
   EVENT overseer-mark <pane> kind=<headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
                              the OVERSEER's own account reached its mark,
@@ -1172,6 +1183,8 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-notice-failed) text='An overseer notice could not be delivered on the channel the field names. A notice from a pass still had its event line printed; a notice from the watch start has none.' ;;
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
     overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The notice reaches the fleet log and the overseer mailbox. Measured account and reset values come from an account mark. Unmeasured fields read account=unknown and resets=none. Login recovery has no usage reset: sign in to an account, then start a fresh overseer by hand.' ;;
+    overseer-capacity-blocked) text='No account qualifies for a successor at the launch reserve. The current coordinator can still spend credits. Its watch continues without repeating the account sweep.' ;;
+    overseer-capacity-failed) text='The successor launch failed at the launch reserve. The current coordinator stays live. Its watch continues through the bounded retry and after exhaustion.' ;;
     overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
     state-required) text='The option reads its lanes from the oversee workflow state. Add --state PATH.' ;;

@@ -3135,20 +3135,18 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
 # reads it as the text of its record and the overseer mailbox as the body of an
 # owner note, so the two cannot describe the case differently.
 #
-# KIND is `dead` or `walled`, the two cases check_overseer recovers from, and
-# it decides three words and nothing else: the notice's own key, the reading
-# that was taken, and how a relaunch describes where the successor's account
-# came from. Every other plan reads the same for both, because the reason no
-# successor opens is the same reason. RECORD is the fleet state's overseer
+# KIND selects the reading and plan wording. RECORD is the fleet state's overseer
 # record key, `<server> <pane>` or empty for none, and MINE 1 where that
 # record names this session (overseer_record_read), which the key alone does
 # not say: an earlier server handed the same pid and pane id left the same
 # one. The no-line plan names which of the three shapes left it with no line.
 overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
   local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
-  local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text
+  local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text headline
   now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
-  if [[ "$kind" == walled ]]; then
+  if [[ "$kind" == reserve ]]; then
+    relaunch_text='A successor is being selected. The current coordinator can still spend credits and its watch continues if no successor opens.'
+  elif [[ "$kind" == walled ]]; then
     reading=walled
     relaunch_text='A successor is being launched into that window on an account the lane pick judged, never on the spent one.'
   else
@@ -3174,8 +3172,14 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
     # one.
     *) plan_text="No successor is launched; the watch reported plan $5, which it has no wording for. Start one by hand." ;;
   esac
-  printf 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s, source=%s. %s\n' \
-    "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text" > "$notice" \
+  if [[ "$kind" == reserve ]]; then
+    printf -v headline 'overseer-reserve: pane=%s window=%s account=%s. Spendable credits remain below the launch reserve. The coordinator stays live and its watch continues. %s' \
+      "$2" "$3" "${OVERSEER_MARK_ACCOUNT:-unknown}" "$plan_text"
+  else
+    printf -v headline 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s, source=%s. %s' \
+      "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text"
+  fi
+  printf '%s\n' "$headline" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
 }
@@ -3183,9 +3187,9 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
 # Exit 3 from the launcher is `lanes pick`'s own "no lane clears the bound",
 # relayed by oversee-succeed: no account in the fleet has room for a
 # successor. One notice on the two channels the recovery already uses, the row
-# marked reported, and the repeat stops — the same ending notice-only recovery
-# takes, because the bounded retry would walk the same accounts and refuse
-# again.
+# marked reported, because a retry would walk the same accounts and refuse
+# again. A reserve refusal leaves the current session live; real failures stop
+# repeat mode.
 #
 # The account and the time it frees up are the account judgement's own fields,
 # read off the one `--check-marks` line this pass already took and that
@@ -3193,10 +3197,20 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
 # the headroom that confirmed it and names the bucket's own reset, so the
 # figure the fleet waits on and the figure that established the wall are one
 # reading. Either can be absent where that judgement named neither.
-overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW
+overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW KIND
   local row="$1" rows="$2" identity="$3" pane="$4" window="$5"
+  local kind="$6"
   local notice="$WORK_DIR/overseer-blocked.txt" record="$WORK_DIR/overseer-blocked.json"
   local errf="$WORK_DIR/overseer-blocked.err"
+  if [[ "$kind" == reserve ]]; then
+    lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reserve:reported)"
+    printf 'overseer-capacity-blocked: pane=%s account=%s. No account qualifies for a successor. The current coordinator can still spend credits. Its watch continues.\n' \
+      "$pane" "${OVERSEER_MARK_ACCOUNT:-unknown}" > "$notice" \
+      || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+    overseer_publish "$notice" "$record" "$errf"
+    ow_message overseer-capacity-blocked "pane=$pane" "account=${OVERSEER_MARK_ACCOUNT:-unknown}" >&2
+    return 0
+  fi
   lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
   OVERSEER_STOP=1
   local account="" resets=""
@@ -3216,23 +3230,25 @@ overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW
     "account=${account:-unknown}" "resets=${resets:-none}" >&2
 }
 
-overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
+overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP KIND
   local row="$1" rows="$2" identity="$3" pane="$4" window="$5" attempt="$6" step="$7"
+  local kind="$8" prefix="" key=overseer-relaunch-failed
+  [[ "$kind" != reserve ]] || { prefix=reserve:; key=overseer-capacity-failed; }
   local retry=exhausted notice="$WORK_DIR/overseer-relaunch-failed.txt"
   local record="$WORK_DIR/overseer-relaunch-failed.json" errf="$WORK_DIR/overseer-relaunch-failed.err"
   if (( attempt < OVERSEER_RELAUNCH_ATTEMPTS )); then
     retry=pending
-    rows="$(lane_row_set "$row" "$rows" "$identity" "pending:$attempt")"
+    rows="$(lane_row_set "$row" "$rows" "$identity" "${prefix}pending:$attempt")"
   else
-    rows="$(lane_row_set "$row" "$rows" "$identity" reported)"
-    OVERSEER_STOP=1
+    rows="$(lane_row_set "$row" "$rows" "$identity" "${prefix}reported")"
+    [[ "$kind" == reserve ]] || OVERSEER_STOP=1
   fi
   lane_row_commit "$rows"
-  printf 'overseer-relaunch-failed: successor launch for tmux window %s (pane %s) failed on attempt %s; retry=%s; step=%s.\n' \
-    "$window" "$pane" "$attempt" "$retry" "$step" > "$notice" \
+  printf '%s: successor launch for tmux window %s (pane %s) failed on attempt %s; retry=%s; step=%s.\n' \
+    "$key" "$window" "$pane" "$attempt" "$retry" "$step" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
-  ow_message overseer-relaunch-failed "pane=$pane" "attempt=$attempt" "retry=$retry" "step=$step" >&2
+  ow_message "$key" "pane=$pane" "attempt=$attempt" "retry=$retry" "step=$step" >&2
 }
 
 # The overseer's own marks, judged by `oversee-succeed --check-marks`. ONE
@@ -3264,6 +3280,7 @@ OVERSEER_MARK_MARK=""
 OVERSEER_MARK_SUCCESSION=on
 OVERSEER_MARK_ACCOUNT=""
 OVERSEER_MARK_RESETS=""
+OVERSEER_MARK_RESERVE_ONLY=false
 OVERSEER_MARK_READ=0
 OVERSEER_MARK_RC=1
 overseer_marks_reset() {
@@ -3317,6 +3334,7 @@ overseer_marks_judge() {
   OVERSEER_MARK_SUCCESSION=on
   OVERSEER_MARK_ACCOUNT=""
   OVERSEER_MARK_RESETS=""
+  OVERSEER_MARK_RESERVE_ONLY=false
   if [[ ! -x "$SUCCEED" ]]; then
     overseer_note overseer-mark-unjudged "path=$SUCCEED" "setting=OVERSEE_WATCH_SUCCEED"
     return 1
@@ -3348,6 +3366,7 @@ overseer_marks_judge() {
       succession=*) OVERSEER_MARK_SUCCESSION="${field#succession=}" ;;
       account=*) OVERSEER_MARK_ACCOUNT="${field#account=}" ;;
       resets=*) OVERSEER_MARK_RESETS="${field#resets=}" ;;
+      reserve_only=true) OVERSEER_MARK_RESERVE_ONLY=true ;;
     esac
   done
   OVERSEER_MARK_RC=0
@@ -3364,13 +3383,14 @@ overseer_marks_judge() {
 # alive.
 #
 # So the screen never decides alone: the wall is confirmed only by the
-# judge's own `mark-reached kind=headroom`, by the account mark
+# judge's own non-reserve `mark-reached kind=headroom`, by the account mark
 # `oversee-succeed --help` owns, so no figure is compared here. Every other
 # answer, a failed judgement included, leaves the pane read as the working
 # overseer it looks like.
 overseer_wall_confirmed() { # PANE
   overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }
-  [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom ]] && return 0
+  [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom \
+     && "$OVERSEER_MARK_RESERVE_ONLY" != true ]] && return 0
   overseer_note overseer-wall-unconfirmed "pane=$1" "answer=$OVERSEER_MARK_KEY" \
     "kind=${OVERSEER_MARK_KIND:-none}"
   return 1
@@ -3762,7 +3782,7 @@ overseer_judge() { # PANE
 check_overseer() {
   local pane="${TMUX_PANE:-}" window screen prior count succession plan
   local record record_mine record_field identity rows attempt completed passes=""
-  local ov_case row other succeed_rc below banner banner_rc
+  local ov_case row other succeed_rc below banner banner_rc prefix=""
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
   # there is nowhere to record one: either way an overseer that dies is
@@ -3799,14 +3819,13 @@ check_overseer() {
   record_mine="$OVERSEER_RECORD_MINE"
 
   overseer_judge "$pane"
-  # An account mark reached at value 0 is a wall whether or
-  # not the harness has met it yet: its next turn fails, and a walled session
-  # hands nothing over, so the succession runs from here, `source=account`.
+  # A launch reserve alone does not stop the current session spending credits.
+  # Other zero-headroom results retain the account-wall recovery.
   # The judgement is the pass's one memoised reading, which the live arm's
   # mark check reads too.
   if [[ "$OV_VERDICT" == live ]] && overseer_marks_judge \
      && [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom \
-           && "$OVERSEER_MARK_VALUE" == 0 ]]; then
+           && "$OVERSEER_MARK_VALUE" == 0 && "$OVERSEER_MARK_RESERVE_ONLY" != true ]]; then
     OV_VERDICT=walled OV_SOURCE=account
   fi
   # A harness whose recorded context fills its window takes no turn again, and
@@ -3820,7 +3839,12 @@ check_overseer() {
   case "$OV_VERDICT" in
     exited) ov_case=dead ;;
     walled) ov_case=walled ;;
-    live) ;;
+    live)
+      if [[ "$OVERSEER_MARK_RC" == 0 && "$OVERSEER_MARK_KEY" == mark-reached \
+         && "$OVERSEER_MARK_KIND" == headroom && "$OVERSEER_MARK_VALUE" == 0 \
+         && "$OVERSEER_MARK_RESERVE_ONLY" == true ]]; then
+        ov_case=reserve prefix=reserve:
+      fi ;;
   esac
   # One row per case, keyed by server plus pane: `<count>` while readings
   # accumulate, `pending:N` after a failed launch, and `reported` after
@@ -3828,16 +3852,22 @@ check_overseer() {
   rows="$(lane_row_prune overseer-dead "${PW_SEEN[0]}" "$identity")"
   rows="$(lane_row_prune overseer-walled "$rows" "$identity")"
   rows="$(lane_row_prune overseer-context-gap "$rows" "$identity")"
-  if [[ -z "$ov_case" ]]; then
+  if [[ -z "$ov_case" || "$ov_case" == reserve ]]; then
     rows="$(lane_row_clear overseer-dead "$rows" "$identity")"
-    rows="$(lane_row_clear overseer-walled "$rows" "$identity")"
+    prior="$(lane_row_get overseer-walled "$rows" "$identity")" \
+      || die state-read-failed "" "pane=$pane" "row=overseer-walled"
+    # An unread account does not prove that a reserve episode lifted.
+    if [[ "$prior" != reserve:* || ( "$OVERSEER_MARK_RC" == 0 && "$OVERSEER_MARK_KEY" == below-mark ) ]]; then
+      rows="$(lane_row_clear overseer-walled "$rows" "$identity")"
+    fi
     # A working overseer is the only one with marks to judge: neither a dead
     # nor a walled one runs a turn, so its context and its account settle
     # nothing and its case is the event the branch below carries.
     overseer_mark_check "$rows" "$identity" "$pane"
     overseer_context_check "$pane" "$identity"
     lane_row_commit "$OVERSEER_MARK_ROWS"
-    return 0
+    [[ "$ov_case" == reserve ]] || return 0
+    rows="$OVERSEER_MARK_ROWS"
   fi
   case "$ov_case" in
     dead) row=overseer-dead; other=overseer-walled ;;
@@ -3853,21 +3883,34 @@ check_overseer() {
   # committed back on every such pass: a replacement in this same pane would
   # then read the old session's repeat count and wait out its remainder before
   # its own first crossing is reported.
-  rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
-  rows="$(lane_row_clear overseer-context-gap "$rows" "$identity")"
+  if [[ "$ov_case" != reserve ]]; then
+    rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
+    rows="$(lane_row_clear overseer-context-gap "$rows" "$identity")"
+  fi
   if ! prior="$(lane_row_get "$row" "$rows" "$identity")"; then
     die state-read-failed "" "pane=$pane" "row=$row"
   fi
+  # Reserve attempts must not consume or suppress recovery from a real failure.
+  if [[ "$ov_case" != reserve && "$prior" == reserve:* ]]; then
+    rows="$(lane_row_clear "$row" "$rows" "$identity")"
+    prior=""
+  elif [[ "$ov_case" == reserve ]]; then
+    prior="${prior#reserve:}"
+  fi
   if [[ "$prior" == reported ]]; then
-    OVERSEER_STOP=1
+    [[ "$ov_case" == reserve ]] || OVERSEER_STOP=1
     lane_row_commit "$rows"
+    [[ "$ov_case" != reserve ]] || return 0
     return 1
   fi
   if [[ "$prior" =~ ^pending:([0-9]+)$ ]]; then
     completed="${BASH_REMATCH[1]}"
     attempt=$((completed + 1))
-    (( attempt <= OVERSEER_RELAUNCH_ATTEMPTS )) \
-      || { lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"; return 1; }
+    if (( attempt > OVERSEER_RELAUNCH_ATTEMPTS )); then
+      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" "${prefix}reported")"
+      [[ "$ov_case" != reserve ]] || return 0
+      return 1
+    fi
   else
     [[ -z "$prior" || "$prior" =~ ^[0-9]+$ ]] \
       || die state-read-failed "" "pane=$pane" "row=$row" "value=$prior"
@@ -3877,6 +3920,7 @@ check_overseer() {
     # second reading: it is not a screen caught between frames, and each pass
     # it waits is a pass the fleet runs unattended.
     passes="$DEAD_PASSES"
+    [[ "$ov_case" != reserve ]] || passes=1
     [[ "$ov_case" != walled || "$OV_SOURCE" == pane ]] || passes=1
     if (( count < passes )); then
       lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" "$count")"
@@ -3907,11 +3951,11 @@ check_overseer() {
   fi
   if [[ "$prior" != pending:* ]]; then
     if [[ "$plan" == relaunch ]]; then
-      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" pending:0)"
+      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" "${prefix}pending:0")"
     else
-      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
+      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" "${prefix}reported")"
     fi
-    echo "EVENT $row $pane window=$window passes=${passes:-$DEAD_PASSES} succession=$succession source=$OV_SOURCE$record_field"
+    echo "EVENT overseer-$ov_case $pane window=$window passes=${passes:-$DEAD_PASSES} succession=$succession source=$OV_SOURCE$record_field"
     # The wall's own words under the line, as every lane usage-limit event
     # carries them. A rows wall carries the harness's own message, the limit
     # and its reset, or `message=unrecorded` where its row holds none. A screen wall carries the banner with the screen on both
@@ -3934,9 +3978,10 @@ check_overseer() {
     overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$record_mine"
   fi
   if [[ "$plan" != relaunch ]]; then
-    OVERSEER_STOP=1
+    [[ "$ov_case" == reserve ]] || OVERSEER_STOP=1
     [[ "$prior" != pending:* ]] \
-      || overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan"
+      || overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan" "$ov_case"
+    [[ "$ov_case" != reserve ]] || return 0
     return 1
   fi
 
@@ -3945,12 +3990,12 @@ check_overseer() {
   # records of their own. The walled recovery's stdout carries the command it
   # built as well, so the pass output says which line it sent.
   succeed_rc=0
-  if [[ "$ov_case" == walled ]]; then
+  if [[ "$ov_case" == walled || "$ov_case" == reserve ]]; then
     overseer_launch_args
     "$SUCCEED" --walled-pane "$pane" "${OVERSEER_LAUNCH_ARGS[@]}" >&2 || succeed_rc=$?
   else
     printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
-      || { overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 1; }
+      || { overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" line-file "$ov_case"; return 1; }
     "$SUCCEED" --dead-pane "$pane" --handoff "$HANDOFF" --line-file "$WORK_DIR/overseer-line" >&2 || succeed_rc=$?
   fi
   # Exit 3 is that script's own "no account qualifies", which a retry cannot
@@ -3958,9 +4003,10 @@ check_overseer() {
   # the bounded retry. The dead path picks no lane, so it never answers 3.
   case "$succeed_rc" in
     0) OVERSEER_SUCCEEDED=1 ;;
-    3) overseer_recovery_blocked "$row" "$rows" "$identity" "$pane" "$window" ;;
-    *) overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" launcher ;;
+    3) overseer_recovery_blocked "$row" "$rows" "$identity" "$pane" "$window" "$ov_case" ;;
+    *) overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" launcher "$ov_case" ;;
   esac
+  [[ "$ov_case" != reserve || "$OVERSEER_SUCCEEDED" == 1 ]] || return 0
   return 1
 }
 

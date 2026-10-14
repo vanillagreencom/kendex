@@ -296,5 +296,139 @@ assert_eq "walled=$(succeed_calls --walled-pane) dead=$(succeed_calls --dead-pan
   "a wall, a death and a wall again: each case counts its own readings alone" "$ERR"
 
 
+# A reserve episode uses the existing row and attempt ceiling, while the
+# current coordinator stays live. The pane banner can belong to another lane.
+while IFS='|' read -r label pane_state launch_rc setting expected_rc attempts notices; do
+  overseer_case "reserve_$label" "$pane_state"
+  touch "$STUB_DIR/repeat-child"
+  state_with "$LINE"
+  printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+  printf '%s\n' "$launch_rc" > "$STUB_DIR/succeed.rc"
+  for pass in 1 2 3; do
+    run TMUX_PANE="$PANE" ORCH_OVERSEER_SUCCESSION="$setting" -- --max-loops 1
+    [[ "$RC" != 3 ]] || break
+  done
+  assert_eq "rc=$RC attempts=$(succeed_calls --walled-pane) mail=$(mailbox_lines) walls=$(grep -c '^EVENT overseer-walled ' <<<"$OUT" || true)" \
+    "rc=$expected_rc attempts=$attempts mail=$notices walls=0" "reserve outcome: $label" "$ERR"
+done <<'ROWS'
+refused|idle|3|on|0|1|2
+banner|walled|3|on|0|1|2
+exhausted|idle|1|on|0|2|3
+off|idle|3|off|0|0|1
+success|idle|0|on|3|1|1
+ROWS
+
+# A reported reserve must not suppress a later real session failure.
+while IFS='|' read -r label cmd screen expected_mode expected_attempts; do
+  overseer_case "reserve_then_$label" idle
+  touch "$STUB_DIR/repeat-child"
+  state_with "$LINE"
+  printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+  printf '3\n' > "$STUB_DIR/succeed.rc"
+  run TMUX_PANE="$PANE" -- --max-loops 1
+  printf '%s\n' "$cmd" > "$STUB_DIR/cmd-$PANE.txt"
+  printf '%b\n' "$screen" > "$STUB_DIR/pane-$PANE.txt"
+  if [[ "$label" == quota ]]; then wall_confirmed; fi
+  run TMUX_PANE="$PANE" -- --max-loops 2
+  assert_eq "rc=$RC recovered=$(succeed_calls "$expected_mode")" "rc=4 recovered=$expected_attempts" \
+    "a later $label failure retains its own recovery" "$ERR"
+done <<'ROWS'
+auth|claude|⏺ Turn\nNot logged in · Please run /login\n❯ |--walled-pane|2
+quota|claude|⏺ Turn\nYou've hit your usage limit · resets 9:50am (America/Los_Angeles)\n❯ |--walled-pane|2
+exit|bash|dev@host ~/kendex $|--dead-pane|1
+ROWS
+
+# A session's own failure row outranks affirmative reserve metadata.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/overseer-row-world.sh"
+while IFS='|' read -r label harness error message mode; do
+  rows_case "reserve_rows_$label" blank \
+    "$(row SessionStart "$harness" source=startup)" \
+    "$(row StopFailure "$harness" "error=$error" "message=$message")"
+  printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+  printf '3\n' > "$STUB_DIR/succeed.rc"
+  run TMUX_PANE="$PANE" -- --max-loops 2
+  assert_eq "rc=$RC recovered=$(succeed_calls "$mode") reserves=$(grep -c '^EVENT overseer-reserve ' <<<"$OUT" || true)" \
+    'rc=4 recovered=1 reserves=0' "session row $label outranks the launch reserve" "$ERR"
+done <<'ROWS'
+quota|claude|rate_limit|Usage limit reached|--walled-pane
+auth|claude|authentication_failed|Login failed|--walled-pane
+pi-quota|pi||You've hit your limit · resets 9:50am (America/Los_Angeles)|--walled-pane
+context|claude|invalid_request|Prompt is too long|--dead-pane
+ROWS
+
+# The repeat owner survives an actual no-successor reply. The capacity notice
+# acknowledges that refusal before the fixture produces new mail and an ask
+# deadline. The same owner then delivers all three events. After those events
+# are visible, the fixture changes the pane to exited and permits succession
+# to end the test through the normal success path. The outer timeout only
+# bounds a broken test; it never keeps the watch alive.
+cat > "$TMP_ROOT/bin/reserve-mail.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+"$REAL_LANE_MAIL" "$@"
+if [[ "$1" == send && "$*" == *overseer-blocked.txt* && ! -e "$STUB_DIR/injected" ]]; then
+  touch "$STUB_DIR/injected"
+  printf 'Lane decision\n' > "$STUB_DIR/question.txt"
+  "$REAL_LANE_MAIL" ask --item KEN-7 --file "$STUB_DIR/question.txt" --options cut,keep > "$STUB_DIR/lane-id"
+  "$REAL_LANE_MAIL" send --item overseer --directive --file "$STUB_DIR/question.txt" >/dev/null
+  "$REAL_LANE_MAIL" ask --item overseer --to owner --file "$STUB_DIR/question.txt" \
+    --options cut,keep --recommend cut --wait 0 > "$STUB_DIR/deadline-id"
+fi
+EOF
+cat > "$TMP_ROOT/bin/reserve-succeed.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == --check-marks ]] && [[ -f "$STUB_DIR/injected" ]] \
+   && grep -q '^EVENT lane-question KEN-7 ' "$STUB_DIR/repeat.out" \
+   && grep -q '^EVENT owner-note ' "$STUB_DIR/repeat.out" \
+   && grep -q '^EVENT owner-ask-resolved .* by=default ' "$STUB_DIR/repeat.out"; then
+  printf 'bash\n' > "$STUB_DIR/cmd-${TMUX_PANE}.txt"
+  printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-${TMUX_PANE}.txt"
+  printf '0\n' > "$STUB_DIR/succeed.rc"
+fi
+exec "$RESERVE_SUCCEED" "$@"
+EOF
+cat > "$TMP_ROOT/bin/reserve-bound-watch.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec timeout 60 "$RESERVE_TARGET" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/reserve-mail.sh" "$TMP_ROOT/bin/reserve-succeed.sh" "$TMP_ROOT/bin/reserve-bound-watch.sh"
+reserve_repeat() { # TARGET NAME
+  overseer_case "$2" idle
+  state_with "$LINE"
+  printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+  printf '3\n' > "$STUB_DIR/succeed.rc"
+  printf '{"issue_id":"oversee","triaged":[],"lanes":[]}\n' > "$STUB_DIR/state.json"
+  : > "$STUB_DIR/repeat.out"
+  REPEAT_RC=0
+  WATCH_BIN="$TMP_ROOT/bin/reserve-bound-watch.sh" run_watch TMUX_PANE="$PANE" \
+    RESERVE_TARGET="$1" RESERVE_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" \
+    REAL_LANE_MAIL="$REAL_LANE_MAIL" OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/reserve-succeed.sh" \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/reserve-mail.sh" \
+    -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --item KEN-7 \
+    > "$STUB_DIR/repeat.out" 2> "$STUB_DIR/repeat.err" </dev/null || REPEAT_RC=$?
+  OUT="$(cat "$STUB_DIR/repeat.out")"
+  assert_eq "rc=$REPEAT_RC injected=$([[ -e "$STUB_DIR/injected" ]] && echo yes || echo no) attempts=$(succeed_calls --walled-pane)" \
+    'rc=0 injected=yes attempts=1' 'reserve refusal reached once through the repeat watch' "$STUB_DIR/repeat.err"
+  assert_eq "lane=$(grep -c '^EVENT lane-question KEN-7 ' <<<"$OUT" || true) owner=$(grep -c '^EVENT owner-note ' <<<"$OUT" || true) deadline=$(grep -c '^EVENT owner-ask-resolved .* by=default ' <<<"$OUT" || true)" \
+    'lane=1 owner=3 deadline=1' 'same repeat owner delivers lane mail, owner mail and the ask deadline after refusal' "$STUB_DIR/repeat.err"
+  assert_eq "capacity=$(grep -c '^oversee-watch: overseer-capacity-blocked ' "$STUB_DIR/repeat.err" || true) handover=$(succeed_calls --dead-pane)" \
+    'capacity=1 handover=1' 'reserve capacity notice is bounded and later exit recovery succeeds' "$STUB_DIR/repeat.err"
+}
+reserve_repeat .agents/skills/orch/scripts/oversee-watch reserve_repeat
+RESERVE_CTL="$(mutant_scripts reserve-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reserve-ctl/github"
+mutate_file "$RESERVE_CTL/oversee-watch" \
+  '&& "$OVERSEER_MARK_VALUE" == 0 && "$OVERSEER_MARK_RESERVE_ONLY" != true ]]; then' \
+  '&& "$OVERSEER_MARK_VALUE" == 0 && ( "$OVERSEER_MARK_RESERVE_ONLY" != true || true ) ]]; then'
+CONTROL_RC=0
+( PASS=0 FAIL=0; reserve_repeat "$RESERVE_CTL/oversee-watch" reserve_repeat_control; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/reserve-control.log" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'control: treating reserve as a wall loses the post-refusal mail events'
+CONTROL_CASE="$TMP_ROOT/cases/reserve_repeat_control"
+assert_eq "refused=$(grep -c '^oversee-watch: overseer-recovery-blocked ' "$CONTROL_CASE/repeat.err" || true) injected=$([[ -e "$CONTROL_CASE/injected" ]] && echo yes || echo no) delivered=$(grep -c '^EVENT lane-question KEN-7 ' "$CONTROL_CASE/repeat.out" || true)" \
+  'refused=1 injected=yes delivered=0' 'control reaches refusal and then loses the new lane question'
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
