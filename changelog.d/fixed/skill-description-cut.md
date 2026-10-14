@@ -1,0 +1,1 @@
+- Skills with long descriptions install across harnesses. Kendex cuts the rendered description at a sentence or word boundary within 1024 characters and preserves the publisher's file and the skill body.

@@ -4,10 +4,6 @@ use super::{Finding, frontmatter_map};
 use crate::frontmatter::Value;
 use crate::model::HarnessId;
 
-/// Codex's documented ceiling on a skill's frontmatter `description`
-/// (developers.openai.com/codex/skills): characters, not bytes.
-const CODEX_DESCRIPTION_MAX_CHARS: usize = 1024;
-
 /// The tree's SKILL.md under either name — a disabled skill keeps the same
 /// content parked under `.disabled`, and it is validated all the same so
 /// enabling it later cannot install something broken.
@@ -107,25 +103,6 @@ pub(super) fn findings(
                 record_name = crate::names::shown(name ),
             ),
             "add a one-line `description:` saying when the skill applies",
-        ));
-    }
-    // Codex bounds the frontmatter `description` — the one hard limit its
-    // skill loader documents — and rejects the skill outright past it. The
-    // body has no cap: Codex reads the whole file.
-    if harness == HarnessId::Codex
-        && let Some(description) = map.get("description").and_then(Value::as_str)
-        && description.chars().count() > CODEX_DESCRIPTION_MAX_CHARS
-    {
-        findings.push(Finding::breakage(
-            format!(
-                "kendex-skill-description-too-long: harness={record_arg0} name={record_name} length={record_arg1} limit={record_CODEX_DESCRIPTION_MAX_CHARS}\n`{name}`'s description is {arg2} characters and {tool} rejects a skill whose description runs past {CODEX_DESCRIPTION_MAX_CHARS}",
-                arg2 = description.chars().count(),
-                record_arg0 = crate::names::shown(harness.name() ),
-                record_name = crate::names::shown(name ),
-                record_arg1 = description.chars().count(),
-                record_CODEX_DESCRIPTION_MAX_CHARS = CODEX_DESCRIPTION_MAX_CHARS,
-            ),
-            "shorten the `description:` in the skill's SKILL.md — say when the skill applies, and leave the how to the body",
         ));
     }
     findings

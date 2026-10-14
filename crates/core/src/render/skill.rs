@@ -93,7 +93,90 @@ pub fn render_skill(
     name: &str,
 ) -> Result<(Rendered, SkillText)> {
     let instructions = skill_instructions(manifest, name);
-    with_instructions(sealed, source_dir, instructions.as_deref())
+    let (rendered, read_as) = with_instructions(sealed, source_dir, instructions.as_deref())?;
+    let mut files = rendered.into_files();
+    for (rel, bytes) in &mut files {
+        if rel == Path::new(SKILL_FILE) {
+            *bytes = bounded_description(&String::from_utf8_lossy(bytes)).into_bytes();
+        }
+    }
+    Ok((Rendered::new(files), read_as))
+}
+
+/// Shared skill directories must fit older Codex loaders too. Only the
+/// rendered description changes; source bytes and the body stay intact.
+fn bounded_description(text: &str) -> String {
+    let Ok((yaml, _)) = crate::frontmatter::split(text) else {
+        return text.to_owned();
+    };
+    let Ok(parsed) = crate::frontmatter::parse_tolerant(yaml) else {
+        return text.to_owned();
+    };
+    let Some(description) = parsed
+        .map
+        .get("description")
+        .and_then(crate::frontmatter::Value::as_str)
+    else {
+        return text.to_owned();
+    };
+    let Some((cap, _)) = description.char_indices().nth(1024) else {
+        return text.to_owned();
+    };
+    let prefix = &description[..cap];
+    let cut = prefix
+        .char_indices()
+        .filter(|(at, ch)| {
+            matches!(ch, '.' | '!' | '?')
+                && description[at + ch.len_utf8()..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+        })
+        .map(|(at, ch)| at + ch.len_utf8())
+        .next_back()
+        .or_else(|| {
+            if description[cap..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+            {
+                return Some(cap);
+            }
+            prefix
+                .char_indices()
+                .filter(|(_, ch)| ch.is_whitespace())
+                .map(|(at, _)| at)
+                .next_back()
+        })
+        .unwrap_or(cap);
+    let mut from = yaml.as_ptr() as usize - text.as_ptr() as usize;
+    let mut to = from;
+    let mut found = false;
+    for line in yaml.split_inclusive('\n') {
+        let opens_entry = !line.starts_with([' ', '\t', '#', '\r', '\n']);
+        if found && opens_entry {
+            break;
+        }
+        if !found {
+            from = to;
+            found = opens_entry
+                && line
+                    .split_once(':')
+                    .is_some_and(|(key, _)| key.trim() == "description");
+        }
+        to += line.len();
+    }
+    let newline = if text.starts_with("---\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    format!(
+        "{}description: {}{newline}{}",
+        &text[..from],
+        super::yaml_quoted(prefix[..cut].trim_end()),
+        &text[to..]
+    )
 }
 
 /// `[skill-instructions]` as `name` renders them: the merge every
@@ -186,9 +269,104 @@ mod tests {
     use super::*;
 
     use crate::manifest::MANIFEST_SCHEMA;
+    use crate::model::HarnessId;
     use std::path::PathBuf;
 
     const SKILL: &str = "---\nname: github\ndescription: gh\n---\n\n# GitHub\n\nAuthor text.\n";
+
+    #[test]
+    fn descriptions_fit_every_harness_without_changing_the_source_or_body() {
+        let sentence = format!("{}. ", "a".repeat(498));
+        let unicode_sentence = format!("{}. ", "é".repeat(498));
+        let rows = [
+            (
+                sentence.repeat(3),
+                format!("{sentence}{}.", "a".repeat(498)),
+            ),
+            (
+                unicode_sentence.repeat(3),
+                format!("{unicode_sentence}{}.", "é".repeat(498)),
+            ),
+            (
+                format!("{}a. more", "a ".repeat(511)),
+                format!("{}a.", "a ".repeat(511)),
+            ),
+            (
+                format!("First. Last! {}", "word ".repeat(300)),
+                "First. Last!".into(),
+            ),
+            (format!("First? {}", "word ".repeat(300)), "First?".into()),
+            ("word ".repeat(300), format!("{}word", "word ".repeat(204))),
+            (format!("{} rest", "é".repeat(1022)), "é".repeat(1022)),
+            ("🦀".repeat(1500), "🦀".repeat(1024)),
+            ("short description. ".into(), "short description. ".into()),
+            ("é".repeat(1024), "é".repeat(1024)),
+        ];
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::test_util::rooted(&tmp);
+        let src = root.join("github");
+        std::fs::create_dir(&src).unwrap();
+        let manifest = Manifest::default();
+        for (description, expected) in rows {
+            for (entry, newline) in [
+                (
+                    format!("description: {}", super::super::yaml_quoted(&description)),
+                    "\n",
+                ),
+                (
+                    format!("description: {}", super::super::yaml_quoted(&description)),
+                    "\r\n",
+                ),
+                (format!("description: |-\n  {description}"), "\n"),
+            ] {
+                let body = "\n# Publisher body\n\ndescription: unchanged\n".replace('\n', newline);
+                let text = format!("---\nname: github\n{entry}\nlicense: MIT\n---\n")
+                    .replace('\n', newline)
+                    + &body;
+                std::fs::write(src.join(SKILL_FILE), &text).unwrap();
+                let sealed = SealedSource::open(&root).unwrap();
+                let (rendered, _) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+                let mut harnesses = HarnessId::ALL;
+                harnesses.swap(0, 1);
+                for harness in harnesses {
+                    let findings = crate::render::validate::validate_skill_tree(
+                        harness,
+                        "github",
+                        "github",
+                        rendered.files(),
+                    );
+                    assert!(findings.is_empty(), "{harness:?}: {findings:?}");
+                }
+                let output = std::str::from_utf8(&rendered.files()[0].1).unwrap();
+                let (yaml, rendered_body) = crate::frontmatter::split(output).unwrap();
+                let parsed = crate::frontmatter::parse_tolerant(yaml).unwrap();
+                assert_eq!(
+                    parsed
+                        .map
+                        .get("description")
+                        .and_then(crate::frontmatter::Value::as_str),
+                    Some(expected.as_str())
+                );
+                assert!(expected.chars().count() <= 1024);
+                assert_eq!(rendered_body, body);
+                if description.chars().count() <= 1024 {
+                    assert_eq!(output, text);
+                }
+                assert_eq!(
+                    sealed
+                        .rendered_item(crate::model::ItemKind::Skill, &src)
+                        .unwrap()
+                        .into_files()[0]
+                        .1,
+                    text.as_bytes()
+                );
+                assert_eq!(
+                    render_authored(&sealed, &src).unwrap()[0].1,
+                    text.as_bytes()
+                );
+            }
+        }
+    }
 
     #[test]
     fn injection_is_idempotent_and_strippable() {

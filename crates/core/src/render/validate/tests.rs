@@ -568,43 +568,6 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
     }
 }
 
-#[test]
-fn a_skill_whose_description_runs_past_codexs_limit_is_refused_there_and_installs_on_claude() {
-    for (harness, length, body, expected) in [
-        (
-            HarnessId::Codex,
-            1025,
-            "Body.".to_owned(),
-            Some("kendex-skill-description-too-long: harness=codex name=gh length=1025 limit=1024"),
-        ),
-        (HarnessId::Claude, 1025, "Body.".to_owned(), None),
-        (HarnessId::Codex, 1024, "prose ".repeat(4000), None),
-    ] {
-        let text = format!(
-            "---\nname: gh\ndescription: {}\n---\n{body}\n",
-            "é".repeat(length)
-        );
-        let findings = validate_skill_tree(harness, "gh", "gh", &skill_tree(&text));
-        let records: Vec<_> = findings
-            .iter()
-            .map(|finding| {
-                (
-                    finding.is_breakage(),
-                    finding.message.lines().next().unwrap_or_default(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            records,
-            expected
-                .map(|record| (true, record))
-                .into_iter()
-                .collect::<Vec<_>>(),
-            "{harness:?} {length}: {findings:?}"
-        );
-    }
-}
-
 /// Command-file findings carry the same record and severity contract.
 #[test]
 fn command_refusals_and_notices_identify_the_rejected_field() {
