@@ -27,9 +27,9 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack install --root ROOT [--root ROOT]... [--print]
 
 Relays one checkout's overseer mailbox to one private Slack channel and back,
-owner messages over Slack's Socket Mode, reading through that checkout's mailbox
-store and writing through its lane-mail. A root is a checkout; without --root, the
-checkout the command runs in.
+owner messages over Slack's Socket Mode. Reads use the mailbox package installed
+beside Slack. Writes use each bound checkout's lane-mail. A root is a checkout;
+without --root, use the checkout the command runs in.
 
 setup     resolve every SLACK_OWNERS address to a Slack user, create the
           private channel or find it by name (--name; default
