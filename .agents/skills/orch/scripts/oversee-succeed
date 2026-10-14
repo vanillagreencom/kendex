@@ -505,6 +505,7 @@ message() { # KEY FIELD=VALUE...
     invalid-wall-minutes) text='ORCH_OVERSEER_WALL_MINUTES takes a whole number of minutes; 0 disables this trigger.' ;;
     invalid-successor-accounts) text='ORCH_OVERSEER_SUCCESSOR_ACCOUNTS takes a whole number; 0 disables this trigger.' ;;
     invalid-context-mark) text='ORCH_HANDOFF_CONTEXT_PCT takes a whole number of percent from 1 to 100.' ;;
+    invalid-agent-reserve) text='ORCH_HANDOFF_AGENT_RESERVE_TOKENS takes a nonnegative whole number of tokens without leading zeros.' ;;
     pane-unreadable) text='The caller pane could not be read.' ;;
     harness-unnamed) text='The caller pane runs no harness this script launches, and neither --harness nor a context reading of this pane names one.' ;;
     invalid-harness) text='--harness takes claude, codex, copilot or pi.' ;;
