@@ -2424,7 +2424,7 @@ SELECTION_ROWS=(
   "a failed preview preserves local execution|full|yes|failed|rules|full||unreported|no|full|0"
   "an unknown selection preserves local execution|full|yes|unknown|rules|full||unreported|no|full|0"
   "an all selection without required CI retains local execution|full|yes|all|unrequired|full||all|no|full|0|context-unrequired"
-  "an all selection CI does not cover runs scoped suites|full|yes|all-render|rules|full|true|subset|yes|absent|0|class-uncovered"
+  "an all selection CI does not cover retains local execution|full|yes|all-render|rules|full||all|no|full|0|class-uncovered"
   "a push-first pre-open uncovered all selection runs scoped suites|full|yes|all-render|pr-no-pr|full|true|subset|yes|absent|0|class-uncovered|push-first"
   "a pre-open full all selection runs the selector's scoped suites|full|yes|all|pr-no-pr|full|true|subset|yes|absent|0|pr-not-open"
   "a pre-open range all selection runs the selector's scoped suites|range|yes|all|pr-no-pr|range|true|subset|yes|absent|0|pr-not-open"
@@ -2573,16 +2573,19 @@ selection_control 'omitting the pre-open scoped route turns its receipt red' \
   "a pre-open full all selection runs the selector's scoped suites"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" \
-  '( "$ci_fallback" == pr-not-open || "$ci_fallback" == class-uncovered )' '"$ci_fallback" == pr-not-open'
+  '( "$ci_fallback" == pr-not-open || ( "$pr_order" == push-first && "$ci_fallback" == class-uncovered ) )' '"$ci_fallback" == pr-not-open'
 selection_base_got="$(selection_rows "$CI_SCRIPT.mutant" 'a push-first pre-open uncovered all selection runs scoped suites')"
 assert_eq "${selection_base_got#*$'\t'}" 'full||all|no|full|0|class-uncovered' \
   'control: the base condition runs DEV_VALIDATE_CMD instead of scoped selection'
+selection_control 'ignoring publication order scopes a review-first full run' \
+  '( "$pr_order" == push-first && "$ci_fallback" == class-uncovered )' '"$ci_fallback" == class-uncovered' \
+  'an all selection CI does not cover retains local execution'
 selection_control 'ignoring confirmed no_pr turns the pre-open route red' \
   '.status == "no_pr"' 'false' \
   "a pre-open full all selection runs the selector's scoped suites"
 selection_control 'ignoring class coverage turns automatic CI resolution red' \
   'standard) return 0 ;;' 'standard|render) return 0 ;;' \
-  'an all selection CI does not cover runs scoped suites'
+  'an all selection CI does not cover retains local execution'
 selection_control 'rejecting a conservative standard fallback turns KEN-3495 routing red' \
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
   'KEN-3495 standard fallback all range uses required PR CI'
@@ -2591,7 +2594,7 @@ selection_control 'rejecting a conservative standard fallback turns explicit CI 
   'a ci standard fallback all selection uses required PR CI'
 selection_control 'omitting the automatic class fallback turns its record red' \
   $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n' '' \
-  'an all selection CI does not cover runs scoped suites'
+  'an all selection CI does not cover retains local execution'
 for row in "${SELECTION_ROWS[@]}"; do
   IFS='|' read -r label requested _ selected _ _ _ _ _ want_launch want_rc _ <<<"$row"
   if [[ "$want_rc" == 1 && "$selected" == all ]]; then

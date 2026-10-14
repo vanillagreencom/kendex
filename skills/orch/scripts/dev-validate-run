@@ -940,7 +940,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
         else
           classify "$class_base"
         fi
-        if [[ ( "$ci_fallback" == pr-not-open || "$ci_fallback" == class-uncovered ) && "$selection" == selection=all ]]; then
+        if [[ ( "$ci_fallback" == pr-not-open || ( "$pr_order" == push-first && "$ci_fallback" == class-uncovered ) ) && "$selection" == selection=all ]]; then
           # The selector owns scoped execution too; no second suite map
           # or project-specific command lives in this runner.
           scoped=true
