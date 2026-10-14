@@ -1,0 +1,1 @@
+- Close idle lanes for completed GitHub pull request items when GitHub returns MERGED without a close reason.

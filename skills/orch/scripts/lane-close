@@ -754,6 +754,7 @@ tracker_terminal() {
         --jq '.state + " " + (.stateReason // "")' \
         || { TRACKER_CAUSE=read-failed; return 2; }
       read -r state reason <<<"$value"
+      if [[ "$state" == MERGED ]]; then ITEM_END=completed; return 0; fi
       [[ "$state" == CLOSED ]] || return 1
       # Only COMPLETED says the work shipped. NOT_PLANNED, DUPLICATE and an
       # issue closed before GitHub recorded a reason all end it unshipped.
