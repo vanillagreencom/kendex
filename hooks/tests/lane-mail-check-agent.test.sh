@@ -138,6 +138,14 @@ judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 launch 250000 Agent $(overseer_env)
 expect 2 'lane-mail-check: agent-launch=Agent tokens=250000 reserve=150000' 'the identified overseer meets the reserve'
+while IFS='|' read -r tokens rc key; do
+  # shellcheck disable=SC2046
+  launch "$tokens" Agent $(overseer_env)
+  expect "$rc" "$key" "overseer Agent launch at $tokens shares the succession mark"
+done <<'ROWS'
+240000|0|-
+300000|2|lane-mail-check: agent-launch=Agent tokens=300000 reserve=150000
+ROWS
 record_overseer_handoff
 # shellcheck disable=SC2046
 launch 600000 Agent $(overseer_env)

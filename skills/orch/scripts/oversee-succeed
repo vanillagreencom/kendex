@@ -850,8 +850,12 @@ if (( JUDGES )); then
     || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
 fi
 if (( JUDGES )) && [[ "$CONTEXT_STATE" == unmeasured ]]; then
+  AGENT_RESERVE="$(orch_env_value ORCH_HANDOFF_AGENT_RESERVE_TOKENS "" 2>"$DEP_ERR")" \
+    || die settings-rejected "setting=ORCH_HANDOFF_AGENT_RESERVE_TOKENS"
+  AGENT_RESERVE=${AGENT_RESERVE:-150000}
   due_rc=0
-  due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT")" || due_rc=$?
+  # The command the agent-launch refusal names must accept that same reading.
+  due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT" "$AGENT_RESERVE")" || due_rc=$?
   case "$due_rc" in
     0) CONTEXT_STATE="$due" ;;
     1) CONTEXT_STATE=unmeasured ;;

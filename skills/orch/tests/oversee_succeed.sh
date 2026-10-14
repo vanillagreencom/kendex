@@ -282,6 +282,9 @@ hp=""
 lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
 [ "\$lane" != none ] || lane=""
 cm="ORCH_HANDOFF_CONTEXT_PCT=\${CONTEXT_PCT:-50}"
+# Legacy percentage rows use no attached-result reserve; reserve rows name it.
+reserve="ORCH_HANDOFF_AGENT_RESERVE_TOKENS=\${AGENT_RESERVE:-0}"
+[ "\${AGENT_RESERVE:-}" != default ] || reserve=""
 # The pause between the two reads an account settles on. A harness stub here
 # has execed its last process within milliseconds of its launch, so a tenth of
 # a second still keeps the two reads apart, and no launch spends the production
@@ -330,7 +333,7 @@ cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i GIT_CEILING_DIRECTORIES="$GIT_CE
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \$settle \\
-  \$hp \$cm \$ttl \$wall \$successors \$qt \$host \$lh "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$reserve \$ttl \$wall \$successors \$qt \$host \$lh "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it and its reading is recorded for this pane, then become the
@@ -1873,12 +1876,12 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: context-below-mark tokens=82000 window=200000 mark=50 headroom=80|0" \
   "a 200k window this reader DID measure is judged, a below-mark answer under the share"
 
-# Exact equality with the default percentage still leaves room.
+# Equality reaches the reserve-aware mark even with no attached-result reserve.
 new_caller "$CODEX_AT_MARK" 'Context 10% left'
 CONTEXT_PCT=90 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexatmark '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=232560 window=258400 mark=90 headroom=80|0" \
-  "a codex overseer at exactly 90 percent of its 258400 window has room"
+  "0|oversee-succeed: mark-reached kind=context value=232560 mark=90 succession=on headroom=unreadable window=258400|0" \
+  "a codex overseer at exactly 90 percent of its 258400 window reaches the mark"
 
 # The real hook's --context input: independent limits, settings resolution,
 # and a node pane with no recorded identity. Only due checks skip identity.
@@ -1902,17 +1905,40 @@ record|399999:1000000|90|0|oversee-succeed: context-below-mark tokens=399999 win
 record|400000:1000000|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
 record|400000:|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
 record|399999:|90|0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on
-record|180000:200000|100|0|oversee-succeed: context-below-mark tokens=180000 window=200000 mark=90 headroom=80
+record|180000:200000|100|0|oversee-succeed: mark-reached kind=context value=180000 mark=90 succession=on headroom=unreadable window=200000
 record|180001:200000|100|0|oversee-succeed: mark-reached kind=context value=180001 mark=90 succession=on headroom=unreadable window=200000
-record|160000:200000|80|0|oversee-succeed: context-below-mark tokens=160000 window=200000 mark=80 headroom=80
+record|160000:200000|80|0|oversee-succeed: mark-reached kind=context value=160000 mark=80 succession=on headroom=unreadable window=200000
 record|160001:200000|80|0|oversee-succeed: mark-reached kind=context value=160001 mark=80 succession=on headroom=unreadable window=200000
 node|400000:1000000|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
 node|400000:|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
 node|232561:258400|90|0|oversee-succeed: mark-reached kind=context value=232561 mark=90 succession=on headroom=unreadable window=258400
-node|232560:258400|90|1|oversee-succeed: harness-unnamed pane=PANE
+node|232560:258400|90|0|oversee-succeed: mark-reached kind=context value=232560 mark=90 succession=on headroom=unreadable window=258400
 node|399999:|90|1|oversee-succeed: harness-unnamed pane=PANE
 foreign|100000:1000000|50|1|oversee-succeed: harness-unnamed pane=PANE
 ROWS
+
+# The agent-launch refusal's named command accepts the same reading. Main's
+# three-argument call is the must-fail control for the reported disagreement.
+RESERVECTL="$(mutant_scripts agent-reserve-control oversee-succeed)" || exit 1
+mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT" "$AGENT_RESERVE")' '"$CONTEXT_PCT")'
+while IFS='|' read -r reading reserve verdict; do
+  new_caller "$UNDER_MARK"
+  AGENT_RESERVE="$reserve" CONTEXT_PCT=90 run_succeed agentreserve '' --check-marks --context "$reading"
+  assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" "0|$verdict" \
+    "succession shares the agent-launch mark at $reading with reserve $reserve"
+done <<'ROWS'
+240000:1000000|default|context-below-mark
+249999:1000000|150000|context-below-mark
+250000:1000000|150000|mark-reached
+300000:1000000|default|mark-reached
+29999:200000|150000|context-below-mark
+30000:200000|150000|mark-reached
+300000:1000000|50000|context-below-mark
+ROWS
+new_caller "$UNDER_MARK"
+AGENT_RESERVE=150000 CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 300000:1000000
+assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" '0|context-below-mark' \
+  'control: main refuses succession at the reading that refuses an Agent launch'
 
 # A stored due reading never supplies context to either judging mode.
 while IFS='|' read -r check expected; do
