@@ -80,6 +80,7 @@ pub struct PluginEntry {
     pub dir: PathBuf,
     /// Declared skill folders relative to the plugin; absence uses `skills/`.
     pub skills: Option<Vec<PathBuf>>,
+    pub(super) offers: super::catalog::Offers,
     pub description: Option<String>,
     pub version: Option<String>,
     pub author: Option<String>,
@@ -223,10 +224,11 @@ fn read_entry(sealed: &SealedSource, index: usize, entry: &Value, registry: &mut
         return;
     }
     let skills = skill_dirs(sealed, &at, &name, &dir, entry.get("skills"), registry);
-    registry.plugins.push(PluginEntry {
+    let mut plugin = PluginEntry {
         name,
         dir,
         skills,
+        offers: super::catalog::Offers::default(),
         description: string(entry, "description"),
         version: string(entry, "version"),
         author: entry.get("author").and_then(owner_name),
@@ -242,7 +244,9 @@ fn read_entry(sealed: &SealedSource, index: usize, entry: &Value, registry: &mut
                     .collect()
             })
             .unwrap_or_default(),
-    });
+    };
+    plugin.offers = super::catalog::read_offers(sealed, &plugin);
+    registry.plugins.push(plugin);
 }
 
 /// The directory inside this catalog an entry points at. Anything else —

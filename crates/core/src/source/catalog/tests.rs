@@ -239,6 +239,21 @@ fn item_names_a_filesystem_would_fold_together_are_reported_not_installed() {
     // The offered list holds one of the two folded names, never both.
     let agents = items(&sealed, &registry, ItemKind::Agent);
     assert!(!agents.iter().any(|name| name.contains("nul")));
+    if case_sensitive {
+        assert_eq!(
+            agents
+                .iter()
+                .filter(|name| names::fold(name) == "data-science/eda")
+                .count(),
+            1
+        );
+        for name in ["data-science/EDA", "data-science/eda"] {
+            assert_eq!(
+                find(&sealed, &registry, ItemKind::Agent, name).is_some(),
+                agents.iter().any(|item| item == name)
+            );
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -266,6 +281,51 @@ fn a_symlinked_plugin_component_is_never_read_through() {
             .iter()
             .any(|name| name.ends_with("leak"))
     );
+    let reviewer = root.join("plugins/code-review/agents/reviewer.md");
+    std::fs::remove_file(&reviewer).expect("remove marker");
+    std::os::unix::fs::symlink(tmp.path().join("secret.md"), &reviewer).expect("symlink");
+    assert_eq!(
+        find(&sealed, &registry, ItemKind::Agent, "code-review/reviewer"),
+        None
+    );
+}
+
+#[test]
+fn a_registry_read_owns_its_offered_items_until_the_next_read() {
+    let (_tmp, sealed) = fixture();
+    let registry = read(&sealed).expect("read").expect("registry");
+    let entry = registry.entry("data-science").expect("entry");
+    for (kind, path) in [
+        (ItemKind::Agent, "agents/late.md"),
+        (ItemKind::Command, "commands/late.md"),
+        (ItemKind::Skill, "skills/late/SKILL.md"),
+    ] {
+        write(
+            sealed.root(),
+            &format!("plugins/data-science/{path}"),
+            "---\nname: late\ndescription: fixture\n---\nbody\n",
+        );
+        assert!(
+            !items(&sealed, &registry, kind)
+                .iter()
+                .any(|name| name == "data-science/late")
+        );
+        assert!(find(&sealed, &registry, kind, "data-science/late").is_none());
+        let group = group(&sealed, entry, &mut Vec::new()).expect("group");
+        assert!(
+            !group
+                .members
+                .iter()
+                .any(|item| item.kind == kind && item.name == "data-science/late")
+        );
+        let fresh = read(&sealed).expect("read").expect("registry");
+        assert!(
+            items(&sealed, &fresh, kind)
+                .iter()
+                .any(|name| name == "data-science/late")
+        );
+        assert!(find(&sealed, &fresh, kind, "data-science/late").is_some());
+    }
 }
 
 fn declared_fixture(source: &str, skills: Option<Value>) -> (tempfile::TempDir, SealedSource) {

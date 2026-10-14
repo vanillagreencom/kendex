@@ -1,1 +1,1 @@
-- Install plugin-registry skills from the repository root and from declared skill folders, using their plugin-qualified names.
+- Install plugin-registry skills from the repository root and from declared skill folders, using their plugin-qualified names. Read each plugin's item list once for catalog lookups.

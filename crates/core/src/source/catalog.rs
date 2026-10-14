@@ -7,6 +7,7 @@
 //! groups a plugin installs as. None of it belongs in `kendex.toml`, which
 //! records what the user chose, not what a catalog says about itself.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -17,6 +18,23 @@ use crate::names;
 use crate::source_read::SealedSource;
 
 use super::plugin_registry::{CatalogFinding, PLUGIN_MANIFEST, PluginEntry, Registry};
+
+/// One registry read owns the accepted item paths and their name findings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct Offers {
+    items: BTreeMap<ItemKind, BTreeMap<String, PathBuf>>,
+    findings: Vec<CatalogFinding>,
+}
+
+pub(super) fn read_offers(sealed: &SealedSource, entry: &PluginEntry) -> Offers {
+    let mut offers = Offers::default();
+    for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
+        offers
+            .items
+            .insert(kind, offered(sealed, entry, kind, &mut offers.findings));
+    }
+    offers
+}
 
 /// The directory a plugin keeps this kind in, and the file that marks one
 /// item. Everything else a plugin may carry (hooks, servers) is left alone
@@ -42,19 +60,23 @@ pub fn find(
 ) -> Option<PathBuf> {
     let (plugin, leaf) = names::split(name)?;
     let entry = registry.entry(plugin)?;
-    offered(sealed, entry, kind, &mut Vec::new())
-        .into_iter()
-        .find_map(|(name, path)| (name == leaf).then_some(path))
+    let path = entry.offers.items.get(&kind)?.get(leaf)?;
+    let (_, marker) = kind_dir(kind)?;
+    let readable = match marker {
+        Some(marker) => sealed.is_file(&path.join(marker)),
+        None => sealed.is_file(path),
+    };
+    readable.then(|| path.clone())
 }
 
 /// Every item of this kind the catalog offers, named as it is declared. A
 /// leaf a filesystem cannot hold is left out here and reported by
 /// [`metadata`], which is where a catalog's problems are read.
-pub fn items(sealed: &SealedSource, registry: &Registry, kind: ItemKind) -> Vec<String> {
+pub fn items(_sealed: &SealedSource, registry: &Registry, kind: ItemKind) -> Vec<String> {
     let mut names = Vec::new();
     for entry in &registry.plugins {
-        for (leaf, _) in offered(sealed, entry, kind, &mut Vec::new()) {
-            names.push(format!("{}/{leaf}", entry.name));
+        if let Some(items) = entry.offers.items.get(&kind) {
+            names.extend(items.keys().map(|leaf| format!("{}/{leaf}", entry.name)));
         }
     }
     names.sort();
@@ -100,8 +122,9 @@ fn offered(
     entry: &PluginEntry,
     kind: ItemKind,
     findings: &mut Vec<CatalogFinding>,
-) -> Vec<(String, PathBuf)> {
-    let mut offered: Vec<(String, PathBuf)> = Vec::new();
+) -> BTreeMap<String, PathBuf> {
+    let mut offered = BTreeMap::new();
+    let mut folded = BTreeMap::new();
     for (leaf, path) in item_paths(sealed, entry, kind) {
         let at = format!("{}/{}", crate::paths::slashed(&entry.dir), kind.name());
         if let Some(problem) = names::segment_problem(&leaf) {
@@ -112,10 +135,8 @@ fn offered(
             ));
             continue;
         }
-        if let Some((other, _)) = offered
-            .iter()
-            .find(|(other, _)| names::fold(other) == names::fold(&leaf))
-        {
+        let key = names::fold(&leaf);
+        if let Some(other) = folded.get(&key) {
             findings.push(CatalogFinding::new(
                 at,
                 format!("`{leaf}` and `{other}` are the same name once a filesystem has folded case and trailing dots: one would overwrite the other"),
@@ -123,7 +144,8 @@ fn offered(
             ));
             continue;
         }
-        offered.push((leaf, path));
+        folded.insert(key, leaf.clone());
+        offered.insert(leaf, path);
     }
     offered
 }
@@ -201,13 +223,14 @@ fn group(
 ) -> Result<CatalogGroup> {
     let at = crate::paths::slashed(&entry.dir);
     check_manifest(sealed, entry, &at, findings)?;
+    findings.extend(entry.offers.findings.iter().cloned());
     let mut members = Vec::new();
     for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {
-        for (leaf, _) in offered(sealed, entry, kind, findings) {
-            members.push(CatalogItem {
+        if let Some(items) = entry.offers.items.get(&kind) {
+            members.extend(items.keys().map(|leaf| CatalogItem {
                 kind,
                 name: format!("{}/{leaf}", entry.name),
-            });
+            }));
         }
     }
     Ok(CatalogGroup {
