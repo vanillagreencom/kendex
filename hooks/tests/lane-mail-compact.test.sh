@@ -21,6 +21,7 @@ CALL_ENV=("HOME=$COP_HOME")
 # record its refusal names can be written, and s1, the lead every row names
 # unless it names another, recorded by its session start alone.
 new_compact_lane() { # NAME ITEM [JUDGE] [WRAPPER]
+  CALL_ENV=("HOME=$COP_HOME")
   local branch
   branch="$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
   new_lane "$1" "$branch"
@@ -176,6 +177,7 @@ assert_eq "RC=$RC first=$(first_line)" "RC=2 first=lane-mail-compact: judge=$LAN
 # compaction is flagged in the overseer mailbox under its pane key, and its
 # turn end is held whatever its succession setting, naming the succession.
 new_compact_overseer() { # NAME [JUDGE]
+  CALL_ENV=("HOME=$COP_HOME" "COPILOT_HOME=$TMP_ROOT")
   new_lane "$1" main
   unmark_lanes
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
@@ -283,7 +285,7 @@ new_compact_overseer control_overseer "$MUTANT_PATH"
 compact auto s1 s1 $(overseer_env)
 # shellcheck disable=SC2046
 turn_end false s1 $(overseer_env)
-assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
+assert_eq "RC=$RC decision=$(stdout_field .decision) flag=$(flag)" "RC=0 decision= flag=s1 auto" \
   "control: without the overseer's refusal a flagged overseer is not held"
 
 # The overseer's pane rule removed from the gate every arm asks: a session in
@@ -295,16 +297,19 @@ compact auto s1 s1 $(overseer_env %3)
 assert_eq "flag=$(flag)" "flag=s1 auto" \
   "control: without the pane rule a session in another pane flags the overseer's compaction"
 
-# The overseer's role dropped from the gate: its refusal is a lane's, naming
-# no succession.
+# The overseer's role dropped from the gate: the flag targets a lane box
+# that does not exist, so the write fails and the turn end sees no compaction.
 mutant gate-no-role -e 's@^    ROLE=overseer$@    :@'
 new_compact_overseer control_role "$MUTANT_PATH"
 # shellcheck disable=SC2046
 compact auto s1 s1 $(overseer_env)
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=2 first=lane-mail-check: compaction-unrecorded=$LANE/tmp/lane-mail/oversee/compaction.json" \
+  "control: without its role the compaction write targets the missing lane box"
 # shellcheck disable=SC2046
 turn_end false s1 $(overseer_env)
 assert_eq "route=$(stdout_field .reason | grep -cF -- "$OVERSEER_ROUTE")" "route=0" \
-  "control: without its role the overseer's refusal names no succession"
+  "control: without its role the overseer's turn end names no succession"
 
 # The fleet item dropped from the gate: the overseer's own handoff record is
 # looked for under no item, and its turn end is held past it.
@@ -316,7 +321,7 @@ compact auto s1 s1 $(overseer_env)
   "$(jq -nc --arg k "$OVERSEER_SERVER $OVERSEER_PANE" '{handoff_file: "/h", pane_key: $k, session_id: "s1"}')" >/dev/null)
 # shellcheck disable=SC2046
 turn_end false s1 $(overseer_env)
-assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=block" \
+assert_eq "RC=$RC decision=$(stdout_field .decision) flag=$(flag)" "RC=0 decision=block flag=s1 auto" \
   "control: without the fleet item the overseer's own handoff record does not end its hold"
 
 # The flag's write gap passed: a compaction nothing flagged goes unreported.
