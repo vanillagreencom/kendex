@@ -119,3 +119,10 @@ control_expect "container absent refuses"
 control_replace scripts/lib/issue-validation.sh 1 \
     '        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))' \
     '        | .missing_outcome_box = false'
+
+# A title marker keeps single-PR parents under ordinary checklist completion.
+control_expect "container single-pr-absent completes"
+control_expect "container single-pr-post completes"
+control_replace scripts/commands/issues.sh 1 \
+    '    checklist_role=$(jq -r '"'"'if (.issue.children.nodes | length) > 0 and (.issue.title | test("\\(one PR\\)"; "i") | not) then "container" else "issue" end'"'"' <<<"$issue_result") || return 1' \
+    '    checklist_role=$(jq -r '"'"'if (.issue.children.nodes | length) > 0 and (true or (.issue.title | test("\\(one PR\\)"; "i") | not)) then "container" else "issue" end'"'"' <<<"$issue_result") || return 1'

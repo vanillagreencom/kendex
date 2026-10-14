@@ -649,9 +649,15 @@ The long pass's events, checked and reported in this order:
                              unjudged harness=<h>>` per item the tracker holds
                              as work the fleet owes that launch_queue lacks:
                              with LINEAR_TEAM, the team's In Progress and In
-                             Review items, from the long pass's one live read
-                             that also supplies Verifying boxes. A priority of 0 (none)
-                             printed `-`; with none, every open PR of the first
+                             Review items. The long pass reads team statuses,
+                             lists issues in their non-terminal states, and
+                             reads each container candidate's children. These
+                             reads also supply Verifying and container outcome
+                             boxes. A failed read exits 2 as tracker-list-failed;
+                             an invalid reply exits 2 as tracker-list-invalid.
+                             Status and child failures carry read=statuses or
+                             read=children. A priority of 0 (none) prints `-`;
+                             with none, every open PR of the first
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes

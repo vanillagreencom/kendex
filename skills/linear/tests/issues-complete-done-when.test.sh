@@ -48,7 +48,7 @@ case "$query" in
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
-  jq -cj --argjson children "${CONTAINER_CHILDREN:-[]}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:$d,state:(if ($children | length) > 0 then {name:"Todo",type:"unstarted"} else {name:"Done",type:"completed"} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
+  jq -cj --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:$title,description:$d,state:(if ($children | length) > 0 then {name:"Todo",type:"unstarted"} else {name:"Done",type:"completed"} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
   printf '___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
@@ -128,12 +128,12 @@ absent|No checklist.|state-done|-
 ROWS
 
 # Old containers need an outcome; ordinary no-checklist completion above stays
-# supported. Real issue reads identify these parents by their children.
-while IFS='|' read -r name description expected; do
+# supported. The title marker makes a parent with children a single-PR bundle.
+while IFS='|' read -r name title description expected; do
   printf '%b' "$description" >"$TMP_ROOT/container.md"
   log="$TMP_ROOT/container-$name.jsonl"
   rc=0
-  CONTAINER_CHILDREN='[{"id":"child-uuid","identifier":"CC-721","title":"child","state":{"name":"Done"}}]' \
+  CONTAINER_TITLE="$title" CONTAINER_CHILDREN='[{"id":"child-uuid","identifier":"CC-721","title":"child","state":{"name":"Done"}}]' \
     run_complete "$TMP_ROOT/container.md" "$log" CC-720 >"$TMP_ROOT/container.out" 2>"$TMP_ROOT/container.err" || rc=$?
   if [[ "$expected" == refuse ]]; then
     assert_ne "container $name refuses" "$rc" 0
@@ -141,13 +141,15 @@ while IFS='|' read -r name description expected; do
     assert_not "container $name stays open" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
   else
     assert_eq "container $name completes" "$rc" 0
-    assert_jq "container $name requests Done" "$(updates "$log")" '.variables.input.stateId == "state-done"'
+    assert_jq "container $name requests its checklist state" "$(updates "$log")" ".variables.input.stateId == \"$expected\""
   fi
 done <<'ROWS'
-absent|No checklist.|refuse
-empty|## Done when|refuse
-post-only|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read|refuse
-proved|## Done when\n- [x] shared outcome\n  Evidence: source read passed|done
+absent|t|No checklist.|refuse
+empty|t|## Done when|refuse
+post-only|t|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read|refuse
+proved|t|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done
+single-pr-absent|Bundle (one PR)|No checklist.|state-done
+single-pr-post|Bundle (one PR)|## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-verifying
 ROWS
 
 log="$TMP_ROOT/all.jsonl"

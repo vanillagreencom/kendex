@@ -4416,8 +4416,12 @@ check_report() {
 
 # The work the fleet owes and its launch queue lacks, one `owed` line per item,
 # as OWED_LINES. The tracker is the membership and launch_queue only the
-# order: with LINEAR_TEAM, every team item In Progress, In Review or
-# Verifying, one live read. Verifying is handled before development filtering; with none, every open pull request in the item repository, the first
+# order: with LINEAR_TEAM, a team-status read supplies the non-terminal names
+# for the issue-list read, then child reads cover each container candidate.
+# These reads exit 2 as tracker-list-failed on failure or tracker-list-invalid
+# on an invalid reply; status and child failures name read=statuses or
+# read=children. Verifying and container outcomes precede development filtering.
+# With none, every open pull request in the item repository, the first
 # --repo, whose head is a GitHub item's branch, issue-N, read whole by a
 # listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
 # pass a short set as the whole one. An item is owed nothing while its record
