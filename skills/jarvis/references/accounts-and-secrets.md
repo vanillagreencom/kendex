@@ -1,8 +1,16 @@
 # Accounts and secrets
 
+## 1Password broker
+
+- For 1Password reads, use the packaged [op-broker](../scripts/op-broker) and [opq](../scripts/opq). Platform: Linux and macOS. This route is optional and requires the 1Password CLI, `op`. Read each script's `--help` for command syntax.
+- Run the broker with `--directory` set to an absolute path to a directory that does not exist. The broker creates a private directory. Select the intended account with `--account` when needed. Keep directory paths, account identifiers, vault names and item references in the consumer's private settings or account ledger.
+- Approve one CLI session when the broker starts, or supply an approved session through `OP_SESSION`. The broker keeps the session token in memory. Its reads disable desktop app integration, so a sub-agent does not request desktop approval for each read.
+- Wait for the broker's `state=ready` message before a client read. Use the client's `read` action to read the selected `op://` reference through the broker's request pipe. Pass the broker directory and an absolute `--output` path. The client creates a file with mode 600 and refuses to overwrite an existing file.
+- Apply [Secret transfer](#secret-transfer) to the output file. Keep the broker in a task-owned terminal. Wait for clients to finish before pressing Ctrl-C when the approved work ends. The broker removes its directory only when no client reply pipes remain.
+
 ## Secret transfer
 
-- Access the password manager through its own CLI. Use the manager's supported interface to read the selected item without displaying it.
+- Use the [1Password broker](#1password-broker) for that manager. Access another password manager through its own supported CLI. Read the selected item without displaying it.
 - Transfer a secret between tools through their own interfaces into a file with mode 600. Create the protected file before writing the value. Let only the intended receiving tool read it.
 - Never print the value, paste it into chat or place it in a handoff. Exclude it from logs and captures.
 - Remove the transfer file when the receiving operation ends. Revoke an exposed credential through its documented route.

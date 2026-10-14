@@ -1,0 +1,1 @@
+- Jarvis ships a configurable Chromium browser driver, an optional 1Password session broker with a protected-file client, and Linux Wayland input and capture tools.

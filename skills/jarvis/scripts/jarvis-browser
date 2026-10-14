@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+# Platform: Linux and macOS with Python 3 and a Chromium-based browser.
+"""Open a URL in the configured assistant profile. Chromium owns profile reuse."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import sys
+from urllib.parse import urlsplit
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        "Platform: Linux and macOS. JARVIS_BROWSER_PROFILE: required absolute assistant profile. "
+        "JARVIS_BROWSER_COMMAND: optional executable name/path; otherwise detect Chromium, Chrome, Brave or Edge. "
+        "JARVIS_BROWSER_PORT: loopback debugging port, default 9222. "
+        "The browser replaces this process; background the first launch when needed."))
+    parser.add_argument("url")
+    args = parser.parse_args()
+    if sys.platform not in ("linux", "darwin"):
+        parser.exit(2, "jarvis-browser: platform=unsupported\n")
+    # CLI URLs can otherwise become Chromium flags instead of navigation.
+    if urlsplit(args.url).scheme not in ("http", "https", "about", "file"):
+        parser.exit(2, "jarvis-browser: url=unsupported-scheme\n")
+    profile = Path(os.environ.get("JARVIS_BROWSER_PROFILE", ""))
+    if not profile.is_absolute():
+        parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PROFILE\nSupply an absolute assistant-owned profile path.\n")
+    command = os.environ.get("JARVIS_BROWSER_COMMAND")
+    candidates = [command] if command else [
+        "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+        "chrome", "brave-browser", "brave", "microsoft-edge", "microsoft-edge-stable",
+    ]
+    if not command and sys.platform == "darwin":
+        for app, executable in [("Chromium", "Chromium"), ("Google Chrome", "Google Chrome"),
+                                ("Brave Browser", "Brave Browser"), ("Microsoft Edge", "Microsoft Edge")]:
+            for root in (Path("/Applications"), Path.home() / "Applications"):
+                candidates.append(str(root / (app + ".app") / "Contents/MacOS" / executable))
+    browser = next((found for name in candidates if (found := shutil.which(name))), None)
+    if browser is None:
+        parser.exit(2, "jarvis-browser: dependency=chromium-browser\nSet JARVIS_BROWSER_COMMAND to an installed Chromium-based browser.\n")
+    port = os.environ.get("JARVIS_BROWSER_PORT", "9222")
+    if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+        parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PORT\n")
+    # This launcher passes the caller's desktop environment unchanged.
+    os.execv(browser, [browser, "--user-data-dir=" + str(profile),
+                      "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=" + port,
+                      "--no-first-run", args.url])
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError):
+        sys.exit("jarvis-browser: launch=failed")

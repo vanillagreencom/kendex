@@ -7,6 +7,89 @@ user-invocable: true
 dependencies:
   required: [mailbox, orch]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch]
+  commands:
+    - command: agent-browser
+      purpose: Browser automation and the installed core guide
+      floor: "0.26.0"
+      packages:
+        npm: agent-browser
+    - command: python3
+      purpose: Run the packaged desktop and session tools
+      floor: "3.8"
+    - command: bash
+      purpose: Run session launch and scratch cleanup commands
+    - command: kendex
+      purpose: Discover projects and manage assistant packages
+    - command: jq
+      purpose: Read and write session records
+    - command: cat
+      purpose: Keep the session lock's input open
+    - command: tmux
+      purpose: Keep the continuing session in a terminal
+      optional: true
+    - command: git
+      purpose: Protect private credential files from tracking
+    - command: find
+      purpose: Remove expired assistant scratch files
+    - command: gh
+      purpose: Optional GitHub account connection
+      optional: true
+    - command: ssh
+      purpose: Optional fleet machine connection
+      optional: true
+    - command: claude
+      purpose: Optional Claude continuing session
+      optional: true
+    - command: codex
+      purpose: Optional Codex continuing session
+      optional: true
+    - command: copilot
+      purpose: Optional Copilot continuing session
+      optional: true
+    - command: pi
+      purpose: Optional Pi continuing session
+      optional: true
+    - command: op
+      purpose: Optional 1Password session broker on Linux and macOS
+      optional: true
+      packages:
+        brew: 1password-cli
+    - command: chromium
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: chromium-browser
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: google-chrome
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: google-chrome-stable
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: chrome
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: brave-browser
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: brave
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: microsoft-edge
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: microsoft-edge-stable
+      purpose: Optional browser alternative on Linux
+      optional: true
+    - command: ydotool
+      purpose: Optional pointer input on Linux Wayland
+      optional: true
+    - command: wtype
+      purpose: Optional keyboard input on Linux Wayland
+      optional: true
+    - command: grim
+      purpose: Optional screen capture on Linux Wayland
+      optional: true
 metadata:
   author: vanillagreen
   source: kendex

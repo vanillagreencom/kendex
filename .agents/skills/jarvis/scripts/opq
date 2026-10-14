@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+# Platform: Linux and macOS with Python 3; connects to the optional op-broker.
+from lib.op_fifo import main
+
+if __name__ == "__main__":
+    main("client")
