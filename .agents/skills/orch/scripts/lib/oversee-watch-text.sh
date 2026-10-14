@@ -585,45 +585,9 @@ The long pass's events, checked and reported in this order:
                              settings. Reported on every long pass while it
                              stays due, so it stops once a report is written;
                              read only with --state
-  EVENT verifying-deadline <item> box=<N> trigger=<JSON> status=<due|overdue> deadline=<UTC>
-                             that due or overdue box key changed. Read
-                             each emitted box in that pass and record evidence.
-                             Pass: tick and complete the same item. Fail or
-                             unreadable by deadline: keep Verifying and file
-                             one blocking peer fix through audit-issues.
-                             Repeat the same check after that fix merges.
-                             A merged item never returns to In Progress.
-                             No deadline moves. An owner-only box goes once
-                             to the owner as an ask on the same item, naming
-                             box, check, Where and deadline. The overseer
-                             records the person's reading and closes the ask.
-  verifying <item> box=<N> trigger=<JSON> status=<due|overdue|blocked|waiting> deadline=<UTC|-> [merged=<UTC>] blocked_by=<ids|-> reading=<JSON> where=<JSON> why=<JSON>
-                             every open post-merge box on every long pass,
-                             before active/queued lane filtering. Overdue
-                             takes priority at or past the deadline,
-                             even with a blocker, when a deadline exists.
-                             Otherwise blocked means an open blocker, waiting
-                             means an unfired trigger, and due means ready.
-                             blocked_by names open blockers, or - for none.
-                             A missing Trigger means merge. Release triggers
-                             use the first matching publication after merge.
-                             In a repository where the item merged, that
-                             release must contain its latest merge commit.
-                             An unfired release has deadline=- and merged=<UTC>.
-                             Its deadline starts at publication, within 72 hours.
-                             Merge triggers keep their deadline from merge.
-                             Invalid items report their parser
-                             error on stderr; the pass reads the next item.
-                             Event blocks print only due or overdue boxes
-                             whose number, trigger, status or deadline key
-                             changed in the saved deadline row. Other fields
-                             wait for the heartbeat, which prints every box.
-                             Waiting and blocked statuses have no individual
-                             deadline keys; those boxes print at heartbeat.
-                             An item
-                             with none prints verifying <item> boxes=0 once at
-                             first read, with EVENT verifying-deadline <item>
-                             boxes=0, and again at heartbeat.
+  EVENT verifying-deadline / verifying
+                             see references/oversee-events.md § Verification
+                             for event fields and operator actions
   EVENT heartbeat            --max-loops long passes with no event, after
                              the repeated parked-merged lines above. A line
                              `  failing <item> <key>` follows for every lane
