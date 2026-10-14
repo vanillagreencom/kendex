@@ -66,10 +66,12 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
     LANE_RECOVERY_CAUSE=relaunch-deferred:KEN-3996
     return 1
   fi
-  LANE_RECOVERY_ARGS=("$4" --tmux --relaunch --continue-resume --harness "$harness" --lane "$2"
+  LANE_RECOVERY_ARGS=("$4" --tmux --relaunch --continue-resume --harness "$harness"
     --launch-flags "$flags" --state-dir "$3" --host "$LANE_RECOVERY_HOST" --tracker "$tracker")
   [[ -z "$repo" ]] || LANE_RECOVERY_ARGS+=(--repo "$repo")
   [[ "$refresh" != true ]] || LANE_RECOVERY_ARGS+=(--lane-refresh)
+  # An omitted account preserves the launcher's inherited-account behavior.
+  [[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")
   if [[ "$tracker" == github ]]; then LANE_RECOVERY_ARGS+=("${item#issue-}")
   else LANE_RECOVERY_ARGS+=("$item"); fi
   LANE_RECOVERY_CAUSE=""

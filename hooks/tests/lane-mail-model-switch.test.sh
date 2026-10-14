@@ -18,7 +18,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge) ;;
+    matching|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -204,6 +204,67 @@ assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" 
 wait "$OWNED_CHILD" 2>/dev/null || :
 OWNED_CHILD=""
 
+fi
+
+if model_case optional-account; then
+  echo '=== recovery preserves optional accounts ==='
+  while IFS='|' read -r account_case account_mode observed; do
+    model_world "$account_case" claude-fable-5-1
+    account="$OFFLINE_HOME"
+    if [[ "$account_mode" == omitted ]]; then
+      account=""
+      record=$(jq '.account=null' <<<"$record")
+      "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
+    fi
+    before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+    if [[ "$observed" == claude-fable-5-1 ]]; then
+      event "$observed"
+      assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "$account_case leaves fleet state unchanged"
+      assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$account_case keeps predecessor running"
+    else
+      # Exercise the installed argument owner and the actual initial parser.
+      # Help is last so it cannot conceal an earlier invalid account option.
+      SCRIPT_DIR="$S"
+      . "$S/lib/lane-launch.sh"
+      . "$S/lib/lane-capabilities.sh"
+      . "$S/lib/lane-relaunch.sh"
+      status=0
+      lane_recovery_args "$record" "$account" "$LANE/tmp" "$REPO_ROOT/skills/orch/scripts/open-terminal" model-switched || status=$?
+      assert_eq "$status" 0 "$account_case constructs recovery arguments"
+      if [[ "$status" == 0 ]]; then
+        expected_args=("$REPO_ROOT/skills/orch/scripts/open-terminal" --tmux --relaunch --continue-resume --harness claude
+          --launch-flags '--dangerously-skip-permissions --model claude-fable-5-1 --effort high'
+          --state-dir "$LANE/tmp" --host local --tracker linear)
+        if [[ "$account_mode" == named ]]; then expected_args+=(--lane "$OFFLINE_HOME"); fi
+        expected_args+=(KEN-3916)
+        assert_eq "$(printf '%s\n' "${LANE_RECOVERY_ARGS[@]}")" "$(printf '%s\n' "${expected_args[@]}")" \
+          "$account_case recovery arguments preserve its account option"
+        status=0
+        "$BASH" "${LANE_RECOVERY_ARGS[@]}" --help >"$TMP_ROOT/parser.out" 2>"$ERR_FILE" || status=$?
+        assert_eq "$status" 0 "$account_case passes the real parser before stop"
+        assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$account_case parser leaves predecessor running"
+        if [[ "$status" == 0 ]]; then
+          event "$observed"
+          await_recovery || FAIL=$((FAIL + 1))
+          assert_eq "$(cat "$LANE/tmp/done")" done "$account_case replacement acknowledges completion"
+          assert_eq "$(cat "$LANE/tmp/argv")" "$(printf '%s\n' "${expected_args[@]:1}")" \
+            "$account_case replacement keeps account, recorded model, permissions and effort"
+          state=$(lane_process_state "$OWNED_CHILD")
+          case "$state" in '' | Z) state=gone ;; esac
+          assert_eq "$state" gone "$account_case recovery stops its verified predecessor"
+          assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped "$account_case records stopped state"
+          assert_eq "$(switch_count)" 1 "$account_case records one model switch"
+          event "$observed"
+          assert_eq "$(switch_count)" 1 "$account_case repeated delivery writes no second switch"
+        fi
+      fi
+    fi
+    kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+  done <<'ACCOUNTS'
+omitted-mismatch|omitted|claude-opus-4-8
+named-mismatch|named|claude-opus-4-8
+matching-omitted|omitted|claude-fable-5-1
+ACCOUNTS
 fi
 
 echo '=== recovery validates before stopping ==='
@@ -439,6 +500,7 @@ old, new = {
     "selector": ('model="${model}[1m]"', 'model="$model"'),
     "selector-id": ('&& ( -z "$launch_id" || "$launch_id" == "$model" )', '&& true'),
     "words": ('eval "choice_words=($choice)" || return 1', 'choice_words=("$choice")'),
+    "account": ('[[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")', 'LANE_RECOVERY_ARGS+=(--lane "$2")'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -447,7 +509,9 @@ Path(target).write_text(changed)
 CONTROL
     status=0
     MODEL_CONTROL=1 MODEL_CONTROL_CASE="$control_case" MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
-    if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/relaunch-$rule.log"; then
+    failure='^  FAIL '
+    [[ "$rule" != account ]] || failure='^  FAIL  omitted-mismatch recovery arguments preserve its account option$'
+    if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/relaunch-$rule.log"; then
       assert_eq red red "$rule recovery control rejects the defect"
     else
       assert_eq "$status" red "$rule recovery control must fail"
@@ -459,6 +523,7 @@ binding|stale-launch
 selector|extended
 selector-id|conflicting-selector
 words|extended
+account|optional-account
 CONTROLS
   control="$TMP_ROOT/companion-control.sh"
   python3 - "$COMPANION" "$control" <<'CONTROL'
