@@ -1,1 +1,1 @@
-- Claude projects with only skills or agents receive the automatic model-switch default. Generated inventory and verification include the scope-owned settings position. User settings and deletions remain intact.
+- Claude projects with only skills or agents receive the automatic model-switch default. Generated inventory and verification include the scope-owned settings position. Verification recognizes unchanged removal of engine-owned settings files. User settings and deletions remain intact.

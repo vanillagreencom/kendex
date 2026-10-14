@@ -332,9 +332,10 @@ fn collect(
 /// The shared configuration files the install record at `HEAD` has kendex
 /// writing keys in: the file each registration it records is reversed in
 /// ([`super::owned::installed`]), the one answer to what an installation
-/// wrote, and the file each keyed shim it records sits in, the inventory at
-/// `HEAD` seeding a record that lacks one as the retirement's does
-/// ([`recorded_shims`]). Read at `HEAD` and not off the record on disk,
+/// wrote, the file each keyed shim it records sits in, and the scope-owned
+/// settings [`scope_positions`] derives from that committed record. The
+/// inventory at `HEAD` seeds a missing keyed shim record as the retirement's
+/// does ([`recorded_shims`]). Read at `HEAD` and not off the record on disk,
 /// which an uncommitted removal has already taken the entry out of.
 ///
 /// A scope that is not a project, a project outside git, an unborn `HEAD`

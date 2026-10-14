@@ -820,19 +820,24 @@ fn history_problem(
 /// record holds and this pass's record does not, the edits
 /// [`crate::engine::owned::installed`] names for taking it back out, in
 /// record key order, so a hook, server or plugin dropped since leaves the
-/// file the way the writer left it. A removal lands only in a file a
-/// registration or shim is judged in. The scope default transition follows
-/// those removals, using the base record's ownership and this pass's lock and
-/// registrations through the planner's shared decision. The writer's
+/// file the way the writer left it. A removal lands only where this pass has
+/// a registration or keyed shim position, or [`crate::engine::generated_paths::scope_positions`]
+/// names a scope-owned settings path at either endpoint. The scope default
+/// transition follows those removals, using the base record's ownership and
+/// the proposed lock through the planner's shared decision. The writer's
 /// [`crate::engine::config_edits::ConfigEditPlan::compose`] then orders and
 /// transforms those edits against the base text, including ownership release
 /// for a value the person changed or deleted before that revision. Replay
-/// discards its record changes. The files are every `keys`
-/// position the pass prints: each registration's edit targets, each keyed
+/// discards its record changes and consumes
+/// [`crate::configedit::ConfigEdit::removes_empty_document`] after composition,
+/// so a document the writer retires compares as absent. An unchanged empty
+/// document keeps its original presence. The comparison includes each
+/// registration's edit targets, each keyed
 /// instruction shim and the scope positions from
 /// [`crate::engine::generated_paths::scope_positions`]. Scope ownership at
 /// either endpoint includes its file, so an unchanged default's removal
-/// can still be compared after ownership leaves. A revision that does not resolve, whose record this build
+/// can still be compared after ownership leaves. A revision that does not
+/// resolve, whose record this build
 /// cannot read, or holding an entry whose removal cannot be named,
 /// answers `Unknown` for every file rather than reading an absent copy as
 /// an empty one, a moved entry as never moved, or a dropped one as kept.
@@ -1085,14 +1090,25 @@ fn foreign_of(
     edits: &mut [crate::configedit::ConfigEdit],
     record: &mut Lock,
 ) -> Option<Foreign> {
-    let text = match base.copy(path) {
-        BaseCopy::Held(text) => text,
-        BaseCopy::Absent => String::new(),
+    let found = match base.copy(path) {
+        BaseCopy::Held(text) => Some(text),
+        BaseCopy::Absent => None,
         BaseCopy::Unreadable => return None,
     };
-    let head = crate::fs::read_if_exists(path).ok()?.unwrap_or_default();
+    let text = found.as_deref().unwrap_or_default();
+    let head = crate::fs::read_if_exists(path).ok()?;
     let applied =
-        crate::engine::config_edits::ConfigEditPlan::compose(path, &text, edits, record).ok()?;
+        crate::engine::config_edits::ConfigEditPlan::compose(path, text, edits, record).ok()?;
+    let applied =
+        if crate::configedit::ConfigEdit::removes_empty_document(edits, found.as_deref(), true)
+            .ok()?
+        {
+            None
+        } else if applied == text {
+            found
+        } else {
+            Some(applied)
+        };
     Some(match applied == head {
         true => Foreign::Unchanged,
         false => Foreign::Changed,

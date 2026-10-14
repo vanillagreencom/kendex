@@ -1774,6 +1774,8 @@ type ClaudeScopeSettingsCase = (
     Option<bool>,
     Option<kendex_core::lock::ClaudeProjectDefault>,
     Option<Foreign>,
+    bool,
+    bool,
 );
 
 const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
@@ -1785,23 +1787,152 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             Some(true),
             Some(Owned),
             Some(Foreign::Unchanged),
+            true,
+            true,
         ),
-        ("user-false", Some(false), Some(false), Some(Released), None),
-        ("user-true", Some(true), Some(true), Some(Released), None),
+        (
+            "user-false",
+            Some(false),
+            Some(false),
+            Some(Released),
+            None,
+            true,
+            true,
+        ),
+        (
+            "user-true",
+            Some(true),
+            Some(true),
+            Some(Released),
+            None,
+            true,
+            true,
+        ),
         (
             "deleted",
             None,
             None,
             Some(Released),
             Some(Foreign::Changed),
+            true,
+            true,
         ),
-        ("removed", None, None, None, Some(Foreign::Unchanged)),
+        (
+            "removed",
+            None,
+            None,
+            None,
+            Some(Foreign::Unchanged),
+            true,
+            true,
+        ),
+        (
+            "removed-default-only",
+            None,
+            None,
+            None,
+            Some(Foreign::Unchanged),
+            false,
+            false,
+        ),
+        (
+            "disabled-default-only",
+            None,
+            None,
+            None,
+            Some(Foreign::Unchanged),
+            false,
+            false,
+        ),
+        (
+            "removed-default-only-empty-file",
+            None,
+            None,
+            None,
+            Some(Foreign::Changed),
+            false,
+            true,
+        ),
+        (
+            "removed-default-only-empty-object",
+            None,
+            None,
+            None,
+            Some(Foreign::Changed),
+            false,
+            true,
+        ),
+        (
+            "default-only-unreadable",
+            None,
+            Some(true),
+            Some(Owned),
+            Some(Foreign::Unknown),
+            false,
+            true,
+        ),
+        (
+            "removed-absent-base",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Unchanged),
+            false,
+            false,
+        ),
+        (
+            "removed-absent-base-empty-file",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Changed),
+            false,
+            true,
+        ),
+        (
+            "removed-empty-file-base",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Unchanged),
+            false,
+            true,
+        ),
+        (
+            "removed-empty-file-base-deleted",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Changed),
+            false,
+            false,
+        ),
+        (
+            "removed-empty-object-base",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Unchanged),
+            false,
+            true,
+        ),
+        (
+            "removed-empty-object-base-deleted",
+            None,
+            None,
+            Some(Released),
+            Some(Foreign::Changed),
+            false,
+            false,
+        ),
         (
             "unapplied-false",
             None,
             Some(false),
             Some(Owned),
             Some(Foreign::Changed),
+            true,
+            true,
         ),
         (
             "foreign",
@@ -1809,6 +1940,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             Some(true),
             Some(Owned),
             Some(Foreign::Changed),
+            true,
+            true,
         ),
         (
             "unreadable",
@@ -1816,6 +1949,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             Some(true),
             Some(Owned),
             Some(Foreign::Unknown),
+            true,
+            true,
         ),
     ]
 };
@@ -1827,17 +1962,24 @@ fn claude_scope_settings_project(
     item: &str,
     case: &str,
     initial: Option<bool>,
+    foreign_keys: bool,
 ) -> (PathBuf, &'static str) {
     let source = format!("[sources.cat]\n{}\n", source_path(&world.catalog));
     let declaration = format!("{source}[{kind}.{item}]\nsource = \"cat\"\n");
     let project = second_project(world, &format!("{kind}-{case}"), &declaration);
     let settings = project.join(".claude/settings.json");
-    let mut user = serde_json::json!({"permissions": {"allow": ["Read"]}, "model": "opus"});
-    if let Some(value) = initial {
-        user["switchModelsOnFlag"] = value.into();
+    if foreign_keys {
+        let mut user = serde_json::json!({"permissions": {"allow": ["Read"]}, "model": "opus"});
+        if let Some(value) = initial {
+            user["switchModelsOnFlag"] = value.into();
+        }
+        write(&settings, &format!("{user}\n"));
+    } else {
+        assert!(!settings.exists(), "{kind}-{case}");
     }
-    write(&settings, &format!("{user}\n"));
-    commit(&project, "user settings before installation");
+    if foreign_keys {
+        commit(&project, "user settings before installation");
+    }
     git(&project, &["tag", "scope-before"]);
     let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
     assert!(
@@ -1845,8 +1987,44 @@ fn claude_scope_settings_project(
         "{kind}-{case}: {}",
         said(&installed)
     );
+    if !foreign_keys {
+        let seeded: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(
+            seeded,
+            serde_json::json!({"switchModelsOnFlag": true}),
+            "{kind}-{case}"
+        );
+        assert_eq!(
+            kendex_core::lock::load(&project.join(RECORD))
+                .unwrap()
+                .claude_project_default,
+            Some(kendex_core::lock::ClaudeProjectDefault::Owned),
+            "{kind}-{case}"
+        );
+    }
+    if case.starts_with("removed-absent-base") {
+        fs::remove_file(&settings).unwrap();
+    } else if case.starts_with("removed-empty-file-base") {
+        write(&settings, "");
+    } else if case.starts_with("removed-empty-object-base") {
+        write(&settings, "{}\n");
+    }
     commit(&project, "scope-owned settings");
     git(&project, &["tag", "scope-installed"]);
+    let base = claude_scope_settings_transition(world, &project, kind, item, case);
+    (project, base)
+}
+
+#[allow(clippy::unwrap_used)]
+fn claude_scope_settings_transition(
+    world: &World,
+    project: &Path,
+    kind: &str,
+    item: &str,
+    case: &str,
+) -> &'static str {
+    let settings = project.join(".claude/settings.json");
     let base = match case {
         "unapplied-false" => {
             edit_json(&settings, |value| {
@@ -1863,7 +2041,16 @@ fn claude_scope_settings_project(
             });
             "scope-installed"
         }
-        "removed" => {
+        "disabled-default-only" => {
+            let disabled = kendex(&world.home, project, &["disable", item, "-y", "--leave"]);
+            assert!(
+                disabled.status.success(),
+                "{kind}-{case}: {}",
+                said(&disabled)
+            );
+            "scope-installed"
+        }
+        case if case.starts_with("removed") => {
             let manifest = project.join("kendex.toml");
             let text = fs::read_to_string(&manifest).unwrap();
             fs::write(
@@ -1883,14 +2070,61 @@ fn claude_scope_settings_project(
         _ => "scope-before",
     };
     if case != "unapplied-false" {
-        let applied = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+        let applied = kendex(&world.home, project, &["apply", "-y", "--leave"]);
         assert!(
             applied.status.success(),
             "{kind}-{case}: {}",
             said(&applied)
         );
     }
-    (project, base)
+    if case.ends_with("-empty-file") {
+        write(&settings, "");
+    } else if case.ends_with("-empty-object") {
+        write(&settings, "{}\n");
+    } else if case.ends_with("-base-deleted") {
+        fs::remove_file(&settings).unwrap();
+    }
+    if case.ends_with("-unreadable") {
+        "missing-scope-base"
+    } else {
+        base
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_claude_scope_settings(
+    settings: &Path,
+    case: &str,
+    expected: Option<bool>,
+    foreign_keys: bool,
+    settings_present: bool,
+) {
+    assert_eq!(settings.exists(), settings_present, "{case}");
+    let actual: serde_json::Value = if settings_present {
+        let text = fs::read_to_string(settings).unwrap();
+        serde_json::from_str(if text.is_empty() { "{}" } else { &text }).unwrap()
+    } else {
+        serde_json::Value::Null
+    };
+    assert_eq!(actual["switchModelsOnFlag"].as_bool(), expected, "{case}");
+    assert_eq!(
+        actual["permissions"],
+        if foreign_keys {
+            serde_json::json!({"allow": ["Read"]})
+        } else {
+            serde_json::Value::Null
+        },
+        "{case}"
+    );
+    assert_eq!(
+        actual["model"],
+        if foreign_keys {
+            serde_json::json!(if case == "foreign" { "sonnet" } else { "opus" })
+        } else {
+            serde_json::Value::Null
+        },
+        "{case}"
+    );
 }
 
 #[test]
@@ -1899,23 +2133,14 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
     use kendex_core::lock::ClaudeProjectDefault::Owned;
     use kendex_core::model::Scope;
     let world = world();
-    let permissions = serde_json::json!({"allow": ["Read"]});
     for (kind, item) in [("skills", "second"), ("agents", "review")] {
-        for &(case, initial, expected, ownership, foreign) in CLAUDE_SCOPE_SETTINGS_CASES {
-            let (project, base) = claude_scope_settings_project(&world, kind, item, case, initial);
+        for &(case, initial, expected, ownership, foreign, foreign_keys, settings_present) in
+            CLAUDE_SCOPE_SETTINGS_CASES
+        {
+            let (project, base) =
+                claude_scope_settings_project(&world, kind, item, case, initial, foreign_keys);
             let settings = project.join(".claude/settings.json");
-            let actual: serde_json::Value =
-                serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
-            assert_eq!(
-                actual["switchModelsOnFlag"].as_bool(),
-                expected,
-                "{kind}-{case}"
-            );
-            assert_eq!(actual["permissions"], permissions, "{kind}-{case}");
-            assert_eq!(
-                actual["model"],
-                if case == "foreign" { "sonnet" } else { "opus" }
-            );
+            assert_claude_scope_settings(&settings, case, expected, foreign_keys, settings_present);
             let scope = Scope::Project {
                 root: project.clone(),
             };
@@ -1974,7 +2199,7 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
                 expected_positions,
                 "{kind}-{case}"
             );
-            if case == "removed" {
+            if case.starts_with("removed") || case == "disabled-default-only" {
                 assert!(
                     matches!(report.generated.recorded, kendex_core::engine::Recorded::Known(ref paths) if paths.contains(&settings))
                 );
