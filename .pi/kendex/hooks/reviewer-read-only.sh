@@ -3,9 +3,9 @@
 # name: reviewer-read-only
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (except `list` and `show` when the command payload has no literal newline), `clean`, `reset` or `switch` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
+# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
 # summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Bash arm matches raw command text, including quoted mentions, and refuses stash commands. Its list and show exemption applies only when the command payload has no literal newline. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. The refusal names the artifact path a reviewer may write and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Bash arm matches raw command text, including quoted mentions, and refuses every stash command. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. The refusal names the artifact path a reviewer may write and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # harnesses: [claude, pi, opencode, cursor]
 # ---
@@ -141,13 +141,9 @@ case "$TOOL_NAME" in
     refuse git unreadable
     ;;
   Bash)
-    # Preserve trailing command newlines through the substitution below.
-    # Every newline-containing payload takes the original scanner path.
     COMMAND=$(printf '%s' "$INPUT" | jq -er '.tool_input.command
-      | if . == null then "" elif type == "string" then . else error("not a string") end
-      | . + "."' 2>/dev/null) ||
+      | if . == null then "" elif type == "string" then . else error("not a string") end' 2>/dev/null) ||
       refuse payload invalid-json
-    COMMAND=${COMMAND%.}
     # `git`, then any run of options (a value-taking one with its value),
     # then the verb as its own word. `git cat-file commit` and `git
     # commit-tree` are reads and do not match.
@@ -159,15 +155,6 @@ case "$TOOL_NAME" in
       # grep decides, so the verb it matched is not in hand; the value names
       # the pair the pattern stands for.
       refuse refused git-write
-    fi
-    # The read exemption supports only newline-free payloads. Otherwise
-    # repeated removal can join a bare stash to a later read's arguments.
-    if [[ $COMMAND != *$'\n'* ]]; then
-      GIT_DISCARD_READ=${GIT_DISCARD/'(checkout|restore|stash|clean|reset|switch)'/'stash[[:blank:]]+(list|show)'}
-      GIT_DISCARD_READ=${GIT_DISCARD_READ//'[[:space:]]'/'[[:blank:]]'}
-      while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do
-        COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/ }
-      done
     fi
     if printf '%s\n' "$COMMAND" | grep -E -- "$GIT_DISCARD" >/dev/null; then
       refuse refused git-discard

@@ -32,9 +32,7 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/reviewer-read-only.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)" || { echo 'reviewer-read-only: scratch=mktemp-failed' >&2; exit 1; }
-[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'reviewer-read-only: scratch=not-a-directory' >&2; exit 1; }
-TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'reviewer-read-only: scratch=resolve-failed' >&2; exit 1; }
+TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
@@ -46,8 +44,6 @@ fgit() {
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/src"
 fgit init -q "$REPO"
-fgit -C "$REPO" config gc.auto 0
-fgit -C "$REPO" config maintenance.auto false
 fgit -C "$REPO" config user.email t@example.com
 fgit -C "$REPO" config user.name t
 printf 'pub fn a() {}\n' >"$REPO/src/lib.rs"
@@ -79,8 +75,16 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
   err="$(cat "$TMP_ROOT/stderr")"
 }
 
-# shellcheck source=lib/assert.sh
-. "$TEST_DIR/lib/assert.sh"
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
 
 assert_contains() {
   local got="$1" needle="$2" name="$3"
@@ -160,8 +164,8 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-write" "refused: $cmd"
 done
-for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' \
-  'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
+for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'git stash' 'git stash pop' \
+  'git stash list' 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-discard" "refused: $cmd"
   for agent in dev ''; do
@@ -169,77 +173,6 @@ for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' \
     assert_eq "$rc" 0 "passes for agent '$agent': $cmd"
   done
 done
-
-# The reviewer harness sends these stash reads and work-changing commands
-# through the same Bash tool. The command text is never executed.
-stash_rows() {
-  local want cmd first label
-  while IFS='|' read -r want cmd; do
-    label=$cmd
-    cmd=$(printf '%b.' "$cmd")
-    cmd=${cmd%.}
-    run_tool reviewer-security Bash command "$cmd"
-    first='-'; [ "$want" = 0 ] || first='reviewer-read-only: refused=git-discard'
-    assert_eq "rc=$rc first=$(first_line)" "rc=$want first=$first" "stash: $label"
-  done <<'ROWS'
-0|git stash list
-0|git stash show
-0|git -C repo stash list --oneline
-0|git --no-pager stash show stash@{0}
-0|git stash list; git stash show
-0|git\tstash\tlist
-0|git\t-C\trepo\tstash\tshow
-0|git  --no-pager  -c  core.quotePath=false  stash  list
-0|git stash list --format=.
-2|git stash\nlist
-2|git stash\nshow
-2|git -C repo stash\nlist
-2|git --no-pager stash\nshow
-2|git -c core.quotePath=false stash\nlist
-2|git stash\t\nlist
-2|git stash\n\nshow
-2|git stash\nlist; git stash\nshow
-2|git stash list\nshow
-2|git stash\ngit stash show list
-2|git stash\ngit stash list list
-2|git stash list\n
-2|git stash show\n\n
-2|\ngit stash list
-2|echo ready\ngit stash show
-0|git\nstash list
-0|git -C\nrepo stash show
-0|git -C repo\nstash list
-0|git\n--no-pager stash list
-0|git --no-pager\nstash show
-0|git -c\ncore.quotePath=false stash list
-0|git -c core.quotePath=false\nstash show
-2|git stash
-2|git stash push
-2|git stash pop
-2|git stash apply
-2|git stash drop
-2|git stash clear
-2|git stash save
-2|git stash create
-2|git stash store
-2|git stash branch probe
-2|git stash --include-untracked
-2|git stash list; git stash pop
-2|git stash show && git stash clear
-2|git stash show; git reset --hard
-2|git stash listx
-2|git stash shown
-ROWS
-}
-stash_rows
-skill_load_control stash-reads "$HOOK" '      while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
-  "        GIT_DISCARD='a^'" HOOK stash_rows 'stash: git stash list; git stash pop' \
-  'stash: git stash show && git stash clear'
-skill_load_control stash-read-prefix "$HOOK" '      while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
-  '        break' HOOK stash_rows 'stash: git stash list' 'stash: git stash show'
-skill_load_control stash-read-newline "$HOOK" "    if [[ \$COMMAND != *\$'\\n'* ]]; then" \
-  $'      :\n    fi\n    if true; then' HOOK stash_rows \
-  'stash: git stash\ngit stash show list' 'stash: git stash\ngit stash list list'
 
 for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
