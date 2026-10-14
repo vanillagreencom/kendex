@@ -340,8 +340,8 @@
 #          the tracker id (TEAM-N) or gh-N; the SESSION:WINDOW form a lane
 #          record's `window` carries is accepted too, and names that window
 #          under exactly that session. Pass the record's `window` as it stands:
-#          the whole name selects the pane, and its window part alone is the
-#          item the hosted probe below names. A hosted record declaring
+#          the whole name selects the pane. The hosted probe uses the record's
+#          item, or the window part when no record exists. A hosted record declaring
 #          status=verb checks the remote harness first. Its pane=verb capture
 #          comes from the provider; other lanes keep the local pane reading.
 #          This answers exactly as oversee-watch does
@@ -4409,6 +4409,8 @@ case "$SUB" in
 		state_host="$(jq -r '.host // "local"' <<<"${state_record:-null}")"
 		[[ -n "$state_record" ]] || state_host="${ORCH_LANE_HOST:-local}"
 		state_item="$(jq -r '.item // empty' <<<"${state_record:-null}")"
+		state_probe_item="$state_item"
+		[[ -n "$state_record" ]] || state_probe_item="${LANE_ARG#*:}"
 		state_harness="$(jq -r '.harness // empty' <<<"${state_record:-null}")"
 		state_mode=local state_source="" state_status=pane
 		if [[ "$state_host" != local ]]; then
@@ -4448,7 +4450,7 @@ case "$SUB" in
 		if [[ "$LANE_STATE_ANSWER" == unjudged && "$state_host" != local && -z "$LANE_PANE_SCREEN" ]]; then
 			probe_rc=0
 			# The provider knows the item, never the session a window sits in.
-			probe_err="$(ORCH_LANE_HOST="$state_host" "$SCRIPT_DIR/lane-host" touch --item "${LANE_ARG#*:}" 2>&1 >/dev/null)" || probe_rc=$?
+			probe_err="$(ORCH_LANE_HOST="$state_host" "$SCRIPT_DIR/lane-host" touch --item "$state_probe_item" 2>&1 >/dev/null)" || probe_rc=$?
 			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
 				printf '%s\n' "$probe_err" >&2
 				message lane-host-busy touch "$LANE_ARG" >&2

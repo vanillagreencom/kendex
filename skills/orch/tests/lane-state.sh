@@ -1059,7 +1059,7 @@ PROBE_MUTANT_REPO="$(dirname "$PROBE_MUTANT_SCRIPTS")"
 rm -- "${PROBE_MUTANT_SCRIPTS:?}/lane-host"
 cp "$VERB_REPO/scripts/lane-host" "$PROBE_MUTANT_SCRIPTS/lane-host"
 git -C "$PROBE_MUTANT_REPO" init -q
-mutate_file "$PROBE_MUTANT_SCRIPTS/lanes" 'touch --item "${LANE_ARG#*:}"' 'touch --item "$LANE_ARG"'
+mutate_file "$PROBE_MUTANT_SCRIPTS/lanes" 'state_probe_item="${LANE_ARG#*:}"' 'state_probe_item="$LANE_ARG"'
 assert_eq "$(probed kendex:CC-404 "$PROBE_MUTANT_REPO")" "kendex:CC-404" \
   "control: probing with the whole argument names the session to the provider"
 # The probe's busy arm, the second branch on its status: without it a probe

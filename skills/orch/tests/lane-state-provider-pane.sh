@@ -88,11 +88,12 @@ CONTROL_RED="$(FAIL=0; assert_eq "$CONTROL_COUNT" 1 control >/dev/null; printf '
 assert_eq "$CONTROL_RED" 1 'the one-capture assertion rejects a caller that drops observation metadata'
 
 # The overseer reads the diagnostic key and the provider's failure line.
+# open-terminal records GitHub items as issue-N and titles their windows gh-N.
 # Keep the failed touch private to this row; other provider cases remain neutral.
 PROBE_PROVIDER="$STUB_DIR/probe-provider"
 cp -p -- "$PROVIDER" "$PROBE_PROVIDER"
 mutate_file "$PROBE_PROVIDER" 'touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;' \
-  'touch) printf "%s\n" "$LANE_HOST_STUB_CAPTURE_ERROR" >&2; exit 7 ;;'
+  'touch) [[ "$3" == issue-2 ]] || { printf "lane-host-fixture: item-unconfigured item=%s\n" "$3" >&2; exit 2; }; printf "%s\n" "$LANE_HOST_STUB_CAPTURE_ERROR" >&2; exit 7 ;;'
 export LANE_HOST_STUB_CAPTURE_ERROR='lane-host-fixture: read-failed cause=connection-lost'
 export LANE_HOST_STUB_CAPABILITIES="$CAPS" LANE_HOST_STUB_CAPTURE_STATUS=7
 record="$(jq -cn --arg host "$PROBE_PROVIDER" '{item:"issue-2",window:"gh-2",host:$host,harness:"codex",status:"running"}')"
@@ -103,9 +104,14 @@ mutate_file "$MUTANT_DIR/lanes" '"$LANE_STATE_ANSWER" == unjudged && "$state_hos
   '"$LANE_STATE_ANSWER" == unjudged && "${ORCH_LANE_HOST:-local}" != local'
 mutate_file "$MUTANT_DIR/lanes" 'probe_err="$(ORCH_LANE_HOST="$state_host" "$SCRIPT_DIR/lane-host" touch' \
   'probe_err="$("$SCRIPT_DIR/lane-host" touch'
-for row in "$SCRIPTS_DIR|0" "$MUTANT_DIR|1"; do
-  IFS='|' read -r probe_scripts want_red <<< "$row"
-  export OVERSEE_WATCH_STATE_DIR="$STUB_DIR/probe-$want_red"
+ITEM_MUTANT_DIR="$(mutant_scripts probe-item-control/orch lanes)"
+orch_fixture_shared_libs "${ITEM_MUTANT_DIR%/scripts}"
+mutate_file "$ITEM_MUTANT_DIR/lanes" 'touch --item "$state_probe_item"' 'touch --item "${LANE_ARG#*:}"'
+for row in "$SCRIPTS_DIR|verb|0" "$SCRIPTS_DIR|pane|0" "$MUTANT_DIR|verb|1" "$ITEM_MUTANT_DIR|verb|1"; do
+  IFS='|' read -r probe_scripts status_mode want_red <<< "$row"
+  export OVERSEE_WATCH_STATE_DIR="$STUB_DIR/probe-$status_mode-$probe_scripts"
+  export LANE_HOST_STUB_CAPABILITIES="${CAPS/status=verb/status=$status_mode}"
+  : > "$STUB_DIR/host.log"
   probe_rc=0
   state="$(env -u ORCH_LANE_HOST "$probe_scripts/lanes" state gh-2 2>"$STUB_DIR/probe.err")" || probe_rc=$?
   assert_eq "$state" unjudged 'a recorded host with no ambient provider retains unjudged'
@@ -114,6 +120,7 @@ for row in "$SCRIPTS_DIR|0" "$MUTANT_DIR|1"; do
   assert_eq "$PROBE_RED" "$want_red" 'the recorded-host diagnostic assertion rejects the pre-fix control'
   if [[ "$want_red" == 0 ]]; then
     assert_file_contains "$STUB_DIR/probe.err" 'lanes: host-unreachable item=gh-2 state=unjudged' 'the overseer receives the unavailable-host category'
+    assert_file_contains "$STUB_DIR/host.log" 'touch --item issue-2 ' 'the probe names the recorded item even without process status capability'
   fi
 done
 
