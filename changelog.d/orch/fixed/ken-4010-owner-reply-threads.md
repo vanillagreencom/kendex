@@ -1,1 +1,0 @@
-- Owner replies stay in the thread of each message they answer, with one topic per thread.

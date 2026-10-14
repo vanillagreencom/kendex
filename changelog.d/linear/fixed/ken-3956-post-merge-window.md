@@ -1,1 +1,0 @@
-- Issue creation and description updates refuse post-merge release triggers without a repository and deadlines that are neither a duration nor a UTC time.

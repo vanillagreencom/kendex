@@ -1,1 +1,0 @@
-- **Breaking:** Completion reads every Done-when checklist, refuses open branch boxes or checked boxes without evidence, and keeps open post-merge checks in Verifying. Containers require a shared-outcome box even on older descriptions. Supply box evidence with `--evidence-file` when ticking boxes.

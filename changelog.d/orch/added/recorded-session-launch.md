@@ -1,1 +1,0 @@
-- Session consumers can build a prompt-free native launch and verify an exact recorded conversation through the existing launch and history readers.

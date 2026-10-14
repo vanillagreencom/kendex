@@ -1,1 +1,0 @@
-- Jarvis keeps one local session per home through start, status and stop. It resumes the recorded conversation, confirms native identity before Start, and preserves an app's Off across repeated boot calls.

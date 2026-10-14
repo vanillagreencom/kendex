@@ -1,1 +1,0 @@
-- Permit the single in-round validation correction when changed files cause the failure, even if the failing test file is unchanged.

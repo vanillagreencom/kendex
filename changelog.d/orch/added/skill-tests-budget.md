@@ -1,1 +1,0 @@
-- Passing Skill Tests suites and jobs print GitHub warning annotations when they approach their time limits.

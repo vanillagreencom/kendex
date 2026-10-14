@@ -1,1 +1,0 @@
-- A Pi lane with working background agents remains working after the lead's turn ends, so the watch sends no idle-after-return notice until its agents finish and the lead settles.

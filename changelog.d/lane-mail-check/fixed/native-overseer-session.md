@@ -1,1 +1,0 @@
-- Bind overseer mail and context to its native session. Once the native session is bound, child sessions in the same pane receive no overseer mail and leave its cursor, context and gap records unchanged. A failed binding write leaves the caller unbound. An old pane writes no gap while the successor's native binding is empty. Check a Copilot session's reader under its own home.

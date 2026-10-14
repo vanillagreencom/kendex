@@ -1,1 +1,0 @@
-- `issues bulk-get --format=compact` returns compact issue rows without descriptions, URLs or timestamps.

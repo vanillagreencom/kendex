@@ -1,1 +1,0 @@
-- A stalled Slack relay exits with its stage and wait age, so its service can restart after a blocked network call or name lookup.

@@ -1,1 +1,0 @@
-- Judge needed test protection against cost. Accept justified omissions and suggest removal of tests with no protection instead of blocking on them.

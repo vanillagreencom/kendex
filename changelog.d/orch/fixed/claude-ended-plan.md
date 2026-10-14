@@ -1,1 +1,0 @@
-- Claude usage refusals now name an ended plan when the account profile confirms cancellation.

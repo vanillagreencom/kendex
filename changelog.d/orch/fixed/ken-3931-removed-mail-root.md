@@ -1,1 +1,0 @@
-- Clarify the local mailbox root refusal contract for sends in peer-mail instructions.

@@ -1,1 +1,0 @@
-- Refuse mistaken local mailbox directories before appending new messages, while preserving mailbox read costs and repository ownership checks for cloud sessions.

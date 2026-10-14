@@ -1,1 +1,0 @@
-- Copilot seats marked unlimited with no positive entitlement read as spent, so lane selection refuses paid overage.

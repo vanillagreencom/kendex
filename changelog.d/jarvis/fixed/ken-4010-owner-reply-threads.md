@@ -1,1 +1,0 @@
-- A fact that answers two messages gets a short reply in each thread.

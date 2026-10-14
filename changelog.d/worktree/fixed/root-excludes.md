@@ -1,1 +1,0 @@
-- Write new Git ignore rules for worktree links with a leading slash so they do not match nested directories with the same name.

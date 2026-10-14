@@ -1,1 +1,0 @@
-- **Breaking:** Hosted lane providers can run the harness without a local SSH viewer. Pane reads and input use provider verbs. A person can open the optional viewer when needed. Automatic recovery for provider-owned panes or relative provider executable paths is deferred to KEN-3996 before any stop or window change. A refused recovery keeps the harness, window and lane record.

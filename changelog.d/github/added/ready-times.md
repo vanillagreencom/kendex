@@ -1,1 +1,0 @@
-- `pr-timeline` reports `ready_times` so callers can separate draft work from bot review waits.

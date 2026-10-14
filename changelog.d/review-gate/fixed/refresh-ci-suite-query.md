@@ -1,1 +1,0 @@
-- Refresh heads with passing CI now request overseer approval in the same watch pass when GitHub's suite-name filter would hide the CI check.

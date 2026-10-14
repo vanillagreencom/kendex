@@ -1,1 +1,0 @@
-- Refuse escaped ANSI-C arguments and input paths for recognized environment producers, so encoded words cannot bypass the environment-dump check.

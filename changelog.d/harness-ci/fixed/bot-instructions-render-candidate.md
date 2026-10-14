@@ -1,1 +1,0 @@
-- Consumer refreshes that change bot review instructions can install the verifier and prove the render class. Each changed file still requires ownership proof.

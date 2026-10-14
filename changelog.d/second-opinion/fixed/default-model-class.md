@@ -1,1 +1,0 @@
-- The default Claude command reads the standard model class from kendex. The default Codex command uses its harness default. An unresolved Claude class uses the harness default with one notice.

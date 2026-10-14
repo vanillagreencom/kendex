@@ -6,6 +6,156 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-10-14
+
+### Added
+
+- Catalogs can declare their minimum kendex version; an older engine refuses incompatible revisions before rendering or installing their packages. Multi-scope installation commands and verification check every selected scope first. Manual and session checks settle records per scope; report-only withholds project records and permits global settlement. Collections check subscriptions and snapshots before the first step, and remaining recorded revisions within each step. Pi extensions use the same minimum. Historical incompatible packages can still be removed when the remaining readings are compatible.
+- Skills can declare external commands with their purpose, minimum version and package names. Install and check report missing required commands and show notices for optional commands or unreadable versions. Checks include in-place sources and existing copies with absent or unreadable install records. Version floors accept leading blank lines in command output. Legacy live copies without frontmatter declare no commands. Accepted copies keep the renderer's text repair.
+- Hooks can declare Claude Code's `PostModelSwitch` event to act when a session's model changes.
+
+### Changed
+
+- Consumer refresh reads compatible package changes from main at the next hourly refresh after their merge. The CLI still comes from the release selected by v1. A catalog that needs a newer CLI uses the release catalog and reports why packages wait.
+
+  You do: nothing
+- App preferences can be shared through dotfiles. Registered projects, harness roots, and terms acceptance move to `machine.toml` beside `settings.toml`. Existing settings migrate on the first unprivileged read. A run acting as root reads the existing settings without migration.
+
+  You do: exclude `machine.toml` and the adjacent `.lock` files from shared dotfiles; keep `settings.toml` tracked.
+
+### Fixed
+
+- Manual and session checks leave every selected scope's install record unchanged when any selected catalog requires a newer kendex version. A compatibility read that exceeds the shared session deadline also leaves every selected record unchanged.
+- Claude project settings default to automatic model switching after a safeguard flag when an enabled Claude installation registers settings there. Skills-only and agents-only projects do not receive a new default. User changes and deletions remain. An unchanged default that kendex inserted stays while any enabled Claude installation remains, including retained installations whose catalog is unavailable. It leaves after the last enabled Claude installation leaves.
+- Collection installs replace members recorded below the catalog minimum in either repository order and refuse incompatible retained revisions before writing. Snapshot holds apply only to explicit collection members and preserve automatic skills' revision choices. Shared plan previews name every new subscription.
+- Claude projects with only skills or agents receive the automatic model-switch default. Generated inventory and verification include the scope-owned settings position. Verification recognizes unchanged removal of engine-owned settings files. User settings, layout and deletions remain intact. An unreadable settings document leaves unrelated installations available and fails record verification with its cause. Clones without an install record release unproved settings inventory rows.
+- Releases verify the collation pull request's changelog.d snapshot and tag its first merge when later program fragments fit the version. The version check uses that merge's policy, so later main settings cannot change the decision. Incompatible fragments stop the release and name the required version level.
+- Session reports that contain only command notices now end with a notice outcome line.
+- Install plugin-registry skills from the repository root and from declared skill folders, using their plugin-qualified names. Read each default item list once per physical plugin source directory and share it across aliases. Catalog checks fail for every refused skill declaration, including colliding folder names and individual skill paths that name the plugin root. Repeated skill declarations count toward the catalog's skill limit.
+- Agents reference required namespaced skills by their installed directory names in Claude Code, Codex, Copilot CLI and Pi.
+- Skills with long descriptions install across harnesses. Kendex cuts each delivered copy's description at a sentence or word boundary within 1024 characters and preserves the publisher's file and the skill body.
+
+### Packages
+
+#### bot-instructions
+
+- Align review-bot test requests and validator guidance with protection against cost and one control for a new or changed instrument.
+
+#### code-quality
+
+- Judge tests by protection against run time and upkeep. Prove a new or changed instrument once without requiring a control for each surface, rule or row.
+
+#### command-safety
+
+- Refuse escaped ANSI-C arguments and input paths for recognized environment producers, so encoded words cannot bypass the environment-dump check.
+- Allow the required literal wrapper launchers and grouped set receipt. Preserve the existing ordinary quoted argument data class and the single- or double-quoted cat file-writing class. Restore main's conservative known-read refusal for other added producer, body, executable-string, prefix, redirect and inherited-input permissions. Retain unsupported context across executable-wrapper lists and registered bodies. Classify optional receiving bodies in their original command order, preserving earlier body data that main allows. Keep direct-head behavior and the existing stricter refusals.
+- Refuse dollar-quoted environment producers and command heads that contain ANSI-C escapes. Unsupported shell contexts also refuse ANSI-C escaped data. Named-variable reads and ordinary env launchers keep working.
+
+#### commit-guards
+
+- Release-version checks separate collated release entries from later pending entries. Publishing checks pending program fragments under the selected merge's policy and version level; independent package release history does not block it. The kendex release workflow owns its fixed changelog.d collation-head check.
+
+#### dev
+
+- Name omitted tests and their protection-against-cost judgement in the pull request body.
+- Permit the single in-round validation correction when changed files cause the failure, even if the failing test file is unchanged.
+
+#### docs-writing
+
+- Rewrites preserve each claim's authorizing source, exceptions and evidence status. Assistant-home examples keep policy, memory and handoffs with their owning contracts.
+
+#### github
+
+- `pr-timeline` reports `ready_times` so callers can separate draft work from bot review waits.
+
+#### harness-ci
+
+- Local validation can read the same lane decision as CI through `change-class --output`. Local runs do not reuse CI proof records.
+- Consumer refreshes that change bot review instructions can install the verifier and prove the render class. Each changed file still requires ownership proof.
+- CI runs each lane that claims a file a proved render deletes or moves, including moves that rewrite the file. In-place and addition-only renders keep their existing skip.
+
+#### iced-rs
+
+- Admit cache regression tests by protection against cost instead of requiring a test for each invalidation case.
+
+#### jarvis
+
+- Jarvis ships a configurable Chromium browser driver, an optional 1Password session broker with a protected-file client, and Linux Wayland input and capture tools.
+- Jarvis keeps one local session per home through start, status and stop. It resumes the recorded conversation, confirms native identity before Start, and preserves an app's Off across repeated boot calls.
+- A fact that answers two messages gets a short reply in each thread.
+
+#### lane-mail-check
+
+- Bind overseer mail and context to its native session. Once the native session is bound, child sessions in the same pane receive no overseer mail and leave its cursor, context and gap records unchanged. A failed binding write leaves the caller unbound. An old pane writes no gap while the successor's native binding is empty. Check a Copilot session's reader under its own home.
+- Pi lane turn rows retain the working background-agent count from Stop hooks.
+
+#### linear
+
+- **Breaking:** Completion reads every Done-when checklist, refuses open branch boxes or checked boxes without evidence, and keeps open post-merge checks in Verifying. Containers require a shared-outcome box even on older descriptions. Supply box evidence with `--evidence-file` when ticking boxes.
+- `issues bulk-get --format=compact` returns compact issue rows without descriptions, URLs or timestamps.
+- Issue creation and description updates refuse post-merge release triggers without a repository and deadlines that are neither a duration nor a UTC time.
+
+#### mailbox
+
+- Share mailbox path checks, cursor reads and numbered snapshots with the Slack relay.
+- Owner asks accept a delivery id so a retry after the repeat window keeps the original ask and Slack thread.
+- Refuse mistaken local mailbox directories before appending new messages, while preserving mailbox read costs and repository ownership checks for cloud sessions.
+- Slack waits for an owner question's tracker outcome before it selects the item link or full question. A missing outcome releases the full question after 300 seconds.
+
+#### orch
+
+- **Breaking:** Hosted lane providers can run the harness without a local SSH viewer. Pane reads and input use provider verbs. A person can open the optional viewer when needed. Automatic recovery for provider-owned panes or relative provider executable paths is deferred to KEN-3996 before any stop or window change. A refused recovery keeps the harness, window and lane record.
+- Session consumers can build a prompt-free native launch and verify an exact recorded conversation through the existing launch and history readers.
+- Passing Skill Tests suites and jobs print GitHub warning annotations when they approach their time limits.
+- Judge test findings by needed protection against cost. Accept justified omissions and remove tests that protect nothing.
+- Container closure requires its holder’s shared-outcome evidence. The holder writes the proof while the parent stays open, then container-close validates the children, posts the bundle summary and completes it. Verification keeps missing or unproved outcomes visible without a merge time, using live issue and child reads.
+- Reuse a no-verdict validation run with no failed lane after a restack under the same conflict and tree rules as a passing run.
+- The succession handoff template excludes rulings, filing history and Verifying readings from the Progress log. It names the fleet log for rulings and filing history, and tracker items for Verifying readings.
+- Claude usage refusals now name an ended plan when the account profile confirms cancellation.
+- Copilot seats marked unlimited with no positive entitlement read as spent, so lane selection refuses paid overage.
+- Hosted relaunches stop the prior harness and start a fresh session after a handoff, with a custom command, or across a harness switch, so the new brief runs.
+- Warm account selection, listings and turn-end checks reuse parsed usage readings. Each read still checks current claims, walls, login expiry and account policy. Delayed reads check expiry before cached readings are used. Failed cache decoding stops selection. Interrupted provider reads release the refresh lock.
+- `lane-close` names the duplicate record count and the workflow-state repair when more than one fleet record names an item.
+- Clarify the local mailbox root refusal contract for sends in peer-mail instructions.
+- Owner replies stay in the thread of each message they answer, with one topic per thread.
+- Lane proposal comments can name a landed source commit when the consumer uses direct pushes.
+- Push-first lanes use scoped validation when CI does not cover the change class and the range selects every suite.
+- Overseer succession uses the agent-launch reserve, so a refused agent launch can hand over to a successor at the same context reading.
+- Record the overseer's native session ID. Clear its binding on a new launch or registration so a resumed session can receive its own mail.
+- A Pi lane with working background agents remains working after the lead's turn ends, so the watch sends no idle-after-return notice until its agents finish and the lead settles.
+
+#### project-management
+
+- Parent issue templates include a shared-outcome box that only the holder ticks after a passing source read, with its evidence recorded below the box.
+- Proposal sweeps accept direct-push source commits, verify their evidence at the landed commit, and return the source repository and PR or commit with each proposal outcome.
+
+#### review-gate
+
+- Refresh heads with passing CI now request overseer approval in the same watch pass when GitHub's suite-name filter would hide the CI check.
+
+#### reviewer-test
+
+- Judge needed test protection against cost. Accept justified omissions and suggest removal of tests with no protection instead of blocking on them.
+
+#### reviewer
+
+- Accept justified test omissions, repair needed evidence, and suggest removal of tests with no protection. Run mutation and stability pairing only for new or changed instruments.
+
+#### second-opinion
+
+- The default Claude command reads the standard model class from kendex. The default Codex command uses its harness default. An unresolved Claude class uses the harness default with one notice.
+
+#### slack
+
+- Read a named Slack channel without a relay binding, with message timestamps, edit times, authors and escaped text for scripts.
+- Read bound mailboxes inside the Slack relay process, so idle polls start no lane-mail processes.
+- The Slack relay skips a root after a local start or poll refusal and retries it each later poll. Other roots continue. A held listen lock stops a duplicate relay. Jarvis hold lock contention affects only its root.
+- A stalled Slack relay exits with its stage and wait age, so its service can restart after a blocked network call or name lookup.
+
+#### worktree
+
+- Write new Git ignore rules for worktree links with a leading slash so they do not match nested directories with the same name.
+
 ## [1.18.0] - 2026-10-13
 
 ### Added
@@ -3046,7 +3196,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.18.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.0..HEAD
+[1.19.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.0
 [1.18.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.18.0
 [1.17.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.17.0
 [1.16.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.16.0

@@ -1,1 +1,0 @@
-- Push-first lanes use scoped validation when CI does not cover the change class and the range selects every suite.

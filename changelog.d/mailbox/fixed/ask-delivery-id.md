@@ -1,1 +1,0 @@
-- Owner asks accept a delivery id so a retry after the repeat window keeps the original ask and Slack thread.
