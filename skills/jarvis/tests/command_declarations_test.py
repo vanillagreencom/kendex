@@ -5,14 +5,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
-from desktop_world import World
+from desktop_world import World, kendex_path
 
 
 class Declaration(World):
     def test_missing_agent_browser(self):
-        built = Path(__file__).resolve().parents[3] / "target/debug/kendex"
-        kendex = os.environ.get("JARVIS_TEST_KENDEX") or (str(built) if built.is_file() else shutil.which("kendex"))
-        self.assertIsNotNone(kendex, "kendex is required for the declaration test")
+        kendex = kendex_path()
+        if kendex is None:
+            if os.environ.get("HARNESS_CI_REQUIRE_KENDEX"):
+                self.fail("HARNESS_CI_REQUIRE_KENDEX requires the checkout's CLI")
+            self.skipTest("kendex is unavailable on this host")
         project = self.root / "project"
         project.joinpath(".claude").mkdir(parents=True)
         source = Path(os.environ.get("JARVIS_TOOL_SKILL", Path(__file__).resolve().parents[1] / "SKILL.md"))

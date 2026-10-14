@@ -3,24 +3,28 @@ import json
 import os
 from pathlib import Path
 import select
+import signal
 import stat
 import subprocess
 import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from desktop_world import SCRIPTS, World, load
+from desktop_world import SCRIPTS, World, load, run_case
 
 
 class Broker(World):
-    def start(self):
-        self.executable("op", """import os,sys,json
+    def start(self, body=None):
+        self.executable("op", body or """import os,sys,json
 with open(os.environ['HOME']+'/calls','a') as f:
     f.write(json.dumps({'verb':sys.argv[1], 'session':os.environ.get('OP_SESSION'), 'biometric':os.environ.get('OP_BIOMETRIC_UNLOCK_ENABLED'), 'account':os.environ.get('OP_ACCOUNT')})+'\\n')
 if sys.argv[1]=='signin': print('fixture-session')
 elif sys.argv[1]=='read':
-    if sys.argv[2].endswith('/fail'): sys.exit(1)
-    sys.stdout.write('fixture-value\\n')
+    reference=sys.argv[-1]
+    if reference.endswith('/fail'): sys.exit(1)
+    value=b'fixture-value\\n' if reference.endswith('/newline') else b'fixture-value'
+    sys.stdout.buffer.write(value)
+    if '--no-newline' not in sys.argv: sys.stdout.buffer.write(b'\\n')
 """)
         self.directory = self.root / "broker"
         process = subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "op-broker"),
@@ -60,7 +64,7 @@ elif sys.argv[1]=='read':
                 stdout, stderr = client.communicate(timeout=15)
                 self.assertEqual(client.returncode, 0, stderr)
                 self.assertEqual(stdout, b"")
-                self.assertEqual(output.read_bytes(), b"fixture-value\n")
+                self.assertEqual(output.read_bytes(), b"fixture-value")
                 self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
         finally:
             for client in clients:
@@ -79,6 +83,99 @@ elif sys.argv[1]=='read':
         _, stderr = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0, stderr)
         self.assertFalse(self.directory.exists())
+
+    def test_exact_field_bytes(self):
+        self.start()
+        for field, expected in (("password", b"fixture-value"), ("newline", b"fixture-value\n")):
+            with self.subTest(field=field):
+                output = self.root / field
+                result = self.run_tool("opq", "--directory", self.directory, "read",
+                                       "op://fixture/item/" + field, "--output", output)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_bytes(), expected)
+
+    def test_cancelled_clients(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum):
+                ack_path, release_path = self.root / "ack", self.root / "release"
+                os.mkfifo(ack_path, 0o600)
+                os.mkfifo(release_path, 0o600)
+                ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
+                release = os.open(release_path, os.O_RDWR | os.O_NONBLOCK)
+                process = self.start("""import os,sys
+if sys.argv[1]=='signin': print('fixture-session')
+elif sys.argv[1]=='read':
+    if sys.argv[-1].endswith('/slow'):
+        with open(os.environ['HOME']+'/ack','wb',buffering=0) as f: f.write(b'R')
+        with open(os.environ['HOME']+'/release','rb',buffering=0) as f: f.read(1)
+    sys.stdout.write('fixture-value')
+""")
+                output = self.root / "cancelled"
+                client = subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "opq"), "--directory",
+                    str(self.directory), "read", "op://fixture/item/slow", "--output", str(output)],
+                    env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    self.assertTrue(select.select([ack], [], [], 5)[0], "op did not acknowledge the slow read")
+                    self.assertEqual(os.read(ack, 1), b"R")
+                    client.send_signal(signum)
+                    stdout, stderr = client.communicate(timeout=5)
+                    self.assertEqual(client.returncode, 128 + signum)
+                    self.assertEqual(stdout, b"")
+                    self.assertEqual(stderr.splitlines()[0], b"op-client: request=cancelled")
+                    self.assertFalse(output.exists())
+                    self.assertEqual(sorted(p.name for p in self.directory.iterdir()), ["requests"])
+                    os.write(release, b"R")
+                    result = self.run_tool("opq", "--directory", self.directory, "read",
+                                           "op://fixture/item/password", "--output", self.root / "normal")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual((self.root / "normal").read_bytes(), b"fixture-value")
+                    (self.root / "normal").unlink()
+                finally:
+                    if client.poll() is None:
+                        client.kill()
+                        client.communicate(timeout=5)
+                    process.send_signal(signum)
+                    _, stderr = process.communicate(timeout=5)
+                    self.assertEqual(process.returncode, 0, stderr)
+                    os.close(ack)
+                    os.close(release)
+                    ack_path.unlink()
+                    release_path.unlink()
+
+    def test_fifo_creation_capabilities(self):
+        module = load("lib/op_fifo.py")
+        root = self.root / "fifo-world"
+        root.mkdir(mode=0o700)
+        directory = module.open_directory(root)
+        real_mkfifo = module.os.mkfifo
+        try:
+            for supported in (True, False):
+                with self.subTest(dir_fd=supported):
+                    def mkfifo(path, mode, **kwargs):
+                        if not supported and "dir_fd" in kwargs:
+                            raise NotImplementedError("fixture has no mkfifoat")
+                        # A capable fixture delegates through the absolute path
+                        # even on a host whose own Python lacks mkfifoat.
+                        real_mkfifo(root / path if kwargs else path, mode)
+
+                    with patch.object(module.os, "mkfifo", mkfifo), \
+                         patch.object(module.os, "supports_dir_fd", {mkfifo} if supported else set()):
+                        try:
+                            module.create_fifo(directory, root, "reply")
+                        except NotImplementedError:
+                            self.fail("FIFO creation used an unavailable capability")
+                        stream = module.open_fifo(directory, "reply", os.O_RDWR)
+                        os.close(stream)
+                        with self.assertRaises(FileExistsError):
+                            module.create_fifo(directory, root, "reply")
+                    (root / "reply").unlink()
+        finally:
+            os.close(directory)
+
+    def test_noninteractive_deadline(self):
+        result = run_case(Path(__file__), "--deadline-worker", dict(os.environ), timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"deadline": True, "reaped": True, "child_status": -signal.SIGTERM})
 
     def test_read_failure_and_existing_output(self):
         self.start()
@@ -177,5 +274,40 @@ elif sys.argv[1]=='read':
             os.close(fd)
 
 
+def deadline_worker():
+    world = World()
+    world.setUp()
+    module = load("lib/op_fifo.py")
+    op = world.executable("op", "import signal\nprint('ready',flush=True)\nsignal.pause()\n")
+    real_popen = subprocess.Popen
+    owned = []
+
+    def launch(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        owned.append(child)
+        if not select.select([child.stdout], [], [], 2)[0] or child.stdout.readline() != b"ready\n":
+            raise AssertionError("owned op did not acknowledge readiness")
+        return child
+
+    deadline = False
+    try:
+        with patch.object(module.subprocess, "Popen", side_effect=launch), patch.object(module, "CALL_SECONDS", 0.02):
+            try:
+                module.call_op([str(op), "read"], world.env)
+            except subprocess.TimeoutExpired:
+                deadline = True
+        print(json.dumps({"deadline": deadline, "reaped": owned[0].returncode is not None,
+                          "child_status": owned[0].returncode}))
+    finally:
+        for child in owned:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+        world.doCleanups()
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if sys.argv[1:] == ["--deadline-worker"]:
+        deadline_worker()
+    else:
+        unittest.main()

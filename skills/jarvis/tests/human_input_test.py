@@ -1,6 +1,8 @@
 """Surface: human-input pointer, keyboard, capture and operation-specific dependencies."""
 import stat
+import sys
 import unittest
+from types import SimpleNamespace
 from desktop_world import World
 
 
@@ -9,6 +11,7 @@ class HumanInput(World):
         super().setUp()
         self.env["WAYLAND_DISPLAY"] = "test-wayland"
 
+    @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
     def test_input_commands(self):
         self.executable("ydotool")
         self.executable("wtype", "import os,sys,json\nwith open(os.environ['TOOL_LOG'],'a') as f: f.write(json.dumps([sys.argv[1:],sys.stdin.read()])+'\\n')\n")
@@ -24,6 +27,7 @@ class HumanInput(World):
                 self.assertEqual(result.stdout, b"")
                 self.assertEqual(self.calls()[-1], expected)
 
+    @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
     def test_capture_exclusive(self):
         self.executable("grim", "import sys\nsys.stdout.buffer.write(b'fixture-image')\n")
         self.assertEqual(self.run_tool("human-input", "shot", "relative.png").returncode, 2)
@@ -36,6 +40,7 @@ class HumanInput(World):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(output.read_bytes(), b"fixture-image")
 
+    @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
     def test_dependencies_platform_and_failed_capture(self):
         for args in (("move", "1", "2"), ("type",), ("shot", str(self.root / "shot"))):
             with self.subTest(args=args):
@@ -47,6 +52,20 @@ class HumanInput(World):
         self.executable("wtype")
         self.env.pop("WAYLAND_DISPLAY")
         self.assertEqual(self.run_tool("human-input", "type", input=b"").returncode, 2)
+
+    def test_platform_refusal(self):
+        from unittest.mock import patch
+        from desktop_world import load
+        module = load("human-input")
+        for platform, display in (("darwin", "fixture-wayland"), ("linux", "")):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform), \
+                 patch.object(sys, "argv", ["human-input", "type"]), \
+                 patch.dict(module.os.environ, WAYLAND_DISPLAY=display), \
+                 patch.object(module.shutil, "which", return_value="/fixture/wtype"), \
+                 patch.object(module.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+                with self.assertRaises(SystemExit) as refusal:
+                    module.main()
+                self.assertEqual(refusal.exception.code, 2)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,11 @@ class Refusal(Exception):
     pass
 
 
+class Cancelled(Exception):
+    def __init__(self, signum):
+        self.signum = signum
+
+
 def open_directory(path):
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     info = os.fstat(fd)
@@ -38,6 +43,14 @@ def open_fifo(directory, name, flags):
         os.close(fd)
         raise Refusal("fifo=private-owner-required")
     return fd
+
+
+def create_fifo(directory, root, name):
+    # Python builds without mkfifoat still support exclusive absolute creation.
+    if os.mkfifo in os.supports_dir_fd:
+        os.mkfifo(name, 0o600, dir_fd=directory)
+    else:
+        os.mkfifo(root / name, 0o600)
 
 
 def send(fd, data, deadline):
@@ -123,7 +136,7 @@ def answer(directory, line, op, env):
             response = {"status": "invalid-request"}
         else:
             try:
-                result = call_op([op, "read", reference], env)
+                result = call_op([op, "read", "--no-newline", reference], env)
                 response = ({"status": "ok", "value": base64.b64encode(result.stdout).decode()}
                             if result.returncode == 0 else {"status": "read-failed"})
             except (OSError, subprocess.TimeoutExpired):
@@ -147,7 +160,7 @@ def broker(args):
     try:
         directory = open_directory(args.directory)
         env = session(op, args.account or os.environ.get("OP_ACCOUNT"))
-        os.mkfifo("requests", 0o600, dir_fd=directory)
+        create_fifo(directory, args.directory, "requests")
         created_fifo = True
         fifo = open_fifo(directory, "requests", os.O_RDWR)
         print("op-broker: state=ready", flush=True)
@@ -187,7 +200,7 @@ def client(args):
     try:
         output = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created_output = True
-        os.mkfifo(name, 0o600, dir_fd=directory)
+        create_fifo(directory, args.directory, name)
         created = True
         reply = open_fifo(directory, name, os.O_RDWR)
         request = json.dumps({"verb": "read", "reference": args.reference, "reply": name}).encode() + b"\n"
@@ -236,11 +249,17 @@ def main(kind):
         parser.exit(2, "op-" + kind + ": platform=unsupported\n")
     if not args.directory.is_absolute() or (kind == "client" and not args.output.is_absolute()):
         parser.exit(2, "op-" + kind + ": path=absolute-required\n")
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    def cancel(signum, _frame):
+        raise Cancelled(signum)
+
     try:
+        signal.signal(signal.SIGTERM, cancel)
+        signal.signal(signal.SIGINT, cancel)
         (broker if kind == "broker" else client)(args)
-    except KeyboardInterrupt:
-        return
+    except Cancelled as cancelled:
+        if kind == "broker":
+            return
+        parser.exit(128 + cancelled.signum, "op-client: request=cancelled\n")
     except (Refusal, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         diagnostic = str(error) if isinstance(error, Refusal) else "operation=failed"
         parser.exit(2, "op-" + kind + ": " + diagnostic + "\n")

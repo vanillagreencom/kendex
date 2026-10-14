@@ -5,11 +5,30 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
+import signal
 import sys
 import tempfile
 import unittest
 
 SCRIPTS = Path(os.environ.get("JARVIS_TOOL_SCRIPTS", Path(__file__).resolve().parents[1] / "scripts"))
+
+
+def kendex_path():
+    built = Path(__file__).resolve().parents[3] / "target/debug/kendex"
+    return os.environ.get("JARVIS_TEST_KENDEX") or (str(built) if built.is_file() else shutil.which("kendex"))
+
+
+def run_case(suite, case, env, timeout=60):
+    process = subprocess.Popen([sys.executable, "-B", str(suite), case], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        return subprocess.CompletedProcess(process.args, 124, stdout, stderr)
 
 
 def load(name):
