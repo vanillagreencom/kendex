@@ -80,6 +80,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 #### jarvis
 
+- Include the publicist agent for product video, social post and outreach drafts.
 - Jarvis ships a configurable Chromium browser driver, an optional 1Password session broker with a protected-file client, and Linux Wayland input and capture tools.
 - Jarvis keeps one local session per home through start, status and stop. It resumes the recorded conversation, confirms native identity before Start, and preserves an app's Off across repeated boot calls.
 - A fact that answers two messages gets a short reply in each thread.
@@ -128,6 +129,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - Parent issue templates include a shared-outcome box that only the holder ticks after a passing source read, with its evidence recorded below the box.
 - Proposal sweeps accept direct-push source commits, verify their evidence at the landed commit, and return the source repository and PR or commit with each proposal outcome.
+
+#### publicist
+
+- Add a publicist agent that drafts product videos, posts and outreach and waits for the user's recorded approval before each send. Publisher setup requires consumer approval and verified licences at checked commits.
 
 #### review-gate
 
