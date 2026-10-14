@@ -319,7 +319,7 @@ success|idle|0|on|3|1|1
 ROWS
 
 # A reported reserve must not suppress a later real session failure.
-while IFS='|' read -r label cmd screen expected_mode expected_attempts; do
+while IFS='|' read -r label cmd screen expected_mode expected_attempts expected_rc; do
   overseer_case "reserve_then_$label" idle
   touch "$STUB_DIR/repeat-child"
   state_with "$LINE"
@@ -328,32 +328,33 @@ while IFS='|' read -r label cmd screen expected_mode expected_attempts; do
   run TMUX_PANE="$PANE" -- --max-loops 1
   printf '%s\n' "$cmd" > "$STUB_DIR/cmd-$PANE.txt"
   printf '%b\n' "$screen" > "$STUB_DIR/pane-$PANE.txt"
+  [[ "$label" != exit ]] || printf '0\n' > "$STUB_DIR/succeed.rc"
   if [[ "$label" == quota ]]; then wall_confirmed; fi
   run TMUX_PANE="$PANE" -- --max-loops 2
-  assert_eq "rc=$RC recovered=$(succeed_calls "$expected_mode")" "rc=4 recovered=$expected_attempts" \
+  assert_eq "rc=$RC recovered=$(succeed_calls "$expected_mode")" "rc=$expected_rc recovered=$expected_attempts" \
     "a later $label failure retains its own recovery" "$ERR"
 done <<'ROWS'
-auth|claude|⏺ Turn\nNot logged in · Please run /login\n❯ |--walled-pane|2
-quota|claude|⏺ Turn\nYou've hit your usage limit · resets 9:50am (America/Los_Angeles)\n❯ |--walled-pane|2
-exit|bash|dev@host ~/kendex $|--dead-pane|1
+auth|claude|⏺ Turn\nNot logged in · Please run /login\n❯ |--walled-pane|2|4
+quota|claude|⏺ Turn\nYou've hit your usage limit · resets 9:50am (America/Los_Angeles)\n❯ |--walled-pane|2|4
+exit|bash|dev@host ~/kendex $|--dead-pane|1|3
 ROWS
 
 # A session's own failure row outranks affirmative reserve metadata.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/overseer-row-world.sh"
-while IFS='|' read -r label harness error message mode; do
+while IFS='|' read -r label harness error message mode launch_rc expected_rc; do
   rows_case "reserve_rows_$label" blank \
     "$(row SessionStart "$harness" source=startup)" \
     "$(row StopFailure "$harness" "error=$error" "message=$message")"
   printf '%s reserve_only=true\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
-  printf '3\n' > "$STUB_DIR/succeed.rc"
+  printf '%s\n' "$launch_rc" > "$STUB_DIR/succeed.rc"
   run TMUX_PANE="$PANE" -- --max-loops 2
   assert_eq "rc=$RC recovered=$(succeed_calls "$mode") reserves=$(grep -c '^EVENT overseer-reserve ' <<<"$OUT" || true)" \
-    'rc=4 recovered=1 reserves=0' "session row $label outranks the launch reserve" "$ERR"
+    "rc=$expected_rc recovered=1 reserves=0" "session row $label outranks the launch reserve" "$ERR"
 done <<'ROWS'
-quota|claude|rate_limit|Usage limit reached|--walled-pane
-auth|claude|authentication_failed|Login failed|--walled-pane
-pi-quota|pi||You've hit your limit · resets 9:50am (America/Los_Angeles)|--walled-pane
-context|claude|invalid_request|Prompt is too long|--dead-pane
+quota|claude|rate_limit|Usage limit reached|--walled-pane|3|4
+auth|claude|authentication_failed|Login failed|--walled-pane|3|4
+pi-quota|pi||You've hit your limit · resets 9:50am (America/Los_Angeles)|--walled-pane|3|4
+context|claude|invalid_request|Prompt is too long|--dead-pane|0|3
 ROWS
 
 # The repeat owner survives an actual no-successor reply. The capacity notice
