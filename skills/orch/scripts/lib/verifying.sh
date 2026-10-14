@@ -9,7 +9,7 @@ verifying_error() { # KEY [FIELDS...]
   printf '\n' >&2
 }
 
-# The watch and reconciliation read the same complete live issue inventory.
+# Callers supply live parents and their direct child state facts.
 # Completed children make their container outcome due for its holder, never Done.
 verifying_containers() { # SAFE_ITEMS
   jq -c '
@@ -25,18 +25,24 @@ verifying_containers() { # SAFE_ITEMS
 }
 
 verifying_parse() { # SAFE_ROW
-  local record id desc parsed boxes
-  # One read for both fields: an issue ID holds no unit separator, and the
+  local record id desc parsed boxes role
+  # One read for the ID, role and description: an ID holds no unit separator, and the
   # final dot keeps the description's trailing newlines through substitution.
-  record="$(jq -r '"\(.id)\u001f\(.description // "")."' <<<"$1")" || return 1
+  record="$(jq -r '"\(.id)\u001f\(if .container then "container" else "issue" end)\u001f\(.description // "")."' <<<"$1")" || return 1
   id="${record%%$'\037'*}"
   desc="${record#*$'\037'}"
-  parsed="$(done_when_parse "${desc%.}" '[]')" || return 1
+  role="${desc%%$'\037'*}"
+  desc="${desc#*$'\037'}"
+  parsed="$(done_when_parse "${desc%.}" '[]' '' '{}' "$role")" || return 1
   boxes="$(jq -c --argjson row "$1" '
     if $row.container == true then
-      [.boxes[] | select((.checked | not) or (.evidence | test("\\S") | not))
-        | . + {trigger: "outcome", trigger_kind: "outcome", trigger_epoch: null,
-               deadline_epoch: null, deadline: null, reading: .text, where: "-", why: "-"}]
+      .missing_evidence_boxes as $missing
+      | (if .missing_outcome_box then
+          [{number: 0, text: .outcome_remedy}]
+         else [.boxes[] | select((.checked | not) or ((.number as $n | $missing | index($n)) != null))] end)
+      | map(
+        . + {trigger: "outcome", trigger_kind: "outcome", trigger_epoch: null,
+               deadline_epoch: null, deadline: null, reading: .text, where: "-", why: "-"})
     else if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)
     then [.boxes[] | select(.post_merge and (.checked | not))] else empty end end' <<<"$parsed")" || boxes=""
   if [[ -z "$boxes" ]]; then

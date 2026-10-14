@@ -73,14 +73,20 @@ case "$query" in
   ;;
 *"workflowStates(filter:"*)
   state="$(jq -r '.variables.name' <<<"$payload")"
-  if [[ "$state" == Verifying ]]; then state_id=state-verifying; else state_id=state-done; fi
+  printf '%s\n' "$state" >>"$STATE/state.requests"
+  case "$state" in
+    Verifying) state_id=state-verifying ;;
+    Done) state_id=state-done ;;
+    Todo) state_id=state-todo ;;
+    *) printf 'unsupported workflow state: %s\n' "$state" >&2; exit 2 ;;
+  esac
   jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id}]}}}'
   ;;
 *"issue(id:"*)
   jq -cjn --argjson d "$(jq -r ' .description | tojson' "$STATE/$id.json")" --arg id "$id" '{data:{issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:$d,state:{name:"In Review",type:"started"},team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},project:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}'
   ;;
 *"issueUpdate(id:"*)
-  response="$(jq -c --rawfile d "$DESCRIPTIONS/$id" --arg id "$id" '{data:{issueUpdate:{success:true,issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} else {name:"Done",type:"completed"} end),parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload")"
+  response="$(jq -c --argjson prior_state "$(jq .state "$STATE/$id.json")" --rawfile d "$DESCRIPTIONS/$id" --arg id "$id" '{data:{issueUpdate:{success:true,issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} elif .variables.input.stateId == "state-done" then {name:"Done",type:"completed"} elif .variables.input.stateId == "state-todo" then {name:"Todo",type:"unstarted"} elif .variables.input.stateId == null then $prior_state else error("unsupported state id") end),parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload")"
   jq -c '.data.issueUpdate.issue' <<<"$response" >"$STATE/$id.json"
   printf '%s' "$response"
   ;;
@@ -106,11 +112,12 @@ SH
 chmod +x "$TMP_ROOT/bin/date"
 
 printf '%s\n' '1: branch source read' '2: live source read' >"$TMP_ROOT/evidence.txt"
-complete() { # ID MET
+linear() { # RESOURCE ACTION ARG...
   (cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" \
-    "$BASH" "$R/.agents/skills/linear/scripts/linear.sh" issues complete "$@")
+    "$BASH" "$R/.agents/skills/linear/scripts/linear.sh" "$@")
 }
+complete() { linear issues complete "$@"; }
 
 RC=0
 complete T-1 --done-when-met all --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/t1.out" 2>"$TMP_ROOT/t1.err" || RC=$?
@@ -133,6 +140,7 @@ RC=0
 complete T-6 --post-merge-at 2026-10-01T00:00:00Z --done-when-met 2 --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/t6-final.out" 2>"$TMP_ROOT/t6-final.err" || RC=$?
 assert_eq "$RC" 0 "final verification completes T-6" "$TMP_ROOT/t6-final.err"
 assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-6.json")" Done "the final box sets Done"
+assert_eq "$(tail -1 "$TMP_ROOT/state/state.requests")" Done "final verification requests Done at the API boundary"
 jq '.description |= sub("\\[ \\]"; "[x]")' "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/t4-checked.json"
 mv -- "$TMP_ROOT/t4-checked.json" "$TMP_ROOT/state/T-4.json"
 
@@ -149,7 +157,8 @@ for id in T-7 T-8; do
 done
 
 # A container outcome survives a failed or unread source read. Its holder's
-# passing read supplies evidence to the real completion command, with no PR.
+# passing read writes its evidence without changing state. container_close.sh
+# covers the following serialized child checks, summary and Done transition.
 jq --arg d '## Done when
 - [ ] Read the shared outcome at source' '.identifier = "T-10" | .id = "uuid-T-10" | .description = $d | .state = {name:"Todo",type:"unstarted"}' \
   "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-10.json"
@@ -159,9 +168,11 @@ complete T-10 >"$TMP_ROOT/parent-open.out" 2>"$TMP_ROOT/parent-open.err" || RC=$
 assert_eq "$RC" 1 "an unread or failed container outcome refuses completion without a merge time"
 assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Todo "the failed outcome keeps its parent open"
 RC=0
-complete T-10 --done-when-met 1 --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/parent-proved.out" 2>"$TMP_ROOT/parent-proved.err" || RC=$?
-assert_eq "$RC" 0 "holder evidence completes the container without a merge time" "$TMP_ROOT/parent-proved.err"
-assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Done "the proved outcome sets its parent Done"
+printf '%s\n' '## Done when' '- [x] Read the shared outcome at source' '  Evidence: holder source read passed' >"$TMP_ROOT/holder.md"
+linear issues update T-10 --description-file "$TMP_ROOT/holder.md" >"$TMP_ROOT/parent-proved.out" 2>"$TMP_ROOT/parent-proved.err" || RC=$?
+assert_eq "$RC" 0 "holder evidence writes without a merge time" "$TMP_ROOT/parent-proved.err"
+assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Todo "the holder evidence update keeps its parent open"
+assert_eq "$(jq -r '.description' "$TMP_ROOT/state/T-10.json")" "$(cat "$TMP_ROOT/holder.md")" "the holder description contains the tick and Evidence"
 
 # Both readers resolve release publication. This release has not fired.
 # Waiting retains the merge date without a deadline.

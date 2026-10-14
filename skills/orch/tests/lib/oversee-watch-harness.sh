@@ -602,15 +602,30 @@ EOF
 
 # Fake live tracker list. tracker.out is the safe-format issue array (default
 # empty), tracker.err is stderr, and tracker.rc is the exit status. Every argv
-# reaches tracker.args so cases can pin the live-list contract. A `--state`
+# reaches tracker.args.all; tracker.args keeps the last issue-list request.
+# statuses.out overrides the team state list; children.err fails a child read.
+# A `--state`
 # argument filters an array to the comma-separated state names it lists, as
 # Linear's own list does, so a case's other items are the server's to drop; any
 # other reply passes as it stands.
 cat > "$TMP_ROOT/bin/linear-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
 printf '%s\n' "$*" >> "$STUB_DIR/tracker.args.all"
+case "$1 $2" in
+  'statuses list')
+    if [[ -f "$STUB_DIR/statuses.out" ]]; then cat "$STUB_DIR/statuses.out"; else
+      printf '%s\n' '[{"name":"In Progress","type":"started"},{"name":"In Review","type":"started"},{"name":"Verifying","type":"started"},{"name":"Todo","type":"unstarted"},{"name":"Backlog","type":"backlog"},{"name":"Triage","type":"triage"},{"name":"Done","type":"completed"},{"name":"Canceled","type":"canceled"}]'
+    fi
+    exit 0 ;;
+  'issues children')
+    if [[ -f "$STUB_DIR/children.err" ]]; then cat "$STUB_DIR/children.err" >&2; exit 2; fi
+    if [[ -f "$STUB_DIR/tracker.out" ]]; then
+      jq -c --arg parent "$3" '{issue:{identifier:$parent,children:{nodes:[.[] | select(.parent_id == $parent) | {identifier:.id,state:{type:.state_type}}]}}}' "$STUB_DIR/tracker.out"
+    else printf '{"issue":{"identifier":"%s","children":{"nodes":[]}}}\n' "$3"; fi
+    exit 0 ;;
+esac
+printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
 states=""
 args=("$@")
 for i in "${!args[@]}"; do

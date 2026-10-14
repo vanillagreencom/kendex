@@ -14,8 +14,9 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 SANDBOX="$TMP_ROOT/repo"
-mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$SANDBOX/skills/mailbox" "$TMP_ROOT/bin"
+mkdir -p "$SANDBOX/skills/linear/scripts/lib" "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$SANDBOX/skills/mailbox" "$TMP_ROOT/bin"
 cp -R "$REPO_ROOT/skills/mailbox/scripts" "$SANDBOX/skills/mailbox/scripts"
+cp "$REPO_ROOT/skills/linear/scripts/lib/issue-validation.sh" "$SANDBOX/skills/linear/scripts/lib/issue-validation.sh"
 cp "$REPO_ROOT/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/container-close"
 cp "$REPO_ROOT/skills/orch/scripts/git-context" "$SANDBOX/skills/orch/scripts/git-context"
 chmod +x "$SANDBOX/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/git-context"
@@ -70,6 +71,11 @@ case "$resource:$action" in
     [[ "$state" == Done ]] && type=completed
     printf '{"id":"PARENT-1","title":"Container","state":"%s","state_type":"%s"}\n' "$state" "$type"
     ;;
+  issues:update)
+    [[ "$#" == 3 && "$2" == --description-file ]] || exit 2
+    cp "$3" "$root/parent.description"
+    printf '{"success":true}\n'
+    ;;
   issues:children)
     shift; pending=false; format=safe
     for arg in "$@"; do [[ "$arg" == --pending ]] && pending=true; [[ "$arg" == --format=ids ]] && format=ids; done
@@ -83,6 +89,11 @@ case "$resource:$action" in
     [[ ! -e "$root/summary.posted" ]] || has_summary=true
     case "$mode" in
       exit) echo 'validator unavailable' >&2; exit 7 ;;
+      outcome)
+        source "${0%/*}/lib/issue-validation.sh"
+        parsed="$(done_when_parse "$(cat "$root/parent.description")" '[]' '' '{}' container)"
+        jq -cn --argjson p "$parsed" --argjson summary "$has_summary" '{all_ok: ($p.completion_state == "Done"), results: [($p | {unmet_branch_boxes,missing_evidence_boxes,missing_outcome_box}) + {id:"PARENT-1",state_type:"started",has_summary:$summary,ok:($p.completion_state == "Done")}]}'
+        ;;
       open-outcome) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":false,"unmet_branch_boxes":[1],"missing_evidence_boxes":[]}]}\n' ;;
       false) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":%s,"ok":false,"cause":"blocked"}]}\n' "$has_summary" ;;
       string_all_ok) printf '{"all_ok":"true","results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":true}]}\n' ;;
@@ -197,6 +208,39 @@ assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two — PR #1
 out="$(run_close)"
 assert_eq "$out" "closed PARENT-1" "completed parent returns idempotently"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "completed retry does not mutate again"
+
+# The documented holder write leaves both newly-proved and already-proved
+# parents open. Only this helper may validate, summarize and complete them.
+for proof in newly-proved already-proved; do
+  for child in completed pending canceled; do
+    reset_state
+    printf 'outcome\n' >"$FAKE_LINEAR_ROOT/validation.mode"
+    printf '%s\n' '## Done when' '- [ ] Shared outcome' >"$FAKE_LINEAR_ROOT/parent.description"
+    printf '%s\n' '## Done when' '- [x] Shared outcome' '  Evidence: holder read passed' >"$TMP_ROOT/holder.md"
+    if [[ "$proof" == newly-proved ]]; then
+      "$SANDBOX/skills/linear/scripts/linear.sh" issues update PARENT-1 --description-file "$TMP_ROOT/holder.md" >"$TMP_ROOT/holder.out"
+    else
+      cp "$TMP_ROOT/holder.md" "$FAKE_LINEAR_ROOT/parent.description"
+    fi
+    assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" 'In Progress' "$proof $child stays open after holder proof"
+    case "$child" in
+      completed) child_state=Done; child_type=completed; want='closed PARENT-1' ;;
+      pending) child_state=Todo; child_type=unstarted; want='deferred CHILD-1' ;;
+      canceled) child_state=Canceled; child_type=canceled; want='deferred CHILD-1' ;;
+    esac
+    jq -cn --arg state "$child_state" --arg type "$child_type" '[{id:"CHILD-1",title:"one",state:$state,state_type:$type}]' >"$FAKE_LINEAR_ROOT/children.json"
+    out="$(run_close)"
+    assert_eq "$out" "$want" "$proof $child obeys the serialized close decision"
+    if [[ "$child" == completed ]]; then
+      assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" Done "$proof validates before Done"
+      assert_file_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "$proof reaches container validation"
+      assert_eq "$(cat "$FAKE_LINEAR_ROOT/summary.calls")" summary "$proof posts one Bundle Complete summary"
+    else
+      assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" 'In Progress' "$proof $child keeps its parent open"
+      [[ ! -e "$FAKE_LINEAR_ROOT/summary.posted" ]] && pass "$proof $child posts no bundle summary" || fail "$proof $child posts no bundle summary"
+    fi
+  done
+done
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

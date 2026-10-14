@@ -4457,12 +4457,22 @@ owed_read() {
   VERIFYING_LINES=""
   VERIFYING_EVENT_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
-  local errf="$WORK_DIR/owed.err" out items rows rc=0 n
+  local errf="$WORK_DIR/owed.err" out items rows rc=0 n statuses open_states
   local id state priority lane host harness model delivery key verdict line asked answer
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --max --format=safe 2>"$errf")" || rc=$?
+    statuses="$("$TRACKER" statuses list --team "$LINEAR_TEAM" --format=safe 2>"$errf")" \
+      || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "read=statuses"
+    if ! open_states="$(jq -er 'if type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.type | type) == "string")
+      then map(select(.type != "completed" and .type != "canceled") | .name) | join(",")
+      else error("tracker-statuses-invalid") end' <<<"$statuses" 2>"$errf")"; then
+      die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM" "read=statuses"
+    fi
+    out='[]'
+    if [[ -n "$open_states" ]]; then
+      out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "$open_states" --max --format=safe 2>"$errf")" || rc=$?
+    fi
     [[ "$rc" -eq 0 ]] \
       || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
     # Linear's priority 0 is No priority, which ranks after Low: it prints `-`.
@@ -4487,8 +4497,23 @@ owed_read() {
       || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
   fi
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    # Container outcomes use the same inventory, including complete children.
-    local containers
+    # Read child state facts only for live candidates. Historical descriptions
+    # are not needed to decide whether a container owes an outcome read.
+    local containers candidates children
+    candidates="$(jq -r '.[] | select((.title // "") | test("\\(one PR\\)"; "i") | not) | .id' <<<"$out")" \
+      || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+    printf '%s\n' "$out" >"$WORK_DIR/container-facts.jsonl"
+    while IFS= read -r id; do
+      [[ -n "$id" ]] || continue
+      children="$("$TRACKER" issues children "$id" --format=raw 2>"$errf")" \
+        || die tracker-list-failed "$(cat "$errf")" "issue=$id" "read=children"
+      printf '%s\n' "$children" >>"$WORK_DIR/container-facts.jsonl"
+    done <<<"$candidates"
+    out="$(jq -sc '[.[0][], (.[1:][] | .issue.identifier as $parent | .issue.children.nodes
+      | if ($parent | type) == "string" and type == "array" and all(.[]; (.identifier | type) == "string" and (.state.type | type) == "string")
+        then .[] | {id: .identifier, parent_id: $parent, state_type: .state.type}
+        else error("tracker-children-invalid") end)] | unique_by(.id)' "$WORK_DIR/container-facts.jsonl")" \
+      || die tracker-list-invalid "" "team=$LINEAR_TEAM" "read=children"
     containers="$(verifying_containers "$out")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
     containers="$(jq -cs 'map(.state = "verifying")' <<<"$containers")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
     items="$(printf '%s\n' "$items" "$containers" | jq -cs 'add | group_by(.id) | map(max_by(.container // false))')" \

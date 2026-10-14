@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Close a Linear container after its holder reads the shared outcome and
 # ticks its outcome box with Evidence. Finished children alone do not close it.
-# merge-pr consumes stdout as `closed ID`, `deferred`, `deferred ID...`, or
+# The overseer's Verification route consumes `closed ID`, `deferred`, `deferred ID...`, or
 # `held ID RESET`.
 # Child summary rows carry `lookup failed` or `unavailable` for unresolved PRs.
 set -euo pipefail

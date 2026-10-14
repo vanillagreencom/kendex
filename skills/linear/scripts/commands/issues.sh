@@ -274,6 +274,8 @@ Validate-Completion:
   children — a leaf cannot validate as a container. A child of a container
   validates alone as its own session root. Use it only for containers;
   explicit single-PR bundles keep the default children-Done-first contract.
+  A container without a branch outcome box refuses. Its holder adds the box
+  when reading its source. Ordinary items without a checklist can complete.
 
 Examples:
   # Basic operations
@@ -3198,7 +3200,9 @@ complete_issue() {
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
     # The sentinel keeps a trailing newline the substitution would strip.
     description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
-    tick=$(done_when_parse "${description%.}" "${met_json:-[]}" "$post_merge_at" "$evidence_json") || return 1
+    local checklist_role
+    checklist_role=$(jq -r 'if (.issue.children.nodes | length) > 0 and (.issue.title | test("\\(one PR\\)"; "i") | not) then "container" else "issue" end' <<<"$issue_result") || return 1
+    tick=$(done_when_parse "${description%.}" "${met_json:-[]}" "$post_merge_at" "$evidence_json" "$checklist_role") || return 1
     missing_count=$(jq '.missing | length' <<<"$tick") || return 1
     if [ "$missing_count" -ne 0 ]; then
         jq -c --arg id "$issue_id" \
@@ -3207,7 +3211,7 @@ complete_issue() {
     fi
     completion_state=$(jq -r '.completion_state // ""' <<<"$tick") || return 1
     if [ -z "$completion_state" ]; then
-        jq -c '{error: "post-merge-checklist", errors, unmet_branch_boxes, missing_evidence_boxes}' <<<"$tick" >&2
+        jq -c '{error: "post-merge-checklist", errors, unmet_branch_boxes, missing_evidence_boxes, missing_outcome_box, remedy: .outcome_remedy}' <<<"$tick" >&2
         return 1
     fi
     if [ -n "$met_json" ]; then
@@ -3428,9 +3432,10 @@ validate_completion() {
         if [ "$role" = "container" ]; then
             local checklist
             description=$(jq -r '(.description // "") + "."' <<<"$issue") || return 1
-            checklist=$(done_when_parse "${description%.}" '[]') || return 1
+            checklist=$(done_when_parse "${description%.}" '[]' '' '{}' container) || return 1
             result=$(jq -cn --argjson result "$result" --argjson checklist "$checklist" '
-                $result + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes})
+                $result + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes, missing_outcome_box})
+                + (if $checklist.missing_outcome_box then {remedy: $checklist.outcome_remedy} else {} end)
                 | .ok = (.ok and $checklist.completion_state == "Done")') || return 1
         fi
 

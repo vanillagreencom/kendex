@@ -160,7 +160,7 @@ if [[ "$PART" == all || "$PART" == development ]]; then
 world owed
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --max --format=safe" \
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --max --format=safe" \
   "the owed items are one live read of the team's In Progress and In Review items" "$ERR"
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
@@ -370,9 +370,9 @@ EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10
 EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
 EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z'
 if [[ "$PART" == all || "$PART" == membership ]]; then
-# An unmerged Todo container with complete children reaches the same reader.
+# An unmerged Triage container with complete children reaches the same reader.
 world verifying_container
-jq '. + [{id:"KEN-P", title:"Shared outcome", state:"Todo", state_type:"unstarted", parent_id:"", description:"## Done when\n- [ ] Read shared outcome at source"},
+jq '. + [{id:"KEN-P", title:"Shared outcome", state:"Triage", state_type:"triage", parent_id:"", description:"## Done when\n- [ ] Read shared outcome at source"},
          {id:"KEN-C", title:"Done child", state:"Done", state_type:"completed", parent_id:"KEN-P"}]' "$STUB_DIR/tracker.out" >"$STUB_DIR/container.json"
 mv -- "$STUB_DIR/container.json" "$STUB_DIR/tracker.out"
 watch_pass -- --state "$STUB_DIR/state.json"
@@ -386,6 +386,83 @@ ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
 mutate_file "$MUTANT_WATCH" 'containers="$(verifying_containers "$out")"' 'containers=""'
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_not_contains "$(verification_lines)" 'verifying KEN-P box=1' "control loses the outcome when the caller omits its container" "$ERR"
+# Completed history is absent from the parent list, but direct child facts
+# still make a Triage container due. No child read visits closed history.
+assert_not_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues children KEN-C ' "closed child history is not scanned as a candidate" "$ERR"
+for outcome in missing-proof absent empty proved; do
+  case "$outcome" in
+    missing-proof) description='## Done when
+- [x] Read shared outcome at source'; expected='box=1 trigger="outcome"' ;;
+    absent) description='Old acceptance criteria'; expected='box=0 trigger="outcome"' ;;
+    empty) description='## Done when'; expected='box=0 trigger="outcome"' ;;
+    proved) description='## Done when
+- [x] Read shared outcome at source
+  Evidence: holder read passed'; expected='boxes=0' ;;
+  esac
+  jq --arg d "$description" 'map(if .id == "KEN-P" then .description = $d else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/outcome.json"
+  mv -- "$STUB_DIR/outcome.json" "$STUB_DIR/tracker.out"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_contains "$(verification_lines)" "verifying KEN-P $expected" "$outcome outcome stays visible with its completion duty" "$ERR"
+  if [[ "$outcome" == absent || "$outcome" == empty ]]; then
+    assert_not_contains "$(verification_events)" 'KEN-P boxes=0' "$outcome outcome never requests completion" "$ERR"
+  fi
+  if [[ "$outcome" == absent ]]; then
+    assert_contains "$(verification_events)" 'KEN-P box=0 trigger="outcome"' "$outcome outcome uses the existing deadline event" "$ERR"
+  fi
+  if [[ "$outcome" == missing-proof ]]; then
+    MUTANT_DIR="$TMP_ROOT/container-evidence"
+    MUTANT_WATCH="$(mutant_scripts container-evidence/orch oversee-watch)/oversee-watch" || exit 1
+    ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+    ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+    mutate_verifying "$MUTANT_WATCH" ' or ((.number as $n | $missing | index($n)) != null)' ''
+    WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+    assert_not_contains "$(verification_lines)" 'verifying KEN-P box=1' "control loses a checked outcome without Evidence" "$ERR"
+  fi
+done
+jq 'map(if .id == "KEN-P" then .description = "## Done when\n- [ ] Read shared outcome at source" else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/outcome.json"
+mv -- "$STUB_DIR/outcome.json" "$STUB_DIR/tracker.out"
+
+# The server-side filter must retain Triage and exclude terminal states.
+bounded_request='issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --max --format=safe'
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "$bounded_request" "the server requests all open names and excludes Done and Canceled" "$ERR"
+for bounded in filter terminals; do
+  MUTANT_DIR="$TMP_ROOT/container-bounded-$bounded"
+  MUTANT_WATCH="$(mutant_scripts "container-bounded-$bounded/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+  case "$bounded" in
+    filter) mutate_file "$MUTANT_WATCH" ' --state "$open_states"' '' ;;
+    terminals) mutate_file "$MUTANT_WATCH" 'select(.type != "completed" and .type != "canceled")' 'select(true)' ;;
+  esac
+  : >"$STUB_DIR/tracker.args.all"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  assert_not_contains "$(cat "$STUB_DIR/tracker.args")" "$bounded_request" "control: $bounded violates the bounded server-side filter" "$ERR"
+  assert_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues children KEN-C ' "control: $bounded reads terminal history" "$ERR"
+done
+
+# A team with no open state must not turn an empty filter into all history.
+world verifying_no_open_states
+printf '%s\n' '[{"name":"Done","type":"completed"},{"name":"Canceled","type":"canceled"}]' >"$STUB_DIR/statuses.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 0 "a terminal-only team completes its bounded read" "$ERR"
+assert_not_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues list ' "an empty open-state set does not request issue history" "$ERR"
+world verifying_unread_states
+printf '%s\n' 'not-json' >"$STUB_DIR/statuses.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 2 "unread statuses refuse the parent selection" "$ERR"
+assert_file_contains "$ERR" 'read=statuses' "the status read failure names its API boundary"
+world verifying_unread_children
+printf '%s\n' 'child read unavailable' >"$STUB_DIR/children.err"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 2 "an unread child set refuses parent selection" "$ERR"
+assert_file_contains "$ERR" 'read=children' "the child read failure names its API boundary"
+
+# Restore the outcome case after the separate API refusal cases.
+world verifying_container_repeat
+jq '. + [{id:"KEN-P", title:"Shared outcome", state:"Triage", state_type:"triage", parent_id:"", description:"## Done when\n- [ ] Read shared outcome at source"},
+         {id:"KEN-C", title:"Done child", state:"Done", state_type:"completed", parent_id:"KEN-P"}]' "$STUB_DIR/tracker.out" >"$STUB_DIR/container.json"
+mv -- "$STUB_DIR/container.json" "$STUB_DIR/tracker.out"
+
 # The held evidence remains open on a repeated failed or unread source read.
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_contains "$(verification_lines)" 'verifying KEN-P box=1' "an unproved outcome remains visible on heartbeat" "$ERR"
@@ -404,8 +481,8 @@ assert_eq "$(owed KEN-1)$(owed KEN-4)" "--" "Verifying never becomes owed develo
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(verification_events)" "rc=0 " "a standing deadline emits once" "$ERR"
 assert_eq "$(verification_lines)" "$want_lines" "the heartbeat carries the same Verifying inventory" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --max --format=safe" "verification shares the owed inventory" "$ERR"
-assert_eq "$(wc -l <"$STUB_DIR/tracker.args.all" | tr -d ' ')" 2 "two passes use two inventory reads" "$ERR"
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --max --format=safe" "verification reads only live team items" "$ERR"
+assert_eq "$(grep -c '^issues list ' "$STUB_DIR/tracker.args.all")" 2 "two passes use two inventory reads" "$ERR"
 verifying_world verifying_future
 jq 'map(if .state == "Verifying" then .description |= gsub("; Deadline:"; "; Trigger: 2026-10-01T12:00:00Z; Deadline:") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/future.json"
 mv -- "$STUB_DIR/future.json" "$STUB_DIR/tracker.out"

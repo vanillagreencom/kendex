@@ -50,6 +50,9 @@ emit() { printf '%s___HTTP_CODE___200' "$1"; }
 single_issue() {
   local id="$1" sname="$2" stype="$3" parent="$4" parent_json="null" branch
   local description=null
+  if [[ "$id" == CC-930 || "$id" == CC-940 ]]; then
+    description='"## Done when\n- [x] Shared outcome\n  Evidence: holder read passed"'
+  fi
   if [[ "$id" == CC-930 && -n "${CONTAINER_CHECKLIST_FILE:-}" ]]; then
     description="$(jq -Rs . "$CONTAINER_CHECKLIST_FILE")"
   fi
@@ -229,12 +232,15 @@ done
 
 # Container outcomes pass through the production parser with no merge input.
 export CONTAINER_CHECKLIST_FILE="$TMP_ROOT/container-outcome.md"
-while IFS='|' read -r name description expected branch missing; do
+while IFS='|' read -r name description expected branch missing absent; do
   printf '%b' "$description" >"$CONTAINER_CHECKLIST_FILE"
   out="$(run_validate CC-930 --include-children-of CC-930 --container 2>"$TMP_ROOT/outcome.err")"
-  check "$name container outcome controls completion" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-930\") | .unmet_branch_boxes == $branch and .missing_evidence_boxes == $missing)"
+  check "$name container outcome controls completion" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-930\") | .unmet_branch_boxes == $branch and .missing_evidence_boxes == $missing and .missing_outcome_box == $absent)"
 done <<'ROWS'
-open|## Done when\n- [ ] Shared outcome at source|false|[1]|[]
-missing-evidence|## Done when\n- [x] Shared outcome at source|false|[]|[1]
-proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|[]|[]
+absent|No checklist|false|[]|[]|true
+empty|## Done when|false|[]|[]|true
+post-only|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: deployment; Deadline: 2026-10-04T00:00:00Z\n  Evidence: holder read passed|false|[]|[]|true
+open|## Done when\n- [ ] Shared outcome at source|false|[1]|[]|false
+missing-evidence|## Done when\n- [x] Shared outcome at source|false|[]|[1]|false
+proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|[]|[]|false
 ROWS

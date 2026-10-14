@@ -133,6 +133,33 @@ CONTROL_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$MUTANT_RW" 2>&1)" ||
 assert_contains "$CONTROL_OUT" 'verifying-invalid issue=T-1' "control restores the base parser’s skipped outcome"
 assert_not_contains "$CONTROL_OUT" 'verifying T-1 box=1' "control loses the holder’s outcome duty"
 
+# Keep missing proof and a missing outcome distinct from proved completion.
+for outcome in missing-proof absent empty proved; do
+  case "$outcome" in
+    missing-proof) description='## Done when
+- [x] Read shared outcome'; expected='box=1 trigger="outcome"' ;;
+    absent) description='Old acceptance criteria'; expected='box=0 trigger="outcome"' ;;
+    empty) description='## Done when'; expected='box=0 trigger="outcome"' ;;
+    proved) description='## Done when
+- [x] Read shared outcome
+  Evidence: holder read passed'; expected='boxes=0' ;;
+  esac
+  jq --arg d "$description" 'map(if .identifier == "T-1" then .description = $d else . end)' "$R/.tracker-fixture/issues.json" >"$TMP/outcome.json"
+  mv -- "$TMP/outcome.json" "$R/.tracker-fixture/issues.json"
+  CASE_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || true
+  if [[ "$outcome" == proved ]]; then
+    assert_contains "$CASE_OUT" 'reconcile-work-items: verifying-empty issue=T-1' "$outcome outcome stays visible with its completion duty"
+  else
+    assert_contains "$CASE_OUT" "verifying T-1 $expected" "$outcome outcome stays visible with its completion duty"
+  fi
+  if [[ "$outcome" == missing-proof ]]; then
+    cp "$SKILL_DIR/scripts/lib/verifying.sh" "$MUTANT_LIB"
+    mutate_file "$MUTANT_LIB" ' or ((.number as $n | $missing | index($n)) != null)' ''
+    CONTROL_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$MUTANT_RW" 2>&1)" || true
+    assert_not_contains "$CONTROL_OUT" 'verifying T-1 box=1' "control loses a checked outcome without Evidence"
+  fi
+done
+
 # A "(one PR)" root with Done children is the single-PR bundle contract
 # working, never a parked container.
 assert_not_contains "$OUT" "container-parked issue=T-16" "a (One PR) bundle root is not container-parked (case-insensitive marker)"

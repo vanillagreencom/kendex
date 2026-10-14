@@ -82,7 +82,7 @@ message() {
     started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
     verifying-invalid) printf 'The Verifying checklist has invalid metadata or an open branch-provable box. Correct the item with evidence.\n' ;;
-    verifying-empty) printf 'The Verifying item has no open post-merge box. Complete the item.\n' ;;
+    verifying-empty) printf 'No unproved box remains. Follow the Verification route: container-close owns container validation, the bundle summary and closure.\n' ;;
     verifying-merge-unread) printf 'The sweep cannot read this item\047s release boxes from its local branch merge evidence.\n' ;;
     findings) printf 'The tracker state differs from the work.\n' ;;
     clean) printf 'Every issue state matches its work.\n' ;;

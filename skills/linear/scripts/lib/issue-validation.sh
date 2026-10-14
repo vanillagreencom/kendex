@@ -282,11 +282,11 @@ require_issue_header_shape() {
 # One parser owns checklist numbering, ticking, triggers, and post-merge deadlines.
 # merge-pr supplies GitHub's mergedAt; watch and reconcile consume the same
 # per-box deadline in the description without a second tracker field.
-# Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON]
+# Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON] [ROLE]
 done_when_parse() {
     local evidence='{}'
     [[ $# -lt 4 ]] || evidence="$4"
-    jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" --argjson evidence "$evidence" '
+    jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" --argjson evidence "$evidence" --arg role "${5:-issue}" '
         def utc_epoch:
             . as $stamp
             | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then
@@ -349,6 +349,8 @@ done_when_parse() {
                              or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)
                     then {box: .number, rule: "post-merge-window"}
                   else empty end]}
-        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null
+        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))
+        | .outcome_remedy = (if .missing_outcome_box then "Add a shared-outcome box under Done when, then read its source." else null end)
+        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null
             elif any(.boxes[]; .post_merge and (.checked | not)) then "Verifying" else "Done" end)'
 }

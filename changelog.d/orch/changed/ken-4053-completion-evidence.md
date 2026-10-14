@@ -1,1 +1,1 @@
-- Container closure requires its holder’s shared-outcome evidence. The last child’s merge reports the outcome due for a read, and verification keeps unproved container boxes visible without a merge time.
+- Container closure requires its holder’s shared-outcome evidence. The holder writes the proof while the parent stays open, then container-close validates the children, posts the bundle summary and completes it. Verification keeps missing or unproved outcomes visible without a merge time, using live issue and child reads.

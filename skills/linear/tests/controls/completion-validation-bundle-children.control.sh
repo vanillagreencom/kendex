@@ -16,3 +16,8 @@ control_expect "open container outcome controls completion"
 control_replace scripts/commands/issues.sh 1 \
     '        if [ "$role" = "container" ]; then' \
     '        if false; then'
+
+control_expect "absent container outcome controls completion"
+control_replace scripts/lib/issue-validation.sh 1 \
+    '        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))' \
+    '        | .missing_outcome_box = false'
