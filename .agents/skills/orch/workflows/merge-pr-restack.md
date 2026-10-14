@@ -102,10 +102,14 @@ Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-
    **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head. Read the current head's recorded skip. `dev-validate-run --help` owns the proof rule and its local base resolution. A reused tree alone supplies no passing validation. This read starts no validation:
 
    ```bash
-   RESTACK_SKIPS="$(.agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.restack_skips // []')" || exit $?
-   RESTACK_PROOF_HEAD="$(jq -r --arg head [PREPARED_HEAD] '[.[] | select(.head == $head)] | last | .validated_head // empty' <<<"$RESTACK_SKIPS")" || exit $?
+   if ! RESTACK_SKIPS="$(.agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.restack_skips // []')"; then
+     exit 1
+   fi
+   if ! RESTACK_PROOF_HEAD="$(jq -r --arg head [PREPARED_HEAD] '[.[] | select(.head == $head)] | last | .validated_head // empty' <<<"$RESTACK_SKIPS")"; then
+     exit 1
+   fi
    if [[ -n "$RESTACK_PROOF_HEAD" ]]; then
-     .agents/skills/orch/scripts/dev-validate-run --resolve-mode --require-proof "$RESTACK_PROOF_HEAD" --worktree [WORKTREE_PATH] || exit $?
+     .agents/skills/orch/scripts/dev-validate-run --resolve-mode --require-proof "$RESTACK_PROOF_HEAD" --expected-head [PREPARED_HEAD] --worktree [WORKTREE_PATH] || exit $?
    fi
    ```
 

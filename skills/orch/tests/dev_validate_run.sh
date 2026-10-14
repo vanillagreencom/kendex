@@ -2937,7 +2937,7 @@ pass_control 'no path rule' 'if (( rc == 1 )); then' 'if true; then' \
   'a pass that read fewer paths than this run reads still runs the range command'
 pass_control 'unreadable exit skipped' 'line="$(cat "$dir/exit" 2>/dev/null)" || line=""' 'line="$(cat "$dir/exit" 2>/dev/null)" || continue' \
   'a later unfinished run voids the pass'
-pass_control 'timeout evidence before pass evidence' 'if [[ -n "$PASS_RUN_DIR" ]]; then' 'if [[ -n "$PASS_RUN_DIR" && -z "$BOUND_RUN_DIR" ]]; then' \
+pass_control 'timeout evidence before pass evidence' $'if [[ -n "$PASS_RUN_DIR" ]]; then\n      passed_before=true' $'if [[ -n "$PASS_RUN_DIR" && -z "$BOUND_RUN_DIR" ]]; then\n      passed_before=true' \
   'a later pass wins over qualifying timeout evidence and keeps its lanes'
 pass_control 'same-second failure ignored' '(( red_start >= pass_start ))' '(( red_start > pass_start ))' \
   'a same-second failure across PID widths cannot reuse a pass'

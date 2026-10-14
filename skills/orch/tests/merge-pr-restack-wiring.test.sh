@@ -410,7 +410,7 @@ merge_proof() { # WT [SCRIPTS] [merge|submit]
   [[ -n "$block" || "${3:-merge}" == submit ]] || return 2
   block="${block//.agents\/skills\/orch\/scripts\//$scripts/}"
   block="${block//\[STATE_KEY\]/KEN-1}"
-  block="${block//\[PREPARED_HEAD\]/$(git -C "$wt" rev-parse HEAD)}"
+  block="${block//\[PREPARED_HEAD\]/${PROOF_PUBLISHED_HEAD:-$(git -C "$wt" rev-parse HEAD)}}"
   block="${block//\[PREPARED_BASE\]/${PROOF_LIVE_BASE:-$(git -C "$wt" rev-parse origin/main)}}"
   block="${block//\[WORKTREE_PATH\]/$wt}"
   (cd "$wt" && env -u ORCH_STATE_DIR -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_SELECTION_CMD \
@@ -439,9 +439,12 @@ for cause in timeout host; do
   printf '#!/bin/sh\nprintf changed\\n\n' > "$PROOF_WT/check.sh"
   git -C "$PROOF_WT" add check.sh
   git -C "$PROOF_WT" -c user.name=t -c user.email=t@example.com commit -q -m source
+  printf 'fix documentation\n' > "$PROOF_WT/fix.md"
+  git -C "$PROOF_WT" add fix.md
+  git -C "$PROOF_WT" -c user.name=t -c user.email=t@example.com commit -q -m fix-docs
   sed '/^DEV_VALIDATE_CMD =/d; /^DEV_VALIDATE_TIMEOUT_SECS =/d' "$PROOF_WT/kendex.settings.toml" > "$PROOF_WT/settings.next"
   mv "$PROOF_WT/settings.next" "$PROOF_WT/kendex.settings.toml"
-  printf 'ORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_CMD = "if test x$PROOF_EXIT = x124; then sleep 2; else exit $PROOF_EXIT; fi"\nDEV_VALIDATE_TIMEOUT_SECS = "1"\n' >> "$PROOF_WT/kendex.settings.toml"
+  printf 'ORCH_PR_ORDER = "review-first"\nDEV_VALIDATE_CMD = "if test x$PROOF_EXIT = x124; then sleep 2; else if test x$PROOF_EXIT != x0; then exit $PROOF_EXIT; fi; if test x${PROOF_BATTERY:-} = xyes; then echo validate: lanes=orch selection=battery; fi; fi"\nDEV_VALIDATE_TIMEOUT_SECS = "1"\n' >> "$PROOF_WT/kendex.settings.toml"
   PROOF_EXIT=3
   [[ "$cause" != timeout ]] || PROOF_EXIT=124
   export PROOF_EXIT
@@ -449,6 +452,7 @@ for cause in timeout host; do
   OUT="$(cd "$PROOF_WT" && env -u DEV_VALIDATE_CI_CONTEXT -u ORCH_PR_ORDER \
     "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --worktree "$PROOF_WT" --poll 1)" || proof_rc=$?
   assert_eq "$proof_rc $(sed -n 's/^state=done .* validate=\([^ ]*\).*/\1/p' <<<"$OUT")" '1 no-verdict' "$cause produces a real no-verdict"
+  NO_VERDICT_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' <<<"$OUT")"
   # Move the base and rebase the no-verdict branch before the real skip check.
   git -C "$PROOF_WT" checkout -qb base-update origin/main
   printf 'base changed\n' > "$PROOF_WT/base.sh"
@@ -496,6 +500,30 @@ for cause in timeout host; do
   assert_eq "$proof_rc ${OUT##*$'\n'}" '1 validation-proof=missing ci-fallback=setting-empty' "$cause full fallback on the pushed head keeps missing proof"
   PROOF_EXIT=0
   export PROOF_EXIT
+  if [[ "$cause" == host ]]; then
+    # A real fix-round request falls back to the full command. Its doc-only
+    # path list omits original branch code, but battery reports every lane.
+    PROOF_BATTERY=yes
+    export PROOF_BATTERY
+    battery_base="$(git -C "$PROOF_WT" rev-parse HEAD~2)"
+    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --worktree "$PROOF_WT" --validate-mode range --base "$battery_base" --poll 1 --fresh)" || fixture_failed battery-producer
+    BATTERY_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' <<<"$OUT")"
+    assert_eq "$(cat "$BATTERY_DIR/paths")" fix.md 'the real battery round records a strict subset of branch paths'
+    assert_eq "$(sed -n 's/^docs-only=//p' "$BATTERY_DIR/start") $(sed -n 's/^docs-only=//p' "$NO_VERDICT_DIR/start")" 'true false' 'battery round and branch have different docs metadata'
+    for metadata in produced different-class; do
+      if [[ "$metadata" == different-class ]]; then
+        other_class=standard
+        [[ "$(sed -n 's/^class=//p' "$NO_VERDICT_DIR/start")" != standard ]] || other_class=micro
+        sed "s/^class=.*/class=$other_class/" "$BATTERY_DIR/start" > "$TMP_ROOT/battery-start"
+        mv "$TMP_ROOT/battery-start" "$BATTERY_DIR/start"
+      fi
+      OUT="$(merge_proof "$PROOF_WT")" || fixture_failed battery-proof
+      assert_contains "$OUT" "validation-proof=local-pass run-dir=$BATTERY_DIR" "$metadata full battery proves the matching tree despite round metadata"
+    done
+    # Keep this independent pass out of the later scoped-record cases.
+    mv "$BATTERY_DIR" "$TMP_ROOT/proved-battery"
+    unset PROOF_BATTERY
+  fi
   OUT="$(cd "$PROOF_WT" && env -u DEV_VALIDATE_CI_CONTEXT -u ORCH_PR_ORDER \
     "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --worktree "$PROOF_WT" --poll 1 --fresh)" || fixture_failed local-proof
   LOCAL_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*/\1/p' <<<"$OUT")"
@@ -550,7 +578,7 @@ for cause in timeout host; do
     OUT="$(merge_proof "$PROOF_WT")" || fixture_failed advanced-base-proof
     assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'advancing the known origin base preserves the integrated restack proof'
     validated="$(sed -n 's/.* validated-head=\([^ ]*\).*/\1/p' <<<"$SKIP_LINE")"
-    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --resolve-mode --require-proof "$validated" --worktree "$PROOF_WT" --base origin/main)" || fixture_failed explicit-base-proof
+    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --resolve-mode --require-proof "$validated" --expected-head "$(git -C "$PROOF_WT" rev-parse HEAD)" --worktree "$PROOF_WT" --base origin/main)" || fixture_failed explicit-base-proof
     assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'an explicit locally readable ancestry input also survives base advance'
     # A stacked base uses the same configured branch as the restack resolver.
     git -C "$producer" checkout -qb feature/parent "$base_before"
@@ -563,9 +591,40 @@ for cause in timeout host; do
     record_skip "$PROOF_WT" "$SKIP_LINE"
     OUT="$(WORKTREE_DEFAULT_BRANCH=feature/parent merge_proof "$PROOF_WT")" || fixture_failed stacked-base-proof
     assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'the proof owner honors the configured stacked restack base'
-    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --resolve-mode --require-proof "$validated" --worktree "$PROOF_WT" --base origin/feature/parent)" || fixture_failed explicit-stacked-proof
+    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --resolve-mode --require-proof "$validated" --expected-head "$(git -C "$PROOF_WT" rev-parse HEAD)" --worktree "$PROOF_WT" --base origin/feature/parent)" || fixture_failed explicit-stacked-proof
     assert_contains "$OUT" "validation-proof=tree-pass run-dir=$LOCAL_DIR" 'explicit stacked ancestry preserves the genuine passing route'
     unset PROOF_LIVE_BASE
+    # The same published skip can reach tree-pass, CI, or local-pass. None
+    # may substitute a validated working copy for the committed PR tree.
+    PROOF_PUBLISHED_HEAD="$(git -C "$PROOF_WT" rev-parse HEAD)"
+    export PROOF_PUBLISHED_HEAD
+    printf 'uncommitted correction\n' >> "$PROOF_WT/check.sh"
+    for route in tree-pass ci local-pass; do
+      sed '/^DEV_VALIDATE_CI_CONTEXT =/d' "$PROOF_WT/kendex.settings.toml" > "$PROOF_WT/settings.next"
+      mv "$PROOF_WT/settings.next" "$PROOF_WT/kendex.settings.toml"
+      if [[ "$route" == ci ]]; then
+        # Validate the dirty snapshot before the CI/local branches can read it.
+        OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --worktree "$PROOF_WT" --poll 1 --fresh)" || fixture_failed dirty-validation
+        printf 'DEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$PROOF_WT/kendex.settings.toml"
+      fi
+      PROOF_CI_WORLD=required
+      export PROOF_CI_WORLD
+      proof_rc=0
+      OUT="$(WORKTREE_DEFAULT_BRANCH=feature/parent merge_proof "$PROOF_WT")" || proof_rc=$?
+      assert_eq "$proof_rc $(sed -n 's/^validation-proof=missing cause=\([^ ]*\).*/\1/p' <<<"$OUT")" '1 tree-mismatch' "$route refuses a dirty checkout before admitting proof"
+    done
+    git -C "$PROOF_WT" restore -- check.sh
+    git -C "$PROOF_WT" checkout -qb main origin/main
+    OUT="$(cd "$PROOF_WT" && "$REPO_ROOT/skills/orch/scripts/dev-validate-run" --worktree "$PROOF_WT" --poll 1 --fresh)" || fixture_failed main-validation
+    for context in empty required; do
+      sed '/^DEV_VALIDATE_CI_CONTEXT =/d' "$PROOF_WT/kendex.settings.toml" > "$PROOF_WT/settings.next"
+      mv "$PROOF_WT/settings.next" "$PROOF_WT/kendex.settings.toml"
+      [[ "$context" == empty ]] || printf 'DEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$PROOF_WT/kendex.settings.toml"
+      proof_rc=0
+      OUT="$(merge_proof "$PROOF_WT")" || proof_rc=$?
+      assert_eq "$proof_rc $(sed -n 's/^validation-proof=missing cause=\([^ ]*\).*/\1/p' <<<"$OUT")" '1 head-mismatch' "main-checkout fallback refuses the PR's different published head with $context CI"
+    done
+    unset PROOF_PUBLISHED_HEAD
   fi
 done
 unset PROOF_EXIT PROOF_CI_WORLD

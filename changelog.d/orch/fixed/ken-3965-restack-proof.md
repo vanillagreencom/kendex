@@ -1,1 +1,1 @@
-- Require local or required-CI proof before a reused restack tree can enter the queue or merge, including submission returns and a base that advances after the restack.
+- Require a passing local validation or required CI for the published tree before a reused restack can merge or enter the queue. Accept a complete validation battery from a fix round.
