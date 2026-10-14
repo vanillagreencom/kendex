@@ -4048,9 +4048,10 @@ ACCOUNT_WALL_DIR="${CLAIMS_DIR%/*}/walls"
 TODAY="$(date -u +%Y-%m-%d)" || die time-failed
 # Start elapsed seconds at the sampled epoch. Subtracting two independently
 # rounded SECONDS readings can otherwise stamp a refusal ahead of the clock.
+# The epoch read includes its own delay; reset elapsed time after it returns.
+RUN_NOW="$(date +%s)" || die time-failed
 SECONDS=0
 RUN_STARTED_SECONDS=$SECONDS
-RUN_NOW="$(date +%s)" || die time-failed
 [[ "$RUN_NOW" =~ ^[0-9]+$ && "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die time-failed
 # Observation time is current; stored sample and prior times stay historical.
 lane_now() { LANE_NOW=$((RUN_NOW + SECONDS - RUN_STARTED_SECONDS)); }

@@ -1808,6 +1808,58 @@ LANES="$saved_lanes"
 assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
   "control: dropping the displaced first sample loses the measured rate"
 
+# Timer wiring needs real elapsed time here: freezing SECONDS would hide the
+# epoch read's delay. All other date forms keep their real-clock behavior.
+DELAYED_CLOCK_BIN="$TMP_ROOT/delayed-clock-bin"; mkdir -p "$DELAYED_CLOCK_BIN"
+cat > "$DELAYED_CLOCK_BIN/date" <<'STUBEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == +%s ]]; then
+  "$STUB_REAL_SLEEP" 2
+fi
+exec "$STUB_REAL_DATE" "$@"
+STUBEOF
+chmod +x "$DELAYED_CLOCK_BIN/date"
+
+delayed_epoch_rate() { # STATE
+  local state="$1" at now
+  claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV= PATH="$CLAIM_BIN:$PATH" \
+    "$LANES" list --harness claude --json --no-cache >/dev/null
+  age_usage_record "$state" "$H/.claude" 600
+  claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV= PATH="$DELAYED_CLOCK_BIN:$CLAIM_BIN:$PATH" \
+    "$LANES" list --harness claude --json --no-cache >/dev/null
+  at="$(jq -r '.fetched_at' "$state"/usage/*.json)" || exit 1
+  now="$("$STUB_REAL_DATE" +%s)" || exit 1
+  DELAYED_SAMPLE_FUTURE=no
+  [[ "$at" -le "$now" ]] || DELAYED_SAMPLE_FUTURE=yes
+  OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV= PATH="$CLAIM_BIN:$PATH" \
+    "$LANES" list --harness claude --json)" || exit 1
+}
+
+epoch_control="$(mutant_scripts delayed-epoch lanes)" || exit 1
+mutate_file "$epoch_control/lanes" \
+  $'RUN_NOW="$(date +%s)" || die time-failed\nSECONDS=0\nRUN_STARTED_SECONDS=$SECONDS' \
+  $'SECONDS=0\nRUN_STARTED_SECONDS=$SECONDS\nRUN_NOW="$(date +%s)" || die time-failed'
+saved_lanes="$LANES"
+while IFS='|' read -r mode future rate; do
+  case "$mode" in
+    fixed) LANES="$saved_lanes" ;;
+    base) LANES="$epoch_control/lanes" ;;
+  esac
+  delayed_epoch_rate "$TMP_ROOT/delayed-epoch-$mode"
+  assert_eq "$DELAYED_SAMPLE_FUTURE $(jq -r '.[0].usage_rate_state' <<<"$OUT")" \
+    "$future $rate" "$mode: a delayed epoch read stamps current usage and the next cache read keeps its rate"
+done <<'ROWS'
+fixed|no|measured
+base|yes|samples-too-close
+ROWS
+LANES="$saved_lanes"
+
 # A refresh answered after a usage 429 takes the figure kept beside that
 # refusal as its prior, under the figure's own stamp: the refusal's stamp
 # would read two samples ten minutes apart as seconds apart.
