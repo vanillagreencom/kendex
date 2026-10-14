@@ -153,11 +153,14 @@ REDIRECT='([[:digit:]]*|\{[[:alpha:]_][[:alnum:]_]*\})(&>[>]?|[<>]&|>>|<<<|<<-|<
 SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"
 UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 
-# Git rejects an empty pathspec and paths outside its repository. Remove only
-# its rm prefix; a plain rm elsewhere still reaches both operand checks.
-GIT_RM="${RM_EDGE}git(${GAP}+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path)${GAP}+${WORD}|${GAP}+-[^${ENDERS}${SPACE_ANY}]*)*${GAP}+rm($|[${ENDERS}${SPACE_ANY}])"
+# Git rejects an empty pathspec and paths outside its repository. Mask only
+# its rm verb. Option values can run nested removals before Git sees them,
+# so their text and every separator must reach both operand checks.
+GIT_RM="(${RM_EDGE}git(${GAP}+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path)${GAP}+${WORD}|${GAP}+-[^${ENDERS}${SPACE_ANY}]*)*${GAP}+)rm($|[${ENDERS}${SPACE_ANY}])"
 while [[ $COMMAND =~ $GIT_RM ]]; do
-  COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/ }
+  git_prefix=${BASH_REMATCH[1]}
+  git_suffix=${BASH_REMATCH[0]#"$git_prefix"rm}
+  COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/"${git_prefix}__${git_suffix}"}
 done
 
 # The harness has no shared-root ownership check.

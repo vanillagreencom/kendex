@@ -124,6 +124,11 @@ git_rm_rows() {
 git directory variable|command|0|-|git -C repo rm -r "$d"
 git shared variable|command|0|-|git rm -r "$TMPDIR"/*
 git shared literal|command|0|-|git --no-pager -c core.quotePath=false rm /shared/home/*
+git nested variable|command|2|block-unsafe-rm: refused=recursive-rm|git -C "$(rm -rf "$X")" rm tracked
+git nested shared variable|command|2|block-unsafe-rm: refused=shared-root|git -C "$(rm -rf "$TMPDIR"/*; pwd)" rm tracked
+git nested shared literal|command|2|block-unsafe-rm: refused=shared-root|git -C "$(rm -rf /shared/home/*; pwd)" rm tracked
+git config nested variable|command|2|block-unsafe-rm: refused=recursive-rm|git -c "name=$(rm -rf "$X")" rm tracked
+git directory nested read|command|0|-|git -C "$(pwd)" rm --cached "$f"
 plain variable pair|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$X"
 sudo variable pair|command|2|block-unsafe-rm: refused=recursive-rm|sudo rm -rf $X
 shared variable pair|command|2|block-unsafe-rm: refused=shared-root|rm -rf "$TMPDIR"/*
@@ -131,12 +136,19 @@ git then plain variable|command|2|block-unsafe-rm: refused=recursive-rm|git rm -
 git then shared variable|command|2|block-unsafe-rm: refused=shared-root|git -C repo rm -r "$d" && rm -rf "$TMPDIR"/*
 plain then git|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$X"; git rm --cached "$f"
 git newline plain|command|2|block-unsafe-rm: refused=recursive-rm|git rm --cached "$f"\nrm -rf "$X"
+git verb separator plain|command|2|block-unsafe-rm: refused=recursive-rm|git rm; rm -rf "$X"
+git repeated then plain|command|2|block-unsafe-rm: refused=recursive-rm|git rm --cached "$f"; git -C repo rm -r "$d"; rm -rf "$X"
+git repeated then shared literal|command|2|block-unsafe-rm: refused=shared-root|git rm --cached "$f"; git -C repo rm -r "$d"; rm -rf /shared/home/*
 '
 }
 git_rm_rows
 skill_load_control git-rm-prefix "$HOOK" 'while [[ $COMMAND =~ $GIT_RM ]]; do' \
   '  break' HOOK git_rm_rows 'git cached variable' 'git directory variable' \
   'git shared variable' 'git shared literal'
+skill_load_control git-rm-erased-options "$HOOK" '  COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/"${git_prefix}__${git_suffix}"}' \
+  '  COMMAND=${COMMAND/"${git_prefix}__${git_suffix}"/ }' HOOK git_rm_rows \
+  'git nested variable' 'git nested shared variable' 'git nested shared literal' \
+  'git config nested variable'
 
 # Agents redirect cleanup output and copy descriptors in Bash tool calls.
 # Each operator crosses its whole target before the scan resumes at operands.
