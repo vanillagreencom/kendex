@@ -1,0 +1,1 @@
+- Container closure requires its holder’s shared-outcome evidence. The last child’s merge reports the outcome due for a read, and verification keeps unproved container boxes visible without a merge time.

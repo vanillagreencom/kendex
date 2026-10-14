@@ -11,6 +11,10 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 
 [DONE: one sentence saying how we know the shared outcome is complete]
 
+## Done when
+
+- [ ] [Children’s shared outcome, the source to read, and the holder who reads it]
+
 ## Acceptance Criteria
 
 - [ ] [Criterion from child [ISSUE_ID]]
@@ -33,6 +37,8 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 ```
 
 ## Rules
+
+The holder reads the shared outcome at its source. Only a passing read ticks its Done-when box, with a nonblank `Evidence:` line indented directly below it. A failed or unread result leaves the box open.
 
 1. `## Sub-Issues`, never `## Requirements`. No implementation detail lives here.
 2. All children share the parent's project. See [dependencies.md](../references/dependencies.md).

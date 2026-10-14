@@ -202,7 +202,8 @@ assert_written "a bulk-update with no authored description keeps a filed header-
 
 echo "=== complete: ticking a body filed before the guard ==="
 printf '%s\n' "$SOURCE_LINE" "$LONG" '' '## Done when' '' '- [ ] first' >"$FILED"
-run_linear issues complete CC-1 --done-when-met 1
+printf '%s\n' '1: branch test read passed' >"$TMP_ROOT/evidence.txt"
+run_linear issues complete CC-1 --done-when-met 1 --evidence-file "$TMP_ROOT/evidence.txt"
 assert_written "a complete ticking a body that opens with a long header" issueUpdate
 assert "the complete writes the ticked box" \
   jq -s -e 'any(.[]; .variables.input.description // "" | contains("- [x] first"))' "$CURL_LOG"

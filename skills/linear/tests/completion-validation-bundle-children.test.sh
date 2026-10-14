@@ -49,11 +49,15 @@ emit() { printf '%s___HTTP_CODE___200' "$1"; }
 # Args: identifier state_name state_type parent_identifier
 single_issue() {
   local id="$1" sname="$2" stype="$3" parent="$4" parent_json="null" branch
+  local description=null
+  if [[ "$id" == CC-930 && -n "${CONTAINER_CHECKLIST_FILE:-}" ]]; then
+    description="$(jq -Rs . "$CONTAINER_CHECKLIST_FILE")"
+  fi
   branch="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
   if [[ -n "$parent" ]]; then
     parent_json="{\"id\":\"uuid-$parent\",\"identifier\":\"$parent\",\"title\":\"parent\"}"
   fi
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"relations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"inverseRelations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]}}}}"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":$description,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"relations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"inverseRelations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]}}}}"
 }
 
 # A child node embedded in a bundle's children.nodes.
@@ -136,7 +140,7 @@ run_validate() {
   PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token \
     LINEAR_FORMAT=safe \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
     issues validate-completion "$@"
 }
 
@@ -222,3 +226,15 @@ for summary_issue in CC-950 CC-951; do
   check "summary case: $summary_issue passes" "$out" \
     '.all_ok == true and (.results | length) == 1 and .results[0].has_summary == true'
 done
+
+# Container outcomes pass through the production parser with no merge input.
+export CONTAINER_CHECKLIST_FILE="$TMP_ROOT/container-outcome.md"
+while IFS='|' read -r name description expected branch missing; do
+  printf '%b' "$description" >"$CONTAINER_CHECKLIST_FILE"
+  out="$(run_validate CC-930 --include-children-of CC-930 --container 2>"$TMP_ROOT/outcome.err")"
+  check "$name container outcome controls completion" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-930\") | .unmet_branch_boxes == $branch and .missing_evidence_boxes == $missing)"
+done <<'ROWS'
+open|## Done when\n- [ ] Shared outcome at source|false|[1]|[]
+missing-evidence|## Done when\n- [x] Shared outcome at source|false|[]|[1]
+proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|[]|[]
+ROWS

@@ -2,8 +2,8 @@
 # unchecked, and reconcile-work-items reports the close as done-unchecked.
 control_expect "the Done update carries the ticked description"
 control_replace scripts/commands/issues.sh 1 \
-    '            update_args+=(--description "${ticked_description%.}")' \
-    '            :'
+    '        update_args+=(--description "${ticked_description%.}")' \
+    '        :'
 
 # Let the section run past the next heading: a box under another heading
 # ticks as if the caller had verified it.
@@ -14,20 +14,20 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 # Tick every open box whatever the caller named: a partly met item closes
 # with its unmet boxes checked.
-control_expect "an unnamed box stays unchecked"
+control_expect "the unnamed branch box is identified"
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                | ($open and ($met == "all" or ($met | any(.[]; . == $n)))) as $tick' \
+    '                | ($open and $selected) as $tick' \
     '                | ($open) as $tick'
 
 # Drop the missing-box refusal: a box number the section does not hold
 # completes the issue as if it named a met box.
-control_expect "a box number past the section refuses before any write"
+control_expect "an absent box identifies its number"
 control_replace scripts/commands/issues.sh 1 \
-    '        if [ "$missing_count" -ne 0 ]; then' \
-    '        if false; then'
+    '    if [ "$missing_count" -ne 0 ]; then' \
+    '    if false; then'
 
 # Accept any value as a box list: box 0 reaches the issue read.
-control_expect "--done-when-met '0' refuses before any request"
+control_expect "malformed box list refuses before any request"
 control_replace scripts/commands/issues.sh 1 \
     '    elif [[ "$done_when_met" =~ ^[1-9][0-9]{0,3}(,[1-9][0-9]{0,3})*$ ]]; then' \
     '    elif true; then'
@@ -35,26 +35,24 @@ control_replace scripts/commands/issues.sh 1 \
 # Open the section at the first line: a box above the heading ticks.
 control_expect "a box above the Done-when section stays unchecked"
 control_replace scripts/lib/issue-validation.sh 1 \
-    '            ({out: [], section: false, boxes: [], ticked: 0};' \
-    '            ({out: [], section: true, boxes: [], ticked: 0};'
+    '            ({out: [], section: false, boxes: [], ticked: 0, changed: false, skip: -1};' \
+    '            ({out: [], section: true, boxes: [], ticked: 0, changed: false, skip: -1};'
 
-# Drop the met boxes from the retry: the rerun sets Done with the verified
-# boxes unchecked.
-control_expect "the retry after a failed Done update keeps --done-when-met"
-control_replace scripts/commands/issues.sh 1 \
-    '                retry+=" --done-when-met $done_when_met"' \
-    '                :'
+# Bare completion cannot bypass the shared checklist decision.
+control_expect "bare branch refuses"
+control_replace scripts/lib/issue-validation.sh 1 \
+    '        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
+    '        | .completion_state = (if (.errors | length) > 0 or false or (.missing_evidence_boxes | length) > 0 then null'
 
+control_expect "bare missing-proof refuses"
+control_replace scripts/lib/issue-validation.sh 1 \
+    '        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
+    '        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or false then null'
 
-control_expect "post-merge 1 sends the expected state ID"
-control_replace scripts/commands/issues.sh 1 \
-    '                completion_state="Verifying"' \
-    '                completion_state="Done"'
-
-control_expect "post-merge branch refuses before any write"
-control_replace scripts/commands/issues.sh 1 \
-    "            if ! jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<\"\$tick\" >/dev/null; then" \
-    "            if ! jq -e '(.errors | length) == 0' <<<\"\$tick\" >/dev/null; then"
+control_expect "bare post sets its checklist state"
+control_replace scripts/lib/issue-validation.sh 1 \
+    "            elif any(.boxes[]; .post_merge and (.checked | not)) then \"Verifying\" else \"Done\" end)'" \
+    "            elif any(.boxes[]; .post_merge and (.checked | not)) then \"Done\" else \"Done\" end)'"
 
 control_expect 'post-merge reading-empty refuses before any write'
 control_replace scripts/lib/issue-validation.sh 1 \

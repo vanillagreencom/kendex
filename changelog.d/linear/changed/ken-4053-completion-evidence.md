@@ -1,0 +1,1 @@
+- **Breaking:** Completion reads every Done-when checklist, refuses open branch boxes or checked boxes without evidence, and keeps open post-merge checks in Verifying. Supply box evidence with `--evidence-file` when ticking boxes.

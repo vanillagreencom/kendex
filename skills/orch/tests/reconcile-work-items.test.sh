@@ -9,8 +9,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP:?}"' EXIT
+TMP="$(mktemp -d)" || { echo "reconcile-work-items: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "reconcile-work-items: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "reconcile-work-items: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
 # The sweep runs from a copy of the orch scripts with the stand-in at the
 # sibling linear path, where it looks for the CLI.
 mkdir -p "$TMP/skills/orch" "$TMP/skills/linear/scripts"
@@ -49,7 +51,7 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
 }
 
 {
-  issue "T-1"  "parked container"        "Todo"        "unstarted" "$now"
+  issue "T-1"  "parked container"        "Todo"        "unstarted" "$now" "" $'## Done when\n- [ ] Read children’s shared outcome at the live source'
   issue "T-2"  "done child a"            "Done"        "completed" "$now" "T-1"
   issue "T-3"  "done child b"            "Done"        "completed" "$now" "T-1"
   issue "T-4"  "canceled child"          "Canceled"    "canceled"  "$now" "T-1"
@@ -113,6 +115,24 @@ assert_eq "$(sort -u "$LINEAR_CALLS")" "issues list --max --format=raw" "the swe
 (cd "$R" && LINEAR_TEAM=kendex RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" >/dev/null 2>&1) || true
 assert_eq "$(sort -u "$LINEAR_CALLS")" "issues list --max --team kendex --format=raw" "the sweep reads the project's team where one is set"
 assert_contains "$OUT" "container-parked issue=T-1" "the parked container is reported"
+assert_contains "$OUT" 'verifying T-1 box=1 trigger="outcome" status=due deadline=- blocked_by=-' "the open container outcome stays visible without a merge"
+assert_not_contains "$OUT" 'verifying-invalid issue=T-1' "a container outcome is not invalid branch work"
+assert_not_contains "$OUT" 'verifying-merge-unread issue=T-1' "a container outcome needs no invented merge time"
+
+# The base verification parser rejected this ordinary open box. Restore that
+# behavior in a private copy and prove that the visible outcome line is lost.
+TMP_ROOT="$TMP"
+source "$TEST_DIR/lib/growth-state.sh"
+MUTANT_RW="$(mutant_scripts container-outcome/orch reconcile-work-items)/reconcile-work-items" || exit 1
+ln -s "$TMP/skills/linear" "${MUTANT_RW%/orch/scripts/*}/linear"
+MUTANT_LIB="${MUTANT_RW%/*}/lib/verifying.sh"
+rm -- "$MUTANT_LIB"
+cp "$SKILL_DIR/scripts/lib/verifying.sh" "$MUTANT_LIB"
+mutate_file "$MUTANT_LIB" 'if $row.container == true then' 'if false then'
+CONTROL_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$MUTANT_RW" 2>&1)" || true
+assert_contains "$CONTROL_OUT" 'verifying-invalid issue=T-1' "control restores the base parser’s skipped outcome"
+assert_not_contains "$CONTROL_OUT" 'verifying T-1 box=1' "control loses the holder’s outcome duty"
+
 # A "(one PR)" root with Done children is the single-PR bundle contract
 # working, never a parked container.
 assert_not_contains "$OUT" "container-parked issue=T-16" "a (One PR) bundle root is not container-parked (case-insensitive marker)"

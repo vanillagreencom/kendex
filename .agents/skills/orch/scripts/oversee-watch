@@ -4462,12 +4462,13 @@ owed_read() {
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review,Verifying" --max --format=safe 2>"$errf")" || rc=$?
+    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --max --format=safe 2>"$errf")" || rc=$?
     [[ "$rc" -eq 0 ]] \
       || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
     # Linear's priority 0 is No priority, which ranks after Low: it prints `-`.
     items="$(jq -c '
       if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
+      | map(select(.state == "In Progress" or .state == "In Review" or .state == "Verifying"))
       | map(
           if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$"))) then .
           else error("tracker-field field=id value=\(.id | tojson)") end
@@ -4486,6 +4487,12 @@ owed_read() {
       || die pr-list-invalid "$(cat "$errf")" "repo=${REPOS[0]}"
   fi
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
+    # Container outcomes use the same inventory, including complete children.
+    local containers
+    containers="$(verifying_containers "$out")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+    containers="$(jq -cs 'map(.state = "verifying")' <<<"$containers")" || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+    items="$(printf '%s\n' "$items" "$containers" | jq -cs 'add | group_by(.id) | map(max_by(.container // false))')" \
+      || die tracker-list-invalid "" "team=$LINEAR_TEAM"
     verifying_read "$items"
     items="$(jq -c 'map(select(.state != "verifying"))' <<<"$items")" \
       || die tracker-list-invalid "" "team=$LINEAR_TEAM"

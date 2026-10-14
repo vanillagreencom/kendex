@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Close a Linear container once its children have finished, one caller at a time.
+# Close a Linear container after its holder reads the shared outcome and
+# ticks its outcome box with Evidence. Finished children alone do not close it.
 # merge-pr consumes stdout as `closed ID`, `deferred`, `deferred ID...`, or
 # `held ID RESET`.
 # Child summary rows carry `lookup failed` or `unavailable` for unresolved PRs.
@@ -179,7 +180,8 @@ and validation failures exit 1, naming the cause on stderr; the parent is left
 open and the run is safe to repeat once the cause is gone -- including a `gh pr
 list` that failed or would not parse, whether the reason was a rate limit or an
 unauthenticated `gh`. A successful `closed` result may carry completion
-diagnostics on stderr; callers must preserve every one. The run owns the
+diagnostics on stderr; callers must preserve every one. The holder records the outcome Evidence line before this run. This helper
+ticks no box and supplies no merge time. The run owns the
 completion gate and the bundle summary: a retry carrying validated summary
 evidence completes without the summary flags, so the bundle comment is never
 posted twice. With `gh` absent a child's PR reference is recorded as `lookup

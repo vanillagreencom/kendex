@@ -160,7 +160,7 @@ if [[ "$PART" == all || "$PART" == development ]]; then
 world owed
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying --max --format=safe" \
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --max --format=safe" \
   "the owed items are one live read of the team's In Progress and In Review items" "$ERR"
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
@@ -370,6 +370,30 @@ EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10
 EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
 EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z'
 if [[ "$PART" == all || "$PART" == membership ]]; then
+# An unmerged Todo container with complete children reaches the same reader.
+world verifying_container
+jq '. + [{id:"KEN-P", title:"Shared outcome", state:"Todo", state_type:"unstarted", parent_id:"", description:"## Done when\n- [ ] Read shared outcome at source"},
+         {id:"KEN-C", title:"Done child", state:"Done", state_type:"completed", parent_id:"KEN-P"}]' "$STUB_DIR/tracker.out" >"$STUB_DIR/container.json"
+mv -- "$STUB_DIR/container.json" "$STUB_DIR/tracker.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_contains "$(verification_lines)" 'verifying KEN-P box=1 trigger="outcome" status=due deadline=- blocked_by=-' "the container’s open outcome is due without a merge" "$ERR"
+assert_contains "$(verification_events)" 'EVENT verifying-deadline KEN-P box=1' "the existing verification event names the container outcome" "$ERR"
+assert_eq "$(owed KEN-P)" '-' "a container is not owed a development launch" "$ERR"
+MUTANT_DIR="$TMP_ROOT/container-selection"
+MUTANT_WATCH="$(mutant_scripts container-selection/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_file "$MUTANT_WATCH" 'containers="$(verifying_containers "$out")"' 'containers=""'
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_not_contains "$(verification_lines)" 'verifying KEN-P box=1' "control loses the outcome when the caller omits its container" "$ERR"
+# The held evidence remains open on a repeated failed or unread source read.
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_contains "$(verification_lines)" 'verifying KEN-P box=1' "an unproved outcome remains visible on heartbeat" "$ERR"
+jq 'map(if .id == "KEN-P" then .description = "## Done when\n- [x] Read shared outcome at source\n  Evidence: holder read passed" else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/proved.json"
+mv -- "$STUB_DIR/proved.json" "$STUB_DIR/tracker.out"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_contains "$(verification_lines)" 'verifying KEN-P boxes=0' "holder evidence requests container completion with no merge" "$ERR"
+
 verifying_world verifying_deadline
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(verification_events)" "rc=0 $want_events" "the deadline raises attention for active and queued verification" "$ERR"
@@ -380,7 +404,7 @@ assert_eq "$(owed KEN-1)$(owed KEN-4)" "--" "Verifying never becomes owed develo
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(verification_events)" "rc=0 " "a standing deadline emits once" "$ERR"
 assert_eq "$(verification_lines)" "$want_lines" "the heartbeat carries the same Verifying inventory" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying --max --format=safe" "verification shares the owed inventory" "$ERR"
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --max --format=safe" "verification shares the owed inventory" "$ERR"
 assert_eq "$(wc -l <"$STUB_DIR/tracker.args.all" | tr -d ' ')" 2 "two passes use two inventory reads" "$ERR"
 verifying_world verifying_future
 jq 'map(if .state == "Verifying" then .description |= gsub("; Deadline:"; "; Trigger: 2026-10-01T12:00:00Z; Deadline:") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/future.json"
@@ -437,7 +461,7 @@ for control in membership event filter queue; do
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   case "$control" in
-    membership) mutate_verifying "$MUTANT_WATCH" 'In Progress,In Review,Verifying' 'In Progress,In Review' ;;
+    membership) mutate_verifying "$MUTANT_WATCH" 'or .state == "Verifying"' 'or false' ;;
     event) mutate_verifying "$MUTANT_WATCH" 'select(.status == "due" or .status == "overdue")' 'select(false)' ;;
     filter) mutate_verifying "$MUTANT_WATCH" 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"' 'items="$(jq -c '\''map(select(.state != "verifying"))'\'' <<<"$items")"; VERIFYING_LINES=""; VERIFYING_EVENT_LINES=""' ;;
     queue)

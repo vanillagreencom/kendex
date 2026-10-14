@@ -48,7 +48,7 @@ for id in T-1 T-2 T-3 T-4 T-5 T-6; do
   if [[ "$id" != T-1 && "$id" != T-2 ]]; then
     deadline=2026-10-02T00:00:00Z
     [[ "$id" != T-5 ]] || deadline=2026-10-03T00:00:00Z
-    desc="## Done when"$'\n'"- [x] branch proof"$'\n'"- [ ] Post-merge: Read health; Where: service; Why after merge: needs deployment; Deadline: $deadline"
+    desc="## Done when"$'\n'"- [x] branch proof"$'\n'"  Evidence: branch tests passed"$'\n'"- [ ] Post-merge: Read health; Where: service; Why after merge: needs deployment; Deadline: $deadline"
     printf '%s' "$desc" >"$TMP_ROOT/descriptions/$id"
   fi
   jq -n --arg d "$desc" --arg id "$id" \
@@ -105,6 +105,7 @@ fi
 SH
 chmod +x "$TMP_ROOT/bin/date"
 
+printf '%s\n' '1: branch source read' '2: live source read' >"$TMP_ROOT/evidence.txt"
 complete() { # ID MET
   (cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" \
@@ -112,13 +113,13 @@ complete() { # ID MET
 }
 
 RC=0
-complete T-1 --done-when-met all >"$TMP_ROOT/t1.out" 2>"$TMP_ROOT/t1.err" || RC=$?
+complete T-1 --done-when-met all --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/t1.out" 2>"$TMP_ROOT/t1.err" || RC=$?
 assert_eq "$RC" 0 "the fully met item completes" "$TMP_ROOT/t1.err"
 RC=0
-complete T-2 --done-when-met 1 >"$TMP_ROOT/t2.out" 2>"$TMP_ROOT/t2.err" || RC=$?
-assert_eq "$RC" 0 "the partly met item completes" "$TMP_ROOT/t2.err"
+complete T-2 --done-when-met 1 --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/t2.out" 2>"$TMP_ROOT/t2.err" || RC=$?
+assert_eq "$RC" 1 "the partly met item refuses" "$TMP_ROOT/t2.err"
 assert_eq "$(jq -rs '[.[] | select(.state.type == "completed") | .identifier] | sort | join(",")' "$TMP_ROOT"/state/*.json)" \
-  "T-1,T-2" "both completions reach the tracker the sweep reads"
+  "T-1" "only proved completion reaches Done"
 
 # Actual completion requests keep open live checks in Verifying. A final
 # evidence tick takes T-6 from Verifying to Done. T-4 models a checked item
@@ -129,7 +130,7 @@ for id in T-3 T-4 T-5 T-6; do
   assert_eq "$RC" 0 "$id enters Verifying through completion" "$TMP_ROOT/$id.err"
 done
 RC=0
-complete T-6 --post-merge-at 2026-10-01T00:00:00Z --done-when-met 2 >"$TMP_ROOT/t6-final.out" 2>"$TMP_ROOT/t6-final.err" || RC=$?
+complete T-6 --post-merge-at 2026-10-01T00:00:00Z --done-when-met 2 --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/t6-final.out" 2>"$TMP_ROOT/t6-final.err" || RC=$?
 assert_eq "$RC" 0 "final verification completes T-6" "$TMP_ROOT/t6-final.err"
 assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-6.json")" Done "the final box sets Done"
 jq '.description |= sub("\\[ \\]"; "[x]")' "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/t4-checked.json"
@@ -146,6 +147,21 @@ for id in T-7 T-8; do
   jq --arg id "$id" --arg d "$invalid_description" '.identifier = $id | .id = ("uuid-" + $id) | .description = $d' \
     "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/$id.json"
 done
+
+# A container outcome survives a failed or unread source read. Its holder's
+# passing read supplies evidence to the real completion command, with no PR.
+jq --arg d '## Done when
+- [ ] Read the shared outcome at source' '.identifier = "T-10" | .id = "uuid-T-10" | .description = $d | .state = {name:"Todo",type:"unstarted"}' \
+  "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-10.json"
+printf '%s\n' '## Done when' '- [ ] Read the shared outcome at source' >"$TMP_ROOT/descriptions/T-10"
+RC=0
+complete T-10 >"$TMP_ROOT/parent-open.out" 2>"$TMP_ROOT/parent-open.err" || RC=$?
+assert_eq "$RC" 1 "an unread or failed container outcome refuses completion without a merge time"
+assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Todo "the failed outcome keeps its parent open"
+RC=0
+complete T-10 --done-when-met 1 --evidence-file "$TMP_ROOT/evidence.txt" >"$TMP_ROOT/parent-proved.out" 2>"$TMP_ROOT/parent-proved.err" || RC=$?
+assert_eq "$RC" 0 "holder evidence completes the container without a merge time" "$TMP_ROOT/parent-proved.err"
+assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Done "the proved outcome sets its parent Done"
 
 # Both readers resolve release publication. This release has not fired.
 # Waiting retains the merge date without a deadline.
@@ -171,7 +187,7 @@ OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH
   REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" "$RW" 2>&1)" || RC=$?
 assert_eq "$RC" 1 "the sweep reports a finding"
 assert_not_contains "$OUT" "issue=T-1" "a fully met completion leaves no done-unchecked finding"
-assert_contains "$OUT" "done-unchecked issue=T-2" "a partly met completion is still done-unchecked"
+assert_not_contains "$OUT" "done-unchecked issue=T-2" "a refused branch tick stays open"
 assert_contains "$OUT" 'verifying T-3 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=-' "past-deadline Verifying is reported"
 assert_contains "$OUT" "verifying-empty issue=T-4" "Verifying with no open box is reported"
 assert_not_contains "$OUT" "issue=T-5" "future Verifying has no stale development finding"

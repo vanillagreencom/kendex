@@ -214,7 +214,7 @@ Activate Options:
 
 Complete Options:
   --format <fmt>        Output format: ids (identifier only); default is JSON.
-  --summary <text>       Post a completion summary comment, then set "Done"
+  --summary <text>       Post a summary comment, then apply the checklist state
   --summary-file <path>  Read the summary from a file (preferred for markdown)
   --post-merge-at <UTC>  Use the merged PR's mergedAt (YYYY-MM-DDTHH:MM:SSZ).
                         Refuse open branch-provable boxes. Set Verifying when
@@ -228,7 +228,10 @@ Complete Options:
                         publication after merge. In a repository where the
                         item merged, that release must contain its latest
                         merge commit. Other deadlines use UTC.
-                        Without this option, explicit completion sets Done.
+                        Every completion reads the checklist, with or without
+                        this option. Open branch boxes refuse. Open post-merge
+                        boxes keep the item Verifying. Ticked boxes require a
+                        nonblank Evidence: line indented directly below them.
   --done-when-met <all|N[,N...]>
                          Tick the "## Done when" checklist boxes the caller
                          verified as met, in the same issueUpdate that sets
@@ -239,6 +242,9 @@ Complete Options:
                          any write. The section runs from its "## Done when"
                          line to the next "## " heading. The result's
                          "done_when_checked" counts the boxes this call ticked.
+  --evidence-file <path>  Evidence for --done-when-met, one N: text line per box.
+                         Writes each Evidence: line with the tick and state.
+                         Also repairs evidence on selected already-ticked boxes.
   The comment is posted BEFORE the state transition; if posting fails the issue
   state is unchanged. Text lacking a "Completion Summary"/"Bundle Complete"
   marker is prefixed with a "## Completion Summary" heading so
@@ -257,10 +263,12 @@ Validate-Completion:
   "Bundle Complete", without regard to letter case.
   --container marks the positional target as a CONTAINER parent — a bundle
   whose children are each worked as their own PR unit, with the container
-  closing LAST. The container's own state passes for any live state (canceled
+  closing after its holder proves the shared outcome. The container's state passes for any live state (canceled
   fails closed) and needs no pre-posted summary: `issues complete --summary`
   posts it at completion time. The expanded children still gate as above, so
-  all_ok answers "may this container complete now?". The flag fails closed:
+  all_ok answers "may this container complete now?". The container checklist
+  must have every box checked with its Evidence line. No merge time is needed.
+  The flag fails closed:
   it requires exactly one issue ID plus --include-children-of naming that
   same issue, and errors (exit 1) when the bundle has no non-canceled
   children — a leaf cannot validate as a container. A child of a container
@@ -310,8 +318,8 @@ Examples:
   issues.sh unblock PROJ-42                      # Resume after blocker resolved
   issues.sh complete PROJ-42                     # Mark done
   issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
-  issues.sh complete PROJ-42 --done-when-met all  # Done, every Done-when box ticked
-  issues.sh complete PROJ-42 --done-when-met 1,3  # Done, boxes 1 and 3 ticked
+  issues.sh complete PROJ-42 --done-when-met all --evidence-file proof.txt
+  issues.sh complete PROJ-42 --done-when-met 1,3 --evidence-file proof.txt
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Single-PR bundle validation
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # May the container close?
 
@@ -3017,7 +3025,7 @@ unblock_issue() {
     echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"unblocked\"}"
 }
 
-# Complete an issue: explicit Done, or the merged checklist's Done/Verifying
+# Complete an issue from its checklist and recorded evidence.
 # Usage: complete_issue CC-XXX [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>]
 # The summary comment is posted BEFORE the state transition so a failed post
 # never yields a Done issue without a completion summary. Unknown or trailing
@@ -3030,11 +3038,12 @@ complete_issue() {
     local issue_id="$1"
     shift
 
-    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--post-merge-at <UTC>]"
+    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]> --evidence-file <path>] [--post-merge-at <UTC>]"
     local summary=""
     local summary_file=""
     local done_when_met=""
     local post_merge_at=""
+    local evidence_file=""
     local output_format=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -3047,6 +3056,16 @@ complete_issue() {
         --format=*)
             output_format="${1#*=}"
             linear_require_format "$output_format" ids || return 1
+            shift
+            ;;
+        --evidence-file)
+            linear_require_option_value "$@" || return 1
+            evidence_file="$2"
+            shift 2
+            ;;
+        --evidence-file=*)
+            evidence_file="${1#*=}"
+            [ -n "$evidence_file" ] || return 1
             shift
             ;;
         --post-merge-at)
@@ -3157,37 +3176,47 @@ complete_issue() {
     fi
     linear_guard_issue_team complete "$issue_id" || return 1
 
-    local completion_state="Done"
-    local update_args=()
-    local done_when_checked=""
-    if [ -n "$met_json" ] || [ -n "$post_merge_at" ]; then
-        local issue_result description tick missing_count
-        issue_result=$(get_issue "$issue_id" --format=raw) || return 1
-        # The sentinel keeps a trailing newline the substitution would strip.
-        description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
-        tick=$(done_when_parse "${description%.}" "${met_json:-[]}" "$post_merge_at") || return 1
-        if [ -n "$post_merge_at" ]; then
-            if ! jq -e '(.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)' <<<"$tick" >/dev/null; then
-                jq -c '{error: "post-merge-checklist", errors,
-                    unmet_branch_boxes: [.boxes[] | select(.checked == false and .post_merge == false) | .number]}' <<<"$tick" >&2
-                return 1
-            fi
-            if jq -e 'any(.boxes[]; .checked == false and .post_merge)' <<<"$tick" >/dev/null; then
-                completion_state="Verifying"
-            fi
-        fi
-        missing_count=$(jq '.missing | length' <<<"$tick") || return 1
-        if [ "$missing_count" -ne 0 ]; then
-            jq -c --arg id "$issue_id" \
-                '{error: ("Done-when box not found in " + $id + ": " + (.missing | map(tostring) | join(",")) + ". Issue state unchanged.")}' <<<"$tick" >&2
+    local evidence_json='{}'
+    if [ -n "$evidence_file" ]; then
+        if [[ -z "$met_json" || ! -r "$evidence_file" ]]; then
+            jq -cn '{error: "done-when-evidence-file"}' >&2
             return 1
         fi
+        evidence_json=$(jq -Rsn '
+            reduce (inputs | gsub("\r\n"; "\n") | split("\n")[] | select(length > 0)) as $line ({};
+                (($line | capture("^(?<box>[1-9][0-9]*):[ \t]*(?<text>\\S.*)$")) // error("done-when-evidence-file")) as $proof
+                | if has($proof.box) then error("done-when-evidence-file")
+                  else .[$proof.box] = $proof.text end)' <"$evidence_file" 2>/dev/null) || {
+            jq -cn '{error: "done-when-evidence-file"}' >&2
+            return 1
+        }
+    fi
+    local completion_state
+    local update_args=()
+    local done_when_checked=""
+    local issue_result description tick missing_count
+    issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+    # The sentinel keeps a trailing newline the substitution would strip.
+    description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
+    tick=$(done_when_parse "${description%.}" "${met_json:-[]}" "$post_merge_at" "$evidence_json") || return 1
+    missing_count=$(jq '.missing | length' <<<"$tick") || return 1
+    if [ "$missing_count" -ne 0 ]; then
+        jq -c --arg id "$issue_id" \
+            '{error: ("Done-when box not found in " + $id + ": " + (.missing | map(tostring) | join(",")) + ". Issue state unchanged."), missing}' <<<"$tick" >&2
+        return 1
+    fi
+    completion_state=$(jq -r '.completion_state // ""' <<<"$tick") || return 1
+    if [ -z "$completion_state" ]; then
+        jq -c '{error: "post-merge-checklist", errors, unmet_branch_boxes, missing_evidence_boxes}' <<<"$tick" >&2
+        return 1
+    fi
+    if [ -n "$met_json" ]; then
         done_when_checked=$(jq '.ticked' <<<"$tick") || return 1
-        if [ "$done_when_checked" -gt 0 ]; then
-            local ticked_description
-            ticked_description=$(jq -r '.description + "."' <<<"$tick") || return 1
-            update_args+=(--description "${ticked_description%.}")
-        fi
+    fi
+    if jq -e '.changed' <<<"$tick" >/dev/null; then
+        local ticked_description
+        ticked_description=$(jq -r '.description + "."' <<<"$tick") || return 1
+        update_args+=(--description "${ticked_description%.}")
     fi
 
     update_args+=(--state "$completion_state")
@@ -3215,8 +3244,8 @@ complete_issue() {
     local update_result
     local update_rc=0
     set +e
-    # The ticked description is the filed body with boxes checked, not new
-    # authored text: an issue filed before the header-shape bar still completes.
+    # Ticks and evidence preserve the filed body's headers: an issue filed
+    # before the header-shape bar still completes.
     update_result=$(LINEAR_REQUIRE_REACH='' update_issue "$issue_id" "${update_args[@]}")
     update_rc=$?
     set -e
@@ -3231,6 +3260,9 @@ complete_issue() {
             local retry="'issues.sh complete $issue_id"
             if [ -n "$done_when_met" ]; then
                 retry+=" --done-when-met $done_when_met"
+            fi
+            if [ -n "$evidence_file" ]; then
+                retry+=" --evidence-file $evidence_file"
             fi
             if [ -n "$post_merge_at" ]; then
                 retry+=" --post-merge-at $post_merge_at"
@@ -3375,7 +3407,7 @@ validate_completion() {
         local role="${roles[$i]}"
         # Get issue state
         local issue
-        issue=$(get_issue "$issue_id")
+        issue=$(get_issue "$issue_id") || return 1
         local state
         state=$(echo "$issue" | jq -r '.state // ""')
         local state_type
@@ -3390,8 +3422,17 @@ validate_completion() {
         local has_summary
         has_summary=$(echo "$comments" | jq 'any(.[]; .body | test("Completion Summary|Bundle Complete"; "i"))')
 
-        local result
+        local result description
         result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
+
+        if [ "$role" = "container" ]; then
+            local checklist
+            description=$(jq -r '(.description // "") + "."' <<<"$issue") || return 1
+            checklist=$(done_when_parse "${description%.}" '[]') || return 1
+            result=$(jq -cn --argjson result "$result" --argjson checklist "$checklist" '
+                $result + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes})
+                | .ok = (.ok and $checklist.completion_state == "Done")') || return 1
+        fi
 
         if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
             all_ok="false"

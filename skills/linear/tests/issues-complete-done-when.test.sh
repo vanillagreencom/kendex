@@ -86,101 +86,130 @@ printf '%s\n' \
   '' \
   '- [ ] first' \
   '- [x] second' \
+  '  Evidence: existing proof' \
   '  - [ ] third' \
   '' \
   '## Notes' \
   '' \
   '- [ ] outside the section' >"$boxes"
 
-# --- all: every box in the section ticks, in the update that sets Done
+proof="$TMP_ROOT/evidence.txt"
+printf '%s\n' '1: first source read' '2: second source read' '3: third source read' >"$proof"
+
+# Bare completion must read every box before either summary or state write.
+# The final column names the field that must carry the refusal box number.
+while IFS='|' read -r name description expected field; do
+  printf '%b' "$description" >"$TMP_ROOT/bare.md"
+  log="$TMP_ROOT/bare-$name.jsonl"
+  rc=0
+  out="$(run_complete "$TMP_ROOT/bare.md" "$log" CC-720 2>"$TMP_ROOT/bare.err")" || rc=$?
+  if [[ "$expected" == refuse ]]; then
+    assert_ne "bare $name refuses" "$rc" 0
+    assert_jq "bare $name names its box" "$(cat "$TMP_ROOT/bare.err")" ".error == \"post-merge-checklist\" and .$field == [1]"
+    assert_not "bare $name leaves the state unchanged" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
+  else
+    assert_eq "bare $name completes" "$rc" 0
+    assert_jq "bare $name sets its checklist state" "$(updates "$log")" ".variables.input.stateId == \"$expected\""
+  fi
+done <<'ROWS'
+branch|## Done when\n- [ ] shared outcome|refuse|unmet_branch_boxes
+missing-proof|## Done when\n- [x] shared outcome|refuse|missing_evidence_boxes
+blank-proof|## Done when\n- [x] shared outcome\n  Evidence:   |refuse|missing_evidence_boxes
+unindented-proof|## Done when\n- [x] shared outcome\nEvidence: read|refuse|missing_evidence_boxes
+not-direct-proof|## Done when\n- [x] shared outcome\n\n  Evidence: read|refuse|missing_evidence_boxes
+complete|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done|-
+post|## Done when\n- [x] branch proof\n  Evidence: branch read\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-verifying|-
+absent|No checklist.|state-done|-
+ROWS
+
 log="$TMP_ROOT/all.jsonl"
-out="$(run_complete "$boxes" "$log" CC-720 --done-when-met all 2>"$TMP_ROOT/all.err")"
-assert_jq "complete --done-when-met all counts the boxes it ticked" "$out" \
-  '.success == true and .action == "completed" and .done_when_checked == 2'
+out="$(run_complete "$boxes" "$log" CC-720 --done-when-met all --evidence-file "$proof" 2>"$TMP_ROOT/all.err")" || true
+assert_jq "all counts newly ticked boxes" "$out" '.done_when_checked == 2'
 update="$(updates "$log")"
-assert_eq "complete --done-when-met all sends one issueUpdate" "$(wc -l <<<"$update" | tr -d ' ')" "1"
-assert_jq "the Done update carries the ticked description" "$update" \
-  '.variables.input.stateId == "state-done" and .variables.input.description == "Problem text.\n\n- [ ] above the section\n\n## Done when\n\n- [x] first\n- [x] second\n  - [x] third\n\n## Notes\n\n- [ ] outside the section\n"'
-assert_jq "a box outside the Done-when section stays unchecked" "$update" \
-  '.variables.input.description | endswith("## Notes\n\n- [ ] outside the section\n")'
-assert_jq "a box above the Done-when section stays unchecked" "$update" \
-  '.variables.input.description | startswith("Problem text.\n\n- [ ] above the section\n\n## Done when\n")'
+assert_jq "the Done update carries the ticked description" "$update" '.variables.input.stateId == "state-done" and (.variables.input.description | contains("- [x] first\n  Evidence: first source read\n- [x] second\n  Evidence: second source read\n  - [x] third\n    Evidence: third source read"))'
+assert_jq "a box above the Done-when section stays unchecked" "$update" '.variables.input.description | startswith("Problem text.\n\n- [ ] above the section")'
+assert_jq "a box outside the Done-when section stays unchecked" "$update" '.variables.input.description | endswith("## Notes\n\n- [ ] outside the section\n")'
 
-# --- a list: only the named box ticks; an unnamed box stays unchecked
+# Selecting only one branch box does not authorize the remaining branch box.
 log="$TMP_ROOT/list.jsonl"
-out="$(run_complete "$boxes" "$log" CC-720 --done-when-met 3 2>"$TMP_ROOT/list.err")"
-assert_jq "complete --done-when-met 3 ticks one box" "$out" '.done_when_checked == 1'
-assert_jq "an unnamed box stays unchecked" "$(updates "$log")" \
-  '.variables.input.stateId == "state-done" and .variables.input.description == "Problem text.\n\n- [ ] above the section\n\n## Done when\n\n- [ ] first\n- [x] second\n  - [x] third\n\n## Notes\n\n- [ ] outside the section\n"'
+rc=0
+run_complete "$boxes" "$log" CC-720 --done-when-met 3 --evidence-file "$proof" --summary proof >"$TMP_ROOT/list.out" 2>"$TMP_ROOT/list.err" || rc=$?
+assert_ne "an unnamed open branch box refuses" "$rc" 0
+assert_jq "the unnamed branch box is identified" "$(cat "$TMP_ROOT/list.err")" '.unmet_branch_boxes == [1]'
+assert_not "open branch refuses before summary or update" jq -se 'any(.[]; (.query | contains("commentCreate")) or (.query | contains("issueUpdate")))' "$log"
 
-# --- a failed Done update after the summary post: the retry it names keeps
-# the met boxes and drops only the summary options
+# Older checked items acquire evidence from their holder's existing read.
+printf '%s\n' '## Done when' '- [x] outcome' '  Evidence: ' >"$TMP_ROOT/legacy.md"
+log="$TMP_ROOT/legacy.jsonl"
+out="$(run_complete "$TMP_ROOT/legacy.md" "$log" CC-720 --done-when-met 1 --evidence-file "$proof" 2>"$TMP_ROOT/legacy.err")" || true
+assert_jq "legacy evidence repair adds no new tick" "$out" '.done_when_checked == 0'
+assert_jq "legacy evidence repair replaces the empty line in the state update" "$(updates "$log")" '.variables.input.stateId == "state-done" and .variables.input.description == "## Done when\n- [x] outcome\n  Evidence: first source read\n"'
+
+# File input is the producer of each new tick's evidence.
+while IFS='|' read -r name content field; do
+  printf '%b' "$content" >"$TMP_ROOT/bad-evidence.txt"
+  log="$TMP_ROOT/evidence-$name.jsonl"
+  rc=0
+  run_complete "$boxes" "$log" CC-720 --done-when-met all --evidence-file "$TMP_ROOT/bad-evidence.txt" --summary proof >"$TMP_ROOT/evidence.out" 2>"$TMP_ROOT/evidence.err" || rc=$?
+  assert_ne "evidence file $name refuses" "$rc" 0
+  assert_jq "evidence file $name reports its category" "$(cat "$TMP_ROOT/evidence.err")" "$field"
+  assert_not "evidence file $name refuses before writes" jq -se 'any(.[]; (.query | contains("commentCreate")) or (.query | contains("issueUpdate")))' "$log"
+done <<'ROWS'
+missing|1: source read|.missing_evidence_boxes == [3]
+empty||.missing_evidence_boxes == [1,3]
+blank|1:   |.error == "done-when-evidence-file"
+duplicate|1: source read\n1: another read|.error == "done-when-evidence-file"
+malformed|source read|.error == "done-when-evidence-file"
+ROWS
+
 log="$TMP_ROOT/failed.jsonl"
 rc=0
-UPDATE_FAILS=1 run_complete "$boxes" "$log" CC-720 --summary "Shipped it" --done-when-met 3 \
-  >"$TMP_ROOT/failed.out" 2>"$TMP_ROOT/failed.err" || rc=$?
-assert_ne "a failed Done update fails the completion" "$rc" 0
-assert_file_contains "the retry after a failed Done update keeps --done-when-met" "$TMP_ROOT/failed.err" \
-  "Rerun 'issues.sh complete CC-720 --done-when-met 3' without summary flags"
+UPDATE_FAILS=1 run_complete "$boxes" "$log" CC-720 --summary proof --done-when-met all --evidence-file "$proof" >"$TMP_ROOT/failed.out" 2>"$TMP_ROOT/failed.err" || rc=$?
+assert_ne "a failed state update fails completion" "$rc" 0
+assert_jq "a failed update followed the summary" "$(jq -s . "$log")" '[.[] | select(.query | contains("commentCreate"))] | length == 1'
 
-# --- a number past the section's last box refuses before the summary post
 log="$TMP_ROOT/missing.jsonl"
 rc=0
-run_complete "$boxes" "$log" CC-720 --summary "Shipped it" --done-when-met 2,4 \
-  >"$TMP_ROOT/missing.out" 2>"$TMP_ROOT/missing.err" || rc=$?
-assert_ne "a box number past the section fails the completion" "$rc" 0
-assert_file_contains "the refusal names the missing box" "$TMP_ROOT/missing.err" \
-  "Done-when box not found in CC-720: 4"
-assert_not "a box number past the section refuses before any write" \
-  jq -s -e 'any(.[]; (.query | contains("commentCreate")) or (.query | contains("issueUpdate")))' "$log"
+run_complete "$boxes" "$log" CC-720 --summary proof --done-when-met 2,4 --evidence-file "$proof" >"$TMP_ROOT/missing.out" 2>"$TMP_ROOT/missing.err" || rc=$?
+assert_ne "an absent box refuses" "$rc" 0
+assert_jq "an absent box identifies its number" "$(cat "$TMP_ROOT/missing.err")" '.missing == [4]'
+assert_not "an absent box refuses before any write" jq -se 'any(.[]; (.query | contains("commentCreate")) or (.query | contains("issueUpdate")))' "$log"
 
-# --- a malformed value refuses before any request
 for value in 0 x 1,,2 "1, 2"; do
   log="$TMP_ROOT/malformed.jsonl"
   rc=0
-  run_complete "$boxes" "$log" CC-720 --done-when-met "$value" \
-    >"$TMP_ROOT/malformed.out" 2>"$TMP_ROOT/malformed.err" || rc=$?
-  assert_ne "--done-when-met '$value' fails" "$rc" 0
-  assert_not "--done-when-met '$value' refuses before any request" test -s "$log"
+  run_complete "$boxes" "$log" CC-720 --done-when-met "$value" >"$TMP_ROOT/malformed.out" 2>"$TMP_ROOT/malformed.err" || rc=$?
+  assert_ne "malformed box list refuses" "$rc" 0
+  assert_not "malformed box list refuses before any request" test -s "$log"
 done
 
-# --- no box to tick: Done alone, the description untouched
+# A section without checkboxes keeps ordinary completion behavior.
 plain="$TMP_ROOT/plain.md"
 printf '%s\n' '## Done when' '' '* a bullet with no box' >"$plain"
 log="$TMP_ROOT/plain.jsonl"
-out="$(run_complete "$plain" "$log" CC-720 --done-when-met all 2>"$TMP_ROOT/plain.err")"
-assert_jq "a Done-when with no box completes with zero ticked" "$out" \
-  '.success == true and .done_when_checked == 0'
-assert_jq "a Done-when with no box sends no description" "$(updates "$log")" \
-  '.variables.input.stateId == "state-done" and (.variables.input | has("description") | not)'
+out="$(run_complete "$plain" "$log" CC-720 --done-when-met all --evidence-file "$proof" 2>"$TMP_ROOT/plain.err")" || true
+assert_jq "an empty checklist has no new tick" "$out" '.done_when_checked == 0'
+assert_jq "an empty checklist sends no description" "$(updates "$log")" '.variables.input | has("description") | not'
 
-
-# Real API updates decide Done/Verifying from the remaining boxes, including
-# the integration already setting Done. The expected state IDs are literal.
 merged=2026-10-01T00:00:00Z
 post='Post-merge: Read deployment health; Where: live service health; Why after merge: the service runs the merged release; Deadline: 2026-10-04T00:00:00Z'
 verification="$TMP_ROOT/verification.md"
 printf '%s\n' '## Done when' '- [ ] branch proof' "- [ ] $post" >"$verification"
-for row in '1|state-verifying|false' 'all|state-done|true'; do
-  IFS='|' read -r met expected checked <<<"$row"
+for row in '1|state-verifying' 'all|state-done'; do
+  IFS='|' read -r met expected <<<"$row"
   log="$TMP_ROOT/verification-$met.jsonl"
-  rc=0
-  out="$(run_complete "$verification" "$log" CC-720 --post-merge-at "$merged" --done-when-met "$met" 2>"$TMP_ROOT/verification.err")" || rc=$?
-  assert_eq "post-merge $met completes successfully" "$rc" 0
-  update="$(updates "$log")"
-  assert_jq "post-merge $met sends the expected state ID" "$update" ".variables.input.stateId == \"$expected\""
-  assert_jq "post-merge $met preserves the open verification box" "$update" ".variables.input.description | contains(\"- [$([[ "$checked" == true ]] && echo x || echo ' ')] Post-merge:\")"
+  out="$(run_complete "$verification" "$log" CC-720 --post-merge-at "$merged" --done-when-met "$met" --evidence-file "$proof" 2>"$TMP_ROOT/verification.err")"
+  assert_jq "post-merge $met selects its state" "$(updates "$log")" ".variables.input.stateId == \"$expected\""
 done
-# Ordinary explicit completion still permits an open acceptance box.
 log="$TMP_ROOT/ordinary.jsonl"
-out="$(run_complete "$verification" "$log" CC-720 --done-when-met 1 2>"$TMP_ROOT/ordinary.err")"
-assert_jq "ordinary completion keeps Done semantics" "$(updates "$log")" '.variables.input.stateId == "state-done" and (.variables.input.description | contains("- [ ] Post-merge:"))'
+out="$(run_complete "$verification" "$log" CC-720 --done-when-met 1 --evidence-file "$proof" 2>"$TMP_ROOT/ordinary.err")" || true
+assert_jq "without merge flags an open post-merge box keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
 # CRLF is normalized before both numbering and deadline parsing.
 crlf="$TMP_ROOT/crlf.md"
 sed 's/$/\r/' "$verification" >"$crlf"
 log="$TMP_ROOT/crlf.jsonl"
 rc=0
-out="$(run_complete "$crlf" "$log" CC-720 --post-merge-at "$merged" --done-when-met 1 2>"$TMP_ROOT/crlf.err")" || rc=$?
+out="$(run_complete "$crlf" "$log" CC-720 --post-merge-at "$merged" --done-when-met 1 --evidence-file "$proof" 2>"$TMP_ROOT/crlf.err")" || rc=$?
 assert_eq "CRLF post-merge checklist is accepted" "$rc" 0
 assert_jq "CRLF checklist remains Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying" and (.variables.input.description | contains("\r") | not)'
 
@@ -192,7 +221,7 @@ parsed="$(done_when_parse "## Done when"$'\n'"- [ ] ${post/merged release/merged
 assert_jq "a semicolon in Why preserves the legacy form" "$parsed" '(.errors | length) == 0 and .boxes[0].trigger == "merge"'
 
 while IFS='|' read -r name trigger deadline; do
-  printf '%s\n' '## Done when' '- [x] branch proof' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
+  printf '%s\n' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
   log="$TMP_ROOT/trigger-$name.jsonl"
   rc=0
   run_complete "$TMP_ROOT/trigger.md" "$log" CC-720 --post-merge-at "$merged" >"$TMP_ROOT/trigger.out" 2>"$TMP_ROOT/trigger.err" || rc=$?
@@ -219,7 +248,7 @@ ROWS
 # Independent refusals must precede both the summary and the state mutation.
 # Columns: name | description's post-merge body | branch box checked | rule.
 while IFS='|' read -r name body branch rule; do
-  printf '%s\n' '## Done when' "- [$branch] branch proof" "- [ ] $body" >"$TMP_ROOT/invalid.md"
+  printf '%s\n' '## Done when' "- [$branch] branch proof" '  Evidence: branch source read' "- [ ] $body" >"$TMP_ROOT/invalid.md"
   log="$TMP_ROOT/invalid-$name.jsonl"
   rc=0
   run_complete "$TMP_ROOT/invalid.md" "$log" CC-720 --post-merge-at "$merged" --summary proof \

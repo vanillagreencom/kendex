@@ -83,6 +83,7 @@ case "$resource:$action" in
     [[ ! -e "$root/summary.posted" ]] || has_summary=true
     case "$mode" in
       exit) echo 'validator unavailable' >&2; exit 7 ;;
+      open-outcome) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":false,"unmet_branch_boxes":[1],"missing_evidence_boxes":[]}]}\n' ;;
       false) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":%s,"ok":false,"cause":"blocked"}]}\n' "$has_summary" ;;
       string_all_ok) printf '{"all_ok":"true","results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":true}]}\n' ;;
       missing_parent) printf '{"all_ok":true,"results":[]}\n' ;;
@@ -179,8 +180,16 @@ assert_eq "$out:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "closed PARENT-1:Done" 
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'open-outcome\n' > "$FAKE_LINEAR_ROOT/validation.mode"
+rc=0
+run_close >"$TMP_ROOT/outcome.out" 2>"$TMP_ROOT/outcome.err" || rc=$?
+assert_eq "$rc" 1 "an open outcome refuses container closure after every child completes"
+assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" 'In Progress' "an unproved outcome keeps its container open"
+assert_file_contains "$TMP_ROOT/outcome.err" '"unmet_branch_boxes":[1]' "the dependency’s refused outcome box reaches the caller"
+[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "an open outcome refuses before completion" || fail "an open outcome refuses before completion"
+printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
 out="$(run_close)"
-assert_eq "$out" "closed PARENT-1" "completed children close the container"
+assert_eq "$out" "closed PARENT-1" "the holder’s proved outcome allows container closure"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" "summary" "first completion posts the bundle summary"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/summary.calls")" "summary" "first completion posts one summary"
 assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR #101" "summary preserves the first child PR"
@@ -382,9 +391,6 @@ rc=0; FLOCK_TEST_RC=74 "$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>"$TMP_ROOT/flo
 assert_eq "$rc" "1" "operational flock error fails instead of deferring"
 assert_file_contains "$TMP_ROOT/flock-error.err" "container-close: lock-failed parent-id=PARENT-1 lock-rc=74" "operational flock error reports its status"
 [[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && pass "operational flock error stops before Linear access" || fail "operational flock error stops before Linear access"
-
-MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
-assert_file_contains "$MERGE_WORKFLOW" 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "merge-pr passes the shared main root"
 
 rc=0
 "$SCRIPT" >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?

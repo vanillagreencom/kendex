@@ -1,0 +1,1 @@
+- Parent issue templates include a shared-outcome box that only the holder ticks after a passing source read, with its evidence recorded below the box.

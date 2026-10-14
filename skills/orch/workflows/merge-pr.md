@@ -345,7 +345,7 @@ Use the output as `MAIN_REPO_ROOT`.
    1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
    2. Run § 3.3. With the head unmoved, return to step 1 and wait.
 
-2. **Complete the issue and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
+2. **Complete the issue and report its parent outcome** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
    The lane owns completion after merge. The overseer owns the remaining post-merge checks on the same item.
 
@@ -364,30 +364,16 @@ Use the output as `MAIN_REPO_ROOT`.
    Use that live UTC timestamp as `[MERGED_AT]`. An absent or unreadable timestamp is a tracker-completion failure.
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES]
+   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES] --evidence-file [EVIDENCE_FILE]
    ```
 
    A rate-limited completion is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds, never recorded as a failed step.
 
-   `[MET_BOXES]` names only boxes with recorded proof. A post-merge box the merged PR's own tests, CI or diff prove has that proof and closes here, not in Verifying. Use `all` only when every box has proof. Otherwise use their numbers in section order from 1, comma-separated. When no new box has proof, omit `--done-when-met`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
+   Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box. The text cites the recorded proof. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. `[MET_BOXES]` names only boxes with recorded proof. A post-merge box the merged PR's own tests, CI or diff prove has that proof and closes here, not in Verifying. Use `all` only when every box has proof. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 
-   **The container closes LAST.** If `[ISSUE]` was the final open child of a container parent, complete the container now. Skip when no `[ISSUE]` was extracted.
-
-   a. Read `.parent_id` (`issues get [ISSUE]`). Empty → step 3. b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3. c. Close the container through the serialized helper:
-
-      ```bash
-      env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
-      ```
-
-      `closed [PARENT_ID]` → record the closure in § 6 with every stderr diagnostic from the helper. If this container has a container parent, repeat a-c for that parent.
-
-      `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6 and continue to step 3. When `[ISSUE]` is among `[CHILD_IDS]`, read its state live. Verifying → report `container [PARENT_ID] awaits verification of [ISSUE]`; the overseer closes the container after verification sets the child Done, under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds). Any other open state → report `closure for [ISSUE] has not propagated; rerun merge-pr`. A failed state read remains a tracker failure. A bare `deferred` means the 120-second lock wait expired; report that and continue.
-
-      `held [PARENT_ID] [REQUESTS_RESET]` → Linear rate-limited the completion. Hold this helper command under the linear skill's `patterns/workflow-actions.md` § Quota Holds; the helper keeps the bundle summary it built, which its next run posts only where the parent still has none. The rerun's output routes through this list. When the hold returns the command instead, record `container [PARENT_ID] held until [REQUESTS_RESET]; rerun merge-pr after it` in § 6, or `container [PARENT_ID] held; Linear gave no reset time` where `[REQUESTS_RESET]` is `unavailable`, with the helper's stderr diagnostics, do not climb to another parent, and continue to step 3.
-
-      On a non-zero exit, carry its diagnostic into § 6, do not climb to another parent, and continue to step 3; the container stays OPEN and the close is safe to repeat once the diagnostic's cause is gone — a failed `gh pr list` among them — so report `container [PARENT_ID] stays open; rerun merge-pr to close it`. Re-running costs nothing when the parent is already complete: the helper short-circuits to `closed`.
+   **The container outcome is due for its holder’s read.** Read `.parent_id` from the live issue. If it is empty, continue to step 3. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR. Without that marker, children or an `agent:multi` label make it a container. For a container whose children are complete, record `container [PARENT_ID] outcome due for holder read` in § 6. Its holder reads the shared outcome through [oversee-events.md § Verification](../references/oversee-events.md#event-kinds). The last child’s merge supplies no outcome evidence. Repeat this classification for container ancestors. An unreadable parent is a tracker failure.
 
 3. **Sync the main repo** — always runs after a merge.
 
@@ -497,7 +483,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 |-------|-------|
 | Branch | [BRANCH_NAME] (deleted / kept) |
 | Issue Tracker | [ISSUE_ID] → Done / still open — [tracker result or cause from § 5 step 2] |
-| Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
+| Container | [PARENT_ID]: outcome due for holder read / pending children / read failure |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 tmp/ close-out: [KEPT_LINE_OR_FIRST_REFUSAL_LINE]

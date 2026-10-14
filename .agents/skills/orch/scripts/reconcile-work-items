@@ -9,8 +9,7 @@
 # the Linear API key reaches where none is set, read live through the linear
 # skill (`issues list --max [--team]`, archived and trashed issues excluded):
 #   container-parked  a parent in a non-terminal state whose non-canceled
-#                     children are all Done — the close that only merge-pr § 5
-#                     performs never ran
+#                     children are all Done; its holder owes an outcome read
 #   merged-in-review  an In Review item whose branch-named PRs are all merged
 #                     (at least one), at any age — no later step moves it
 #   started-stale     an In Progress / In Review item untouched for longer
@@ -19,9 +18,9 @@
 #   done-unchecked    a Done item whose description still carries unchecked
 #                     `- [ ]` acceptance criteria — a partial-scope PR's
 #                     `Closes` magic word closed it
-#   verifying         open post-merge boxes, with their status and UTC date
+#   verifying         open post-merge or container outcome boxes and their status
 #   verifying-counts  totals for due, overdue, blocked and waiting boxes
-#   verifying-empty   a Verifying issue with no open post-merge box
+#   verifying-empty   a Verifying issue or container with no unproved box
 #   verifying-invalid a Verifying description missing required box metadata or
 #                     still holding open branch-provable work
 #   verifying-merge-unread a release item with no merged PR on its local branch;
@@ -78,7 +77,7 @@ message() {
     clock-failed) printf 'The current time could not be read.\n' ;;
     invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
     pr-probe-failed) printf 'The pull request probe failed. The issue PR state remains unverified.\n' ;;
-    container-parked) printf 'All non-canceled children are Done. Close the parent or state why it remains open.\n' ;;
+    container-parked) printf 'All non-canceled children are Done. Its holder must read the shared outcome and record evidence before closure.\n' ;;
     merged-in-review) printf 'Every linked pull request has merged. Complete it with `issues complete --post-merge-at <mergedAt>`, which moves it to Done or Verifying.\n' ;;
     started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
@@ -146,24 +145,14 @@ note() { findings=$((findings + 1)); message "$@"; }
 # Non-terminal parents whose non-canceled children (by parent identifier) are
 # all completed. Trashed/archived rows never count as children or parents.
 
-jq -r '
-  map(select((.trashed // false) == false and .archivedAt == null)) as $live
-  | ($live | map(select(.parent.identifier != null))) as $children
-  | ($children | group_by(.parent.identifier)) as $broods
-  | $broods[]
-  | .[0].parent.identifier as $pid
-  | (map(select(.state.type != "canceled"))) as $countable
-  | select(($countable | length) > 0 and ($countable | all(.state.type == "completed")))
-  | ($live[] | select(.identifier == $pid)) as $parent
-  | select($parent.state.type != "completed" and $parent.state.type != "canceled")
-  # A "(one PR)" root is a single-PR bundle, not a container: its children go
-  # Done while the root stays open until ITS PR merges, so an open root with
-  # Done children is that contract working, not a parked container.
-  | select($parent.title | test("\\(one PR\\)"; "i") | not)
-  | [$parent.identifier, $parent.title, $parent.state.name] | @tsv
-' "$ISSUES" >"$TMPD/containers" || config_error scan-failed scan=container
-while IFS=$'\t' read -r pid ptitle pstate; do
-  [ -n "$pid" ] || continue
+safe_issues="$(jq -c '{issues:{nodes: map(select((.trashed // false) == false and .archivedAt == null))}}' "$ISSUES")" \
+  || config_error scan-failed scan=container
+safe_issues="$(format_issues_list "$safe_issues")" || config_error scan-failed scan=container
+verifying_containers "$safe_issues" >"$TMPD/containers" || config_error scan-failed scan=container
+while IFS= read -r row; do
+  [ -n "$row" ] || continue
+  fields="$(jq -r '[.id, .title, .state] | @tsv' <<<"$row")" || config_error scan-failed scan=container
+  IFS=$'\t' read -r pid ptitle pstate <<<"$fields"
   note container-parked "issue=$pid" "state=$pstate" "title=$ptitle"
 done <"$TMPD/containers"
 
@@ -250,13 +239,13 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
 done <"$TMPD/started"
 
 # --- verifying ---------------------------------------------------------------
-jq -c '.[] | select((.trashed // false) == false and .archivedAt == null and .state.name == "Verifying")' \
-  "$ISSUES" >"$TMPD/verifying" || config_error scan-failed scan=verifying
+jq -c '.[] | select(.state == "Verifying")' <<<"$safe_issues" >"$TMPD/verifying-leaves" || config_error scan-failed scan=verifying
+jq -cs 'group_by(.id) | map(max_by(.container // false)) | .[]' "$TMPD/verifying-leaves" "$TMPD/containers" \
+  >"$TMPD/verifying" || config_error scan-failed scan=verifying
 verifying_counts='{"due":0,"overdue":0,"blocked":0,"waiting":0,"items":0}'
 while IFS= read -r row; do
   [ -n "$row" ] || continue
-  safe="$(jq -c '{issues:{nodes:[.]}}' <<<"$row")" || config_error scan-failed scan=verifying
-  safe="$(format_issues_list "$safe" | jq -c '.[0]')" || config_error scan-failed scan=verifying
+  safe="$row"
   iid="$(jq -r '.id' <<<"$safe")" || config_error scan-failed scan=verifying
   verifying_counts="$(jq -c '.items += 1' <<<"$verifying_counts")" || config_error scan-failed scan=verifying
   if ! boxes="$(verifying_parse "$safe" 2>"$TMPD/verifying.err")"; then
