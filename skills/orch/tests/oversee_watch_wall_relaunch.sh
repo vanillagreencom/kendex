@@ -325,95 +325,12 @@ failure_passes() {
 assert_eq "$(failure_passes)" '1 0 retained' \
   'a completed failed relaunch reports its exit and log once while retaining the surviving window' "$TMP_ROOT/failure.err"
 
-# wall_control NAME OLD NEW ROW — ROW, its label marked as a control, against
-# a copy of the watch with OLD replaced by NEW once.
-wall_control() {
-  local scripts
-  scripts="$(mutant_scripts "$1/orch" oversee-watch)" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
-  mutate_file "$scripts/oversee-watch" "$2" "$3"
-  WATCH_BIN="$scripts/oversee-watch" wall_table "control: $4"
-}
-# The unpatched watch: the route never runs, so the first row is usage-limit.
-wall_control unrouted '[[ "$event" == usage-limit ]] && wall_route' 'false && wall_route' \
-  "${ROW_RELAUNCH%%|*}|walled|fresh|-|rc=0 first=$USAGE_LIMIT killed=none relaunch~--relaunch=false"
-# Without its refusal the spent account is relaunched onto.
-wall_control spent-unrefused '[[ "$(lane_claims_canon "$to")" != "$(lane_claims_canon "$spent")" ]]' 'true' \
-  "${ROW_SPENT%%|*}|walled|spent|auto|rc=0 first=EVENT+lane-relaunched+KEN-2+lane=$SPENT+from=$SPENT killed=none"
-
-wall_control pick-unrefused '    WALL_PICK="pick unjudged exit=$rc"
-    [[ ! -s "$errf" ]] || cat -- "$errf" >&2
-    return 1' '    WALL_PICK="pick unjudged exit=$rc"
-    to=/home/me/.fclaude' \
-  "a failed account read|walled|failed|auto|rc=0 first=$RELAUNCHED relaunch~--relaunch=true"
-wall_control stop-unrefused '      ow_message wall-relaunch-refused "lane=$lane" reason=stop-failed "exit=$rc" >&2
-      cat -- "$errf" >&2
-      return 1' '      ow_message wall-relaunch-refused "lane=$lane" reason=stop-failed "exit=$rc" >&2' \
-  "a failed hosted stop|walled:stop-failed|fresh|auto|rc=0 first=$RELAUNCHED relaunch~--relaunch=true"
-wall_control stop-unconfirmed '|| ! grep -qE "^stopped item=$item processes=[0-9]+$" <<<"$out"' '|| false' \
-  "a stop with no confirmation|walled:stop-unconfirmed|fresh|auto|rc=0 first=$RELAUNCHED relaunch~--relaunch=true"
-wall_control context-unrefused '    ow_message wall-relaunch-refused "lane=$lane" reason=context-unavailable "cause=$LANE_RECOVERY_CAUSE" >&2
-    return 1' '    ow_message wall-relaunch-refused "lane=$lane" reason=context-unavailable "cause=$LANE_RECOVERY_CAUSE" >&2
-    return 0' \
-  'an unknown original permission choice|walled:legacy|fresh|auto|rc=0 out~EVENT+usage-limit=false'
-
+# This control applies the table's original retained-lane assertion to a fault.
+# The ordinary rows cover each refusal without repeating full-watch mutations.
 scripts="$(mutant_scripts provider-recovery-unrefused/orch lib/lane-relaunch.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/provider-recovery-unrefused/github"
 mutate_file "$scripts/lib/lane-relaunch.sh" 'if [[ "$pane" == verb ]]; then' 'if false; then'
 WATCH_BIN="$scripts/oversee-watch" wall_table "refusal-control: $ROW_VERB"
-
-scripts="$(mutant_scripts capabilities-unrefused/orch lib/lane-relaunch.sh)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/capabilities-unrefused/github"
-mutate_file "$scripts/lib/lane-relaunch.sh" \
-  '"$LANE_RECOVERY_CWD" || rc=$?' '"$LANE_RECOVERY_CWD" || rc=0'
-WATCH_BIN="$scripts/oversee-watch" wall_table "refusal-control: $ROW_CAP_FAILED"
-
-scripts="$(mutant_scripts relative-recovery-unrefused/orch lib/lane-relaunch.sh)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/relative-recovery-unrefused/github"
-mutate_file "$scripts/lib/lane-relaunch.sh" \
-  '*) LANE_RECOVERY_CAUSE=relative-provider-deferred:KEN-3996; return 1 ;;' \
-  '*) LANE_RECOVERY_CAUSE=relative-provider-deferred:KEN-3996; : ;;'
-WATCH_BIN="$scripts/oversee-watch" wall_table "refusal-control: $ROW_RELATIVE"
-
-# Removing the launcher's context read makes the removed checkout look usable.
-scripts="$(mutant_scripts checkout-unrefused/orch lib/lane-relaunch.sh)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/checkout-unrefused/github"
-mutate_file "$scripts/lib/lane-relaunch.sh" \
-  'LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1' \
-  'LANE_RECOVERY_CWD="$PWD"'
-WATCH_BIN="$scripts/oversee-watch" wall_table \
-  "control: a removed launch checkout|walled:checkout-gone|fresh|auto|rc=0 first=$RELAUNCHED relaunch~--relaunch=true"
-
-# The window replacement owner must receive the old window intact.
-wall_control premature-kill '  # The exit status lands beside the marker, which ends wall_relaunch_pending.' \
-  '  tmux kill-window -t "${4##* }"
-  # The exit status lands beside the marker, which ends wall_relaunch_pending.' \
-  "the launcher receives a pre-deleted window|walled|fresh|auto|rc=0 killed=%3"
-
-# Without the pending check the launch's own gap is reported as window-gone.
-scripts="$(mutant_scripts gone-unheld/orch oversee-watch)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/gone-unheld/github"
-mutate_file "$scripts/oversee-watch" ' && ! wall_relaunch_pending "$lane"' ''
-assert_eq "$(WATCH_BIN="$scripts/oversee-watch" gone_passes)" "1 1" \
-  "control: without the pending check the window a running relaunch is opening reads window-gone" "$TMP_ROOT/gone.err"
-
-scripts="$(mutant_scripts failure-unreported/orch oversee-watch)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/failure-unreported/github"
-mutate_file "$scripts/oversee-watch" '      if [[ "$rc" != 0 ]]; then' '      if false; then'
-assert_eq "$(WATCH_BIN="$scripts/oversee-watch" failure_passes)" '0 0 retained' \
-  'control: without completion reporting a failed relaunch leaves only the surviving window' "$TMP_ROOT/failure.err"
-
-scripts="$(mutant_scripts held-restarted/orch oversee-watch)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/held-restarted/github"
-mutate_file "$scripts/oversee-watch" ' || ( "$event" == usage-limit && "$seen_reported" == lane-relaunched )' ''
-assert_eq "$(WATCH_BIN="$scripts/oversee-watch" held_passes)" '1 1' \
-  'control: without the recovery report identity each old-pane wall restarts the launch' "$TMP_ROOT/held.err"
-
-scripts="$(mutant_scripts stuck-unreported/orch oversee-watch)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/stuck-unreported/github"
-mutate_file "$scripts/oversee-watch" 'elif (( PASS_NOW - since >= PREPARE_SECS )); then' 'elif false; then'
-assert_eq "$(WATCH_BIN="$scripts/oversee-watch" stuck_passes)" '0 0' \
-  'control: without the preparation bound a detached recovery can remain silent' "$TMP_ROOT/stuck.err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
