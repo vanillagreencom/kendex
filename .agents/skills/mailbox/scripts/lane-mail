@@ -654,6 +654,7 @@ esac
 
 ITEM=""
 FILE=""
+FILE_GIVEN=""
 OPTIONS=""
 OPTS_GIVEN=""
 ROOT=""
@@ -700,7 +701,13 @@ while [ "$#" -gt 0 ]; do
     --item) need_val "$@"; ITEM="$2"; shift 2 ;;
     --issue) need_val "$@"; ISSUE="$2"; shift 2 ;;
     --do) [ "$#" -ge 2 ] || refuse owner-action-missing --do; OWNER_DO="$2"; shift 2 ;;
-    --file) need_val "$@"; FILE="$2"; shift 2 ;;
+    --file | --text)
+      need_val "$@"; FILE_GIVEN="$2"; FILE="$2"
+      case "$FILE" in
+        /*) ;;
+        *) FILE="$(pwd -P)/$FILE" || refuse root-unresolved . ;;
+      esac
+      shift 2 ;;
     --options) need_val "$@"; OPTIONS="$2"; shift 2 ;;
     --root) need_val "$@"; ROOT="$2"; shift 2 ;;
     --repo) need_val "$@"; REPO="$2"; shift 2 ;;
@@ -725,7 +732,6 @@ while [ "$#" -gt 0 ]; do
     --draft) need_val "$@"; DRAFT="$2"; shift 2 ;;
     --reserved) RESERVED=1; shift ;;
     --due) DUE=1; shift ;;
-    --text) need_val "$@"; FILE="$2"; shift 2 ;;
     --default) DEFAULT=1; shift ;;
     --delivery-id) need_val "$@"; DELIVERY_ID="$2"; shift 2 ;;
     --thread-ts) need_val "$@"; THREAD_TS="$2"; shift 2 ;;
@@ -1915,7 +1921,8 @@ lm_append_host() { # FILE LINE
 
 lm_read_file() {
   [ -n "$FILE" ] || refuse option-required --file
-  { [ -f "$FILE" ] && [ -r "$FILE" ]; } || refuse file-unreadable "$FILE"
+  { [ -f "$FILE" ] && [ -r "$FILE" ]; } ||
+    REFUSE_EXTRA="resolved=$FILE" refuse file-unreadable "$FILE_GIVEN"
 }
 
 lm_after() { # VALUE

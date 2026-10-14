@@ -1,0 +1,1 @@
+- Resolve lane-mail message paths against the caller's directory before reading them. An unreadable-file refusal names both the given path and the resolved path.
