@@ -12,9 +12,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-lane-world.sh"
 
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
 CAPS=$'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb'
+mv "$OT_STUB_BIN/ssh" "$OT_STUB_BIN/ssh-handoff"
 cat > "$OT_STUB_BIN/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "$*" != *'workflow-state handoff-standing '* ]] || exec "${0%/*}/ssh-handoff" "$@"
 printf '%s\n' "$*" > "$LANE_HOST_STUB_LOG.ssh"
 [[ "$1" == -T && "$2" == -o && "$3" == BatchMode=yes && "$4" == -- && $# == 6 ]] || exit 1
 [[ -z "$(cat)" ]] || exit 1

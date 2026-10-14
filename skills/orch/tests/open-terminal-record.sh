@@ -123,6 +123,9 @@ esac
 exit 0
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/lanes" "$BIN/claude" "$BIN/kendex" "$BIN/tmux"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-stubs.sh"
+ot_stub_bin "$TMP_ROOT/handoff-bin"
+ln -s "$TMP_ROOT/handoff-bin/ssh" "$BIN/ssh"
 export TERMINAL=ghostty
 PROC_BIN="$TMP_ROOT/proc-bin"
 proc_table_install "$PROC_BIN"
@@ -193,7 +196,7 @@ run_ot() {
   rm -f -- "${TMP_ROOT:?}/pasted"
   rm -f -- "${TMP_ROOT:?}/pane-buffer"
   set +e
-  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" STUB_PANE_BUFFER="$TMP_ROOT/pane-buffer" \
+  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OT_TMUX_LOG="$TMP_ROOT/handoff" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" STUB_PANE_BUFFER="$TMP_ROOT/pane-buffer" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
     STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" STUB_PANE_PID="${STUB_PANE_PID:-}" STUB_CLAUDE_HOLD="${STUB_CLAUDE_HOLD:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
@@ -1037,8 +1040,8 @@ assert_eq "rc=$RC refused=$(grep -c '^open-terminal: host-prepare-failed item=CC
 
 # A hosted codex relaunch that resumes carries no continuation line;
 # resume-lineless must reach the caller, so that relaunch waits in the
-# foreground even in a fleet. One whose record names claude starts fresh on its
-# start brief, which carries the line, so it is handed off like any launch.
+# foreground even in a fleet. A harness switch starts fresh after the same
+# foreground preparation wait.
 CODEX_RELAUNCH=(-- --relaunch --launch-flags "-m gpt-5 -c model_reasoning_effort=high")
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 LANE_HOST_STUB_SELECTION=resume STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) handed=$(grep -c '^open-terminal: lane-preparing ' <<<"$OUT" || true) lineless=$(grep -c '^open-terminal: resume-lineless item=CC-83 harness=codex$' <<<"$ERR" || true) record=$(prepared CC-83)" \
@@ -1057,14 +1060,8 @@ assert_eq "rc=$RC record=$(prepared CC-83)" "rc=0 record=running none none" \
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-87", harness: "claude", status: "running"}]' >/dev/null
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-87 STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC handed=$(grep -c '^open-terminal: lane-preparing item=CC-87 ' <<<"$OUT" || true) lineless=$(grep -c 'resume-lineless' <<<"$ERR" || true) record=$(settled CC-87)" \
-  "rc=0 handed=1 lineless=0 record=running prepare none" \
-  "a hosted codex relaunch across a harness switch starts fresh and is handed off"
-LINELESS_MUTANT="$(mutant_scripts lineless-mutant open-terminal)" || exit 1
-mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
-"$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-88", harness: "claude", status: "running"}]' >/dev/null
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-88 STUB_HARNESS_TEXT='Working (esc to interrupt)' -- SCRIPT="$LINELESS_MUTANT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
-assert_eq "handed=$(grep -c '^open-terminal: lane-preparing item=CC-88 ' <<<"$OUT" || true)" "handed=0" \
-  "control: gated on every hosted codex relaunch the switched one waits in the foreground"
+  "rc=0 handed=0 lineless=0 record=running none none" \
+  "a hosted codex relaunch across a harness switch starts fresh after foreground preparation"
 
 # lane-host refuses a call at its per-home cap once every slot stays taken. A
 # slot naming this suite's own shell, alive throughout, fills a cap of 1 in a

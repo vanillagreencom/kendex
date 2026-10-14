@@ -437,7 +437,7 @@ assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and 
 # where the box's /dev/stderr open reopens the file: where it duplicates the
 # descriptor, the mutant truncates nothing and the control stands down.
 stage "$TMP_ROOT/stderr-ctrl"
-mutate_file "$TMP_ROOT/stderr-ctrl/scripts/open-terminal" 'lane_handoff_standing "$3" "" ' 'lane_handoff_standing "$3" /dev/stderr '
+mutate_file "$TMP_ROOT/stderr-ctrl/scripts/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE"' 'lane_handoff_standing "$3" /dev/stderr "$WORKFLOW_STATE"'
 STDERR_REOPEN="$(stderr_reopen)"
 case "$STDERR_REOPEN" in
   truncates)
