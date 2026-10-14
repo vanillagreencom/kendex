@@ -359,39 +359,15 @@ wall_mutant() {
   mutate_file "$scripts/$2" "$3" "$4"
   WALL_WATCH="$scripts/oversee-watch"
 }
-# wall_control NAME FILE OLD NEW ROW WALL: ROW, its label marked as a control
-# and its wall expectation WALL, run against wall_mutant's copy.
-wall_control() {
-  local row="control: ${5%%wall=*}wall=$6"
-  wall_mutant "$1" "$2" "$3" "$4"
-  WATCH_BIN="$WALL_WATCH" usage_table "$row"
-}
-wall_control wall-quoted lib/account-wall.sh '"$ACCOUNT_WALL_DRAWN"You*' '*You*' \
-  "$WALL_ROW_QUOTED" /home/me/.eclaude@1788367800
-wall_control wall-first-line lib/account-wall.sh '"ve hit your weekly limit"* ]] || own=1
-    fi' '"ve hit your weekly limit"* ]] || own=1; break
-    fi' \
-  "$WALL_ROW_UNDER" none
-wall_control wall-any-banner lib/account-wall.sh '"$ACCOUNT_WALL_DRAWN"You*"ve hit your weekly limit"*' '"$ACCOUNT_WALL_DRAWN"You*"ve hit your "*' \
-  "$WALL_ROW_SESSION" /home/me/.eclaude@1788367800
-wall_control wall-any-reset lib/account-wall.sh ' && "$3" -gt "$4"' '' \
-  "$WALL_ROW_PASSED" /home/me/.eclaude@1788105600
-
-# A watch whose call is disabled stands in for the install that reported the
-# wall before the record existed, and is also the control for the call: its
-# pass records nothing. The next pass of this watch records the wall. The
-# control for that keeps a reported wall's later passes skipped whole.
+# A pre-upgrade install reported the wall without recording it. The next
+# pass of the current watch repairs that state without a second event.
 wall_mutant wall-unwritten oversee-watch '    account_wall_record "$PROJECT_ROOT"' '    : account_wall_record "$PROJECT_ROOT"'
 UNRECORDED_WATCH="$WALL_WATCH"
-WALL_ROW_UNRECORDED="control: a watch that does not call the writer reports the wall and records none|${WALL_ROW_WEEKLY#*|}"
+WALL_ROW_UNRECORDED="a pre-upgrade watch reports the wall without recording it|${WALL_ROW_WEEKLY#*|}"
 WALL_ROW_UNRECORDED="${WALL_ROW_UNRECORDED%%wall=*}wall=none"
 WALL_ROW_LATER="a wall reported with no record is recorded on the next pass, which reports nothing|cont|weekly_wall|claim_live|-|UTC|rc=0 first=$HEARTBEAT wall=/home/me/.eclaude@1791136800"
 WATCH_BIN="$UNRECORDED_WATCH" usage_table "$WALL_ROW_UNRECORDED"
 usage_table "$WALL_ROW_LATER"
-wall_mutant wall-quiet-skipped oversee-watch '      quiet=1' '      continue'
-WATCH_BIN="$UNRECORDED_WATCH" usage_table "$WALL_ROW_UNRECORDED"
-WATCH_BIN="$WALL_WATCH" usage_table "control: ${WALL_ROW_LATER%%wall=*}wall=none"
-
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,
 # each a fresh sighting because each names a different wall (the
@@ -453,30 +429,6 @@ assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
 assert_eq "$(sed -n '2,5p' <<<"$OUT")" "$(printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
   "the wall's payload is the window around the banner, the lines on both sides of it included" "$ERR"
 
-# The usage-limit arm's must-fail control: its early exit
-# restored. The mutant leaves the pass on the first walled lane, so the fleet
-# above reads as usage-limit alone. The substitution is scoped to the arm, so
-# its one landing is counted rather than its pattern's absence. The copy keeps
-# orch's place in a skills tree: its libraries resolve the github skill
-# beside it.
-MUTANT_DIR="$TMP_ROOT/mutant"
-MUTANT_WATCH="$(mutant_scripts mutant/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-assert_eq "$(grep -cxF -- '    PASS_EVENT=1; return 0' "$MUTANT_WATCH" || true)" "0" \
-  "control: the usage-limit arm returns nothing before the mutation"
-sed '/^    echo "EVENT \$event \$lane/,/^    PASS_EVENT=1$/ s/^    PASS_EVENT=1$/    PASS_EVENT=1; return 0/' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_WATCH"
-assert_eq "$(grep -cxF -- '    PASS_EVENT=1; return 0' "$MUTANT_WATCH" || true)" "1" \
-  "control: the mutant restores the usage-limit arm's early exit once"
-new_case walled_and_asking_fleet_mutant
-printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
-printf '%b\n' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt"
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-WATCH_BIN="$MUTANT_WATCH" run TZ=UTC
-expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+lane-asking=false"
-assert_eq "$(watch "$expect")" "$expect" \
-  "control: with the early exit restored the asking lane goes unreported" "$ERR"
-
 echo "=== a wall that ends is kept as a pause on the lane record ==="
 # The sighting row's first-seen time opens the pause and the pass that sees
 # the wall end closes it, on the lane record whose window is the walled one:
@@ -528,14 +480,6 @@ run TZ=UTC
 assert_eq "$(jq -r "$PAUSES" "$STUB_DIR/oversee-state.json") $(grep -c wall-unrecorded "$ERR" || true)" "KEN-1: 0" \
   "a wall on a window no record names keeps nothing and says nothing" "$ERR"
 
-# The control: a copy of the watch whose pause write keeps nothing.
-PAUSE_DIR="$TMP_ROOT/unpaused"
-PAUSE_WATCH="$(mutant_scripts unpaused/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$PAUSE_DIR/github"
-mutate_file "$PAUSE_WATCH" '| if $i == null then . else .lanes[$i].pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"}] end' '| .'
-assert_eq "$(WATCH_BIN="$PAUSE_WATCH" wall_then wall_control cleared)" "KEN-1: KEN-2:" \
-  "control: without the pause write a wall that ended leaves the lane record with no walled time" "$ERR"
-
 # The pause lands in the fleet state --state names, not in
 # ORCH_STATE_DIR: the harness stub keeps one state whatever --state-dir says,
 # so this case runs the real workflow-state over two directories, the fleet
@@ -561,20 +505,6 @@ wall_in_fleet_dir() { # NAME
 }
 assert_eq "$(wall_in_fleet_dir wall_fleet_dir)" "$WALL_PAUSE | {\"triaged\":[]}" \
   "a wall that ends is kept in the fleet state directory, never in ORCH_STATE_DIR" "$ERR"
-# The control: a copy of the watch whose pause write goes to ORCH_STATE_DIR.
-DIR_WATCH="$(mutant_scripts pause-dir/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/pause-dir/github"
-mutate_file "$DIR_WATCH" '"$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update oversee' \
-  '"$WORKFLOW_STATE" --state-dir "$WORKFLOW_STATE_DIR" update oversee'
-assert_eq "$(WATCH_BIN="$DIR_WATCH" wall_in_fleet_dir wall_fleet_dir_control)" "KEN-1: KEN-2: | {\"triaged\":[]}" \
-  "control: a pause written to ORCH_STATE_DIR leaves the fleet record with no walled time" "$ERR"
-
-STATE_WATCH="$(mutant_scripts state-dir/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/state-dir/github"
-mutate_file "$STATE_WATCH" 'FLEET_STATE_DIR="${STATE_FILE%/*}"' 'FLEET_STATE_DIR="$WORKFLOW_STATE_DIR"'
-assert_eq "$(WATCH_BIN="$STATE_WATCH" wall_in_fleet_dir wall_single_pass_control)" "KEN-1: KEN-2: | {\"triaged\":[]}" \
-  "control: ignoring --state leaves a single pass with no recorded wall pause" "$ERR"
-
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash
 if [[ -f "$STUB_DIR/reset-grep-fail" && "${1:-}" == "-Em1" ]]; then

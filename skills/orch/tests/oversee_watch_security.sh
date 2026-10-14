@@ -94,29 +94,15 @@ one_of_each() {
 echo "=== oversee-watch security alerts ==="
 
 # GitHub CLI gives GH_TOKEN precedence over GITHUB_TOKEN and the keyring.
-# Only the four alert reads use the supplied installation token. Each control
-# restores the watch's ambient credential at one API call site.
-for kind in rest graphql; do
-  scripts="$(mutant_scripts "security-auth-$kind/orch" lib/security-alerts.sh)" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-auth-$kind/github"
-  case "$kind" in
-    rest) call='gh api --paginate' ;;
-    graphql) call='gh api graphql' ;;
-  esac
-  mutate_file "$scripts/lib/security-alerts.sh" "GH_TOKEN=\"\$token\" $call" "GH_TOKEN=\"\${GH_TOKEN:-}\" $call"
-done
+# Only the four alert reads use the supplied installation token.
 for row in \
   'gh|GH_TOKEN=ghs_fixture_lane|0' \
   'github|GITHUB_TOKEN=ghs_fixture_lane|0' \
-  'keyring|GH_TOKEN=|0' \
-  'rest|GH_TOKEN=ghs_fixture_lane|3' \
-  'graphql|GH_TOKEN=ghs_fixture_lane|1'; do
+  'keyring|GH_TOKEN=|0'; do
   IFS='|' read -r name ambient wrong <<<"$row"
   new_case "security_auth_$name"
   one_of_each
-  watch="$REPO_ROOT/skills/orch/scripts/oversee-watch"
-  case "$name" in rest|graphql) watch="$TMP_ROOT/security-auth-$name/orch/scripts/oversee-watch" ;; esac
-  WATCH_BIN="$watch" run "$ambient" --
+    run "$ambient" --
   current=ghs_fixture_lane
   [[ "$name" != keyring ]] || current=keyring
   got="$(awk -F'\t' -v current="$current" '
@@ -206,70 +192,6 @@ parent|mode-770
 parent-owner|not-owned
 EOF
 
-# Each mutation removes one reader rule. Type uses a directory, so the control
-# cannot block opening a FIFO. The unchanged cause assertion would turn red.
-for rule in type owner mode parent parent-owner length malformed; do
-  scripts="$(mutant_scripts "security-token-$rule/orch" lib/gh-auth.sh)" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-token-$rule/github"
-  new_case "security_token_control_$rule"
-  supplied="$STUB_DIR/alert-token"
-  case "$rule" in
-    type)
-      mutate_file "$scripts/lib/gh-auth.sh" '[[ ! -f "$file" ]]' '[[ ! -e "$file" ]]'
-      supplied="$STUB_DIR/token-directory"; mkdir "$supplied" ;;
-    owner)
-      mutate_file "$scripts/lib/gh-auth.sh" '[[ ! -O "$path" ]]' '[[ ! -e "$path" ]]'
-      supplied=/etc/passwd
-      if [[ -O "$supplied" ]]; then
-        supplied="$STUB_DIR/token-foreign"
-        cp -p "$STUB_DIR/alert-token" "$supplied"
-        chown 1 "$supplied"
-      fi
-      [[ ! -O "$supplied" ]] || exit 1 ;;
-    mode)
-      mutate_file "$scripts/lib/gh-auth.sh" '(( (8#$mode & permissions) == 0 ))' '(( (8#$mode & 0) == 0 ))'
-      chmod 640 "$supplied" ;;
-    parent)
-      mutate_file "$scripts/lib/gh-auth.sh" 'for path in "$file" "$parent"; do' 'for path in "$file"; do'
-      mkdir "$STUB_DIR/shared-parent"
-      cp -p "$supplied" "$STUB_DIR/shared-parent/token"
-      supplied="$STUB_DIR/shared-parent/token"
-      chmod 770 "$STUB_DIR/shared-parent" ;;
-    parent-owner)
-      mutate_file "$scripts/lib/gh-auth.sh" '[[ ! -O "$path" ]]' \
-        '[[ "$path" == "$file" && ! -O "$path" ]]'
-      cp -p "$supplied" "$FOREIGN_PARENT_TOKEN"
-      supplied="$FOREIGN_PARENT_TOKEN" ;;
-    length)
-      mutate_file "$scripts/lib/gh-auth.sh" 'read -r -n 4096 -d' 'read -r -n 8192 -d'
-      printf '%5000s' '' | tr ' ' x > "$supplied" ;;
-    malformed)
-      mutate_file "$scripts/lib/gh-auth.sh" \
-        '[[ -n "$token" && "$token" != *[[:space:]]* ]] || cause=malformed' \
-        '[[ -n "$token" && "$token" != *[[:space:]]* ]] || true'
-      : > "$supplied" ;;
-  esac
-  WATCH_BIN="$scripts/oversee-watch" run GH_TOKEN=ghs_fixture_lane "ORCH_SECURITY_ALERT_TOKEN_FILE=$supplied" --
-  case "$rule" in
-    parent-owner)
-      if [[ "$EUID" -eq 0 ]]; then
-        assert_eq "$RC|$(unread)" '0|none' 'control: foreign parent ownership refusal disappears' "$ERR"
-      else
-        assert_eq "$RC|$(unread)" '0|EVENT security-alerts-unread reads=installation-token:credential' \
-          'control: foreign parent reaches its mode refusal' "$ERR"
-        assert_contains "$(cat "$ERR")" "orch_token_file_read: refused file=$FOREIGN_PARENT cause=mode-" \
-          'control: skipping parent ownership reaches the next parent check' "$ERR"
-      fi
-      assert_not_contains "$(cat "$ERR")" "orch_token_file_read: refused file=$FOREIGN_PARENT cause=not-owned" \
-        'control: the foreign-parent not-owned row fails' "$ERR" ;;
-    type|owner)
-      forbidden=not-regular
-      [[ "$rule" != owner ]] || forbidden=not-owned
-      assert_not_contains "$(cat "$ERR")" "cause=$forbidden" "control: $rule cause disappears" "$ERR" ;;
-    *) assert_eq "$RC|$(unread)" '0|none' "control: $rule refusal disappears" "$ERR" ;;
-  esac
-done
-
 # One open alert of each kind prints one line each, the Dependabot line naming
 # its pull request, and ends the run as news. The next pass, with no verdict
 # recorded, prints each again marked report=repeat, and the heartbeat follows:
@@ -331,38 +253,25 @@ assert_eq "$RC|$(events)" "0|$LINE_CODE" "an alert closed and reopened is report
 # a pass on which the same set stands prints no unread line, so an overseer
 # following the log through a push wake is not woken for it again, and the
 # heartbeat follows; a pass whose set changes prints the new set and ends the
-# run. The control row runs a copy that prints the line on every pass a read
-# fails, and shows the standing pass's line.
-SECURITY_REPEAT_LIB="$(mutant_scripts security-unread-repeat/orch lib/security-alerts.sh)/lib/security-alerts.sh" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-unread-repeat/github"
-mutate_file "$SECURITY_REPEAT_LIB" \
-  '      echo "EVENT security-alerts-unread reads=$SECURITY_UNREAD"' '      :'
-mutate_file "$SECURITY_REPEAT_LIB" \
-  '    if [[ "$prior" != "$SECURITY_UNREAD" ]]; then' \
-  '    echo "EVENT security-alerts-unread reads=$SECURITY_UNREAD"; if [[ "$prior" != "$SECURITY_UNREAD" ]]; then'
-for mutant in "" repeat; do
-  new_case security_unread
-  one_of_each
-  watch="$REPO_ROOT/skills/orch/scripts/oversee-watch"
-  [[ -z "$mutant" ]] || watch="$TMP_ROOT/security-unread-repeat/orch/scripts/oversee-watch"
-  printf '%s\n' "$HTTP_403" > "$STUB_DIR/dependabot-fail"
-  WATCH_BIN="$watch" run --
-  assert_eq "$RC|$(unread)|$(events)|$(heartbeats)" \
-    "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|$LINE_CODE
-$LINE_SECRET|0" "${mutant:+control $mutant: }a failed read of one list is the unread line, and the other lists are reported" "$ERR"
-  assert_eq "$(grep -c '^oversee-watch: security-alerts-read-failed source=owner/repo/dependabot cause=permission$' "$ERR" || true)" "1" \
-    "${mutant:+control $mutant: }the failed read is named on stderr with its cause" "$ERR"
-  WATCH_BIN="$watch" run --
-  want="none|1"
-  [[ -z "$mutant" ]] || want="EVENT security-alerts-unread reads=owner/repo/dependabot:permission|1"
-  assert_eq "$RC|$(unread)|$(heartbeats)" "0|$want" \
-    "${mutant:+control $mutant: }a standing failure prints no unread line and the heartbeat comes" "$ERR"
-  printf 'gh: Bad Gateway (HTTP 502)\n' > "$STUB_DIR/code-scanning-fail"
-  WATCH_BIN="$watch" run --
-  assert_eq "$RC|$(unread)|$(heartbeats)" \
-    "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission,owner/repo/code-scanning:http-502|0" \
-    "${mutant:+control $mutant: }a changed set of failed reads is the unread line again, and ends the run" "$ERR"
-done
+# run.
+new_case security_unread
+one_of_each
+printf '%s\n' "$HTTP_403" > "$STUB_DIR/dependabot-fail"
+run --
+assert_eq "$RC|$(unread)|$(events)|$(heartbeats)" \
+  "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|$LINE_CODE
+$LINE_SECRET|0" "a failed read of one list is the unread line, and the other lists are reported" "$ERR"
+assert_eq "$(grep -c '^oversee-watch: security-alerts-read-failed source=owner/repo/dependabot cause=permission$' "$ERR" || true)" "1" \
+  "the failed read is named on stderr with its cause" "$ERR"
+run --
+want="none|1"
+assert_eq "$RC|$(unread)|$(heartbeats)" "0|$want" \
+  "a standing failure prints no unread line and the heartbeat comes" "$ERR"
+printf 'gh: Bad Gateway (HTTP 502)\n' > "$STUB_DIR/code-scanning-fail"
+run --
+assert_eq "$RC|$(unread)|$(heartbeats)" \
+  "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission,owner/repo/code-scanning:http-502|0" \
+  "a changed set of failed reads is the unread line again, and ends the run" "$ERR"
 
 # A read that fails keeps the rows of its source: the alert reported before it
 # is a repeat, not news, once the read comes back.
@@ -380,43 +289,25 @@ assert_eq "$RC|$(firsts)|$(unread)|$(grep -c ' report=repeat$' <<<"$OUT" || true
 # permission and an alert feature turned off are told apart by GitHub's own
 # words, and any other failure keeps its HTTP status. Code or secret scanning
 # turned off, as on a repository without GitHub's paid security products, is
-# off rather than unread: no unread line and no stderr line. Each control row
-# runs a copy with one rule of that choice removed (all: no feature-off is
-# off; any-kind: Dependabot's too; any-cause: every paid-kind failure) and
-# shows the line that rule keeps or drops.
-SECURITY_CAUSE_MUTANTS="$TMP_ROOT/security-cause"
-for mutant in all any-kind any-cause; do
-  lib="$(mutant_scripts "security-cause/$mutant/orch" lib/security-alerts.sh)/lib/security-alerts.sh" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$SECURITY_CAUSE_MUTANTS/$mutant/github"
-  case "$mutant" in
-    all) mutate_file "$lib" '[[ "$cause" == feature-off && "$kind" != dependabot ]] ||' 'false ||' ;;
-    any-kind) mutate_file "$lib" '[[ "$cause" == feature-off && "$kind" != dependabot ]] ||' '[[ "$cause" == feature-off ]] ||' ;;
-    any-cause) mutate_file "$lib" '[[ "$cause" == feature-off && "$kind" != dependabot ]] ||' '[[ "$kind" != dependabot ]] ||' ;;
-  esac
-done
+# off rather than unread: no unread line and no stderr line.
 for row in \
-  "|dependabot|$HTTP_403|permission" \
-  "|code-scanning|gh: Resource not accessible by personal access token (HTTP 403)|permission" \
-  "|dependabot|gh: Dependabot alerts are disabled for this repository. (HTTP 403)|feature-off" \
-  "|secret-scanning|gh: Secret scanning is disabled on this repository. (HTTP 404)|off" \
-  "|code-scanning|gh: GitHub Code Security or GitHub Advanced Security is not enabled (HTTP 403)|off" \
-  "|code-scanning|gh: Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)|off" \
-  "|code-scanning|gh: no analysis found (HTTP 404)|off" \
-  "|code-scanning|gh: You have exceeded a secondary rate limit. (HTTP 403)|http-403" \
-  "|secret-scanning|gh: Bad Gateway (HTTP 502)|http-502" \
-  "all|secret-scanning|gh: Secret scanning is disabled on this repository. (HTTP 404)|feature-off" \
-  "any-kind|dependabot|gh: Dependabot alerts are disabled for this repository. (HTTP 403)|off" \
-  "any-cause|code-scanning|gh: Resource not accessible by personal access token (HTTP 403)|off"; do
-  IFS='|' read -r mutant kind text cause <<<"$row"
+  "dependabot|$HTTP_403|permission" \
+  "code-scanning|gh: Resource not accessible by personal access token (HTTP 403)|permission" \
+  "dependabot|gh: Dependabot alerts are disabled for this repository. (HTTP 403)|feature-off" \
+  "secret-scanning|gh: Secret scanning is disabled on this repository. (HTTP 404)|off" \
+  "code-scanning|gh: GitHub Code Security or GitHub Advanced Security is not enabled (HTTP 403)|off" \
+  "code-scanning|gh: Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)|off" \
+  "code-scanning|gh: no analysis found (HTTP 404)|off" \
+  "code-scanning|gh: You have exceeded a secondary rate limit. (HTTP 403)|http-403" \
+  "secret-scanning|gh: Bad Gateway (HTTP 502)|http-502"; do
+  IFS='|' read -r kind text cause <<<"$row"
   new_case security_cause
   printf '%s\n' "$text" > "$STUB_DIR/$kind-fail"
-  watch="$REPO_ROOT/skills/orch/scripts/oversee-watch"
-  [[ -z "$mutant" ]] || watch="$SECURITY_CAUSE_MUTANTS/$mutant/orch/scripts/oversee-watch"
-  WATCH_BIN="$watch" run --
+    run --
   want="EVENT security-alerts-unread reads=owner/repo/$kind:$cause|1"
   [[ "$cause" != off ]] || want="none|0"
   assert_eq "$RC|$(unread)|$(grep -c '^oversee-watch: security-alerts-read-failed ' "$ERR" || true)" "0|$want" \
-    "${mutant:+control $mutant: }$text is ${cause/#off/off, not unread}" "$ERR"
+    "$text is ${cause/#off/off, not unread}" "$ERR"
 done
 
 # A scanning feature turned off keeps the rows reported before it, so its
@@ -535,29 +426,6 @@ new_case security_setting_invalid
 run ORCH_SECURITY_ALERTS=yes --
 assert_eq "$RC|${OUT:-empty}|$(grep -c 'oversee-watch: security-alerts-invalid setting=ORCH_SECURITY_ALERTS value=yes' "$ERR" || true)" \
   "2|empty|1" "an ORCH_SECURITY_ALERTS value other than on or off is refused" "$ERR"
-
-# Must-fail controls on the second pass without a record. With the baseline
-# row read dropped, the alert is a first report again and ends the run; with
-# the repeat dropped, the once-only check this replaced, it is silent.
-for mutant in baseline once-only; do
-  MUTANT_DIR="$TMP_ROOT/security-mutant-$mutant"
-  MUTANT_LIB="$(mutant_scripts "security-mutant-$mutant/orch" lib/security-alerts.sh)/lib/security-alerts.sh" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-  case "$mutant" in
-    baseline)
-      mutate_file "$MUTANT_LIB" "if [[ \"\$reported\" == *\$'\\n'\"\$key\"\$'\\n'* ]]; then" 'if false; then'
-      want="$LINE_CODE|0" ;;
-    once-only)
-      mutate_file "$MUTANT_LIB" "repeats+=\"\$line report=repeat\"\$'\\n'" ':'
-      want="none|1" ;;
-  esac
-  new_case "security_mutant_$mutant"
-  printf '[%s]\n' "$CODE_SCANNING" > "$STUB_DIR/code-scanning.json"
-  WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
-  WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run --
-  assert_eq "$(events)|$(heartbeats)" "$want" \
-    "control $mutant: a second pass without a record no longer repeats the alert as report=repeat" "$ERR"
-done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

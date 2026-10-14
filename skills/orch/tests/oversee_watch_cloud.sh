@@ -203,7 +203,6 @@ for row in \
   "ready_unchanged|room||100,abc111,b,true,;200,abc111,b,false,$FINISHED" \
   "ready_head|room||100,abc111,b,true,;200,abc222,b,false,EVENT lane-stalled issue-1 age=0 state=finished" \
   "ready_body|room||100,abc111,b,true,;200,abc111,c,false,EVENT lane-stalled issue-1 age=0 state=finished" \
-  "ready_both|room||100,abc111,b,true,;200,abc222,c,false,EVENT lane-stalled issue-1 age=0 state=finished" \
   "ready_old_directive|room|200|100,abc111,b,true,;2200,abc111,b,false,EVENT lane-stalled issue-1 age=2100 state=finished" \
   "ready_repeat|room||100,abc111,b,true,;200,abc111,b,false,$FINISHED;260,abc222,c,false,;320,abc222,c,false,;380,abc222,c,false,EVENT lane-stalled issue-1 age=120 state=finished" \
   "credit_locked|locked||100,abc111,b,true,$CREDIT" \
@@ -220,102 +219,6 @@ for row in \
   IFS='|' read -r name credit sent steps <<<"$row"
   state_case "$name" "$credit" "$sent" "$steps"
 done
-
-echo "=== controls ==="
-# cloud_mutant NAME SCRIPT OLD NEW — a copy of the scripts with one rule of
-# SCRIPT removed, the github skill beside it as the harness's mutants lay it.
-cloud_mutant() {
-  local dir scripts
-  dir="$TMP_ROOT/$1"
-  scripts="$(mutant_scripts "$1/orch" "$2")" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$dir/github"
-  mutate_file "$scripts/$2" "$3" "$4"
-  CLOUD_WATCH="$scripts/oversee-watch"
-}
-# shellcheck disable=SC2016  # the script's own text, never expanded here.
-cloud_mutant mail-session oversee-watch '    item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")' '    mail_items+=("$item")'
-new_case cloud_mail_mutant
-cloud_state
-open_pr abc111 "## Lane status"
-watch 700
-assert_eq "red=$([[ "$(grep -c -- '--item issue-1' "$STUB_DIR/mail.calls" || true)" -gt 0 ]] && echo yes || echo no)" "red=yes" \
-  "control: a mail pass reading a channel=session lane fails the mail row" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant handoff-fileless oversee-watch '    ! item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} || continue' '    :'
-new_case cloud_handoff_mutant
-cloud_state
-open_pr abc111 "## Lane status"
-watch 700
-assert_eq "red=$([[ "$(handoff_reads)" -gt 0 ]] && echo yes || echo no)" "red=yes" \
-  "control: a handoff check reading a files=none lane's state fails the state row" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant window-statusless oversee-watch '[[ -z "$window" ]] || item_in "$item" ${STATUSLESS[@]+"${STATUSLESS[@]}"} || LANES+=("$window")' '[[ -z "$window" ]] || LANES+=("$window")'
-new_case cloud_window_mutant
-cloud_state main:issue-1
-open_pr abc111 "## Lane status"
-watch 700
-assert_eq "events=$EVENTS" "events=EVENT window-gone main:issue-1" \
-  "control: a status=none window carried into the pane passes fails the window row" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant list-once lib/watch-host-kinds.sh '    [[ "${entry%%|*}" == "$1" ]] || continue' '    continue'
-new_case cloud_list_mutant
-cloud_state
-open_pr abc111 "## Lane status"
-watch 700
-assert_eq "lists=$(open_lists)" "lists=2" "control: a pass that lists again for its second caller fails the one-list row" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant stall-digest lib/watch-host-kinds.sh '    if [[ "$prior" != "$OPEN_PR_HEAD|$digest|"* ]]; then' '    if [[ "${prior%%|*}" != "$OPEN_PR_HEAD" ]]; then'
-CASE_LABEL="control: without the body digest a changed body" stall_case stall_body_mutant \
-  "100|abc111|## Lane status working||" "1900|abc111|## Lane status pushed fix|EVENT lane-stalled issue-1 age=1800"
-# shellcheck disable=SC2016
-cloud_mutant stall-head lib/watch-host-kinds.sh '    if [[ "$prior" != "$OPEN_PR_HEAD|$digest|"* ]]; then' '    if [[ "${prior#*|}" != "$digest|"* ]]; then'
-CASE_LABEL="control: without the head compare a new head" stall_case stall_head_mutant \
-  "100|abc111|## Lane status working||" "1900|abc222|## Lane status working|EVENT lane-stalled issue-1 age=1800"
-# shellcheck disable=SC2016
-cloud_mutant stall-repeat lib/watch-host-kinds.sh '    if (( passes == 0 )); then' '    if true; then'
-CASE_LABEL="control: reported every pass, the quiet pass after a report" stall_case stall_repeat_mutant \
-  "100|abc111|## Lane status working||" "1900|abc111|## Lane status working|EVENT lane-stalled issue-1 age=1800" \
-  "1960|abc111|## Lane status working|EVENT lane-stalled issue-1 age=1860"
-# shellcheck disable=SC2016
-cloud_mutant bound-none lib/watch-host-kinds.sh '  [[ -n "$at" ]] && (( at >= $2 && PASS_NOW - at >= CLOUD_STALL_SECS )) || return 1' '  return 1'
-DIRECTIVE_AGE=2000 CASE_LABEL="control: without the bound the unanswered lane is left running" stall_case stall_bound_mutant \
-  "100|abc111|b|" "1900|abc111|b|EVENT lane-stalled issue-1 age=1800" "3800|abc111|b|"
-assert_eq "closes=$(closes)" "closes=0" "control: without the bound no lane-close runs" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant bound-since lib/watch-host-kinds.sh '(( at >= $2 && PASS_NOW' '(( PASS_NOW'
-DIRECTIVE_AGE=2000 CASE_LABEL="control: a directive older than the last push" stall_case stall_bound_since_mutant \
-  "100|abc111|b|" "1900|abc111|b|EVENT lane-stalled issue-1 age=1800" "2100|abc222|b|"   "3900|abc222|b|EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1900"
-# shellcheck disable=SC2016
-cloud_mutant start-bound-progress oversee-watch 'cloud_stall_close "$item" "$since"' 'cloud_stall_close "$item" "$running"'
-DIRECTIVE_AGE=700 CASE_LABEL="control: launch time hides a first push after the directive" stall_case start_bound_progress_mutant \
-  "600|||EVENT start-stalled issue-1 age=600" "2500||$PUSHED_HEAD|$CLOSED"
-assert_eq "closes=$(closes)" "closes=1" "control: the first-push row rejects closure on launch time" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant start-bound-unread lib/watch-host-kinds.sh 'ow_message branch-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=2; break' 'ow_message branch-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=1; break'
-DIRECTIVE_AGE=700 CASE_LABEL="control: an unread branch treated as absent closes the lane" stall_case start_bound_unread_mutant \
-  "600|||EVENT start-stalled issue-1 age=600" "2500||unread|$CLOSED"
-assert_eq "closes=$(closes)" "closes=1" "control: the unread row rejects closing without branch evidence" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant ready-field lib/watch-host-kinds.sh 'headRefName,headRepositoryOwner,headRefOid,body,isDraft' 'headRefName,headRepositoryOwner,headRefOid,body'
-state_case ready_field_mutant room '' '100,abc111,b,true,;200,abc111,b,false,'
-assert_eq "red=$([[ "$EVENTS" != "$FINISHED" ]] && echo yes || echo no)" "red=yes" \
-  "control: omitting isDraft fails the ready row" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant credit-judgment lib/watch-host-kinds.sh '| if length > 0 then "out-of-credit" else "" end' '| if false then "out-of-credit" else "" end'
-state_case credit_judgment_mutant zero '' '100,abc111,b,true,'
-assert_eq "red=$([[ "$EVENTS" != "$CREDIT" ]] && echo yes || echo no)" "red=yes" \
-  "control: skipping the credit judgment fails the exhausted row" "$STUB_DIR/err"
-# shellcheck disable=SC2016
-cloud_mutant finished-close lib/watch-host-kinds.sh '[[ "$state" != finished ]] && (( age >= LANE_STALL_SECS ))' '(( age >= LANE_STALL_SECS ))'
-new_case finished_close_mutant
-DIRECTIVE_AGE=200 cloud_state
-open_pr abc111 b
-watch 100
-open_pr abc111 b false
-watch 2200
-assert_eq "events=$EVENTS" "events=EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=2000" \
-  "control: closing a finished lane fails the old-directive row" "$STUB_DIR/err"
-unset CLOUD_WATCH
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

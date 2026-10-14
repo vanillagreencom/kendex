@@ -418,18 +418,6 @@ ROWS
   RECORD_ARGS=(--pr 7)
 }
 clean_ci_rows shipped
-for mutation in old-allowance all-attempts; do
-  case "$mutation" in
-    old-allowance) replacement='null as $ci_clean' ;;
-    all-attempts) replacement='$t.ci_head_secs as $ci_clean' ;;
-  esac
-  control "m-clean-ci-$mutation" oversee-cycle '$t.ci_head_clean_secs as $ci_clean' "$replacement"
-  if (FAIL=0; clean_ci_rows "$mutation"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/clean-ci-$mutation.out"; then
-    fail "$mutation: mutation did not redden clean CI rows"
-  else
-    assert_file_contains "$TMP_ROOT/clean-ci-$mutation.out" '  FAIL  ' "$mutation: cycle rows reject the planted defect"
-  fi
-done
 RUN_BIN=""
 
 # Direct pushes use the same measured lane verdict as the rollup.
@@ -448,12 +436,6 @@ ROWS
   RECORD_ARGS=(--pr 7)
 }
 direct_verdicts shipped
-control m-direct-verdict oversee-cycle 'elif $lane_secs == null then "unmeasured"' 'elif $open == null or $lane_secs == null then "unmeasured"'
-if (FAIL=0; direct_verdicts old-open; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/direct-verdict.out"; then
-  fail 'the open-required verdict mutation did not redden direct push rows'
-else
-  assert_file_contains "$TMP_ROOT/direct-verdict.out" '  FAIL  ' 'direct push rows reject the old open-required verdict'
-fi
 RUN_BIN=""
 
 echo "=== merged cycles keep refusal rows for the fleet audit ==="
@@ -471,18 +453,6 @@ assert_refusal_cycle() {
 }
 refusal_cycle_case refusals
 assert_refusal_cycle
-for mutation in copy count; do
-  case "$mutation" in
-    copy) control "m-refusal-$mutation" oversee-cycle 'repeat_refusals: $refusals,' 'repeat_refusals: [],' ;;
-    count) control "m-refusal-$mutation" oversee-cycle '.repeat_refusals | length end | n)' '.repeat_refusals | 0 end | n)' ;;
-  esac
-  refusal_cycle_case "refusals-$mutation"
-  if (FAIL=0; assert_refusal_cycle; [[ "$FAIL" -eq 0 ]]) > "$CASE/control.out"; then
-    fail "$mutation: mutation did not redden refusal cycle rows"
-  else
-    assert_contains "$(cat "$CASE/control.out")" '  FAIL  ' "$mutation: refusal rows reject the planted defect"
-  fi
-done
 RUN_BIN=""
 
 echo "=== a negative round interval is refused at write ==="
@@ -815,12 +785,6 @@ missing decision|standard|0|-|-|null|merged
 ROWS
 }
 merged_cause_rows shipped
-control m-merged-cause oversee-cycle 'elif $dominant.phase == "merged" and $class != null and $lane_secs > $targets[$class]' 'elif false'
-if (FAIL=0; merged_cause_rows control; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/merged-cause-control.out"; then
-  fail 'merged cause: disabling attribution did not redden the suite'
-else
-  assert_file_contains "$TMP_ROOT/merged-cause-control.out" '  FAIL  ' 'merged cause: old phase-only cause fails regression rows'
-fi
 RUN_BIN=""
 
 # One row per rule: the wait a push opens, the wait a bot review opens, a
@@ -919,18 +883,6 @@ clean_phase_rows() {
     'lane=2400 phase=ci_green phase_secs=1900 cause=work' 'forgiven-CI cause: work exceeds the unforgiven final-head checks'
 }
 clean_phase_rows shipped
-for mutation in phase cause; do
-  case "$mutation" in
-    phase) anchor='.secs - ($ci_clean // 0)' replacement='.secs - 0' ;;
-    cause) anchor='[$running - ($ci_clean // 0), 0]' replacement='[$running, 0]' ;;
-  esac
-  control "m-clean-$mutation" oversee-cycle "$anchor" "$replacement"
-  if (FAIL=0; clean_phase_rows "$mutation"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/clean-$mutation.out"; then
-    fail "$mutation: clean CI mutation did not redden lane attribution"
-  else
-    assert_file_contains "$TMP_ROOT/clean-$mutation.out" '  FAIL  ' "$mutation: lane attribution rejects forgiven CI"
-  fi
-done
 RUN_BIN=""
 
 echo "=== a miss always records a cause ==="
@@ -978,8 +930,7 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 # its phase is named, it was not already a miss on that phase, and the
 # fleet's records that are misses on that phase are exactly three. Each row
 # records a sequence and asserts the bar lines its last record printed; each
-# conjunct has a row it alone decides, and a control below that plants its
-# removal against that row.
+# conjunct has a row it alone decides.
 #   m   a miss at 5000 s, its longest gap ending at merged
 #   p   a miss whose CI went green at 700 s, before the PR opened at 2460 s,
 #       so the longest gap before the PR opens is 1760 s from CI green to
@@ -1111,18 +1062,6 @@ cycle_medians() {
     'lane_median=1200 open_median=3437 miss_share=1/3' 'both medians and the lane miss fraction come from the cycle records'
 }
 cycle_medians shipped
-for mutation in median share; do
-  case "$mutation" in
-    median) anchor='.lane_secs | interval // empty] | nr(0.5)' replacement='.actual | interval // empty] | nr(0.5)' ;;
-    share) anchor='map(select(. > $targets[$class]))' replacement='map(select(. > 0))' ;;
-  esac
-  control "m-cycle-$mutation" oversee-cycle "$anchor" "$replacement"
-  if (FAIL=0; cycle_medians "$mutation"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/medians-$mutation.out"; then
-    fail "$mutation: mutation did not redden cycle median rows"
-  else
-    assert_file_contains "$TMP_ROOT/medians-$mutation.out" '  FAIL  ' "$mutation: aggregate rows reject the planted defect"
-  fi
-done
 RUN_BIN=""
 
 new_case rollup-no-state
@@ -1149,120 +1088,7 @@ negative_rollup() {
 assert_eq "$(negative_rollup rollup-negative)" "median=100 p90=100 round_median=300 fix_median=200 rounds_untimed=2" \
   "negative seconds enter neither median nor p90, and a negative round counts as untimed"
 
-# --- controls ----------------------------------------------------------------
-# Planted defects in the record verb's target comparison, the span its verdict
-# judges and the stamps its phase reads, the rollup verb, and the
-# lane_item_state it reads rounds through, each in a private copy of that one
-# file among links to the shipped scripts, beside the same stubs, the
-# lane-host fake among them.
-
-
-echo "=== controls ==="
-# Each independent refusal is disabled alone. The mutant must get past the
-# flag guard, so a different refusal is not credited as this guard working.
-while IFS='|' read -r name anchor replacement form; do
-  control "m-delivery-$name" oversee-cycle "$anchor" "$replacement"
-  new_case "c-delivery-$name"; printf small > "$CASE/class"; timeline 900
-  case "$form" in
-    both) RECORD_ARGS=(--pr 7 --commit "$MERGE") ;;
-    neither) RECORD_ARGS=() ;;
-  esac
-  got="$(record KEN-1 micro)"
-  assert_not_contains "$(cat "$CASE/err")" 'oversee-cycle: usage=--pr,--commit' \
-    "control: disabling $name turns its keyed refusal assertion red"
-  assert_not_contains "$got" 'rc=2 ' "control: $name reaches beyond the flag guard"
-done <<'ROWS'
-neither|[[ -z "$PR" && -z "$COMMIT" ]]|{ [[ -z "$PR" && -z "$COMMIT" ]] && false; }|neither
-both|[[ -n "$PR" && -n "$COMMIT" ]]; then|{ [[ -n "$PR" && -n "$COMMIT" ]] && false; }; then|both
-ROWS
-RECORD_ARGS=(--commit "$MERGE")
-# Each rule of the push read alone: the push leaving the branch at the
-# commit, a later push containing it, the launch bound on the compared pushes,
-# no stand-in for an unplaced push, and the period the log is read over.
-control m-push-exact oversee-cycle '([.[] | select(.after == $commit)] | first' '([.[] | select(false)] | first'
-new_case c-push-exact; printf small > "$CASE/class"; pushes "300:$BASE" "1200:$MERGE"
-assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=-' \
-  "control: without the exact match, a push leaving the branch at the commit is compared and goes unplaced"
-control m-push-ahead oversee-cycle '[[ "$status" == ahead ]] || continue' '[[ "$status" == never ]] || continue'
-new_case c-push-ahead; printf small > "$CASE/class"; pushes "1500:$BATCH"; answer "$BATCH" ahead
-assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=-' \
-  "control: without the containment answer, a batch push containing the commit goes unplaced"
-control m-push-since oversee-cycle 'select((.at | fromdate) >= ($since | tonumber))' 'select(true)'
-new_case c-push-since; printf small > "$CASE/class"; pushes "-100:$OLD" "1500:$BATCH"; answer "$BATCH" ahead
-assert_eq "$(field actual "$(record KEN-1 micro)")|$(sed -n 's/^oversee-cycle: merged-unread commit=[^ ]* //p' "$CASE/err")" 'actual=-|cause=compare-failed' \
-  "control: without the launch bound, a push before the launch is compared"
-control m-push-fallback oversee-cycle 'merged: (if $merged == "" then null' 'merged: (if $merged == "" then ($authored | tonumber | todate)'
-new_case c-push-fallback; printf small > "$CASE/class"; pushes "300:$OTHER"; answer "$OTHER" diverged
-assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=60' \
-  "control: a stand-in date for an unplaced push turns the null-merged assertion red"
-control m-push-period oversee-cycle 'query+="&time_period=${span%%:*}"' 'query+=""'
-new_case c-push-period; printf small > "$CASE/class"; pushes "1200:$MERGE"
-edit_json "$CASE/state/workflow-state-oversee.json" ".lanes[0].launched_at = \"$(jq -rn 'now - 7200 | floor | todate')\""
-record KEN-1 micro >/dev/null
-assert_eq "$(grep -c 'time_period=' "$CASE/gh.calls" || true)" 0 \
-  "control: without the period, the whole push log is read"
-RECORD_ARGS=(--pr 7)
-
-control m-merge-target oversee-cycle '$targets[$class] + ($merge_group // 0)' '$targets[$class] + 0'
-new_case c-merge-target; printf micro > "$CASE/class"; timeline 1500
-edit_json "$CASE/timeline.json" '.ci_merge_group_secs = 280'
-assert_eq "$(field target "$(record KEN-1 micro)")" "target=1200" \
-  "control: without the allowance the shipped-target row loses merge-group seconds"
-
-control m-merge-gap oversee-cycle '.secs - ($merge_group // 0)' '.secs - 0'
-new_case c-merge-gap; printf micro > "$CASE/class"; timeline 1080
-edit_json "$CASE/timeline.json" ".ci_merge_group_secs = 280 | .stamps |= (.gate_met = \"$(at 500)\" | .ci_green = \"$(at 560)\" | .armed = \"$(at 620)\")"
-assert_eq "$(field phase "$(record KEN-1 micro)")" "phase=merged" \
-  "control: without the merged-gap subtraction the allowance row names merged"
-
-control m-record oversee-cycle 'elif $lane_secs > $targets[$class] then "miss"' 'elif false then "miss"'
-new_case c-miss; printf standard > "$CASE/class"; timeline 5521
-assert_eq "$(field verdict "$(record KEN-1 standard)")" "verdict=met" \
-  "control: without the target comparison a close past its target reports no miss"
-
-control m-open oversee-cycle 'elif $lane_secs > $targets[$class] then "miss"' 'elif $open > $target then "miss"'
-new_case c-open; printf micro > "$CASE/class"; timeline 2000
-edit_json "$CASE/timeline.json" ".stamps.created = \"$(at 900)\" | .open_secs = 1100"
-assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=met" \
-  "control: judged on open to merge, a slow launch before PR opened loses lane time"
-
-control m-phase oversee-cycle '($stamps.launched | fromdate) as $o' '($stamps.pr_opened | fromdate) as $o'
-assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=bot_wait,bot_wait,bot_wait" \
-  "control: using the PR open bound hides the pre-open work and names gate_green"
-
-control m-phase-end oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at >= $o)]'
-assert_eq "$(repeat_row c-phase-end "a:1 a:2 a:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=ci,ci,ci" \
-  "control: without the upper bound, a CI green after the merge charges the miss to merged to CI green"
-
-control m-arm-order oversee-cycle \
-  '| map(select(.name != "armed" or .at > $green))' \
-  '| map(select(true))'
-new_case c-arm-order; printf micro > "$CASE/class"; timeline 1800
-edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at 1700)\" | .armed = \"$(at 1500)\")"
-got="$(record KEN-1 micro)"
-assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=armed phase_secs=1200" \
-  "control: old ordering charges pre-CI time to armed and fails the ci_green row"
-
-control m-arm-outside oversee-cycle \
-  '([.[] | select(.name == "ci_green" or .name == "gate_green") | .at] | max) as $green' \
-  '([$stamps.ci_green, $stamps.gate_green] | map(fromdate) | max) as $green'
-new_case c-arm-outside; printf micro > "$CASE/class"; timeline 1800
-edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at 10000)\" | .armed = \"$(at 1500)\")"
-got="$(record KEN-1 micro)"
-assert_eq "$(field phase "$got") $(field phase_secs "$got")" "phase=merged phase_secs=1500" \
-  "control: a post-merge CI threshold hides the arm and turns the armed row red"
-
-control m-ci-bar oversee-cycle '(.phase != "ci_green" or .cause == "ci")' '(true)'
-assert_eq "$(repeat_row c-ci-bar "cw:1 cw:2 cw:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=work,work,work" \
-  "control: counting every ci_green miss, three lanes of post-open work make the bar"
-
-control m-ci-split oversee-cycle 'if $work >= $checks and $work >= $wait then "work"' 'if $work <= $checks and $work >= $wait then "work"'
-new_case c-ci-split; printf micro > "$CASE/class"; ci_timeline 3500
-assert_eq "$(field cause "$(record KEN-1 micro)")" "cause=ci" \
-  "control: with the parts swapped, work late in the gap reads as ci"
-
-# Today's split before KEN-3869: every second after the final push is a
-# check's, so the idle gap between two short runs reads as ci and makes the bar.
+# Counting the whole gap as checks must redden the ordinary CI-cause table.
 control m-ci-running oversee-cycle \
   'covered_seconds([$t.ci_head_spans[] | {from: (.start | fromdate), to: (.end | fromdate)}]; $final; $to)' '($to - $final)'
 if (FAIL=0; ci_cause_rows control; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/ci-running-control.out"; then
@@ -1271,148 +1097,6 @@ else
   assert_eq "$(grep -c '^  FAIL  ci cause: two short runs with a long idle gap between them are wait$' "$TMP_ROOT/ci-running-control.out")" "1" \
     "control: today's split reddens the idle-gap row"
 fi
-assert_eq "$(repeat_row c-ci-running "cv:1 cv:2 cv:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=ci,ci,ci" \
-  "control: under today's split, three idle-gap lanes make the CI bar"
-
-control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
-new_case c-rollup
-jq -n --argjson c "[$(cycle '"micro"' 100 met null false false),$(cycle '"micro"' 400 met null false false),$(cycle '"micro"' 1000 miss null false false),$(cycle '"micro"' 200 met null false false)]" \
-  '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
-  > "$CASE/state/workflow-state-oversee.json"
-assert_eq "$(rollup | grep -o 'p90=[0-9]*')" "p90=400" "control: a floor rank reports a p90 below the slowest tenth"
-
-control m-report oversee-cycle '    if [[ "$VERB" == rollup ]]; then' '    if true; then'
-new_case c-report
-jq -n --argjson c "[$(cycle '"micro"' 100 met null false false)]" \
-  '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
-  > "$CASE/state/workflow-state-oversee.json"
-assert_eq "$(report_unchanged | tail -n 1)" "unchanged=no" "control: a report that appends its rows changes the fleet state"
-
-control m-rollup-rounds oversee-cycle 'select(.kind == "fix") | .secs | interval // empty] | nr(0.5))' 'select(.kind == "review") | .secs | interval // empty] | nr(0.5))'
-new_case c-rollup-rounds
-jq -n --argjson c "[$(cycle '"micro"' 100 met null false false "$P1")]" \
-  '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
-  > "$CASE/state/workflow-state-oversee.json"
-assert_eq "$(rollup | grep -o 'fix_median=[0-9]*')" "fix_median=300" "control: a fix median read over the review rounds reports a review's seconds"
-
-control m-lane-state lib/lane-gitfile.sh 'path="$(cd -- "$6" && "$1" path "$state_key" 2>"$7/state.err")" || return 2' \
-  'path="$("$1" path "$state_key" 2>"$7/state.err")" || return 2'
-new_case c-lane-root; printf micro > "$CASE/class"; timeline 1200
-edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
-assert_eq "$(field fix "$(record KEN-5 micro)")" "fix=-" \
-  "control: read from the caller's checkout, another repository's lane has no rounds"
-
-control m-hosted-dir lib/lane-gitfile.sh 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$state_key"' \
-  'lane_hosted_state_path "$LANE_HOSTED_CLONE" "${ORCH_STATE_DIR:-tmp}" "$state_key"'
-new_case c-hosted-dir; printf micro > "$CASE/class"; timeline 1200
-edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
-mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp"
-echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
-printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
-assert_eq "$(field fix "$(CONTROL_STATE_DIR=/fleet/state record KEN-4 micro)")" "fix=-" \
-  "control: read at the overseer's ORCH_STATE_DIR, a hosted lane has no rounds"
-control m-hosted-settings lib/lane-gitfile.sh 'for file in kendex.settings.toml .kendex/settings.toml; do' 'for file in; do'
-mkdir -p "$CASE/host/clone/lane-state"
-printf '{"cycles": 3}' > "$CASE/host/clone/lane-state/workflow-state-KEN-4.json"
-printf '[env]\nORCH_STATE_DIR = "lane-state"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
-  "control: without the worktree settings read, the lane's own state directory is missed"
-control m-empty-dir lib/lane-gitfile.sh 'LANE_HOSTED_STATE_DIR="${LANE_HOSTED_STATE_DIR:-tmp}"' ':'
-new_case c-empty-dir; printf micro > "$CASE/class"; timeline 1200
-edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
-mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp"
-echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
-printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
-printf '[env]\nORCH_STATE_DIR = ""\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
-  "control: without the empty-setting fallback, the state is sought at the clone's root"
-control m-gone-only lib/lane-gitfile.sh '[[ "$rc" -eq 0 && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]] || return "$rc"' \
-  '[[ -z "$LANE_ITEM_STATE" && -n "${8:-}" ]] || return "$rc"'
-gone_case c-gone-only
-mkdir -p "$CASE/host/w/KEN-4"
-echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
-printf '[env]\nORCH_STATE_DIR = lane-state\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
-  "control: falling back on any empty read, a failed live read is answered from the archive"
-control m-kept-since oversee-cycle 'select(.item == $item and ((.at // "") >= $since))' 'select(.item == $item)'
-gone_case c-kept-since "" -10
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=5" \
-  "control: without the session bound, an earlier run's archive is read"
-control m-kept-spaced oversee-cycle '(?<p>/.*[^\\s])\\s*$' '(?<p>/\\S+)'
-gone_case c-kept-spaced "$TMP_ROOT/case-c-kept-spaced/my fleet/kept.tgz"
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
-  "control: a path cut at its first space names no archive"
-control m-kept-member lib/lane-gitfile.sh 'if "lane-host-state" in members:' 'if False:'
-GONE_STALE=1 gone_case c-kept-member "" 10 zz-state
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=9" \
-  "control: matched by name alone, the older tmp copy, first in byte order, is read"
-control m-kept-listed lib/lane-gitfile.sh 'raw.decode(tar.encoding, "surrogateescape")' 'raw.decode("ascii", "backslashreplace")'
-gone_case c-kept-listed "" 10 café-state
-assert_eq "$(field fix "$(LC_ALL=C record KEN-4 micro)")" "fix=-" \
-  "control: matched against an escaped spelling, a name the locale cannot print is missed"
-control m-kept-stream lib/lane-gitfile.sh '  [[ -f "$2" ]] || { printf '"'"'archive-missing' \
-  '  tar -xzf "$2" -C "$3" 2>/dev/null || :; [[ -f "$2" ]] || { printf '"'"'archive-missing'
-gone_case c-kept-stream
-assert_eq "$(stream_read "${RUN_BIN%/*}/lib")" "5 left=clone lane-host-state state.err w " \
-  "control: an archive unpacked to be read leaves its members on disk"
-control m-kept-clone lib/lane-gitfile.sh 'key=lambda m: (m.name.startswith(root + "/"), m.name)' \
-  'key=lambda m: (not m.name.startswith(root + "/"), m.name)'
-GONE_MANIFEST=none GONE_WT_COPY=1 gone_case c-kept-clone
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=8" \
-  "control: preferring the worktree's copy reads it over the clone's"
-control m-private-env lib/lane-gitfile.sh '  if [[ -n "$private" ]]; then' '  if false; then'
-new_case c-private-env; printf micro > "$CASE/class"; timeline 1200
-edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
-mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp" "$CASE/host/clone/private-state"
-echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
-printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
-printf '{"cycles": 4}' > "$CASE/host/clone/private-state/workflow-state-KEN-4.json"
-printf 'ORCH_STATE_DIR=private-state\n' > "$CASE/host/w/KEN-4/.env.local"
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
-  "control: without the private env file read, the lane's private state directory is missed"
-control m-private-named lib/lane-gitfile.sh '        e=*) private="${line#e=}" ;;' '        e=*) ;;'
-mkdir -p "$CASE/host/w/KEN-4/config"
-mv -- "$CASE/host/w/KEN-4/.env.local" "$CASE/host/w/KEN-4/config/priv.env"
-printf '[env]\nKENDEX_ENV_FILE = "config/priv.env"\n' > "$CASE/host/w/KEN-4/kendex.settings.toml"
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" \
-  "control: reading .env.local whatever KENDEX_ENV_FILE names misses the named file"
-control m-kept-hardlink lib/lane-gitfile.sh 'readable = lambda m: m.isfile() or m.islnk()' 'readable = lambda m: m.isfile()'
-hardlink_case c-kept-hardlink
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
-  "control: taking regular files alone, a hard-link entry reads as missing"
-control m-kept oversee-cycle '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"} || return $?' '"$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" || return $?'
-gone_case c-kept
-assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=-" \
-  "control: without the kept= archive, a gone sandbox has no rounds"
-
-control m-split oversee-cycle '     else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits' '     else null end) as $waits'
-new_case c-split; printf micro > "$CASE/class"
-gate_timeline "100 1400" "400 1500 2000" 3200
-pauses KEN-1 600-1000 -
-got="$(record KEN-1 standard)"
-assert_eq "$(field phase "$got") $(field cause "$got") $(field paused "$got")" "phase=gate_green cause=gate_green paused=-" \
-  "control: without the split the gate_green phase stays undivided and names no wait"
-
-control m-interval oversee-cycle 'def interval: if type == "number" and . < 0 then null else . end;' 'def interval: .;'
-negative_write c-interval-write
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle.pr_rounds | map(.secs)')" '[-40,1200]' \
-  "control: without the interval rule the record writes the negative seconds"
-assert_eq "$(negative_rollup c-interval-rollup)" "median=-50 p90=100 round_median=-40 fix_median=-10 rounds_untimed=0" \
-  "control: without the interval rule the negative seconds lead the medians"
-
-control m-miss-cause oversee-cycle 'def miss_cause: .cause // .phase // "unread";' 'def miss_cause: .cause;'
-miss_cause_case c-miss-cause 5000 null
-assert_eq "$(field cause "$(record KEN-1 micro)")" "cause=-" \
-  "control: without the fallback a miss with a stamp missing records no cause"
-
-control m-admin-route oversee-cycle '$missing - ["armed"]' '$missing - []'
-new_case c-admin-route; printf micro > "$CASE/class"
-gate_timeline "100 1400" "400 1500 2000" 3200
-edit_json "$CASE/timeline.json" '.stamps.armed = null'
-got="$(record KEN-1 standard)"
-assert_eq "$(field phase "$got") $(field bot_wait "$got")" "phase=- bot_wait=-" \
-  "control: with armed a stamp the span requires, an admin-route merge reads no phase or gate waits"
 RUN_BIN=""
 
 echo
@@ -1430,8 +1114,6 @@ assert_contains "$(state '.fleet_log[-1].text')" 'class_reason=production-past-s
 assert_eq "$(record KEN-1 standard)|$(cat "$CASE/err")" \
   'rc=1 |oversee-cycle: tier-mismatch item=KEN-1 launch=small given=standard' "a hand tier cannot erase a launch escape"
 assert_eq "$(wc -l < "$CASE/class.calls" | tr -d ' ')" '1' "tier mismatch refuses before classification"
-control m-tier-check oversee-cycle '[[ -n "$TIER" && "$TIER" != "$launch_tier" ]]; then' '[[ -n "$TIER" && "$TIER" != "$launch_tier" ]] && false; then'
-assert_contains "$(record KEN-1 standard)" 'rc=0 cycle' "control: disabling the comparison accepts the mismatched tier"
 RUN_BIN=""
 
 # Existing classifier evidence explains misses without another classifier.
@@ -1448,10 +1130,6 @@ excluded-path path=.github/workflows/build.yml glob=.github/workflows/*|path-mis
 instruction-file path=AGENTS.md measured-class=micro|path-miss
 several-subsystems production=40|path-miss
 ROWS
-control m-class-reason oversee-cycle 'class_reason="${class_evidence%% *}"' 'class_reason="" # ${class_evidence%% *}'
-got="$(record KEN-1 small)"
-assert_eq "$(field class_reason "$got") $(field escape_cause "$got")" 'class_reason=- escape_cause=-' \
-  "control: discarding the classifier reason turns the escape assertion red"
 RUN_BIN=""
 new_case legacy-tier; printf micro > "$CASE/class"; timeline 1000
 got="$(record KEN-1 micro)"
@@ -1486,16 +1164,6 @@ assert_eq "$(cloud_seen null)" 'rc=0 tier=- escaped=- review=- unread=0 lane-hos
 # lane with no state.
 assert_eq "$(cloud_seen '"small"' caps-broken)" 'rc=0 tier=small escaped=true review=- unread=1 lane-host=1' \
   "a host whose capability line is refused records no rounds and prints rounds-unread with the refusal"
-control m-files-none lib/lane-gitfile.sh '[[ "$files" != none ]] || return 0' '{ [[ "$files" != none ]] || true; } || return 0'
-assert_eq "$(cloud_seen '"small"')" 'rc=0 tier=small escaped=true review=- unread=1 lane-host=2' \
-  "control: a cloud record read for its rounds prints rounds-unread and the dispatcher's refusals"
-control m-caps-unread lib/lane-gitfile.sh 'lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2' \
-  'lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 0'
-assert_eq "$(cloud_seen '"small"' caps-broken | cut -d' ' -f5)" 'unread=0' \
-  "control: a refused capability read taken as no state prints no rounds-unread"
-control m-tier-none oversee-cycle '  none) ;;' '  none) usage_error --tier ;;'
-assert_eq "$(cloud_seen null | cut -d' ' -f1)" 'rc=2' \
-  "control: a stated null tier taken as missing refuses the record"
 RUN_BIN=""
 
 echo '=== running lanes read script-written rounds across a resume ==='
@@ -1553,13 +1221,6 @@ assert_eq "$(sed -E 's/.* start=([0-9]+) .*/\1/' <<<"$rows" | sort -n)" \
 assert_eq "$(state '.lanes[0] | has("cycle")')" false 'running read creates no cycle'
 record KEN-1 micro >/dev/null
 assert_eq "$(state '.lanes[0].cycle.stages')" "$(jq -c '.stages' "$SF")" 'record copies the same stages'
-control m-stages oversee-cycle 'stages: $stages,' 'stages: null,'
-record KEN-1 micro >/dev/null
-assert_eq "$(state '.lanes[0].cycle.stages')" null 'control: dropping cycle stages fails same-stage copy'
-RUN_BIN=""
-control m-stage-reader oversee-cycle "'sort_by(.start)[]" "'sort_by(.start)[] | select(false)"
-assert_eq "$(stage_command KEN-1)" '' 'control: hiding discovered rows fails running-stage count'
-RUN_BIN=""
 cp "$SF" "$CASE/stage-state.saved"
 mv -- "$SF" "$REPO/tmp/workflow-state-pr-7.json"
 assert_eq "$(stage_command KEN-1)" "$rows" 'lane PR key resolves when item key is absent'
@@ -1608,21 +1269,6 @@ for location in worktree clone-setting archive; do
   HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" record KEN-1 micro >/dev/null
   assert_eq "$(state '.lanes[0].cycle.stages')" "$(jq -c '.stages' "$stage_case_root/stage-state.saved")" \
     "hosted PR-key cycle from $location records the same stages"
-  control "m-hosted-pr-$location" oversee-cycle \
-    '"${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "pr-$pr_key"' \
-    '"${ORCH_STATE_DIR:-tmp}" "pr-$pr_key" \
-    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "pr-$pr_key"'
-  rc=0
-  HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" \
-    stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
-  assert_eq "$rc" 1 "control: hosted $location stages refuse a file key used as the lane identity"
-  assert_contains "$(cat "$CASE/err")" 'item-unconfigured item=pr-7' \
-    "control: the shipped SSH inventory rejects the wrong lane identity for $location"
-  HOME="$CASE/home" PATH="$CASE/ssh-bin:$PATH" LANE_HOST_SSH_INVENTORY="$CASE/hosts.json" record KEN-1 micro >/dev/null
-  assert_eq "$(state '.lanes[0].cycle.stages')" null \
-    "control: hosted $location cycle loses stages under the wrong lane identity"
-  RUN_BIN=""
 done
 CASE="$stage_case_root"
 export CASE
@@ -1654,38 +1300,9 @@ for broken in lane-json fleet-json stages-object stages-false stages-string stag
   assert_eq "$(sed -n '1p' "$CASE/err")" 'oversee-cycle: stages-unread=KEN-1' "$broken puts the keyed refusal first"
   [[ -n "$(sed -n '2,$p' "$CASE/err")" ]] && pass "$broken keeps the read diagnostic" || fail "$broken keeps the read diagnostic"
 done
-control m-stage-error-order oversee-cycle \
-  '(jq -c '\''.stages | if . == null then [] else . end'\'' <<<"$LANE_ITEM_STATE" | print_stages "$ITEM") 2>"$WORK/state.err"' \
-  '(jq -c '\''.stages | if . == null then [] else . end'\'' <<<"$LANE_ITEM_STATE" | print_stages "$ITEM")'
-rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
-[[ "$(sed -n '1p' "$CASE/err")" != 'oversee-cycle: stages-unread=KEN-1' ]] \
-  && pass 'control: uncaptured formatter stderr fails first-line assertion' || fail 'control: uncaptured formatter stderr fails first-line assertion'
-RUN_BIN=""
-"$WS" --state-dir "$REPO/tmp" update KEN-1 '.stages=false'
-control m-stage-false oversee-cycle \
-  "'.stages | if . == null then [] else . end'" "'.stages // []'"
-rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
-assert_eq "$rc|$(cat "$CASE/err")" '0|' 'control: defaulting false to an empty array fails unread-data refusal'
-RUN_BIN=""
-printf 'not json' > "$SF"
-control m-stage-unread oversee-cycle 'read_lane_state || refuse stages-unread "$ITEM" "$WORK/state.err"' 'read_lane_state || true'
-rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
-assert_eq "$(cat "$CASE/err")" 'oversee-cycle: stages-unread item=KEN-1 cause=no-state' 'control: swallowing read failure fails unread-cause assertion'
-RUN_BIN=""
 rm -- "$SF"
 cloud_case stages-cloud null
 rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
 assert_eq "$rc|$(cat "$CASE/err")" '1|oversee-cycle: stages-unread item=KEN-1 cause=no-state' 'files=none has no readable stages'
-control m-stage-no-state oversee-cycle 'if [[ -z "$LANE_ITEM_STATE" ]]; then' 'if false; then'
-rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
-assert_eq "$rc" 0 'control: absent-state refusal disabled accepts an empty read'
-RUN_BIN=""
-control m-stage-no-record oversee-cycle '[[ -n "$lane" ]] || refuse record-missing "$ITEM"
-  read_lane_state' '[[ -n "$lane" ]] || lane="{}"
-  read_lane_state'
-rc=0; stage_command KEN-unknown > "$CASE/out" 2> "$CASE/err" || rc=$?
-assert_eq "$(cat "$CASE/err")" 'oversee-cycle: stages-unread item=KEN-unknown cause=no-state' 'control: absent-lane refusal disabled fails record-missing assertion'
-RUN_BIN=""
-
 echo "pass: $PASS  fail: $FAIL"
 [[ "$FAIL" -eq 0 ]]

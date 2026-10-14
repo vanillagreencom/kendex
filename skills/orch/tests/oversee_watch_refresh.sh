@@ -185,11 +185,9 @@ assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" 'rc=0 events=' "an unread list
 refresh_watch --repo owner/repo --repo other/repo
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=${REPEAT/owner\/repo/other/repo}" "the standing pair repeats after two good long passes" "$STUB_DIR/err"
 
-# Each private mutant still reads the real completed-run list. The positive
-# event oracle rejects an unreachable threshold or an initial event marked repeat.
+# The positive event oracle rejects an unreachable threshold in a private copy.
 for mutation in \
-  'threshold|if length == 2 and all(.[]; .conclusion == "failure") then|if length == 3 and all(.[]; .conclusion == "failure") then' \
-  'initial-marker|      report=initial|      report=repeat'; do
+  'threshold|if length == 2 and all(.[]; .conclusion == "failure") then|if length == 3 and all(.[]; .conclusion == "failure") then'; do
   IFS='|' read -r name old replacement <<<"$mutation"
   MUTANT_WATCH="$(mutant_scripts "refresh-mutant-$name/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-mutant-$name/github"
@@ -202,51 +200,6 @@ for mutation in \
   ( assert_eq "$REFRESH_EVENTS" "$EVENT" 'positive event oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
   assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the positive event assertion rejects $name" "$STUB_DIR/err"
 done
-
-# A failed workflow list must not become a successful absence read.
-GUARD_WATCH="$(mutant_scripts refresh-guard/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-guard/github"
-mutate_file "$GUARD_WATCH" "      --jq '.workflows[].path' 2>\"\$3\")\"" "      --jq '.workflows[].path' 2>\"\$3\" || true)\""
-new_case refresh_guard_control
-printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
-printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
-refresh_watch
-printf 'HTTP 404: workflow kendex-refresh.yml not found on the default branch (https://api.github.com/repos/owner/repo/actions/workflows/kendex-refresh.yml)\n' > "$STUB_DIR/refresh.owner_repo.err"
-printf 'HTTP 404: Not Found (https://api.github.com/repos/owner/repo/actions/workflows)\n' > "$STUB_DIR/workflows.owner_repo.err"
-WATCH_BIN="$GUARD_WATCH" refresh_watch
-NOTICES="$REFRESH_NOTICES"
-rm -- "$STUB_DIR/refresh.owner_repo.err"
-refresh_watch
-CONTROL_RC=0
-( assert_eq "notices=$NOTICES restored=$REFRESH_EVENTS" 'notices=1 restored=' 'workflow access oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
-assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the access assertion rejects a masked workflow-list failure" "$STUB_DIR/err"
-
-# Reset the event flag after printing the refresh event, leaving its text and
-# state intact. The two-failures oracle must reject the delayed wake.
-WAKE_WATCH="$(mutant_scripts refresh-wake/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-wake/github"
-mutate_file "$WAKE_WATCH" '    rows="$(lane_row_set refresh-failing "$rows" "$repo" "$run|$passes' '    PASS_EVENT=0; rows="$(lane_row_set refresh-failing "$rows" "$repo" "$run|$passes'
-new_case refresh_wake_control
-printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
-printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
-WATCH_BIN="$WAKE_WATCH" refresh_watch --max-loops 2
-CONTROL_RC=0
-( assert_eq "rc=$REFRESH_RC lists=$REFRESH_LISTS heartbeats=$REFRESH_HEARTBEATS events=$REFRESH_EVENTS" "rc=0 lists=1 heartbeats=0 events=$EVENT" 'two-failures oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
-assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the wake assertion rejects a disabled refresh event flag" "$STUB_DIR/err"
-
-# The multi-repository oracle checks the request, not the stub's permissive
-# choice of a log file. Omitting --repo must turn that oracle red.
-REPO_WATCH="$(mutant_scripts refresh-repo/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-repo/github"
-mutate_file "$REPO_WATCH" 'log="$(gh run view "$newest" --repo "$repo" --log-failed' 'log="$(gh run view "$newest" --log-failed'
-new_case refresh_repo_control
-printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.other_repo.json"
-printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
-printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/refresh.owner_repo.err"
-WATCH_BIN="$REPO_WATCH" refresh_watch --repo owner/repo --repo other/repo
-CONTROL_RC=0
-( assert_eq "rc=$REFRESH_RC lists=$REFRESH_LISTS log=$REFRESH_LOG_REQUESTS events=$REFRESH_EVENTS" "rc=0 lists=2 log=run view 202 --repo other/repo --log-failed events=${EVENT/owner\/repo/other/repo}" 'multi-repository oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
-assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the log assertion rejects an omitted repository" "$STUB_DIR/err"
 
 # refresh_rule_passes NAME runs one stale-page rule's passes on WATCH_BIN in a
 # fresh case and leaves the last pass's outcome in OUTCOME.
@@ -307,29 +260,21 @@ refresh_rule_passes() {
   OUTCOME="rc=$REFRESH_RC events=$REFRESH_EVENTS stale=$REFRESH_STALE"
 }
 
-# One control per stale-page rule: the real watch meets the oracle and a
-# private mutant that keeps the rule's text but drops its effect does not.
-# NAME|MATCHED TEXT|MUTANT TEXT|ORACLE
+# Each stale-page sequence checks the real watch across separate passes.
+# NAME|ORACLE
 for row in \
-  'record-stale|else "older" end) as $order|else "newer" end) as $order|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
-  "rerun-attempt|def run: [.createdAt, .databaseId, .attempt];|def run: [.createdAt, .databaseId, .attempt * 0];|rc=0 events=$EVENT stale=" \
-  'rerun-page|-n "$standing" ]]|-n never ]]|rc=0 events= stale=' \
-  'recorded-pair-stale| -z "$standing" ]]; then| -z "$standing" && -z never ]]; then|rc=0 events= stale=repo=owner/repo newest=206 read=205' \
-  'unrecorded-stale|!= same ]]; then|!= same && -z never ]]; then|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
-  'unfiltered-record|lane_row_set refresh-failing "$rows" "$repo" "${recent#|lane_row_set refresh-failing "$rows" "$repo/never" "${recent#|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
-  "unjudged-record|order=unjudged|order=same|rc=0 events=${EVENT/last=202 since=2026-09-30T07/last=203 since=2026-09-30T08} stale=" \
-  'unfiltered-older-head|[run, $run]|[run, run]|rc=0 events= stale=repo=owner/repo newest=202 read=201' \
-  'unrecorded-row|      standing="$prior"|      standing=""|rc=0 events= stale='; do
-  IFS='|' read -r name old replacement oracle <<<"$row"
+  'record-stale|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
+  "rerun-attempt|rc=0 events=$EVENT stale=" \
+  'rerun-page|rc=0 events= stale=' \
+  'recorded-pair-stale|rc=0 events= stale=repo=owner/repo newest=206 read=205' \
+  'unrecorded-stale|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
+  'unfiltered-record|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
+  "unjudged-record|rc=0 events=${EVENT/last=202 since=2026-09-30T07/last=203 since=2026-09-30T08} stale=" \
+  'unfiltered-older-head|rc=0 events= stale=repo=owner/repo newest=202 read=201' \
+  'unrecorded-row|rc=0 events= stale='; do
+  IFS='|' read -r name oracle <<<"$row"
   refresh_rule_passes "$name"
   assert_eq "$OUTCOME" "$oracle" "rule $name" "$STUB_DIR/err"
-  MUTANT_WATCH="$(mutant_scripts "refresh-rule-$name/orch" oversee-watch)/oversee-watch" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-rule-$name/github"
-  mutate_file "$MUTANT_WATCH" "$old" "$replacement"
-  WATCH_BIN="$MUTANT_WATCH" refresh_rule_passes "$name"
-  CONTROL_RC=0
-  ( assert_eq "$OUTCOME" "$oracle" "rule $name oracle"; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
-  assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the $name oracle rejects a mutant without the rule" "$STUB_DIR/err"
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

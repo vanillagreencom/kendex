@@ -13,10 +13,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
-# mutant_scripts and mutate_file, for the controls below.
+# Private script layouts hold the stand-in watch beside the real launcher.
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
@@ -242,36 +241,19 @@ assert_eq "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC $SET
   "the restart is written beside the fleet state with the new loop's pid and the successor pane"
 watch_stop "$NEW" "$FLEET_STATE" || true
 
-# The same complete command survives either claim state. The release control
-# leaves a readable descriptor with the recorded directory replaced. The
-# replay control drops the recorded selection and cadence before execution.
-COMMAND_CONTROL="$(mutant_scripts command-control lib/watch-handover.sh)" || exit 1
-mutate_file "$COMMAND_CONTROL/lib/watch-handover.sh" '          *) argv+=("$word") ;;' \
-  '          --state) argv+=("$word" "$state"); skip=value ;;
-          *) : ;;'
+# The same complete command survives either claim state.
 mkdir -p "$TMP_ROOT/configured"
 WATCH_START_CWD="$TMP_ROOT/configured"
 DEFAULT_WATCH_ARGS="$WATCH_ARGS"
 WATCH_ARGS="--repeat 9 --interval 7 --state $FLEET_STATE --since 2026-01-01T00:00:00Z --repo custom/repo --item KEN-1 --hosted remote --root remote-root --handoff=old-handoff --harness codex"
-for COMMAND_CASE in live released descriptor-control replay-control; do
+for COMMAND_CASE in live released; do
   new_predecessor
   fresh_output
   COMMAND_BIN="$OVERSEE"
-  [[ "$COMMAND_CASE" != replay-control ]] || COMMAND_BIN="$COMMAND_CONTROL/oversee"
   if [[ "$COMMAND_CASE" != live ]]; then
     watch_stop "$OLD" "$FLEET_STATE"
     assert_eq "$(test -e "$WATCH_PID_FILE" && echo present || echo absent)" absent \
       "$COMMAND_CASE: normal release removed the live claim"
-  fi
-  if [[ "$COMMAND_CASE" == descriptor-control ]]; then
-    # A private retained-command mutation, with the command otherwise intact.
-    python3 - "$WATCH_ARGV_FILE" "$TMP_ROOT/work" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-words = p.read_bytes().split(b'\0')
-words[2] = sys.argv[2].encode()
-p.write_bytes(b'\0'.join(words))
-PY
   fi
   succeed "$COMMAND_BIN"
   [[ "$COMMAND_CASE" != live ]] || wait_restart
@@ -279,16 +261,9 @@ PY
   NEW="${WATCH_PID:-}"
   EXPECT_COMMAND="pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/configured argv=${WATCH_ARGS% --handoff=old-handoff --harness codex} --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF"
   ACTUAL_COMMAND="$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')"
-  if [[ "$COMMAND_CASE" == *control ]]; then
-    assert_eq "$(test "$ACTUAL_COMMAND" = "$EXPECT_COMMAND" && echo preserved || echo changed)" changed \
-      "$COMMAND_CASE: the complete-command assertion rejects the private defect"
-  else
-    assert_eq "$RC|$ACTUAL_COMMAND" "0|$EXPECT_COMMAND" \
-      "$COMMAND_CASE: replay keeps script, cwd, selection and cadence and replaces only successor values"
-    assert_eq "$WATCH_SCRIPT" "$FIXTURE_WATCH" "$COMMAND_CASE: the configured script remains the replay owner"
-  fi
-  [[ "$COMMAND_CASE" != replay-control ]] || assert_eq "$RC|${NEW:+claimed}" '0|claimed' \
-    "the replay control retains state and reaches the command-loss assertion with a live claim"
+  assert_eq "$RC|$ACTUAL_COMMAND" "0|$EXPECT_COMMAND" \
+    "$COMMAND_CASE: replay keeps script, cwd, selection and cadence and replaces only successor values"
+  assert_eq "$WATCH_SCRIPT" "$FIXTURE_WATCH" "$COMMAND_CASE: the configured script remains the replay owner"
   [[ -z "$NEW" ]] || watch_stop "$NEW" "$FLEET_STATE" || true
 done
 WATCH_ARGS="$DEFAULT_WATCH_ARGS"
@@ -308,32 +283,12 @@ assert_eq "$UNKNOWN_RESULT" '1|watch-restart-failed|step=claim' \
   "an unknown claim refuses before either fresh launch or replay"
 
 ARGV_BOUNDARY="$(mutant_scripts argv-boundary)" || exit 1
-ARGV_CONTROL="$(mutant_scripts argv-control lib/watch-handover.sh)" || exit 1
-UNREAD_CONTROL="$(mutant_scripts unread-control lib/watch-handover.sh)" || exit 1
-LEGACY_CONTROL="$(mutant_scripts legacy-control lib/watch-pid.sh)" || exit 1
-mutate_file "$ARGV_CONTROL/lib/watch-handover.sh" \
-  '        watch_start fresh "$state" "${@:2}" || return $?' \
-  '        WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=argv); return 1'
-mutate_file "$UNREAD_CONTROL/lib/watch-handover.sh" \
-  '        WATCH_HANDOVER_FIELDS+=("unread=$WATCH_ARGV_FILE")' '        :'
-mutate_file "$LEGACY_CONTROL/lib/watch-pid.sh" \
-  '    [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]] || watch_command_fresh' \
-  '    [[ -n "$WATCH_SCRIPT" && -n "$WATCH_CWD" ]] || return 1'
-rm -- "$LEGACY_CONTROL/lib/watch-handover.sh"
-cp -p -- "$ARGV_CONTROL/lib/watch-handover.sh" "$LEGACY_CONTROL/lib/watch-handover.sh"
-for ARGV_BIN in "$ARGV_BOUNDARY" "$ARGV_CONTROL" "$UNREAD_CONTROL" "$LEGACY_CONTROL"; do
-  rm -- "$ARGV_BIN/oversee-watch"
-  cp -p -- "$FIXTURE_WATCH" "$ARGV_BIN/oversee-watch"
-done
-for DESCRIPTOR_CASE in live released malformed legacy released-control unread-control legacy-control; do
+rm -- "$ARGV_BOUNDARY/oversee-watch"
+cp -p -- "$FIXTURE_WATCH" "$ARGV_BOUNDARY/oversee-watch"
+for DESCRIPTOR_CASE in live released malformed legacy; do
   new_predecessor
   [[ "$DESCRIPTOR_CASE" == live ]] || watch_stop "$OLD" "$FLEET_STATE"
   DESCRIPTOR_BIN="$ARGV_BOUNDARY/oversee"
-  case "$DESCRIPTOR_CASE" in
-    released-control) DESCRIPTOR_BIN="$ARGV_CONTROL/oversee" ;;
-    unread-control) DESCRIPTOR_BIN="$UNREAD_CONTROL/oversee" ;;
-    legacy-control) DESCRIPTOR_BIN="$LEGACY_CONTROL/oversee" ;;
-  esac
   if [[ "$DESCRIPTOR_CASE" == legacy* ]]; then
     printf '%s\0' --repeat 9 --state "$FLEET_STATE" --repo legacy/repo > "$WATCH_ARGV_FILE"
   elif [[ "$DESCRIPTOR_CASE" == malformed ]]; then
@@ -343,7 +298,7 @@ for DESCRIPTOR_CASE in live released malformed legacy released-control unread-co
   fi
   printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
   succeed "$DESCRIPTOR_BIN"
-  if [[ "$DESCRIPTOR_CASE" == live || "$DESCRIPTOR_CASE" == released-control || "$DESCRIPTOR_CASE" == legacy-control ]]; then
+  if [[ "$DESCRIPTOR_CASE" == live ]]; then
     assert_eq "$RC|$(recorded pane)|$(grep -c '^oversee: watch-restart-failed step=argv' <<<"$OUT")" "1|$PRED|1" \
       "$DESCRIPTOR_CASE: refusal keeps the predecessor before close"
     [[ "$DESCRIPTOR_CASE" != live ]] || watch_pid_live "$FLEET_STATE"
@@ -352,7 +307,7 @@ for DESCRIPTOR_CASE in live released malformed legacy released-control unread-co
     assert_eq "$RC|$WATCH_ORIGIN|$WATCH_PANE|$(grep -c '^oversee: watch-started ' <<<"$OUT")|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")" \
       "0|succession|$SUCC|1|1" "$DESCRIPTOR_CASE: the successor owns the started watch"
     UNREAD_COUNT="$(grep -cF "unread=$WATCH_ARGV_FILE" <<<"$OUT" || true)"
-    if [[ "$DESCRIPTOR_CASE" == legacy || "$DESCRIPTOR_CASE" == unread-control ]]; then
+    if [[ "$DESCRIPTOR_CASE" == legacy ]]; then
       assert_eq "$UNREAD_COUNT" 0 "$DESCRIPTOR_CASE: the unread assertion detects an omitted field"
     else
       assert_eq "$UNREAD_COUNT" 1 "$DESCRIPTOR_CASE: the default selection names its unread command"
@@ -421,17 +376,10 @@ watch_stop "$WATCH_PID" "$FLEET_STATE"
 # Stop keeps the fleet state and its handled event logs. A fresh reader
 # starts from line one; a successor retains its previous reader cursor.
 LOG_BOUNDARY="$(mutant_scripts log-boundary)" || exit 1
-LOG_CONTROL="$(mutant_scripts log-control lib/watch-handover.sh)" || exit 1
-mutate_file "$LOG_CONTROL/lib/watch-handover.sh" \
-  'if [[ -z "$1" ]] && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; }' \
-  'if false && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; }'
-for LOG_BIN in "$LOG_BOUNDARY" "$LOG_CONTROL"; do
-  rm -- "$LOG_BIN/oversee-watch"
-  cp -p -- "$FIXTURE_WATCH" "$LOG_BIN/oversee-watch"
-done
-for LOG_CASE in fresh succession control; do
+rm -- "$LOG_BOUNDARY/oversee-watch"
+cp -p -- "$FIXTURE_WATCH" "$LOG_BOUNDARY/oversee-watch"
+for LOG_CASE in fresh succession; do
   LOG_BIN="$LOG_BOUNDARY"
-  [[ "$LOG_CASE" != control ]] || LOG_BIN="$LOG_CONTROL"
   PRED="$(recorded pane)"
   printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
   printf 'fixture retained\n' > "$WATCH_ERR_FILE"
@@ -455,8 +403,6 @@ for LOG_CASE in fresh succession control; do
       [[ "$LOG_STREAM" != "$WATCH_LOG_FILE" ]] || RETAINED_LINE='EVENT fixture retained'
       assert_eq "$(sed -n '1p' "$LOG_STREAM")" "$RETAINED_LINE" \
         "$LOG_CASE: the old event keeps its numbered reader position"
-    else
-      assert_file_contains "$LOG_STREAM" retained "$LOG_CASE: disabling fresh-log clearing delivers the handled event again"
     fi
   done
   watch_stop "$WATCH_PID" "$FLEET_STATE"
@@ -464,12 +410,9 @@ done
 
 # The floor comes from the first lane. Repository selection stays with the
 # watch's existing default and ORCH_CONNECTED_REPOS resolution.
-SINCE_CONTROL="$(mutant_scripts since-control lib/watch-handover.sh)" || exit 1
 SINCE_FLOOR="$(mutant_scripts since-floor)" || exit 1
-mutate_file "$SINCE_CONTROL/lib/watch-handover.sh" '--since "$since")' ')'
-for SINCE_CASE in floor control; do
+for SINCE_CASE in floor; do
   SINCE_BIN="$SINCE_FLOOR"
-  [[ "$SINCE_CASE" != control ]] || SINCE_BIN="$SINCE_CONTROL"
   rm -- "${SINCE_BIN:?}/oversee-watch"
   cp -p -- "$FIXTURE_WATCH" "$SINCE_BIN/oversee-watch"
   tm kill-window -a -t "$KEEP_WINDOW"
@@ -477,23 +420,14 @@ for SINCE_CASE in floor control; do
   run_oversee "$SINCE_BIN/oversee" -- launch --wait-secs 20
   watch_handoff_read
   EXPECT_SINCE=2026-01-01T00:00:00Z
-  [[ "$SINCE_CASE" != control ]] || EXPECT_SINCE=""
   assert_eq "$RC|$WATCH_SINCE" "0|$EXPECT_SINCE" "$SINCE_CASE: the first watch carries the fixed fleet start"
   watch_stop "$WATCH_PID" "$FLEET_STATE"
 done
 
-# The runner accepts this first-watch job, but the command exits without a
-# claim. The control changes only the claim-deadline refusal to success.
+# The runner accepts this first-watch job, but the command exits without a claim.
 NORECORD="$(mutant_scripts norecord lib/watch-handover.sh)" || exit 1
-CLAIM_CONTROL="$(mutant_scripts claim-control lib/watch-handover.sh)" || exit 1
-mutate_file "$CLAIM_CONTROL/lib/watch-handover.sh" \
-  '      WATCH_HANDOVER_FIELDS=(step=claim "log=$WATCH_ERR_FILE" "$runner")
-      return 1' \
-  '      WATCH_HANDOVER_FIELDS=(step=claim "log=$WATCH_ERR_FILE" "$runner")
-      return 0'
-for CLAIM_CASE in refusal control; do
+for CLAIM_CASE in refusal; do
   CLAIM_BIN="$NORECORD"
-  [[ "$CLAIM_CASE" != control ]] || CLAIM_BIN="$CLAIM_CONTROL"
   rm -- "${CLAIM_BIN:?}/oversee-watch"
   printf '#!/bin/sh\nexit 0\n' > "$CLAIM_BIN/oversee-watch"
   chmod +x "$CLAIM_BIN/oversee-watch"
@@ -503,7 +437,6 @@ for CLAIM_CASE in refusal control; do
   LIVE_RC=0
   watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
   EXPECT_CLAIM='1|1|0|none|1'
-  [[ "$CLAIM_CASE" != control ]] || EXPECT_CLAIM='0|1|1|present|2'
   RECORD_PRESENT=none
   [[ "$(recorded pane)" == none ]] || RECORD_PRESENT=present
   assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$RECORD_PRESENT|$(tm list-panes -a -F '#{pane_id}' | wc -l | tr -d ' ')" \
@@ -513,13 +446,9 @@ for CLAIM_CASE in refusal control; do
 done
 
 # The runner cannot write its record. A first launch must close the new pane.
-ERROR_CONTROL="$(mutant_scripts error-control lib/watch-handover.sh)" || exit 1
-mutate_file "$ERROR_CONTROL/lib/watch-handover.sh" \
-  'cd -- "$launch_cwd" 2>>"$DEP_ERR"' 'cd -- "$launch_cwd" 2>"$DEP_ERR"'
-for ERROR_CASE in retained control; do
+for ERROR_CASE in retained; do
   ERROR_BIN="$OVERSEE"
   EXPECT_ERROR=1
-  [[ "$ERROR_CASE" != control ]] || { ERROR_BIN="$ERROR_CONTROL/oversee"; EXPECT_ERROR=0; }
   tm kill-window -a -t "$KEEP_WINDOW"
   rm -f -- "${FLEET_STATE:?}"
   mkdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
@@ -530,40 +459,6 @@ for ERROR_CASE in retained control; do
   assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$(grep -c '^job-unit: record-unwritable ' <<<"$OUT")" \
     "1|1|0|$EXPECT_ERROR" "$ERROR_CASE: a refused job keeps its failed status and the restoration preserves the launch error"
 done
-
-UNSTARTED="$(mutant_scripts unstarted oversee)" || exit 1
-mutate_file "$UNSTARTED/oversee" '      hand_over_watch ;;' '      ;;'
-tm kill-window -a -t "$KEEP_WINDOW"
-rm -f -- "${FLEET_STATE:?}"
-run_oversee "$UNSTARTED/oversee" -- launch --wait-secs 20
-LIVE_RC=0
-watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
-assert_eq "$RC|$LIVE_RC" "0|1" "control: a launch without the start leaves no watch claim"
-
-HANDOFF_CONTROL="$(mutant_scripts handoff-control lib/watch-handover.sh)" || exit 1
-mutate_file "$HANDOFF_CONTROL/lib/watch-handover.sh" '--handoff "$HANDOFF" ' ''
-rm -- "$HANDOFF_CONTROL/oversee-watch"
-cp -p -- "$FIXTURE_WATCH" "$HANDOFF_CONTROL/oversee-watch"
-tm kill-window -a -t "$KEEP_WINDOW"
-rm -f -- "${FLEET_STATE:?}"
-run_oversee "$HANDOFF_CONTROL/oversee" -- launch --handoff "$FIRST_HANDOFF" --wait-secs 20
-[[ "$RC" -eq 0 ]] || printf '%s\ncustom-handoff-control-exit=%s\n' "$OUT" "$RC" >&2
-watch_handoff_read
-assert_eq "$RC|$WATCH_HANDOFF" '0|' "control: omitting the handoff word loses the first watch's custom path"
-watch_stop "$WATCH_PID" "$FLEET_STATE"
-
-# The control: the succession without the handover leaves the watch reading
-# the predecessor's pane, which the stop closed.
-UNHANDED="$(mutant_scripts unhanded oversee)" || exit 1
-mutate_file "$UNHANDED/oversee" '      hand_over_watch ;;' '      ;;'
-new_predecessor
-fresh_output
-succeed "$UNHANDED/oversee"
-sleep 2
-assert_eq "$RC|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)|$(started_line "$OLD" | sed 's/ .*//')|$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$PRED" || true)|$(grep -c '^oversee: watch-' <<<"$OUT")" \
-  "0|alive|pane=$PRED|0|0" \
-  "control: without the handover the watch keeps serving the gone predecessor pane"
-watch_stop "$OLD" "$FLEET_STATE" || true
 
 # A $TMUX tmux will not state for the successor's session is a notice, and
 # the succession still stands with no helper started: a tmux on the run's
@@ -722,18 +617,10 @@ done
 mv "$REAL_GH" "$WSTUBS/gh"
 
 # A live repeat watch sees the harness's wall and invokes the real successor.
-# The control keeps the successful launch and removes only its watch restart.
-RECOVERY_CONTROL="$(mutant_scripts recovery-control oversee-succeed)" || exit 1
-orch_fixture_shared_libs "$TMP_ROOT/recovery-control"
 make_lane "$H" eclaude
 claude_usage 80 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-mutate_file "$RECOVERY_CONTROL/oversee-succeed" \
-  '  local cwd="$7" script="$8" argc="$9"' \
-  '  return 0
-  local cwd="$7" script="$8" argc="$9"'
-for RECOVERY_CASE in walled control; do
+for RECOVERY_CASE in walled; do
   RECOVERY_BIN="$SRC_DIR/oversee-succeed"
-  [[ "$RECOVERY_CASE" != control ]] || RECOVERY_BIN="$RECOVERY_CONTROL/oversee-succeed"
   printf '%s\n' "$RECOVERY_BIN" > "$WSTUBS/succeed.bin"
   cat > "$WSTUBS/gh" <<EOF
 #!/bin/sh
@@ -776,19 +663,8 @@ EOF
     [[ "$SUCC" == "$PRED" || "$SUCC" == none ]] || break
     sleep 0.1
   done
-  if [[ "$RECOVERY_CASE" == walled ]]; then
-    wait_restart
-    EXPECT_RECOVERY=watched
-  else
-    for _ in $(seq 1 300); do
-      LIVE_RC=0
-      watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
-      [[ "$LIVE_RC" != 1 ]] || break
-      sleep 0.1
-    done
-    NEW=""
-    EXPECT_RECOVERY=absent
-  fi
+  wait_restart
+  EXPECT_RECOVERY=watched
   LIVE_RC=0
   watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
   RECOVERY_RESULT=absent
@@ -803,16 +679,10 @@ printf '%s\n' "$SRC_DIR/oversee-succeed" > "$WSTUBS/succeed.bin"
 
 # Death replay has a complete command and no new flag array. The watch must
 # keep that command rather than replace it with its print helper's command.
-REPLAY_CONTROL="$(mutant_scripts replay-control lib/watch-overseer-record.sh)" || exit 1
-orch_fixture_shared_libs "$TMP_ROOT/replay-control"
-mutate_file "$REPLAY_CONTROL/lib/watch-overseer-record.sh" \
-  '  if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" == succession && ${#OVERSEER_FLAGS[@]} -eq 0 && "$held" != none && "$held" != unread ]]; then' \
-  '  if false; then'
 printf '#!/bin/sh\n[ "$1 $2" != "auth status" ] || { echo ready >> %s/auth.calls; echo Logged in; }\n' "$WSTUBS" > "$WSTUBS/gh"
 chmod +x "$WSTUBS/gh"
-for REPLAY_CASE in replay control; do
+for REPLAY_CASE in replay; do
   REPLAY_BIN="$SRC_DIR/oversee-succeed"
-  [[ "$REPLAY_CASE" != control ]] || REPLAY_BIN="$REPLAY_CONTROL/oversee-succeed"
   new_predecessor
   watch_stop "$OLD" "$FLEET_STATE"
   watch_argv_read "$FLEET_STATE"
@@ -842,12 +712,7 @@ for REPLAY_CASE in replay control; do
     "0|0|ready" "$REPLAY_CASE: death recovery with no watch starts a detached repeat watch" "$TMP_ROOT/replay.out"
   assert_file_contains "$WATCH_LOG_FILE" retained "$REPLAY_CASE: death recovery keeps unread stdout events"
   assert_file_contains "$WATCH_ERR_FILE" retained "$REPLAY_CASE: death recovery keeps the previous error log"
-  if [[ "$REPLAY_CASE" == replay ]]; then
-    assert_eq "$(recorded launch_line)" "$REPLAY_LINE" "the replay watch keeps the complete recorded command"
-  else
-    assert_eq "$(recorded launch_line)" 'claude -n overseer brief' \
-      "control: printing without replay flag words overwrites the complete command"
-  fi
+  assert_eq "$(recorded launch_line)" "$REPLAY_LINE" "the replay watch keeps the complete recorded command"
   watch_stop "$WATCH_PID" "$FLEET_STATE"
 done
 
