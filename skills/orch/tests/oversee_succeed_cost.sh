@@ -6,8 +6,7 @@ set -euo pipefail
 source "${BASH_SOURCE[0]%/*}/lib/git-env.sh"
 TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 source "$TEST_DIR/lib/assertions.sh"
-mkdir -p "$TEST_DIR/../../../tmp"
-TMP_ROOT="$(mktemp -d "$TEST_DIR/../../../tmp/oversee-cost.XXXXXX")" || { echo 'oversee-succeed-cost: scratch=mktemp-failed' >&2; exit 1; }
+TMP_ROOT="$(mktemp -d)" || { echo 'oversee-succeed-cost: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'oversee-succeed-cost: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'oversee-succeed-cost: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
@@ -20,6 +19,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -30,10 +30,28 @@ source = Path(os.environ.get('SUCCEED_SCRIPTS_UNDER_TEST', str(tests.parent / 's
 spec = importlib.util.spec_from_file_location('counter', tests / 'lib/process-count.py')
 counter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(counter)
-BOUND = 80
+BOUND = 76
+PATH_BOUND = 8
+RECORD_BOUND = 20
 
 def result(name, got, want):
     print('assert', str(got), str(want), name, sep='\t')
+
+def caller_cost(trace, external, parent):
+    start = next((i for i, line in enumerate(trace) if ': ol_record_current 123 %1' in line), None)
+    if start is None:
+        return None
+    end = next((i + 1 for i in range(start, len(trace))
+                if ': read -r OL_CUR_HARNESS ' in trace[i]), None)
+    if end is None:
+        return None
+    path_end = next(i for i in range(start, end) if ': state_file=' in trace[i])
+    def count(lines):
+        pids = {re.search(r'count:(\d+):', line).group(1) for line in lines
+                if re.match(r'^\++count:\d+:', line)} - {parent}
+        commands = [line for line in external if line.split()[1] in pids or line.split()[2] in pids]
+        return counter.total(lines, commands, {parent})
+    return count(trace[start:end]), count(trace[start:path_end])
 
 for skill in ('orch', 'mailbox', 'github'):
     shutil.copytree(source.parent.parent / skill / 'scripts', root / 'candidate' / skill / 'scripts')
@@ -111,10 +129,11 @@ def run(script, name, extra=None, args=()):
             external.setdefault(pid, line)
     trace = (count_dir / 'trace').read_text(errors='surrogateescape').splitlines()
     count = counter.total(trace, list(external.values()), {str(proc.pid)})
-    return status, (root / (name + '.out')).read_bytes(), (root / (name + '.err')).read_bytes(), count
+    return status, (root / (name + '.out')).read_bytes(), (root / (name + '.err')).read_bytes(), count, caller_cost(trace, list(external.values()), str(proc.pid))
 
 rows = [
     ('complete', identity, {}, (), 0, b'mark-unmeasured'),
+    ('complete-absolute', identity, {'ORCH_STATE_DIR': str(record_file.parent)}, (), 0, b'mark-unmeasured'),
     ('bootstrap', None, {}, (), 0, b'mark-unmeasured'),
     ('partial', {**identity, 'model': None}, {'FIXTURE_MODEL': 'fable'}, (), 0,
      b'mark-unmeasured kind=rate reason=one-sample'),
@@ -146,19 +165,107 @@ for name, record, extra, args, status, key in rows:
     if key:
         # oversee-watch consumes the first keyed line. Prose stays outside the assertion.
         result(name + ': keyed result', b' '.join(actual[1].split()[1:1 + len(key.split())]).decode(), key.decode())
-    if name == 'complete':
+    if name in ('complete', 'complete-absolute'):
         print('metric', 'candidate-own-processes', actual[3], sep='\t')
+        assert actual[4] is not None, 'complete caller-record workload was not reached'
+        print('metric', name + '-caller-record-processes', actual[4][0], sep='\t')
+        print('metric', name + '-state-path-processes', actual[4][1], sep='\t')
+        result(name + ': state-path process bound', int(actual[4][1] < PATH_BOUND), 1)
+        result(name + ': caller-record process reduction', int(actual[4][0] < RECORD_BOUND), 1)
         if BOUND is not None:
             result('complete: own process bound', int(actual[3] < BOUND), 1)
-        complete = actual
+        if name == 'complete':
+            complete = actual
     if baseline:
         before = run(root / 'base/orch/scripts/oversee-succeed', name + '-base', extra, args)
         for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
             result(name + ': base ' + field, int(actual[i] == before[i]), 1)
-        if name == 'complete':
+        if name in ('complete', 'complete-absolute'):
             print('metric', 'base-own-processes', before[3], sep='\t')
-            if BOUND is not None:
-                result('base control: rejects process bound', int(before[3] >= BOUND), 1)
+            assert before[4] is not None, 'baseline caller-record workload was not reached'
+            if name == 'complete':
+                result(name + ': baseline rejects state-path bound', int(before[4][1] >= PATH_BOUND), 1)
+
+# Loading definitions must leave the reader's globals, argv and shell state.
+loaded = subprocess.run([bash, '-c', '''
+file=$1
+set -- caller --state-dir ignored
+PROJECT_ROOT=reader SCRIPT_DIR=reader STATE_DIR=reader STATE_DIR_FLAG=reader
+PRIVATE_ENV=reader GLOBAL_OPTS=reader SR_HARNESS=reader
+before=$-; before_dir=$PWD; trap ':' EXIT; before_trap=$(trap -p EXIT)
+source "$file"
+[[ $PROJECT_ROOT == reader && $SCRIPT_DIR == reader && $STATE_DIR == reader &&
+   $STATE_DIR_FLAG == reader && $PRIVATE_ENV == reader && $GLOBAL_OPTS == reader &&
+   $SR_HARNESS == reader && $- == "$before" && $PWD == "$before_dir" &&
+   $(trap -p EXIT) == "$before_trap" && $* == 'caller --state-dir ignored' ]]
+''',
+                         'fixture', str(scripts / 'workflow-state')], cwd=root / 'work',
+                        env=env, capture_output=True)
+result('definition loading: reader unchanged', loaded.returncode, 0)
+result('definition loading: stdout empty', len(loaded.stdout), 0)
+result('definition loading: stderr empty', len(loaded.stderr), 0)
+
+def path_read(tree, extra, sourced=False):
+    path_env = {**env, **extra, 'PROJECT_ROOT': str(root / 'work'), 'SCRIPT_DIR': str(tree)}
+    command = [bash, str(tree / 'workflow-state'), 'path', 'oversee']
+    if sourced:
+        command = [bash, '-c', 'source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee', 'fixture']
+    answer = subprocess.run(command, cwd=root / 'work', env=path_env, capture_output=True)
+    return answer.returncode, answer.stdout, answer.stderr
+
+for name, extra in [('relative', {}), ('absolute', {'ORCH_STATE_DIR': str(record_file.parent)})]:
+    direct = path_read(scripts, extra, True)
+    cli = path_read(scripts, extra)
+    result(name + ': sourced path succeeds', direct[0], 0)
+    result(name + ': sourced and CLI path observables', int(direct == cli), 1)
+    if baseline:
+        result(name + ': baseline path observables', int(cli == path_read(root / 'base/orch/scripts', extra)), 1)
+
+(root / 'work/.env.local').write_text('return 1\n')
+refused = path_read(scripts, {}, True)
+result('settings failure: path refuses', refused[0], 1)
+result('settings failure: no path printed', len(refused[1]), 0)
+(root / 'work/.env.local').unlink()
+
+shutil.copytree(root / 'candidate', root / 'missing-dependency')
+(root / 'missing-dependency/orch/scripts/lib/kendex-env.sh').unlink()
+refused = path_read(root / 'missing-dependency/orch/scripts', {}, True)
+result('missing settings dependency: path refuses', refused[0], 1)
+result('missing settings dependency: no path printed', len(refused[1]), 0)
+
+shutil.copytree(root / 'candidate', root / 'failed-root')
+(root / 'failed-root/orch/scripts/git-context').write_text('#!' + bash + '\nexit 1\n')
+refused = path_read(root / 'failed-root/orch/scripts', {}, True)
+result('common-root dependency failure: path refuses', refused[0], 1)
+result('common-root dependency failure: no path printed', len(refused[1]), 0)
+
+(root / 'work/.env.local').write_text('cd /\ntrap ":" EXIT\n')
+isolated = subprocess.run([bash, '-c', '''
+source "$SCRIPT_DIR/workflow-state"
+before_dir=$PWD; before_trap=$(trap -p EXIT); before_options=$-
+path=$(workflow_state_path oversee) || exit 1
+[[ $PWD == "$before_dir" && $(trap -p EXIT) == "$before_trap" && $- == "$before_options" ]]
+''', 'fixture'], cwd=root / 'work',
+    env={**env, 'PROJECT_ROOT': str(root / 'work'), 'SCRIPT_DIR': str(scripts)}, capture_output=True)
+result('path initialization: reader state isolated', isolated.returncode, 0)
+(root / 'work/.env.local').unlink()
+
+# Restore the removed executable lookup in a private copy. It must retain
+# the result while the state-path instrument rejects the added processes.
+shutil.copytree(root / 'candidate', root / 'path-mutant')
+path = root / 'path-mutant/orch/scripts/lib/overseer-launch.sh'
+text = path.read_text()
+old = 'state_file="$(source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee)" 2>/dev/null'
+new = 'state_file="$("$SCRIPT_DIR/workflow-state" path oversee 2>/dev/null)"'
+assert text.count(old) == 1, (path, old)
+path.write_text(text.replace(old, new))
+assert path.read_text() != text
+record_file.write_text(json.dumps({'overseer': identity}) + '\n')
+path_control = run(root / 'path-mutant/orch/scripts/oversee-succeed', 'path-control')
+for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
+    result('path cost control: same ' + field, int(path_control[i] == complete[i]), 1)
+assert path_control[4] is not None, 'control caller-record workload was not reached'
+result('path cost control: rejects executable lookup', int(path_control[4][1] >= PATH_BOUND), 1)
 
 # Restore the redundant source initialization on a private tree. This puts the
 # removed cost back without changing the named account workload or its result.

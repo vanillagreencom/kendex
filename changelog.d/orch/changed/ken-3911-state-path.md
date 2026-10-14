@@ -1,0 +1,1 @@
+- The overseer mark check resolves its launch-record path in the calling shell. It starts fewer processes when it reads the caller identity.

@@ -1236,7 +1236,7 @@ ol_record_current() { # SERVER PANE
   local record fields start state_file sep=$'\x1f'
   OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
   # Resolve once through the state owner, then read that file without reloading settings.
-  state_file="$("$SCRIPT_DIR/workflow-state" path oversee 2>/dev/null)" || return 1
+  state_file="$(source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee)" 2>/dev/null || return 1
   [[ -f "$state_file" ]] || return 1
   record="$(jq -r '.overseer // null' "$state_file" 2>"$DEP_ERR")" || return 2
   record="${record:-null}"
