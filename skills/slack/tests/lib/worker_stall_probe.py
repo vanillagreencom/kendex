@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 
 if sys.argv[1] != "--child":
@@ -63,15 +64,20 @@ from settings import load
 
 root, mode, file_path = Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
 settings = load()
-# Shorten existing figures inside this child. Real elapsed time proves timer
-# wiring and progress renewal, not the duration of the production deadline.
+# Shorten existing figures inside this child. The connected clock advances
+# only at polls, so reader shutdown cannot age with runner scheduling delays.
 settings.poll_seconds = 0.2
 relay.RECONNECT_BOUND_SECONDS = 1
 relay.RETRY_FIRST_SECONDS = 0.4
 relay.RETRY_MAX_SECONDS = 0.8
 main.load = lambda **kwargs: settings
 bound = 1.2
-started = time.monotonic()
+clock = time.monotonic
+connected_time = 0.0
+if mode == "connected":
+    clock = lambda: connected_time
+    relay.time = SimpleNamespace(monotonic=clock, time=time.time, sleep=time.sleep)
+started = clock()
 polls, attempts, api_calls, chunks = [], [], [], []
 original_get, original_post, original_open = Slack.get, Slack.post, Slack._open
 original_poll = relay.RootRelay.poll
@@ -100,7 +106,7 @@ def post(self, method, **body):
     if method == "apps.connections.open":
         if mode == "connect-api":
             block()
-        attempts.append(time.monotonic() - started)
+        attempts.append(clock() - started)
         if mode == "reconnect":
             if attempts[-1] > 3:
                 raise Finished
@@ -113,7 +119,7 @@ def post(self, method, **body):
 
 def opened(self, *args, **kwargs):
     result = original_open(self, *args, **kwargs)
-    api_calls.append(time.monotonic() - started)
+    api_calls.append(clock() - started)
     return result
 
 
@@ -164,11 +170,14 @@ def poll(self, bot_user):
         saved_bytes = (root / "tmp/slack/files/FWORKER-worker.txt").read_text()
         delivered = stamp in self.state.delivered
     result = original_poll(self, bot_user)
-    polls.append(time.monotonic() - started)
+    polls.append(clock() - started)
     return result
 
 
 def polled(self):
+    global connected_time
+    if mode == "connected":
+        connected_time += settings.poll_seconds
     result = original_poll_once(self)
     if mode == "connected" and polls[-1] > 3:
         raise Finished
@@ -191,6 +200,6 @@ except Finished:
 if mode in ("reconnect", "connected", "api-progress", "download"):
     print(json.dumps({"polls": len(polls), "attempts": len(attempts), "api_calls": len(api_calls),
                       "api_after_first_poll": sum(at > polls[0] for at in api_calls) if polls else 0,
-                      "elapsed": time.monotonic() - started, "bound": bound,
+                      "elapsed": clock() - started, "bound": bound,
                       "file_bytes": saved_bytes, "delivered": delivered, "chunks": len(chunks)}))
 sys.exit(result)
