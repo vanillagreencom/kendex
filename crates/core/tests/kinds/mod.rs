@@ -41,7 +41,7 @@ pub struct Fixture {
 #[allow(clippy::unwrap_used)]
 pub fn fixture(declarations: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = tmp.path().canonicalize().unwrap();
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();

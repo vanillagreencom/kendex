@@ -380,6 +380,9 @@ pub struct EngineReport {
     /// Shared positions owned by the record this pass read. A proposed
     /// ownership release does not erase what verification must compare.
     pub scope_positions: Vec<super::Position>,
+    /// Scope settings comparisons that failed. Ownership remains recorded,
+    /// but record verification must reject these unproved positions.
+    pub scope_errors: Vec<crate::error::CoreError>,
     /// The settings edits each registration this pass plans is, by lock
     /// entry key, as the pass held them in place: a record write for an
     /// entry this pass proved holds them in place again before it writes.
@@ -600,6 +603,7 @@ impl EngineReport {
             own_edit_rows: BTreeSet::new(),
             generated: super::GeneratedPaths::default(),
             scope_positions: Vec::new(),
+            scope_errors: Vec::new(),
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
             wanted: BTreeMap::new(),

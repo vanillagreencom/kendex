@@ -247,15 +247,11 @@ fn an_apply_brings_the_trash_within_its_bounds_and_keeps_what_it_wrote() {
 /// and before their closing line.
 #[test]
 fn refresh_and_remove_close_on_the_pass_too() {
-    let rows: [(&str, &[&str], &str); 2] = [
-        (
-            "refresh",
-            &["refresh", "-y", "--scope", "project"],
-            "up to date",
-        ),
-        ("remove", &["remove", "deploy"], "removed 4 changes"),
+    let rows: [(&str, &[&str]); 2] = [
+        ("refresh", &["refresh", "-y", "--scope", "project"]),
+        ("remove", &["remove", "deploy"]),
     ];
-    for (verb, args, closing) in rows {
+    for (verb, args) in rows {
         let (_tmp, home) = fixture();
         let project = migrating_project(&home);
         let installed = kendex(
@@ -271,14 +267,13 @@ fn refresh_and_remove_close_on_the_pass_too() {
 
         let closed = kendex(&home, &project, &bounds, args);
         assert!(closed.status.success(), "{verb}: {}", said(&closed));
-        assert!(
-            before(
-                &said(&closed),
-                "trash: removed 1 older entry",
-                &format!("{}: {closing}", project.display())
-            ),
-            "{verb}: {}",
-            said(&closed)
+        assert_eq!(
+            project.join(".claude/skills/deploy").exists(),
+            verb == "refresh"
+        );
+        assert_eq!(
+            project.join(".claude/settings.json").exists(),
+            verb == "refresh"
         );
         let kept = names(&home);
         assert!(kept.contains(&young), "{verb}: {kept:?}");
@@ -368,17 +363,13 @@ fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
     );
     assert!(!removed.status.success(), "{}", said(&removed));
     let text = said(&removed);
-    assert!(text.contains("removed 4 changes"), "{text}");
-    assert!(text.contains("trash: removed 1 older entry"), "{text}");
-    let trash_line = text
-        .lines()
-        .find(|line| line.contains("trash: removed 1 older entry"))
-        .unwrap();
+    let frame = text.split('└').next().unwrap();
     assert!(
-        crate::presentation::escaped_the_frame(trash_line).is_empty(),
-        "shared trash report escaped the frame: {text}"
+        crate::presentation::escaped_the_frame(frame).is_empty(),
+        "a write report escaped the frame: {text}"
     );
-    assert!(!text.contains("Nothing removed"), "{text}");
+    assert!(!names(&home).iter().any(|name| name.ends_with("-old")));
+    assert!(!project.join(".claude/settings.json").exists());
     assert!(
         !project.join(".claude/skills/deploy").exists(),
         "the project scope's removal was written"

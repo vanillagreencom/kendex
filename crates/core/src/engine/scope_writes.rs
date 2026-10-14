@@ -70,6 +70,12 @@ pub(super) fn plan_manifest_write(
     Ok(())
 }
 
+/// Generated paths and record proofs consume the same shared-file pass.
+pub(super) struct ConfigWrites {
+    pub edited: BTreeSet<PathBuf>,
+    pub scope_errors: Vec<crate::error::CoreError>,
+}
+
 /// One mutation per config file, whatever asked for it — a single
 /// precondition can hold; per-edit preconditions against the same original
 /// bytes cannot.
@@ -81,11 +87,13 @@ pub(super) fn plan_manifest_write(
 /// ([`crate::pi_ext::append_system_retires`]). Returns every file it edits
 /// or takes away.
 pub(super) fn plan_config_edits(
+    env: &Env,
     scope: &Scope,
-    config_edits: config_edits::ConfigEditPlan,
+    mut config_edits: config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     ops: &mut Vec<PlannedOp>,
-) -> Result<BTreeSet<PathBuf>> {
+) -> Result<ConfigWrites> {
+    let scope_errors = super::plan_claude_project_defaults(env, scope, new_lock, &mut config_edits);
     let project = matches!(scope, Scope::Project { .. });
     let mut edited = BTreeSet::new();
     for (path, (labels, mut edits)) in config_edits.by_file {
@@ -142,7 +150,10 @@ pub(super) fn plan_config_edits(
             op: Op::EditFile { pre, path, edits },
         });
     }
-    Ok(edited)
+    Ok(ConfigWrites {
+        edited,
+        scope_errors,
+    })
 }
 
 /// What the record can say of one source or set this pass.

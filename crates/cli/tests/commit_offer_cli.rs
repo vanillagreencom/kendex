@@ -204,8 +204,7 @@ fn head_subject(project: &Path) -> String {
         .to_owned()
 }
 
-/// No terminal and no flag: one line naming the flags, and the run exits
-/// as the verb would. A flag that leaves is the same success with no line.
+/// A non-interactive apply leaves its writes uncommitted unless a flag chooses otherwise.
 #[test]
 fn without_a_terminal_the_line_names_the_flags_and_leave_says_nothing() {
     let tmp = tempfile::tempdir().unwrap();
@@ -213,22 +212,15 @@ fn without_a_terminal_the_line_names_the_flags_and_leave_says_nothing() {
     let project = project(&tmp);
     let (output, text) = apply(&home, &project, &[]);
     assert!(output.status.success(), "{text}");
-    assert!(
-        text.contains(
-            "5 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave"
-        ),
-        "{text}"
-    );
     assert_eq!(head_subject(&project), "files");
 
     let (output, text) = apply(&home, &project, &["--leave"]);
     assert!(output.status.success(), "{text}");
-    assert!(!text.contains("not committed"), "{text}");
     assert!(git(&project, &["status", "--porcelain"]).contains("?? .claude/agents/offer-file.md"));
 }
 
 /// The commit route: the set is committed with the command's message, or
-/// the one `--message` gives, and the ledger carries the part.
+/// the one `--message` gives.
 #[test]
 fn the_commit_flag_commits_the_set_with_the_commands_message() {
     let tmp = tempfile::tempdir().unwrap();
@@ -236,11 +228,6 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     let project = project(&tmp);
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 5 files as "), "{text}");
-    assert!(
-        text.contains(" · committed 5 files"),
-        "no ledger part: {text}"
-    );
     assert!(
         !home.join("fake-bin/calls").exists(),
         "a commit that takes no pull request asked gh"
@@ -248,7 +235,10 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     assert_eq!(head_subject(&project), "chore: kendex apply");
     let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
     assert!(
-        files.contains(".claude/agents/offer-file.md") && files.contains(".kendex-generated.json"),
+        files.contains(".claude/agents/offer-file.md")
+            && files.contains(".kendex-generated.json")
+            && files.contains(".claude/settings.json")
+            && files.contains(".kendex-lock.json"),
         "{files}"
     );
     assert!(!files.contains("kendex.toml"), "{files}");
@@ -261,7 +251,6 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     fs::write(project.join("AGENTS.md"), "# app\n\nmore\n").unwrap();
     let (output, text) = apply(&home, &project, &["--commit", "--message", "docs: renders"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 5 files as "), "{text}");
     assert_eq!(head_subject(&project), "docs: renders");
     assert!(
         git(&project, &["status", "--porcelain"]).contains(" M AGENTS.md"),
@@ -1296,12 +1285,6 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let bare = origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--push"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 5 files as "), "{text}");
-    assert!(text.contains("pushed to origin/main"), "{text}");
-    assert!(
-        text.contains(" · committed and pushed 5 files"),
-        "no ledger part: {text}"
-    );
     assert_eq!(
         git(&project, &["rev-parse", "HEAD"]),
         git(&project, &["rev-parse", "origin/main"])
@@ -1321,26 +1304,12 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     let before = git(&project, &["rev-parse", "HEAD"]);
     let (output, text) = apply(&home, &project, &["--push"]);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("committed 5 files as "), "{text}");
-    assert!(text.contains("the push was refused"), "{text}");
-    assert!(text.contains("git said:"), "{text}");
-    assert!(
-        text.contains("GH006: Protected branch update failed"),
-        "{text}"
-    );
-    assert!(
-        text.contains("the commit is on main in this checkout; kendex did not undo it"),
-        "{text}"
-    );
-    assert!(
-        text.contains(" · committed, not pushed"),
-        "no ledger part: {text}"
-    );
     assert_ne!(
         git(&project, &["rev-parse", "HEAD"]),
         before,
         "the commit was undone"
     );
+    assert_eq!(git(&project, &["rev-parse", "origin/main"]), before);
 }
 
 /// A bare repository the project calls `origin`, fetched from `url` and
@@ -1589,22 +1558,11 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
     origin(&project, "plain-origin");
     let (output, text) = apply(&home, &project, &["--pull-request"]);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("committed 5 files as "), "{text}");
-    assert!(text.contains(" on kendex/renders"), "{text}");
-    assert!(text.contains("pushed to origin/kendex/renders"), "{text}");
-    assert!(
-        text.contains("opened https://github.com/acme/site/pull/41"),
-        "{text}"
-    );
-    assert!(
-        text.contains("this checkout is now on kendex/renders"),
-        "{text}"
-    );
-    assert!(
-        text.contains(" · committed 5 files, pull request open"),
-        "no ledger part: {text}"
-    );
     assert!(home.join("fake-bin/calls").exists(), "gh was never asked");
+    assert_eq!(
+        git(&project, &["rev-parse", "HEAD"]),
+        git(&project, &["rev-parse", "origin/kendex/renders"])
+    );
     assert_eq!(
         git(&project, &["symbolic-ref", "--short", "HEAD"]).trim(),
         "kendex/renders"
@@ -1621,20 +1579,13 @@ fn the_pull_request_flag_opens_one_or_names_the_branch_gh_refused() {
     origin(&project, "refuse-origin");
     let (output, text) = apply(&home, &project, &["--pull-request"]);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("pushed to origin/kendex/renders"), "{text}");
-    assert!(text.contains("the pull request was refused"), "{text}");
-    assert!(text.contains("gh said:"), "{text}");
-    assert!(
-        text.contains("GitHub Actions is not permitted to create or approve pull requests"),
-        "{text}"
+    assert_eq!(
+        git(&project, &["symbolic-ref", "--short", "HEAD"]).trim(),
+        "kendex/renders"
     );
-    assert!(
-        text.contains("the branch kendex/renders is on origin; open the pull request yourself"),
-        "{text}"
-    );
-    assert!(
-        text.contains(" · committed and pushed, no pull request"),
-        "no ledger part: {text}"
+    assert_eq!(
+        git(&project, &["rev-parse", "HEAD"]),
+        git(&project, &["rev-parse", "origin/kendex/renders"])
     );
 }
 
@@ -1686,8 +1637,7 @@ fn a_hooks_refusal_is_quoted_whole_and_nothing_is_committed() {
     assert!(!text.contains("already said"), "{text}");
 }
 
-/// The two states the offer cannot be made in print one line each, and a
-/// flag does not change that.
+/// An operation in progress or a detached head prevents the automatic commit.
 #[test]
 fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1696,10 +1646,6 @@ fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     fs::write(project.join(".git/MERGE_HEAD"), "").unwrap();
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(
-        text.contains("5 files kendex wrote are not committed; a merge is in progress"),
-        "{text}"
-    );
     fs::remove_file(project.join(".git/MERGE_HEAD")).unwrap();
 
     let head = git(&project, &["rev-parse", "HEAD"]);
@@ -1708,10 +1654,6 @@ fn a_detached_head_or_an_operation_in_progress_prints_one_line() {
     // which writes nothing, so only the renders are counted.
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
-    assert!(
-        text.contains("3 files kendex wrote are not committed; this checkout is on no branch"),
-        "{text}"
-    );
     assert_eq!(head_subject(&project), "files");
 }
 

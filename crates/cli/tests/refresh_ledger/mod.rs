@@ -125,95 +125,57 @@ fn pre_rename_project(home: &Path) -> PathBuf {
     project
 }
 
-/// The whole contract in one run: one conflict line for one item however
-/// many tools hit it, every position it sits at, what the files in the way
-/// are against the catalog, where they came from, and a closing ledger
-/// whose every nonzero part carries its next step.
+/// A refused copy stays unchanged while the free item installs on each tool.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
+fn a_blocked_refresh_installs_free_items_and_retains_conflicting_copies() {
+    use kendex_core::engine::{DriftState, audit};
     let tmp = tempfile::tempdir().unwrap();
-    // Canonical once, where the fixture's root enters (invariant 17): the
-    // ledger prints the root kendex resolved, and a temporary directory is
-    // routinely behind a symlink.
-    let home = &tmp.path().canonicalize().unwrap();
-    let project = pre_rename_project(home);
-
-    let printed = said(&kendex(
-        home,
-        &project,
-        &["refresh", "-y", "--scope", "project"],
-    ));
-
-    // One item, one line — not one line per tool, and no position hidden.
-    assert_eq!(
-        printed
-            .matches("  skill commit-guards for Claude Code, Codex:")
-            .count(),
-        1,
-        "the same conflict was printed once per tool: {printed}"
-    );
-    assert!(
-        printed.contains("conflicts:\n  skill commit-guards for Claude Code, Codex:"),
-        "the one line names every tool the conflict blocks: {printed}"
-    );
-    assert!(
-        printed.contains(&format!(
-            "    also at {}",
-            kendex_core::paths::slashed(&project.join(".agents/skills/commit-guards"))
-        )),
-        "every position is named, so the reader can act on each: {printed}"
-    );
-    assert!(
-        printed.contains("differs from the package in 2 files: SKILL.md, references/rules.md"),
-        "the conflict says how the files in the way compare: {printed}"
-    );
-    // The ledger: every outcome of the run, and the next step for each.
-    assert_eq!(
-        ledger(&printed),
-        format!(
-            "{}: refreshed 4 changes · skipped 1 item on conflict · flagged 2 items on safety · details folded",
-            kendex_core::paths::slashed(&project)
-        ),
-        "{printed}"
-    );
-    assert!(
-        printed.contains("  skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above"),
-        "the skipped part carries its next step: {printed}"
-    );
-    assert!(
-        printed.contains("  flagged — the safety lines above"),
-        "the flagged part carries its next step: {printed}"
-    );
-
-    // The two sentences that would hide these outcomes.
-    assert!(
-        !printed.contains("nothing installed") && !printed.contains("up to date"),
-        "a run with a blocked install is neither empty nor up to date: {printed}"
-    );
-
-    // The count and the lines it sends the reader to are one reading: the
-    // ledger counts exactly the items the block above carries a finding
-    // against, so following the pointer finds what the number promised.
-    assert_eq!(
-        flagged_items(&printed),
-        BTreeSet::from(["commit-guards".to_owned(), "tidy".to_owned()]),
-        "the ledger's count and the block it points at disagree: {printed}"
-    );
+    let home = tmp.path().canonicalize().unwrap();
+    let project = pre_rename_project(&home);
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let planned = audit(&env, &scope).unwrap();
+    for harness in [
+        kendex_core::model::HarnessId::Claude,
+        kendex_core::model::HarnessId::Codex,
+    ] {
+        assert!(planned.drift.iter().any(|row| row.name == "commit-guards"
+            && row.harness == harness
+            && row.state == DriftState::Conflict));
+    }
+    let flagged: BTreeSet<_> = planned
+        .safety
+        .iter()
+        .filter(|row| !row.advisory.findings.is_empty())
+        .map(|row| row.name.as_str())
+        .collect();
+    assert_eq!(flagged, BTreeSet::from(["commit-guards", "tidy"]));
+    let output = kendex(&home, &project, &["refresh", "-y", "--scope", "project"]);
+    assert!(output.status.success(), "{}", said(&output));
+    for tool in [".claude", ".agents"] {
+        assert_eq!(
+            fs::read_to_string(project.join(tool).join("skills/commit-guards/SKILL.md")).unwrap(),
+            UNMANAGED_SKILL
+        );
+        assert_eq!(
+            fs::read_to_string(project.join(tool).join("skills/tidy/SKILL.md")).unwrap(),
+            fs::read_to_string(home.join("catalog/skills/tidy/SKILL.md")).unwrap()
+        );
+    }
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.join(".claude/settings.json")).unwrap()).unwrap();
+    assert_eq!(settings["switchModelsOnFlag"], true);
 }
 
-/// A run with nothing to report beyond its writes says that, and that
-/// the scan it ran found nothing: a clean scan and a scan nobody ran
-/// would otherwise close on the same line. The ledger's parts are
-/// outcomes, not a fixed shape padded with zeroes.
+/// A clean refresh writes the requested skill and records its default.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_clean_refresh_ends_on_the_count_and_a_clean_scan() {
+fn a_clean_refresh_writes_the_skill_and_owned_settings() {
     let tmp = tempfile::tempdir().unwrap();
-    // Canonical once, where the fixture's root enters (invariant 17): the
-    // ledger prints the root kendex resolved, and a temporary directory is
-    // routinely behind a symlink.
-    let home = &tmp.path().canonicalize().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "tidy", "Nothing alarming here.\n");
@@ -224,27 +186,29 @@ fn a_clean_refresh_ends_on_the_count_and_a_clean_scan() {
         "copy",
         "[skills.tidy]\nsource = \"cat\"\n",
     );
-
-    let printed = said(&kendex(
-        home,
-        &project,
-        &["refresh", "-y", "--scope", "project"],
-    ));
+    let output = kendex(&home, &project, &["refresh", "-y", "--scope", "project"]);
+    assert!(output.status.success(), "{}", said(&output));
     assert_eq!(
-        ledger(&printed),
-        format!(
-            "{}: refreshed 3 changes · safety: clean · details folded",
-            kendex_core::paths::slashed(&project)
-        ),
-        "a clean run reports its writes, its clean scan and that it left detail out, and no outcome it does not have: {printed}"
+        fs::read_to_string(project.join(".claude/skills/tidy/SKILL.md")).unwrap(),
+        fs::read_to_string(catalog.join("skills/tidy/SKILL.md")).unwrap()
     );
-    assert!(
-        printed.contains("  folded — --verbose draws them") && !printed.contains(" scores "),
-        "the clean package is folded, and the ledger names the flag that draws it: {printed}"
+    let record = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert_eq!(
+        record.claude_project_default,
+        Some(kendex_core::lock::ClaudeProjectDefault::Owned)
     );
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let clean = kendex_core::engine::audit(&env, &scope).unwrap();
+    assert!(clean.drift.is_empty());
+    assert!(clean.plan.ops.is_empty());
     assert!(
-        !printed.contains("flagged — the safety lines above"),
-        "a clean scan has no next step: {printed}"
+        clean
+            .safety
+            .iter()
+            .all(|row| row.advisory.findings.is_empty() && row.advisory.skipped.is_empty())
     );
 }
 

@@ -356,7 +356,9 @@ pub fn adopted_workflows(report: &EngineReport) -> Vec<Standing> {
 /// where the scope has no record file at all — that absence is the
 /// caller's own refusal, said where the record was looked for.
 ///
-/// Four readings, each the engine's. The bytes are the serialization the
+/// Each reading is the engine's. Failed scope settings comparisons refuse
+/// the record's proof even when its ownership stays unchanged.
+/// The bytes are the serialization the
 /// record writer lays down for the parsed record, so a hand-written key,
 /// a hand-laid layout or a field this build does not carry is a
 /// difference. A source or set served from the record's own commit is
@@ -399,6 +401,12 @@ pub fn record(
     let refresh = Some(Remedy::Refresh {
         global: matches!(scope, Scope::Global),
     });
+    problems.extend(
+        report
+            .scope_errors
+            .iter()
+            .map(|error| Problem::from(error.to_string())),
+    );
     if text != crate::lock::committed_text(&path, lock)? {
         problems.push("not laid out as kendex writes it".to_owned().into());
     }

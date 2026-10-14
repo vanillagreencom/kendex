@@ -160,10 +160,20 @@ fn an_unreadable_settings_file_is_one_conflict_not_a_scope_error() {
                 .collect();
             assert_eq!(conflicts.len(), 1, "{current:?}");
             assert_eq!(conflicts[0].name, "guard");
-            assert!(report.plan.ops.iter().any(|op| op.line().contains("ship")));
+            assert!(report.plan.ops.iter().any(|op| {
+                op.op
+                    .touched()
+                    .contains(&f.project.join(".claude/commands/ship.md"))
+            }));
             assert!(
-                !report.plan.ops.iter().any(|op| op.line().contains("guard")),
+                !report.plan.ops.iter().any(|op| op
+                    .op
+                    .touched()
+                    .contains(&f.project.join(".claude/hooks/guard.sh"))),
                 "a hook that cannot register does not half-install"
+            );
+            assert!(
+                matches!(report.scope_errors.as_slice(), [kendex_core::error::CoreError::ConfigEdit { path, .. }] if path == &settings(&f))
             );
             assert_eq!(
                 report.record.claude_project_default,

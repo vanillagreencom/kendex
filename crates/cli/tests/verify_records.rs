@@ -1952,6 +1952,15 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
             true,
         ),
+        (
+            "current-unreadable",
+            None,
+            None,
+            Some(Owned),
+            Some(Foreign::Unknown),
+            false,
+            true,
+        ),
     ]
 };
 
@@ -2067,6 +2076,7 @@ fn claude_scope_settings_transition(
             "scope-before"
         }
         "unreadable" => "missing-scope-base",
+        "current-unreadable" => "scope-installed",
         _ => "scope-before",
     };
     if case != "unapplied-false" {
@@ -2084,7 +2094,11 @@ fn claude_scope_settings_transition(
     } else if case.ends_with("-base-deleted") {
         fs::remove_file(&settings).unwrap();
     }
-    if case.ends_with("-unreadable") {
+    if case == "current-unreadable" {
+        fs::remove_file(&settings).unwrap();
+        fs::create_dir(&settings).unwrap();
+        base
+    } else if case.ends_with("-unreadable") {
         "missing-scope-base"
     } else {
         base
@@ -2100,6 +2114,10 @@ fn assert_claude_scope_settings(
     settings_present: bool,
 ) {
     assert_eq!(settings.exists(), settings_present, "{case}");
+    if case == "current-unreadable" {
+        assert!(settings.is_dir());
+        return;
+    }
     let actual: serde_json::Value = if settings_present {
         let text = fs::read_to_string(settings).unwrap();
         serde_json::from_str(if text.is_empty() { "{}" } else { &text }).unwrap()
@@ -2146,6 +2164,11 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
             };
             let env = Env::host_rooted(&world.home);
             let report = kendex_core::engine::audit(&env, &scope).unwrap();
+            if case == "current-unreadable" {
+                assert_current_scope_read_failure(&world, &project, kind, item, &report);
+            } else {
+                assert!(report.scope_errors.is_empty(), "{kind}-{case}");
+            }
             assert_eq!(
                 kendex_core::lock::load(&project.join(RECORD))
                     .unwrap()
@@ -2196,6 +2219,7 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
                     | "unapplied-false"
                     | "foreign"
                     | "unreadable"
+                    | "current-unreadable"
             ) {
                 assert_claude_scope_verification(
                     &world, &project, kind, case, ownership, foreign, base,
@@ -2211,6 +2235,63 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
 }
 
 #[allow(clippy::unwrap_used)]
+fn assert_current_scope_read_failure(
+    world: &World,
+    project: &Path,
+    kind: &str,
+    item: &str,
+    report: &kendex_core::engine::EngineReport,
+) {
+    use kendex_core::error::CoreError;
+    let settings = project.join(".claude/settings.json");
+    assert!(
+        matches!(report.scope_errors.as_slice(), [CoreError::Io { path, .. }] if path == &settings)
+    );
+    assert!(
+        report.drift.is_empty(),
+        "a registration conflict must not mask the scope failure"
+    );
+    assert!(
+        report.plan.ops.is_empty(),
+        "unchanged installations need no writes"
+    );
+    let env = Env::host_rooted(&world.home);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.to_path_buf(),
+    };
+    let path = kendex_core::manifest::manifest_path(&env, &scope);
+    let mut manifest = kendex_core::manifest::load_current(&path).unwrap().unwrap();
+    let declaration = match kind {
+        "skills" => manifest.skills[item].clone(),
+        "agents" => manifest.agents[item].clone(),
+        _ => unreachable!(),
+    };
+    manifest.commands.insert("second".into(), declaration);
+    let lock = kendex_core::lock::load(&project.join(RECORD)).unwrap();
+    let planned = kendex_core::engine::plan_scope(
+        &env,
+        &scope,
+        &manifest,
+        &lock,
+        &kendex_core::engine::PlanOptions::current(),
+    )
+    .unwrap();
+    assert!(planned.plan.ops.iter().any(|op| {
+        op.op
+            .touched()
+            .contains(&project.join(".claude/commands/second.md"))
+    }));
+    assert!(
+        matches!(planned.scope_errors.as_slice(), [CoreError::Io { path, .. }] if path == &settings)
+    );
+    assert_eq!(
+        planned.record.claude_project_default,
+        Some(kendex_core::lock::ClaudeProjectDefault::Owned)
+    );
+    assert!(settings.is_dir());
+}
+
+#[allow(clippy::unwrap_used)]
 fn assert_claude_scope_verification(
     world: &World,
     project: &Path,
@@ -2221,32 +2302,56 @@ fn assert_claude_scope_verification(
     base: &str,
 ) {
     use kendex_core::lock::ClaudeProjectDefault::Owned;
-    let (output, document) = verify_from(&world.home, project, "project", Some(base));
-    assert_eq!(
-        output.status.success(),
-        case != "unapplied-false",
-        "{kind}-{case}: {}",
-        said(&output)
-    );
-    assert_eq!(
-        row(&document, "record", RECORD, None).unwrap().state,
-        if case == "unapplied-false" {
-            State::Failed
-        } else {
-            State::Ok
-        },
-        "{kind}-{case}"
-    );
-    let expected_positions = if ownership == Some(Owned) {
-        vec![("record", RECORD, ".claude/settings.json", foreign)]
+    let bases: &[Option<&str>] = if case == "current-unreadable" {
+        &[None, Some(base)]
     } else {
-        Vec::new()
+        &[Some(base)]
     };
-    assert_eq!(
-        keys_positions(&document),
-        expected_positions,
-        "{kind}-{case}"
-    );
+    for &base in bases {
+        let (output, document) = verify_from(&world.home, project, "project", base);
+        assert_eq!(
+            row(&document, "record", RECORD, None).unwrap().state,
+            if matches!(case, "unapplied-false" | "current-unreadable") {
+                State::Failed
+            } else {
+                State::Ok
+            },
+            "{kind}-{case}"
+        );
+        assert_eq!(
+            output.status.success(),
+            !matches!(case, "unapplied-false" | "current-unreadable"),
+            "{kind}-{case}: {}",
+            said(&output)
+        );
+        if case == "current-unreadable" {
+            assert!(!document.clean);
+            assert_eq!(document.failed, 0, "only the record comparison fails");
+            assert!(
+                document
+                    .rows
+                    .iter()
+                    .filter(|row| row.kind != "record")
+                    .all(|row| row.state == State::Ok)
+            );
+            assert!(
+                row(&document, "record", RECORD, None)
+                    .unwrap()
+                    .detail
+                    .is_some()
+            );
+        }
+        let expected_positions = if ownership == Some(Owned) {
+            vec![("record", RECORD, ".claude/settings.json", base.and(foreign))]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            keys_positions(&document),
+            expected_positions,
+            "{kind}-{case}"
+        );
+    }
 }
 
 const CLAUDE_DEFAULT_REPLAY_CASES: &[ClaudeDefaultReplayCase] = {

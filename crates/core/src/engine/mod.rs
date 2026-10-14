@@ -293,8 +293,7 @@ fn plan_scope_with_lock_base(
     )?;
     scope_writes::record_entry_selectors(&state, &mut new_lock, &item_pass, &kept);
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
-    plan_claude_project_defaults(env, scope, &new_lock, &mut config_edits, &mut scope_notes);
-    let edited = plan_config_edits(scope, config_edits, &mut new_lock, &mut ops)?;
+    let config = plan_config_edits(env, scope, config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock, &said, &state.retired);
     let notices = desired::retired_notices(scope, &state, &retired);
     state.warnings.extend(notices);
@@ -321,7 +320,7 @@ fn plan_scope_with_lock_base(
         item_pass,
         resolved_sources,
         generated,
-        edited,
+        config,
         installations,
         wanted: wanted(&manifest, &state),
         readings,
@@ -336,25 +335,25 @@ fn plan_claude_project_defaults(
     scope: &Scope,
     lock: &Lock,
     config_edits: &mut config_edits::ConfigEditPlan,
-    notes: &mut Vec<String>,
-) {
+) -> Vec<crate::error::CoreError> {
     if let Some((path, edit)) =
         claude_project_default_edit(env, scope, lock.claude_project_default, lock)
     {
         // A default must not turn a refused registration into a scope error.
         // Keep its ownership record until the document can be compared.
-        let probe = crate::fs::read_if_exists(&path)
-            .map_err(|error| error.to_string())
-            .and_then(|current| edit.apply(current.as_deref().unwrap_or_default()));
-        if let Err(message) = probe {
-            notes.push(format!(
-                "{}: Claude project defaults could not be compared: {message}",
-                path.display()
-            ));
-            return;
+        let probe = crate::fs::read_if_exists(&path).and_then(|current| {
+            edit.apply(current.as_deref().unwrap_or_default())
+                .map_err(|message| crate::error::CoreError::ConfigEdit {
+                    path: path.clone(),
+                    message,
+                })
+        });
+        if let Err(error) = probe {
+            return vec![error];
         }
         config_edits.push(path, "Claude project defaults".into(), edit);
     }
+    Vec::new()
 }
 
 /// The scope default transition, with ownership from the document's record
@@ -407,7 +406,7 @@ struct Planned {
     item_pass: plan_pass::ItemPass,
     resolved_sources: BTreeMap<(String, Option<String>), crate::lock::SourceRev>,
     generated: GeneratedPaths,
-    edited: BTreeSet<std::path::PathBuf>,
+    config: scope_writes::ConfigWrites,
     installations: BTreeMap<String, Installation>,
     wanted: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     readings: scope_writes::RecordReadings,
@@ -440,13 +439,20 @@ fn report(
         item_pass,
         resolved_sources,
         generated,
-        edited,
+        config,
         installations,
         wanted,
         readings,
         new_lock,
         held,
     } = planned;
+    let scope_writes::ConfigWrites {
+        edited,
+        scope_errors,
+    } = config;
+    state
+        .notes
+        .extend(scope_errors.iter().map(ToString::to_string));
     state.warnings.extend(state.agent_names.warnings());
     let kept_bundles = state.kept_bundles_by_name();
     let report = EngineReport {
@@ -479,6 +485,7 @@ fn report(
         own_edit_rows: item_pass.own_edit_rows,
         generated: generated.editing(edited, generated_paths::recorded(env, scope, lock)?),
         scope_positions: generated_paths::scope_positions(env, scope, lock),
+        scope_errors,
         installations,
         wanted,
         stood_in: readings.stood_in(lock),

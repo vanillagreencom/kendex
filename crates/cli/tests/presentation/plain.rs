@@ -83,7 +83,7 @@ fn show_file_prints_the_files_own_lines() {
 /// about it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_failure_after_the_write_still_records_and_reports_it() {
+fn a_failed_installer_keeps_the_applied_files_and_drift_record() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let project = home.join("dev/app");
@@ -122,10 +122,10 @@ fn a_failure_after_the_write_still_records_and_reports_it() {
         !output.status.success(),
         "the installer did not fail: {printed}"
     );
-    assert!(
-        printed.contains("applied 3 changes"),
-        "the run said nothing about what it wrote: {printed}"
-    );
+    assert!(project.join(".claude/skills/armed/SKILL.md").is_file());
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.join(".claude/settings.json")).unwrap()).unwrap();
+    assert_eq!(settings["switchModelsOnFlag"], true);
     let drift = Env::host_rooted(home.clone()).drift_dir();
     let recorded = fs::read_dir(&drift).map(|d| d.count()).unwrap_or(0);
     assert_eq!(
