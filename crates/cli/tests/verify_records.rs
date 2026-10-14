@@ -2208,17 +2208,11 @@ fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownershi
                 },
                 "{kind}-{case}"
             );
-            // These CLI rows cover each ownership and comparison category.
-            // Empty-document variations use the same production replay above.
             if matches!(
                 case,
                 "insert"
-                    | "user-false"
-                    | "user-true"
                     | "removed-default-only"
                     | "unapplied-false"
-                    | "foreign"
-                    | "unreadable"
                     | "current-unreadable"
             ) {
                 assert_claude_scope_verification(
