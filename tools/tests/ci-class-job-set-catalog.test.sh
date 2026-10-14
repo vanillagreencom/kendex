@@ -142,9 +142,9 @@ CONTROLS
 #   skills/AGENTS.md and docs/cite.md cite a shard.
 # A script's read carries the change to its skill's readers; a suite's read
 # runs that suite's shard and goes no further.
-# Catalog skills can declare all three lists; only required skills are edges.
+# External commands and agent lists do not add required skill edges.
 required_edge="$(printf 'doc-limits\tcommit-guards')"
-check "required, optional and agents lists retain the required skill edge" "$required_edge" \
+check "required, optional, agents and commands retain only the required skill edge" "$required_edge" \
   "$(awk -f "$ROOT/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
 needle='/^  agents:/ { next }'
 [ "$(grep -cxF -- "$needle" "$ROOT/tools/lib/skill-requirements.awk")" -eq 1 ] || exit 1
@@ -153,6 +153,16 @@ awk -v needle="$needle" '$0 != needle' "$ROOT/tools/lib/skill-requirements.awk" 
 got="$(awk -f "$TMP/rule/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
 [ "$got" != "$required_edge" ] && ok "must-fail: dropping the agents skip fails the required-edge row" || \
   bad "must-fail: dropping the agents skip leaves the required-edge row green"
+cp "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk"
+needle='/^  commands:/ { commands = 1; next }'
+[ "$(grep -cxF -- "$needle" "$ROOT/tools/lib/skill-requirements.awk")" -eq 1 ] || exit 1
+awk -v needle="$needle" '$0 != needle' "$ROOT/tools/lib/skill-requirements.awk" >"$TMP/rule/tools/lib/skill-requirements.awk"
+! cmp -s "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk" || exit 1
+got="$(awk -f "$TMP/rule/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
+case "$got" in
+  *"$(printf '?\t%s' "$SEL_WORLD/skills/doc-limits/SKILL.md")"*) ok "must-fail: the base reader's command refusal rejects the valid required-edge row" ;;
+  *) bad "must-fail: removing command support did not refuse the declared key" ;;
+esac
 cp "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk"
 # PATH|SHARDS, every row micro and not docs-only.
 world_rows=0

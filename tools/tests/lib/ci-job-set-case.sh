@@ -98,7 +98,7 @@ cp "$READ_WORLD/Cargo.toml" "$SEL_WORLD/Cargo.toml"
 skill() { # NAME REQUIRED-LIST — a SKILL.md, with a dependencies block where REQUIRED-LIST is given
   mkdir -p "$SEL_WORLD/skills/$1/scripts" "$SEL_WORLD/skills/$1/tests"
   if [ -n "$2" ]; then
-    printf -- '---\nname: %s\ndependencies:\n  required: [%s]\n  optional: [price-handling]\n  agents: [runtime]\n---\n' "$1" "$2"
+    printf -- '---\nname: %s\ndependencies:\n  optional: [price-handling]\n  commands:\n    - command: agent-browser\n      purpose: Browser automation\n      floor: "0.26.0"\n      packages:\n        npm: agent-browser\n    - command: op\n      purpose: Credential reads\n      optional: true\n  required: [%s]\n  agents: [runtime]\n---\n' "$1" "$2"
   else
     printf -- '---\nname: %s\n---\n' "$1"
   fi >"$SEL_WORLD/skills/$1/SKILL.md"

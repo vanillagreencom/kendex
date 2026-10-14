@@ -4,21 +4,27 @@
 # kendex engine reads the same key when it installs a skill
 # (crates/core/src/source/browse/deps.rs). Every SKILL.md here spells it as a
 # two-space `required:`, `optional:` or `agents:` key holding an inline list
-# of bare names. Only required skills add skill edges; optional skills and
-# agents do not. Anything else under `dependencies:` prints `?` and
+# of bare names. The `commands:` block declares external tools, whose rows
+# crates/core/src/engine/deps/commands.rs judges. Only required skills add
+# skill edges; optional skills, agents and external commands do not.
+# Anything else under `dependencies:` prints `?` and
 # its file, a name that is not bare prints `?` too, and each caller refuses
 # both rather than read them as no dependency. tools/ci-job-set follows the
 # rows to select shards; tools/shipped-refs judges a link between skills by
 # them.
-FNR == 1 { front = ($0 == "---"); deps = 0; skill = FILENAME; sub(/\/SKILL\.md$/, "", skill); sub(/^.*\//, "", skill); next }
+FNR == 1 { front = ($0 == "---"); deps = 0; commands = 0; skill = FILENAME; sub(/\/SKILL\.md$/, "", skill); sub(/^.*\//, "", skill); next }
 !front { next }
 $0 == "---" { front = 0; next }
 /^[^ ]/ {
   deps = ($0 == "dependencies:")
+  commands = 0
   if (!deps && index($0, "dependencies:") == 1) print "?\t" FILENAME
   next
 }
 !deps { next }
+/^  commands:/ { commands = 1; next }
+commands && (/^    / || /^[ ]*$/) { next }
+{ commands = 0 }
 /^  optional:/ { next }
 /^  agents:/ { next }
 !/^  required:/ { print "?\t" FILENAME; next }
