@@ -18,7 +18,12 @@ import time
 from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(REPO / "skills/slack/scripts/lib"))
+# The installed reader must use the selected source under test, so controls
+# reach its cache and shared definitions as well as the bound writer.
+INSTALLED = Path(sys.argv[2]) / "installed-skills"
+shutil.copytree(REPO / "skills/slack/scripts", INSTALLED / "slack/scripts")
+shutil.copytree(Path(sys.argv[1]) / "scripts", INSTALLED / "mailbox/scripts")
+sys.path.insert(0, str(INSTALLED / "slack/scripts/lib"))
 from relay import RootRelay
 from settings import Presence, Settings
 from store import Binding, write_binding
