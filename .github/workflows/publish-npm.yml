@@ -84,7 +84,7 @@ jobs:
       # With check-latest off, setup-node takes the runner's cached Node 24
       # and the npm it bundles; tools/publish-npm refuses an npm below
       # 11.5.1, the trusted-publishing floor, with npm=<version>.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           # No registry-url: that writes an .npmrc naming a token, and this
