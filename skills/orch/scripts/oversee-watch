@@ -4806,11 +4806,21 @@ verifying_read() { # SAFE_ITEMS
       merged="${out%%$'\n'*}"
       merged_repos="${out#*$'\n'}"
     fi
+    # Both helpers leave their answer in LANE_ROW; read here, they fork
+    # nothing per issue.
+    lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id" >/dev/null \
+      || die state-read-failed "" "row=verifying-deadline" "issue=$id"
+    prior="$LANE_ROW"
     rc=0
     boxes="$(verifying_judge "$row" "$merged" "$merged_repos" "$PASS_NOW" "$boxes" "$WORK_DIR/verifying-release.err" "$MERGED_SEARCH_PAGE" gh "$read_dir" 2>"$errf")" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
       read -r key _ <"$errf" || key=verifying-invalid
       [[ "$rc" -eq 1 || "$rc" -eq 2 ]] || die "$key" "$(cat "$errf")" "issue=$id"
+      # An unread item cannot clear a previously reported deadline.
+      if [[ "$rc" -eq 2 && -n "$prior" ]]; then
+        lane_row_set verifying-deadline "$state" "$id" "$prior" >/dev/null
+        state="$LANE_ROW"
+      fi
       ow_message verifying-invalid "issue=$id" >&2
       cat -- "$errf" >&2
       continue
@@ -4831,11 +4841,6 @@ verifying_read() { # SAFE_ITEMS
     key="${due//$'\n'/|}"
     [[ -n "$key" ]] || key=-
     [[ "$lines" != "verifying $id boxes=0" ]] || key=boxes=0
-    # Both helpers leave their answer in LANE_ROW; read here, they fork
-    # nothing per issue.
-    lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id" >/dev/null \
-      || die state-read-failed "" "row=verifying-deadline" "issue=$id"
-    prior="$LANE_ROW"
     lane_row_set verifying-deadline "$state" "$id" "$key" >/dev/null
     state="$LANE_ROW"
     [[ "$prior" != "$key" ]] || continue

@@ -56,16 +56,25 @@ event_sequence events
 event_contract
 assert_contains "$(cat "$STUB_DIR/log")" 'EVENT lane-asking gh-1' 'the second pass is an event block'
 
-# A per-item read failure must leave other due rows committed. The overseer
-# consumes the stderr cause and EVENT keys across successive long passes.
+# A per-item read failure must retain saved deadlines until recovery. The
+# overseer consumes the stderr cause and EVENT keys across long passes.
+RELEASE_KEY=$'verifying-deadline\tKEN-3\tbox=1 trigger="release owner/releases v*" status=due deadline=2026-10-04T12:00:00Z'
 unread_merge_sequence() {
   output_world "$1"
   jq '. + [{id:"KEN-2",state:"Verifying",priority:2,
-    description:"## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +72h"}]' \
+    description:"## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +72h"},
+    {id:"KEN-3",state:"Verifying",priority:2,
+    description:"## Done when\n- [ ] Post-merge: Read release; Where: feed; Why after merge: live release; Trigger: release owner/releases v*; Deadline: +72h"}]' \
     "$STUB_DIR/tracker.out" > "$STUB_DIR/items.json"
   mv -- "$STUB_DIR/items.json" "$STUB_DIR/tracker.out"
+  printf '%s\n' '[{"number":3,"headRefName":"ken-3","mergedAt":"2026-10-01T00:00:00Z"}]' > "$STUB_DIR/merged.json"
+  printf '%s\n' '[{"tagName":"v1","publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' > "$STUB_DIR/releases.owner_releases.json"
   local phase
-  for phase in first second; do
+  for phase in first second recovered; do
+    case "$phase" in
+      second) touch "$STUB_DIR/release-fail" ;;
+      recovered) rm -- "$STUB_DIR/release-fail" ;;
+    esac
     output_pass
     printf '%s\n' "$RC" > "$STUB_DIR/$phase.rc"
     cp "$STUB_DIR/out" "$STUB_DIR/$phase.out"
@@ -74,16 +83,30 @@ unread_merge_sequence() {
   done
 }
 unread_merge_contract() {
-  local phase
-  for phase in first second; do
+  local phase events unread
+  while IFS='|' read -r phase events unread; do
     assert_eq "$(cat "$STUB_DIR/$phase.rc")" 0 "$phase unread merge pass completes" "$STUB_DIR/$phase.err"
     assert_eq "$(grep -cx 'verifying-merge-unread issue=KEN-2' "$STUB_DIR/$phase.err" || true)" 1 \
       "$phase reports the unread item's cause once"
     assert_not_contains "$(cat "$STUB_DIR/$phase.out")" 'verifying-deadline KEN-2' "$phase never emits an unread deadline"
     assert_contains "$(cat "$STUB_DIR/$phase.state")" $'verifying-deadline\tKEN-1\tbox=1' "$phase commits the other due row"
-  done
+    assert_eq "$(awk -F'\t' '$1 == "verifying-deadline" && $2 == "KEN-3"' "$STUB_DIR/$phase.state")" "$RELEASE_KEY" \
+      "$phase retains the release item's saved deadline"
+    assert_eq "$(grep -Ec '^verifying-release-unread .*issue=KEN-3 repo=owner/releases$' "$STUB_DIR/$phase.err" || true)" "$unread" \
+      "$phase reports the release read cause only while unread"
+    assert_eq "$(grep -c '^EVENT verifying-deadline KEN-3 ' "$STUB_DIR/$phase.out" || true)" "$events" \
+      "$phase emits the release deadline only on the first readable pass"
+    if [[ "$unread" == 1 ]]; then
+      assert_eq "$(awk '/^verifying KEN-3 /' "$STUB_DIR/$phase.out")" '' 'an unread release item prints no judged row'
+    fi
+  done <<'ROWS'
+first|1|0
+second|0|1
+recovered|0|0
+ROWS
   assert_eq "$(grep -c '^EVENT verifying-deadline KEN-1 ' "$STUB_DIR/first.out" || true)" 1 'the other due item wakes on its first pass'
   assert_eq "$(grep -c '^EVENT verifying-deadline KEN-1 ' "$STUB_DIR/second.out" || true)" 0 'the second pass does not repeat the committed due event'
+  assert_eq "$(grep -c '^EVENT verifying-deadline KEN-1 ' "$STUB_DIR/recovered.out" || true)" 0 'recovery does not repeat the other due event'
 }
 # A cleared key must rise again even though its row was printed earlier.
 printf '0\n' > "$STUB_DIR/prwatch.rc"
@@ -202,6 +225,7 @@ while IFS='@' read -r name file old new contract; do
   assert_eq "$control_rc" 1 "control: $name reddens the output contract"
 done <<'ROWS'
 unread_merge@oversee-watch@[[ "$rc" -eq 1 || "$rc" -eq 2 ]]@[[ "$rc" -eq 1 ]]@unread_merge
+unread_deadline_key@oversee-watch@[[ "$rc" -eq 2 && -n "$prior" ]]@[[ "$rc" -eq 2 && -n "$prior" && "$rc" -eq 1 ]]@unread_merge
 verifying_repeat@oversee-watch@[[ -z "$VERIFYING_EVENT_LINES" ]] || printf '%s\n' "$VERIFYING_EVENT_LINES"@[[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"@event
 pr_repeat@lib/pr-watch-pass.sh@[[ -z "$event_out" ]] || printf '%s' "$event_out"@[[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"@event
 completion_repeat@oversee-watch@[[ "$prior" != "$key" ]] || continue@[[ "$prior" != "$key" || "$key" == boxes=0 ]] || continue@completion
