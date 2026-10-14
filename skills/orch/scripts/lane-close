@@ -36,6 +36,7 @@ message() { # REASON FIELD=VALUE...
     argument-count) printf '%s\n' 'Specify one lane item.' ;;
     missing-value) printf '%s\n' 'The option requires a value.' ;;
     record-missing) printf '%s\n' 'No fleet lane record names this item.' ;;
+    record-duplicate) printf '%s fleet lane records name this item; remove each superseded one through `workflow-state update oversee` and close again.\n' "$count" ;;
     record-invalid) printf '%s\n' 'The lane record lacks a value required for safe close-out, or an option contradicts one it carries.' ;;
     pane-missing)
       printf '%s\n' 'No tmux pane carries the recorded window name.' \
@@ -452,6 +453,7 @@ if ! count="$(jq -r --arg item "$ITEM" '[.[] | select(.item == $item)] | length'
   message record-invalid "item=$ITEM" "field=record" >&2
   exit 1
 fi
+[[ "$count" -le 1 ]] || { message record-duplicate "item=$ITEM" "count=$count" >&2; exit 1; }
 [[ "$count" == 1 ]] || { message record-missing "item=$ITEM" "count=$count" >&2; exit 1; }
 record="$(jq -c --arg item "$ITEM" '.[] | select(.item == $item)' <<<"$records")" \
   || { message record-invalid "item=$ITEM" "field=record" >&2; exit 1; }

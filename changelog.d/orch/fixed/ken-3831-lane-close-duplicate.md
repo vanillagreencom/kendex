@@ -1,0 +1,1 @@
+- `lane-close` names the duplicate record count and the workflow-state repair when more than one fleet record names an item.
