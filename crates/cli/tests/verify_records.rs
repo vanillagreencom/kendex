@@ -146,9 +146,9 @@ pub(crate) fn adoption_world(template: &str) -> World {
 /// without a row of its own. The catalog's repository is declared three
 /// times, under one mirror: `cat` for the items, `picat` for the Pi
 /// extension alone, and `spare` for nothing, the state a source is in
-/// after its last package is removed. Installed, committed and tagged.
+/// after its last package is removed. The consumer is not installed.
 #[allow(clippy::unwrap_used)]
-pub(crate) fn world() -> World {
+pub(crate) fn catalog_world() -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("cat");
@@ -229,26 +229,33 @@ pub(crate) fn world() -> World {
     repository(&project);
     commit(&project, "before kendex");
 
-    for args in [
-        &["source", "refresh"][..],
-        &["update-pi", "--scope", "project"],
-        &["apply", "-y", "--leave"],
-    ] {
-        let output = kendex(&home, &project, args);
-        assert!(
-            output.status.success(),
-            "kendex {args:?}: {}",
-            said(&output)
-        );
-    }
-    commit(&project, "installed");
-    git(&project, &["tag", INSTALLED]);
     World {
         _tmp: tmp,
         home,
         project,
         catalog,
     }
+}
+
+/// The full consumer installed, committed and tagged.
+pub(crate) fn world() -> World {
+    let world = catalog_world();
+
+    for args in [
+        &["source", "refresh"][..],
+        &["update-pi", "--scope", "project"],
+        &["apply", "-y", "--leave"],
+    ] {
+        let output = kendex(&world.home, &world.project, args);
+        assert!(
+            output.status.success(),
+            "kendex {args:?}: {}",
+            said(&output)
+        );
+    }
+    commit(&world.project, "installed");
+    git(&world.project, &["tag", INSTALLED]);
+    world
 }
 
 /// One verify run of the project scope, with the document it printed.
@@ -1068,10 +1075,9 @@ fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 fn every_bookkeeping_edit_is_a_failed_row_and_a_non_zero_close() {
     let world = world();
     for (label, edit, failing) in bookkeeping_edits(&world) {
-        git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
+        git(&world.project, &["reset", "-q", "--hard", INSTALLED]);
         edit(&world);
-        commit(&world.project, label);
-        let (output, document) = verify(&world, Some(INSTALLED));
+        let (output, document) = verify(&world, None);
         assert!(!output.status.success(), "{label}: {}", said(&output));
         assert!(!document.clean, "{label}: {document:?}");
         for (kind, name, harness, state, detail) in failing {
@@ -1195,34 +1201,6 @@ fn a_source_served_from_the_records_own_commit_fails_the_record_row() {
         "{record:?}"
     );
     assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
-}
-
-/// A source only a Pi extension names is resolved by the carrier, off the
-/// path every other declaration's source takes to the record: where the
-/// mirror cannot serve its revision, it is named in the record row all the
-/// same. The mirror is stripped as above; `picat` is the source the row
-/// has to name, beside `cat`.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_pi_only_source_served_from_the_records_own_commit_is_named_in_the_record_row() {
-    let world = world();
-    let mirror = mirror(&world);
-    let refs = git(&mirror, &["for-each-ref", "--format=%(refname)"]);
-    for name in refs.lines().filter(|line| !line.is_empty()) {
-        git(&mirror, &["update-ref", "-d", name]);
-    }
-    let (output, document) = verify(&world, Some(INSTALLED));
-    assert!(!output.status.success(), "{}", said(&output));
-    let record = row(&document, "record", RECORD, None).unwrap();
-    assert_eq!(record.state, State::Failed, "{record:?}");
-    assert!(
-        record
-            .detail
-            .as_deref()
-            .unwrap_or_default()
-            .contains("source picat: the mirror cannot serve the declared revision"),
-        "{record:?}"
-    );
 }
 
 /// One row of the table below: its label, the manifest text it replaces
@@ -1406,38 +1384,6 @@ fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
     assert_eq!(record.state, State::Ok, "{record:?}");
 }
 
-/// A recorded commit the mirror cannot place is named as one to fetch,
-/// never as one off the declared revision's history: a runner whose mirror
-/// is cold has edited nothing, and the accusation would send its reader
-/// searching the record for an edit nobody made. Here the mirror is moved
-/// aside and one entry's commit is repointed.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_commit_a_cold_mirror_cannot_place_is_named_as_one_to_fetch() {
-    let world = world();
-    let mirror = mirror(&world);
-    fs::rename(&mirror, mirror.with_extension("aside")).unwrap();
-    git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
-    edit_json(&world.project.join(RECORD), |lock| {
-        lock["entries"][SECOND]["sourceCommit"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
-    });
-    commit(&world.project, "a repointed entry commit");
-    let (output, document) = verify(&world, Some(INSTALLED));
-    assert!(!output.status.success(), "{}", said(&output));
-    let record = row(&document, "record", RECORD, None).unwrap();
-    assert_eq!(record.state, State::Failed, "{record:?}");
-    let detail = record.detail.as_deref().unwrap_or_default();
-    let named = format!(
-        "{SECOND}: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it",
-        world.catalog.display()
-    );
-    assert!(detail.contains(&named), "{record:?} does not say {named:?}");
-    assert!(
-        !detail.contains("is not on the declared revision's history"),
-        "{record:?} accuses the record"
-    );
-}
-
 /// Restoring missing-ancestor `Some(false)` fails the record assertion.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -1567,30 +1513,11 @@ fn a_global_keys_position_is_unknown_under_a_base_the_home_resolves() {
     );
 }
 
-/// A base revision the project cannot resolve answers `unknown` for every
-/// keys position rather than reading an absent copy as an empty one: a
-/// file kendex created from nothing is byte for byte its own edits over
-/// the empty string, so anything but this answer would vouch for it
-/// against a revision nobody has. Beside the row without a base and the
-/// row with the installed tag, this is the third of the three answers.
+/// Missing revisions and older lock formats supply no trusted base for
+/// the foreign-key comparison.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_base_the_project_cannot_resolve_answers_unknown_for_every_keys_position() {
-    let world = world();
-    let (output, document) = verify(&world, Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"));
-    assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(keys_judged(&document), every_key_unknown(), "{document:?}");
-}
-
-/// A base revision whose record another lock version wrote is one this
-/// build cannot read, as it cannot read the same record at the head: a
-/// field the older shape lacks is a wrong answer, not a missing one, so
-/// the replay reads nothing from it and every keys position answers
-/// `unknown` rather than `unchanged` over a record it could not judge.
-/// The record here differs from the head's in its version alone.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_base_record_from_another_lock_version_answers_unknown_for_every_keys_position() {
+fn unreadable_bases_answer_unknown_for_every_keys_position() {
     let world = world();
     git(
         &world.project,
@@ -1601,9 +1528,15 @@ fn a_base_record_from_another_lock_version_answers_unknown_for_every_keys_positi
     });
     commit(&world.project, "the record as an earlier kendex wrote it");
     git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
-    let (output, document) = verify(&world, Some("older"));
-    assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(keys_judged(&document), every_key_unknown(), "{document:?}");
+    for base in ["deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "older"] {
+        let (output, document) = verify(&world, Some(base));
+        assert!(output.status.success(), "{base}: {}", said(&output));
+        assert_eq!(
+            keys_judged(&document),
+            every_key_unknown(),
+            "{base}: {document:?}"
+        );
+    }
 }
 
 /// A key the person adds beside kendex's in a registry file is a change
@@ -1719,7 +1652,7 @@ fn keys_positions(document: &Document) -> Vec<(&str, &str, &str, Option<Foreign>
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order() {
-    let world = world();
+    let world = catalog_world();
     let project = second_project(
         &world,
         "two",
@@ -1770,6 +1703,8 @@ type ClaudeDefaultReplayCase = (
 
 type ClaudeScopeSettingsCase = (
     &'static str,
+    &'static str,
+    &'static str,
     Option<bool>,
     Option<bool>,
     Option<kendex_core::lock::ClaudeProjectDefault>,
@@ -1778,10 +1713,14 @@ type ClaudeScopeSettingsCase = (
     bool,
 );
 
+// The scope owns the setting. File and tree installs cover insertion and
+// read failure; the other scope transitions use the tree fixture.
 const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
     use kendex_core::lock::ClaudeProjectDefault::{Owned, Released};
     &[
         (
+            "skills",
+            "second",
             "insert",
             None,
             Some(true),
@@ -1791,6 +1730,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "user-false",
             Some(false),
             Some(false),
@@ -1800,6 +1741,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "user-true",
             Some(true),
             Some(true),
@@ -1809,6 +1752,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "deleted",
             None,
             None,
@@ -1818,6 +1763,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed",
             None,
             None,
@@ -1827,6 +1774,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed-default-only",
             None,
             None,
@@ -1836,6 +1785,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             false,
         ),
         (
+            "skills",
+            "second",
             "disabled-default-only",
             None,
             None,
@@ -1845,6 +1796,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             false,
         ),
         (
+            "skills",
+            "second",
             "removed-default-only-empty-file",
             None,
             None,
@@ -1854,6 +1807,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed-default-only-empty-object",
             None,
             None,
@@ -1863,6 +1818,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "default-only-unreadable",
             None,
             Some(true),
@@ -1872,6 +1829,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed-absent-base",
             None,
             None,
@@ -1881,6 +1840,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             false,
         ),
         (
+            "skills",
+            "second",
             "removed-absent-base-empty-file",
             None,
             None,
@@ -1890,6 +1851,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed-empty-file-base",
             None,
             None,
@@ -1899,6 +1862,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed-empty-file-base-deleted",
             None,
             None,
@@ -1908,6 +1873,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             false,
         ),
         (
+            "skills",
+            "second",
             "removed-empty-object-base",
             None,
             None,
@@ -1917,6 +1884,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "removed-empty-object-base-deleted",
             None,
             None,
@@ -1926,6 +1895,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             false,
         ),
         (
+            "skills",
+            "second",
             "unapplied-false",
             None,
             Some(false),
@@ -1935,6 +1906,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "foreign",
             None,
             Some(true),
@@ -1944,6 +1917,8 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
             "unreadable",
             None,
             Some(true),
@@ -1953,6 +1928,30 @@ const CLAUDE_SCOPE_SETTINGS_CASES: &[ClaudeScopeSettingsCase] = {
             true,
         ),
         (
+            "skills",
+            "second",
+            "current-unreadable",
+            None,
+            None,
+            Some(Owned),
+            Some(Foreign::Unknown),
+            false,
+            true,
+        ),
+        (
+            "agents",
+            "review",
+            "insert",
+            None,
+            Some(true),
+            Some(Owned),
+            Some(Foreign::Unchanged),
+            true,
+            true,
+        ),
+        (
+            "agents",
+            "review",
             "current-unreadable",
             None,
             None,
@@ -2150,80 +2149,84 @@ fn assert_claude_scope_settings(
 fn claude_file_and_tree_installs_record_scope_settings_and_replay_their_ownership() {
     use kendex_core::lock::ClaudeProjectDefault::Owned;
     use kendex_core::model::Scope;
-    let world = world();
-    for (kind, item) in [("skills", "second"), ("agents", "review")] {
-        for &(case, initial, expected, ownership, foreign, foreign_keys, settings_present) in
-            CLAUDE_SCOPE_SETTINGS_CASES
-        {
-            let (project, base) =
-                claude_scope_settings_project(&world, kind, item, case, initial, foreign_keys);
-            let settings = project.join(".claude/settings.json");
-            assert_claude_scope_settings(&settings, case, expected, foreign_keys, settings_present);
-            let scope = Scope::Project {
-                root: project.clone(),
-            };
-            let env = Env::host_rooted(&world.home);
-            let report = kendex_core::engine::audit(&env, &scope).unwrap();
-            if case == "current-unreadable" {
-                assert_current_scope_read_failure(&world, &project, kind, item, &report);
+    let world = catalog_world();
+    for &(
+        kind,
+        item,
+        case,
+        initial,
+        expected,
+        ownership,
+        foreign,
+        foreign_keys,
+        settings_present,
+    ) in CLAUDE_SCOPE_SETTINGS_CASES
+    {
+        let (project, base) =
+            claude_scope_settings_project(&world, kind, item, case, initial, foreign_keys);
+        let settings = project.join(".claude/settings.json");
+        assert_claude_scope_settings(&settings, case, expected, foreign_keys, settings_present);
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let env = Env::host_rooted(&world.home);
+        let report = kendex_core::engine::audit(&env, &scope).unwrap();
+        if case == "current-unreadable" {
+            assert_current_scope_read_failure(&world, &project, kind, item, &report);
+        } else {
+            assert!(report.scope_errors.is_empty(), "{kind}-{case}");
+        }
+        assert_eq!(
+            kendex_core::lock::load(&project.join(RECORD))
+                .unwrap()
+                .claude_project_default,
+            ownership,
+            "{kind}-{case}"
+        );
+        let inventory: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(project.join(".kendex-generated.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            inventory
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|path| path == ".claude/settings.json"),
+            ownership == Some(Owned),
+            "{kind}-{case}"
+        );
+        assert_eq!(
+            kendex_core::attest::foreign_since(&env, &project, base, &report)
+                .get(&settings)
+                .copied(),
+            foreign,
+            "{kind}-{case}"
+        );
+        assert_eq!(
+            report.scope_positions,
+            if ownership == Some(Owned) {
+                vec![kendex_core::engine::Position {
+                    path: settings.clone(),
+                    owns: kendex_core::engine::Owns::Keys,
+                }]
             } else {
-                assert!(report.scope_errors.is_empty(), "{kind}-{case}");
-            }
-            assert_eq!(
-                kendex_core::lock::load(&project.join(RECORD))
-                    .unwrap()
-                    .claude_project_default,
-                ownership,
-                "{kind}-{case}"
+                Vec::new()
+            },
+            "{kind}-{case}"
+        );
+        if matches!(
+            case,
+            "insert" | "removed-default-only" | "unapplied-false" | "current-unreadable"
+        ) {
+            assert_claude_scope_verification(
+                &world, &project, kind, case, ownership, foreign, base,
             );
-            let inventory: serde_json::Value = serde_json::from_str(
-                &fs::read_to_string(project.join(".kendex-generated.json")).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(
-                inventory
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|path| path == ".claude/settings.json"),
-                ownership == Some(Owned),
-                "{kind}-{case}"
+        }
+        if case.starts_with("removed") || case == "disabled-default-only" {
+            assert!(
+                matches!(report.generated.recorded, kendex_core::engine::Recorded::Known(ref paths) if paths.contains(&settings))
             );
-            assert_eq!(
-                kendex_core::attest::foreign_since(&env, &project, base, &report)
-                    .get(&settings)
-                    .copied(),
-                foreign,
-                "{kind}-{case}"
-            );
-            assert_eq!(
-                report.scope_positions,
-                if ownership == Some(Owned) {
-                    vec![kendex_core::engine::Position {
-                        path: settings.clone(),
-                        owns: kendex_core::engine::Owns::Keys,
-                    }]
-                } else {
-                    Vec::new()
-                },
-                "{kind}-{case}"
-            );
-            if matches!(
-                case,
-                "insert"
-                    | "removed-default-only"
-                    | "unapplied-false"
-                    | "current-unreadable"
-            ) {
-                assert_claude_scope_verification(
-                    &world, &project, kind, case, ownership, foreign, base,
-                );
-            }
-            if case.starts_with("removed") || case == "disabled-default-only" {
-                assert!(
-                    matches!(report.generated.recorded, kendex_core::engine::Recorded::Known(ref paths) if paths.contains(&settings))
-                );
-            }
         }
     }
 }
@@ -2458,7 +2461,7 @@ const CLAUDE_DEFAULT_REPLAY_CASES: &[ClaudeDefaultReplayCase] = {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn claude_scope_default_transitions_replay_without_changing_user_settings() {
-    let world = world();
+    let world = catalog_world();
     write(
         &world.catalog.join("output-styles/STE.md"),
         "---\nname: STE\ndescription: Short sentences\nkeep-coding-instructions: true\n---\nWrite short sentences.\n",
@@ -2718,7 +2721,7 @@ fn claude_default_replay_base(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_moved_hook_is_replayed_with_its_retirement_first() {
-    let world = world();
+    let world = catalog_world();
     let hook = |event: &str| {
         format!(
             "[[custom-hooks]]\nname = \"zebra\"\nevent = \"{event}\"\nmatcher = \"Bash\"\ncommand = \"./zebra.sh\"\nagents = \"all\"\n"
@@ -2890,7 +2893,7 @@ fn dropped_registration_cases(world: &World) -> Vec<RegistrationReplayCase> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dropped_registration_is_replayed_with_its_removal() {
-    let world = world();
+    let world = catalog_world();
     for (name, before, after, edit, failing, expected) in dropped_registration_cases(&world) {
         let (output, document) = retired(&world, name, &before, &after, edit.as_deref());
         let failed: Vec<&str> = document

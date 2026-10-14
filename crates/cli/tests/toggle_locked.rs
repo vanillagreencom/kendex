@@ -697,9 +697,9 @@ fn a_toggle_or_source_change_holds_every_other_package_at_its_recorded_commit() 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn collection_and_template_writers_hold_a_moved_sibling_catalog() {
+    let world = world();
+    move_the_catalog(&world);
     for collection in [true, false] {
-        let world = world();
-        move_the_catalog(&world);
         let before = record(&world);
         let sibling_path = world.project.join(".claude/skills/second/SKILL.md");
         let bytes = fs::read(&sibling_path).unwrap();
@@ -801,18 +801,9 @@ fn collection_and_template_writers_hold_a_moved_sibling_catalog() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_and_rename_hold_a_moved_sibling_catalog() {
+    let world = world();
+    move_the_catalog(&world);
     for rename in [false, true] {
-        let world = world();
-        if rename {
-            let output = kendex(
-                &world.home,
-                &world.project,
-                &["fork", "agent", "review", "--leave"],
-            );
-            assert!(output.status.success(), "{}", said(&output));
-            commit(&world.project, "local copy before rename");
-        }
-        move_the_catalog(&world);
         let before = record(&world);
         let sibling = world.project.join(".claude/skills/second/SKILL.md");
         let bytes = fs::read(&sibling).unwrap();

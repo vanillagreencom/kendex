@@ -19,9 +19,29 @@ use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 
 use super::verify_records::{
-    INSTALLED, RECORD, World, commit, edit_json, git, kendex, row, said, verify, verify_output,
-    verify_scope, world, write,
+    INSTALLED, RECORD, World, catalog_world, commit, edit_json, git, kendex, row, said, verify,
+    verify_output, verify_scope, world, write,
 };
+
+/// Record checks need a repository source, a set and its skill, and an
+/// agent for declaration edits. The full fixture owns carrier coverage.
+fn record_world() -> World {
+    let world = catalog_world();
+    write(
+        &world.project.join("kendex.toml"),
+        &format!(
+            "schema = 7\n[sources.cat]\nrepo = \"file://{}\"\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.second]\nsource = \"cat\"\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            world.catalog.display(),
+        ),
+    );
+    for args in [&["source", "refresh"][..], &["apply", "-y", "--leave"]] {
+        let output = kendex(&world.home, &world.project, args);
+        assert!(output.status.success(), "{}", said(&output));
+    }
+    commit(&world.project, "installed");
+    git(&world.project, &["tag", INSTALLED]);
+    world
+}
 
 /// One `--at-record` run of the project scope, with the document it
 /// printed.
@@ -220,7 +240,7 @@ fn states<'a>(document: &'a Document, name: &str) -> Vec<&'a State> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_declares_the_dependencies_the_recorded_commit_required() {
-    let world = world();
+    let world = record_world();
     write(
         &world.catalog.join("skills/first/SKILL.md"),
         "---\nname: first\ndescription: a first skill\n---\n# First\n",
@@ -282,7 +302,7 @@ fn at_record_declares_the_dependencies_the_recorded_commit_required() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_refuses_a_record_older_than_the_base_record() {
-    let world = world();
+    let world = record_world();
     append(
         &world,
         "skills/second/SKILL.md",
@@ -315,7 +335,7 @@ fn at_record_refuses_a_record_older_than_the_base_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn head_record_failures_carry_a_scoped_refresh_remedy() {
-    let world = world();
+    let world = record_world();
     let env = install_global(&world);
     for (scope, record_path, global) in [
         ("project", world.project.join(RECORD), false),
@@ -357,7 +377,7 @@ fn head_record_failures_carry_a_scoped_refresh_remedy() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removed_packages_carry_refresh_only_for_unedited_copies() {
-    let world = world();
+    let world = record_world();
     let env = install_global(&world);
     let declaration = "[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
     for (scope, manifest, installed, global) in [
@@ -398,7 +418,7 @@ fn removed_packages_carry_refresh_only_for_unedited_copies() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_refuses_every_held_commit_under_an_unreadable_base_record() {
-    let world = world();
+    let world = record_world();
     let record = world.project.join(RECORD);
     let text = fs::read_to_string(&record).unwrap();
     write(&record, "<<<<<<< ours\n{}\n>>>>>>> theirs\n");
@@ -426,7 +446,7 @@ fn at_record_refuses_every_held_commit_under_an_unreadable_base_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_leaves_a_declared_revision_to_itself() {
-    let world = world();
+    let world = record_world();
     git(&world.catalog, &["checkout", "-q", "-b", "side"]);
     write(&world.catalog.join("NOTES.md"), "A side note.\n");
     commit(&world.catalog, "a side branch");
@@ -469,7 +489,7 @@ fn at_record_leaves_a_declared_revision_to_itself() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn at_record_holds_the_records_source_entry_to_the_manifest() {
-    let world = world();
+    let world = record_world();
     let rows: [(&str, RecordEdit); 2] = [
         (
             "another repository",
@@ -520,7 +540,7 @@ fn at_record_weighs_an_unapplied_revision_edit_at_the_declared_revision() {
             Declared::Unserved,
         ),
     ] {
-        let world = world();
+        let world = record_world();
         let installed = head(&world.catalog);
         append(
             &world,
