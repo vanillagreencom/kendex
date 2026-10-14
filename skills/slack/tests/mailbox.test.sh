@@ -159,19 +159,22 @@ WARNINGS="$(sk_legacy_warnings "$LEGACY" "$LEGACY_WARNINGS")" || RC=$?
 assert_eq "$RC=$WARNINGS" "0=$LEGACY_WARNINGS" "control: the hidden help key leaves legacy envelope diagnostics unchanged"
 sk_bin_reset
 
-# A mailbox store import can fail outside envelope validation. The healthy
-# root must post even when the first root's dependency raises an exception.
+# A real mailbox byte read can fail outside envelope validation. The healthy
+# root must post even when the first root has invalid UTF-8 data.
 BROKEN="$(sk_new_root broken-events)"
 sk_bind "$BROKEN"
 sk_poll "$BROKEN"
-sk_store_fixture "$BROKEN" 'raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")'
+mkdir -p "$(sk_box "$BROKEN")"
+touch "$(sk_box "$BROKEN")/to-overseer.jsonl"
+printf '\377\n' > "$(sk_box "$BROKEN")/to-overseer.jsonl.numbering"
 rm -- "$BROKEN/tmp/slack/status.json"
 mkdir "$BROKEN/tmp/slack/status.json"
 sk_lm "$HEALTHY" notice --item overseer --to owner --file "$(sk_text root-error 'Healthy after root error.')" >/dev/null
 sk_run -- listen --once --root "$BROKEN" --root "$HEALTHY"
-assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Healthy after root error.')=$(printf '%s\n' "$ERR" | grep -c '^slack: root-poll-failed=')" \
+assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Healthy after root error.')=$(printf '%s\n' "$ERR" | grep -c '^slack: lane-mail-failed=')" \
   "1=1=1" "a root read error reports once and does not stop healthy-root routing"
-assert_has "$ERR1" "slack: root-poll-failed=$BROKEN cause=UnicodeDecodeError:" "the root error names the root and actual cause"
+assert_has "$ERR1" "slack: lane-mail-failed=" "the root error keeps the mailbox read refusal"
+assert_has "$ERR1" "root=$BROKEN" "the root error names the failed root"
 
 sk_mutant repeated-fields mailbox.py 'if pair not in self\.reported_fields:' 'if True:'
 RC=0
@@ -259,10 +262,10 @@ sk_poll "$SK_TMP/field-unknown-kind"
 assert_eq "$ERR" "" "control: unknown field choices no longer get a keyed diagnostic"
 sk_bin_reset
 
-sk_mutant root-isolation relay.py '(            )except Exception as err:(\n                self.root_failed\(root, err\)\n                clean = False)' '\1except Refusal as err:\2'
+sk_mutant root-isolation relay.py '(            )except Exception as err:(\n                self.root_failed\(root, err\)\n                clean = False)' '\1except Exception as err:\n                raise err'
 sk_lm "$HEALTHY" notice --item overseer --to owner --file "$(sk_text root-control 'Root control.')" >/dev/null
 sk_run -- listen --once --root "$BROKEN" --root "$HEALTHY"
-assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Root control.')" "1=0" "control: the root error escapes and prevents the healthy root from posting"
+assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Root control.')" "2=0" "control: the root error escapes and prevents the healthy root from posting"
 sk_bin_reset
 
 sk_mutant status-isolation relay.py 'except Exception as status_err:' 'except Refusal as status_err:'

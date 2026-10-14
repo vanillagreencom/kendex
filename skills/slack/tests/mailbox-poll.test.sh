@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Surface: relay mailbox reads. Inputs: skills/slack/scripts/lib/**,
-# skills/mailbox/scripts/lib/** and skills/slack/tests/lib/**.
+# skills/mailbox/scripts/lib/**, skills/slack/tests/lib/** and
+# skills/slack/tests/fixtures/mailbox-pre-read-events/**.
 # Fake time drives the real worker loop. The control restores the existing
 # events subprocess path and fails the same idle-process assertion.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
 sk_fake_start
-while IFS='|' read -r mode transport; do
-  ROOT="$(sk_new_root "$transport-$mode")"
+while IFS='|' read -r mode transport format; do
+  ROOT="$(sk_new_root "$transport-$mode-$format")"
+  [ "$format" != historical ] || sk_historical_mailbox "$ROOT"
   sk_bind "$ROOT"
   assert_eq "$RC" 0 "$mode: one root binds before measurement"
   if [ "$transport" = eyes ]; then
@@ -37,12 +39,15 @@ while IFS='|' read -r mode transport; do
   fi
   sk_bin_reset
 done <<'ROWS'
-production|idle
-subprocess|idle
-production|reconnect
-subprocess|reconnect
-production|eyes
-subprocess|eyes
+production|idle|current
+subprocess|idle|current
+production|reconnect|current
+subprocess|reconnect|current
+production|eyes|current
+subprocess|eyes|current
+production|idle|historical
+production|reconnect|historical
+production|eyes|historical
 ROWS
 
 sk_summary

@@ -38,9 +38,9 @@ SK_RELAY_POLL=none
 code_of() {
   local scripts="${SK_BIN%/*}"
   (export LC_ALL=C; cat -- "$scripts/slack" "$scripts"/lib/*.py \
-    "$ROOT/.agents/skills/mailbox/scripts/lib/lane-mail-store.py" \
-    "$ROOT/.agents/skills/mailbox/scripts/lib/mailbox-append.sh" \
-    "$ROOT/.agents/skills/mailbox/scripts/lib/common-root.sh") \
+    "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/lane-mail-store.py" \
+    "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/mailbox-append.sh" \
+    "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/common-root.sh") \
     | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])'
 }
 row() { sk_run -- listen --status --root "$ROOT"; LINE="$OUT"; }
@@ -98,7 +98,12 @@ print('''def read_events(box, jq_defs, previous, receipts=False, timeout=30):
             marker.unlink()
             (box.parent.parent / "held").touch()
             time.sleep(3)
-    return _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)''')
+    rows, receipt = _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)
+    if (box.parent.parent / "observe").exists() and previous:
+        for row in rows:
+            if row.get("text") in ("Before helper reload.", "After helper reload."):
+                (box.parent.parent / "projection").write_text(row["text"])
+    return rows, receipt''')
 PY
   )" || exit 1
   sk_store_fixture "$ROOT" "$hook"
@@ -128,7 +133,7 @@ outage() {
 # sk_mutant made, polling every second
 start() {
   printf 'export SLACK_POLL_SECONDS=1\n' > "$SK_RUN_FROM/.env.local"
-  sk_relay_start "$ROOT"
+  sk_relay_start "$ROOT" "$@"
   row
   [ "$(field "$LINE" connection)" = connected ] || { printf 'relay on %s did not connect\n' "$ROOT" >&2; exit 1; }
 }
@@ -185,18 +190,12 @@ while IFS='|' read -r mode member; do
   if [ "$mode" = production ]; then
     sk_copy "mailbox-update-$mode"
   else
-    sk_mutant mailbox-untracked relay.py 'for root in sorted\(roots\):' 'for root in []:'
+    sk_mutant mailbox-untracked relay.py 'for path in MAILBOX_READ_FILES:' 'for path in ():'
   fi
   mailer
-  # The fixture links shared definitions. Replace the link before changing
-  # one root's dependency, so the update cannot reach another root.
-  if [ "$member" = common-root.sh ]; then
-    cp "$ROOT/.agents/skills/mailbox/scripts/lib/$member" "$ROOT/tmp/$member"
-    mv "$ROOT/tmp/$member" "$ROOT/.agents/skills/mailbox/scripts/lib/$member"
-  fi
   start
   PID="$(pid)"
-  printf '# mailbox update\n' >> "$ROOT/.agents/skills/mailbox/scripts/lib/$member"
+  printf '# mailbox update\n' >> "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/$member"
   C1="$(code_of)"
   WAIT=20
   [ "$mode" != untracked ] || WAIT=6
@@ -212,8 +211,37 @@ done <<'ROWS'
 production|lane-mail-store.py
 untracked|lane-mail-store.py
 production|common-root.sh
-untracked|common-root.sh
 ROWS
+
+# A helper-only update changes a warmed projection with unchanged mailbox bytes.
+fresh helper-projection
+sk_copy helper-projection
+mailer
+touch "$ROOT/tmp/observe"
+start
+sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text helper-before 'Before helper reload.')" >/dev/null
+tries=0
+while [ ! -s "$ROOT/tmp/projection" ] && [ "$tries" -lt 100 ]; do tries=$((tries + 1)); sleep 0.1; done
+assert_eq "$(cat "$ROOT/tmp/projection")" 'Before helper reload.' 'the real reader warms the original projection'
+cp "$(sk_box "$ROOT")/to-overseer.jsonl" "$ROOT/tmp/mailbox-before"
+python3 - "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/mailbox-append.sh" <<'PYHELPER'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+pattern = 'select(.tracker_pending != true or owner_tracker_release_at <= $now) | del(.tracker_pending);'
+assert source.count(pattern) == 1
+replacement = pattern[:-1] + ' | if .text == "Before helper reload." then .text = "After helper reload." else . end;'
+path.write_text(source.replace(pattern, replacement))
+PYHELPER
+C1="$(code_of)"
+row_until code "$C1" 20
+tries=0
+while [ "$(cat "$ROOT/tmp/projection")" != 'After helper reload.' ] && [ "$tries" -lt 100 ]; do tries=$((tries + 1)); sleep 0.1; done
+assert_eq "$(cat "$ROOT/tmp/projection")" 'After helper reload.' 'helper-only reload replaces the reader definitions and warmed projections'
+cmp "$(sk_box "$ROOT")/to-overseer.jsonl" "$ROOT/tmp/mailbox-before"
+assert_eq "$?" 0 'helper-only reload changes the result without a mailbox write'
+sk_relay_stop
 
 # --- a held reply defers the reload on its open connection --------------------------
 fresh deferred

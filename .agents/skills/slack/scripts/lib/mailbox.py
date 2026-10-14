@@ -1,4 +1,8 @@
-"""Mailbox reads use the root's mailbox store; writes use its lane-mail.
+"""Mailbox reads use Slack's installed mailbox dependency; writes use the root's lane-mail.
+
+The public events and drain commands own the output contract. Their per-poll
+process starts exceed the relay's polling contract, so reads call that same
+mailbox owner's parser and receipt rules inside this process.
 
 The relay keys every delivery it makes with `--delivery-id channel:ts`. Its
 journal skips a stamp it already carried; for any stamp the journal lost,
@@ -26,10 +30,11 @@ from refusals import Refusal, keyed
 from store import parse_at
 
 LANE_MAIL = Path(".agents/skills/mailbox/scripts/lane-mail")
+MAILBOX_SCRIPTS = Path(__file__).resolve().parents[3] / "mailbox" / "scripts"
 MAILBOX_READ_FILES = (
-    LANE_MAIL.parent / "lib" / "lane-mail-store.py",
-    LANE_MAIL.parent / "lib" / "mailbox-append.sh",
-    LANE_MAIL.parent / "lib" / "common-root.sh",
+    MAILBOX_SCRIPTS / "lib" / "lane-mail-store.py",
+    MAILBOX_SCRIPTS / "lib" / "mailbox-append.sh",
+    MAILBOX_SCRIPTS / "lib" / "common-root.sh",
 )
 LANE_MAIL_TIMEOUT_SECONDS = 30
 LANE_MAIL_CLEANUP_SECONDS = 5
@@ -86,7 +91,7 @@ class LaneMail:
     def _read_events(self, receipts: bool = False) -> Tuple[List[Dict], Optional[Tuple[int, Set[str]]]]:
         deadline = time.monotonic() + LANE_MAIL_TIMEOUT_SECONDS
         if self.reader is None:
-            path = self.root / MAILBOX_READ_FILES[0]
+            path = MAILBOX_READ_FILES[0]
             spec = importlib.util.spec_from_file_location("lane_mail_store", path)
             module = importlib.util.module_from_spec(spec)
             try:
@@ -103,14 +108,14 @@ class LaneMail:
                 [shell, "-c", 'set -euo pipefail; . "$1"; . "$2"; '
                  'mailbox_root="$(mailbox_common_root "$3")"; '
                  'printf "%s\\0%s" "$mailbox_root" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
-                 "mailbox-definitions", str(self.root / MAILBOX_READ_FILES[1]),
-                 str(self.root / MAILBOX_READ_FILES[2]), str(self.root)],
+                 "mailbox-definitions", str(MAILBOX_READ_FILES[1]),
+                 str(MAILBOX_READ_FILES[2]), str(self.root)],
                 capture_output=True, text=True, timeout=max(0, deadline - time.monotonic()),
             )
             if definitions.returncode != 0:
                 raise Refusal("lane-mail-failed", definitions.stderr.strip())
-            # Overseer mail belongs to the main checkout; reader code and
-            # relay state belong to the bound checkout. NUL preserves paths
+            # Overseer mail belongs to the main checkout; the installed
+            # dependency supplies code. NUL preserves paths
             # containing newlines without splitting the shared definitions.
             mailbox_root, self.jq_defs = definitions.stdout.split("\0", 1)
             self.box = Path(mailbox_root) / "tmp" / "lane-mail" / "overseer"

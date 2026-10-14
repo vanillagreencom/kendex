@@ -17,6 +17,12 @@ while IFS='|' read -r fault control; do
   done
   BAD_CH="$(sk_channel "$BAD_ROOT")"
   GOOD_CH="$(sk_channel "$GOOD_ROOT")"
+  case "$control" in
+    start) sk_mutant root-start relay.py '            self.root_failed\(path, err\)' '            raise err' ;;
+    poll) sk_mutant root-poll relay.py '                self.root_failed\(root, err\)\n                clean = False' '                raise err' ;;
+    retry) sk_mutant root-retry relay.py '        for path in self.paths:\n            if path not in active' '        for path in ():\n            if path not in active' ;;
+    diagnostic) sk_mutant root-diagnostic relay.py '        if self.root_errors.get\(path\) != error:' '        if True:' ;;
+  esac
   if [ "$fault" = poll ]; then
     sk_store_fixture "$BAD_ROOT" 'def read_events(box, jq_defs, previous, receipts=False, timeout=30):
     marker = box.parent.parent / "failure"
@@ -24,12 +30,6 @@ while IFS='|' read -r fault control; do
         raise ValueError(marker.read_text())
     return _read_events(box, jq_defs, previous, receipts=receipts, timeout=timeout)'
   fi
-  case "$control" in
-    start) sk_mutant root-start relay.py '            self.root_failed\(path, err\)' '            raise err' ;;
-    poll) sk_mutant root-poll relay.py '                self.root_failed\(root, err\)\n                clean = False' '                raise err' ;;
-    retry) sk_mutant root-retry relay.py '        for path in self.paths:\n            if path not in active' '        for path in ():\n            if path not in active' ;;
-    diagnostic) sk_mutant root-diagnostic relay.py '        if self.root_errors.get\(path\) != error:' '        if True:' ;;
-  esac
   cat > "$SK_TMP/root-probe.py" <<'PY'
 import contextlib, io, json, pathlib, subprocess, sys, urllib.request
 

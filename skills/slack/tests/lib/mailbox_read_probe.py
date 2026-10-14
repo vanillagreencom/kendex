@@ -15,7 +15,7 @@ if sys.argv[1] != "--child":
 del sys.argv[1]
 
 sys.path.insert(0, sys.argv[1])
-from mailbox import LaneMail
+from mailbox import MAILBOX_READ_FILES, LaneMail
 
 root = Path(sys.argv[2])
 mail = LaneMail(root)
@@ -34,6 +34,47 @@ def equivalent():
 
 
 assert equivalent() == [], "a missing mailbox must remain empty"
+
+# The bound public writer and compactor produce this version's real format.
+def command(*args):
+    return subprocess.run([str(mail.script), *args], cwd=root, capture_output=True,
+                          text=True, check=True, timeout=30).stdout
+
+
+text = root / "tmp/producer.txt"
+text.write_text("Historical producer notice.\n")
+command("notice", "--item", "overseer", "--to", "owner", "--file", str(text))
+text.write_text("Historical producer ask?\n")
+command("ask", "--item", "overseer", "--to", "owner", "--file", str(text),
+        "--options", "yes,no", "--recommend", "no")
+text.write_text("Historical producer directive.\n")
+command("send", "--item", "overseer", "--directive", "--file", str(text))
+produced = equivalent()
+assert {row["kind"] for row in produced} == {"notice", "ask", "directive"}
+over = box / "to-overseer.jsonl"
+source = [json.loads(raw) for raw in over.read_text().splitlines()]
+source[0]["at"] = "2000-01-01T00:00:00Z"
+over.write_text("".join(json.dumps(row) + "\n" for row in source))
+command("compact", "--item", "overseer")
+compacted_rows = equivalent()
+ask = next(row for row in compacted_rows if row["kind"] == "ask")
+assert (ask["line"], ask["count"]) == (2, 2)
+assert not any(row["kind"] == "notice" for row in compacted_rows)
+text.write_text("Historical appended tail.\n")
+command("notice", "--item", "overseer", "--to", "owner", "--file", str(text))
+tail = next(row for row in equivalent() if row["text"] == "Historical appended tail.")
+assert (tail["line"], tail["count"]) == (3, 3)
+command("inbox", "--item", "overseer")
+receipt_lines = command("drain", "--item", "overseer", "--after", "0", "--receipts").splitlines()
+header = next(line for line in receipt_lines if line.startswith("receipts "))
+fields = dict(word.split("=", 1) for word in header.split()[1:])
+assert int(fields["cursor"]) == mail.read_receipts()[0] == 1
+directive = next(row for row in produced if row["kind"] == "directive")
+assert mail.read_receipts()[1] == {directive["id"]}
+assert any(line.split()[1:2] == [directive["id"]] for line in receipt_lines)
+
+for name in ("to-overseer.jsonl.numbering", "to-lane.jsonl.numbering"):
+    (box / name).unlink(missing_ok=True)
 box.mkdir(parents=True, exist_ok=True)
 over = box / "to-overseer.jsonl"
 lane = box / "to-lane.jsonl"
@@ -162,7 +203,7 @@ streams = [over.open("rb"), lane.open("rb")]
 for fd, stream in zip((8, 9), streams):
     os.dup2(stream.fileno(), fd)
 try:
-    command = [sys.executable, str(mail.script.parent / "lib/lane-mail-store.py"),
+    command = [sys.executable, str(MAILBOX_READ_FILES[0]),
                "plain-lock", str(box), str(over), str(lane)]
     result = subprocess.run(command, pass_fds=(8, 9), capture_output=True, check=True, timeout=30)
     assert result.stdout == b""
@@ -208,6 +249,6 @@ finally:
 if linked:
     assert mail.box == box
     assert not (root / "tmp/lane-mail/overseer").exists(), "reads must not create a second mailbox"
-    assert Path(mail.reader.__code__.co_filename) == root / ".agents/skills/mailbox/scripts/lib/lane-mail-store.py", \
-        "the reader code must come from the bound checkout"
+assert Path(mail.reader.__code__.co_filename) == MAILBOX_READ_FILES[0], \
+    "the reader code must come from the installed dependency beside Slack"
 print("mailbox-read: output-equivalent=yes numbered-tail=yes cursor=yes")

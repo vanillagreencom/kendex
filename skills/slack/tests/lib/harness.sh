@@ -197,42 +197,50 @@ PY
   [ "$?" -eq 0 ] || exit 1
   sk_store_fixture "$1" ""
 }
-# sk_store_fixture ROOT BODY: change the mailbox store dependency in this root.
+# sk_store_fixture ROOT BODY: inject a root-specific projection in the installed reader.
 sk_store_fixture() {
-  python3 - "$1" "$SK_ROOT/skills/mailbox/scripts/lib" "$2" <<'PY'
-import pathlib, shlex, sys
-root, library, body = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-scripts = root / ".agents/skills/mailbox/scripts"
-if scripts.is_symlink():
-    scripts.unlink()
-    scripts.mkdir()
-    entry = scripts / "lane-mail"
-    entry.write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec ' + shlex.quote(str(library.parent / 'lane-mail')) + ' "$@"\n')
-    entry.chmod(0o755)
-lib = scripts / "lib"
-lib.mkdir(exist_ok=True)
-for path in library.iterdir():
-    if path.name != "lane-mail-store.py" and not (lib / path.name).exists():
-        (lib / path.name).symlink_to(path)
-source = library / "lane-mail-store.py"
-(lib / source.name).write_text(
-    "import runpy\nglobals().update(runpy.run_path(" + repr(str(source)) + "))\n"
-    "_read_events = read_events\n" + body + "\n")
+  [ -n "$2" ] || return 0
+  python3 - "$1" "${SK_SLACK%/slack/scripts/slack}/mailbox/scripts/lib/lane-mail-store.py" \
+    "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/lane-mail-store.py" "$2" <<'PY'
+import pathlib, sys
+root, baseline, selected, body = sys.argv[1:]
+for target in dict.fromkeys((baseline, selected)):
+    path = pathlib.Path(target)
+    assert path.is_file() and not path.is_symlink()
+    source = path.read_text()
+    index = source.count("# root projection fixture")
+    previous, fixture = f"_previous_{index}", f"_fixture_{index}"
+    assert body.count("def read_events(") == 1
+    hook = body.replace("def read_events(", f"def {fixture}(").replace("_read_events", previous)
+    source += f"\n# root projection fixture\n{previous} = read_events\n" + hook + "\n"
+    source += "def read_events(box, jq_defs, previous, receipts=False, timeout=30):\n"
+    source += f"    reader = {fixture} if box == Path({root!r}) / 'tmp/lane-mail/overseer' else {previous}\n"
+    source += "    return reader(box, jq_defs, previous, receipts=receipts, timeout=timeout)\n"
+    path.write_text(source)
 PY
   [ "$?" -eq 0 ] || exit 1
 }
 
-sk_store_mutant() { # ROOT PATTERN REPLACEMENT: mutate the dependency copy.
-  sk_store_fixture "$1" ""
+sk_store_mutant() { # ROOT PATTERN REPLACEMENT: mutate only the selected dependency copy.
+  sk_copy store-control
   python3 - "$SK_ROOT/skills/mailbox/scripts/lib/lane-mail-store.py" \
-    "$1/.agents/skills/mailbox/scripts/lib/lane-mail-store.py" "$2" "$3" <<'PY'
+    "${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lib/lane-mail-store.py" "$2" "$3" <<'PY'
 import pathlib, sys
 source, target, pattern, replacement = sys.argv[1:]
 text = pathlib.Path(source).read_text()
 assert text.count(pattern) == 1 and pattern != replacement
-pathlib.Path(target).write_text(text.replace(pattern, replacement))
+path = pathlib.Path(target)
+assert not path.is_symlink()
+path.write_text(text.replace(pattern, replacement))
 PY
   [ "$?" -eq 0 ] || exit 1
+}
+
+# sk_historical_mailbox ROOT: install the unchanged historical writer and helpers.
+sk_historical_mailbox() {
+  rm -- "$1/.agents/skills/mailbox/scripts" || exit 1
+  cp -R "$SK_ROOT/skills/slack/tests/fixtures/mailbox-pre-read-events/scripts" \
+    "$1/.agents/skills/mailbox/scripts" || exit 1
 }
 
 # sk_event_filter ROOT JQ: the mailbox store produces changed event fields.
@@ -394,7 +402,8 @@ sk_copy() {
   cp -R "$SK_ROOT/skills/slack/scripts" "$dir/skills/slack/scripts"
   cp -R "$SK_ROOT/skills/slack/systemd" "$dir/skills/slack/systemd"
   ln -sfn "$SK_ROOT/skills/orch" "$dir/skills/orch"
-  ln -sfn "$SK_ROOT/skills/mailbox" "$dir/skills/mailbox"
+  mkdir -p "$dir/skills/mailbox"
+  cp -R "${SK_SLACK%/slack/scripts/slack}/mailbox/scripts" "$dir/skills/mailbox/scripts"
   ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
   SK_BIN="$dir/skills/slack/scripts/slack"
 }
@@ -425,7 +434,8 @@ sk_tracker_fixture() {
   cp -R "$SK_ROOT/skills/slack/scripts" "$SK_TMP/tracker/skills/slack/scripts"
   cp -R "$SK_ROOT/skills/slack/systemd" "$SK_TMP/tracker/skills/slack/systemd"
   ln -s "$SK_ROOT/skills/orch" "$SK_TMP/tracker/skills/orch"
-  ln -s "$SK_ROOT/skills/mailbox" "$SK_TMP/tracker/skills/mailbox"
+  mkdir -p "$SK_TMP/tracker/skills/mailbox"
+  cp -R "$SK_ROOT/skills/mailbox/scripts" "$SK_TMP/tracker/skills/mailbox/scripts"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/tracker/skills/linear/scripts/linear.sh"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/bin/gh"
   chmod +x "$SK_TMP/tracker/skills/linear/scripts/linear.sh" "$SK_TMP/bin/gh"
