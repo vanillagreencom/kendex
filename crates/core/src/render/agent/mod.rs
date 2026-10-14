@@ -530,7 +530,11 @@ mod tests {
                     rendered
                 };
                 for line in prose.lines().filter(|line| line.starts_with("- ")) {
-                    actual.push((method, harness, line.to_owned()));
+                    actual.push((
+                        method,
+                        harness,
+                        line.replace(std::path::MAIN_SEPARATOR, "/"),
+                    ));
                 }
                 expected.push((
                     method,
