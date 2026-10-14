@@ -39,6 +39,8 @@ source "$TEST_DIR/lib/lanes-fixture.sh"
 source "$TEST_DIR/lib/open-terminal-stubs.sh"
 # shellcheck source=lib/question-off.sh
 source "$TEST_DIR/lib/question-off.sh"
+# The successor probe and the launcher use the same handoff parser.
+source "$SCRIPTS_DIR/lib/lane-state.sh"
 # mutant_scripts and mutate_file, the two halves of each control.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -123,7 +125,7 @@ run_ot() {
   [[ -z "$RUN_CMD" ]] || command_args=(--cmd "$RUN_CMD")
   : > "$RUN/live"
   : > "$RUN/saved-session"
-  local judge_root="$RUN/judge" handoff_dir
+  local judge_root="$RUN/judge" handoff_dir replay_sandbox="$RUN/remote/srv/lane"
   if [[ "$HANDOFF_CASE" != neutral ]]; then
     mkdir -p "$judge_root/clone"
     git init -q "$judge_root/clone"
@@ -148,6 +150,7 @@ run_ot() {
         ;;
     esac
     mkdir -p "$handoff_dir"
+    HANDOFF_STATE_FILE="$handoff_dir/workflow-state-KEN-1.json"
     case "$HANDOFF_CASE" in
       none) ;;
       unreadable) printf '{broken\n' > "$handoff_dir/workflow-state-KEN-1.json" ;;
@@ -155,13 +158,22 @@ run_ot() {
       *) printf '{"handoff":{"at":"2026-10-01T00:00:00Z","reason":"context","remaining":"Continue work"}}\n' > "$handoff_dir/workflow-state-KEN-1.json" ;;
     esac
     selection_env+=(OT_HANDOFF_WORKTREE="$judge_root/lane")
+    case "$HANDOFF_CASE" in
+      stands | settings | private) replay_sandbox="$judge_root/lane" ;;
+    esac
   fi
   if [[ "$SELECT_KIND" != - ]]; then
     selection_env=(LANE_HOST_STUB_SELECTION= OT_REPLAY_LIB="$TEST_DIR/lib/open-terminal-stubs.sh"
       OT_REPLAY_SCRIPTS="${OPEN_TERMINAL%/*}" OT_REPLAY_RUN="$RUN/inline" OT_REPLAY_HARNESS="$harness"
-      OT_REPLAY_KIND="$SELECT_KIND" OT_REPLAY_SANDBOX="$RUN/remote/srv/lane" OT_REPLAY_ITEM=KEN-1)
+      OT_REPLAY_KIND="$SELECT_KIND" OT_REPLAY_SANDBOX="$replay_sandbox" OT_REPLAY_ITEM=KEN-1)
     mkdir -p "$RUN/inline"
     [[ "$HANDOFF_CASE" == neutral ]] || selection_env+=(OT_HANDOFF_WORKTREE="$judge_root/lane")
+    if [[ "$replay_sandbox" == "$judge_root/lane" ]]; then
+      selection_env+=(OT_REPLAY_HANDOFF=true)
+      # The shipped provider exports worktree tmp before running this payload.
+      create_line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc '
+      create_line+="'export ORCH_STATE_DIR=$(printf '%q' "$judge_root/lane/tmp"); exec bash -c \"\$1\"' lane-host"
+    fi
   fi
   [[ "$REQUIRE_PREPARED" != true ]] || selection_env+=(OT_HANDOFF_READY_FILE="$RUN/ready")
   OUT="$(env LINEAR_TEAM= LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_MAX_PCT=95 ORCH_LANE_ALIASES=eclaude=work ORCH_LANE_COPILOT_POOL="$pool" \
@@ -389,7 +401,7 @@ custom_case() {
   assert_eq "$CUSTOM_RESULT" 'rc=0 replay=0 order=stop,create runs=1 brief=1 saved=yes' \
     'a custom relaunch stops before create and runs the exact brief in a fresh session' "$RUN/launcher.out"
 }
-standing_case() {
+standing_case() { # [route-only]
   SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
   STANDING_RESULT="rc=$RC retired=$(said '^open-terminal: session-retired item=KEN-1 harness=codex$') stop=$(grep -c '^stop ' "$RUN/host.log" || true) $(cat "$RUN/inline/replay.out")"
   assert_eq "$STANDING_RESULT" 'rc=0 retired=1 stop=1 rc=0 runs=1 resume=0 fresh=1 target=0' \
@@ -397,6 +409,15 @@ standing_case() {
   local query=""
   [[ ! -f "$RUN/tmux.log.handoff" ]] || query="$(cat "$RUN/tmux.log.handoff")"
   assert_not_contains "$query" "$RUN/state" 'the handoff query sends no caller state directory'
+  if [[ "${1:-}" != route-only ]]; then
+    assert_eq "$(cat "$RUN/inline/handoff.log")" $'state=stands\nremaining=Continue work\nresume=0' \
+      'the successor environment reads remaining work and stamps the judged handoff'
+    OT_HANDOFF_WORKTREE="$RUN/judge/lane" OT_TMUX_LOG="$RUN/tmux.log" \
+      lane_handoff_standing "$RUN" "" "$OT_STUB_BIN/ssh" -T -o BatchMode=yes -- lane.example \
+      "cd /srv/lane && .agents/skills/orch/scripts/workflow-state handoff-standing KEN-1 --worktree /srv/lane"
+    assert_eq "$LANE_HANDOFF_STATE $(jq -r '.handoff.resumed_at | type' "$HANDOFF_STATE_FILE")" 'none number' \
+      'the launcher judge sees the same handoff consumed by the successor'
+  fi
 }
 custom_case
 for HANDOFF_CASE in stands settings private; do standing_case; done
@@ -462,9 +483,17 @@ CUSTOM_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
 assert_eq "$CUSTOM_CONTROL" 1 'control: the main custom route keeps the live session and drops its brief'
 control hosted-handoff '    lane_handoff_standing "$3" "" ssh -T -o BatchMode=yes -- "$ssh_target" "$judge"' '    LANE_HANDOFF_STATE=none; false && lane_handoff_standing "$3" "" ssh -T -o BatchMode=yes -- "$ssh_target" "$judge"'
 SAVED_FAIL="$FAIL"; FAIL=0
-HANDOFF_CASE=stands standing_case > "$TMP_ROOT/handoff-control.out"
+HANDOFF_CASE=stands standing_case route-only > "$TMP_ROOT/handoff-control.out"
 HANDOFF_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
 assert_eq "$HANDOFF_CONTROL" 1 'control: the main hosted route resumes the saved full-context transcript'
+control successor-state '[[ -z "$RELAUNCH_HANDOFF_DIR" ]] || run="export ORCH_STATE_DIR=$(lane_single_quote "$RELAUNCH_HANDOFF_DIR") && $run"' '[[ -z "$RELAUNCH_HANDOFF_DIR" ]] || true'
+for HANDOFF_CASE in settings private; do
+  SAVED_FAIL="$FAIL"; FAIL=0
+  standing_case > "$TMP_ROOT/successor-$HANDOFF_CASE-control.out"
+  SUCCESSOR_CONTROL="$FAIL"; FAIL="$SAVED_FAIL"
+  assert_eq "$SUCCESSOR_CONTROL" 2 "control: provider tmp hides the $HANDOFF_CASE handoff from the successor"
+done
+HANDOFF_CASE=neutral
 control failed-read '    none) return 0 ;;' '    none | unreadable) return 0 ;;'
 SAVED_FAIL="$FAIL"; FAIL=0
 read_refusal_case 'neutral|ssh' > "$TMP_ROOT/read-control.out"

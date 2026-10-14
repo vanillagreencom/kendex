@@ -169,7 +169,7 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     marker-failed) text='The lane launch marker could not be written, or did not read back holding the root the lane opens in, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
-    session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
+    session-retired) text='The item'"'"'s handoff record stands. The relaunch starts a fresh session, and the start workflow continues from the record. A hosted relaunch requires a successful provider stop first and carries the judged remote state directory into the successor.' ;;
     harness-switched) text='The lane record names another harness as the last one to run the lane, so no session this harness holds carries that work. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
     harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The selected command may have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet cleanup closes its window and records stopped, still naming the harness, model and account of the last launch that took. Automatic pane=verb relaunch is deferred to KEN-3996. On the legacy SSH pane route, a foreground launch writes stopped only once the close succeeds; a close failure leaves the record as it read, tmux-failed naming the cause. The background job records stopped once cleanup reaches window close, even if that close fails. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
     record-stop-failed) text='The hosted relaunch did not take and its window is closed, but its record could not be rewritten stopped, so the record keeps whatever status the launch last wrote. workflow-state names why above: fix it, then relaunch.' ;;
@@ -422,22 +422,28 @@ Options:
                     @lane-viewer-command option. Both routes run the harness
                     in the remote worktree, with no lane env prefix. A create
                     line carrying state=preparing is a host still preparing
-                    the item it accepted. Under --state-dir the window and its
-                    claim open, the record reads preparing and the launch
+                    the item it accepted. A hosted --relaunch without --cmd
+                    waits synchronously before handoff judgment and before
+                    opening the successor window. Without --state-dir every
+                    preparation waits synchronously. A fresh or custom-command
+                    launch under --state-dir opens the window and its
+                    claim, the record reads preparing and the launch
                     moves on: a background job runs `lane-host wait`, then the
                     rest of the launch, and records the lane running, or
                     stopped after cleanup, with its reason, logging to
                     lane-prepare-ITEM.log in the state directory; the summary
                     counts it as preparing. A failed provider stop keeps
                     the window and current running or preparing record.
-                    Without --state-dir, and for a
-                    Codex --relaunch awaiting host session selection, the
-                    launch runs `lane-host wait` itself.
                     lane-close closes a record still preparing. With
                     --relaunch keeps the tree on pane=local. Automatic
                     pane=verb relaunch is deferred to KEN-3996 and refuses as
                     host-relaunch-deferred before stopping the prior harness
-                    or replacing its window. Without --cmd, Codex and Pi
+                    or replacing its window. A hosted --cmd relaunch requires
+                    a successful lane-host stop before create --relaunch.
+                    Without --cmd a standing remote handoff requires a
+                    successful provider stop, then starts fresh with the
+                    judged remote state directory. No standing record keeps
+                    native resume-or-fresh selection. Codex and Pi
                     resume a lead session whose recorded cwd is this worktree,
                     or run the start brief when none exists. Claude falls back
                     to that brief when --continue exits 1. Claude and Pi carry
@@ -640,11 +646,14 @@ Options:
                     its continuation pasted into
                     the pane. A fresh start needs no paste. See --host.
                     With no match the normal brief
-                    starts fresh, and so does a local relaunch of an item
+                    starts fresh, and so does a relaunch of an item
                     whose handoff record stands (`workflow-state
                     handoff-standing`), reported as session-retired: its lane
-                    ended that session and the start workflow continues from
-                    the record. A verdict that cannot be read refuses as
+                    retires that session and the start workflow continues from
+                    the record. A hosted relaunch requires a successful provider
+                    stop before starting fresh. Its successor reads the judged
+                    remote state directory, including an older configured
+                    location. A verdict that cannot be read refuses as
                     handoff-unreadable and launches nothing. A relaunch whose
                     fleet record names another harness as the last one to run
                     the lane starts fresh too, hosted or local, reported as
@@ -657,7 +666,8 @@ Options:
                     after the pane shows a harness screen, including a fresh
                     start after a harness switch. A --cmd relaunch follows
                     lane-directive.md § Lane preference: no session lookup,
-                    harness-switch check or start brief. Before the
+                    harness-switch check or start brief. On a hosted lane it
+                    stops the live harness before create --relaunch. Before the
                     worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged

@@ -161,8 +161,8 @@ fi
 exit "$rc"
 STUB
 chmod +x "$RECOVERY_PROVIDER"
-recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
-  local name="$1" harness="$2" verb="$3" path="$4" step="$5" state env_list first_starts retry_starts record
+recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL] [RETRY_SSH]
+  local name="$1" harness="$2" verb="$3" path="$4" step="$5" retry_ssh="${7:-neutral}" state env_list first_starts retry_starts record first_queries retry_queries
   state="$TMP_ROOT/recovery-$name"; mkdir -p "$state/disk/srv/lane" "$state/disk/pi/packages/@vanillagreen/pi-hooks/extensions"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$state/disk/srv/lane/.git"
   printf '%s\n' '{"compaction":{"enabled":false}}' > "$state/disk/pi/settings.json"
@@ -177,6 +177,8 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
   else env_list+=";ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"; fi
   run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch KEN-3241
   first_starts="$(typed "clear; ssh 'lane.example'")"; first_starts="${first_starts:-0}"
+  first_queries=0
+  [[ ! -f "$RUN/tmux.log.handoff" ]] || first_queries="$(wc -l < "$RUN/tmux.log.handoff" | tr -d '[:space:]')"
   assert_eq "rc=$RC step=$(jq -r '.lanes[0].prepare.step' "$record") failed=$(awk '$2 == "summary" { for (i=3;i<=NF;i++) if ($i ~ /^failed=/) print $i }' <<<"$OUT")" \
     "rc=0 step=$step failed=failed=0" "dispatcher busy during $name retains the accepted preparation"
   if [[ "$name" == codex-cat* ]]; then
@@ -185,25 +187,41 @@ recovery_case() { # NAME HARNESS BLOCK_VERB BLOCK_PATH STEP [CONTROL]
     env_list="${env_list/flags=-m gpt-6-astra -c model_reasoning_effort=high/flags=-m gpt-6.1-sol -c model_reasoning_effort=medium}"
   fi
   rm -f "$state/home/.cache/orch/lane-host-slots/short/slot.$$"
+  [[ "$retry_ssh" != failed ]] || env_list+=';OT_HANDOFF_SSH_STATUS=255'
   run_ot "$env_list" --state-dir "$state" --host "$RECOVERY_PROVIDER" --harness "$harness" --lane "$H/.eclaude" --repo o/r --relaunch KEN-3241
   retry_starts="$(typed "clear; ssh 'lane.example'")"; retry_starts="${retry_starts:-0}"
+  retry_queries=0
+  [[ ! -f "$RUN/tmux.log.handoff" ]] || retry_queries="$(wc -l < "$RUN/tmux.log.handoff" | tr -d '[:space:]')"
   RECOVERY_RESULT="rc=$RC creates=$(grep -c '^create ' "$state/calls") starts=$((first_starts + retry_starts)) status=$(jq -r '.lanes[0].status' "$record") pending=$(jq 'has("prepare")' <<<"$(jq '.lanes[0]' "$record")")"
   [[ "${6:-}" == control ]] || assert_eq "$RECOVERY_RESULT" "rc=0 creates=1 starts=1 status=running pending=false" "retry after $name starts one harness in the accepted sandbox"
-  if [[ "$name" == codex-cat ]]; then
+  if [[ "$name" == codex-cat || "$retry_ssh" != neutral ]]; then
     assert_eq "$(jq -r '.lanes[0] | [.account,.model,.effort] | join(":")' "$record")" \
       "$H/.eclaude:gpt-6-astra:high" 'a record-only retry keeps the started model and effort despite new invocation flags'
   fi
+  if [[ "$retry_ssh" != neutral ]]; then
+    assert_eq "first_queries=$first_queries retry_queries=$retry_queries stops=$(grep -c '^stop ' "$state/calls" || true)" \
+      'first_queries=1 retry_queries=0 stops=0' 'a saved selection completes without rereading handoff or stopping its harness'
+  fi
 }
-while IFS='|' read -r name harness verb path step; do
-  recovery_case "$name" "$harness" "$verb" "$path" "$step"
+while IFS='|' read -r name harness verb path step retry_ssh; do
+  recovery_case "$name" "$harness" "$verb" "$path" "$step" '' "${retry_ssh:-neutral}"
 done <<'ROWS'
 codex-put|codex|create|--repo|marker
 codex-cat|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection
+codex-cat-ssh|codex|put|/srv/lane/tmp/lane-mail/KEN-3241/context.json|selection|failed
 pi-settings|pi|create|--repo|marker
 pi-carrier|pi|cat|/srv/lane/.pi/settings.json|marker
 ROWS
 
 RECOVERY_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-selection-handoff/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-selection-handoff/orch"
+mutate_file "$OPEN_TERMINAL" '[[ "$host_pending_step" != selection ]] || return 0' '[[ "$host_pending_step" != selection ]] || true'
+RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
+recovery_case codex-cat-ssh-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' failed > "$TMP_ROOT/selection-handoff-control.out"
+RECOVERY_HANDOFF_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"
+assert_eq "$RECOVERY_HANDOFF_CONTROL" 2 'control: rereading handoff on a saved selection fails its record-only retry'
+OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-selection-step/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-selection-step/orch"
 mutate_file "$OPEN_TERMINAL" '        host_pending_step=selection' '        host_pending_step=marker'

@@ -1791,9 +1791,11 @@ and so the rule any caller naming no --state-dir reads; first match wins:
   3. tmp
   A relative path joins the main checkout, or the working directory outside
   Git; an absolute path stays unchanged.
-  A hosted SSH launch exports ORCH_STATE_DIR as the absolute path to its
-  worktree's tmp/. State-aware scripts and hooks inherit it. Local launches
-  keep the default main-checkout directory.
+  A hosted SSH launch normally exports ORCH_STATE_DIR as the absolute path to
+  its worktree's tmp/. A fresh successor to a standing handoff uses the remote
+  directory its handoff judge selected, including an older configured location.
+  State-aware scripts and hooks inherit it. Local launches keep the default
+  main-checkout directory.
 
 Handoff record: handoff-standing and handoff-resume read the item's file in
 the State directory above, then in <root>/tmp, where root is --worktree or,

@@ -2799,7 +2799,7 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # Hosted Codex selection stays in the foreground, never in the background job a
 # hosted launch hands its wait to. Its result is unknown until the host starts
 # the harness; launch_finish reads that result.
-RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
+RELAUNCH_ROUTE=resume HOST_SELECTION_FILE="" RELAUNCH_HANDOFF_DIR=""
 host_harness_stop() {
   local rc=0
   host_transport stop --item "$wt_id" --harness "$HARNESS" || rc=$?
@@ -2809,7 +2809,7 @@ host_harness_stop() {
 }
 relaunch_route() { # ITEM STATE_ID WORKTREE
   local judge
-  RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
+  RELAUNCH_ROUTE=resume HOST_SELECTION_FILE="" RELAUNCH_HANDOFF_DIR=""
   LANE_RECORD_VALUE=absent
   [[ "$FLEET" != true ]] || lane_record_read "$2" harness || return 1
   if [[ "$LANE_RECORD_VALUE" != absent && "$LANE_RECORD_VALUE" != "$HARNESS" ]]; then
@@ -2837,6 +2837,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
     none) return 0 ;;
     stands)
       [[ "$HOST_RELAUNCH" != true ]] || host_harness_stop || return 1
+      [[ "$HOST_RELAUNCH" != true ]] || RELAUNCH_HANDOFF_DIR="${LANE_HANDOFF_FILE%/*}"
       ot_message session-retired "item=$1" "harness=$HARNESS"
       RELAUNCH_ROUTE=fresh HOST_SELECTION_FILE=""
       return 0 ;;
@@ -2969,6 +2970,9 @@ launch_finish() {
     # which can carry the launching session's identity. This text is POSIX
     # shell (a hosted relaunch reads `$?`), so `unset` clears the list here.
     run="unset ${LANE_LAUNCH_SCRUB[*]} && $run"
+    # Older hosted launches wrote state under the remote project setting.
+    # Keep the successor on the judge's file even when the provider exports tmp.
+    [[ -z "$RELAUNCH_HANDOFF_DIR" ]] || run="export ORCH_STATE_DIR=$(lane_single_quote "$RELAUNCH_HANDOFF_DIR") && $run"
     # Keep the marked launch root when a lane's tool shell changes directory.
     run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
@@ -3927,14 +3931,14 @@ for raw in "${ITEMS[@]}"; do
   fi
   # Judged before any record write: a preparing record already names this
   # launch's harness, and the switch is read against the one before it.
-  RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
+  RELAUNCH_ROUTE=resume HOST_SELECTION_FILE="" RELAUNCH_HANDOFF_DIR=""
   if [[ "$LANE_HOST" == local && "$RELAUNCH" == true && -z "$CMD_TEMPLATE" ]] && ! relaunch_route "$item" "$wt_id" "$wt"; then
     failed=$((failed + 1))
     continue
   fi
-  # A host still preparing the item it accepted answers through `wait`. Under a
-  # fleet a background job waits and the watch reports what it recorded;
-  # without one there is no record to report through, so the launch waits here.
+  # Hosted no-command relaunches wait here before handoff judgment. Fresh and
+  # custom-command fleet launches hand preparation to the background job;
+  # without fleet state every preparation waits here.
   if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" && ( "$RELAUNCH" != true || -n "$CMD_TEMPLATE" ) ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
