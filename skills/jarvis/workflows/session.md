@@ -12,18 +12,37 @@ Follow this workflow when starting a continuing session, reconciling open work o
 
 ## Start
 
-- Keep one assistant in control at a time.
 - Read `state/handoff.md` first, at the path in the [home layout](../README.md#home-layout). If it is absent and the user has an earlier handoff elsewhere, read that file. Have the user move it once to the current path. Read the [Handoff contract](../references/long-session.md#handoff) before using it. Read its State, Sub-agents and Instructions in force sections. Compare its state time with the clock and the user's staleness bound. Refuse a handoff outside that bound. Ask the user to set the bound if none exists.
+- Load only the safety core at start: the role in [persona.md](../persona.md), [Authority](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records). Use already loaded text rather than reading it again. Keep one assistant in control at a time.
+- Check current holds and temporary instructions in the compact handoff sections above. Read the current owner request with its delivered context. Apply its decision boundary through Authority before choosing work.
+- Check the event registration state in the handoff's State section.
 - Register with the event source the user selected. Use its supported registration and delivery interface. The source can change without changing this session contract.
 - Check the user channel and each agent's channel for unread events. Keep one communication channel per agent. Use the source's delivery order rather than sorting event ids.
-- Confirm the session prerequisites under [Homes](../references/long-session.md#homes). If they are missing, take its setup route as the first decision and leave the handoff untouched. Otherwise reconcile the tracker queue, the open asks and the due audits through live reads of their homes. Check what each open item waits for and why. Resume authorized work when the wait no longer applies.
+- Confirm the session prerequisites under [Homes](../references/long-session.md#homes). If they are missing, take its setup route as the first decision and leave the handoff untouched. Otherwise read all open session work from the selected tracker project, through every page. Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source. Reconcile the tracker queue, the open asks and the due audits through live reads of their homes. Keep a compact view of open work and due obligations for the first decision. Check what each open item waits for and why. Resume authorized work when the wait no longer applies.
 - Read no other record before the first decision.
-- Follow [verification.md:Acceptance](../references/verification.md#acceptance) when selecting which references to load.
+- Before taking the selected action, load its sections under [Action routes](#action-routes).
 - Follow [Handoff replacement](#handoff-replacement) before writing the current handoff under the [Handoff contract](../references/long-session.md#handoff) and entering the event loop.
+
+## Action routes
+
+Load each named section before the step that acts on it. Read its full text, including its rules, rather than only its heading or a summary. Use [Acceptance](../references/verification.md#acceptance) to select any further instructions the task needs. A start instruction must not read whole rule files in advance.
+
+| Action | Load before acting |
+|---|---|
+| Reply or request a decision | [Medium and threads](../references/communication.md#medium-and-threads), [Message types](../references/communication.md#message-types), [Delivery](../references/communication.md#delivery) and [Sources](../references/verification.md#sources). |
+| Queue decision | [Authority](../references/decisions.md#authority), [Approach](../references/decisions.md#approach), [Evidence and risk](../references/decisions.md#evidence-and-risk), [Homes](../references/long-session.md#homes) and [Acceptance](../references/verification.md#acceptance). |
+| Payment or spend | [Authority](../references/decisions.md#authority), [Evidence and risk](../references/decisions.md#evidence-and-risk) and [Account ledger](../references/accounts-and-secrets.md#account-ledger). Load [Official records](../references/accounts-and-secrets.md#official-records) when the action uses those records. |
+| Browser or account step | [Authority](../references/decisions.md#authority), [Account ledger](../references/accounts-and-secrets.md#account-ledger) and [Secret transfer](../references/accounts-and-secrets.md#secret-transfer). For a browser step, load [Browser guide](../references/browser.md#browser-guide), [Profile and tabs](../references/browser.md#profile-and-tabs), [Forms and captures](../references/browser.md#forms-and-captures) and [Bot checks](../references/browser.md#bot-checks). For sign-in, load [Remote sign-in](../references/accounts-and-secrets.md#remote-sign-in). For the user's input devices, load [Desktop and terminal](../references/computer-use.md#desktop-and-terminal). |
+| Merge | [Authority](../references/decisions.md#authority), orch's [Workflow Execution](../../orch/SKILL.md#workflow-execution) and its [merge workflow](../../orch/workflows/merge-pr.md). Load the target repository's merge instructions before its merge step. |
+| Lane launch | [Authority](../references/decisions.md#authority), orch's [Delegation](../../orch/references/skill-rules.md#delegation) and [Agent Lifecycle](../../orch/references/skill-rules.md#agent-lifecycle). For an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md). |
+| Succession | [Succession](#succession), [Handoff replacement](#handoff-replacement), the [Handoff contract](../references/long-session.md#handoff) and [Retention](../references/accounts-and-secrets.md#retention). |
+
+A consumer's own rule files keep their content. Its start instructions load only its safety-core sections above. Give its remaining rule sections action routes for the same classes in this table. Each route names the owning file and its existing section heading. Load that section before the action it governs. Keep consumer-specific rules in their owning files rather than copying them into this workflow or the handoff.
 
 ## Event loop
 
 - Read each delivered event and connect it to an open item or create that item.
+- Load the action's sections under [Action routes](#action-routes) before acting.
 - Handle user decisions through [decisions.md:Authority](../references/decisions.md#authority). Use [communication.md:Message types](../references/communication.md#message-types) for replies, notices and scheduled reports.
 - Update the item's state after each action. Keep an unresolved obligation open until its acceptance check passes.
 - Run the verify pass after handling events and before waiting again. Select the checks under [Homes](../references/long-session.md#homes). Check each due box at its evidence source under [verification.md:Sources](../references/verification.md#sources). Record the outcome on the item and take the next action on failure.

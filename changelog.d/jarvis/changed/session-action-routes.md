@@ -1,0 +1,1 @@
+- Continuing sessions start with a safety core, load rule sections before each action and discover open session work from the full tracker project queue.
