@@ -417,7 +417,10 @@ pub(crate) fn required_skills(
                     })
             });
             RequiredSkill {
-                name: name.clone(),
+                name: match method {
+                    crate::manifest::Method::Symlink => crate::harness::canonical_name(name),
+                    crate::manifest::Method::Copy => crate::harness::rendered_name(harness, name),
+                },
                 root: crate::render::agent::skill_root(env, harness, scope, method),
             }
         })

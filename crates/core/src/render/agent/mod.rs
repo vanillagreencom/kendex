@@ -469,6 +469,81 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn required_skill_references_use_installed_names() {
+        let env = Env::fake("/h", crate::env::FakeOs::Linux);
+        let scope = Scope::Project { root: "/p".into() };
+        let source = parse_source_agent(
+            "---\nname: rust\ndescription: Rust engineer\nrole: engineer\n---\nBody.\n",
+        )
+        .unwrap();
+        let mut actual = Vec::new();
+        let mut expected = Vec::new();
+        for (harness, copy_root, copy_name) in [
+            (HarnessId::Claude, ".claude/skills", "pub__item"),
+            (HarnessId::Codex, ".agents/skills", "pub__item"),
+            (HarnessId::Copilot, ".github/skills", "pub-item"),
+            (HarnessId::Pi, ".agents/skills", "pub__item"),
+        ] {
+            for (method, root, installed) in [
+                (Method::default(), ".agents/skills", "pub__item"),
+                (Method::Copy, copy_root, copy_name),
+            ] {
+                let mut manifest = Manifest::default();
+                manifest.install.method = method;
+                let agent = EffectiveAgent {
+                    source: &source,
+                    harness,
+                    scope: &scope,
+                    skills: crate::engine::desired_agent::required_skills(
+                        &env,
+                        &scope,
+                        harness,
+                        &manifest,
+                        |_| None,
+                        &["pub/item".into(), "plain".into()],
+                    ),
+                    overrides: FrontmatterOverrides::default(),
+                    model_classes: Default::default(),
+                    model_bindings: Default::default(),
+                    permissions: PermissionIntent::Unspecified,
+                    launch_instructions: None,
+                    additional_instructions: None,
+                    custom_hooks: vec![],
+                    role_policy: None,
+                };
+                let rendered = generate(&agent, None).unwrap().text;
+                if harness == HarnessId::Claude {
+                    actual.push((
+                        method,
+                        harness,
+                        rendered
+                            .lines()
+                            .find(|line| line.starts_with("skills:"))
+                            .unwrap()
+                            .to_owned(),
+                    ));
+                    expected.push((method, harness, format!("skills: {installed}, plain")));
+                }
+                let prose = if harness == HarnessId::Claude {
+                    skills_prose(&agent).unwrap()
+                } else {
+                    rendered
+                };
+                for line in prose.lines().filter(|line| line.starts_with("- ")) {
+                    actual.push((method, harness, line.to_owned()));
+                }
+                expected.push((
+                    method,
+                    harness,
+                    format!("- {installed}: {root}/{installed}/SKILL.md"),
+                ));
+                expected.push((method, harness, format!("- plain: {root}/plain/SKILL.md")));
+            }
+        }
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn shared_instructions_render_first_inside_markers() {
         let mut table = BTreeMap::new();
         table.insert("all".to_owned(), "fleet rule".to_owned());

@@ -1,0 +1,1 @@
+- Agents reference required namespaced skills by their installed directory names in Claude Code, Codex, Copilot CLI and Pi.
