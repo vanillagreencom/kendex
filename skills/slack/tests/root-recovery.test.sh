@@ -313,12 +313,34 @@ while read -r subtype mode; do
   BAD_ROOT="$(sk_new_root "inactive-$subtype-$mode")"
   GOOD_ROOT="$(sk_new_root "active-$subtype-$mode")"
   for ROOT in "$BAD_ROOT" "$GOOD_ROOT"; do sk_bind "$ROOT"; sk_poll "$ROOT"; done
+  REPORT_ID=""
+  case "$subtype" in
+    report|cached-report)
+      mkdir -p "$BAD_ROOT/tmp/progress-reports"
+      printf 'Report body.\n' > "$BAD_ROOT/tmp/progress-reports/report.md"
+      sk_lm "$BAD_ROOT" notice --item overseer --to owner --attach "$BAD_ROOT/tmp/progress-reports/report.md" \
+        --file "$(sk_text "report-$subtype-$mode" 'Pending report.')" > "$SK_TMP/report.out"
+      REPORT_ID="$(field "$(cat "$SK_TMP/report.out")" id)"
+      # The public once-only listener uploads and exits with no socket share.
+      sk_poll "$BAD_ROOT"
+      assert_eq "$RC" 0 "$subtype/$mode: a once-only poll uploads the report"
+      ;;
+  esac
   case "$mode" in
     pre-cut)
       sk_mutant pre-cut relay.py '(    def handle\([\s\S]*?        ts = str\(message\["ts"\]\)\n)' '\1        if path == "live":\n            self.pending_live[ts] = message\n            if not active:\n                return\n'
       ;;
     main)
       sk_mutant main-drop relay.py 'if event.get\("type"\) != "message" or root is None:' 'if event.get("type") != "message" or root is None or root not in self.roots:'
+      ;;
+    parent-unbound)
+      sk_mutant parent-unbound relay.py '        if message is not None:\n            self.bind_file_share\(message\)' '        if message is not None:\n            pass'
+      ;;
+    cached-bypass)
+      sk_mutant cached-bypass relay.py '(?m)^(        parent = thread.parent if thread is not None else None\n)' '\1        if parent is not None:\n            return parent\n'
+      ;;
+    progress-reset)
+      sk_mutant progress-reset store.py '(            thread = self.threads.setdefault\(thread_ts, Thread\(ts=thread_ts, envelope=env_id, kind="notice"\)\)\n)' '\1            thread = self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind="notice")\n'
       ;;
   esac
   cat > "$SK_TMP/inactive-probe.py" <<'PY'
@@ -331,15 +353,37 @@ sys.path.insert(0, sys.argv[1])
 from api import Slack
 from relay import Relay
 from settings import load
+from mailbox import LaneMail
+from store import Journal, RelayLock, read_journal
 bad, good = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
-subtype = sys.argv[4]
+subtype, report_id = sys.argv[4:]
+is_reply = subtype in ("reply", "report", "cached-report")
 settings = load()
 api = Slack(settings.token, settings.api_url)
 channel = json.loads((bad / "tmp/slack/binding.json").read_text())["channel"]
-# This parent is beyond catch-up's history horizon. Only live retention can
-# recover its reply once the mailbox command returns.
-parent = api.post("_test/message", channel=channel, user="U001", text="Old parent.",
-                  ts="%.6f" % (time.time() - 8 * 86400))["ts"]
+if report_id:
+    share = next(message for message in api.get("conversations.history", channel=channel)["messages"]
+                 if message.get("files"))
+    parent = share["ts"]
+    assert report_id in read_journal(bad).pending_files.values()
+else:
+    # Only live retention can recover a reply beyond history's horizon.
+    parent = api.post("_test/message", channel=channel, user="U001", text="Old parent.",
+                      ts="%.6f" % (time.time() - 8 * 86400))["ts"]
+if subtype == "cached-report":
+    # Earlier relay versions cached report parents before binding their file.
+    # Their journal and real mailbox delivery remain valid upgrade inputs.
+    earlier = api.post("_test/message", channel=channel, user="U001", text="Before outage.", thread_ts=parent)["ts"]
+    fixture_lock = RelayLock(bad)
+    fixture_lock.acquire()
+    try:
+        journal = Journal(bad, read_journal(bad))
+        pointer = {"ts": parent, "author": "bot", "excerpt": "Pending report."}
+        journal.append(t="parent", ts=parent, parent=pointer)
+        previous = LaneMail(bad).send_directive("Before outage.", channel + ":" + earlier, pointer)
+        journal.append(t="in", channel=channel, ts=earlier, kind="directive", id=previous, thread=parent, generation=0)
+    finally:
+        fixture_lock.release()
 scripts = bad / ".agents/skills/mailbox/scripts"
 source = scripts.resolve()
 scripts.unlink()
@@ -349,7 +393,7 @@ try:
     assert [root.path for root in relay.roots] == [good]
     app = Slack(settings.app_token, settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
     assert relay.open(app)
-    fields = {} if subtype == "reply" else {"subtype": subtype}
+    fields = {} if is_reply else {"subtype": subtype}
     stamp = api.post("_test/message", channel=channel, user="U001", text="Outage reply.",
                      thread_ts=parent, **fields)["ts"]
     envelope = relay.incoming.get(timeout=10)
@@ -361,14 +405,35 @@ try:
         if envelope["envelope_id"] in state["acks"]:
             break
     relay.deliver(envelope)
-    if subtype == "reply":
+    if is_reply:
         relay.deliver(envelope)
         scripts.symlink_to(source)
+        if subtype == "cached-report":
+            assert relay.start_root(bad)
+            recovered = relay.by_channel[channel]
+            assert recovered.lock.handle is not None
+            recovered.parent_context(parent)
         assert relay.poll_once()
         assert relay.poll_once()
+        recovered = relay.by_channel[channel]
+        assert recovered.lock.handle is not None
         events = [json.loads(line) for line in (bad / "tmp/lane-mail/overseer/to-lane.jsonl").read_text().splitlines()] if (bad / "tmp/lane-mail/overseer/to-lane.jsonl").exists() else []
         delivered = [event for event in events if event.get("delivery_id") == channel + ":" + stamp]
-        print(json.dumps({"count": len(delivered), "text": [event["text"] for event in delivered]}))
+        result = {"count": len(delivered), "text": [event["text"] for event in delivered]}
+        if report_id:
+            next_stamp = api.post("_test/message", channel=channel, user="U001", text="Next instruction.", thread_ts=parent)["ts"]
+            next_event = relay.incoming.get(timeout=10)
+            assert next_event["payload"]["event"]["ts"] == next_stamp
+            relay.deliver(next_event)
+            relay.deliver(next_event)
+            following = [event for event in recovered.mail.events() if event.get("delivery_id") == channel + ":" + next_stamp]
+            result.update(report=[event.get("parent", {}).get("envelope") == report_id for event in delivered],
+                          prior_repeated=any(entry["text"] == "Before outage." for event in delivered
+                                             for entry in event.get("parent", {}).get("thread", [])),
+                          next_count=len(following),
+                          next_report=[event.get("parent", {}).get("envelope") == report_id for event in following],
+                          next_context=[event.get("parent", {}).get("thread") for event in following])
+        print(json.dumps(result))
     else:
         # Drive the production two-reading reload decision while the root
         # stays inactive, then close the real socket through its reload path.
@@ -397,16 +462,24 @@ PY
     GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
-    python3 "$SK_TMP/inactive-probe.py" "${SK_BIN%/*}/lib" "$BAD_ROOT" "$GOOD_ROOT" "$subtype")" || RC=$?
+    python3 "$SK_TMP/inactive-probe.py" "${SK_BIN%/*}/lib" "$BAD_ROOT" "$GOOD_ROOT" "$subtype" "$REPORT_ID")" || RC=$?
   assert_eq "$RC" 0 "$subtype/$mode: the acknowledged event reaches the production delivery and recovery path"
   RESULT="$(printf '%s\n' "$OUT" | tail -n 1)"
-  if [ "$subtype" = reply ]; then
-    GOT="$(jq -c '[.count,.text]' <<<"$RESULT")"
-    WANT='[1,["Outage reply."]]'
-  else
-    GOT="$(jq -c '[.reload,.inactive]' <<<"$RESULT")"
-    WANT='[true,true]'
-  fi
+  case "$subtype" in
+    reply)
+      GOT="$(jq -c '[.count,.text]' <<<"$RESULT")"
+      WANT='[1,["Outage reply."]]'
+      ;;
+    report|cached-report)
+      GOT="$(jq -c '[.count,.text,.report,.prior_repeated,.next_count,.next_report,
+        ([.next_context[][] | {author,text}])]' <<<"$RESULT")"
+      WANT='[1,["Outage reply."],[true],false,1,[true],[{"author":"owner","text":"Next instruction."}]]'
+      ;;
+    *)
+      GOT="$(jq -c '[.reload,.inactive]' <<<"$RESULT")"
+      WANT='[true,true]'
+      ;;
+  esac
   if [ "$mode" = production ]; then
     assert_eq "$GOT" "$WANT" "$subtype: ignored events permit reload and an outage reply arrives once"
   else
@@ -420,6 +493,11 @@ message_deleted production
 message_deleted pre-cut
 reply production
 reply main
+report production
+report parent-unbound
+cached-report production
+cached-report cached-bypass
+cached-report progress-reset
 ROWS
 
 sk_summary

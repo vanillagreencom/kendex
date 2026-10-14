@@ -257,7 +257,11 @@ class State:
         elif kind == "bound":
             env_id = self.pending_files.pop(str(line["file"]), str(line["id"]))
             thread_ts = str(line["ts"])
-            self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind="notice", parent=line.get("parent"))
+            thread = self.threads.setdefault(thread_ts, Thread(ts=thread_ts, envelope=env_id, kind="notice"))
+            thread.envelope = env_id
+            thread.kind = "notice"
+            if "parent" in line:
+                thread.parent = line["parent"]
             self.by_envelope[env_id] = thread_ts
         elif kind == "parent":
             thread_ts = str(line["ts"])

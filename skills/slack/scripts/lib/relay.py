@@ -498,15 +498,24 @@ class RootRelay:
     def parent_context(self, thread_ts: str, message: Optional[Dict] = None, retries: int = RETRIES) -> Dict:
         """Read a parent's small context once, persisting it across restarts."""
         thread = self.state.threads.get(thread_ts)
-        if thread is not None and thread.parent is not None:
-            return thread.parent
-        if message is None:
+        parent = thread.parent if thread is not None else None
+        if message is None and (parent is None or self.state.pending_files and not parent.get("envelope")):
             messages = self.api.get("conversations.replies", retries=retries, channel=self.channel, ts=thread_ts, limit=1)["messages"]
             if not messages or str(messages[0]["ts"]) != thread_ts:
                 raise Refusal("slack-api-failed", f"conversations.replies parent={thread_ts} missing", error="thread_not_found")
             message = messages[0]
+        if message is not None:
+            self.bind_file_share(message)
+            thread = self.state.threads.get(thread_ts)
+            parent = thread.parent if thread is not None else None
         envelope = thread.envelope if thread is not None and thread.kind in {"ask", "notice"} else ""
-        parent = self.parent_of(message, "bot" if message.get("bot_id") else "owner", envelope)
+        if parent is None:
+            assert message is not None, "an uncached parent needs its Slack message"
+            parent = self.parent_of(message, "bot" if message.get("bot_id") else "owner", envelope)
+        elif envelope and parent.get("envelope") != envelope:
+            parent = dict(parent, envelope=envelope)
+        else:
+            return parent
         self.journal.append(t="parent", ts=thread_ts, parent=parent)
         return parent
 

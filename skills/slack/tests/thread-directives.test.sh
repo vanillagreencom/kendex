@@ -124,7 +124,7 @@ sk_event "$ROOT" "$CH" "$DROP"
 assert_eq "$(jq -r --arg d "$CH:$DROP" 'select(.delivery_id == $d) | has("parent")' "$(sk_box "$ROOT")/to-lane.jsonl")" "false" "control: omitting mailbox pointer arguments breaks directive context"
 sk_bin_reset
 
-sk_mutant cache relay.py 'if thread is not None and thread.parent is not None:' 'if thread is not None and thread.parent is not None and False:'
+sk_mutant cache relay.py 'if message is None and \(parent is None or self.state.pending_files and not parent.get\("envelope"\)\):' 'if message is None:'
 sk_ctl /_test/calls-reset >/dev/null
 for text in uncached-one uncached-two; do
   REPLY="$(sk_inject "$CH" U001 "$text" "$PARENT")"
