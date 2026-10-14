@@ -156,9 +156,10 @@ case "$TOOL_NAME" in
       # the pair the pattern stands for.
       refuse refused git-write
     fi
-    # Stash reads change no work. Remove only their prefix so another Git
-    # discard in the same tool call still reaches the existing rule.
-    GIT_DISCARD_READ=${GIT_DISCARD/'(checkout|restore|stash|clean|reset|switch)'/'stash[[:space:]]+(list|show)'}
+    # A newline separates commands. The read prefix stays on one line;
+    # negated whitespace classes still exclude all whitespace from values.
+    GIT_DISCARD_READ=${GIT_DISCARD/'(checkout|restore|stash|clean|reset|switch)'/'stash[[:blank:]]+(list|show)'}
+    GIT_DISCARD_READ=${GIT_DISCARD_READ//'[[:space:]]'/'[[:blank:]]'}
     while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do
       COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/ }
     done

@@ -173,17 +173,38 @@ done
 # The reviewer harness sends these stash reads and work-changing commands
 # through the same Bash tool. The command text is never executed.
 stash_rows() {
-  local want cmd first
+  local want cmd first label
   while IFS='|' read -r want cmd; do
+    label=$cmd
+    cmd=$(printf '%b' "$cmd")
     run_tool reviewer-security Bash command "$cmd"
     first='-'; [ "$want" = 0 ] || first='reviewer-read-only: refused=git-discard'
-    assert_eq "rc=$rc first=$(first_line)" "rc=$want first=$first" "stash: $cmd"
+    assert_eq "rc=$rc first=$(first_line)" "rc=$want first=$first" "stash: $label"
   done <<'ROWS'
 0|git stash list
 0|git stash show
 0|git -C repo stash list --oneline
 0|git --no-pager stash show stash@{0}
 0|git stash list; git stash show
+0|git\tstash\tlist
+0|git\t-C\trepo\tstash\tshow
+0|git  --no-pager  -c  core.quotePath=false  stash  list
+2|git stash\nlist
+2|git stash\nshow
+2|git -C repo stash\nlist
+2|git --no-pager stash\nshow
+2|git -c core.quotePath=false stash\nlist
+2|git stash\t\nlist
+2|git stash\n\nshow
+2|git stash\nlist; git stash\nshow
+2|git stash list\nshow
+0|git\nstash list
+0|git -C\nrepo stash show
+0|git -C repo\nstash list
+0|git\n--no-pager stash list
+0|git --no-pager\nstash show
+0|git -c\ncore.quotePath=false stash list
+0|git -c core.quotePath=false\nstash show
 2|git stash
 2|git stash push
 2|git stash pop
@@ -208,6 +229,11 @@ skill_load_control stash-reads "$HOOK" '    while [[ $COMMAND =~ $GIT_DISCARD_RE
   'stash: git stash show && git stash clear'
 skill_load_control stash-read-prefix "$HOOK" '    while [[ $COMMAND =~ $GIT_DISCARD_READ ]]; do' \
   '      break' HOOK stash_rows 'stash: git stash list' 'stash: git stash show'
+skill_load_control stash-read-newline "$HOOK" "    GIT_DISCARD_READ=\${GIT_DISCARD_READ//'[[:space:]]'/'[[:blank:]]'}" \
+  "    GIT_DISCARD_READ=\${GIT_DISCARD/'(checkout|restore|stash|clean|reset|switch)'/'stash[[:space:]]+(list|show)'}" \
+  HOOK stash_rows 'stash: git stash\nlist' 'stash: git stash\nshow' \
+  'stash: git -C repo stash\nlist' 'stash: git --no-pager stash\nshow' \
+  'stash: git -c core.quotePath=false stash\nlist'
 
 for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
