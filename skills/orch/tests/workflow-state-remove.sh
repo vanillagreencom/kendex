@@ -16,9 +16,6 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
-git -C "$TMP_ROOT" init -q
-git -C "$TMP_ROOT" config gc.auto 0
-git -C "$TMP_ROOT" config maintenance.auto false
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"

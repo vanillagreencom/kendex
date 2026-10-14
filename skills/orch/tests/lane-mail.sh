@@ -116,7 +116,7 @@ for root in "$LANE" "$TMP_ROOT/root-link" omitted; do
 done
 
 # Each envelope writer selects the same root owner before any mailbox effect.
-for verb in ask notice send resolve compact; do
+for verb in ask notice send resolve; do
   args=()
   case "$verb" in
     ask | notice) args=(--file "$(text root 'Which checkout?')") ;;
@@ -124,7 +124,7 @@ for verb in ask notice send resolve compact; do
     resolve) args=(--id missing) ;;
   esac
   item=KEN-1
-  [[ "$verb" != resolve && "$verb" != compact ]] || item=overseer
+  [[ "$verb" != resolve ]] || item=overseer
   lm "$verb" --item "$item" --root tmp/lane-mail ${args[@]+"${args[@]}"}
   assert_eq "$RC=${ERR%% top=*}" '2=lane-mail: root-not-checkout=tmp/lane-mail' \
     "$verb: a mailbox directory cannot receive envelope writes"
@@ -148,6 +148,12 @@ root_reads() {
   assert_eq "$RC" 124 'wait: a read timeout keeps its existing directory root contract'
 }
 root_reads
+root_compact() {
+  mkdir -p "$TMP_ROOT/compact-directory"
+  lm compact --item overseer --root "$TMP_ROOT/compact-directory"
+  assert_eq "$RC=$ERR" '0=' 'compact: retention keeps its existing outside-Git root contract'
+}
+root_compact
 lm ask --item KEN-1 --root "$TMP_ROOT/removed-write-root" --file "$(text root 'Which checkout?')"
 assert_eq "$RC=${ERR%% top=*}" "2=lane-mail: root-not-checkout=$TMP_ROOT/removed-write-root" \
   'a missing root cannot receive an envelope write'
@@ -1535,12 +1541,19 @@ assert_eq "$(jq -r '.text' "$LANE/tmp/lane-mail/tmp/lane-mail/KEN-1/to-overseer.
   "control: the old root behavior writes the question where no overseer reads"
 
 # shellcheck disable=SC2016  # Mutations use literal production text.
-mutant checked-reads 'ask | notice | send | resolve | compact | peer)' \
-  'ask | notice | send | resolve | compact | peer | pending | drain | inbox | events | watch | wait)'
+mutant checked-reads 'ask | notice | send | resolve | peer)' \
+  'ask | notice | send | resolve | peer | pending | drain | inbox | events | watch | wait)'
 LANE="$TMP_ROOT/root-lane"
 ROOT_ASSERT_RC=0
 ( FAIL=0; root_reads; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/read-root-control.out" || ROOT_ASSERT_RC=$?
 assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to reads fails the same read-root assertions'
+
+# shellcheck disable=SC2016  # Mutations use literal production text.
+mutant checked-compact 'ask | notice | send | resolve | peer)' \
+  'ask | notice | send | resolve | compact | peer)'
+ROOT_ASSERT_RC=0
+( FAIL=0; root_compact; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/compact-root-control.out" || ROOT_ASSERT_RC=$?
+assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to compact fails the same outside-Git assertion'
 
 new_lane control_wait_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Read once?')"

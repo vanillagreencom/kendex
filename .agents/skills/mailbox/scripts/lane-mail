@@ -471,7 +471,7 @@ cannot both append: the second checks the first row while it holds that lock
 and refuses with its id. A mailbox read failure refuses the write as
 `write-failed` locally or `host-append` on a provider, never as an empty mailbox.
 
-A local --root used to write mailbox envelopes must be a checkout's physical
+A local --root used to append mailbox envelopes must be a checkout's physical
 top-level directory; another value refuses as `root-not-checkout`. Reads,
 including their cursor and watcher records, keep their existing root behavior.
 A send writes a mailbox of the caller's own repository alone, its own lanes
@@ -1183,10 +1183,10 @@ fi
 lm_root_own() { # ROOT own|checkout
   local top canonical
   if [ "$2" = checkout ]; then
-    # Cursor and liveness records belong to the read paths. Only envelope
-    # writers need checkout validation; its Git processes cannot burden reads.
+    # Compaction retains existing rows and delivers no new envelope. Cursor
+    # and liveness records belong to reads. Validate only envelope appends.
     case "$VERB" in
-      ask | notice | send | resolve | compact | peer)
+      ask | notice | send | resolve | peer)
         top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
         canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
         [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""

@@ -38,7 +38,7 @@ old_touch="$(from_epoch "$((now - 3 * 86400))" '%Y%m%d%H%M' '')"
 fresh_at="$(from_epoch "$now" '%Y-%m-%dT%H:%M:%SZ')"
 umask 022
 
-# One checkout per case, so its root, its progress directory and
+# One project per case, outside Git, so its root, its progress directory and
 # its archive name are the sandbox's own; the retention is two days and every
 # old fixture is three days old. KEN-0 is the first lane record, done and old;
 # KEN-1 runs; KEN-2 and KEN-12 are done and old, their workflow states taken by
@@ -52,9 +52,6 @@ build() { # DIR
   local p="$1" sd="$1/tmp"
   mkdir -p "$p"
   (cd "$p" && "$WS" init oversee >/dev/null)
-  git -C "$p" init -q
-  git -C "$p" config gc.auto 0
-  git -C "$p" config maintenance.auto false
   jq --arg old "$old_at" --arg fresh "$fresh_at" '
     .lanes = [{item: "KEN-0", status: "done", launched_at: $old},
               {item: "KEN-1", status: "running", launched_at: $old},
@@ -214,9 +211,6 @@ out="$(prune "$p" --keep tmp/waiter.run 2>&1)" || rc=$?
 build_bare() { # DIR
   local sd="$1/tmp" f
   mkdir -p "$sd/mutstab-diag" "$sd/waiter.run"
-  git -C "$1" init -q
-  git -C "$1" config gc.auto 0
-  git -C "$1" config maintenance.auto false
   for f in completion-summary-KEN-1.md dev-return-KEN-1-7.json workflow-state-KEN-1.json.lock \
     completion-summary-KEN-2.md audit-KEN-4.json completion-summary-KEN-12.md \
     mutstab-diag/run.log waiter.run/watch.log directive.md; do
@@ -277,9 +271,6 @@ out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_RO
 dp="$TMP_ROOT/default"
 mkdir -p "$dp"
 (cd "$dp" && "$WS" init oversee >/dev/null)
-git -C "$dp" init -q
-git -C "$dp" config gc.auto 0
-git -C "$dp" config maintenance.auto false
 six_at="$(from_epoch "$((now - 6 * 86400))" '%Y-%m-%dT%H:%M:%SZ')"
 four_at="$(from_epoch "$((now - 4 * 86400))" '%Y-%m-%dT%H:%M:%SZ')"
 jq --arg six "$six_at" --arg four "$four_at" --arg fresh "$fresh_at" '
@@ -513,9 +504,6 @@ big_run() { # NAME SCRIPT
   local bp="$TMP_ROOT/big-$1" rc=0 out
   mkdir -p "$bp"
   (cd "$bp" && "$WS" init oversee >/dev/null)
-  git -C "$bp" init -q
-  git -C "$bp" config gc.auto 0
-  git -C "$bp" config maintenance.auto false
   jq --arg old "$old_at" --arg text "$(printf '%0300d' 0)" \
     '.fleet_log = [range(4000) | {at: $old, kind: "ruling", item: "KEN-\(.)", text: $text}]' \
     "$bp/tmp/workflow-state-oversee.json" > "$bp/next" && mv -- "$bp/next" "$bp/tmp/workflow-state-oversee.json"
