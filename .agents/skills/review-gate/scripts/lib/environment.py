@@ -111,6 +111,12 @@ def validate_environment(repository, config):
     branch = repos[0].get("default_branch") if isinstance(repos[0], dict) else None
     if not isinstance(branch, str) or not branch:
         refuse("read")
+    owner = repos[0].get("owner")
+    owner_type = owner.get("type") if isinstance(owner, dict) else None
+    # GitHub repository metadata defines the applicable secret namespaces.
+    # Unknown owner evidence cannot authorize skipping a placement check.
+    if owner_type not in ("User", "Organization"):
+        refuse("read", "repos/{owner}/{repo}")
     endpoint = "repos/" + repository + "/environments/" + quote(config["environment"], safe="")
     try:
         envs = rows("repos/" + repository + "/environments", "environments")
@@ -133,9 +139,10 @@ def validate_environment(repository, config):
         # repository/organization secrets can reach these caller mappings.
         names = ["KENDEX_APP_ID", "KENDEX_APP_PRIVATE_KEY",
                  "FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY"] if "pairs" in config else config["names"]
-        scopes = [{"scope": label, "secrets": rows(scope, "secrets")}
-                  for label, scope in (("repository", "repos/" + repository + "/actions/secrets"),
-                                       ("organization", "orgs/" + repository.split("/", 1)[0] + "/actions/secrets"))]
+        namespaces = [("repository", "repos/" + repository + "/actions/secrets")]
+        if owner_type == "Organization":
+            namespaces.append(("organization", "orgs/" + repository.split("/", 1)[0] + "/actions/secrets"))
+        scopes = [{"scope": label, "secrets": rows(scope, "secrets")} for label, scope in namespaces]
         placement = secret_placement(names, scopes)
         if placement["cause"]:
             refuse(placement["cause"], placement["outside"] or placement["unreadable"])

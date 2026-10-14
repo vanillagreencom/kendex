@@ -92,6 +92,22 @@ for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
                           'exit "$SCRIPT_EXIT"\n')
     executable.chmod(0o755)
 
+def requested_permissions(inputs, owner_type):
+    # Judge the workflow's declarations, not hosted action execution. The
+    # pinned token action omits empty permission inputs from its request.
+    request = {}
+    for key, value in inputs.items():
+        if not key.startswith('permission-'):
+            continue
+        if value not in ('read', 'write'):
+            expression = re.fullmatch(r"\$\{\{ github\.event\.repository\.owner\.type != '([^']+)' && '([^']+)' \|\| '' \}\}", value)
+            assert expression, ('permission-expression', key, value)
+            excluded_type, permission = expression.groups()
+            value = permission if owner_type != excluded_type else ''
+        if value:
+            request[key[len('permission-'):]] = value
+    return request
+
 def check(job):
     steps = job['steps']
     assert job['environment'] == '${{ inputs.environment }}'
@@ -133,6 +149,17 @@ def check(job):
     assert repository['with']['owner'] == '${{ github.repository_owner }}'
     assert repository['with']['repositories'] == '${{ github.event.repository.name }}'
     assert 'permission-issues' not in repository['with']
+    expected = {'contents': 'write', 'pull-requests': 'write', 'workflows': 'write',
+                'administration': 'read', 'metadata': 'read', 'actions': 'read',
+                'environments': 'read', 'secrets': 'read'}
+    for owner_type, organization_permission in (
+        ('User', None), ('Organization', 'read'), ('', 'read'), ('Bot', 'read'),
+    ):
+        wanted = dict(expected)
+        if organization_permission:
+            wanted['organization-secrets'] = organization_permission
+        actual = requested_permissions(repository['with'], owner_type)
+        assert actual == wanted, ('permission-request', owner_type, actual, wanted)
     assert upstream['with']['owner'] == 'vanillagreencom' and upstream['with']['repositories'] == 'kendex'
     assert {k: v for k, v in upstream['with'].items() if k.startswith('permission-')} == {'permission-issues': 'write'}
     assert upstream['continue-on-error'] is True
@@ -149,7 +176,7 @@ for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
     print(f'  executed: {script} from release checkout with consumer cwd; status=0,47')
 for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token',
                  'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure',
-                 'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair'):
+                 'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair', 'unconditional-organization'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -168,6 +195,8 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
         next(s for s in steps if s.get('id') == 'token')['with']['app-id'] = '${{ secrets[inputs.app-id-secret-name] || secrets.app-id || secrets.FLEET_GH_APP_ID }}'
     elif mutation == 'mixed-pair':
         next(s for s in steps if s.get('id') == 'token')['with']['private-key'] = '${{ secrets.KENDEX_APP_PRIVATE_KEY || secrets.FLEET_GH_APP_PRIVATE_KEY }}'
+    elif mutation == 'unconditional-organization':
+        next(s for s in steps if s.get('id') == 'token')['with']['permission-organization-secrets'] = 'read'
     elif mutation.endswith(('-disabled-exec', '-masked-failure')):
         script = 'refresh-consumer.sh' if mutation.startswith('consumer-') else 'refresh-reviews.sh'
         step = next(s for s in steps if script in s.get('run', ''))
@@ -178,6 +207,9 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     assert json.dumps(j) != json.dumps(job), mutation
     try: check(j)
     except AssertionError as error:
+        if mutation == 'unconditional-organization':
+            assert error.args[0][:2] == ('permission-request', 'User'), (mutation, error)
+            print('  control rejected: ' + mutation + ' for User')
         if mutation.endswith(('-disabled-exec', '-masked-failure')):
             expected = 'execution' if mutation.endswith('-disabled-exec') else 'failure propagation'
             assert error.args[0][2] == expected, (mutation, error)

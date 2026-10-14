@@ -150,7 +150,7 @@ jobs:
           permission-actions: read
           permission-environments: read
           permission-secrets: read
-          permission-organization-secrets: read
+          permission-organization-secrets: ${{ github.event.repository.owner.type != 'User' && 'read' || '' }}
       - name: Refresh and arm the rolling pull request
         working-directory: consumer
         env:

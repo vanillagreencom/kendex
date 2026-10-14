@@ -72,7 +72,7 @@ set -euo pipefail
 printf 'sleep %s\n' "$*" >>"$TEST_STATE/calls"
 SLEEP
 chmod +x "$BIN/sleep"
-printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repository.json"
+printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 printf '{"environments":[{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
 printf '{"branch_policies":[{"name":"main","type":"branch"}]}\n' >"$FIXTURES/branch-policies.json"
 printf '{"secrets":[{"name":"FLEET_GH_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-kendex.json"

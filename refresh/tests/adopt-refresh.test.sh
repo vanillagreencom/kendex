@@ -344,7 +344,7 @@ cp "$TMP/default-policies" "$FIXTURES/branch-policies.json"
 cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
 
 sandbox
-printf '{"full_name":"vanillagreencom/kendex","default_branch":"main"}\n' >"$FIXTURES/repository.json"
+printf '{"full_name":"vanillagreencom/kendex","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 cp "$DIR/.kendex-generated.json" "$TMP/self-inventory"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && [ ! -e "$DIR/$REFRESH" ] && cmp -s "$TMP/self-inventory" "$DIR/.kendex-generated.json"; then
@@ -362,7 +362,7 @@ else bad 'self-exclusion control did not reach adoption' "$OUT"; fi
 sandbox
 rm -- "$DIR/.github/workflows/review-gate-writer.yml"
 printf '[]\n' >"$DIR/.kendex-generated.json"
-printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repository.json"
+printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" || exit 1
 # Refresh records the new template hash before adoption, as above.
@@ -447,7 +447,7 @@ while IFS='|' read -r kind expected; do
         update) printf '\n# updated template\n' >>"$DIR/$TEMPLATE"; ship_refresh_template "$DIR/$TEMPLATE" ;;
       esac ;;
     environment) SHIM_FAIL='environments' ;;
-    excluded) printf '{"full_name":"vanillagreencom/kendex","default_branch":"main"}\n' >"$FIXTURES/repository.json" ;;
+    excluded) printf '{"full_name":"vanillagreencom/kendex","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json" ;;
     *) exit 2 ;;
   esac
   cp "$DIR/.kendex-generated.json" "$TMP/before"
@@ -478,7 +478,7 @@ while IFS='|' read -r kind expected; do
     if [ "$RC" -ne 0 ] && cmp -s "$TMP/before" "$DIR/.kendex-generated.json" && [ -e "$writer" ] && { [ "$expected" = environment ] || grep -q "^refresh-error=$expected value=" <<<"$OUT"; }; then ok "$kind"; else bad "$kind (rc=$RC)" "$OUT"; fi
   fi
   SHIM_FAIL=''
-  printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repository.json"
+  printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 done <<'CASES'
 initial|pass
 new-install|pass
@@ -877,24 +877,84 @@ repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_ID|judgment
 repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|refusal
 PLACEMENT_ROWS
 
-# A missing metadata permission cannot be treated as no outside copy.
-for scope in repository organization; do
+# This table reaches production validation through adoption. Repository
+# discovery succeeds; failed metadata reads belong to the later validator.
+cp "$BIN/gh-shim" "$TMP/gh-shim-base"
+python3 - "$BIN/gh-shim" <<'VALIDATION_READ_FAILURE'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]); text = p.read_text()
+old = 'if [ -n "${GH_SHIM_FAIL:-}" ] && [ "$GH_SHIM_FAIL" = "$name" ]; then'
+assert text.count(old) == 1
+changed = text.replace(old, 'if [ "$paginate" = 1 ] && ' + old[3:])
+assert changed != text
+p.write_text(changed)
+VALIDATION_READ_FAILURE
+while IFS='|' read -r owner evidence expected organization_read; do
   sandbox
-  cp "$CALLER" "$DIR/$TEMPLATE"
+  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
   cp "$TMP/default-environments" "$FIXTURES/environments.json"
   cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
-  run_refresh_command "$DIR" "$DIR/$ADOPT"
-  [ "$RC" -eq 0 ] || exit 1
+  cp "$TMP/default-policies" "$FIXTURES/branch-policies.json"
+  python3 - "$FIXTURES/repository.json" "$owner" <<'OWNER_METADATA'
+import json
+from pathlib import Path
+import sys
+data = {'full_name': 'acme/widgets', 'default_branch': 'main'}
+owner = sys.argv[2]
+if owner == 'missing': pass
+elif owner == 'null': data['owner'] = None
+elif owner == 'malformed': data['owner'] = []
+elif owner == 'missing-type': data['owner'] = {}
+else: data['owner'] = {'type': owner}
+Path(sys.argv[1]).write_text(json.dumps(data))
+OWNER_METADATA
   snapshot_adoption
-  SHIM_FAIL=repository-secrets
-  endpoint=repos/acme/widgets/actions/secrets
-  if [ "$scope" = organization ]; then SHIM_FAIL=organization-actions-secrets; endpoint=orgs/acme/actions/secrets; fi
+  : >"$FIXTURES/.urls.log"
+  SHIM_FAIL="$evidence"
+  [ "$evidence" != none ] || SHIM_FAIL=''
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   SHIM_FAIL=''
-  if adoption_preserved "refresh-error=environment value=kendex cause=read operation=$endpoint"; then
-    ok "$scope unreadable placement refuses before adoption"
-  else bad "$scope unreadable placement" "$OUT"; fi
-done
+  if [ "$expected" = accept ]; then
+    matched=no
+    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" &&
+        [ ! -e "$DIR/.github/workflows/review-gate-writer.yml" ]; then matched=yes; fi
+    for endpoint in 'repos/{owner}/{repo}' repos/acme/widgets/environments \
+        repos/acme/widgets/environments/kendex/deployment-branch-policies \
+        repos/acme/widgets/environments/kendex/secrets repos/acme/widgets/actions/secrets; do
+      grep -qxF "$endpoint" "$FIXTURES/.urls.log" || matched=no
+    done
+    if [ "$matched" = yes ]; then ok "$owner owner adopts with applicable evidence=$evidence"
+    else bad "$owner applicable evidence=$evidence" "$OUT"; fi
+  elif adoption_preserved "refresh-error=environment value=kendex cause=read operation=$expected"; then
+    ok "$owner unreadable evidence=$evidence preserves workflow, writer and inventory"
+  else bad "$owner unreadable evidence=$evidence" "$OUT"; fi
+  observed=no
+  if grep -qxF orgs/acme/actions/secrets "$FIXTURES/.urls.log"; then observed=yes; fi
+  if [ "$observed" = "$organization_read" ]; then ok "$owner evidence=$evidence organization read=$observed"
+  else bad "$owner evidence=$evidence organization read=$observed expected=$organization_read"; fi
+done <<'OWNER_EVIDENCE_ROWS'
+User|none|accept|no
+User|organization-actions-secrets|accept|no
+Organization|none|accept|yes
+User|repository|repos/{owner}/{repo}|no
+Organization|repository|repos/{owner}/{repo}|no
+missing|none|repos/{owner}/{repo}|no
+null|none|repos/{owner}/{repo}|no
+malformed|none|repos/{owner}/{repo}|no
+missing-type|none|repos/{owner}/{repo}|no
+Bot|none|repos/{owner}/{repo}|no
+User|environments|repos/acme/widgets/environments|no
+Organization|environments|repos/acme/widgets/environments|no
+User|branch-policies|repos/acme/widgets/environments/kendex/deployment-branch-policies|no
+Organization|branch-policies|repos/acme/widgets/environments/kendex/deployment-branch-policies|no
+User|environment-secrets-kendex|repos/acme/widgets/environments/kendex/secrets|no
+Organization|environment-secrets-kendex|repos/acme/widgets/environments/kendex/secrets|no
+User|repository-secrets|repos/acme/widgets/actions/secrets|no
+Organization|repository-secrets|repos/acme/widgets/actions/secrets|no
+Organization|organization-actions-secrets|orgs/acme/actions/secrets|yes
+OWNER_EVIDENCE_ROWS
+cp "$TMP/gh-shim-base" "$BIN/gh-shim"
 cp "$TMP/default-environments" "$FIXTURES/environments.json"
 cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
