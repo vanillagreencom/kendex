@@ -85,6 +85,7 @@ case "$resource:$action" in
     else jq 'map(.depth //= 0)' "$root/children.json"; fi
     ;;
   issues:validate-completion)
+    jq -e 'any(.[]; .state_type != "canceled")' "$root/children.json" >/dev/null || exit 1
     mode="$(cat "$root/validation.mode")"; has_summary=false
     [[ ! -e "$root/summary.posted" ]] || has_summary=true
     case "$mode" in
@@ -163,7 +164,7 @@ run_close() { (cd "$CALLER_ONE" && "$SCRIPT" "$SANDBOX" PARENT-1); }
 run_linked_close() { (cd "$CALLER_TWO" && "$SCRIPT" "$CALLER_TWO" PARENT-1); }
 
 reset_state
-printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-3","title":"three","state":"Canceled","state_type":"canceled"}]' > "$FAKE_LINEAR_ROOT/children.json"
 out="$(run_close)"
 assert_eq "$out" "deferred CHILD-2" "pending child defers closure and is named"
 [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "pending child prevents parent mutation" || fail "pending child prevents parent mutation"
@@ -171,23 +172,34 @@ assert_eq "$out" "deferred CHILD-2" "pending child defers closure and is named"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-3","title":"three","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 out="$(run_close)"
-assert_eq "$out" "deferred CHILD-2 CHILD-3" "canceled descendants defer closure and are named"
-[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "canceled descendants prevent parent mutation" || fail "canceled descendants prevent parent mutation"
-assert_file_not_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "canceled descendants stop before validation"
+assert_eq "$out" "closed PARENT-1" "Done and Canceled descendants allow closure"
+assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" Done "mixed terminal children complete the parent"
+assert_file_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "canceled descendants reach validation"
+assert_file_not_contains "$FAKE_LINEAR_ROOT/summary.body" 'CHILD-2' "summary excludes canceled descendants"
 
-# The suite's one must-fail control: the canceled-descendant refusal removed.
+# Restore the old canceled-descendant refusal in a disposable copy.
 CANCELED_MUTANT="$SANDBOX/skills/orch/scripts/container-close-canceled-mutant"
-assert_eq "$(grep -Fc 'if [[ -n "$CANCELED" ]]; then print_deferred "$CANCELED"; exit 0; fi' "$SCRIPT")" "1" "canceled control finds the refusal gate"
+assert_eq "$(grep -Fc 'CHILDREN="$(jq ' "$SCRIPT")" "1" "canceled control finds the child filter"
 awk '
-  index($0, "if [[ -n \"$CANCELED\" ]]; then") { print "if false; then print_deferred \"$CANCELED\"; exit 0; fi"; next }
-  index($0, "[[ \"$state_type\" == \"completed\" ]]") { print "    [[ -n \"$state_type\" ]] \\"; next }
+  index($0, "CHILDREN=\"$(jq ") {
+    print "CANCELED=\"$(jq -r '\''.[] | select(.state_type == \"canceled\") | .id'\'' <<<\"$CHILDREN\")\""
+    print "if [[ -n \"$CANCELED\" ]]; then print_deferred \"$CANCELED\"; exit 0; fi"
+  }
   { print }
 ' "$SCRIPT" > "$CANCELED_MUTANT"
 chmod +x "$CANCELED_MUTANT"
+cmp -s "$SCRIPT" "$CANCELED_MUTANT" && fail "canceled control changes the copy" || pass "canceled control changes the copy"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 out="$("$CANCELED_MUTANT" "$SANDBOX" PARENT-1)"
-assert_eq "$out:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "closed PARENT-1:Done" "canceled control exposes parent mutation when refusal barriers are removed"
+assert_eq "$out:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "deferred CHILD-2:In Progress" "canceled control exposes the endless deferral"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"}]' > "$FAKE_LINEAR_ROOT/children.json"
+rc=0; run_close >/dev/null 2>"$TMP_ROOT/all-canceled.err" || rc=$?
+assert_eq "$rc" 1 "all-canceled children preserve the validator refusal"
+assert_file_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "all-canceled children reach validation"
+[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "all-canceled children prevent parent mutation" || fail "all-canceled children prevent parent mutation"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -226,12 +238,16 @@ for proof in newly-proved already-proved; do
     case "$child" in
       completed) child_state=Done; child_type=completed; want='closed PARENT-1' ;;
       pending) child_state=Todo; child_type=unstarted; want='deferred CHILD-1' ;;
-      canceled) child_state=Canceled; child_type=canceled; want='deferred CHILD-1' ;;
+      canceled) child_state=Canceled; child_type=canceled; want='closed PARENT-1' ;;
     esac
     jq -cn --arg state "$child_state" --arg type "$child_type" '[{id:"CHILD-1",title:"one",state:$state,state_type:$type}]' >"$FAKE_LINEAR_ROOT/children.json"
+    if [[ "$child" == canceled ]]; then
+      jq '. + [{id:"CHILD-2",title:"two",state:"Done",state_type:"completed"}]' "$FAKE_LINEAR_ROOT/children.json" >"$FAKE_LINEAR_ROOT/children.next"
+      mv "$FAKE_LINEAR_ROOT/children.next" "$FAKE_LINEAR_ROOT/children.json"
+    fi
     out="$(run_close)"
     assert_eq "$out" "$want" "$proof $child obeys the serialized close decision"
-    if [[ "$child" == completed ]]; then
+    if [[ "$child" != pending ]]; then
       assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" Done "$proof validates before Done"
       assert_file_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "$proof reaches container validation"
       assert_eq "$(cat "$FAKE_LINEAR_ROOT/summary.calls")" summary "$proof posts one Bundle Complete summary"

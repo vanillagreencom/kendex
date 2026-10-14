@@ -87,10 +87,6 @@ container_close_message() {
       printf 'container-close: children-response parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: child response is invalid for $PARENT_ID"
       ;;
-    canceled-unreadable)
-      printf 'container-close: canceled-unreadable parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: cannot read canceled children for $PARENT_ID"
-      ;;
     validation-failed)
       printf 'container-close: validation-failed parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: completion validation failed for $PARENT_ID"
@@ -165,7 +161,7 @@ usage: container-close <REPOSITORY_CHECKOUT> <PARENT_ID>
 
 Derives the shared main repository and serializes closure across its containers.
 Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
-repeat. Prints `deferred` followed by pending or canceled child ids when closure
+repeat. Prints `deferred` followed by pending child ids when closure
 must wait. A bare `deferred` means the 120-second lock wait expired. Prints
 `held <PARENT_ID> <REQUESTS_RESET>` when Linear rate-limited the completion,
 REQUESTS_RESET being the UTC time its quota refills or `unavailable`: the parent
@@ -301,9 +297,8 @@ CHILDREN="$("$LINEAR" issues children "$PARENT_ID" --recursive)" \
 jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) > 0 and
   (.title | type) == "string" and (.state_type | type) == "string")' <<<"$CHILDREN" >/dev/null \
   || { container_close_message children-response "$@" >&2; exit 1; }
-CANCELED="$(jq -r '.[] | select(.state_type == "canceled") | .id' <<<"$CHILDREN")" \
-  || { container_close_message canceled-unreadable "$@" >&2; exit 1; }
-if [[ -n "$CANCELED" ]]; then print_deferred "$CANCELED"; exit 0; fi
+CHILDREN="$(jq '[.[] | select(.state_type != "canceled")]' <<<"$CHILDREN")" \
+  || { container_close_message children-response "$@" >&2; exit 1; }
 
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
   || { container_close_message validation-failed "$@" >&2; exit 1; }

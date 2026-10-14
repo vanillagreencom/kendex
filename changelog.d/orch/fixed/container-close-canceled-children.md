@@ -1,0 +1,1 @@
+- Container closure excludes canceled children from pending work and the completion summary, so completed work can close its container.
