@@ -1374,6 +1374,8 @@ SELECTOR_FLEET="$TMP_ROOT/selector-fleet"
 SELECTOR_DEFAULT="$TMP_ROOT/selector-default"
 mkdir -p "$SELECTOR_REPO" "$SELECTOR_FLEET" "$SELECTOR_DEFAULT"
 git -C "$SELECTOR_REPO" init -q
+git -C "$SELECTOR_REPO" config gc.auto 0
+git -C "$SELECTOR_REPO" config maintenance.auto false
 git -C "$SELECTOR_REPO" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m seed
 git -C "$SELECTOR_REPO" worktree add -q -b selector "$SELECTOR_ROOT"
 git -C "$SELECTOR_REPO" worktree remove "$SELECTOR_ROOT"
