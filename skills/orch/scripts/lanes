@@ -1810,7 +1810,34 @@ refresh_lane_usage() {
 record_usage_refusal() {
 	status="$(http_refusal_status "$HTTP_CODE" refused)"
 	detail="usage query refused with HTTP $HTTP_CODE"
+	local profile_detail
+	if [[ "$harness" == claude && ( "$HTTP_CODE" == 401 || "$HTTP_CODE" == 403 ) ]] &&
+		profile_detail="$(claude_refusal_plan_detail "$token")"; then
+		detail="$profile_detail"
+	fi
 	write_usage_refusal "$harness" "$dir" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true
+}
+
+# Claude Code's profile response names the live plan. Its stored
+# subscriptionType can survive cancellation, and auth status does not expose
+# subscription_status. An unread or contradictory profile proves no cause.
+claude_refusal_plan_detail() { # TOKEN
+	local resp HTTP_CODE HTTP_RETRY HTTP_BODY
+	command -v curl >/dev/null 2>&1 || return 1
+	resp=$(curl -s --max-time 10 -D - -w '\n%{http_code}' "${CLAUDE_USAGE_URL%/*}/profile" \
+		-H "anthropic-beta: $CLAUDE_OAUTH_BETA" -K - <<-CURLCFG
+		header = "Authorization: Bearer ${1}"
+	CURLCFG
+	) || return 1
+	split_http_answer "$(http_answer "$resp")"
+	[[ "$HTTP_CODE" == 2?? ]] || return 1
+	jq -er '
+		.organization as $org
+		| select($org.organization_type == "claude_free"
+		    and $org.subscription_status == "canceled"
+		    and .account.has_claude_max == false)
+		| "plan ended: \($org.organization_type), subscription \($org.subscription_status)"
+	' <<<"$HTTP_BODY" 2>/dev/null
 }
 
 # Serves the last figure the host holds for a rate-limited lane, into

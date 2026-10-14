@@ -102,6 +102,9 @@ STUBEOF
 chmod +x "$CLAIM_BIN/tmux"
 FAIL_BIN="$TMP_ROOT/fail-bin"; mkdir -p "$FAIL_BIN"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$FAIL_BIN/tmux"; chmod +x "$FAIL_BIN/tmux"
+# Usage refusals can read a profile. The neutral fixture has no profile;
+# the curl-response cases put their own shim ahead of this one.
+cp "$FAIL_BIN/tmux" "$CLAIM_BIN/curl"
 
 LIVE_PID="$$"
 STORE=""
