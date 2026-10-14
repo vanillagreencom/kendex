@@ -23,6 +23,7 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 - `researcher` produces research reports with sources for each claim.
 - `scout` finds code and explains the facts another assistant needs.
 - `reviewer-arch` checks a design against the project's architecture rules.
+- `publicist` drafts product videos, posts and outreach. Each send needs your approval on its tracker item.
 - Setup workflows connect Slack, Linear, GitHub and a fleet machine with checked results.
 - Your own skills and private notes add task knowledge and personal context.
 - [Updates](#update) replace the Jarvis render and keep your instructions, own skills, memory and handoffs unchanged.

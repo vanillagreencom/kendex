@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [mailbox, orch]
-  agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch]
+  agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
     - command: agent-browser
       purpose: Browser automation and the installed core guide
@@ -130,6 +130,7 @@ Read the linked workflow or reference for the task before acting.
 
 | Task | Read first |
 |---|---|
+| Draft product videos, posts or outreach | Launch `publicist` with a task file or attached prompt. Its Setup section owns publisher installs. |
 | Choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [references/communication.md](references/communication.md) |

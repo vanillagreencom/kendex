@@ -1,0 +1,1 @@
+- Include the publicist agent for product video, social post and outreach drafts.
