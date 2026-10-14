@@ -1775,26 +1775,38 @@ stage_cache 0
 table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
 retain_rate_samples() { # STATE
-  local state="$1" f
+  local state="$1" clock_env="$TMP_ROOT/retained-rate-clock"
+  # Freeze both epoch and elapsed time: a slow process can otherwise stamp
+  # the second sample ahead of the next read and force a third fetch.
+  _virtual_clock_seed
+  virtual_clock_bash_env "$clock_env"
   rm -rf -- "${state:?}"
   claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV="$clock_env" PATH="$CLOCK_BIN:$CLAIM_BIN:$PATH" \
     "$LANES" list --harness claude --json --no-cache >/dev/null
-  f="$(find "$state/usage" -type f -name '*.json' -print -quit)"
-  jq --argjson at "$(( $(date +%s) - 600 ))" '.fetched_at = $at' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  printf '%s' "$(( $(cat "$STUB_CLOCK") + 600 ))" > "$STUB_CLOCK"
   claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV="$clock_env" PATH="$CLOCK_BIN:$CLAIM_BIN:$PATH" \
     "$LANES" list --harness claude --json --no-cache >/dev/null
   OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    OVERSEE_WATCH_STATE_DIR="$state" BASH_ENV="$clock_env" PATH="$CLOCK_BIN:$CLAIM_BIN:$PATH" \
     "$LANES" list --harness claude --json)"
 }
 
 retain_rate_samples "$TMP_ROOT/retained-rate"
 assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "measured" \
   "two real fetches retain the displaced first sample for the next cache read"
+
+retained_control="$(mutant_scripts retained-prior lanes)" || exit 1
+mutate_file "$retained_control/lanes" '{fetched_at: $at, usage} end) as $p' \
+  '{fetched_at: $at, usage} end) as $p | null as $p'
+saved_lanes="$LANES"; LANES="$retained_control/lanes"
+retain_rate_samples "$TMP_ROOT/retained-rate-control"
+LANES="$saved_lanes"
+assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
+  "control: dropping the displaced first sample loses the measured rate"
 
 # A refresh answered after a usage 429 takes the figure kept beside that
 # refusal as its prior, under the figure's own stamp: the refusal's stamp
