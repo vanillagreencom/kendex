@@ -46,7 +46,7 @@ The note's reading route names this subject. The observation establishes access 
 
 **Source checkpoint, 2026-10-12**: Draft request TASK-DRAFT awaits a read of its original record. The service refused access. No draft is prepared. The user instruction TEMP-DRAFT says to hold the draft until access returns.
 
-**Rewritten State entry**: TASK-DRAFT, checked 2026-10-12: original-record verification remains unresolved because the service refused access. Next action: read the original request record when access returns. Source: [source checkpoint](#handoff).
+**Rewritten State entry**: TASK-DRAFT, checked 2026-10-12: original-record verification remains unresolved because the service refused access. No draft is prepared. Next action: read the original request record when access returns. Source: [source checkpoint](#handoff).
 
 **Rewritten Instructions in force entry**: TEMP-DRAFT, recorded 2026-10-12: hold the draft until access returns. Source: [source checkpoint](#handoff).
 
