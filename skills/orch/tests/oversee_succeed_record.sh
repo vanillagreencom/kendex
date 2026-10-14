@@ -739,6 +739,10 @@ pending_run() {
   rm -f -- "${dir:?}/workflow-state" "${TMP_ROOT:?}/pending.snap"
   cat > "$dir/workflow-state" <<STUB
 #!/usr/bin/env bash
+if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then
+  source "$SRC_DIR/workflow-state" || return \$?
+  return 0
+fi
 "$SRC_DIR/workflow-state" "\$@" || exit
 [[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || jq -c .overseer "$FLEET_STATE" > "$TMP_ROOT/pending.snap"
 STUB
@@ -780,6 +784,10 @@ recordfail_run() { # SCRIPTS_DIR
   rm -f -- "${dir:?}/workflow-state" "${TMP_ROOT:?}/record-refused"
   cat > "$dir/workflow-state" <<STUB
 #!/usr/bin/env bash
+if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then
+  source "$SRC_DIR/workflow-state" || return \$?
+  return 0
+fi
 if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-refused" ]]; then
   touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
 fi
