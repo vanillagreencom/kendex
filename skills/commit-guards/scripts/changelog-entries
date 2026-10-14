@@ -491,9 +491,11 @@ release_bump() { # OLD NEW PATH
   ' 2>"$GG_TMP/dependency.err")"; then
     gg_fail_cause version-compare "$(gg_shown "$3")" "$GG_TMP/dependency.err" "Could not compare the versions."
   fi
+  # Before 1.0, minor and patch levels are unjudged. A publishing caller has
+  # no prior version, so its selected version supplies the major component.
   case "$BUMP" in
     major) ;;
-    minor | patch) [ -z "$1" ] || [ "${1%%.*}" != 0 ] ;;
+    minor | patch) local prior="${1:-$2}"; [ "${prior%%.*}" != 0 ] ;;
     none) return 1 ;;
     *) gg_fail version-compare "$(gg_shown "$3"):$BUMP" "The version comparison returned an unknown increase." ;;
   esac
@@ -549,7 +551,7 @@ if [ "$MODE" = release ]; then
     mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
     gg_mode_is_regular "$mode" || gg_fail version-mode "$(gg_shown "$f"):$mode" "A configured version file must be a regular JSON file."
     new="$(read_version "$sha" "$f")" || exit 2
-    release_bump "" "$new" "$f"
+    release_bump "" "$new" "$f" || continue
     [ "$BUMP" != major ] || continue
     judge_release "$(gg_shown "$f"):$new"
   done <"$GG_TMP/files.z"

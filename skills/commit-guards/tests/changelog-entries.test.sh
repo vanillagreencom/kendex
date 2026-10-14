@@ -459,6 +459,9 @@ for row in \
   "package-pending-fixed|packages/a/package.json|1.9.0|1.9.1||packages/a/CHANGELOG.md|### Unreleased\n\n- Fix another typo.\n\n### 1.9.1\n\n- Fix a typo.\n||0" \
   "release-pending-added|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--release HEAD|patch-added|added|changelog.d/added/entry.md:minor" \
   "release-pending-fixed|app.json|1.9.0|1.9.1|- Fix another typo.|CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--release HEAD|0|fixed" \
+  "release-zero-patch-added|app.json|0.9.0|0.9.1|$ADD|||--release HEAD|0|added" \
+  "release-zero-minor-breaking|app.json|0.9.1|0.10.0|$BREAK|||--release HEAD|0" \
+  "release-one-patch-added|app.json|1.0.0|1.0.1|$ADD|||--release HEAD|patch-added|added|changelog.d/added/entry.md:minor" \
   "major-past-release|app.json|1.9.0|2.0.0|$BREAK|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|major-breaking" \
   "major-own-release|app.json|1.9.0|2.0.0|$ADD|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Changed\n\n$BREAK\n|--base base|0|added" \
   "released-patch-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Added\n\n$ADD\n||patch-added"; do
@@ -492,6 +495,20 @@ for row in \
     report="${report%"$marker"};${ERR}required-level=$required$marker"
   fi
   assert_eq "$label" "rc=$expected $report" "$(run 'COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json packages/*/package.json package.json' "$args")"
+done
+# Restore the base's no-prior-version rule: both pre-1.0 publishing rows
+# must refuse, proving each fixture reaches the level check.
+gg_mutant release_zero changelog-entries \
+  'minor | patch) local prior="${1:-$2}"; [ "${prior%%.*}" != 0 ]' \
+  'minor | patch) [ -z "$1" ] || [ "${1%%.*}" != 0 ]'
+for row in \
+  "patch-added|0.9.1|patch-added|$ADD|added|minor" \
+  "minor-breaking|0.10.0|minor-breaking|$BREAK|changed|major"; do
+  IFS='|' read -r label version key entry section level <<<"$row"
+  R="$TMP/version-release-zero-$label"
+  assert_eq "control: the base refuses pre-1.0 release $version" \
+    "rc=1 ${ERR}$key=app.json:$version;${ERR}entry-preview=$entry;${ERR}required-level=changelog.d/$section/entry.md:$level;$(summary 1 1)" \
+    "$(CE="$release_zero" run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '--release HEAD')"
 done
 # The must-fail control: a grammar reading only the colon-inside spelling
 # refuses the package record's major written the other way.
