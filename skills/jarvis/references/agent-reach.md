@@ -12,8 +12,9 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 
 ## Read
 
-- Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N]`. It moves no cursor and marks nothing.
-- Keep the last `line` handled for each repository in the handoff's State section, and pass it as `[N]`; `0` reads every envelope.
+- Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N] --mark-read`. The command records the snapshot's logical count for the Slack relay's hold resume.
+- Handle the returned notices through [One voice](#one-voice). Show every returned owner ask through [Answer an ask](#answer-an-ask).
+- Keep the snapshot header's `count` for each repository in the handoff's State section after handling the returned envelopes, and pass it as `[N]`; `0` reads every envelope.
 - An agent writes a notice only when its workflow or a directive from the user tells it to. With no envelope, say that the agent has reported nothing. Silence does not mean the agent is idle.
 
 ## Answer an ask

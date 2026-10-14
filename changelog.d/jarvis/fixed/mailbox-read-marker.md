@@ -1,1 +1,1 @@
-- Repository mailbox reads mark the notices and questions Jarvis read, so Slack skips them when the session hold ends.
+- Incremental session mailbox reads mark the notices and questions Jarvis read, so Slack skips them when the session hold ends.

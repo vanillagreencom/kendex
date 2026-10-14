@@ -9,7 +9,7 @@ Each record kind has one home. Write a record to its home, never to the handoff.
 | Standing rule | The skill or reference that owns it. |
 | Durable fact, ruling, preference or lesson | A memory note under [memory.md:Notes](memory.md#notes). |
 | Work, task or check | The tracker: an item, or a Done-when box on an item. |
-| Open exchange | Its mailbox, read live: the user channel and each agent's channel. With orch installed, `lane-mail pending`, peer asks and the [Jarvis mailbox read](../SKILL.md#reachable-repositories). |
+| Open exchange | Its mailbox, read live: the user channel and each agent's channel. With orch installed, `lane-mail pending`, peer asks and the [Jarvis mailbox read](agent-reach.md#read). |
 | Session state | The handoff. |
 
 - A continuing session requires available tracker access and one user-selected project for its own tasks. Confirm that the tracker can read the workspace queue and retain tasks and checks. If setup or project selection is missing, request it through [Connect Linear](../workflows/setup-linear.md). Keep the current handoff untouched until these prerequisites hold.

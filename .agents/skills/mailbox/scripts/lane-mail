@@ -183,9 +183,10 @@ Overseer side:
               order. Logical numbers survive compaction, so a watcher keeps
               each box's last `line` or `count` and passes it back as N.
               --mark-read is the Jarvis read: local --item overseer with
-              --box to-overseer and no --after. After printing the snapshot,
-              atomically save its logical count in to-overseer.seen for the
-              Slack relay's hold resume. Without it, mark nothing: a relay keeps its own record
+              --box to-overseer. After printing the selected envelopes,
+              atomically save the snapshot's logical count in to-overseer.seen for the
+              Slack relay's hold resume, including on an --after read.
+              Without it, mark nothing: a relay keeps its own record
               of what it carried, keyed by envelope id, and needs neither
               a line cursor nor an acknowledgement
 
@@ -814,7 +815,7 @@ for given in $OPTS_GIVEN; do
       case "$EVENT_BOX" in to-lane | to-overseer) ;; *) refuse box-invalid "$EVENT_BOX" ;; esac ;;
     --mark-read)
       [ "$VERB:$ITEM:$EVENT_BOX:$HOST" = events:overseer:to-overseer:0 ] || refuse option-unknown --mark-read
-      [ -z "$AFTER" ] || refuse option-conflict '--mark-read,--after' ;;
+      ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in ask | send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
     --thread-ts | --parent)

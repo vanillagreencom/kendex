@@ -65,22 +65,31 @@ polls() { # ROOT: two completed polls, the first of which may predate a change
 
 # The Jarvis read uses the installed mailbox command. The control removes
 # only its write, so the same read succeeds but a resume posts both read items.
-while read -r name logical control; do
+while read -r name logical control after; do
   R="$(sk_new_root "jarvis-read-$name")"
   sk_bind "$R"
   sk_poll "$R" "$HOLD"
   fresh
+  PREFIX_ID=""
+  if [ "$after" -gt 0 ]; then
+    notice "$R" "prefix-$name" "Earlier notice in $name."
+    PREFIX_ID="$(last_id "$R")"
+    PREFIX_OUT="$(cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer --after 0 --mark-read)" || exit 1
+    assert_eq "$(field "${PREFIX_OUT%%$'\n'*}" count)=$(cat "$(sk_box "$R")/to-overseer.seen")" "1=1" "$name: the earlier session read establishes its position"
+  fi
   notice "$R" "read-notice-$name" "Read notice in $name."
   READ_NOTICE="$(last_id "$R")"
   READ_ASK="$(ask "$R" "read-ask-$name" "Read ask in $name?")"
-  if [ "$name" = gapped ]; then
+  if [ "$name" = gapped ] || [ "$name" = incremental-gap ]; then
     python3 - "$(sk_box "$R")/to-overseer.jsonl" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 rows = path.read_text().splitlines(keepends=True)
-path.write_text(rows[0] + "interrupted\n" + rows[1])
+rows.insert(-1, "interrupted\n")
+path.write_text("".join(rows))
 path.with_name(path.name + ".numbering").write_text(json.dumps(
-    {"dropped": 2, "first": json.loads(rows[0])["id"], "lines": [1, 3, 5]}) + "\n")
+    {"dropped": len(rows) - 1, "first": json.loads(rows[0])["id"],
+     "lines": list(range(1, len(rows) * 2, 2))}) + "\n")
 PY
     [ "$?" -eq 0 ] || exit 1
   fi
@@ -101,7 +110,13 @@ PY
   fi
   sk_poll "$R" "$HOLD"
   [ "$RC" -eq 0 ] || exit 1
-  READ_OUT="$(cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer --mark-read)" || exit 1
+  BEFORE=absent
+  [ ! -f "$(sk_box "$R")/to-overseer.seen" ] || BEFORE="$(cat "$(sk_box "$R")/to-overseer.seen")"
+  (cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer >/dev/null) || exit 1
+  PROBE_MARKER=absent
+  [ ! -f "$(sk_box "$R")/to-overseer.seen" ] || PROBE_MARKER="$(cat "$(sk_box "$R")/to-overseer.seen")"
+  assert_eq "$PROBE_MARKER" "$BEFORE" "$name: the reachability probe records no session read"
+  READ_OUT="$(cd "$R" && .agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer --after "$after" --mark-read)" || exit 1
   assert_eq "$(field "${READ_OUT%%$'\n'*}" count)" "$logical" "$name: Jarvis receives the logical snapshot count"
   assert_eq "$(jq -rs 'map(.id) | join(",")' <<<"${READ_OUT#*$'\n'}")" "$READ_NOTICE,$READ_ASK" "$name: Jarvis receives both read envelopes"
   MARKER=absent
@@ -117,18 +132,22 @@ PY
   sk_poll "$R" "$HOLD"
   CH_R="$(sk_channel "$R")"
   RESUME_ROW="$RC=$(count "$CH_R" "Read notice in $name.")=$(count "$CH_R" "Read ask in $name?")=$(jq -r 'select(.t == "resume") | .skipped | join(",")' "$(sk_journal "$R")")"
+  EXPECTED_SKIPPED="${PREFIX_ID:+$PREFIX_ID,}$READ_NOTICE,$READ_ASK"
   if [ "$control" = yes ]; then
-    sk_assert_red "$RESUME_ROW" "0=0=0=$READ_NOTICE,$READ_ASK" "$name: removing the writer fails the same resume assertion"
+    sk_assert_red "$RESUME_ROW" "0=0=0=$EXPECTED_SKIPPED" "$name: removing the writer fails the same resume assertion"
     assert_eq "$RESUME_ROW" '0=1=1=' "$name: without the writer the resume skips nothing"
   else
-    assert_eq "$RESUME_ROW" "0=0=0=$READ_NOTICE,$READ_ASK" "$name: resume skips the notices and asks Jarvis read"
+    assert_eq "$RESUME_ROW" "0=0=0=$EXPECTED_SKIPPED" "$name: resume skips the notices and asks Jarvis read"
   fi
   assert_eq "$(count "$CH_R" "Unread notice in $name.")" 1 "$name: a notice after the read still posts"
 done <<'ROWS'
-plain 2 no
-gapped 5 no
-writer-control 2 yes
+plain 2 no 0
+gapped 5 no 0
+incremental 3 no 1
+incremental-gap 7 no 1
+writer-control 2 yes 0
 ROWS
+rm -- "$JARVIS_SESSION" || exit 1
 
 ROOT="$(sk_new_root alpha)"
 sk_bind "$ROOT"
