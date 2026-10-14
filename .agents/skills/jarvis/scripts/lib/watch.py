@@ -21,16 +21,47 @@ LIB = Path(__file__).resolve().parent
 CAP = 60 * 1024
 
 
-def run(args, cwd=None, data=None):
-    return subprocess.run(list(map(str, args)), cwd=cwd, input=data,
-                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          timeout=60)
+class Failure(RuntimeError):
+    """Stable operation identity, separate from the first useful diagnostic."""
+    def __init__(self, operation, category, code, detail):
+        self.record = {"key": [operation, category, str(code)], "detail": str(detail)}
+        super().__init__(str(detail))
 
 
-def checked(args, cwd=None):
-    result = run(args, cwd)
+def failure(operation, error):
+    if isinstance(error, Failure):
+        return error
+    category = "timeout" if isinstance(error, subprocess.TimeoutExpired) else type(error).__name__
+    return Failure(operation, category, getattr(error, "errno", None), str(error))
+
+
+def child_failure(operation, result):
+    detail = result.stderr.strip() or "child exit=" + str(result.returncode)
+    # Our transported pass carries its typed result. CLI refusal keys are
+    # machine fields on the first line, never English traceback classification.
+    first = detail.split("\n", 1)[0]
+    if first.startswith("jarvis: failure="):
+        record = json.loads(first[len("jarvis: failure="):])
+        return Failure(*record["key"], record["detail"])
+    keyed = re.match(r"^(?:lane-mail|kendex): ([a-z][a-z0-9-]*)=", first)
+    return Failure(operation, "refusal" if keyed else "exit",
+                   keyed[1] if keyed else result.returncode, detail)
+
+
+def run(args, cwd=None, data=None, operation=None):
+    try:
+        return subprocess.run(list(map(str, args)), cwd=cwd, input=data,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise failure(operation or Path(args[0]).name, error) from error
+
+
+def checked(args, cwd=None, operation=None):
+    operation = operation or Path(args[0]).name
+    result = run(args, cwd, operation=operation)
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or "command-failed " + str(args[0]))
+        raise child_failure(operation, result)
     return result.stdout
 
 
@@ -48,9 +79,28 @@ def config(bash, root):
     return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root]))
 
 
-def line_value(value, token=False):
-    encoded = json.dumps(str(value), ensure_ascii=token)[1:-1]
-    return encoded.replace(" ", r"\u0020") if token else encoded
+def line_value(value, token=False, limit=None):
+    # Ordinary source code is data. Only protocol controls become escapes.
+    result, used = [], 0
+    text = str(value)
+    for index, char in enumerate(text):
+        units = []
+        if not token and (index == 0 or text[index-1] == "\n") and text.startswith(("EVENT ", "cursor:"), index):
+            units.append(" ")
+        code = ord(char)
+        if (char != "\n" or token) and (code < 32 or 127 <= code < 160 or (token and char.isspace())):
+            unit = {"\n": r"\n", "\r": r"\r", "\t": r"\t"}.get(char, "\\u%04x" % code)
+        elif token and char == " ":
+            unit = r"\u0020"
+        else:
+            unit = char
+        units.append(unit)
+        size = sum(map(len, units))
+        if limit is not None and used + size > limit:
+            break
+        result.extend(units)
+        used += size
+    return "".join(result)
 
 
 def event(kind, **fields):
@@ -75,47 +125,74 @@ def atomic_json(path, value):
 
 
 def hold(root, permitted):
-    # The relay owner resolves aliases, precedence and path forms. Run its
-    # module in isolation because each root supplies its own installed owner.
-    owner = root / ".agents/skills/slack/scripts/lib"
-    if not (owner / "settings.py").is_file():
-        raise RuntimeError("dependency=slack-missing")
-    code = ('import json,os,sys; from pathlib import Path; '
-            'sys.path.insert(0,sys.argv[1]); os.environ["SLACK_ORCH_DIR"]=sys.argv[2]; '
-            'from settings import load_presence; '
-            'print(json.dumps(load_presence(Path(sys.argv[3])).jarvis_session_file))')
-    value = json.loads(checked([sys.executable, "-B", "-c", code, owner,
-                                root / ".agents/skills/orch", root]))
-    if not value:
-        return "ok"
     if not permitted():
         return "skipped"
-    path = Path(value)
-    with path.open("a"):
-        at = epoch()
-        os.utime(path, (at, at))
+    # Code comes from the producer's declared siblings. Targets are data.
+    packages = LIB.parents[2]
+    owner = packages / "slack/scripts/lib"
+    code = """import json,os,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+os.environ["SLACK_ORCH_DIR"]=sys.argv[2]
+from settings import load_presence
+from refusals import Refusal
+try:
+ print(json.dumps({"path":load_presence(Path(sys.argv[3])).jarvis_session_file}))
+except Refusal as error:
+ print(json.dumps({"failure":{"key":["presence-settings","refusal",error.key],"detail":str(error)}}))
+"""
+    try:
+        record = json.loads(checked([sys.executable, "-B", "-c", code, owner,
+                                     packages / "orch", root], operation="presence-settings"))
+        if "failure" in record:
+            error = record["failure"]
+            raise Failure(*error["key"], error["detail"])
+        value = record["path"]
+        at = epoch() if value else None
+        # No external command may follow this final permission before touch.
+        if not permitted():
+            return "skipped"
+        if value:
+            path = Path(value)
+            with path.open("a"):
+                os.utime(path, (at, at))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        if not permitted():
+            return "skipped"
+        raise failure("presence-hold", error) from error
     return "ok"
 
 
 def project_roots():
     try:
-        roots = run(["kendex", "project", "list"])
-    except FileNotFoundError as error:
-        raise RuntimeError("kendex-missing fix=install-kendex-on-host-PATH") from error
-    if roots.returncode:
-        raise RuntimeError("kendex-missing fix=install-kendex-on-host-PATH " + roots.stderr.strip())
-    return [Path(line.strip()).expanduser().resolve() for line in roots.stdout.split("\n")
+        roots = checked(["kendex", "project", "list"], operation="project-list")
+    except Failure as error:
+        raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
+    return [Path(line.strip()).expanduser().resolve() for line in roots.split("\n")
             if line.strip() and "(" not in line]
 
 
 def presence_roots(permitted):
+    if not permitted():
+        return [("local", "skipped", None)]
     results = []
     for root in project_roots():
         try:
             results.append((str(root), hold(root, permitted), None))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            results.append((str(root), "failed", str(error)))
+            results.append((str(root), "failed", failure("presence-hold", error).record))
     return results
+
+
+def pass_output(side, roots, events):
+    body, origins, size = [], [], 0
+    for root, block in events:
+        end = size + len(block.encode())
+        origins.append([size, end, str(root)] if root is not None else [size, end, None])
+        body.append(block)
+        size = end
+    record = {"side": side, "roots": roots, "event_bytes": size, "origins": origins}
+    return "".join(body) + "cursor: " + json.dumps(record, separators=(",", ":")) + "\n"
 
 
 def mail_pass(bash, home, side, cursor):
@@ -127,14 +204,14 @@ def mail_pass(bash, home, side, cursor):
         prior = state.get(key, {})
         next_root = json.loads(json.dumps(prior))
         mail = root / ".agents/skills/mailbox/scripts/lane-mail"
-        cause = ""
+        cause = None
         root_events = []
         try:
             if not root.is_dir():
-                raise RuntimeError("root-missing")
+                raise Failure("root-read", "missing", "root", "root-missing")
             if not mail.is_file():
-                raise RuntimeError("refresh-needed" if (root / ".agents/skills/orch").is_dir() else "no-mailbox")
-            common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root]).strip())
+                raise Failure("root-read", "missing", "mailbox", "refresh-needed" if (root / ".agents/skills/orch").is_dir() else "no-mailbox")
+            common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
             for box in ("to-lane", "to-overseer"):
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
@@ -146,17 +223,17 @@ def mail_pass(bash, home, side, cursor):
                         "--after", str(before.get("count", 0))]
                 if box == "to-overseer":
                     args.append("--mark-read")
-                output = checked(args, root).split("\n")
+                output = checked(args, root, operation="mailbox-events-" + box).split("\n")
                 header = re.fullmatch(r"count=(\d+) first=.*", output[0]) if output else None
                 if not header:
-                    raise RuntimeError("events-header-unread")
+                    raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
                 next_root[box] = {"count": int(header[1]), "size": size}
                 for row in output[1:]:
                     if not row:
                         continue
                     envelope = json.loads(row)
                     if box == "to-lane":
-                        if root == home or envelope.get("kind") != "answer":
+                        if (side == "local" and root == home) or envelope.get("kind") != "answer":
                             continue
                         metadata = "%s %s re %s" % tuple(line_value(value, True) for value in
                             (envelope["id"], envelope["kind"], envelope.get("re", "")))
@@ -166,18 +243,15 @@ def mail_pass(bash, home, side, cursor):
                         metadata = "%s %s to=owner ref=%s options=%s recommend=%s deadline=%s" % tuple(line_value(value, True) for value in (
                             envelope["id"], envelope["kind"], envelope.get("ref") or "",
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
-                    # Message text can quote this protocol. Reserve boundary
-                    # lines for the pass writer so a quote cannot forge cursors.
-                    text = "\n".join(re.sub(r"^(EVENT |cursor:)", r" \1", line_value(line))
-                                     for line in str(envelope.get("text", "")).split("\n"))[:4000]
+                    text = line_value(envelope.get("text", ""), limit=4000)
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
-            receipts = checked([mail, "drain", "--item", "overseer", "--after", "0", "--receipts"], root).split("\n")
+            receipts = checked([mail, "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
             index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
             if index is None:
-                raise RuntimeError("receipts-unread")
+                raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
             receipt = re.fullmatch(r"receipts cursor=(\d+) count=\d+ first=.*", receipts[index])
             if not receipt:
-                raise RuntimeError("receipts-missed")
+                raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
             unread = []
             for row in receipts[index + 1:]:
                 parts = row.split()
@@ -192,33 +266,56 @@ def mail_pass(bash, home, side, cursor):
             else:
                 next_root.pop("unread", None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            cause = str(error)
+            cause = failure("root-read", error).record
         if cause:
-            if prior.get("cause") != cause:
-                events.append(event("root-unreachable", repo=root.name, cause=cause))
+            if not isinstance(prior.get("cause"), dict) or prior["cause"].get("key") != cause["key"]:
+                events.append((root, event("root-unreachable", repo=root.name, cause=cause["detail"])))
+                next_root = dict(prior, cause=cause)
+            else:
+                next_root = prior
             # A failed root read commits neither of its box cursors.
-            next_root = dict(prior, cause=cause)
         else:
             next_root.pop("cause", None)
-            events.extend(root_events)
+            events.extend((root, block) for block in root_events)
         state[key] = next_root
-    return "".join(events) + "cursor: " + json.dumps({"side": side, "roots": state}, separators=(",", ":")) + "\n"
+    return pass_output(side, state, events)
 
 
-def complete_blocks(data, offset):
-    blocks = []
+def decode_log(data, offset):
+    """One LF decoder for committed pass bytes and consumer blocks.
+
+    The append lock makes a producer footer and its events one snapshot.
+    Origins come only from that footer; old and consumer bytes stay unknown.
+    """
+    blocks, records = [], []
     opened = None
     position = offset
     for part in data.split(b"\n")[:-1]:
-        line = part + b"\n"
-        boundary = line.startswith(b"EVENT ") or line.startswith(b"cursor:")
+        boundary = part.startswith((b"EVENT ", b"cursor:"))
         if boundary and opened is not None:
             blocks.append([opened, position])
             opened = None
-        if line.startswith(b"EVENT "):
+        if part.startswith(b"EVENT "):
             opened = position
-        position += len(line)
-    return blocks, opened if opened is not None else position
+        if part.startswith(b"cursor: "):
+            record = json.loads(part[8:])
+            records.append((position + len(part) + 1, record))
+            start = position - record.get("event_bytes", 0)
+            origins = {(start+a, start+b): [record["side"], root]
+                       for a, b, root in record.get("origins", []) if root is not None}
+            for span in reversed(blocks):
+                if span[0] < start:
+                    break
+                origin = origins.get(tuple(span[:2]))
+                if origin is not None:
+                    span.append(origin)
+        position += len(part) + 1
+    return blocks, opened if opened is not None else position, records
+
+
+def complete_blocks(data, offset):
+    blocks, end, _ = decode_log(data, offset)
+    return blocks, end
 
 
 class Watch:
@@ -237,14 +334,8 @@ class Watch:
         self.state["cursors"] = self.cursors
         if self.log.exists():
             with self.log.open("rb") as source:
-                source.seek(self.state.get("cursor_offset", 0))
-                for line in source:
-                    if not line.endswith(b"\n"):
-                        break
-                    if line.startswith(b"cursor: "):
-                        record = json.loads(line[8:])
-                        self.cursors[record["side"]] = record["roots"]
-                    self.state["cursor_offset"] = source.tell()
+                fcntl.flock(source, fcntl.LOCK_SH)
+                self.ingest(source)
         self.save()
         self.next_presence = {}
         self.presence_pending = {}
@@ -254,32 +345,44 @@ class Watch:
             atomic_json(self.path, self.state)
             self._saved = json.loads(json.dumps(self.state))
 
+    def ingest(self, source):
+        offset = self.state["offset"]
+        checkpoint = self.state.get("cursor_offset", 0)
+        start = min(offset, checkpoint) if self.state["pending"] is None else checkpoint
+        source.seek(start)
+        spans, end, records = decode_log(source.read(), start)
+        if self.state["pending"] is None:
+            self.state["spans"].extend(span for span in spans if span[0] >= offset)
+            self.state["offset"] = end
+        for at, record in records:
+            if at > checkpoint:
+                self.cursors[record["side"]] = record["roots"]
+                self.state["cursor_offset"] = at
+        self.state["cursor_offset"] = max(self.state.get("cursor_offset", 0), end)
+
     def append(self, output):
-        lines = output.split("\n")
-        if len(lines) < 2 or lines[-1] != "" or not lines[-2].startswith("cursor: "):
+        data = output.encode()
+        _, _, records = decode_log(data, 0)
+        if not records or records[-1][0] != len(data):
             raise RuntimeError("pass-incomplete")
-        record = json.loads(lines[-2][8:])
-        if len(lines) == 2 and self.cursors.get(record["side"]) == record["roots"]:
+        record = records[-1][1]
+        if data.startswith(b"cursor: ") and self.cursors.get(record["side"]) == record["roots"]:
             return
-        with self.log.open("ab") as out:
+        with self.log.open("a+b") as out:
             fcntl.flock(out, fcntl.LOCK_EX)
-            out.write(output.encode())
+            out.write(data)
             out.flush()
             os.fsync(out.fileno())
-            self.state["cursor_offset"] = out.tell()
-        self.cursors[record["side"]] = record["roots"]
+            self.ingest(out)
         self.save()
 
     def batch(self, now):
         if self.state["pending"] is None:
-            offset = self.state["offset"]
-            spans, end = [], offset
             if self.log.exists():
                 with self.log.open("rb") as source:
-                    source.seek(offset)
-                    spans, end = complete_blocks(source.read(), offset)
-            self.state["spans"].extend(spans)
-            self.state["offset"] = end
+                    fcntl.flock(source, fcntl.LOCK_SH)
+                    self.ingest(source)
+            end = self.state["offset"]
             def block(span, header=False):
                 with self.log.open("rb") as source:
                     source.seek(span[0])
@@ -295,8 +398,8 @@ class Watch:
             if now < self.state["due"]:
                 self.save()
                 return
-            owner = ("repo=" + line_value(self.home.name, True)).encode()
-            ordered = sorted(eligible, key=lambda span: owner not in block(span, True).split())
+            owner = ["local", str(self.home.resolve())]
+            ordered = sorted(eligible, key=lambda span: len(span) < 3 or span[2] != owner)
             selected, retained, body = [], [], b""
             full = False
             for span in ordered:
@@ -322,7 +425,7 @@ class Watch:
             try:
                 result = run([self.home / ".agents/skills/mailbox/scripts/lane-mail", "send", "--item", "overseer",
                               "--directive", "--file", payload.name, "--delivery-id", pending["key"]], self.home)
-            except (OSError, subprocess.SubprocessError) as error:
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 print("watch-loop: send=pending " + str(error), file=sys.stderr)
                 return
         sent = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
@@ -345,20 +448,23 @@ class Watch:
             if now is None:
                 now = epoch()
             return 0 <= now - at < 300
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             return False
 
     def remote_command(self, args):
-        # Ship the pass and its private implementation, not a remote install
-        # path. Each remote root still supplies its own mailbox/settings owner.
-        files = {name: base64.b64encode((LIB.parent / name).read_bytes()).decode()
+        # Carry exact dependency bytes, never target-local code or settings.
+        files = {"jarvis/scripts/" + name: base64.b64encode((LIB.parent / name).read_bytes()).decode()
                  for name in ("vm-watch.sh", "lib/watch.py", "lib/jarvis-env.sh")}
+        packages = LIB.parents[2]
+        for name in ("slack/scripts/lib/settings.py", "slack/scripts/lib/refusals.py",
+                     "orch/scripts/lib/kendex-env.sh"):
+            files[name] = base64.b64encode((packages / name).read_bytes()).decode()
         bootstrap = """import base64,json,pathlib,subprocess,sys,tempfile
 with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
  root=pathlib.Path(folder)
  for name,value in json.loads(sys.argv[1]).items():
   path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value))
- result=subprocess.run([sys.argv[2],str(root/'vm-watch.sh'),*sys.argv[3:]])
+ result=subprocess.run([sys.argv[2],str(root/'jarvis/scripts/vm-watch.sh'),*sys.argv[3:]])
  sys.exit(result.returncode)
 """
         return "python3 -c " + shlex.quote(bootstrap) + " " + shlex.quote(json.dumps(files)) + " \"$BASH\" " + shlex.join(args) + "\n"
@@ -368,17 +474,21 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         return run(["ssh", host, "bash -s"], data=self.remote_command(args))
 
     def presence(self, side):
+        if not self.live():
+            return [(side, "skipped", None)]
         try:
             return self._presence(side)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            return [(side, "failed", str(error))]
+            if not self.live():
+                return [(side, "skipped", None)]
+            return [(side, "failed", failure("presence-" + side, error).record)]
 
     def _presence(self, side):
         permitted = self.live
         if side == "local":
             return presence_roots(permitted)
-        # The host resolves settings before requesting permission for each
-        # actual touch. Mail reads never carry a saved renewal permission.
+        # Each host operation requests current local permission. The host
+        # supplies the touch timestamp before its final permission request.
         with tempfile.TemporaryFile(mode="w+") as errors:
             process = subprocess.Popen(["ssh", self.settings["JARVIS_CONTROL_HOST"], "bash -s"],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
@@ -406,7 +516,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                                 return results
                             break
                 errors.seek(0)
-                raise RuntimeError(errors.read() or "host-presence-failed")
+                raise child_failure("host-presence", subprocess.CompletedProcess(process.args, process.wait(timeout=60), "", errors.read()))
             finally:
                 if not process.stdin.closed:
                     process.stdin.close()
@@ -420,14 +530,14 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         try:
             outputs.append(("local", mail_pass(self.bash, self.home, "local", self.cursors.get("local", {})), None))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            outputs.append(("local", None, str(error)))
+            outputs.append(("local", None, failure("local-pass", error).record))
         host = self.settings["JARVIS_CONTROL_HOST"]
         if host:
             try:
                 result = self.remote(host)
-                outputs.append(("host", result.stdout, result.stderr.strip() or "host-pass-failed" if result.returncode else None))
+                outputs.append(("host", result.stdout, child_failure("host-pass", result).record if result.returncode else None))
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                outputs.append(("host", None, str(error)))
+                outputs.append(("host", None, failure("host-pass", error).record))
         return outputs
 
     def accept(self, outputs):
@@ -461,12 +571,12 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
 
     def failed_pass(self, side, cause):
         prior = self.state.get(side + "_failure", {})
-        if prior.get("cause") != cause:
-            self.append(event("root-unreachable", repo=self.settings["JARVIS_CONTROL_HOST"] if side == "host" else self.home.name,
-                              cause=cause) + "cursor: " +
-                        json.dumps({"side": side, "roots": self.cursors.get(side, {})}) + "\n")
-        self.state[side + "_failure"] = {"cause": cause}
-        self.save()
+        if prior.get("key") != cause["key"]:
+            self.append(pass_output(side, self.cursors.get(side, {}), [(None,
+                event("root-unreachable", repo=self.settings["JARVIS_CONTROL_HOST"] if side == "host" else self.home.name,
+                      cause=cause["detail"]))]))
+            self.state[side + "_failure"] = cause
+            self.save()
 
     def accept_presence(self, side, results):
         failures = self.state.setdefault("presence_failures", {}).setdefault(side, {})
@@ -477,9 +587,9 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                 failures.pop(root, None)
             elif status == "failed":
                 if root not in failures:
-                    self.append(event("presence-renew-failed", repo=Path(root).name, side=side, cause=cause) +
-                                "cursor: " + json.dumps({"side": side, "roots": self.cursors.get(side, {})}) + "\n")
-                failures[root] = cause
+                    self.append(pass_output(side, self.cursors.get(side, {}), [(None,
+                        event("presence-renew-failed", repo=Path(root).name, side=side, cause=cause["detail"]))]))
+                    failures[root] = cause
             elif status != "skipped":
                 raise RuntimeError("presence-status-invalid")
         self.save()
@@ -528,5 +638,5 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        print("jarvis: operation=failed " + str(error), file=sys.stderr)
+        print("jarvis: failure=" + json.dumps(failure("pass", error).record), file=sys.stderr)
         sys.exit(1)

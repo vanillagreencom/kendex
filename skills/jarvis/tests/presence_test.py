@@ -53,12 +53,9 @@ class Presence(unittest.TestCase):
         local_slack.mkdir(parents=True, exist_ok=True)
         if not local_slack.joinpath("scripts").exists():
             local_slack.joinpath("scripts").symlink_to(REPO / "skills/slack/scripts", target_is_directory=True)
-        remote_slack = remote / ".agents/skills/slack"
-        remote_slack.mkdir(parents=True)
-        remote_slack.joinpath("scripts").symlink_to(REPO / "skills/slack/scripts", target_is_directory=True)
         remote.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
         failure = scratch / "fail-host"
-        executable("ssh", '[ ! -f "$FAIL_HOST" ] || exit 1\ncd "$REMOTE_ROOT" || exit\nPRESENCE_ROOT=$REMOTE_ROOT; export PRESENCE_ROOT\nexec '+BASH+' -s\n')
+        executable("ssh", 'if [ -n "${TRANSPORT_READY:-}" ]; then\nprintf ready > "$TRANSPORT_READY"\nread -r ack < "$TRANSPORT_RELEASE"\nfi\n[ ! -f "$FAIL_HOST" ] || exit 1\ncd "$REMOTE_ROOT" || exit\nPRESENCE_ROOT=$REMOTE_ROOT; export PRESENCE_ROOT\nexec '+BASH+' -s\n')
         root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
         env = dict(os.environ, PATH=str(bins)+os.pathsep+os.environ["PATH"], CLOCK=str(clock),
                    INSPECT_STATE=str(state), ORCH_OVERSEER_HOST=str(inspector),
@@ -154,6 +151,40 @@ class Presence(unittest.TestCase):
             renew()
             self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 2)
             failure.unlink()
+            # A session can end during transport, before any host permission
+            # request. Both a failed and a successful transport must skip.
+            ready, release = scratch / "transport-ready", scratch / "transport-release"
+            os.mkfifo(ready)
+            os.mkfifo(release)
+            for transport_fails in (False, True):
+                state.write_text("idle")
+                hook("lane-mail-deliver.sh")
+                before = remote_hold.stat().st_mtime
+                if transport_fails:
+                    failure.touch()
+                read_fd = os.open(ready, os.O_RDONLY | os.O_NONBLOCK)
+                release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+                try:
+                    with patch.dict(os.environ, TRANSPORT_READY=str(ready), TRANSPORT_RELEASE=str(release)), \
+                            ThreadPoolExecutor(max_workers=1) as work:
+                        pending = work.submit(watch.presence, "host")
+                        try:
+                            self.assertTrue(select.select([read_fd], [], [], 30)[0])
+                            self.assertEqual(os.read(read_fd, 5), b"ready")
+                            state.write_text("gone")
+                        finally:
+                            os.write(release_fd, b"ack\n")
+                        results = pending.result(timeout=30)
+                    self.assertTrue(all(status == "skipped" for _, status, _ in results), results)
+                    watch.accept_presence("host", results)
+                    self.assertEqual(remote_hold.stat().st_mtime, before)
+                    self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 2)
+                finally:
+                    os.close(read_fd)
+                    os.close(release_fd)
+                    if failure.exists():
+                        failure.unlink()
+            state.write_text("idle")
             # Block the real mailbox events command after its start
             # acknowledgement. Presence must keep running in the same owner.
             installed = root / ".agents/skills/mailbox/scripts"
