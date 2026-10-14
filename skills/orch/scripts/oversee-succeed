@@ -859,7 +859,7 @@ if (( JUDGES )) && [[ "$CONTEXT_STATE" == unmeasured ]]; then
   case "$due_rc" in
     0) CONTEXT_STATE="$due" ;;
     1) CONTEXT_STATE=unmeasured ;;
-    *) die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$CONTEXT_PCT" ;;
+    *) die invalid-agent-reserve "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$AGENT_RESERVE" ;;
   esac
 fi
 if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then

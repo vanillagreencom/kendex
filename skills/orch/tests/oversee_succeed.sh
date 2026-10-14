@@ -1921,19 +1921,22 @@ ROWS
 # three-argument call is the must-fail control for the reported disagreement.
 RESERVECTL="$(mutant_scripts agent-reserve-control oversee-succeed)" || exit 1
 mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT" "$AGENT_RESERVE")' '"$CONTEXT_PCT")'
-while IFS='|' read -r reading reserve verdict; do
+while IFS='|' read -r reading reserve expected_rc verdict; do
   new_caller "$UNDER_MARK"
   AGENT_RESERVE="$reserve" CONTEXT_PCT=90 run_succeed agentreserve '' --check-marks --context "$reading"
-  assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" "0|$verdict" \
+  assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" "$expected_rc|$verdict" \
     "succession shares the agent-launch mark at $reading with reserve $reserve"
 done <<'ROWS'
-240000:1000000|default|context-below-mark
-249999:1000000|150000|context-below-mark
-250000:1000000|150000|mark-reached
-300000:1000000|default|mark-reached
-29999:200000|150000|context-below-mark
-30000:200000|150000|mark-reached
-300000:1000000|50000|context-below-mark
+240000:1000000|default|0|context-below-mark
+249999:1000000|150000|0|context-below-mark
+250000:1000000|150000|0|mark-reached
+300000:1000000|default|0|mark-reached
+29999:200000|150000|0|context-below-mark
+30000:200000|150000|0|mark-reached
+300000:1000000|50000|0|context-below-mark
+300000:1000000|-1|1|invalid-agent-reserve
+300000:1000000|0150000|1|invalid-agent-reserve
+300000:1000000|nope|1|invalid-agent-reserve
 ROWS
 new_caller "$UNDER_MARK"
 AGENT_RESERVE=150000 CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 300000:1000000
