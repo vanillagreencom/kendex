@@ -283,7 +283,7 @@ environment_rows() {
 [2, "cat <<'EOF' \u007c& bash\nenv\nEOF", "copilot-inline-merged-pipe-heredoc-program"]
 [2, "{ cat <<'EOF' \u007c& command env NAME=value bash; }\nenv\nEOF", "grouped-merged-piped-heredoc-program"]
 [2, "cat <<'EOF' \u007c& cat | sh -s\nprintenv\nEOF", "indirect-merged-piped-heredoc-program"]
-[2, "cat <<'EOF' | cat\nenv\nEOF", "pipeline-heredoc-data-retains-main-refusal"]
+[0, "cat <<'EOF' | cat\nenv\nEOF", "pipeline-heredoc-data-data"]
 [2, "bash -c 'cat | cat' <<'EOF'\nenv\nEOF", "inherited-pipeline-heredoc-retains-main-refusal"]
 [2, "bash -c 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "inherited-merged-pipeline-heredoc-retains-main-refusal"]
 [2, "eval 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "eval-inherited-pipeline-heredoc-retains-main-refusal"]
@@ -846,13 +846,21 @@ environment_rows() {
 [2,"bash <<EOF; script.sh","unread-shell-heredoc-body-without-marker"]
 [0,"python3 - <<'PY'\nfrom pathlib import Path\np=Path('scripts/test-plugin-logic.js')\ntext=p.read_text(); lines=text.splitlines(keepends=True)\nfor i,line in enumerate(lines):\n    if '\"a description link to a plugin\\'s page\"' in line:\n        lines[i]=line.replace('null],', r'\"schema.a.link has unknown key \\\"pane\\\"\"],')\n    elif '\"a description link with both an address and a page\"' in line:\n        lines[i]=line.replace('\"schema.a.link must declare exactly one of url and pane\"', r'\"schema.a.link has unknown key \\\"pane\\\"\"')\n    elif '\"a description link with neither an address nor a page\"' in line:\n        lines[i]=line.replace('\"schema.a.link must declare exactly one of url and pane\"','\"schema.a.link.url must be an https address\"')\n    elif '\"a description link to a page that is no plugin id\"' in line or '\"a description link to a page that is not a string\"' in line:\n        lines[i]=''\n    elif '\"a status hint link to a plugin\\'s page\"' in line:\n        lines[i]=line.replace('\"status.a.link.pane needs a setting description\"', r'\"status.a.link has unknown key \\\"pane\\\"\"')\n    elif '\"a description link may name a page\"' in line:\n        lines[i]='    [\"a description link refuses the old pane key\", \\'var LINK_KEYS = [\"text\", \"url\"];\\', \\'var LINK_KEYS = [\"text\", \"url\", \"pane\"];\\'],\\n'\n    elif any(x in line for x in ['\"a description link declares no address beside its page\"','\"a description link declares an address or a page\"','\"only a description link names a page\"','\"a description link\\'s page is a plugin id\"','\"a description link\\'s page is a string\"']):\n        lines[i]=''\nassert ''.join(lines)!=text\np.write_text(''.join(lines))\nPY","ken-3998-allow-original-source-edit"]
 [0,"python3 - <<'PY'\nfrom pathlib import Path\nimport struct\nr=Path('tmp/ui-shots/VG-563')\npaths=sorted(p for folder in ['after','after-consumers'] for p in (r/folder).rglob('*.png'))\nlines=[]\nfor p in paths:\n w,h=struct.unpack('>II',p.read_bytes()[16:24]); lines.append(f'- `{p}`: {w} \u00d7 {h}')\nPath('tmp/qa-after-inventory-VG-563.md').write_text('# After images available\\n\\n'+'\\n'.join(lines)+'\\n')\nprint('After completed-set images',len(paths))\nPY","ken-3998-allow-png-inventory"]
-[2,"sh tmp/runtime-tests/launch.sh /home/method/dev/.worktrees/vgshell/vgs-1686/tmp/runtime-tests/tui env VGS_TEST_RUN=1 scripts/test-tui.sh","ken-3998-allow-launcher-report"]
-[2,"sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/launch.sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait 1034 --item HT-970","ken-3998-allow-waiter-report"]
-[2,"python3 - <<PY\nfor name in ['NAME']:\n    print('env', name)\nPY","ken-3998-allow-unquoted-python-data"]
+[0,"sh tmp/runtime-tests/launch.sh /home/method/dev/.worktrees/vgshell/vgs-1686/tmp/runtime-tests/tui env VGS_TEST_RUN=1 scripts/test-tui.sh","ken-3998-allow-launcher-report"]
+[0,"sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/launch.sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait 1034 --item HT-970","ken-3998-allow-waiter-report"]
+[0,"python3 - <<PY\nfor name in ['NAME']:\n    print('env', name)\nPY","ken-3998-allow-unquoted-python-data"]
 [0,"mkdir -p build && cat > build/x.py <<'PY'\nfor name in ['NAME']:\n    print('The printed run set passed.')\nPY\npython3 build/x.py","ken-3998-allow-file-write-and-run"]
 [0,"cat > build/x.py <<'PY' && python3 build/x.py\nfor name in ['NAME']:\n    print('The printed run set passed.')\nPY","ken-3998-allow-file-write-inline-run"]
 [0,"cat > build/control.py <<'PY'\nimport os, subprocess\nfor directory in ['build']:\n    subprocess.run(['python3', 'check.py'], env={'PATH': os.defpath, 'HOME': directory, 'VGS_TEST_RUN': '1'})\nPY\npython3 build/control.py && echo ok","ken-3998-allow-subprocess-environment-data"]
 [0,"mkdir -p notes && cat > notes/brief.md <<'EOF'\nIf a command prints the environment, use a named variable.\nfor example: replace env, printenv, export -p, declare -x, /proc/*/environ and show-environment with named reads.\nEOF","ken-3998-allow-brief-data"]
+[0,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/queue-wait 610 180 2400 --json --no-guard --no-check-probe","vsys-queue-wait-named-unset"]
+[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN printenv","vsys-queue-wait-environment-output"]
+[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/queue-wait $(env)","vsys-queue-wait-executable-substitution"]
+[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/queue-wait `printenv`","vsys-queue-wait-executable-backtick"]
+[2,"sh tmp/runtime-tests/launch.sh tmp/runtime-tests/tui env VGS_TEST_RUN=1 env","launcher-report-environment-output"]
+[2,"sh tmp/runtime-tests/launch.sh tmp/runtime-tests/tui env VGS_TEST_RUN=1 scripts/test-tui.sh $(env)","launcher-report-executable-substitution"]
+[2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY env","documented-waiter-environment-output"]
+[2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait $(printenv)","documented-waiter-executable-substitution"]
 [2,"sh wrap.sh env","ken-3998-refuse-wrapper-no-program"]
 [0,"receiver one two env -u NAME","ken-3998-refuse-ordinary-receiver-no-program"]
 [0,"receiver one two env -i -u NAME --unset=OTHER -C build NAME=value program extra words > out","ken-3998-launcher-any-receiver-arity"]
@@ -1014,7 +1022,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
       defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
-      defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$pipeline$incoming_sources\" ]", "false") }
+      defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$incoming_sources\" ]", "false") }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
       defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
@@ -1027,7 +1035,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "launcher-pass" && $0 == "        env)" { print; print "          program=\"\"; mode=other; break"; changed++; next }
       defect == "nested-pass" && $0 == "  n=${#tokens[@]}" { print "  [ -z \"$compound\" ] || return 1"; changed++ }
       defect == "broad-filter" { swap("[[ $pattern =~ $filter_re ]]", "[[ -n $pattern ]]") }
-      defect == "env-terminator" { swap("--) options_ended=1; pos=$((pos + 1)); continue ;;", "--) pos=$((pos + 1)); break ;;") }
+      defect == "env-terminator" { swap("options_ended=1; pos=$((pos + 1)); continue ;;", "pos=$((pos + 1)); break ;;") }
       defect == "grep-record-flags" { swap("^-[EFq]+$", "^-[EFazq]+$") }
       defect == "nul-records" && $0 == "    case \"${decisions[$stage]}\" in" {
         print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
@@ -1133,7 +1141,6 @@ main-evidence-cut|FAIL environment: conservative-sudo-group-operand: exit=0 expe
 main-evidence-cut|FAIL environment: split-string-named-read: exit=0 expected=2
 main-evidence-cut|FAIL environment: split-string-quoted-data: exit=0 expected=2
 main-command-cut|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
-main-evidence-cut|FAIL environment: wrapper-empty-launcher: exit=0 expected=2
 late-check|FAIL environment: explicit-policy-off: exit=0 expected=2
 unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
 launcher-pass|FAIL environment: launcher-dump: exit=0 expected=2
@@ -1170,7 +1177,7 @@ suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
 quoted-heredoc|FAIL environment: double-quoted-heredoc-data: exit=2 expected=0
 heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
-unset-operand|FAIL environment: wrapper-unset-launcher: exit=2 expected=0
+unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
 suffix-first-word|FAIL environment: unsupported-list-evidence: exit=0 expected=2
 suffix-stage-only|FAIL environment: unsupported-list-evidence: exit=0 expected=2
 suffix-stage-only|FAIL environment: unsupported-pipe-evidence: exit=0 expected=2

@@ -1,0 +1,1 @@
+- Permit direct Python heredoc data, quoted cat data pipelines and saved waiter commands that clear named environment variables. Keep refusals for whole-environment output and executable substitutions.
