@@ -274,6 +274,13 @@ environment_rows() {
 [2,"env NAME=value bash <<'EOF'\nenv\nEOF","env-heredoc-program"]
 [2,"sudo -u NAME sh <<'EOF'\nprintenv\nEOF","sudo-heredoc-program"]
 [2,"cat <<'EOF' | bash\nenv\nEOF","piped-heredoc-program"]
+[2,"cat <<'EOF' | exec bash\nenv\nEOF","piped-exec-heredoc-program"]
+[2,"cat <<'EOF' | timeout 60 bash\nenv\nEOF","piped-timeout-heredoc-program"]
+[2,"cat <<'EOF' | nice bash\nprintenv\nEOF","piped-nice-heredoc-program"]
+[2,"cat <<'EOF' | sudo -s\nenv\nEOF","piped-sudo-shell-heredoc-program"]
+[2,"cat <<'EOF' | xargs -I{} {}\nenv\nEOF","piped-xargs-heredoc-program"]
+[2,"cat <<'EOF' | cat | exec bash\nenv\nEOF","indirect-piped-exec-heredoc-program"]
+[0,"cat <<'EOF' | timeout 60 bash\nprintf done\nEOF","unproved-pipe-without-known-read"]
 [2, "cat <<'EOF' \u007c& bash\nenv\nEOF", "copilot-merged-pipe-heredoc-program"]
 [2, "cat <<'FIRST' 3<<SECOND \u007c& bash\nenv\nFIRST\nordinary\nSECOND", "mixed-body-merged-pipeline"]
 [2, "cat 3<<FIRST <<'SECOND' \u007c& bash\nordinary\nFIRST\nprintenv\nSECOND", "reversed-mixed-body-merged-pipeline"]
@@ -284,6 +291,7 @@ environment_rows() {
 [2, "{ cat <<'EOF' \u007c& command env NAME=value bash; }\nenv\nEOF", "grouped-merged-piped-heredoc-program"]
 [2, "cat <<'EOF' \u007c& cat | sh -s\nprintenv\nEOF", "indirect-merged-piped-heredoc-program"]
 [0, "cat <<'EOF' | cat\nenv\nEOF", "pipeline-heredoc-data-data"]
+[0, "cat <<'EOF' | cat | cat\nenv\nEOF", "pipeline-heredoc-data-chain"]
 [2, "bash -c 'cat | cat' <<'EOF'\nenv\nEOF", "inherited-pipeline-heredoc-retains-main-refusal"]
 [2, "bash -c 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "inherited-merged-pipeline-heredoc-retains-main-refusal"]
 [2, "eval 'cat \u007c& cat' <<'EOF'\nenv\nEOF", "eval-inherited-pipeline-heredoc-retains-main-refusal"]
@@ -1062,7 +1070,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "heredoc-program" { swap("if [ -n \"${stage_stdin[$stage]}\" ]; then", "if false; then") }
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
       defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
-      defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
+      defect == "heredoc-pipe" { swap("data_source=\"$data_source$piped_source\"", "data_source=\"$data_source\"") }
       defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
       defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
