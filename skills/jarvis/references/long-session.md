@@ -15,7 +15,8 @@ Each record kind has one home. Write a record to its home, never to the handoff.
 - A continuing session requires available tracker access and one user-selected project for its own tasks. Confirm that the tracker can read the workspace queue and retain tasks and checks. If setup or project selection is missing, request it through [Connect Linear](../workflows/setup-linear.md). Keep the current handoff untouched until these prerequisites hold.
 - Select a session-task project in a Linear team that no repository's overseer dispatches. Confirm at project selection that no checkout's `LINEAR_TEAM` names that team. If this is unconfirmed, use [Connect Linear](../workflows/setup-linear.md) before continuing. Create each of the session's own tasks in that project through the tracker's existing issue creation command.
 - Record a session's check on another item as a Done-when box on that item. The box names the check, its evidence source, its trigger and its deadline. It follows the tracker's Verifying lifecycle: an open box keeps the item in Verifying, and the box closes only on recorded evidence or an explicit disposition. Add no label.
-- Select the checks by the tracker's Verifying state, read across the workspace and every page. When the read fails, report the checks unavailable.
+- For a fix sent to another owner, put the Done-when box on a check item in the session's own task project instead. Link the other owner's item. Keep the box and check item open until the session records the check where the problem was seen. The other owner's Done mark closes neither the box nor the check item.
+- Select the checks by the tracker's Verifying state across the workspace, and also read every open check item in the session's own task project. Read both selections live and through every page. When a read fails, report the checks unavailable.
 
 ## Handoff
 
