@@ -1,1 +1,1 @@
-- Allows source edits and prose in heredocs, quoted argument data, and env launchers through wrappers. Keeps refusal for recognized shell environment dumps, shell input behind documented launchers, piped exec input, and inherited process-environment reads.
+- Shell command checks allow data bodies and quoted arguments, while retaining environment dump refusals through documented launchers, compound input, piped exec and inherited process descriptors.

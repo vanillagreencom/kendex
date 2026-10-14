@@ -959,6 +959,111 @@ environment_rows() {
 [2,"bash -c 'cat < /proc/self/fd/3' 3< /proc/$$/environ","proc-input-self-fd-redirect"]
 [2,"bash -c 'cat < /dev/stdin' < /proc/$$/environ","proc-input-stdin-redirect"]
 [0,"bash -c 'cat /dev/fd/2 |\u0026 cat' 2< /proc/$$/environ","proc-input-data-replaced-merged-pipe"]
+[2,"{ bash; } <<'EOF'\nenv\nEOF","compound-brace-shell-heredoc"]
+[2,"{ bash; } <<< 'env'","compound-brace-shell-string"]
+[2,"cat <<'EOF' | { bash; }\nenv\nEOF","compound-brace-shell-pipe"]
+[0,"{ cat; } <<'EOF'\nenv\nEOF","compound-brace-data-heredoc"]
+[0,"{ cat; } <<< 'env'","compound-brace-data-string"]
+[0,"cat <<'EOF' | { cat; }\nenv\nEOF","compound-brace-data-pipe"]
+[2,"{ eval cat; } < /proc/self/environ","compound-brace-proc"]
+[2,"(bash) <<'EOF'\nenv\nEOF","compound-subshell-shell-heredoc"]
+[2,"(bash) <<< 'env'","compound-subshell-shell-string"]
+[2,"cat <<'EOF' | (bash)\nenv\nEOF","compound-subshell-shell-pipe"]
+[0,"(cat) <<'EOF'\nenv\nEOF","compound-subshell-data-heredoc"]
+[0,"(cat) <<< 'env'","compound-subshell-data-string"]
+[0,"cat <<'EOF' | (cat)\nenv\nEOF","compound-subshell-data-pipe"]
+[2,"(eval cat) < /proc/self/environ","compound-subshell-proc"]
+[2,"if :; then bash; fi <<'EOF'\nenv\nEOF","compound-if-shell-heredoc"]
+[2,"if :; then bash; fi <<< 'env'","compound-if-shell-string"]
+[2,"cat <<'EOF' | if :; then bash; fi\nenv\nEOF","compound-if-shell-pipe"]
+[0,"if :; then cat; fi <<'EOF'\nenv\nEOF","compound-if-data-heredoc"]
+[0,"if :; then cat; fi <<< 'env'","compound-if-data-string"]
+[0,"cat <<'EOF' | if :; then cat; fi\nenv\nEOF","compound-if-data-pipe"]
+[2,"if :; then eval cat; fi < /proc/self/environ","compound-if-proc"]
+[2,"for item in one; do bash; done <<'EOF'\nenv\nEOF","compound-for-shell-heredoc"]
+[2,"for item in one; do bash; done <<< 'env'","compound-for-shell-string"]
+[2,"cat <<'EOF' | for item in one; do bash; done\nenv\nEOF","compound-for-shell-pipe"]
+[0,"for item in one; do cat; done <<'EOF'\nenv\nEOF","compound-for-data-heredoc"]
+[0,"for item in one; do cat; done <<< 'env'","compound-for-data-string"]
+[0,"cat <<'EOF' | for item in one; do cat; done\nenv\nEOF","compound-for-data-pipe"]
+[2,"for item in one; do eval cat; done < /proc/self/environ","compound-for-proc"]
+[2,"while :; do bash; break; done <<'EOF'\nenv\nEOF","compound-while-shell-heredoc"]
+[2,"while :; do bash; break; done <<< 'env'","compound-while-shell-string"]
+[2,"cat <<'EOF' | while :; do bash; break; done\nenv\nEOF","compound-while-shell-pipe"]
+[0,"while :; do cat; break; done <<'EOF'\nenv\nEOF","compound-while-data-heredoc"]
+[0,"while :; do cat; break; done <<< 'env'","compound-while-data-string"]
+[0,"cat <<'EOF' | while :; do cat; break; done\nenv\nEOF","compound-while-data-pipe"]
+[2,"while :; do eval cat; break; done < /proc/self/environ","compound-while-proc"]
+[2,"until false; do bash; break; done <<'EOF'\nenv\nEOF","compound-until-shell-heredoc"]
+[2,"until false; do bash; break; done <<< 'env'","compound-until-shell-string"]
+[2,"cat <<'EOF' | until false; do bash; break; done\nenv\nEOF","compound-until-shell-pipe"]
+[0,"until false; do cat; break; done <<'EOF'\nenv\nEOF","compound-until-data-heredoc"]
+[0,"until false; do cat; break; done <<< 'env'","compound-until-data-string"]
+[0,"cat <<'EOF' | until false; do cat; break; done\nenv\nEOF","compound-until-data-pipe"]
+[2,"until false; do eval cat; break; done < /proc/self/environ","compound-until-proc"]
+[2,"case one in one) bash;; esac <<'EOF'\nenv\nEOF","compound-case-shell-heredoc"]
+[2,"case one in one) bash;; esac <<< 'env'","compound-case-shell-string"]
+[2,"cat <<'EOF' | case one in one) bash;; esac\nenv\nEOF","compound-case-shell-pipe"]
+[0,"case one in one) cat;; esac <<'EOF'\nenv\nEOF","compound-case-data-heredoc"]
+[0,"case one in one) cat;; esac <<< 'env'","compound-case-data-string"]
+[0,"cat <<'EOF' | case one in one) cat;; esac\nenv\nEOF","compound-case-data-pipe"]
+[2,"case one in one) eval cat;; esac < /proc/self/environ","compound-case-proc"]
+[2,"{ :; bash; } <<'EOF'\nenv\nEOF","compound-list-shell"]
+[2,"{ exec bash; } <<'EOF'\nenv\nEOF","compound-exec-shell"]
+[2,"cat <<'EOF' | { :; timeout 60 bash; }\nenv\nEOF","compound-pipe-launcher"]
+[2,"cat <<'EOF' | { :; exec bash; }\nenv\nEOF","compound-pipe-exec"]
+[2,"{ bash /dev/fd/3; } 3<<'EOF'\nenv\nEOF","compound-nonstdin-body"]
+[2,"{ bash <&3; } 3<<'EOF'\nenv\nEOF","compound-nonstdin-copy"]
+[2,"{ (bash); } <<< 'env'","compound-nested-body"]
+[2,"{ { eval cat; }; } < /proc/self/environ","compound-nested-proc"]
+[2,"{ { cat; } < /dev/null; bash; } <<< 'env'","compound-nested-restore-body"]
+[2,"{ { cat; } < /dev/null; eval cat; } < /proc/self/environ","compound-nested-restore-proc"]
+[0,"{ bash < /dev/null; } <<< 'env'","compound-replace-body"]
+[0,"{ (bash) < /dev/null; } <<< 'env'","compound-nested-replace-body"]
+[0,"{ eval cat < /dev/null; } < /proc/self/environ","compound-replace-proc"]
+[0,"{ cat; } <<< 'env'; bash","compound-body-lifetime-ends"]
+[0,"{ cat < /dev/null; } < /proc/self/environ; cat","compound-proc-lifetime-ends"]
+[0,"{ bash; } <<'EOF' < /dev/null\nenv\nEOF","compound-closing-replace-body"]
+[0,"{ cat; } <<< 'env' | cat","compound-outgoing-data"]
+[2,"{ cat; } <<< 'env' | bash","compound-outgoing-shell"]
+[0,"{ cat; } 3<<'EOF' 3<&-\nenv\nEOF","compound-closed-body-descriptor"]
+[2,"{ bash; } 3<<'EOF' 0< /dev/fd/3 3<&-\nenv\nEOF","compound-body-path-copy"]
+[0,"printf '%s' '{ bash; }' <<< 'env'","compound-quoted-syntax-data"]
+[0,["{","bash;","}","<<<","env"],"compound-argv-data"]
+[2,"bash -c 'cat /proc/$$/fd/3' 3< /proc/$$/environ","proc-alias-pid-cat"]
+[2,"bash -c 'strings /proc/$$/fd/3' 3< /proc/$$/environ","proc-alias-pid-strings"]
+[2,"bash -c 'cat < /proc/$$/fd/3' 3< /proc/$$/environ","proc-alias-pid-redirect"]
+[0,"bash -c 'cat /proc/$$/fd/3' 3< /dev/null","proc-alias-pid-plain-descriptor"]
+[2,"bash -c 'cat /proc/$BASH\u0050ID/fd/3' 3< /proc/$$/environ","proc-alias-bashpid-cat"]
+[2,"bash -c 'strings /proc/$BASH\u0050ID/fd/3' 3< /proc/$$/environ","proc-alias-bashpid-strings"]
+[2,"bash -c 'cat < /proc/$BASH\u0050ID/fd/3' 3< /proc/$$/environ","proc-alias-bashpid-redirect"]
+[0,"bash -c 'cat /proc/$BASH\u0050ID/fd/3' 3< /dev/null","proc-alias-bashpid-plain-descriptor"]
+[2,"bash -c 'cat /proc/${BASH\u0050ID}/fd/3' 3< /proc/$$/environ","proc-alias-braced-bashpid-cat"]
+[2,"bash -c 'strings /proc/${BASH\u0050ID}/fd/3' 3< /proc/$$/environ","proc-alias-braced-bashpid-strings"]
+[2,"bash -c 'cat < /proc/${BASH\u0050ID}/fd/3' 3< /proc/$$/environ","proc-alias-braced-bashpid-redirect"]
+[0,"bash -c 'cat /proc/${BASH\u0050ID}/fd/3' 3< /dev/null","proc-alias-braced-bashpid-plain-descriptor"]
+[2,"bash -c 'cat /proc/thread-self/fd/3' 3< /proc/$$/environ","proc-alias-thread-self-cat"]
+[2,"bash -c 'strings /proc/thread-self/fd/3' 3< /proc/$$/environ","proc-alias-thread-self-strings"]
+[2,"bash -c 'cat < /proc/thread-self/fd/3' 3< /proc/$$/environ","proc-alias-thread-self-redirect"]
+[0,"bash -c 'cat /proc/thread-self/fd/3' 3< /dev/null","proc-alias-thread-self-plain-descriptor"]
+[0,"bash -c \"cat '/proc/\\$\\$/fd/3'\" 3< /proc/$$/environ","proc-alias-literal-pid-data"]
+[0,"bash -c \"cat '/proc/\\$BASH\u0050ID/fd/3'\" 3< /proc/$$/environ","proc-alias-literal-bashpid-data"]
+[0,"bash -c 'cat /proc/1/fd/3' 3< /proc/$$/environ","proc-alias-other-process-data"]
+[0,"bash -c 'FD=3; cat /proc/\"$$\"/fd/$FD' 3< /dev/null","proc-alias-plain-expanded-fd"]
+[2,"bash -c \"cat /proc/\\$\\$/fd/3\" 3< /proc/$$/environ","proc-alias-escaped-outer-source"]
+[2,"cat <<'EOF' | { { :; bash; }; }\nenv\nEOF","compound-nested-pipeline-shell"]
+[0,"cat <<'EOF' | { { :; cat; }; }\nenv\nEOF","compound-nested-pipeline-data"]
+[2,"{ cat; } <<< 'env' | { :; bash; }","compound-pipeline-groups-shell"]
+[0,"{ cat; } <<< 'env' | { :; cat; }","compound-pipeline-groups-data"]
+[2,"{ eval 'cat <&4'; } 3< /proc/self/environ 4<&3 3<&-","compound-proc-copied-descriptor"]
+[0,"{ bash; } 3<<'EOF' 3<&-\nenv\nEOF","compound-closed-shell-input"]
+[0,"{ bash; } 3<<'EOF' 3> out\nenv\nEOF","compound-output-replaces-body"]
+[2,"case one in other) cat;; one) bash;; esac <<'EOF'\nenv\nEOF","compound-case-later-arm-shell"]
+[0,"case one in other) cat;; one) cat;; esac <<'EOF'\nenv\nEOF","compound-case-later-arm-data"]
+[0,"bash -c \"cat /proc/$$/fd/3\" 3< /proc/$$/environ","proc-alias-expanded-outer-source-data"]
+[0,"bash -c \"FD=3; cat '/proc/\\$\\$'/fd/\\$FD\" 3< /proc/$$/environ","proc-alias-literal-pid-expanded-fd-data"]
+[2,"case one in one) printf '%s' ';' ';'; (bash) <<'EOF'\nenv\nEOF\n;; esac","compound-case-quoted-boundary-shell"]
+[0,"case one in one) printf '%s' ';' ';'; (cat) <<'EOF'\nenv\nEOF\n;; esac","compound-case-quoted-boundary-data"]
 ENVIRONMENT_ROWS
   ) || exit 1
   while IFS=$'\t' read -r expected command_json label world; do
@@ -1079,18 +1184,27 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "heredoc-expansion" { swap("[ -z \"${heredoc_expand[$doc]}\" ] || {", "[ -z \"${heredoc_expand[$doc]}\" ] || true || {") }
       defect == "transparent-launcher" { swap("        timeout | nice | stdbuf | setsid | nohup | flock | time)", "        transparent-launcher-disabled)") }
       defect == "sudo-shell-option" { swap("-i | --login | -s | --shell)", "sudo-shell-option-disabled)") }
+      defect == "case-boundary-role" { swap("[ \"${kinds[$i]}\" = operator ] && [ \"${kinds[$((i - 1))]:-}\" = operator ]", "true") }
+      defect == "compound-scope" { swap("then stage_scope[stage]=$group; fi", "then :; fi") }
+      defect == "compound-parent" { swap("group_parents[group]=$owner", "group_parents[group]=-1") }
+      defect == "compound-end" { swap("[ \"$stage\" -le \"${group_last[$group]}\" ]", "true") }
+      defect == "body-replacement" { swap("[ \"${body_entry%%:*}\" = \"$1\" ] || retained=", "retained=") }
+      defect == "thread-alias" { swap(" | /proc/thread-self/fd/*", "") }
+      defect == "executable-alias-provenance" { swap("executable_aliases[cursor]=0", "executable_aliases[cursor]=1") }
+      defect == "process-alias" { swap("[ -n \"${3:-}\" ] || return 1", "return 1") }
+      defect == "alias-provenance" { swap("[ -n \"${3:-}\" ] || return 1", ":") }
       defect == "proc-inheritance" { swap("local environment_input_fds=${stage_proc_fds[$stage]}", "local environment_input_fds=\" \"") }
-      defect == "proc-pipeline-input" { swap("input_proc_fds=${input_proc_fds//\" 0 \"/ } ;; esac", ": ;; esac") }
+      defect == "proc-pipeline-input" { swap("input_proc_fds=${input_proc_fds//\" $1 \"/ }", ":") }
       defect == "descriptor-prefix" { swap("[ \"${arg_kinds[$((n - 1))]}\" = descriptor ]", "[[ ${args[$((n - 1))]} =~ ^[0-9]+$ ]]") }
-      defect == "proc-fd-operand" { swap("[[ $input_proc_fds == *\" $input_fd \"* ]]", "false") }
+      defect == "proc-fd-operand" { swap("/dev/fd/* | /proc/self/fd/* | /proc/thread-self/fd/*) input_fd=${1##*/} ;;", "/dev/fd/* | /proc/self/fd/* | /proc/thread-self/fd/*) return 1 ;;") }
       defect == "proc-merged-pipe" { swap("if [ \"${separators[$stage]}\" = \047|\047\047&\047 ]; then", "if false; then") }
       defect == "here-string" { swap("then c=\047<<<\047", "then c=\047<<\047") }
       defect == "delimiter-proof" { swap("[ \"$kind\" != ansi-escaped ] || return 0", "[ \"$kind\" != ansi-escaped ] || return 1") }
       defect == "heredoc-program" { swap("if [ \"${stage_stdin[$stage]}\" = 1 ]; then", "if false; then") }
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
-      defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
-      defect == "heredoc-pipe" { swap("data_source=\"$data_source $piped_source\"", "data_source=\"$data_source\"") }
-      defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
+      defect == "descriptor-body" && changed == 0 { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
+      defect == "heredoc-pipe" { swap("piped_source=$data_source", "piped_source=\"\"") }
+      defect == "missing-identifier-cut" && changed == 0 { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
       defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
       defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
@@ -1215,6 +1329,16 @@ proc-fd-operand|FAIL environment: proc-input-fd-path: exit=0 expected=2
 proc-inheritance|FAIL environment: proc-input-output-style-copy: exit=0 expected=2
 proc-fd-operand|FAIL environment: proc-input-fd-redirect: exit=0 expected=2
 proc-merged-pipe|FAIL environment: proc-input-data-replaced-merged-pipe: exit=2 expected=0
+compound-scope|FAIL environment: compound-brace-shell-heredoc: exit=0 expected=2
+compound-scope|FAIL environment: compound-brace-proc: exit=0 expected=2
+compound-parent|FAIL environment: compound-nested-body: exit=0 expected=2
+compound-end|FAIL environment: compound-body-lifetime-ends: exit=2 expected=0
+body-replacement|FAIL environment: compound-replace-body: exit=2 expected=0
+process-alias|FAIL environment: proc-alias-pid-cat: exit=0 expected=2
+alias-provenance|FAIL environment: proc-alias-literal-pid-data: exit=2 expected=0
+thread-alias|FAIL environment: proc-alias-thread-self-cat: exit=0 expected=2
+executable-alias-provenance|FAIL environment: proc-alias-expanded-outer-source-data: exit=2 expected=0
+case-boundary-role|FAIL environment: compound-case-quoted-boundary-shell: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
