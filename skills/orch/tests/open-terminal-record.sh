@@ -738,13 +738,17 @@ git -C "$TMP_ROOT/dependency-unpark" config gc.auto 0
 git -C "$TMP_ROOT/dependency-unpark" config maintenance.auto false
 orch_fixture_shared_libs "$TMP_ROOT/dependency-unpark"
 mutate_file "$DEPENDENCY_OT" '{until_pr: .until_pr}' '{}'
-for row in "$OT|0|done" "$DEPENDENCY_OT|2|stopped"; do
-  IFS='|' read -r owner close_rc close_status <<<"$row"
-  "$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" \
-    '(.lanes[] | select(.item == "CC-65")) |= (.status="parked" | .parked={until_pr:9,head:"abc",repo:"o/r",at:$at})' >/dev/null
+for row in "$OT|0|done|" "$DEPENDENCY_OT|2|stopped|" "$OT|0|done|other/repo"; do
+  IFS='|' read -r owner close_rc close_status until_repo <<<"$row"
+  "$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" --arg until_repo "$until_repo" \
+    '(.lanes[] | select(.item == "CC-65")) |= (.status="parked" | .parked=({until_pr:9,head:"abc",repo:"o/r",at:$at} + (if $until_repo == "" then {} else {until_repo:$until_repo} end)))' >/dev/null
   STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
     run_ot SCRIPT="$owner" --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
   assert_eq "rc=$RC status=$(field "$(record CC-65)" status)" 'rc=0 status=running' 'dependency park without own PR resumes its harness'
+  if [[ -n "$until_repo" ]]; then
+    assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-65") | .pending_pr.until_repo')" "$until_repo" \
+      'recovery retains the dependency repository beside its number'
+  fi
   "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")).status="stopped"' >/dev/null
   CLOSE_RC=0
   PATH="$BIN:$PATH" ORCH_LANE_HOST="$HOST_STUB" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" STUB_PR_STATE=MERGED \

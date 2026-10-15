@@ -107,6 +107,8 @@ message() { # REASON FIELD=VALUE...
       printf '%s\n' \
         'The lane was not parked and nothing changed. reason names the condition it stopped on:' \
         '  local             the record carries no host, so there is no sandbox to stop.' \
+        '  repo-unwatched    the dependency repository is neither the lane repository nor in ORCH_CONNECTED_REPOS.' \
+        '  connected-repos-unread  the connected repository setting could not be read.' \
         '  repo-unresolved   the record names no repository and gh repo view could not answer for this checkout; pass --repo OWNER/REPO.' \
         '  pr-read-failed    gh pr view could not read the pull request; its own words are on the lines above this one.' \
         '  pr-branch-mismatch  the pull request head branch differs from the checked-out branch, or the workflow-state branch named by branch-source.' \
@@ -141,7 +143,7 @@ message() { # REASON FIELD=VALUE...
 
 usage() {
   cat <<'EOF'
-Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park [--pr N] [--until-pr N]]
+Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park [--pr N] [--until-pr N|OWNER/REPO#N]]
                   [--harness claude|codex|pi|copilot] [--tracker linear|github]
                   [--repo OWNER/REPO] ITEM
 
@@ -312,11 +314,13 @@ or mismatched evidence refuses. A queue
 park whose remote Git read fails may use the item's workflow-state branch;
 its admission or refusal names branch-source=workflow-state.
 --park --until-pr N selects another OPEN PR in the same repository as the
-resume prerequisite. --pr is optional there and retains the lane's own PR
-identity. Branch, queue, CLEAN and reducer checks apply only to a queue park.
+resume prerequisite. OWNER/REPO#N selects an OPEN PR in that repository.
+The repository must be the lane's own or listed in ORCH_CONNECTED_REPOS.
+--pr is optional there and retains the lane's own PR identity. Branch, queue, CLEAN and reducer checks apply only to a queue park.
 The dependency park retains until_pr beside head, repo, at and the optional
-own pr. Its own PR merge does not clear the wait. The watch reports the
-dependency's merge as parked-merged and its unmerged close as parked-closed.
+own pr. A qualified reference also retains until_repo for the dependency.
+A bare number keeps the existing record shape. Its own PR merge does not
+clear the wait. The watch reports the dependency's merge as parked-merged and its unmerged close as parked-closed.
 
 The record's worktree must stand: a removed-worktree answer to the stop
 refuses as stop-failed, as it does under --keep-sandbox.
@@ -395,6 +399,7 @@ TERMINAL_MODE=close
 PARK=false
 PARK_PR=""
 PARK_UNTIL_PR=""
+PARK_UNTIL_REPO=""
 OPT_HARNESS=""
 OPT_TRACKER=""
 OPT_REPO=""
@@ -436,6 +441,11 @@ if [[ "$PARK" == true && -z "$PARK_PR$PARK_UNTIL_PR" || "$PARK" == false && -n "
   message missing-value "option=--park" "requires=--pr" >&2; usage >&2; exit 2
 fi
 [[ -z "$PARK_PR" || "$PARK_PR" =~ ^[1-9][0-9]*$ ]] || { message missing-value "option=--pr" "value=$PARK_PR" >&2; exit 2; }
+# Qualified dependency references come from the overseer's park request.
+if [[ "$PARK_UNTIL_PR" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then
+  PARK_UNTIL_REPO="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
+  PARK_UNTIL_PR="${BASH_REMATCH[2]}"
+fi
 [[ -z "$PARK_UNTIL_PR" || "$PARK_UNTIL_PR" =~ ^[1-9][0-9]*$ ]] || { message missing-value "option=--until-pr" "value=$PARK_UNTIL_PR" >&2; exit 2; }
 if [[ "$TERMINAL_MODE" != close ]]; then
   [[ "$KEEP_SANDBOX" == false && "$PARK" == false ]] \
@@ -685,7 +695,7 @@ tracker_read() { # OUT_VAR COMMAND...
 TRACKER_CAUSE=""
 ITEM_END=""
 tracker_terminal() {
-  local value number state reason pr_repo pr_number pr_numbers description checklist pending_pr=null
+  local value number state reason pr_repo pr_number pr_rows description checklist pending_pr=null
   TRACKER_CAUSE=""
   if [[ "$TERMINAL_MODE" != close ]]; then
     # A resumed sandbox can be stopped or running while its PR is still open.
@@ -699,9 +709,12 @@ tracker_terminal() {
     # lane's own PR stays OPEN. Both retained waits must permit terminal close.
     pr_repo="$(jq -er '.repo | strings | select(length > 0)' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
-    pr_numbers="$(jq -er '[.pr, .until_pr] | map(select(. != null)) | if length > 0 and all(.[]; type == "number" and . > 0) then unique[] else error("parked-record-invalid") end' <<<"$pending_pr")" \
+    pr_rows="$(jq -er '[{repo: .repo, pr: .pr}, {repo: (.until_repo // .repo), pr: .until_pr}]
+      | map(select(.pr != null))
+      | if length > 0 and all(.[]; (.pr | type) == "number" and .pr > 0 and (.repo | type) == "string" and (.repo | length) > 0)
+        then unique[] | [.repo, .pr] | @tsv else error("parked-record-invalid") end' <<<"$pending_pr")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
-    while IFS= read -r pr_number; do
+    while IFS=$'\t' read -r pr_repo pr_number; do
       tracker_read state env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' \
         || { TRACKER_CAUSE=pr-read-failed; return 2; }
       case "$state" in
@@ -709,7 +722,7 @@ tracker_terminal() {
         MERGED|CLOSED) ;;
         *) TRACKER_CAUSE=pr-state-invalid; return 2 ;;
       esac
-    done <<<"$pr_numbers"
+    done <<<"$pr_rows"
   fi
   case "$tracker" in
     linear)
@@ -854,7 +867,7 @@ park_worktree_read() {
   return "$rc"
 }
 park_judge() {
-  local err view fields pr_state pr_head pr_branch armed merge_state queue queued out rc=0 kinds target clean
+  local err view fields pr_state pr_head pr_branch armed merge_state queue queued out rc=0 kinds target clean target_repo connected
   [[ -n "$host" ]] || { message park-refused "item=$ITEM" "reason=local" >&2; exit 1; }
   [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
   err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=provider-unsupported" "cause=stderr-unsaved" >&2; exit 1; }
@@ -870,10 +883,20 @@ park_judge() {
     tracker_read PARK_REPO env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner \
       || { message park-refused "item=$ITEM" "reason=repo-unresolved" >&2; exit 1; }
   fi
+  target_repo="${PARK_UNTIL_REPO:-$PARK_REPO}"
+  if [[ -n "$PARK_UNTIL_REPO" ]]; then
+    source "$SCRIPT_DIR/lib/gh-repo.sh"
+    connected="$(orch_connected_repos "$PARK_REPO")" \
+      || { message park-refused "item=$ITEM" reason=connected-repos-unread >&2; exit 1; }
+    if [[ "$PARK_UNTIL_REPO" != "$(printf '%s' "$PARK_REPO" | tr '[:upper:]' '[:lower:]')" ]] \
+        && ! grep -qxF -- "$PARK_UNTIL_REPO" <<<"$connected"; then
+      message park-refused "item=$ITEM" reason=repo-unwatched "repo=$PARK_UNTIL_REPO" >&2; exit 1
+    fi
+  fi
   target="${PARK_UNTIL_PR:-$PARK_PR}"
-  tracker_read view env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$target" --repo "$PARK_REPO" \
+  tracker_read view env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$target" --repo "$target_repo" \
       --json state,headRefOid,headRefName,autoMergeRequest,mergeStateStatus \
-    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$target" "repo=$PARK_REPO" >&2; exit 1; }
+    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$target" "repo=$target_repo" >&2; exit 1; }
   # One tab-separated line, the arm read as a word: a null autoMergeRequest is
   # a pull request nothing will merge unless the queue holds it.
   fields="$(jq -r '[.state, .headRefOid, .headRefName, (if .autoMergeRequest == null then "no" else "yes" end), .mergeStateStatus] | @tsv' <<<"$view" 2>/dev/null)" \
@@ -957,8 +980,8 @@ park_sandbox() {
   fi
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
-    --arg item "$ITEM" --arg pr "$PARK_PR" --arg until "$PARK_UNTIL_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
-    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = ({head: $head, repo: $repo, at: $at} + (if $pr == "" then {} else {pr: ($pr | tonumber)} end) + (if $until == "" then {} else {until_pr: ($until | tonumber)} end)) | del(.pending_pr)) else error("lane record disappeared") end' \
+    --arg item "$ITEM" --arg pr "$PARK_PR" --arg until "$PARK_UNTIL_PR" --arg until_repo "$PARK_UNTIL_REPO" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = ({head: $head, repo: $repo, at: $at} + (if $pr == "" then {} else {pr: ($pr | tonumber)} end) + (if $until == "" then {} else {until_pr: ($until | tonumber)} end) + (if $until_repo == "" then {} else {until_repo: $until_repo} end)) | del(.pending_pr)) else error("lane record disappeared") end' \
     >/dev/null || { message state-write-failed "item=$ITEM" "status=parked" >&2; exit 1; }
   [[ "$PARK_BRANCH_SOURCE" == worktree ]] || fields+=("branch-source=$PARK_BRANCH_SOURCE")
   message parked "${fields[@]}" "head=$PARK_HEAD" "status=parked"

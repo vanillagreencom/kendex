@@ -840,8 +840,8 @@ PREPARE_ROWS=""
 PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
-    elif (((.parked.until_pr // .parked.pr) | type) != "number" or (.parked.repo? | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
-    else "\(.item)\u001f\(.parked.repo | ascii_downcase)#\(.parked.until_pr // .parked.pr)\u001f\(.launched_at | if . == null then "" else (fromdateiso8601 | tostring) end)" end'
+    elif (((.parked.until_pr // .parked.pr) | type) != "number" or ((.parked.until_repo // .parked.repo) | type) != "string") then error("lane-field field=parked value=\(.parked | tojson)")
+    else "\(.item)\u001f\((.parked.until_repo // .parked.repo) | ascii_downcase)#\(.parked.until_pr // .parked.pr)\u001f\(.launched_at | if . == null then "" else (fromdateiso8601 | tostring) end)" end'
 PARKED_ITEMS=()
 PARKED_KEYS=()
 

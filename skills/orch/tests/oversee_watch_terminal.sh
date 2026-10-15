@@ -566,7 +566,7 @@ running_unfinished|MERGED|completed|- [ ] Record proof|running|if|4|running|0
 EOF
 
 LOST_IDENTITY="$(mutant_scripts terminal-lost-identity/orch open-terminal)/open-terminal" || exit 1
-mutate_file "$LOST_IDENTITY" '.pending_pr = (.parked | {pr, repo, head} + (if .until_pr == null then {} else {until_pr: .until_pr} end))' '.'
+mutate_file "$LOST_IDENTITY" '.pending_pr = (.parked | {pr, repo, head} + (if .until_pr == null then {} else {until_pr: .until_pr} end) + (if .until_repo == null then {} else {until_repo: .until_repo} end))' '.'
 PARKED_PR_CONTROL="$(mutant_scripts terminal-parked-pr-control/orch lane-close)/lane-close" || exit 1
 ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-parked-pr-control/linear"
 mutate_file "$PARKED_PR_CONTROL" 'elif .pending_pr != null then .pending_pr' 'elif .pending_pr != null then null'
@@ -575,13 +575,17 @@ DEPENDENCY_WAIT_CONTROL="$(mutant_scripts terminal-dependency-wait-control/orch 
 for control in "$OWN_WAIT_CONTROL" "$DEPENDENCY_WAIT_CONTROL"; do
   ln -s "$TMP_ROOT/terminal-close/linear" "${control%/orch/scripts/lane-close}/linear"
 done
-mutate_file "$OWN_WAIT_CONTROL" '[.pr, .until_pr]' '[.until_pr]'
-mutate_file "$DEPENDENCY_WAIT_CONTROL" '[.pr, .until_pr]' '[.pr]'
+mutate_file "$OWN_WAIT_CONTROL" '[{repo: .repo, pr: .pr}, {repo: (.until_repo // .repo), pr: .until_pr}]' '[{repo: (.until_repo // .repo), pr: .until_pr}]'
+mutate_file "$DEPENDENCY_WAIT_CONTROL" '[{repo: .repo, pr: .pr}, {repo: (.until_repo // .repo), pr: .until_pr}]' '[{repo: .repo, pr: .pr}]'
 while read -r owner identity mode retained own_state dependency_state expected_rc expected_status expected_close; do
   terminal_case "identity_${owner}_${identity}_${mode}_${retained}_${own_state}_${dependency_state}" parked completed
   if [[ "$identity" != own ]]; then
     jq --arg identity "$identity" '.lanes[0].parked |= ((if $identity == "dependency" then del(.pr) else . end) + {until_pr:2})' \
       "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+    mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
+  fi
+  if [[ "$identity" == foreign ]]; then
+    jq '.lanes[0].parked.until_repo="other/repo"' "$STUB_DIR/fleet/workflow-state-oversee.json" >"$STUB_DIR/fleet/next"
     mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
   fi
   printf '%s\n' "$own_state" > "$STUB_DIR/pr-state-1"
@@ -603,6 +607,10 @@ while read -r owner identity mode retained own_state dependency_state expected_r
   terminal_conditional_run "$close_bin"
   assert_eq "$(terminal_result)" "rc=$expected_rc status=$expected_status close=$expected_close mail=0 closed=0 refused=0" \
     "$mode: $owner/$identity/$retained/$own_state/$dependency_state preserves the all-recorded-PR close rule" "$STUB_DIR/err"
+  if [[ "$identity" == foreign ]]; then
+    assert_contains "$(cat "$STUB_DIR/gh.calls")" 'pr view 2 --repo other/repo ' \
+      'terminal close checks the retained dependency in its repository'
+  fi
 done <<'EOF'
 transfer own shipped pending OPEN MERGED 4 stopped 0
 transfer dependency shipped pending MERGED OPEN 4 stopped 0
@@ -615,6 +623,8 @@ both both shipped parked MERGED OPEN 4 parked 0
 both both shipped pending OPEN MERGED 4 stopped 0
 both both shipped pending MERGED OPEN 4 stopped 0
 both both shipped parked MERGED MERGED 0 done 1
+both foreign shipped parked MERGED OPEN 4 parked 0
+both foreign shipped pending MERGED OPEN 4 stopped 0
 both both shipped pending MERGED CLOSED 0 done 1
 own_wait both control parked OPEN MERGED 0 done 1
 own_wait both control pending OPEN MERGED 0 done 1

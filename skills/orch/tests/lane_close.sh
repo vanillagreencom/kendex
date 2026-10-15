@@ -69,6 +69,10 @@ cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladde
   "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" \
   "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
+ln -s "$TEST_DIR/../../github" "$FIXTURE/skills/github"
+cp "$TEST_DIR/../scripts/lib/gh-repo.sh" "$SCRIPTS/lib/"
+cp "$TEST_DIR/../scripts/lib/kendex-env.sh" "$SCRIPTS/lib/"
+cp "$TEST_DIR/../scripts/orch-env" "$SCRIPTS/orch-env"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
 #!/usr/bin/env bash
@@ -530,7 +534,7 @@ run_close() { # SCRIPT [ARGS...]
     LANE_CLOSE_TMUX_LIST_COUNT="$TMP_ROOT/list-count" LANE_CLOSE_CAPTURE_COUNT="$TMP_ROOT/capture-count" \
     LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" LANE_CLOSE_GH_CALLS="$GH_CALLS" \
     LANE_CLOSE_STATE_CALLS="$STATE_CALLS" LANE_CLOSE_MAIL_CALLS="$MAIL_CALLS" \
-    LANE_CLOSE_LANE_PID="${LANE_CLOSE_LANE_PID:-}" ORCH_LANE_CLOSE_SECS=1 \
+    LANE_CLOSE_LANE_PID="${LANE_CLOSE_LANE_PID:-}" ORCH_LANE_CLOSE_SECS=1 ORCH_CONNECTED_REPOS="${PARK_CONNECTED:-}" \
     "$script" "$@" "$(jq -r '.lanes[0].item' "$STATE")" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -2203,8 +2207,11 @@ BRANCH_CONTROL="$(mutant park-branch '[[ "$pr_branch" == "$PARK_BRANCH" ]]' '[[ 
 HEAD_CONTROL="$(mutant park-head '[[ "$pr_head" == "$PARK_HEAD" ]]' '[[ true ]]')"
 CLEAN_HEAD_CONTROL="$(mutant park-clean-head '.head == $head' 'true')"
 CLEAN_BRANCH_CONTROL="$(mutant park-clean-branch '.branch == $branch' 'true')"
+# Restore the old number-only parse in a disposable script. The foreign park
+# assertion must reject that script before it reaches the host stop.
+BARE_PARSE_CONTROL="$(mutant park-bare-parse 'if [[ "$PARK_UNTIL_PR" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then' 'if false; then')"
 park_contract_row() { # SCRIPT MODE
-  local script="$1" mode="$2" porcelain branch view="$PARK_VIEW" args=(--park --pr 7)
+  local script="$1" mode="$2" porcelain branch view="$PARK_VIEW" PARK_CONNECTED="" args=(--park --pr 7)
   write_state running codex /host linear owner/repo; write_panes python; working_screen
   if [[ "$mode" == dirty ]]; then printf 'uncommitted\n' >"$PARK_TREE/dirty"; fi
   porcelain="$(git -C "$PARK_TREE" status --porcelain)" || exit 1
@@ -2214,6 +2221,14 @@ park_contract_row() { # SCRIPT MODE
   case "$mode" in
     dependency) args=(--park --until-pr 9); view="$UNARMED" ;;
     dependency-own) args=(--park --pr 7 --until-pr 9); view="$OTHER" ;;
+    foreign|foreign-closed|foreign-merged|unwatched)
+      args=(--park --until-pr Other/Repo#9); view="$OTHER"; PARK_CONNECTED=other/repo
+      case "$mode" in
+        foreign-closed) view="$(jq '.state="CLOSED"' <<<"$view")" ;;
+        foreign-merged) view="$(jq '.state="MERGED"' <<<"$view")" ;;
+        unwatched) PARK_CONNECTED=another/repo ;;
+      esac ;;
+    qualified-own) args=(--park --until-pr Owner/Repo#9); view="$OTHER" ;;
     unrelated) view="$(jq '.headRefName="unrelated"' <<<"$view")" || exit 1 ;;
     head-moved) view="$(jq '.headRefOid="moved"' <<<"$view")" || exit 1 ;;
     packed) git -C "$PARK_REPO_FIXTURE" pack-refs --all ;;
@@ -2232,6 +2247,12 @@ for row in \
   "$SCRIPT|packed|rc=0 status=parked pr=7 until=null reason= reducer=1" \
   "$SCRIPT|dependency|rc=0 status=parked pr=null until=9 reason= reducer=0" \
   "$SCRIPT|dependency-own|rc=0 status=parked pr=7 until=9 reason= reducer=0" \
+  "$SCRIPT|foreign|rc=0 status=parked pr=null until=9 reason= reducer=0" \
+  "$SCRIPT|foreign-closed|rc=1 status=running pr=null until=null reason=pr-not-open reducer=0" \
+  "$SCRIPT|foreign-merged|rc=1 status=running pr=null until=null reason=pr-not-open reducer=0" \
+  "$SCRIPT|unwatched|rc=1 status=running pr=null until=null reason=repo-unwatched reducer=0" \
+  "$SCRIPT|qualified-own|rc=0 status=parked pr=null until=9 reason= reducer=0" \
+  "$BARE_PARSE_CONTROL|foreign|rc=2 status=running pr=null until=null reason= reducer=0" \
   "$SCRIPT|unrelated|rc=1 status=running pr=null until=null reason=pr-branch-mismatch reducer=0" \
   "$SCRIPT|dirty|rc=1 status=running pr=null until=null reason=clean-status-invalid reducer=0" \
   "$SCRIPT|missing|rc=1 status=running pr=null until=null reason=clean-status-unread reducer=0" \
@@ -2245,7 +2266,40 @@ for row in \
   "$CLEAN_BRANCH_CONTROL|branch-status|rc=0 status=parked pr=7 until=null reason= reducer=1"; do
   IFS='|' read -r owner mode want <<<"$row"
   assert_eq "$(park_contract_row "$owner" "$mode")" "$want" "park admission: $mode through ${owner##*/}"
+  if [[ "$mode" == dependency ]]; then
+    assert_eq "$(jq -c '.lanes[0].parked | keys' "$STATE")" '["at","head","repo","until_pr"]' \
+      'a bare dependency keeps the same saved fields'
+  fi
+  if [[ "$mode" == foreign && "$owner" == "$SCRIPT" ]]; then
+    assert_eq "$(jq -c '.lanes[0].parked | {repo,until_repo,until_pr}' "$STATE")" \
+      '{"repo":"owner/repo","until_repo":"other/repo","until_pr":9}' 'a foreign dependency keeps both repositories'
+    assert_contains "$(cat "$GH_CALLS")" 'pr view 9 --repo other/repo ' 'park reads the dependency in its repository'
+    FOREIGN_PARK="$(jq -c '.lanes[0]' "$STATE")"
+  fi
 done
+# Pass the actual foreign park to the watch. OPEN holds it; MERGED resumes
+# it; CLOSED reports the failed dependency without awarding an item merge.
+FOREIGN_WATCH_RESULT="$(
+  source "$TEST_DIR/lib/oversee-watch-harness.sh"
+  new_case foreign_park
+  printf '' >"$STUB_DIR/windows.txt"
+  jq -n --argjson lane "$FOREIGN_PARK" --arg host "$REPO_ROOT/skills/orch/tests/fixtures/lane-host" \
+    '{lanes:[($lane | .item="issue-2" | .tracker="github" | .host=$host)]}' >"$STUB_DIR/state.json"
+  for dependency_state in OPEN MERGED CLOSED; do
+    jq -nc --arg state "$dependency_state" '{state:$state}' >"$STUB_DIR/dependency-9.json"
+    out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err")" || { cat "$STUB_DIR/err" >&2; exit 1; }
+    case "$dependency_state" in
+      OPEN) [[ "$out" != *'EVENT parked-merged '* && "$out" != *'EVENT parked-closed '* ]] || exit 1 ;;
+      MERGED) grep -xF 'EVENT parked-merged issue-2 pr=9 repo=other/repo' <<<"$out" ;;
+      CLOSED) grep -xF 'EVENT parked-closed issue-2 pr=9 repo=other/repo' <<<"$out" ;;
+    esac
+    [[ "$out" != *'EVENT merged '* ]] || exit 1
+  done
+  [[ "$(grep -c '^pr view 9 --repo other/repo --json state$' "$STUB_DIR/gh.calls")" -gt 0 ]] || exit 1
+)" && FOREIGN_WATCH_RC=0 || FOREIGN_WATCH_RC=$?
+assert_eq "rc=$FOREIGN_WATCH_RC result=$FOREIGN_WATCH_RESULT" \
+  $'rc=0 result=EVENT parked-merged issue-2 pr=9 repo=other/repo\nEVENT parked-closed issue-2 pr=9 repo=other/repo' \
+  'the watch reads the dependency from a real foreign park and reports its merge and close'
 for row in \
   'ken-1|rc=0 status=parked fallback=1' \
   'other-branch|rc=1 status=running fallback=1'; do
