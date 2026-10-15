@@ -152,7 +152,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 run_validate() {
   PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token \
-    LINEAR_FORMAT="${LINEAR_FORMAT:-safe}" \
+    LINEAR_FORMAT="${RUN_FORMAT:-safe}" \
     "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
     issues validate-completion "$@"
 }
@@ -260,10 +260,10 @@ ROWS
 export CHILD_CHECKLIST_FILE="$TMP_ROOT/child.md"
 while IFS='|' read -r name format state description expected; do
   printf '%b' "$description" >"$CHILD_CHECKLIST_FILE"
-  out="$(LINEAR_FORMAT="$format" CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
+  out="$(RUN_FORMAT="$format" CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
   check "$name child controls bundle acceptance" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-912\") | .state == \"$state\" and .state_ok == $expected and .ok == $expected)"
   if [[ "$state" != Done ]]; then
-    out="$(LINEAR_FORMAT="$format" CHILD_STATE="$state" run_validate CC-940 --include-children-of CC-940 --container)"
+    out="$(RUN_FORMAT="$format" CHILD_STATE="$state" run_validate CC-940 --include-children-of CC-940 --container)"
     check "$name started child keeps container open" "$out" '.all_ok == false and (.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false)'
   fi
 done <<'ROWS'
