@@ -3259,6 +3259,7 @@ printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/tmp/workflow-state-pr-42.json"
 
 facts_case() { # CASE EXIT STATUS REASON [EXPECTED_READ]
   local kind="$1" expected_rc="$2" status="$3" reason="$4" expected="${5:-}" record env_list="" actual
+  rm -f -- "$NOSETTINGS/kendex.settings.toml" "$FACTS_ROOT/local/kendex.settings.toml" "$FACTS_ROOT/local/.env.local" "$FACTS_ROOT/local/lane.env"
   record="$(jq -cn --arg root "$FACTS_ROOT/local" '{item:"KEN-FACTS",mail_root:$root,pending_pr:{pr:42}}')" || exit 1
   printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json"
   case "$kind" in
@@ -3270,6 +3271,38 @@ facts_case() { # CASE EXIT STATUS REASON [EXPECTED_READ]
     malformed) printf '{\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
     nonobject) printf '[]\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
     invalid-count) printf '{"stages":42}\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
+    caller-settings-*|caller-export-*)
+      mkdir -p "$FACTS_ROOT/caller-state" "$FACTS_ROOT/local/records"
+      if [[ "$kind" == caller-settings-* ]]; then
+        printf '[env]\nORCH_STATE_DIR = "%s"\n' "$FACTS_ROOT/caller-state" > "$NOSETTINGS/kendex.settings.toml"
+      else
+        env_list="ORCH_STATE_DIR=$FACTS_ROOT/caller-state"
+      fi
+      if [[ "$kind" == *-configured-* ]]; then
+        printf '[env]\nORCH_STATE_DIR = "records"\n' > "$FACTS_ROOT/local/kendex.settings.toml"
+        printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/records/workflow-state-KEN-FACTS.json"
+        printf '{"stages":[{"kind":"wrong-directory"}]}\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json"
+      fi
+      if [[ "$kind" == *-present ]]; then
+        printf '{"stages":[{"kind":"caller"}]}\n' > "$FACTS_ROOT/caller-state/workflow-state-KEN-FACTS.json"
+      else
+        rm -f -- "$FACTS_ROOT/caller-state/workflow-state-KEN-FACTS.json"
+      fi ;;
+    private-env) printf 'exit 97\n' > "$FACTS_ROOT/local/.env.local" ;;
+    private-state-present|private-state-absent|private-custom-file)
+      mkdir -p "$FACTS_ROOT/local/private-records"
+      printf '{"stages":[{"kind":"wrong-directory"}]}\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json"
+      printf 'ORCH_STATE_DIR="private-records"\nexit 97\n' > "$FACTS_ROOT/local/.env.local"
+      if [[ "$kind" == private-state-absent ]]; then
+        rm -f -- "$FACTS_ROOT/local/private-records/workflow-state-KEN-FACTS.json"
+      else
+        printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/private-records/workflow-state-KEN-FACTS.json"
+      fi
+      if [[ "$kind" == private-custom-file ]]; then
+        printf '[env]\nKENDEX_ENV_FILE = "lane.env"\n' > "$FACTS_ROOT/local/kendex.settings.toml"
+        mv -- "$FACTS_ROOT/local/.env.local" "$FACTS_ROOT/local/lane.env"
+      fi ;;
+    private-expression) printf 'ORCH_STATE_DIR="$HOME/unresolved"\n' > "$FACTS_ROOT/local/.env.local" ;;
     hosted|provider-failed|provider-busy|parked|files-none|host-gone)
       record="$(jq --arg root "$FACTS_ROOT/host" --arg host "$HOST_FIXTURE" '.mail_root=$root|.host=$host' <<<"$record")"
       env_list="LANE_HOST_STUB_LOG=$FACTS_ROOT/host.log;LANE_HOST_STUB_DIR=/"
@@ -3302,7 +3335,11 @@ facts_case() { # CASE EXIT STATUS REASON [EXPECTED_READ]
 }
 while IFS='|' read -r kind expected_rc status reason; do
   [[ -n "$kind" ]] || continue
-  facts_case "$kind" "$expected_rc" "$status" "$reason"
+  if [[ "$status" == read ]]; then
+    facts_case "$kind" "$expected_rc" "$status" "$reason" "$FACTS_READ"
+  else
+    facts_case "$kind" "$expected_rc" "$status" "$reason"
+  fi
 done <<'FACTS_CASES'
 gone|1|absent|root-gone
 unbound|2|failed|root-unbound
@@ -3319,6 +3356,19 @@ provider-busy|2|failed|state-unread
 parked|2|failed|state-unread
 files-none|1|absent|files-none
 host-gone|1|absent|state-absent
+caller-settings-configured-present|0|read|
+caller-settings-configured-absent|0|read|
+caller-settings-default-present|0|read|
+caller-settings-default-absent|0|read|
+caller-export-configured-present|0|read|
+caller-export-configured-absent|0|read|
+caller-export-default-present|0|read|
+caller-export-default-absent|0|read|
+private-env|0|read|
+private-state-present|0|read|
+private-state-absent|1|absent|state-absent
+private-custom-file|0|read|
+private-expression|2|failed|state-unread
 FACTS_CASES
 facts_case local 0 read '' "$FACTS_READ"
 facts_case hosted 0 read '' "$FACTS_READ"
