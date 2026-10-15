@@ -246,7 +246,7 @@ while IFS='|' read -r name current type phase target; do
   [[ "$phase" != merged ]] || phase_args+=(--post-merge-at "$merged")
   rc=0
   CURRENT_STATE="$current" CURRENT_TYPE="$type" CURRENT_PARENT=CC-700 \
-    run_complete "$verification" "$log" CC-720 --done-when-met 1 --evidence-file "$proof" "${phase_args[@]}" >"$TMP_ROOT/phase.out" 2>"$TMP_ROOT/phase.err" || rc=$?
+    run_complete "$verification" "$log" CC-720 --done-when-met 1 --evidence-file "$proof" ${phase_args[@]+"${phase_args[@]}"} >"$TMP_ROOT/phase.out" 2>"$TMP_ROOT/phase.err" || rc=$?
   if [[ "$target" == refuse ]]; then
     assert_ne "phase $name refuses" "$rc" 0
     assert_jq "phase $name names the missing phase" "$(cat "$TMP_ROOT/phase.err")" '.error == "completion-phase" and .id == "CC-720"'
