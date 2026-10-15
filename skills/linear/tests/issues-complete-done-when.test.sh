@@ -39,16 +39,19 @@ case "$query" in
     Verifying) state_id=state-verifying ;;
     Done) state_id=state-done ;;
     Todo) state_id=state-todo ;;
+    'In Progress') state_id=state-in-progress ;;
+    'In Review') state_id=state-in-review ;;
+    'In QA') state_id=state-in-qa ;;
     *) printf 'unsupported workflow state: %s\n' "$state" >&2; exit 2 ;;
   esac
-  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-verifying" then "started" else "unstarted" end)}]}}}'
+  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-todo" then "unstarted" else "started" end)}]}}}'
   printf '___HTTP_CODE___200'
   ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
-  jq -cj --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:$title,description:$d,state:(if ($children | length) > 0 then {name:"Todo",type:"unstarted"} else {name:"Done",type:"completed"} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
+  jq -cj --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --arg state "${CURRENT_STATE:-In Review}" --arg type "${CURRENT_TYPE:-started}" --arg parent "${CURRENT_PARENT:-}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:$title,description:$d,state:(if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name:"Todo",type:"unstarted"} else {name:$state,type:$type} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:(if $parent == "" then null else {id:"parent-uuid",identifier:$parent,title:"shared bundle"} end),children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
   printf '___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
@@ -56,7 +59,7 @@ case "$query" in
     printf '%s' '{"errors":[{"message":"update refused"}]}___HTTP_CODE___200'
     exit 0
   fi
-  jq -cj --argjson prior_state '{"name":"Done","type":"completed"}' --argjson d "$description" '{data:{issueUpdate:{success:true,issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} elif .variables.input.stateId == "state-done" then {name:"Done",type:"completed"} elif .variables.input.stateId == "state-todo" then {name:"Todo",type:"unstarted"} elif .variables.input.stateId == null then $prior_state else error("unsupported state id") end),assignee:null,project:null,projectMilestone:null,cycle:null,parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload"
+  jq -cj --argjson prior_state '{"name":"In Review","type":"started"}' --argjson d "$description" '{data:{issueUpdate:{success:true,issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} elif .variables.input.stateId == "state-done" then {name:"Done",type:"completed"} elif .variables.input.stateId == "state-todo" then {name:"Todo",type:"unstarted"} elif .variables.input.stateId == "state-in-review" then {name:"In Review",type:"started"} elif .variables.input.stateId == "state-in-progress" then {name:"In Progress",type:"started"} elif .variables.input.stateId == "state-in-qa" then {name:"In QA",type:"started"} elif .variables.input.stateId == null then $prior_state else error("unsupported state id") end),assignee:null,project:null,projectMilestone:null,cycle:null,parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload"
   printf '___HTTP_CODE___200'
   ;;
 *)
@@ -123,7 +126,7 @@ blank-proof|## Done when\n- [x] shared outcome\n  Evidence:   |refuse|missing_ev
 unindented-proof|## Done when\n- [x] shared outcome\nEvidence: read|refuse|missing_evidence_boxes
 not-direct-proof|## Done when\n- [x] shared outcome\n\n  Evidence: read|refuse|missing_evidence_boxes
 complete|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done|-
-post|## Done when\n- [x] branch proof\n  Evidence: branch read\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-verifying|-
+post|## Done when\n- [x] branch proof\n  Evidence: branch read\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-in-review|-
 absent|No checklist.|state-done|-
 ROWS
 
@@ -149,7 +152,7 @@ empty|t|## Done when|refuse
 post-only|t|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read|refuse
 proved|t|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done
 single-pr-absent|Bundle (one PR)|No checklist.|state-done
-single-pr-post|Bundle (one PR)|## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-verifying
+single-pr-post|Bundle (one PR)|## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-in-review
 ROWS
 
 log="$TMP_ROOT/all.jsonl"
@@ -233,7 +236,35 @@ for row in '1|state-verifying' 'all|state-done'; do
 done
 log="$TMP_ROOT/ordinary.jsonl"
 out="$(run_complete "$verification" "$log" CC-720 --done-when-met 1 --evidence-file "$proof" 2>"$TMP_ROOT/ordinary.err")" || true
-assert_jq "without merge flags an open post-merge box keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
+assert_jq "without merge flags an open post-merge box keeps its started state" "$(updates "$log")" '.variables.input.stateId == "state-in-review"'
+
+# dev-implement writes branch proof before the shared PR merge. merge-pr
+# supplies the parent's mergedAt, including after integration set the child Done.
+while IFS='|' read -r name current type phase target; do
+  log="$TMP_ROOT/phase-$name.jsonl"
+  phase_args=()
+  [[ "$phase" != merged ]] || phase_args+=(--post-merge-at "$merged")
+  rc=0
+  CURRENT_STATE="$current" CURRENT_TYPE="$type" CURRENT_PARENT=CC-700 \
+    run_complete "$verification" "$log" CC-720 --done-when-met 1 --evidence-file "$proof" "${phase_args[@]}" >"$TMP_ROOT/phase.out" 2>"$TMP_ROOT/phase.err" || rc=$?
+  if [[ "$target" == refuse ]]; then
+    assert_ne "phase $name refuses" "$rc" 0
+    assert_jq "phase $name names the missing phase" "$(cat "$TMP_ROOT/phase.err")" '.error == "completion-phase" and .id == "CC-720"'
+    assert_not "phase $name writes nothing" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
+  else
+    assert_eq "phase $name completes" "$rc" 0
+    assert_jq "phase $name selects its state" "$(updates "$log")" ".variables.input.stateId == \"$target\""
+    assert_jq "phase $name records branch proof and leaves live proof open" "$(updates "$log")" '.variables.input.description | contains("- [x] branch proof\n  Evidence: first source read\n- [ ] Post-merge:")'
+  fi
+done <<'ROWS'
+premerge-progress|In Progress|started|before|state-in-progress
+premerge-review|In Review|started|before|state-in-review
+premerge-custom|In QA|started|before|state-in-qa
+postmerge-child|In Progress|started|merged|state-verifying
+postmerge-integration-done|Done|completed|merged|state-verifying
+unproved-done|Done|completed|before|refuse
+unstarted|Todo|unstarted|before|refuse
+ROWS
 # CRLF is normalized before both numbering and deadline parsing.
 crlf="$TMP_ROOT/crlf.md"
 sed 's/$/\r/' "$verification" >"$crlf"

@@ -148,7 +148,7 @@ With `pr_order` reading `push-first`, read the existing PR's draft flag before a
 
    Keep `## Merge decision`. For an existing PR, preserve its recorded head and route through body updates; use pending text only before any attempt is recorded. Omit other empty sections. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
 
-   Include accepted Verifying bundle children in the child `Closes` lines. Their implementation is in this PR. Merge-pr completes each child again after merge and hands its remaining checks to the overseer.
+   Include qualified started bundle children in the child `Closes` lines. Their implementation is in this PR. Merge-pr completes each child again after merge and hands its remaining checks to the overseer.
 
 4. **Create or update the PR.** Never defer, queue, or gate CI behind bot review activity.
 

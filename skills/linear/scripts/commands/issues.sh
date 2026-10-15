@@ -217,8 +217,10 @@ Complete Options:
   --summary <text>       Post a summary comment, then apply the checklist state
   --summary-file <path>  Read the summary from a file (preferred for markdown)
   --post-merge-at <UTC>  Use the merged PR's mergedAt (YYYY-MM-DDTHH:MM:SSZ).
-                        Refuse open branch-provable boxes. Set Verifying when
-                        a post-merge box remains open, otherwise Done.
+                        Refuse open branch-provable boxes. Set Verifying after
+                        merge when a post-merge box remains open, otherwise Done.
+                        Without this option, open post-merge boxes keep the
+                        current started state; any other current state refuses.
                         Each Post-merge box names reading, Where, Why after
                         merge, Trigger and Deadline on one line. A missing
                         Trigger means merge. Trigger accepts merge, a UTC time
@@ -229,8 +231,8 @@ Complete Options:
                         item merged, that release must contain its latest
                         merge commit. Other deadlines use UTC.
                         Every completion reads the checklist, with or without
-                        this option. Open branch boxes refuse. Open post-merge
-                        boxes keep the item Verifying. Ticked boxes require a
+                        this option. Open branch boxes refuse. Post-merge boxes
+                        follow the phase above. Ticked boxes require a
                         nonblank Evidence: line indented directly below them.
   --done-when-met <all|N[,N...]>
                          Tick the "## Done when" checklist boxes the caller
@@ -255,7 +257,8 @@ Validate-Completion:
   in "In Progress" or "In Review" — "Done" fails state_ok because managed
   session roots stay pre-merge until PR merge. This pre-merge state rule applies
   ONLY to the session root, not to expanded bundle children.
-  Bundle children expanded via --include-children-of pass in Done, or Verifying
+  Bundle children expanded via --include-children-of pass in Done, or a started
+  state other than Verifying
   when the shared checklist parser proves only post-merge checks remain and
   every checked box has evidence. Open branch work fails state_ok.
   Canceled children are excluded from the expansion:
@@ -3257,6 +3260,14 @@ complete_issue() {
     if [ -z "$completion_state" ]; then
         jq -c '{error: "post-merge-checklist", errors, unmet_branch_boxes, missing_evidence_boxes, missing_outcome_box, remedy: .outcome_remedy}' <<<"$tick" >&2
         return 1
+    fi
+    # Checklist proof does not establish a merge. Keep the development phase
+    # until the existing post-merge route supplies its merge timestamp.
+    if [[ "$completion_state" == Verifying && -z "$post_merge_at" ]]; then
+        completion_state=$(jq -er '.issue.state | select(.type == "started") | .name | strings | select(length > 0)' <<<"$issue_result") || {
+            jq -cn --arg id "$issue_id" '{error: "completion-phase", id: $id, fix: "issues complete --post-merge-at"}' >&2
+            return 1
+        }
     fi
     if [ -n "$met_json" ]; then
         done_when_checked=$(jq '.ticked' <<<"$tick") || return 1
