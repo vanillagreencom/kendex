@@ -65,12 +65,31 @@ brief_contract() {
   assert_eq "$cmp_rc" 0 "$2"
 }
 
-local_input_count() { grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$RUN/tmux.log" || true; }
+local_input_count() { if [[ -f "$RUN/tmux.log" ]]; then grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$RUN/tmux.log" || true; else printf 0; fi; }
 launch_contract() { printf '%s\n' "$OUT" > "$RUN/launch-errors"; assert_eq "rc=$RC local=$(local_input_count)" 'rc=0 local=0' "$1" "$RUN/launch-errors"; }
 failed_launch_contract() {
   assert_eq "rc=$RC local=$(local_input_count) stops=$(grep -c '^stop --item KEN-40 --harness claude ' "$RUN/host.log" || true) killed=$(grep -c '^kill-window ' "$RUN/tmux.log" || true)" "$1" "$2"
 }
 
+seed_prior() { # DIRECTORY STATUS HARNESS [CHECKPOINT]
+  prior_state="$1"
+  ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$prior_state" "$PWD"
+  prior_record="$(jq -cn --arg host "$HOST_STUB" --arg account "$H/.eclaude" --arg status "$2" --arg harness "$3" \
+    --arg cwd "$PWD" --argjson checkpoint "${4:-null}" \
+    '{item:"KEN-40",tracker:"linear",repo:"o/r",host:$host,kind:"ssh",account:$account,harness:$harness,
+      window:"stub:KEN-40",mail_root:"/srv/lane",status:$status,session_id:"saved-session",session_since:"2026-10-01T00:00:00Z",
+      launched_at:"2026-10-01T00:00:00Z",model:"claude-opus-5-5",effort:"high",launch:{pane:"%9",server:123,pid:456,start:"prior-start"},
+      recovery:{cwd:$cwd,flags:"--model opus --effort high --permission-mode dontAsk",session:"stub",refresh:false},
+      retained:{pr:12,note:"keep-complete-record"}} + (if $checkpoint == null then {} else {prepare:$checkpoint} end)')"
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" set oversee lanes "[$prior_record]" >/dev/null
+  prior_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0]' | jq -Sc .)"
+}
+retained_prior() {
+  assert_eq "rc=$RC stops=$(grep -c '^stop ' "$RUN/host.log" || true) started=$([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no)" \
+    'rc=1 stops=0 started=no' "$1 preserves the predecessor process"
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0]' | jq -Sc .)" \
+    "$prior_saved" "$1 preserves the complete predecessor record"
+}
 # The connection bound excludes independent launcher setup and cleanup.
 BOUND_OPEN_TERMINAL="$OPEN_TERMINAL"
 BOUND_MUTANT="$(mutant_scripts connection-bound/orch open-terminal)/open-terminal"
@@ -200,14 +219,15 @@ orch_fixture_shared_libs "$TMP_ROOT/taken-record/orch"
 mutate_file "$RECORD_MUTANT" 'lane_record_write() {' 'lane_record_write() { [[ "${7:-running}" != running ]] || return 1;'
 OPEN_TERMINAL="$RECORD_MUTANT"
 fleet="$TMP_ROOT/taken-fleet"
-ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$fleet" "$PWD"
+seed_prior "$fleet" running codex
 cp "$DELIVERED" "$CURRENT"
 run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT" \
-  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$fleet" KEN-40
-failed_launch_contract 'rc=1 local=0 stops=0 killed=0' 'a confirmed foreground launch survives a later record failure'
+  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$fleet" --relaunch KEN-40
+failed_launch_contract 'rc=1 local=0 stops=0 killed=0' 'a confirmed foreground replacement survives a later record failure'
+assert_eq "$(grep -c '^stop --item KEN-40 --harness codex ' "$RUN/host.log" || true)" 1 'the taken replacement retired only its predecessor'
 mutate_file "$RECORD_MUTANT" '[[ -n "$UNTAKEN_PANE" ]] || return 1' '[[ -n "$UNTAKEN_PANE" ]] || UNTAKEN_PANE="$LAUNCH_PANE"'
 run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT" \
-  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$fleet" KEN-40
+  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$fleet" --relaunch KEN-40
 CONTROL_RC=0
 ( FAIL=0; failed_launch_contract 'rc=1 local=0 stops=0 killed=0' control; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/taken-control.log" 2>&1 || CONTROL_RC=$?
 assert_eq "$CONTROL_RC" 1 'the taken launch assertion rejects cleanup after a later record failure'
@@ -243,62 +263,135 @@ done
 OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
 
 
-# --relaunch is an admitted recovery command, but provider-pane recovery is
-# deferred before create, prior stop, parked start or window replacement.
-# A saved lane window is the real list-windows producer for replacement.
+# The replacement uses the existing named window, while the provider owns the
+# remote predecessor independently of that window.
 mutate_file "$OT_STUB_BIN/tmux" '    [[ " $* " == *'\'' -f '\''* ]] || echo "1" ;;' '    if [[ " $* " == *'\'' -f '\''* && "${OT_PRIOR_WINDOW:-}" == 1 ]]; then
       printf "1 @1\\n"
     elif [[ " $* " != *'\'' -f '\''* ]]; then echo "1"; fi ;;'
-CUT_MUTANT="$(mutant_scripts deferred-relaunch/orch open-terminal)/open-terminal"
-orch_fixture_shared_libs "$TMP_ROOT/deferred-relaunch/orch"
-mutate_file "$CUT_MUTANT" 'if [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then' 'if false && [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then'
-cut_contract() {
-  local provider_ops=0 window_ops=0
-  # The fixtures create each trace only when that tool is invoked.
-  [[ ! -f "$RUN/host.log" ]] || provider_ops="$(grep -cE '^(create|start|stop|capture|send) ' "$RUN/host.log" || true)"
-  [[ ! -f "$RUN/tmux.log" ]] || window_ops="$(grep -cE '^(new-window|kill-window|set-option|load-buffer|paste-buffer|send-keys) ' "$RUN/tmux.log" || true)"
-  assert_eq "$RC" 1 "$1 refuses automatic provider relaunch"
-  assert_eq "$(grep -cFx "open-terminal: host-relaunch-deferred host=$HOST_STUB pane=verb follow-up=KEN-3996" <<< "$OUT" || true)" 1 "$1 names the deferred recovery owner"
-  assert_eq "$provider_ops" 0 "$1 changes no provider harness or pane"
-  assert_eq "$window_ops" 0 "$1 preserves the existing window"
-  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" get "$cut_key" | jq -Sc .)" "$cut_saved" "$1 preserves the entire saved record"
-}
-for row in 'fleet|running|none|0' 'fleet|running|new-window|0' 'fleet|preparing|set-option|0' 'fleet|parked|none|7' 'launch-only|selection|none|0'; do
-  IFS='|' read -r scope prior operation stop_status <<< "$row"
-  cut_state="$TMP_ROOT/cut-$scope-$prior-$operation"
-  cut_args=()
-  if [[ "$scope" == fleet ]]; then
-    ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$cut_state" "$PWD"
-    cut_key=oversee; cut_args=(--state-dir "$cut_state")
-    cut_record="$(jq -cn --arg host "$HOST_STUB" --arg account "$H/.eclaude" --arg status "$prior" --arg line "$LANE_HOST_STUB_CREATE_LINE" '{item:"KEN-40",host:$host,kind:"ssh",account:$account,harness:"claude",window:"stub:KEN-40",mail_root:"/srv/lane",status:$status,session_id:"saved-session",model:"opus",effort:"high"} + (if $status == "preparing" then {prepare:{host:$host,line:$line,step:"marker",relaunch:true,account:("CLAUDE_CONFIG_DIR="+$account),harness:"claude",since:"2026-10-01T00:00:00Z"}} else {} end)')"
-    "$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" set oversee lanes "[$cut_record]" >/dev/null
-  else
-    cut_key=KEN-40
-    "$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" init KEN-40 >/dev/null
-    "$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" set KEN-40 host_launch "$(jq -cn --arg host "$HOST_STUB" --arg account "CLAUDE_CONFIG_DIR=$H/.eclaude" --arg line "$LANE_HOST_STUB_CREATE_LINE" '{status:"preparing",host:$host,account:$account,line:$line,step:"selection",relaunch:true,harness:"codex",model:"gpt-6-astra",effort:"high",pane:"%1",server:"saved-server",session:"stub",since:"2026-10-01T00:00:00Z"}')" >/dev/null
+
+PREPARING_CREATE_LINE="${LANE_HOST_STUB_CREATE_LINE}"$'\tstate=preparing'
+NATIVE_CHECKPOINT="$(jq -cn --arg host "$HOST_STUB" --arg account "CODEX_HOME=$H/.eclaude" --arg line "$LANE_HOST_STUB_CREATE_LINE" \
+  '{status:"preparing",host:$host,account:$account,line:$line,step:"selection",relaunch:true,harness:"codex",command_route:"native",
+    model:"gpt-6-astra",effort:"high",pane:"%1",server:"123",session:"stub",since:"2026-10-01T00:00:00Z"}')"
+cp "$OT_STUB_BIN/claude" "$OT_STUB_BIN/codex"
+CUSTOM_BRIEF="$TMP_ROOT/custom-brief"
+printf '%s' 'custom replacement task' > "$CUSTOM_BRIEF"
+for row in \
+  'native|running|claude||0|1|running' \
+  'switch|running|codex||0|1|running' \
+  'custom|running|claude||0|1|running' \
+  'window|running|codex|OT_TMUX_FAIL=new-window|1|0|retained' \
+  'option|running|codex|OT_TMUX_FAIL=set-option|1|0|retained' \
+  'marker|running|codex|LANE_HOST_STUB_PUT_STATUS=7|1|0|retained' \
+  'readback|running|codex|LANE_HOST_STUB_PUT_BYTES=wrong-marker|1|0|retained' \
+  'stop-failed|running|codex|LANE_HOST_STUB_STOP_STATUS=7|1|1|retained' \
+  'stop-unconfirmed|running|codex|LANE_HOST_STUB_STOP_OUT=unconfirmed|1|1|retained' \
+  'wait-native|running|codex|LANE_HOST_STUB_WAIT_STATUS=7|1|0|retained' \
+  'wait-custom|running|claude|LANE_HOST_STUB_WAIT_STATUS=7|1|0|retained' \
+  'checkpoint-failed|preparing|codex|LANE_HOST_STUB_PUT_STATUS=7|1|0|retained' \
+  'checkpoint-completed|preparing|codex||0|1|running' \
+  'park-failed|parked|claude|LANE_HOST_STUB_START_STATUS=7|1|0|retained' \
+  'park-unconfirmed|parked|claude|LANE_HOST_STUB_START_OUT=unconfirmed|1|0|retained' \
+  'park-started|parked|claude||0|0|running' \
+  'retired|stopped|claude||0|0|running' \
+  'ssh|running|codex|SSH_FAIL=7|1|2|stopped' \
+  'viewer|running|codex|LANE_HOST_STUB_VIEWER_STATUS=7|1|2|stopped' \
+  'capture|running|codex|LANE_HOST_STUB_CAPTURE_STATUS=7|1|2|stopped'; do
+  IFS='|' read -r label prior harness injection expected_rc stops expected_status <<<"$row"
+  checkpoint=null command_env="$CHOICE" extra_args=() preparation="" requested=claude lane_args=(--lane "$H/.eclaude")
+  case "$label" in
+    checkpoint-*) checkpoint="$NATIVE_CHECKPOINT"; requested=codex ;;
+  esac
+  case "$label" in
+    custom|wait-custom) command_env="cmd=claude --model opus --effort high {brief} $COMPACTION_OFF_ALL"; extra_args=(--brief-file "$CUSTOM_BRIEF") ;;
+  esac
+  if [[ "$requested" == codex ]]; then
+    command_env="cmd=codex -m gpt-6-astra -c model_reasoning_effort=high {brief} $COMPACTION_OFF_ALL"
+    extra_args=(--brief-file "$CUSTOM_BRIEF")
   fi
-  cut_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" get "$cut_key" | jq -Sc .)"
-  OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
-  run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$cut_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$READY;LANE_HOST_STUB_STOP_STATUS=$stop_status;OT_TMUX_FAIL=$operation;OT_PRIOR_WINDOW=1" \
-    --harness claude --lane "$H/.eclaude" --repo o/r --relaunch ${cut_args[@]+"${cut_args[@]}"} KEN-40
-  cut_contract "$row"
+  case "$label" in wait-*) preparation=";LANE_HOST_STUB_CREATE_LINE=$PREPARING_CREATE_LINE" ;; esac
+  seed_prior "$TMP_ROOT/relaunch-$label" "$prior" "$harness" "$checkpoint"
+  printf 'Working (esc to interrupt)\n' > "$CURRENT"
+  run_ot "$command_env;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;OT_PRIOR_WINDOW=1;$injection$preparation" \
+    --harness "$requested" ${lane_args[@]+"${lane_args[@]}"} --repo o/r --state-dir "$prior_state" --relaunch ${extra_args[@]+"${extra_args[@]}"} KEN-40
+  printf '%s\n' "$OUT" > "$RUN/result.log"
+  assert_eq "rc=$RC local=$(local_input_count) stops=$(grep -c '^stop ' "$RUN/host.log" || true)" \
+    "rc=$expected_rc local=0 stops=$stops" "$label replacement ownership" "$RUN/result.log"
+  if [[ "$expected_status" == retained ]]; then
+    if [[ "$stops" == 0 ]]; then retained_prior "$label"
+    else
+      assert_eq "$([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no)" no "$label starts no successor after failed stop"
+      assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0]' | jq -Sc .)" "$prior_saved" "$label retains the old record and checkpoint"
+      assert_file_contains "$RUN/result.log" 'open-terminal: host-stop-failed item=KEN-40' "$label reports stop failure"
+    fi
+  else
+    assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0].status')" "$expected_status" "$label records the launch outcome"
+    if [[ "$expected_status" == running ]]; then
+      assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0] | [.harness,.prepare] | @json')" "[\"$requested\",null]" "$label completes the requested harness and retires its checkpoint"
+    fi
+  fi
+  if [[ "$stops" != 0 ]]; then
+    assert_eq "$(sed -n '/^stop /{p;q;}' "$RUN/host.log")" "stop --item KEN-40 --harness $harness " "$label retires the recorded harness"
+    assert_eq "$(awk '/^put / {prepared=1} /^stop / {print prepared+0; exit}' "$RUN/host.log")" 1 "$label prepares the marker before retirement"
+  fi
+  if [[ "$stops" == 2 ]]; then
+    assert_eq "$(sed -n '/^stop /p' "$RUN/host.log" | tail -1)" 'stop --item KEN-40 --harness claude ' "$label cleanup names the requested successor"
+  fi
+  case "$label" in
+    native|switch|custom|checkpoint-completed|park-started|retired)
+      assert_eq "$([[ -s "$RUN/host.log.started" ]] && echo yes || echo no)" yes "$label executes the remote successor" ;;
+  esac
+  case "$label" in
+    window|option) assert_file_contains "$RUN/result.log" 'open-terminal: tmux-failed operation=' "$label names the window failure" ;;
+    marker|readback|checkpoint-failed) assert_file_contains "$RUN/result.log" 'open-terminal: marker-failed item=KEN-40' "$label reaches marker failure" ;;
+    wait-*) assert_file_contains "$RUN/result.log" 'open-terminal: host-prepare-failed item=KEN-40' "$label reaches foreground preparation failure" ;;
+  esac
+  [[ "$label" != custom ]] || assert_eq "$(sed -n '/custom replacement task/p' "$RUN/host.log.started")" 'custom replacement task' 'the custom successor receives the exact brief'
+  [[ "$label" != park-started ]] || assert_eq "$(awk '/^start / {started=1} /^create / {print started+0; exit}' "$RUN/host.log")" 1 'confirmed sandbox start precedes create'
 done
-# The existing selection checkpoint has its real relaunch=true producer.
-# For the mutation control, use the ordinary running row with no checkpoint,
-# so removing the refusal reaches actual replacement window setup.
-cut_state="$TMP_ROOT/cut-control"
-ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$cut_state" "$PWD"
-cut_key=oversee
-"$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" set oversee lanes "$(jq -cn --arg host "$HOST_STUB" '{item:"KEN-40",host:$host,harness:"claude",status:"running",window:"stub:KEN-40"} | [. ]')" >/dev/null
-cut_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$cut_state" get oversee | jq -Sc .)"
-OPEN_TERMINAL="$CUT_MUTANT"
-run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$READY;OT_PRIOR_WINDOW=1" \
-  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$cut_state" --relaunch KEN-40
-assert_eq "$(grep -c '^new-window -k ' "$RUN/tmux.log" || true)" 1 'the cut mutant reaches replacement window setup'
+
+STOP_FIRST_MUTANT="$(mutant_scripts stop-first/orch open-terminal)/open-terminal"
+orch_fixture_shared_libs "$TMP_ROOT/stop-first/orch"
+mutate_file "$STOP_FIRST_MUTANT" 'launch_finish() {' 'launch_finish() {
+  if [[ "$HOST_PANE" == verb && "$host_command_restart" == pending ]]; then
+    host_harness_stop prior || return 1
+    host_command_restart=completed
+  fi'
+OPEN_TERMINAL="$STOP_FIRST_MUTANT"
+seed_prior "$TMP_ROOT/stop-first" running codex
+run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_PUT_STATUS=7;OT_PRIOR_WINDOW=1" \
+  --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$prior_state" --relaunch KEN-40
+printf '%s\n' "$OUT" > "$RUN/result.log"
+assert_eq "$(grep -c '^create ' "$RUN/host.log" || true) $(grep -c '^stop --item KEN-40 --harness codex ' "$RUN/host.log" || true)" '1 1' 'the stop-first control reaches create and prior retirement'
+assert_file_contains "$RUN/result.log" 'open-terminal: marker-failed item=KEN-40' 'the stop-first control reaches the same marker failure'
 CONTROL_RC=0
-( FAIL=0; cut_contract control; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/cut-control.log" 2>&1 || CONTROL_RC=$?
-assert_eq "$CONTROL_RC" 1 'the same refusal contract rejects automatic provider relaunch'
+( FAIL=0; retained_prior control; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/retained-control.log" 2>&1 || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'the retention assertion rejects stop before replacement preparation'
 OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
+
+# A compatible saved selection finishes the started successor without setup.
+for scope in fleet launch-only; do
+  prior_state="$TMP_ROOT/selection-$scope"
+  selection_args=() key=KEN-40 query=.host_launch
+  if [[ "$scope" == fleet ]]; then
+    seed_prior "$prior_state" preparing codex "$NATIVE_CHECKPOINT"
+    selection_args=(--state-dir "$prior_state"); key=oversee; query='.lanes[0].prepare'
+  else
+    "$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" init KEN-40 >/dev/null
+    "$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" set KEN-40 host_launch "$NATIVE_CHECKPOINT" >/dev/null
+  fi
+  selection_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query" | jq -Sc .)"
+  run_ot "flags=-m gpt-6-astra -c model_reasoning_effort=high;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$prior_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_CAT_STATUS=69" \
+    --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
+  assert_eq "$RC" 0 "$scope busy selection keeps its continuation"
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query" | jq -Sc .)" "$selection_saved" "$scope preserves the complete selection checkpoint"
+  assert_eq "$(grep -cE '^(create|wait|put|stop) ' "$RUN/host.log" || true) $([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no)" '0 no' "$scope busy selection starts and stops no harness"
+  run_ot "flags=-m gpt-6-astra -c model_reasoning_effort=high;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$prior_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_SELECTION=resume" \
+    --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
+  launch_contract "$scope saved selection completes"
+  assert_eq "$(grep -cE '^(create|wait|put|stop) ' "$RUN/host.log" 2>/dev/null || true) $([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no) $(if [[ -f "$RUN/tmux.log" ]]; then grep -c '^new-window ' "$RUN/tmux.log" || true; else printf 0; fi)" '0 no 0' "$scope selection does no new setup or launch"
+  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query // null")" null "$scope retires the completed selection checkpoint"
+done
 
 # Fresh create responses can be saved before wait or marker completion.
 # This wrapper uses the real dispatcher's occupied pool slot producer.
@@ -338,6 +431,26 @@ for row in 'launch-only|wait|preparing' 'launch-only|marker|ready' 'fleet|marker
   launch_contract "$row completes the fresh checkpoint"
   assert_eq "$(grep -c '^create ' "$RUN/host.log" || true)" 0 "$row reuses its accepted sandbox"
   assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$retry_state" get "$retry_key" "$retry_query // null")" null "$row retires its completed checkpoint"
+done
+# The same dispatcher slot producer must not overwrite a running predecessor.
+for step in wait marker; do
+  seed_prior "$TMP_ROOT/busy-relaunch-$step" running codex "$NATIVE_CHECKPOINT"
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" update oversee --arg host "$RETRY_PROVIDER" \
+    '.lanes[0].host = $host | .lanes[0].prepare.host = $host' >/dev/null
+  prior_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0]' | jq -Sc .)"
+  retry_home="$prior_state/home"
+  retry_slot="$retry_home/.cache/orch/lane-host-slots"
+  [[ "$step" == wait ]] || retry_slot+=/short
+  retry_slot+="/slot.$$"
+  retry_line="$LANE_HOST_STUB_CREATE_LINE"
+  [[ "$step" != wait ]] || retry_line="$PREPARING_CREATE_LINE"
+  run_ot "$CHOICE;$COMPACTION_OFF_ALL;HOME=$retry_home;ORCH_LANE_HOST=$RETRY_PROVIDER;OT_RETRY_PROVIDER=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CREATE_LINE=$retry_line;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;ORCH_LANE_HOST_SHORT_MAX_CALLS=1;ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=0;OT_BUSY_SLOT=$retry_slot;OT_BLOCK_AFTER_CREATE=1" \
+    --harness claude --lane "$H/.eclaude" --repo o/r --state-dir "$prior_state" --relaunch KEN-40
+  printf '%s\n' "$OUT" > "$RUN/result.log"
+  retained_prior "busy $step"
+  assert_eq "$(grep -c '^create ' "$RUN/host.log" || true)" 1 "busy $step reaches accepted create"
+  assert_file_contains "$RUN/result.log" 'open-terminal: lane-host-busy item=KEN-40' "busy $step refuses for explicit retry"
+  rm -f -- "${retry_slot:?}"
 done
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

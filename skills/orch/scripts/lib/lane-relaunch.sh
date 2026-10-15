@@ -16,7 +16,7 @@
 # must refuse before stopping a lane. The host and tracker retain their existing
 # lane-record meanings, including null host meaning local.
 lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
-  local fields item harness flags refresh tracker repo pane rc=0 model effort choice launch_model launch_id
+  local fields item harness flags refresh tracker repo rc=0 model effort choice launch_model launch_id
   local -a words=() choice_words=()
   LANE_RECOVERY_CAUSE=permission-choice-unrecorded
   LANE_RECOVERY_ARGS=() LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
@@ -61,11 +61,6 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
     LANE_RECOVERY_CAUSE="host-capabilities-unavailable exit=$rc"
     return "$rc"
   fi
-  lane_capability pane pane
-  if [[ "$pane" == verb ]]; then
-    LANE_RECOVERY_CAUSE=relaunch-deferred:KEN-3996
-    return 1
-  fi
   LANE_RECOVERY_ARGS=("$4" --tmux --relaunch --continue-resume --harness "$harness"
     --launch-flags "$flags" --state-dir "$3" --host "$LANE_RECOVERY_HOST" --tracker "$tracker")
   [[ -z "$repo" ]] || LANE_RECOVERY_ARGS+=(--repo "$repo")
@@ -75,6 +70,11 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
   if [[ "$tracker" == github ]]; then LANE_RECOVERY_ARGS+=("${item#issue-}")
   else LANE_RECOVERY_ARGS+=("$item"); fi
   LANE_RECOVERY_CAUSE=""
+}
+
+lane_recovery_stop_confirmed() { # OUTPUT ITEM
+  local out="$1" item="$2"
+  [[ "$out" =~ ^stopped\ item=([^\ ]+)\ processes=([0-9]+)$ && "${BASH_REMATCH[1]}" == "$item" ]]
 }
 
 # The hook acquires one session's recovery under workflow-state's lock before
@@ -114,7 +114,7 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
     }
   else
     out="$(ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" stop --item "$item" --harness "$harness")" || return 1
-    [[ "$out" =~ ^stopped\ item=([^\ ]+)\ processes=([0-9]+)$ && "${BASH_REMATCH[1]}" == "$item" ]] || return 1
+    lane_recovery_stop_confirmed "$out" "$item" || return 1
   fi
   "$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update oversee \
     '(.lanes[] | select(.item == $item and .launched_at == $launch)) |= (.status = "stopped")' \

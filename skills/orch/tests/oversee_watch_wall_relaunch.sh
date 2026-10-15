@@ -18,6 +18,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
+# shellcheck source=lib/open-terminal-stubs.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/open-terminal-stubs.sh"
+LAUNCH_BIN="$TMP_ROOT/launch-bin"
+ot_stub_bin "$LAUNCH_BIN"
 
 RESET_NOW=1788364800
 BANNER="You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)"
@@ -191,7 +195,7 @@ facts() {
 CASE_SEQ=0
 RUN_SEQ=0
 wall_table() {
-  local row label screen pick setting expect env control_red
+  local row label screen pick setting expect env
   for row in "$@"; do
     IFS='|' read -r label screen pick setting expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'wall_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
@@ -200,14 +204,7 @@ wall_table() {
     [[ "$setting" == - ]] || env+=(ORCH_WALL_RELAUNCH="$setting")
     ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
     OUT="$(run_watch "${env[@]}" -- --max-loops 1 --state "$STUB_DIR/oversee-state.json" gh-1 gh-2 2>"$ERR")" && RC=0 || RC=$?
-    if [[ "$label" == refusal-control:* ]]; then
-      control_red="$(FAIL=0; assert_eq "$(facts "$expect")" "$expect" "$label" > /dev/null; printf '%s' "$FAIL")"
-      assert_eq "$control_red" 1 "$label rejects the same retained-lane contract" "$ERR"
-      assert_eq "$(facts 'stopped=1 marker=true relaunch~--relaunch=true')" \
-        'stopped=1 marker=true relaunch~--relaunch=true' "$label reaches stop and dispatch" "$ERR"
-    else
-      assert_eq "$(facts "$expect")" "$expect" "$label" "$ERR"
-    fi
+    assert_eq "$(facts "$expect")" "$expect" "$label" "$ERR"
   done
 }
 
@@ -215,7 +212,7 @@ RELAUNCHED="EVENT+lane-relaunched+KEN-2+lane=$FRESH+from=$SPENT"
 USAGE_LIMIT="EVENT+usage-limit+gh-2+$SPENT+resets=2026-09-02T16:50:00Z"
 ROW_RELAUNCH="a walled lane with a qualifying pick preserves its permission choice, host and session|walled|fresh|-|rc=0 first=$RELAUNCHED out~EVENT+usage-limit=false pick=$SPENT killed=none relaunch~--relaunch=true relaunch~--lane+$FRESH=true relaunch~--model+$MODEL+--effort+high+--permission-mode+dontAsk=true relaunch~--host+local=true relaunch~--continue-resume=true session=main relaunch~KEN-2=true"
 ROW_SPENT="the spent account handed back is refused, and the wall goes to the overseer|walled|spent|auto|rc=0 first=$USAGE_LIMIT second=pick+lane=$SPENT err~reason%espent-account=true killed=none relaunch~--relaunch=false"
-ROW_VERB="provider-owned recovery leaves the prior lane intact|walled:hosted-verb|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%erelaunch-deferred:KEN-3996=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
+ROW_VERB="provider-owned recovery dispatches without caller retirement|walled:hosted-verb|fresh|auto|rc=0 first=EVENT+lane-relaunched+issue-2+lane=$FRESH+from=$SPENT stopped=0 marker=true killed=none record=retained windows=retained relaunch~--relaunch=true relaunch~--tracker+github=true relaunch~--repo+owner/repo=true relaunch~2=true"
 ROW_CAP_FAILED="unavailable absolute host capabilities leave the prior lane intact|walled:cap-unavailable|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%ehost-capabilities-unavailable+exit%e7=true err~lane-host-fixture:+capabilities-failed+exit%e7=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
 ROW_RELATIVE="relative provider recovery leaves the prior lane intact|walled:relative|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%erelative-provider-deferred:KEN-3996=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
 
@@ -325,12 +322,38 @@ failure_passes() {
 assert_eq "$(failure_passes)" '1 0 retained' \
   'a completed failed relaunch reports its exit and log once while retaining the surviving window' "$TMP_ROOT/failure.err"
 
-# This control applies the table's original retained-lane assertion to a fault.
-# The ordinary rows cover each refusal without repeating full-watch mutations.
-scripts="$(mutant_scripts provider-recovery-unrefused/orch lib/lane-relaunch.sh)" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/provider-recovery-unrefused/github"
-mutate_file "$scripts/lib/lane-relaunch.sh" 'if [[ "$pane" == verb ]]; then' 'if false; then'
-WATCH_BIN="$scripts/oversee-watch" wall_table "refusal-control: $ROW_VERB"
+# The real launcher must reach marker setup while the provider still owns the
+# predecessor. The watch keeps its own commands first on PATH.
+FRESH="$TMP_ROOT/actual-fresh-account"
+mkdir -p "$FRESH"
+stage walled:hosted-verb fresh
+jq --arg cwd "$TMP_ROOT/repo" '.overseer = {cwd:$cwd}' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/edited"
+mv "$STUB_DIR/edited" "$STUB_DIR/oversee-state.json"
+cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/workflow-state-oversee.json"
+cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/saved-state.json"
+canonical_saved="$(jq -Sc '.lanes[0]' "$STUB_DIR/workflow-state-oversee.json")"
+ERR="$TMP_ROOT/actual-launcher.err"
+OUT="$(run_watch ORCH_WALL_RELAUNCH=auto OVERSEE_WATCH_OPEN_TERMINAL="$REPO_ROOT/skills/orch/scripts/open-terminal" \
+  PATH="$TMP_ROOT/bin:$LAUNCH_BIN:$PATH" LANES_CLI="$TMP_ROOT/bin/lanes-stub.sh" WORKTREE_CLI="$LAUNCH_BIN/worktree" \
+  ORCH_LANE_PREFERENCE= ORCH_LANE_DIRS= ORCH_LANE_ALIASES= ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL= \
+  CODEX_HOME= PI_CODING_AGENT_DIR= ORCH_OVERSEER_LANES= ORCH_OVERSEER_CLOUD_LANES= \
+  CLAUDE_CODE_SESSION_ID= CODEX_THREAD_ID= OT_HANDOFF_WORKTREE= OT_HANDOFF_ANSWER= OT_HANDOFF_SSH_STATUS=0 \
+  OT_TMUX_LOG="$STUB_DIR/launcher-tmux.log" OT_WT_LOG="$STUB_DIR/launcher-worktree.log" \
+  LANE_HOST_STUB_PUT_STATUS=7 ${PROFILE_ENV[@]+"${PROFILE_ENV[@]}"} -- \
+  --max-loops 1 --state "$STUB_DIR/oversee-state.json" gh-1 gh-2 2>"$ERR")" && RC=0 || RC=$?
+assert_eq "$RC" 0 'the actual-launcher wall attempt dispatches' "$ERR"
+marker="$STATE_DIR/wall-relaunch.gh-2"
+n=0
+while [[ ! -s "$marker.exit" && "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
+assert_eq "$([[ -s "$marker.exit" ]] && cat "$marker.exit" || echo missing)" 1 'the actual launcher reports its setup failure'
+assert_eq "$(grep -c '^create --item issue-2 ' "$STUB_DIR/host.calls" || true)" 1 'the actual wall launcher reaches create'
+assert_eq "$(grep -c '^cat --item issue-2 /srv/lane/.git ' "$STUB_DIR/host.calls" || true)" 1 'the actual wall launcher reads the remote git directory'
+assert_eq "$(grep -c '^put --item issue-2 ' "$STUB_DIR/host.calls" || true)" 1 'the actual wall launcher attempts marker put'
+assert_file_contains "$STUB_DIR/wall-relaunch-issue-2.log" 'open-terminal: marker-failed item=2' 'the actual wall launcher reaches marker failure'
+assert_eq "$(grep -c '^stop ' "$STUB_DIR/host.calls" || true)" 0 'failed wall setup never retires the predecessor'
+assert_eq "$(grep -vc 'workflow-state handoff-standing ' "$STUB_DIR/launcher-tmux.log.handoff" || true)" 0 'failed wall setup executes no remote successor command'
+assert_eq "$(jq -Sc '.lanes[0]' "$STUB_DIR/workflow-state-oversee.json")" "$canonical_saved" 'failed wall setup keeps the complete canonical lane record'
+assert_eq "$(jq -Sc '.lanes[0]' "$STUB_DIR/oversee-state.json")" "$canonical_saved" 'failed wall setup keeps the complete watch lane record'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

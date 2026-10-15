@@ -461,10 +461,6 @@ lane_capability HOST_KIND kind
 lane_capability HOST_LAUNCH launch
 lane_capability HOST_PANE pane
 host_launch_judge() {
-  if [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then
-    ot_message host-relaunch-deferred "host=$LANE_HOST" pane=verb follow-up=KEN-3996 >&2
-    return 1
-  fi
 case "$HOST_LAUNCH" in
   window | ssh) ;;
   cloud-session)
@@ -2427,6 +2423,13 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   [[ -n "$LAUNCH_PANE" ]] || tmux_window_open "$dir" "$title" || return 1
   pane="$LAUNCH_PANE"
   if [[ -n "$target" && "${HOST_PANE:-local}" == verb ]]; then
+    if [[ "$host_command_restart" == pending ]]; then
+      host_harness_stop prior || return 1
+      host_command_restart=completed
+    fi
+    if [[ -n "$RELAUNCH_HANDOFF_DIR" ]]; then
+      ot_message session-retired "item=$title" "harness=$HARNESS"
+    fi
     # remote-prefix owns the detached sandbox session. The control process
     # holds no interactive terminal and the local window receives no input.
     HOST_PANE_LAUNCH=owned
@@ -2802,25 +2805,35 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # the harness; launch_finish reads that result.
 RELAUNCH_ROUTE=resume HOST_SELECTION_FILE="" RELAUNCH_HANDOFF_DIR=""
 host_harness_stop() { # [prior]
-  local rc=0 target="$HARNESS"
+  local rc=0 target="$HARNESS" out
   # Retirement precedes replacement of the record's harness. Cleanup follows
   # launch and must name the requested successor instead.
   if [[ "${1:-}" == prior && "$FLEET" == true ]]; then
     lane_record_read "$wt_id" harness || return 1
     [[ "$LANE_RECORD_VALUE" == absent ]] || target="$LANE_RECORD_VALUE"
   fi
-  host_transport stop --item "$wt_id" --harness "$target" || rc=$?
-  [[ "$rc" -ne 0 ]] || return 0
+  if [[ "${HOST_PANE:-local}" == verb ]]; then
+    out="$(host_transport stop --item "$wt_id" --harness "$target")" || rc=$?
+    if [[ "$rc" -eq 0 ]] && lane_recovery_stop_confirmed "$out" "$wt_id"; then return 0; fi
+  else
+    host_transport stop --item "$wt_id" --harness "$target" || rc=$?
+    [[ "$rc" -ne 0 ]] || return 0
+  fi
   ot_message host-stop-failed "item=$item" "exit=$rc" >&2
   return 1
 }
 relaunch_route() { # ITEM STATE_ID WORKTREE
   local judge
   RELAUNCH_ROUTE=resume HOST_SELECTION_FILE="" RELAUNCH_HANDOFF_DIR=""
+  # A saved selection belongs to the successor that already started.
+  if [[ "$host_pending_step" == selection ]]; then
+    [[ "$HARNESS" != codex ]] || HOST_SELECTION_FILE="tmp/lane-mail/$2/relaunch-selection"
+    return 0
+  fi
   LANE_RECORD_VALUE=absent
   [[ "$FLEET" != true ]] || lane_record_read "$2" harness || return 1
   if [[ "$LANE_RECORD_VALUE" != absent && "$LANE_RECORD_VALUE" != "$HARNESS" ]]; then
-    [[ "$HOST_RELAUNCH" != true || "$host_command_restart" == completed ]] || host_harness_stop prior || return 1
+    [[ "$HOST_RELAUNCH" != true || "$HOST_PANE" == verb || "$host_command_restart" == completed ]] || host_harness_stop prior || return 1
     ot_message harness-switched "item=$1" "harness=$HARNESS" "recorded=$LANE_RECORD_VALUE"
     RELAUNCH_ROUTE=fresh
     return 0
@@ -2831,9 +2844,6 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
       codex) RELAUNCH_ROUTE=resume-or-fresh; HOST_SELECTION_FILE="tmp/lane-mail/$2/relaunch-selection" ;;
       pi) RELAUNCH_ROUTE=resume-or-fresh ;;
     esac
-    # A selection checkpoint follows a harness already started. Complete its
-    # record without judging or stopping that surviving process again.
-    [[ "$host_pending_step" != selection ]] || return 0
     judge="cd $(lane_single_quote "$remote_path") && .agents/skills/orch/scripts/workflow-state handoff-standing $(lane_single_quote "$2") --worktree $(lane_single_quote "$remote_path")" || return 1
     # The provider prefix owns harness launch, not synchronous reads. The
     # remote judge uses its own project settings, as the start workflow does.
@@ -2844,9 +2854,9 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
     stands)
-      [[ "$HOST_RELAUNCH" != true || "$host_command_restart" == completed ]] || host_harness_stop prior || return 1
+      [[ "$HOST_RELAUNCH" != true || "$HOST_PANE" == verb || "$host_command_restart" == completed ]] || host_harness_stop prior || return 1
       [[ "$HOST_RELAUNCH" != true ]] || RELAUNCH_HANDOFF_DIR="${LANE_HANDOFF_FILE%/*}"
-      ot_message session-retired "item=$1" "harness=$HARNESS"
+      [[ "$HOST_RELAUNCH" == true && "$HOST_PANE" == verb ]] || ot_message session-retired "item=$1" "harness=$HARNESS"
       RELAUNCH_ROUTE=fresh HOST_SELECTION_FILE=""
       return 0 ;;
   esac
@@ -3120,6 +3130,8 @@ launch_record_finish() {
 # state, so they do not create a fleet. A retry reads this before create.
 host_launch_pending() { # STEP
   local pending
+  # Preparation cannot replace a record whose predecessor still owns it.
+  [[ "${HOST_PANE:-local}" != verb || "$host_command_restart" != pending ]] || return 0
   pending="$(jq -cn --arg line "$host_line" --arg host "$LANE_HOST" --arg step "$1" --arg since "$launched_at" \
     --arg account "$LANE_ENV" --arg harness "$HARNESS" --argjson relaunch "$RELAUNCH" \
     --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg command "$CMD_TEMPLATE" \
@@ -3143,6 +3155,16 @@ host_launch_pending() { # STEP
 host_launch_resume() { # [admitted]
   local key="$wt_id" query='.host_launch' pending
   if [[ "${1:-}" == admitted ]]; then
+    if [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then
+      [[ "$host_pending_step" != selection ]] || return 0
+      LANE_RECORD_VALUE=absent
+      [[ "$FLEET" != true ]] || lane_record_read "$wt_id" status || return 1
+      case "$LANE_RECORD_VALUE" in
+        stopped|parked) host_command_restart=completed ;;
+        *) host_command_restart=pending ;;
+      esac
+      return 0
+    fi
     [[ "$host_command_restart" == pending ]] || return 0
     host_harness_stop prior || return 1
     host_launch_ready completed || return 1
@@ -3189,6 +3211,10 @@ host_launch_ready() { # completed|failed
     failed)
       mail_root="$remote_path"
       if [[ "${HOST_PANE:-local}" == verb ]]; then
+        if [[ "$host_command_restart" == pending ]]; then
+          [[ -z "$UNTAKEN_PANE" ]] || tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
+          return 0
+        fi
         case "${HOST_PANE_LAUNCH:-unstarted}" in
           unjudged) return 1 ;;
           owned)
@@ -3857,9 +3883,9 @@ for raw in "${ITEMS[@]}"; do
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
   if [[ "$LANE_HOST" != local ]]; then
-    # Stop does not remove saved sessions. The custom command below still
-    # takes its own fresh route, after create reconnects the stopped harness.
-    if [[ "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restart" != completed ]] && ! host_harness_stop prior; then
+    # Local-pane commands reconnect after stop. Provider-owned commands keep
+    # the predecessor until replacement setup succeeds.
+    if [[ "$HOST_PANE" == local && "$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line" && "$host_command_restart" != completed ]] && ! host_harness_stop prior; then
       failed=$((failed + 1))
       continue
     fi
@@ -3966,10 +3992,9 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     continue
   fi
-  # Hosted no-command relaunches wait here before handoff judgment. Fresh and
-  # custom-command fleet launches hand preparation to the background job;
-  # without fleet state every preparation waits here.
-  if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" && ( "$RELAUNCH" != true || -n "$CMD_TEMPLATE" ) ]]; then
+  # A provider-owned replacement prepares in the foreground so the background
+  # preparing record cannot replace its still-running predecessor's record.
+  if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" && -z "$host_pending_step" && ( "$RELAUNCH" != true || -n "$CMD_TEMPLATE" && "$HOST_PANE" == local ) ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
   else
@@ -3979,6 +4004,10 @@ for raw in "${ITEMS[@]}"; do
     [[ "$host_state" != preparing || "$host_pending_step" == marker || "$host_pending_step" == selection ]] || host_transport wait --item "$wt_id" || wait_rc=$?
     if [[ "$wait_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
       ot_message lane-host-busy "item=$item" step=wait >&2
+      if [[ "$HOST_PANE" == verb && "$host_command_restart" == pending ]]; then
+        failed=$((failed + 1))
+        continue
+      fi
       host_launch_pending wait || { failed=$((failed + 1)); continue; }
       preparing=$((preparing + 1))
       continue
@@ -3995,6 +4024,10 @@ for raw in "${ITEMS[@]}"; do
     [[ "$LANE_HOST" == local || "$FLEET" == true ]] || host_launch_pending "${host_pending_step:-marker}" || { failed=$((failed + 1)); continue; }
     if ! launch_finish; then
       if [[ "$LANE_HOST" != local && "$LANE_MARKER_REASON" == lane-host-busy ]]; then
+        if [[ "$HOST_PANE" == verb && "$host_command_restart" == pending ]]; then
+          failed=$((failed + 1))
+          continue
+        fi
         host_launch_pending "$([[ "$host_pending_step" == selection ]] && echo selection || echo marker)" || { failed=$((failed + 1)); continue; }
         preparing=$((preparing + 1))
         continue
