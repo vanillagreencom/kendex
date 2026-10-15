@@ -420,7 +420,7 @@ mv -- "$STUB_DIR/container.json" "$STUB_DIR/tracker.out"
 watch_pass -- --state "$STUB_DIR/state.json"
 # Completed history is absent from the parent list, but direct child facts
 # still make a Triage container due. No child read visits closed history.
-assert_not_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues children KEN-C ' "closed child history is not scanned as a candidate" "$ERR"
+assert_not_contains "$(cat "$STUB_DIR/tracker.bulk-stdin")" 'KEN-C' "closed child history is not scanned as a candidate" "$ERR"
 for outcome in missing-proof absent empty proved; do
   case "$outcome" in
     missing-proof) description='## Done when
@@ -469,7 +469,7 @@ for bounded in filter terminals; do
   : >"$STUB_DIR/tracker.args.all"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
   assert_not_contains "$(cat "$STUB_DIR/tracker.args")" "$bounded_request" "control: $bounded violates the bounded server-side filter" "$ERR"
-  assert_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues children KEN-C ' "control: $bounded reads terminal history" "$ERR"
+  assert_contains "$(cat "$STUB_DIR/tracker.bulk-stdin")" 'KEN-C' "control: $bounded reads terminal history" "$ERR"
 done
 
 # A team with no open state must not turn an empty filter into all history.
@@ -488,6 +488,56 @@ printf '%s\n' 'child read unavailable' >"$STUB_DIR/children.err"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "$RC" 2 "an unread child set refuses parent selection" "$ERR"
 assert_file_contains "$ERR" 'read=children' "the child read failure names its API boundary"
+
+# Backlog parents and queued work retain their child reads. Terminal child
+# names can be custom; their types decide whether the outcome is due.
+while IFS='|' read -r child_type due; do
+  new_case "child_bulk_$child_type"
+  fleet '["KEN-A"]'
+  jq -nc --arg type "$child_type" '[
+    {id:"KEN-P",title:"Shared outcome",state:"Backlog",state_type:"backlog",
+      description:"## Done when\n- [ ] Read shared outcome at source"},
+    {id:"KEN-A",title:"Queued work",state:"In Progress",state_type:"started"},
+    {id:"KEN-Q",title:"Bundle (ONE PR)",state:"Todo",state_type:"unstarted"},
+    {id:"KEN-C",title:"Closed child",state:"Done",state_type:"completed",parent_id:"KEN-P"},
+    {id:"KEN-D",title:"Other child",state:"Custom",state_type:$type,parent_id:"KEN-P"}
+  ]' >"$STUB_DIR/tracker.out"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC reads=$(grep -c '^issues bulk-get --stdin --format=raw$' "$STUB_DIR/tracker.args.all" || true)" \
+    'rc=0 reads=1' "the candidate set uses one bulk child read" "$ERR"
+  assert_eq "$(cat "$STUB_DIR/tracker.bulk-stdin")" $'KEN-P\nKEN-A' "bulk children use the same open non-bundle candidates before queue filtering" "$ERR"
+  assert_not_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues children ' "the pass makes no individual child read" "$ERR"
+  assert_eq "$(verification_lines | grep -c '^verifying KEN-P box=1' || true)" "$due" "$child_type child keeps exact outcome membership" "$ERR"
+done <<'ROWS'
+completed|1
+canceled|1
+started|0
+ROWS
+
+MUTANT_DIR="$TMP_ROOT/child-bulk-repeat"
+MUTANT_WATCH="$(mutant_scripts child-bulk-repeat/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
+mutate_file "$MUTANT_WATCH" 'children="$("$TRACKER" issues bulk-get --stdin --format=raw <<<"$candidates" 2>"$errf")"' \
+  'children="$("$TRACKER" issues bulk-get --stdin --format=raw <<<"$candidates" 2>"$errf"; "$TRACKER" issues bulk-get --stdin --format=raw <<<"$candidates" 2>"$errf")"'
+: >"$STUB_DIR/tracker.args.all"
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+control_rc=0
+( FAIL=0; assert_eq "$(grep -c '^issues bulk-get ' "$STUB_DIR/tracker.args.all" || true)" 1 'one bulk child read'; [[ "$FAIL" == 0 ]] ) \
+  >"$TMP_ROOT/child-bulk-repeat.log" || control_rc=$?
+assert_eq "$control_rc" 1 "control rejects repeated bulk child reads" "$ERR"
+
+while IFS='|' read -r name reply; do
+  new_case "child_bulk_empty_$name"
+  fleet '[]'
+  printf '%s\n' "$reply" >"$STUB_DIR/tracker.out"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "$RC" 0 "$name candidate set completes" "$ERR"
+  assert_not_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues bulk-get ' "$name candidate set makes no bulk request" "$ERR"
+done <<'ROWS'
+empty|[]
+bundle|[{"id":"KEN-Q","title":"Bundle (one PR)","state":"Backlog","state_type":"backlog"}]
+ROWS
 
 # Restore the outcome case after the separate API refusal cases.
 world verifying_container_repeat

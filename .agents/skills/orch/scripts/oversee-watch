@@ -4709,13 +4709,12 @@ owed_read() {
     candidates="$(jq -r '.[] | select((.title // "") | test("\\(one PR\\)"; "i") | not) | .id' <<<"$out")" \
       || die tracker-list-invalid "" "team=$LINEAR_TEAM"
     printf '%s\n' "$out" >"$WORK_DIR/container-facts.jsonl"
-    while IFS= read -r id; do
-      [[ -n "$id" ]] || continue
-      children="$("$TRACKER" issues children "$id" --format=raw 2>"$errf")" \
-        || die tracker-list-failed "$(cat "$errf")" "issue=$id" "read=children"
+    if [[ -n "$candidates" ]]; then
+      children="$("$TRACKER" issues bulk-get --stdin --format=raw <<<"$candidates" 2>"$errf")" \
+        || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "read=children"
       printf '%s\n' "$children" >>"$WORK_DIR/container-facts.jsonl"
-    done <<<"$candidates"
-    out="$(jq -sc '[.[0][], (.[1:][] | .issue.identifier as $parent | .issue.children.nodes
+    fi
+    out="$(jq -sc '[.[0][], (.[1:][] | .issues.nodes[] | .identifier as $parent | .children.nodes
       | if ($parent | type) == "string" and type == "array" and all(.[]; (.identifier | type) == "string" and (.state.type | type) == "string")
         then .[] | {id: .identifier, parent_id: $parent, state_type: .state.type}
         else error("tracker-children-invalid") end)] | unique_by(.id)' "$WORK_DIR/container-facts.jsonl")" \

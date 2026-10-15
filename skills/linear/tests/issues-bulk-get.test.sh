@@ -41,17 +41,28 @@ DOWN-1)
     exit 0
     ;;
 esac
-jq -cj '
+if [[ "${CHILD_PAGES:-}" == failed && "$(jq -r '.operationName // (.query | split("(")[0])' <<<"$payload")" == 'query ContinueConnection' ]]; then
+    printf '%s' 'upstream unavailable___HTTP_CODE___503'
+    exit 0
+fi
+jq -cj --arg pages "${CHILD_PAGES:-}" '
 def closed: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []};
 def issue($n; $archived; $previous): {id: "00000000-0000-4000-8000-00000000000\($n)", identifier: "KEN-\($n)",
     title: "Fixture text", description: "", state: {name: "Todo", type: "unstarted"}, assignee: null,
     project: null, projectMilestone: null, cycle: null, team: {name: "Fixture"}, labels: closed, priority: 0,
     estimate: null, sortOrder: 0, url: "", createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z", archivedAt: $archived, trashed: null, parent: null,
-    children: closed, relations: closed, inverseRelations: closed, _previous: $previous};
+    children: (closed | .nodes = (if $n == 1 then [
+        {id:"child-done",identifier:"KEN-10",title:"Closed",state:{name:"Shipped",type:"completed"}},
+        {id:"child-canceled",identifier:"KEN-11",title:"Canceled",state:{name:"Dropped",type:"canceled"}},
+        {id:"child-open",identifier:"KEN-12",title:"Open",state:{name:"Building",type:"started"}}]
+        else [] end)), relations: closed, inverseRelations: closed, _previous: $previous};
 def world: [issue(1; null; []), issue(2; null; []), issue(3; "2026-10-02T00:00:00.000Z"; []), issue(4; null; ["OLD-7"])];
 .query as $q |
-if ($q | test("issue[(]id:")) then
+if ($q | test("ContinueConnection")) then
+    (world[0].children | .nodes |= .[1:]) as $children
+    | {data:{issue:{id:"00000000-0000-4000-8000-000000000001",children:$children}}}
+elif ($q | test("issue[(]id:")) then
     .variables.id as $ref
     | [world[] | select(.identifier == $ref or .id == $ref or (._previous | index($ref)))] as $hit
     | if ($hit | length) == 1 then {data: {issue: ($hit[0] | del(._previous))}}
@@ -63,8 +74,13 @@ else
     | {data: {issues: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [world[]
         | select(.identifier as $i | .id as $u | $refs | index($i) or index($u))
         | select(.archivedAt == null or ($q | test("includeArchived: *true")))
-        | del(._previous)]}}}
-end' <<<"$payload"
+        | del(._previous)
+        | if $pages != "" and .identifier == "KEN-1" then
+            .children.pageInfo = {hasNextPage:true,endCursor:"child-page"} | .children.nodes |= .[:1]
+          else . end]}}}
+end
+| if ($q | test("nodes \\{ id identifier title state \\{ name type \\}")) then .
+  else walk(if type == "object" and has("children") then .children.nodes |= map(del(.state.type)) else . end) end' <<<"$payload"
 printf '___HTTP_CODE___200'
 STUB
 chmod +x "$TMP_ROOT/bin/curl"
@@ -138,6 +154,26 @@ while IFS='|' read -r format want_rc want_requests check; do
 done <<'ROWS'
 safe|0|1|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and has("description"))
 compact|0|1|map(.id) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state == "Todo" and (has("description") or has("url") or has("created_at") or has("updated_at") | not))
-raw|0|1|.issues.nodes | map(.identifier) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state.name == "Todo" and has("description"))
+raw|0|1|.issues.nodes | map(.identifier) == ["KEN-2", "KEN-1"] and all(.[]; .title == "Fixture text" and .state.name == "Todo" and has("description")) and (.[1].children.nodes | map({identifier,state}) == [{identifier:"KEN-10",state:{name:"Shipped",type:"completed"}},{identifier:"KEN-11",state:{name:"Dropped",type:"canceled"}},{identifier:"KEN-12",state:{name:"Building",type:"started"}}])
 comapct|1|0|
+ROWS
+
+while IFS='|' read -r pages want_rc want_requests; do
+    rc=0
+    : >"$TMP_ROOT/calls"
+    out=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CALLS="$TMP_ROOT/calls" \
+        LINEAR_API_KEY_OVERRIDE=test-key LINEAR_RETRY_BASE_DELAY=0 CHILD_PAGES="$pages" "$BASH" .agents/skills/linear/scripts/linear.sh \
+        issues bulk-get --stdin --format=raw <<<"KEN-1" 2>"$TMP_ROOT/err") || rc=$?
+    assert_eq "bulk-get $pages child pages status" "$rc" "$want_rc"
+    requests=$(wc -l <"$TMP_ROOT/calls" | tr -d ' ')
+    assert_eq "bulk-get $pages child pages requests" "$requests" "$want_requests"
+    if [[ "$want_rc" == 0 ]]; then
+        assert_jq "bulk-get child pages retain terminal types" "$out" \
+            '.issues.nodes[0].children.nodes | map({identifier,state}) == [{identifier:"KEN-10",state:{name:"Shipped",type:"completed"}},{identifier:"KEN-11",state:{name:"Dropped",type:"canceled"}},{identifier:"KEN-12",state:{name:"Building",type:"started"}}]'
+    else
+        assert_eq "bulk-get failed child pages print no result" "$out" ''
+    fi
+done <<'ROWS'
+complete|0|2
+failed|1|4
 ROWS

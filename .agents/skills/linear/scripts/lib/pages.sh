@@ -203,7 +203,7 @@ linear_connection_fields() {
 linear_children_fields() {
     local depth="$1" fields descendants
     case "${LINEAR_ISSUE_CHILD_MODE:-brief}" in
-    brief) fields='id identifier title state { name }' ;;
+    brief) fields='id identifier title state { name type }' ;;
     direct) fields='id identifier title state { name type } assignee { name } priority estimate createdAt' ;;
     bundle|recursive)
         fields="id identifier title state { name type } assignee { name } labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } } priority estimate parent { identifier } $ISSUE_RELATION_FIELDS"

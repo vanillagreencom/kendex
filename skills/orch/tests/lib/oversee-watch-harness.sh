@@ -604,6 +604,7 @@ EOF
 # empty), tracker.err is stderr, and tracker.rc is the exit status. Every argv
 # reaches tracker.args.all; tracker.args keeps the last issue-list request.
 # statuses.out overrides the team state list; children.err fails a child read.
+# Bulk reads retain their stdin candidates in tracker.bulk-stdin.
 # A `--state`
 # argument filters an array to the comma-separated state names it lists, as
 # Linear's own list does, so a case's other items are the server's to drop; any
@@ -623,6 +624,17 @@ case "$1 $2" in
     if [[ -f "$STUB_DIR/tracker.out" ]]; then
       jq -c --arg parent "$3" '{issue:{identifier:$parent,children:{nodes:[.[] | select(.parent_id == $parent) | {identifier:.id,state:{type:.state_type}}]}}}' "$STUB_DIR/tracker.out"
     else printf '{"issue":{"identifier":"%s","children":{"nodes":[]}}}\n' "$3"; fi
+    exit 0 ;;
+  'issues bulk-get')
+    cat >"$STUB_DIR/tracker.bulk-stdin"
+    if [[ -f "$STUB_DIR/children.err" ]]; then cat "$STUB_DIR/children.err" >&2; exit 2; fi
+    if [[ -f "$STUB_DIR/children.out" ]]; then cat "$STUB_DIR/children.out"; exit 0; fi
+    if [[ -f "$STUB_DIR/tracker.out" ]]; then
+      jq -c --rawfile refs "$STUB_DIR/tracker.bulk-stdin" '. as $all | {issues:{nodes:[
+        ($refs | split("\n")[] | select(length > 0)) as $parent
+        | {identifier:$parent,children:{nodes:[$all[] | select(.parent_id == $parent)
+          | {identifier:.id,state:{type:.state_type}}]}}]}}' "$STUB_DIR/tracker.out"
+    else printf '{"issues":{"nodes":[]}}\n'; fi
     exit 0 ;;
 esac
 printf '%s\n' "$*" > "$STUB_DIR/tracker.args"

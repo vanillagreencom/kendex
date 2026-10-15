@@ -642,7 +642,7 @@ bulk_get_issues() {
                 archivedAt
                 trashed
                 parent { id identifier title }
-                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }
+                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name type } } }
 '"$ISSUE_RELATION_FIELDS"
 
     local result

@@ -1,4 +1,12 @@
 # Each mutation changes a disposable skill copy and names its assertion.
+control_expect "bulk-get raw returns its format"
+control_replace scripts/commands/issues.sh 1 \
+    '                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name type } } }' \
+    '                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }'
+control_expect "bulk-get child pages retain terminal types"
+control_replace scripts/lib/pages.sh 1 \
+    '    brief) fields='"'"'id identifier title state { name type }'"'"' ;;' \
+    '    brief) fields='"'"'id identifier title state { name }'"'"' ;;'
 # A UUID refuses as no issue identifier.
 control_expect 'a UUID reads its issue'
 control_replace scripts/lib/common.sh 1 \
