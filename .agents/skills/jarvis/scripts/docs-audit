@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Read committed Markdown growth through Git's documented metadata interface.
+set -euo pipefail
+exec python3 - "$@" <<'PY'
+import argparse
+import datetime as dt
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def timestamp(value):
+    try:
+        if not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)", value):
+            raise ValueError()
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+    except ValueError:
+        raise argparse.ArgumentTypeError("timestamp requires YYYY-MM-DDTHH:MM:SS and a UTC offset")
+
+
+parser = argparse.ArgumentParser(description="Report committed Markdown snapshot growth.")
+parser.add_argument("--since", required=True, type=timestamp)
+parser.add_argument("--until", required=True, type=timestamp)
+parser.add_argument("--top", type=int, default=10)
+parser.add_argument("repos", nargs="+")
+args = parser.parse_args()
+if args.since > args.until or args.top < 0:
+    parser.error("since must not exceed until; top must be nonnegative")
+start, end = args.since.isoformat(), args.until.isoformat()
+env = os.environ.copy()
+for key in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+    env.pop(key, None)
+env["GIT_TERMINAL_PROMPT"] = "0"
+exclude = re.compile(rb"(^|/)(plans|research|node_modules|fixtures)/|^changelog\.d/|^CHANGELOG\.md$")
+quote = json.dumps
+
+
+def git(repo, operation, *argv, data=None):
+    try:
+        result = subprocess.run(["git", "-C", repo, *argv], input=data, capture_output=True,
+                                env=env, timeout=60, check=True)
+        return result.stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        detail = error.stderr.decode(errors="replace") if isinstance(error, subprocess.CalledProcessError) else str(error)
+        raise ValueError(f"{operation}: {detail.strip()}") from error
+
+
+def snapshot(repo, revision):
+    operation = f"snapshot {revision}"
+    entries = {}
+    for entry in git(repo, operation, "ls-tree", "-r", "-z", "--full-tree", revision).split(b"\0"):
+        if entry:
+            meta, path = entry.split(b"\t", 1)
+            mode, kind, oid = meta.split()
+            if kind == b"blob":
+                entries[path] = oid
+    inventory = entries.get(b".kendex-generated.json")
+    if inventory is None:
+        raise ValueError(f"{operation}: inventory missing")
+    try:
+        value = json.loads(git(repo, operation + " inventory", "cat-file", "blob", inventory))
+        if not isinstance(value, list):
+            raise ValueError("inventory must be an array")
+        paths = [row.get("path") if isinstance(row, dict) else row for row in value]
+        if any(not isinstance(path, str) for path in paths):
+            raise ValueError("inventory entries require paths")
+        generated = {os.fsencode(path) for path in paths}
+    except (ValueError, UnicodeError) as error:
+        raise ValueError(f"{operation}: invalid inventory: {error}") from error
+    selected = {path: oid for path, oid in entries.items()
+                if path.endswith(b".md") and not exclude.search(path) and path not in generated}
+    ids = sorted(set(selected.values()))
+    sizes = {}
+    if ids:
+        lines = git(repo, operation + " sizes", "cat-file", "--batch-check",
+                    data=b"\n".join(ids) + b"\n").splitlines()
+        if len(lines) != len(ids):
+            raise ValueError(f"{operation}: incomplete size responses")
+        for oid, line in zip(ids, lines):
+            fields = line.split()
+            if len(fields) != 3 or fields[:2] != [oid, b"blob"] or not fields[2].isdigit():
+                raise ValueError(f"{operation}: invalid size response {line!r}")
+            sizes[oid] = int(fields[2])
+    return {path: sizes[oid] for path, oid in selected.items()}
+
+
+failed = False
+for named in args.repos:
+    identity = f"repo={quote(Path(named).name)} repo_path={quote(named)}"
+    try:
+        repo = str(Path(named).resolve())
+        identity = f"repo={quote(Path(repo).name)} repo_path={quote(repo)}"
+        pinned = git(repo, "HEAD", "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+        if git(repo, "history", "rev-parse", "--is-shallow-repository").strip() != b"false":
+            raise ValueError("history: shallow repository")
+        head = git(repo, "head endpoint", "rev-list", "-1", f"--before={end}", pinned).decode().strip()
+        if not head:
+            raise ValueError("head endpoint: no commit at or before until")
+        base = git(repo, "base endpoint", "rev-list", "-1", f"--before={start}", head).decode().strip()
+        if not base:
+            raise ValueError("base endpoint: no commit at or before since")
+        old, new = snapshot(repo, base), snapshot(repo, head)
+        rows = [f"{identity} base={base} head={head} since={start} until={end} "
+                f"md_files={len(old)}->{len(new)} md_bytes={sum(old.values())}->{sum(new.values())}"]
+        growth = sorted(((size - old.get(path, 0), size, path) for path, size in new.items()
+                         if size > old.get(path, 0)), key=lambda row: (-row[0], row[2]))
+        rows.extend(f"growth {identity} delta_bytes={delta} bytes={size} path={quote(os.fsdecode(path))}"
+                    for delta, size, path in growth[:args.top])
+        print("\n".join(rows))
+    except (ValueError, OSError) as error:
+        failed = True
+        print(f"{identity} status=unread cause={quote(str(error))}")
+sys.exit(1 if failed else 0)
+PY

@@ -1,0 +1,11 @@
+# Committed Markdown growth
+
+1. Obtain explicit repository roots and start and end timestamps from the consumer. Use absolute timestamps with seconds and a UTC offset, such as `2026-10-01T00:00:00+00:00`. Keep repository defaults and schedules in the consumer.
+2. Run [scripts/docs-audit](../scripts/docs-audit) with `--since START --until END REPO_DIR...`. Use `--top N` to change the finite displayed growth list. The command's help defines the default.
+3. Check the exit status and every `repo=` row. An unread repository has `status=unread` and a cause, with no measurements. Report that cause. Missing history or inventory does not mean zero documents. Do not substitute a root commit, an empty tree or the current commit.
+4. Read the full `base` and `head` revisions before interpreting growth. The command pins HEAD once. Git selects the first reachable commit at or before the end, then the first commit at or before the start from that end revision. Selection uses Git's default traversal and committer dates. It does not establish when a remote branch received a commit.
+5. Compare snapshot totals. Boundary commits belong to their boundary snapshots, so growth covers `(START, END]`. The report compares exact trees, not the sum of edits. Equal endpoints or unchanged sizes can have no growth rows. Complete empty document sets have zero totals.
+6. Read `growth repo=` rows as positive size changes among eligible end paths. Removed paths affect totals only. Counts and bytes cover all eligible paths, including those outside the displayed list. String values use JSON quoting. `repo_path` distinguishes equal repository names. Paths retain their Git bytes through selection; JSON escapes preserve unusual names in the report.
+7. Retain the command output with the audit evidence. The report uses each revision's committed generated-file inventory. Pending files do not affect it. Missing or invalid inventories remain unread. Shallow history remains unread.
+
+The command reads tree metadata before selecting Markdown. It requests sizes only for selected Markdown blobs. It reads inventory contents at both revisions. In a partial clone, Git can fetch those blobs plus tree and commit metadata into its object cache. Checkout files, the index and refs remain unchanged. This cache effect requires network access when selected objects are absent.

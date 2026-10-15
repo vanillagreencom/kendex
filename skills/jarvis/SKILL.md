@@ -28,7 +28,7 @@ dependencies:
       purpose: Keep the continuing session in a terminal
       optional: true
     - command: git
-      purpose: Protect private credential files from tracking
+      purpose: Protect private credential files and read committed document reports
     - command: find
       purpose: Remove expired assistant scratch files
     - command: gh
@@ -135,6 +135,7 @@ Read the linked workflow or reference for the task before acting.
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [references/communication.md](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
+| Report committed Markdown growth for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
