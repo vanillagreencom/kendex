@@ -37,7 +37,7 @@ STATE="$TMP_ROOT/state/workflow-state-oversee.json"
 # writes carries, and `none` for a record carrying no start.
 state() {
   jq -n --arg pane "$1" --arg start "${2:-1790000000}" '{issue_id: "oversee", overseer: ({runtime: "tmux", server: "7000", pane: $pane,
-    window: "@1", launch_line: "claude"} + (if $start == "none" then {} else {server_start: ($start | tonumber)} end))}' > "$STATE"
+    window: "@1", generation: 1, launch_line: "claude"} + (if $start == "none" then {} else {server_start: ($start | tonumber)} end))}' > "$STATE"
 }
 exit_of() { jq -r '.overseer.exit.status // "none"' "$STATE"; }
 
@@ -48,95 +48,150 @@ run() {
   RC=0
   ERR="$TMP_ROOT/err"
   (cd "$TMP_ROOT" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" \
-    ${pane:+TMUX=fake TMUX_PANE="$pane"} "${RUN_BIN:-$SCRIPTS/overseer-run}" "$@") >"$TMP_ROOT/out" 2>"$ERR" || RC=$?
+    ${pane:+TMUX=fake TMUX_PANE="$pane"} "$BASH" "${RUN_BIN:-$SCRIPTS/overseer-run}" "$@") >"$TMP_ROOT/out" 2>"$ERR" || RC=$?
 }
 
 echo "=== overseer-run ==="
 
-# A record carrying no start names no session.
-while IFS='|' read -r label recorded start pane want_rc want_exit; do
+while IFS='|' read -r label recorded start pane want_exit want_error; do
   state "$recorded" "$start"
   run "$pane" -- sh -c 'exit 7'
-  assert_eq "rc=$RC exit=$(exit_of) err=$(wc -c < "$ERR" | tr -d ' ')" "rc=$want_rc exit=$want_exit err=0" "$label" "$ERR"
+  keys="$(sed -n 's/^overseer-run: \([^=]*\)=.*/\1/p' "$ERR" | paste -sd , -)"
+  assert_eq "rc=$RC exit=$(exit_of) keys=$keys" "rc=7 exit=$want_exit keys=$want_error" "$label" "$ERR"
 done <<'ROWS'
-the record names this pane on this server's start: its status is written and handed back|%9|1790000000|%9|7|7
-the record names this pane and carries no start: nothing is written|%9|none|%9|7|none
-the record names this pane id on an earlier server handed the same pid: nothing is written|%9|1789996400|%9|7|none
-the record names another pane: nothing is written|%3||%9|7|none
-outside tmux: nothing is written|%9|||7|none
+this server and pane record completion|%9|1790000000|%9|7|
+a startless record stays unbound|%9|none|%9|none|start-unrecorded,exit-unrecorded
+an earlier server stays unbound|%9|1789996400|%9|none|start-unrecorded,exit-unrecorded
+another pane stays unbound|%3||%9|none|start-unrecorded,exit-unrecorded
+outside tmux keeps command status|%9|||none|
 ROWS
 
 state %9
 run %9 -- true
-assert_eq "rc=$RC exit=$(exit_of)" "rc=0 exit=0" "a clean exit is recorded as 0"
+assert_eq "rc=$RC exit=$(exit_of) active=$(jq -r '.overseer | has("harness_pid") or has("harness_start")' "$STATE")" \
+  'rc=0 exit=0 active=false' 'completion clears active identity and keeps zero status'
+assert_eq "$(jq -r '.overseer.exit.run | [.server,.server_start,.pane,.generation] | @tsv' "$STATE")" \
+  $'7000\t1790000000\t%9\t1' 'completion retains the server, pane and generation binding'
 run %9 --
 assert_eq "rc=$RC" "rc=2" "no command is a usage error"
 
-# A status an earlier session in this pane left is dropped before the command
-# runs: the command reads the record mid-run and exits 0 only where it is gone.
-state_exit() { # PANE STATUS [START]
-  state "$1" "${3:-}"
-  jq --argjson s "$2" '.overseer.exit = {status: $s, at: "2026-09-28T01:00:00Z"}' "$STATE" > "$STATE.tmp"
-  mv -- "$STATE.tmp" "$STATE"
-}
-CLEARED_CHECK="jq -e '.overseer.exit == null' '$STATE' >/dev/null"
-state_exit %9 9
-run %9 -- sh -c "$CLEARED_CHECK"
-assert_eq "rc=$RC exit=$(exit_of)" "rc=0 exit=0" "a prior status in this pane is dropped before the line runs"
-state_exit %3 9
-run %9 -- sh -c "$CLEARED_CHECK"
-assert_eq "rc=$RC exit=$(exit_of)" "rc=1 exit=9" "another pane's status is left where it stands"
-state_exit %9 9 1789996400
-run %9 -- sh -c "$CLEARED_CHECK"
-assert_eq "rc=$RC exit=$(exit_of)" "rc=1 exit=9" "an earlier server's status for this pane id is left where it stands"
-
-# A record that cannot be written is said under its key, and the status stands.
-printf 'not json' > "$STATE"
-run %9 -- sh -c 'exit 5'
-assert_eq "rc=$RC keys=$(grep -o '^overseer-run: [a-z-]*=[a-z0-9]*' "$ERR" | tr '\n' ',')" \
-  "rc=5 keys=overseer-run: exit-uncleared=pending,overseer-run: exit-unrecorded=5," \
-  "an unwritable record is reported at both writes and the command's status handed back" "$ERR"
-
-# --- control ----------------------------------------------------------------
-# The start test removed from ol_names: an earlier server's record for this
-# pane id takes the status.
-START_CTL="$(mutant_scripts start-ctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$START_CTL/lib/overseer-launch.sh" \
-  '    and (.server_start | tostring) == $start;' '    and true;'
-state %9 1789996400
-RUN_BIN="$START_CTL/overseer-run" run %9 -- sh -c 'exit 7'
-assert_eq "exit=$(exit_of)" "exit=7" "control: without the start test an earlier server's record takes the status"
-
-# Each writer's own start emptied, one control per call site: the bound
-# record for this pane is no longer named, so the prior status stands through
-# the line, and the line's status is never written.
-CLEARSTART_CTL="$(mutant_scripts clearstart-ctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$CLEARSTART_CTL/lib/overseer-launch.sh" \
-  'ol_names($server; $start; $pane)) then .overseer |= del(.exit)' 'ol_names($server; ""; $pane)) then .overseer |= del(.exit)'
-state_exit %9 9
-RUN_BIN="$CLEARSTART_CTL/overseer-run" run %9 -- sh -c "$CLEARED_CHECK"
-assert_eq "rc=$RC" "rc=1" "control: a clear judged on no start leaves this pane's bound record its earlier status"
-EXITSTART_CTL="$(mutant_scripts exitstart-ctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$EXITSTART_CTL/lib/overseer-launch.sh" \
-  'ol_names($server; $start; $pane)) then .overseer.exit = {' 'ol_names($server; ""; $pane)) then .overseer.exit = {'
 state %9
-RUN_BIN="$EXITSTART_CTL/overseer-run" run %9 -- sh -c 'exit 7'
-assert_eq "exit=$(exit_of)" "exit=none" "control: a write judged on no start leaves this pane's bound record without its status"
+jq '.overseer.exit = {status: 9}' "$STATE" > "$STATE.next"
+mv -- "$STATE.next" "$STATE"
+run %9 -- "$BASH" -c '
+  jq -e --arg pid "$$" ".overseer | .harness_pid == \$pid and (.harness_start | length > 0) and .exit == null" "$1" >/dev/null
+' harness "$STATE"
+assert_eq "rc=$RC exit=$(exit_of)" "rc=0 exit=0" 'COMMAND sees its own exec PID and start with the old exit removed' "$ERR"
 
-# The record's session test removed: another pane's record takes the status.
-MUTANT="$(mutant_scripts mutant lib/overseer-launch.sh)" || exit 1
-mutate_file "$MUTANT/lib/overseer-launch.sh" 'if (.overseer | ol_names($server; $start; $pane)) then .overseer.exit = {' 'if true then .overseer.exit = {'
+# The child reaches its binding wait before the launcher replaces OL_PRIOR.
+# A sleep fixture acknowledges that progress, then waits for the writer.
+mkdir -p "$TMP_ROOT/wait-bin"
+mkfifo "$TMP_ROOT/release"
+cat > "$TMP_ROOT/wait-bin/sleep" <<STUB
+#!/bin/sh
+: > "$TMP_ROOT/waiting"
+read -r release < "$TMP_ROOT/release"
+STUB
+chmod +x "$TMP_ROOT/wait-bin/sleep"
 state %3
-RUN_BIN="$MUTANT/overseer-run" run %9 -- sh -c 'exit 7'
-assert_eq "exit=$(exit_of)" "exit=7" "control: without the session test another pane's record takes the status"
+(
+  PATH="$TMP_ROOT/wait-bin:$PATH" run %9 -- "$BASH" -c 'jq -e --arg pid "$$" ".overseer.harness_pid == \$pid" "$1" >/dev/null' harness "$STATE"
+  printf '%s\n' "$RC" > "$TMP_ROOT/launch-rc"
+) &
+launch_pid=$!
+if await_marker "$TMP_ROOT/waiting"; then
+  assert_eq "$(jq -r '.overseer.pane' "$STATE")" '%3' 'binding wait acknowledges before record replacement'
+  state %9
+  printf 'release\n' > "$TMP_ROOT/release"
+else
+  fail 'child reached binding wait'
+  kill "$launch_pid" 2>/dev/null || true
+fi
+wait "$launch_pid" || true
+assert_eq "$(cat "$TMP_ROOT/launch-rc")|$(exit_of)" '0|0' 'replacement retains the executed child identity through completion' "$ERR"
 
-# The clear removed from a copy of the wrapper: the prior status stands while
-# the line runs.
-CLEAR_CTL="$(mutant_scripts clear-ctl overseer-run)" || exit 1
-mutate_file "$CLEAR_CTL/overseer-run" '    elif ! ol_record_exit_clear "${KEY%% *}" "${KEY#* }"; then' '    elif false; then'
-state_exit %9 9
-RUN_BIN="$CLEAR_CTL/overseer-run" run %9 -- sh -c "$CLEARED_CHECK"
-assert_eq "rc=$RC" "rc=1" "control: without the clear the line runs under the earlier session's status"
+# Record failure never prevents COMMAND, including the binding deadline.
+for record in broken missing; do
+  if [[ "$record" == broken ]]; then printf 'not json' > "$STATE"
+  else rm -f -- "${STATE:?}"; fi
+  run %9 -- sh -c 'printf command-started; exit 5'
+  assert_eq "$RC|$(cat "$TMP_ROOT/out")" '5|command-started' "$record record keeps command output and status" "$ERR"
+  assert_eq "$(sed -n 's/^overseer-run: \([^=]*\)=.*/\1/p' "$ERR" | paste -sd , -)" \
+    'start-unrecorded,exit-unrecorded' "$record record reports unavailable start and completion"
+done
+
+# The current identity changes during COMMAND: its old exit writer must refuse.
+while IFS='|' read -r field value; do
+  state %9
+  run %9 -- sh -c 'jq --arg field "$2" --arg value "$3" ".overseer[\$field] = \$value" "$1" > "$1.next" && mv -- "$1.next" "$1"; exit 6' harness "$STATE" "$field" "$value"
+  assert_eq "$RC|$(exit_of)|$(jq -r --arg field "$field" '.overseer[$field]' "$STATE")" \
+    "6|none|$value" "old completion cannot overwrite changed $field" "$ERR"
+done <<'ROWS'
+harness_pid|999
+harness_start|later
+generation|later
+server|other
+server_start|other
+pane|%3
+ROWS
+
+# A writable read with a refused atomic update still reaches COMMAND.
+REFUSED="$(mutant_scripts refused workflow-state)" || exit 1
+rm -- "${REFUSED:?}/workflow-state"
+cat > "$REFUSED/workflow-state" <<STUB
+#!/bin/sh
+if [ "\$1" = update ]; then printf 'fixture-write-refused\n' >&2; exit 1; fi
+exec "$SCRIPTS/workflow-state" "\$@"
+STUB
+chmod +x "$REFUSED/workflow-state"
+state %9
+RUN_BIN="$REFUSED/overseer-run" run %9 -- sh -c 'printf command-started; exit 5'
+assert_eq "$RC|$(cat "$TMP_ROOT/out")|$(exit_of)" '5|command-started|none' 'failed atomic start write keeps COMMAND and its status' "$ERR"
+
+# A real pseudo-terminal supplies input only after COMMAND acknowledges stdin.
+state %9
+TTY_RC=0
+python3 - "$BASH" "$SCRIPTS/overseer-run" "$TMP_ROOT" "$PATH" "$GIT_CEILING_DIRECTORIES" <<'PYTTY' > "$TMP_ROOT/tty" || TTY_RC=$?
+import os, pty, select, signal, sys, time
+shell, wrapper, root, path, ceiling = sys.argv[1:]
+pid, fd = pty.fork()
+if pid == 0:
+    env = dict(HOME=root, PATH=root + "/bin:" + path, ORCH_STATE_DIR=root + "/state", TMUX="fake", TMUX_PANE="%9", GIT_CEILING_DIRECTORIES=ceiling)
+    os.execve(shell, [shell, wrapper, "sh", "-c", 'test -t 0 || exit 8; printf "input-ready\n"; read -r text; printf "input=%s\n" "$text"; exit 7'], env)
+data, sent, status = b"", False, None
+deadline = time.monotonic() + 15
+try:
+    while time.monotonic() < deadline:
+        if select.select([fd], [], [], 0.05)[0]:
+            try: chunk = os.read(fd, 4096)
+            except OSError: chunk = b""
+            data += chunk
+        if b"input-ready" in data and not sent:
+            os.write(fd, b"terminal-value\n")
+            sent = True
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            pid = None
+            break
+    else:
+        raise RuntimeError("terminal input deadline")
+    assert os.waitstatus_to_exitcode(status) == 7, (status, data)
+    assert b"input=terminal-value" in data, data
+    print("terminal-input=kept status=7")
+finally:
+    if pid is not None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    os.close(fd)
+PYTTY
+assert_eq "$TTY_RC|$(cat "$TMP_ROOT/tty")|$(exit_of)" '0|terminal-input=kept status=7|7' 'foreground exec retains terminal input and COMMAND status'
+
+# Start binding is tested by the same identity assertion in a disposable copy.
+CONTROL="$(mutant_scripts identity-control lib/overseer-launch.sh)" || exit 1
+mutate_file "$CONTROL/lib/overseer-launch.sh" '.harness_pid = $run.harness_pid' '.harness_pid = "999"'
+state %9
+RUN_BIN="$CONTROL/overseer-run" run %9 -- "$BASH" -c 'jq -e --arg pid "$$" ".overseer.harness_pid == \$pid" "$1" >/dev/null' harness "$STATE"
+assert_eq "$RC" '1' 'control: a different recorded PID fails the COMMAND identity assertion'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

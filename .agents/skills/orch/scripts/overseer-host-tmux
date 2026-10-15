@@ -70,6 +70,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/overseer-launch.sh
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # shellcheck source=lib/pane-write.sh
 source "$SCRIPT_DIR/lib/pane-write.sh"
 
@@ -166,7 +168,7 @@ pane_listed() { # PANE
 # inspect's answer for a session the server does not list: the keyed line
 # alone, at exit 0.
 inspect_gone() {
-  printf 'session=%s window=none server=none state=gone\n' "$SESSION"
+  printf 'session=%s window=none server=none state=gone harness_state=unknown harness_cause=pane-gone\n' "$SESSION"
   exit 0
 }
 # inspect holds every read after its first listing to one rule: a pane the
@@ -194,6 +196,40 @@ inspect_field() { # VAR FIELD SHAPE FORMAT
 }
 # The last read of the rule: the pane still listed once every read is made.
 inspect_settled() { pane_listed "$SESSION" || inspect_gone; }
+
+# Pane observation can disprove a completed run's attribution after a manual
+# resume. Only the saved process identity can establish a running harness.
+inspect_harness() { # SERVER PANE_STATE
+  local record bound identity pid process_start server_start rc=0
+  HARNESS_STATE=unknown HARNESS_CAUSE=record-unreadable
+  record="$(ol_record_get)" || return 0
+  HARNESS_CAUSE=server-start-unreadable
+  server_start="$(ol_session_start "$1" "$SESSION")" || return 0
+  HARNESS_CAUSE=record-unbound
+  bound="$(jq -c --arg server "$1" --arg start "$server_start" --arg pane "$SESSION" "$OL_JQ_DEFS"'
+    select(ol_names($server; $start; $pane))' <<<"$record" 2>"$DEP_ERR")" \
+    || { HARNESS_CAUSE=record-unreadable; return 0; }
+  [[ -n "$bound" ]] || return 0
+  HARNESS_CAUSE=identity-unrecorded
+  identity="$(jq -r "$OL_JQ_DEFS"'
+    if .harness_pid != null or .harness_start != null then [.harness_pid, .harness_start]
+    elif .exit.run as $run | $run != null
+      and ol_names($run.server; ($run.server_start | tostring); $run.pane) and .generation == $run.generation
+    then [.exit.run.harness_pid, .exit.run.harness_start]
+    else empty end | @tsv' <<<"$bound" 2>"$DEP_ERR")" \
+    || { HARNESS_CAUSE=record-unreadable; return 0; }
+  [[ -n "$identity" ]] || return 0
+  IFS=$'\t' read -r pid process_start <<<"$identity"
+  lane_identity_status "$pid" "$process_start" || rc=$?
+  if [[ "$LANE_PROBE_RC" -gt 1 ]]; then HARNESS_CAUSE=process-probe-failed; return 0; fi
+  case "$rc" in
+    0) HARNESS_STATE=running HARNESS_CAUSE="" ;;
+    3)
+      if [[ "$2" == exited ]]; then HARNESS_STATE=stopped HARNESS_CAUSE=""
+      else HARNESS_CAUSE=pane-not-exited; fi ;;
+    *) HARNESS_CAUSE="$LANE_IDENTITY_CAUSE" ;;
+  esac
+}
 
 require_session() { # VALUE
   [[ -n "$1" ]] || die_status 2 option-missing option=--session "verb=$VERB"
@@ -303,8 +339,10 @@ case "$VERB" in
       else
         state=idle
       fi
+      inspect_harness "$server" "$state"
       inspect_settled
-      printf 'session=%s window=%s server=%s state=%s%s\n' "$SESSION" "$window" "$server" "$state" "${start:+ server_start=$start}"
+      printf 'session=%s window=%s server=%s state=%s%s harness_state=%s%s\n' "$SESSION" "$window" "$server" "$state" \
+        "${start:+ server_start=$start}" "$HARNESS_STATE" "${HARNESS_CAUSE:+ harness_cause=$HARNESS_CAUSE}"
     else
       inspect_field obs pane_pid '^[0-9]+[[:blank:]]+[^[:space:]]' '#{pane_pid} #{pane_current_command}'
       pid="${obs%%[[:blank:]]*}"
@@ -316,9 +354,11 @@ case "$VERB" in
       # own exit status, since the caller runs no probe of its own.
       lane_state state listed "$cmd" "$pid" "$screen" || cause=",limit-scan"
       [[ "$LANE_PROBE_RC" -le 1 ]] || cause="$cause,process-probe probe=$LANE_PROBE_RC"
+      inspect_harness "$server" "$state"
       inspect_settled
-      printf 'session=%s window=%s server=%s state=%s%s%s%s\n' "$SESSION" "$window" "$server" "$state" \
-        "${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}" "${cause:+ cause=${cause#,}}" "${start:+ server_start=$start}"
+      printf 'session=%s window=%s server=%s state=%s%s%s%s harness_state=%s%s\n' "$SESSION" "$window" "$server" "$state" \
+        "${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}" "${cause:+ cause=${cause#,}}" "${start:+ server_start=$start}" \
+        "$HARNESS_STATE" "${HARNESS_CAUSE:+ harness_cause=$HARNESS_CAUSE}"
     fi
     printf '%s\n' "$screen"
     ;;

@@ -20,7 +20,9 @@ TMP_ROOT="$(mktemp -d)" || { echo "overseer-host: scratch=mktemp-failed" >&2; ex
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "overseer-host: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "overseer-host: scratch=resolve-failed" >&2; exit 1; }
 SOCK="overseer-host-$$"
+IDENTITY_GUARD=""
 cleanup() {
+  if [[ -n "$IDENTITY_GUARD" ]]; then kill "$IDENTITY_GUARD" 2>/dev/null || true; wait "$IDENTITY_GUARD" 2>/dev/null || true; fi
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
@@ -126,13 +128,13 @@ assert_eq "$(tm display-message -p -t "$SESSION" '#{window_index} #{window_name}
 # inspect --launch: the first-turn reading over the whole screen.
 run_tmux inspect --launch --session "$SESSION"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(sed 1d <<<"$OUT" | grep -q 'esc to interrupt' && echo screen)" \
-  "0|session=$SESSION window=$WINDOW server=$SERVER_PID state=working|screen" \
+  "0|session=$SESSION window=$WINDOW server=$SERVER_PID state=working harness_state=unknown harness_cause=record-unreadable|screen" \
   "inspect --launch reads a turn in flight as working, the screen under the keyed line"
 ASK="$(new_pane 7 "printf 'Do you trust the files in this folder?\\n'; exec sleep 100000")"
 wait_for "$ASK" 'trust the files' || true
 run_tmux inspect --launch --session "$ASK"
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
-  "0|session=$ASK window=$(tm display-message -p -t "$ASK" '#{window_id}') server=$SERVER_PID state=asking;Do you trust the files in this folder?;" \
+  "0|session=$ASK window=$(tm display-message -p -t "$ASK" '#{window_id}') server=$SERVER_PID state=asking harness_state=unknown harness_cause=record-unreadable;Do you trust the files in this folder?;" \
   "inspect --launch reads the folder-trust dialog as asking, that line alone under the keyed one"
 IDLE="$(new_pane 8 "printf 'FIXTURE startup waiting\\n'; exec sleep 100000")"
 wait_for "$IDLE" 'startup waiting' || true
@@ -226,7 +228,7 @@ PROVIDER_BIN="$STARTCTL/overseer-host-tmux" run_tmux inspect --session "$SHELL_P
 assert_eq "$RC|$(field "$OUT" state)" '0|exited' "control: ignoring the recorded start reads a different server identity as live"
 run_tmux inspect --session %999
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
-  "0|session=%999 window=none server=none state=gone;" \
+  "0|session=%999 window=none server=none state=gone harness_state=unknown harness_cause=pane-gone;" \
   "inspect on a session the server does not list answers gone with no screen"
 # A pane that closes during any read after the listing is gone, never an
 # unreadable session: the window a succession's stop closes while its caller's
@@ -256,7 +258,7 @@ for read in before empty after; do
   [[ "$read" != after ]] || launch=(--launch)
   RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect ${launch[@]+"${launch[@]}"} --session "$RACE"
   assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
-    "0|session=$RACE window=none server=none state=gone;" \
+    "0|session=$RACE window=none server=none state=gone harness_state=unknown harness_cause=pane-gone;" \
     "inspect on a session that closes at its read ($read) answers gone"
 done
 # Its control: a provider that refuses every failed read as unreadable.
@@ -297,7 +299,7 @@ mkdir -p "$PROBE_BIN"
 printf '#!/bin/sh\nexit 3\n' > "$PROBE_BIN/pgrep"
 chmod +x "$PROBE_BIN/pgrep"
 RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')" \
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | sed 's/ harness_state=.*//' | grep -o ' cause=.*')" \
   "0| cause=process-probe probe=3" \
   "inspect names a child probe that could not run and its exit status"
 # Both scans failing on one pass are both named: the probe as above and a grep
@@ -312,7 +314,7 @@ STUB
 chmod +x "$PROBE_BIN/grep"
 both_causes() { # [PROVIDER_BIN]
   PROVIDER_BIN="${1:-}" RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
-  BOTH="$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')"
+  BOTH="$RC|$(sed -n 1p <<<"$OUT" | sed 's/ harness_state=.*//' | grep -o ' cause=.*')"
 }
 both_causes
 assert_eq "$BOTH" "0| cause=limit-scan,process-probe probe=3" \
@@ -326,7 +328,7 @@ rm -f -- "${PROBE_BIN:?}/grep"
 PROBECTL="$(mutant_scripts probectl overseer-host-tmux)" || exit 1
 mutate_file "$PROBECTL/overseer-host-tmux" 'cause="$cause,process-probe probe=$LANE_PROBE_RC"' 'cause="$cause,process-probe"'
 PROVIDER_BIN="$PROBECTL/overseer-host-tmux" RUN_PATH="$PROBE_BIN:$PATH" run_tmux inspect --session "$SHELL_PANE"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -o ' cause=.*')" "0| cause=process-probe" \
+assert_eq "$RC|$(sed -n 1p <<<"$OUT" | sed 's/ harness_state=.*//' | grep -o ' cause=.*')" "0| cause=process-probe" \
   "control: a provider that drops the probe status names the cause alone"
 run_tmux inspect --session fleet:3
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
@@ -465,6 +467,128 @@ run_tmux create --cwd "$TMP_ROOT/work" --line "exec sleep 1"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "2|overseer-host-tmux: option-missing option=--after,--session verb=create" \
   "create refuses no placement at all"
+
+# The Python parent holds the exited child unreaped through the identity
+# observations. Every liveness read names a process this suite still owns.
+mkdir -p "$TMP_ROOT/identity-state"
+IDENTITY_STATE="$TMP_ROOT/identity-state/workflow-state-oversee.json"
+mkfifo "$TMP_ROOT/identity-release"
+python3 - "$TMP_ROOT" <<'PYIDENTITY' &
+import os, signal, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+ended = False
+def child_ended(*_):
+    global ended
+    ended = True
+def stop(*_):
+    raise SystemExit(1)
+signal.signal(signal.SIGCHLD, child_ended)
+signal.signal(signal.SIGTERM, stop)
+pid = os.fork()
+if pid == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    (root / "identity-pid").write_text(str(os.getpid()))
+    with (root / "identity-release").open() as release:
+        release.read()
+    os._exit(0)
+try:
+    deadline = time.monotonic() + 120
+    while not ended and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not ended:
+        raise RuntimeError("child exit deadline")
+    (root / "identity-ended").touch()
+    while not (root / "identity-reap").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+finally:
+    if not ended:
+        os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
+PYIDENTITY
+IDENTITY_GUARD=$!
+await_marker "$TMP_ROOT/identity-pid" || exit 1
+DEAD_PID="$(cat "$TMP_ROOT/identity-pid")"
+DEAD_START="$(source "$SRC_DIR/lib/lane-state.sh" && lane_process_start "$DEAD_PID")"
+printf 'exit\n' > "$TMP_ROOT/identity-release"
+await_marker "$TMP_ROOT/identity-ended" || exit 1
+LIVE_PANE="$(new_pane 15 'printf "person-program-ready\n"; exec sleep 100000')"
+wait_for "$LIVE_PANE" person-program-ready || exit 1
+LIVE_PID="$(tm display-message -p -t "$LIVE_PANE" '#{pane_pid}')"
+LIVE_START="$(source "$SRC_DIR/lib/lane-state.sh" && lane_process_start "$LIVE_PID")"
+ENDED_PANE="$(new_pane 16 'exec /bin/sh')"
+identity_record() { # PANE MODE
+  jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$1" \
+    --arg pid "$LIVE_PID" --arg process_start "$LIVE_START" --arg dead "$DEAD_PID" --arg dead_start "$DEAD_START" --arg mode "$2" '
+    {server: $server, server_start: $start, pane: $pane, generation: 1} as $base
+    | ($base + {harness_pid: $dead, harness_start: $dead_start}) as $done
+    | {issue_id: "oversee", overseer: ($base +
+      (if $mode == "live" or $mode == "old-exit" then {harness_pid: $pid, harness_start: $process_start}
+       elif $mode == "dead" then {harness_pid: $dead, harness_start: $dead_start}
+       elif $mode == "reused" then {harness_pid: $pid, harness_start: "earlier start"}
+       else {} end)
+      + (if $mode == "exit" or $mode == "old-exit" then {exit: {status: 0, run: $done}} else {} end))}' > "$IDENTITY_STATE"
+}
+identity_inspect() { # PANE [PROVIDER]
+  RC=0
+  OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="${RUN_PATH:-$PATH}" \
+    ORCH_STATE_DIR="$TMP_ROOT/identity-state" TMUX="$TMUX_ADDR" "${2:-$PROVIDER}" inspect --session "$1" 2>&1)" || RC=$?
+}
+while IFS='|' read -r label pane mode want_state want_cause; do
+  identity_record "$pane" "$mode"
+  identity_inspect "$pane"
+  assert_eq "$RC|$(field "$OUT" harness_state)|$(field "$OUT" harness_cause)" \
+    "0|$want_state|$want_cause" "recorded harness: $label" "$OUT"
+done <<EOF
+live recorded process|$LIVE_PANE|live|running|
+old exit beside live identity|$LIVE_PANE|old-exit|running|
+ended recorded process and shells only|$ENDED_PANE|dead|stopped|
+bound completion and shells only|$ENDED_PANE|exit|stopped|
+reused recorded PID and shells only|$ENDED_PANE|reused|stopped|
+person program after bound completion|$LIVE_PANE|exit|unknown|pane-not-exited
+person program after killed harness|$LIVE_PANE|dead|unknown|pane-not-exited
+unrecorded harness|$LIVE_PANE|none|unknown|identity-unrecorded
+EOF
+identity_record "$ENDED_PANE" live
+RUN_PATH="$PROBE_BIN:$PATH" identity_inspect "$ENDED_PANE"
+assert_eq "$RC|$(field "$OUT" harness_state)|$(field "$OUT" harness_cause)" '0|unknown|process-probe-failed' 'failed pane probe lowers a live identity to unknown'
+for mode in missing broken; do
+  if [[ "$mode" == missing ]]; then rm -f -- "${IDENTITY_STATE:?}"
+  else printf 'broken json' > "$IDENTITY_STATE"; fi
+  identity_inspect "$LIVE_PANE"
+  reason=record-unreadable
+  assert_eq "$RC|$(field "$OUT" harness_state)|$(field "$OUT" harness_cause)" "0|unknown|$reason" "$mode identity record is unknown"
+done
+identity_record "$LIVE_PANE" live
+mkdir -p "$TMP_ROOT/identity-bin"
+cat > "$TMP_ROOT/identity-bin/ps" <<STUB
+#!/bin/sh
+[ "\$*" != '-o lstart= -p $LIVE_PID' ] || exit 2
+exec "$REAL_PS" "\$@"
+STUB
+chmod +x "$TMP_ROOT/identity-bin/ps"
+RUN_PATH="$TMP_ROOT/identity-bin:$PATH" identity_inspect "$LIVE_PANE"
+assert_eq "$RC|$(field "$OUT" harness_state)|$(field "$OUT" harness_cause)" '0|unknown|start-read-failed' 'failed identity start read is unknown'
+STATE_READ_CTL="$(mutant_scripts state-read-fixture lib/lane-state.sh)" || exit 1
+mutate_file "$STATE_READ_CTL/lib/lane-state.sh" 'lane_proc_readable() { [[ -d /proc/self ]]; }' 'lane_proc_readable() { return 1; }'
+cat > "$TMP_ROOT/identity-bin/ps" <<STUB
+#!/bin/sh
+[ "\$*" != '-o stat= -p $LIVE_PID' ] || exit 2
+exec "$REAL_PS" "\$@"
+STUB
+RUN_PATH="$TMP_ROOT/identity-bin:$PATH" identity_inspect "$LIVE_PANE" "$STATE_READ_CTL/overseer-host-tmux"
+assert_eq "$RC|$(field "$OUT" harness_state)|$(field "$OUT" harness_cause)" '0|unknown|state-read-failed' 'failed identity state read is unknown'
+
+PERSON_CTL="$(mutant_scripts person-control overseer-host-tmux)" || exit 1
+mutate_file "$PERSON_CTL/overseer-host-tmux" '  lane_identity_status "$pid" "$process_start" || rc=$?' \
+  '  lane_identity_status "$pid" "$process_start" || rc=$?
+  if [[ "$2" != exited ]]; then rc=0; fi'
+identity_record "$LIVE_PANE" exit
+identity_inspect "$LIVE_PANE" "$PERSON_CTL/overseer-host-tmux"
+assert_eq "$(field "$OUT" harness_state)" running 'control: substituting pane presence fails the person-program unknown assertion'
+: > "$TMP_ROOT/identity-reap"
+wait "$IDENTITY_GUARD"
+IDENTITY_GUARD=""
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

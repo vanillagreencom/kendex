@@ -1274,37 +1274,44 @@ ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID
       else error("overseer-native-unbound") end' >/dev/null 2>"$DEP_ERR"
 }
 
-# ol_record_exit_clear SERVER PANE — the record's `exit` member dropped where
-# the record names that session on that server: `overseer-run` asks it before
-# its line runs, so a launch line run again in the same pane leaves no status
-# its predecessor earned. Returns 1 with the writer's words in DEP_ERR.
-ol_record_exit_clear() { # SERVER PANE
-  local start
-  # Unread, the start names no record bound to one, and the update leaves it
-  # as it stands.
-  start="$(ol_session_start "$1" "$2")" || start=""
-  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg start "$start" --arg pane "$2" "$OL_JQ_DEFS"'
-      if (.overseer | ol_names($server; $start; $pane)) then .overseer |= del(.exit) else . end' \
-    >/dev/null 2>"$DEP_ERR"
+# The pane starts overseer-run before the launcher replaces OL_PRIOR. Wait
+# for that completed binding before the single start update. The update
+# rechecks the generation against a replacement between the read and write.
+ol_record_start() { # SERVER PANE PID PROCESS_START
+  local start record generation run passes=50
+  start="$(ol_session_start "$1" "$2")" || { printf 'server-start-unreadable\n' > "$DEP_ERR"; return 1; }
+  while :; do
+    record="$(ol_record_get)" || return 1
+    generation="$(jq -r --arg server "$1" --arg start "$start" --arg pane "$2" "$OL_JQ_DEFS"'
+      select(ol_names($server; $start; $pane)) | .generation // empty' <<<"$record" 2>"$DEP_ERR")" || return 1
+    [[ -z "$generation" ]] || break
+    passes=$((passes - 1))
+    [[ "$passes" -gt 0 ]] || { printf 'record-binding-timeout\n' > "$DEP_ERR"; return 1; }
+    sleep 0.1 || return 1
+  done
+  run="$(jq -cn --arg server "$1" --arg start "$start" --arg pane "$2" --argjson generation "$generation" \
+    --arg pid "$3" --arg process_start "$4" \
+    '{server: $server, server_start: ($start | tonumber), pane: $pane, generation: $generation,
+      harness_pid: $pid, harness_start: $process_start}' 2>"$DEP_ERR")" || return 1
+  "$SCRIPT_DIR/workflow-state" update oversee --argjson run "$run" "$OL_JQ_DEFS"'
+    if (.overseer | ol_names($run.server; ($run.server_start | tostring); $run.pane)
+        and .generation == $run.generation)
+    then .overseer |= (del(.exit) | .harness_pid = $run.harness_pid | .harness_start = $run.harness_start)
+    else error("overseer-run-unbound") end' >/dev/null 2>"$DEP_ERR" || return 1
+  printf '%s\n' "$run"
 }
 
-# ol_record_exit SERVER PANE STATUS — the harness's exit status and the UTC
-# time it returned, as the record's `exit` member `{status, at}`, written by
-# `overseer-run` once the launch line it runs returns. Only a record naming
-# that session on that server takes it: a line that outlived its record, a
-# successor's having replaced it, says nothing about the session recorded now.
-# oversee-watch reads it as the session's death where the pane's process is a
-# bare shell with nothing but shells under it, the state this return leaves.
-# Returns 1 with the writer's words in DEP_ERR.
-ol_record_exit() { # SERVER PANE STATUS
-  local at start
+# Only the run that installed the active identity can complete it. Retain
+# that identity under exit.run for inspect after clearing the active fields.
+ol_record_exit() { # RUN_JSON STATUS
+  local at
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  # Unread, as ol_record_exit_clear reads it: no exit is written.
-  start="$(ol_session_start "$1" "$2")" || start=""
-  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg start "$start" --arg pane "$2" \
-    --argjson status "$3" --arg at "$at" "$OL_JQ_DEFS"'
-      if (.overseer | ol_names($server; $start; $pane)) then .overseer.exit = {status: $status, at: $at} else . end' \
-    >/dev/null 2>"$DEP_ERR"
+  "$SCRIPT_DIR/workflow-state" update oversee --argjson run "$1" --argjson status "$2" --arg at "$at" "$OL_JQ_DEFS"'
+    if (.overseer | ol_names($run.server; ($run.server_start | tostring); $run.pane)
+        and .generation == $run.generation
+        and .harness_pid == $run.harness_pid and .harness_start == $run.harness_start)
+    then .overseer |= (del(.harness_pid, .harness_start) | .exit = {status: $status, at: $at, run: $run})
+    else error("overseer-run-unbound") end' >/dev/null 2>"$DEP_ERR"
 }
 
 # ol_caller_known SERVER PANE DIR — what the session SERVER PANE is known to

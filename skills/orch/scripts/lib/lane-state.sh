@@ -663,6 +663,25 @@ lane_stop_signal() { # PIDS [ROOT]
   LANE_STOP_COUNT="$count"
 }
 
+# Read the saved PID and start without signalling. Status 3 means the saved
+# process has ended. Status 1 leaves the failed read in LANE_IDENTITY_CAUSE.
+LANE_IDENTITY_CAUSE=""
+lane_identity_status() { # PID START: 0 live, 3 ended, 1 unreadable
+  local state start=""
+  LANE_IDENTITY_CAUSE=""
+  [[ "$1" =~ ^[1-9][0-9]*$ && -n "$2" ]] || { LANE_IDENTITY_CAUSE=identity-invalid; return 1; }
+  state="$(lane_process_state "$1")" || { LANE_IDENTITY_CAUSE=state-read-failed; return 1; }
+  if [[ -n "$state" && "$state" != Z ]]; then
+    start="$(lane_process_start "$1")" || { LANE_IDENTITY_CAUSE=start-read-failed; return 1; }
+    # ps answering no process for a pid the state read found live is either
+    # that process exiting between the two reads, or no answer at all.
+    if [[ -z "$start" ]]; then
+      state="$(lane_process_state "$1")" || { LANE_IDENTITY_CAUSE=state-read-failed; return 1; }
+      [[ -z "$state" || "$state" == Z ]] || { LANE_IDENTITY_CAUSE=start-read-failed; return 1; }
+    fi
+  fi
+  [[ -n "$start" && "$start" == "$2" ]] || { LANE_IDENTITY_CAUSE=identity-stale; return 3; }
+}
 # End a lane's harness by its launch identity: every process named for HARNESS
 # at or below PID, where PID still runs and started at START. No directory is
 # read, since a lane's own close-out removes its worktree before its harness
@@ -677,21 +696,15 @@ lane_stop_signal() { # PIDS [ROOT]
 #   start-read-failed     the start of a live PID could not be read
 #   process-read-failed   the process table could not be read
 lane_stop_identity() { # PID START HARNESS
-  local state start="" table name_re found
+  local table name_re found rc=0
   lane_stop_reset
-  [[ "$1" =~ ^[1-9][0-9]*$ && -n "$2" ]] || { LANE_STOP_CAUSE=identity-invalid; return 1; }
   LANE_STOP_PID="$1"
-  state="$(lane_process_state "$1")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
-  if [[ -n "$state" && "$state" != Z ]]; then
-    start="$(lane_process_start "$1")" || { LANE_STOP_CAUSE=start-read-failed; return 1; }
-    # ps answering no process for a pid the state read found live is either
-    # that process exiting between the two reads, or no answer at all.
-    if [[ -z "$start" ]]; then
-      state="$(lane_process_state "$1")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
-      [[ -z "$state" || "$state" == Z ]] || { LANE_STOP_CAUSE=start-read-failed; return 1; }
-    fi
+  lane_identity_status "$1" "$2" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    LANE_STOP_CAUSE="$LANE_IDENTITY_CAUSE"
+    [[ "$LANE_STOP_CAUSE" != identity-invalid ]] || LANE_STOP_PID=""
+    return "$rc"
   fi
-  [[ -n "$start" && "$start" == "$2" ]] || { LANE_STOP_CAUSE=identity-stale; return 3; }
   LANE_STOP_PID=""
   table="$(lane_process_table)" || { LANE_STOP_CAUSE=process-read-failed; return 1; }
   name_re="$(lane_harness_process_re "$3")" || { LANE_STOP_CAUSE=process-read-failed; return 1; }

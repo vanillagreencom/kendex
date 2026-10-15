@@ -6,23 +6,13 @@
 #
 # Usage: overseer-run COMMAND [ARG]...
 #
-# lib/overseer-launch.sh's ol_session_open puts this in front of every line an
-# overseer launch types into its pane. Before COMMAND runs, the record's
-# `overseer.exit` is dropped where the record names this pane on this tmux
-# server (ol_record_exit_clear), so a line run again in the same pane carries
-# no status its predecessor earned. COMMAND runs as this script's child, so
-# the status is the one the shell would have seen, and tmux names this
-# script's bash as the pane's foreground command for the session's whole
-# life: a reader of a launched overseer's harness takes it from its launch
-# record or its SessionStart row (lib/overseer-launch.sh ol_caller_known). The record takes it as
-# `overseer.exit = {status, at}` only where it names this pane on this tmux
-# server (ol_record_exit); outside tmux nothing is read or written. A pane
-# key, a library or a write that fails is said on stderr under
-# `overseer-run: exit-unrecorded=<status>`, or `exit-uncleared=pending` for
-# the clear; the command's own status is this script's either way.
+# COMMAND inherits stdin and the launch environment. The foreground Bash
+# child records its own PID and start before exec COMMAND. The parent writes
+# COMMAND status only against that exact run. Failed record operations report
+# their cause and COMMAND still runs. Outside tmux no record is read or written.
 set -euo pipefail
 
-usage() { sed -n '/^# Usage:/,/^# the clear; the command/p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '/^# Usage:/,/^# their cause/p' "$0" | sed 's/^# \{0,1\}//'; }
 case "${1:-}" in
   -h | --help | help) usage; exit 0 ;;
   "") usage >&2; exit 2 ;;
@@ -33,42 +23,67 @@ export SCRIPT_DIR
 
 # Every line this script writes, and the only place its text lives.
 message() { # KEY VALUE CAUSE
-  case "$1" in
-    exit-uncleared) printf 'overseer-run: exit-uncleared=%s\nthe exit status an earlier session in this pane left on the session record could not be dropped, so the watch may read this session as ended until a launch or a watch start rewrites the record:\n%s\n' "$2" "$3" >&2 ;;
-    exit-unrecorded) printf 'overseer-run: exit-unrecorded=%s\nthe exit status could not be written to the session record, so the watch reads this session from its rows and its pane:\n%s\n' "$2" "$3" >&2 ;;
-  esac
+  printf 'overseer-run: %s=%s\n%s\n' "$1" "$2" "$3" >&2
 }
 
 # The pane key is lib/lane-context.sh's, the pair the record keys the session
 # on; the writers are the record's owner. A library or a key that cannot be
 # had costs the record and never the session: KEY stays empty and COMMAND
 # still runs. Outside tmux there is no pane and no record names one.
-KEY="" CAUSE=""
+KEY="" CAUSE="" RUN_FILE=""
 if [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]]; then
   DEP_ERR="$(mktemp)" || DEP_ERR=""
   if [[ -z "$DEP_ERR" ]]; then
     CAUSE="mktemp failed"
   else
-    trap 'rm -f -- "${DEP_ERR:?}"' EXIT
+    trap 'rm -f -- "${DEP_ERR:?}"; [[ -z "$RUN_FILE" ]] || rm -f -- "${RUN_FILE:?}"' EXIT
     # shellcheck source=lib/lane-context.sh
     # shellcheck source=lib/overseer-launch.sh
     if ! { source "$SCRIPT_DIR/lib/lane-context.sh" && source "$SCRIPT_DIR/lib/overseer-launch.sh"; } 2>"$DEP_ERR"; then
       CAUSE="$(cat -- "$DEP_ERR")"
     elif ! KEY="$(lane_context_caller_key)"; then
       KEY="" CAUSE="tmux reported no server pid for pane $TMUX_PANE"
-    elif ! ol_record_exit_clear "${KEY%% *}" "${KEY#* }"; then
-      message exit-uncleared pending "$(cat -- "$DEP_ERR")"
+    elif ! RUN_FILE="$(mktemp)"; then
+      KEY="" CAUSE="mktemp failed"
     fi
   fi
 fi
 
 rc=0
-"$@" || rc=$?
+if [[ -n "$KEY" ]]; then
+  # A new Bash process has its own $$ on Bash 3.2 too. A parenthesized
+  # subshell would retain the wrapper PID, which can outlive COMMAND.
+  "$BASH" -c '
+    set -euo pipefail
+    key=$1 DEP_ERR=$2 run_file=$3
+    shift 3
+    start=""
+    if { source "$SCRIPT_DIR/lib/lane-state.sh" && source "$SCRIPT_DIR/lib/overseer-launch.sh"; } 2>"$DEP_ERR"; then
+      if start="$(lane_process_start "$$")" && [[ -n "$start" ]]; then
+        ol_record_start "${key%% *}" "${key#* }" "$$" "$start" >"$run_file" || true
+      else
+        printf "process-start-unreadable\n" >"$DEP_ERR"
+      fi
+    fi
+    if [[ ! -s "$run_file" ]]; then
+      printf "overseer-run: start-unrecorded=pending\n" >&2
+      cat -- "$DEP_ERR" >&2
+    fi
+    exec "$@"
+  ' overseer-run "$KEY" "$DEP_ERR" "$RUN_FILE" "$@" || rc=$?
+else
+  [[ -z "${TMUX:-}" || -z "${TMUX_PANE:-}" ]] || message start-unrecorded pending "$CAUSE"
+  "$@" || rc=$?
+fi
 
 [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] || exit "$rc"
-if [[ -z "$KEY" ]]; then
-  message exit-unrecorded "$rc" "$CAUSE"
-elif ! ol_record_exit "${KEY%% *}" "${KEY#* }" "$rc"; then
+RUN=""
+if [[ -n "$RUN_FILE" && -s "$RUN_FILE" ]]; then
+  RUN="$(cat -- "$RUN_FILE")" || RUN=""
+fi
+if [[ -z "$RUN" ]]; then
+  message exit-unrecorded "$rc" "${CAUSE:-no recorded run identity}"
+elif ! ol_record_exit "$RUN" "$rc"; then
   message exit-unrecorded "$rc" "$(cat -- "$DEP_ERR")"
 fi
 exit "$rc"
