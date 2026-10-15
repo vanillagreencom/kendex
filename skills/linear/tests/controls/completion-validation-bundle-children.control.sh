@@ -21,3 +21,15 @@ control_expect "absent container outcome controls completion"
 control_replace scripts/lib/issue-validation.sh 1 \
     '        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))' \
     '        | .missing_outcome_box = false'
+
+# Restore the base's Done-only child acceptance.
+control_expect "qualified child controls bundle acceptance"
+control_replace scripts/lib/issue-validation.sh 1 \
+    $'\t\t'"printf 'Done\\nVerifying\\n'" \
+    $'\t\t'"printf 'Done\\n'"
+
+# A state name cannot substitute for branch proof.
+control_expect "open-branch child controls bundle acceptance"
+control_replace scripts/lib/issue-validation.sh 1 \
+    $'\t\t\tstate_ok=$(jq -r --arg state "$state" '\''.completion_state == $state'\'' <<<"$checklist") || return 1' \
+    $'\t\t\tstate_ok=true'

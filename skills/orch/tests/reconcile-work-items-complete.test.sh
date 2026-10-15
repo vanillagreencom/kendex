@@ -83,7 +83,7 @@ case "$query" in
   jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-verifying" then "started" else "unstarted" end)}]}}}'
   ;;
 *"issue(id:"*)
-  jq -cjn --argjson d "$(jq -r ' .description | tojson' "$STATE/$id.json")" --arg id "$id" '{data:{issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:$d,state:{name:"In Review",type:"started"},team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},project:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}'
+  jq -cjn --argjson d "$(jq -r ' .description | tojson' "$STATE/$id.json")" --argjson state "$(jq .state "$STATE/$id.json")" --arg id "$id" '{data:{issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:$d,state:$state,team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},project:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}'
   ;;
 *"issueUpdate(id:"*)
   response="$(jq -c --argjson prior_state "$(jq .state "$STATE/$id.json")" --rawfile d "$DESCRIPTIONS/$id" --arg id "$id" '{data:{issueUpdate:{success:true,issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} elif .variables.input.stateId == "state-done" then {name:"Done",type:"completed"} elif .variables.input.stateId == "state-todo" then {name:"Todo",type:"unstarted"} elif .variables.input.stateId == null then $prior_state else error("unsupported state id") end),parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload")"
@@ -179,11 +179,28 @@ assert_eq "$(jq -r '.description' "$TMP_ROOT/state/T-10.json")" "$(cat "$TMP_ROO
 jq --arg d '## Done when
 - [ ] Post-merge: Read health; Where: service; Why after merge: release; Trigger: release owner/repo v*; Deadline: +24h' '.identifier = "T-9" | .id = "uuid-T-9" | .description = $d' "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-9.json"
 
+# Linear's GitHub integration can close a child through the shared PR's
+# Closes line before the merge workflow restores its unproved live check.
+jq '.state = {name:"Done",type:"completed"}' "$TMP_ROOT/state/T-9.json" >"$TMP_ROOT/integration-done.json"
+mv -- "$TMP_ROOT/integration-done.json" "$TMP_ROOT/state/T-9.json"
+jq -r .description "$TMP_ROOT/state/T-9.json" >"$TMP_ROOT/descriptions/T-9"
+RC=0
+complete T-9 --post-merge-at 2026-10-01T00:00:00Z >"$TMP_ROOT/child-handoff.out" 2>"$TMP_ROOT/child-handoff.err" || RC=$?
+assert_eq "$RC" 0 "the merge route reopens the integration-closed child for verification" "$TMP_ROOT/child-handoff.err"
+assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-9.json")" Verifying "the child's open post-merge box remains Verifying"
+
 cat >"$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
-  'pr list') echo '[{"state":"MERGED","mergedAt":"2026-10-01T00:00:00.123Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"}]' ;;
+  'pr list')
+    # The child has no branch PR. Only the shared PR's Closes line links it.
+    if [[ "$*" == *'--head t-9'* ]]; then
+      echo '[]'
+    else
+      echo '[{"number":1,"headRefName":"t-parent","headRepositoryOwner":{"login":"owner"},"title":"bundle (one PR)","body":"Closes T-PARENT\n- Closes T-9","state":"MERGED","mergedAt":"2026-10-01T00:00:00.123Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"},{"number":2,"headRefName":"unrelated","headRepositoryOwner":{"login":"owner"},"title":"mentions T-9","body":"Mentions T-9","state":"MERGED","mergedAt":"2026-10-02T00:00:00Z","isCrossRepository":false,"mergeCommit":{"oid":"2222222222222222222222222222222222222222"},"url":"https://github.com/owner/repo/pull/2"}]'
+    fi
+    ;;
   'release list') cat "$RELEASES" ;;
   'api repos/owner/repo/compare/'*) echo ahead ;;
   *) exit 2 ;;
@@ -240,7 +257,7 @@ fired|release owner/repo v*|+72h|[{"tagName":"v1","publishedAt":"2026-10-02T00:0
 merge|merge|2026-10-04T00:00:00Z|[]|overdue|2026-10-04T00:00:00Z|merge
 ROWS
 printf '%s\n' '[]' >"$TMP_ROOT/releases.json"
-for control in overdue empty stale fields branch; do
+for control in overdue empty stale fields branch child-merge; do
   MUTANT_DIR="$TMP_ROOT/reconcile-$control"
   MUTANT_RW="$(mutant_scripts "reconcile-$control/orch" reconcile-work-items)/reconcile-work-items" || exit 1
   ln -s "$LINEAR_SKILL" "$MUTANT_DIR/linear"
@@ -264,11 +281,20 @@ for control in overdue empty stale fields branch; do
       rm -- "${mutant_lib:?}"
       cp "$SKILL_DIR/scripts/lib/verifying.sh" "$mutant_lib"
       mutate_file "$mutant_lib" "if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)" "if (.errors | length) == 0"; expected='verifying-invalid issue=T-8' ;;
+    child-merge)
+      mutate_file "$MUTANT_RW" '--search "(head:$1 OR \"$3\") in:title,body" --limit 1000' '--head "$1" --limit 1000'
+      expected='verifying T-9 box=1 trigger="release owner/repo v*" status=waiting'
+      ;;
   esac
   CONTROL_RC=0
   CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token \
     REAL_DATE="$REAL_DATE" RELEASES="$TMP_ROOT/releases.json" DESCRIPTIONS="$TMP_ROOT/descriptions" STATE="$TMP_ROOT/state" RECONCILE_STALE_HOURS=0 "$MUTANT_RW" 2>&1)" || CONTROL_RC=$?
-  assert_eq "$CONTROL_RC" 1 "control: $control reaches findings"
+  if [[ "$control" == child-merge ]]; then
+    assert_eq "$CONTROL_RC" 1 "control: child branch lookup leaves a merge evidence finding"
+    assert_contains "$CONTROL_OUT" 'verifying-merge-unread issue=T-9' "control: own branch loses the shared PR merge"
+  else
+    assert_eq "$CONTROL_RC" 1 "control: $control reaches findings"
+  fi
   if [[ "$control" == stale ]]; then
     assert_contains "$CONTROL_OUT" "$expected" "control: removing the exclusion makes Verifying stale development"
   else

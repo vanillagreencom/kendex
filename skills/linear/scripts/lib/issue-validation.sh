@@ -5,8 +5,10 @@ set -euo pipefail
 # Expected completion state(s) for an issue, keyed by its ROLE in the validation.
 #
 #   bundle-child  A sub-issue processed under its parent session as part of a
-#                 bundle. It is marked Done per-sub-issue while the parent
-#                 session aggregates it, so it must be "Done".
+#                 single-PR bundle. Verifying also passes when the shared
+#                 parser proves that only post-merge checks remain.
+#   container-child  A separate PR unit. It must finish Done before its
+#                    container can close.
 #
 #   session-root  The managed top-level issue of a worktree session (a single
 #                 delegation / decomposition child worked directly). Whether or
@@ -26,6 +28,10 @@ completion_expected_states() {
 	local role="${1:-session-root}"
 
 	if [[ "$role" == "bundle-child" ]]; then
+		printf 'Done\nVerifying\n'
+		return 0
+	fi
+	if [[ "$role" == "container-child" ]]; then
 		printf 'Done\n'
 		return 0
 	fi
@@ -56,7 +62,7 @@ completion_state_matches() {
 
 # Build the completion-validation result JSON for one issue.
 #
-# Args: issue_id state parent_id has_summary [role] [state_type]
+# Args: issue_id state parent_id has_summary [role] [state_type] [description]
 #
 # The distinguishing "role" is supplied explicitly by the caller (positional
 # target => session-root; bundle-expanded child => bundle-child; positional
@@ -83,6 +89,7 @@ build_completion_validation_result() {
 	local has_summary="$4"
 	local role="${5:-session-root}"
 	local state_type="${6:-}"
+	local description="${7:-}" checklist
 	local state_ok="false"
 	local ok="false"
 
@@ -94,6 +101,10 @@ build_completion_validation_result() {
 	else
 		if completion_state_matches "$state" "$role"; then
 			state_ok="true"
+		fi
+		if [[ "$role" == "bundle-child" && "$state_ok" == true ]]; then
+			checklist=$(done_when_parse "$description" '[]') || return 1
+			state_ok=$(jq -r --arg state "$state" '.completion_state == $state' <<<"$checklist") || return 1
 		fi
 
 		if [[ "$state_ok" == "true" && "$has_summary" == "true" ]]; then

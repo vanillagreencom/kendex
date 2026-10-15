@@ -33,7 +33,7 @@
 #                         failure reports pr-probe-failed; stale items retain
 #                         started-stale with PR state unverified. A Verifying
 #                         release-item read failure exits 2. A successful read
-#                         with no local branch merge reports verifying-merge-unread
+#                         with no linked merge reports verifying-merge-unread
 #                         and continues without reading that item's boxes.
 #                         The watch reads such items through its own connected-
 #                         repository and title/body merge lookup.
@@ -83,7 +83,7 @@ message() {
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
     verifying-invalid) printf 'The Verifying checklist has invalid metadata or an open branch-provable box. Correct the item with evidence.\n' ;;
     verifying-empty) printf 'No unproved box remains. Follow the Verification route: container-close owns container validation, the bundle summary and closure.\n' ;;
-    verifying-merge-unread) printf 'The sweep cannot read this item\047s release boxes from its local branch merge evidence.\n' ;;
+    verifying-merge-unread) printf 'The sweep cannot read this item\047s release boxes from its linked pull request merge evidence.\n' ;;
     findings) printf 'The tracker state differs from the work.\n' ;;
     clean) printf 'Every issue state matches its work.\n' ;;
   esac
@@ -120,6 +120,8 @@ FORMATTERS_LIB="$SCRIPT_DIR/../../linear/scripts/lib/formatters.sh"
 source "$FORMATTERS_LIB"
 # shellcheck source=lib/verifying.sh
 source "$SCRIPT_DIR/lib/verifying.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
 TMPD="$(mktemp -d)" || config_error temporary-directory command=mktemp
 trap 'rm -rf -- "${TMPD:?}"' EXIT
 # A failed or partial read refuses: the linear skill reads every page or
@@ -172,8 +174,18 @@ probe_prs() {
   # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
   # repository's same-named branch vouch for this item.
   local listed fields=state,mergedAt,isCrossRepository
-  [[ "${2:-}" != verifying ]] || fields+=,mergeCommit,url
-  listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json "$fields")" || return 1
+  if [[ "${2:-}" == verifying ]]; then
+    # A single-PR child has no branch PR. Its parent's Closes line is judged
+    # by the same ownership rule the watch uses, rather than by a mention.
+    fields+=,mergeCommit,url,number,headRefName,headRepositoryOwner,title,body
+    listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --search "(head:$1 OR \"$3\") in:title,body" --limit 1000 --json "$fields")" || return 1
+    listed="$(jq -ce --arg item "$3" "$LANE_MERGED_JQ"'
+      if type != "array" or length >= 1000 then error("merge-list-incomplete") else
+        [.[] | .url as $url | lane_own($item; ($url | split("/")[3]); null)
+         | {state, mergedAt, isCrossRepository, mergeCommit, url}] end' <<<"$listed")" || return 1
+  else
+    listed="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state all --head "$1" --json "$fields")" || return 1
+  fi
   jq -er --arg mode "${2:-}" '[.[] | select(.isCrossRepository | not)] as $rows
     | ($rows | map(select(.state == "MERGED"))
        | if $mode == "verifying" then map(. + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}) else . end) as $merged
@@ -262,7 +274,7 @@ while IFS= read -r row; do
   merged_repos='{}'
   if jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
     branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
-    prs="$(probe_prs "$branch" verifying 2>"$TMPD/pr-probe-error")" || {
+    prs="$(probe_prs "$branch" verifying "$iid" 2>"$TMPD/pr-probe-error")" || {
       cat -- "$TMPD/pr-probe-error" >&2
       config_error verifying-merge-unread "issue=$iid"
     }

@@ -255,9 +255,10 @@ Validate-Completion:
   in "In Progress" or "In Review" — "Done" fails state_ok because managed
   session roots stay pre-merge until PR merge. This pre-merge state rule applies
   ONLY to the session root, not to expanded bundle children.
-  Bundle children expanded via --include-children-of are expected in "Done":
-  every completed child IS included and validates as Done/pass (a still-pending
-  child fails state_ok). Canceled children are excluded from the expansion —
+  Bundle children expanded via --include-children-of pass in Done, or Verifying
+  when the shared checklist parser proves only post-merge checks remain and
+  every checked box has evidence. Open branch work fails state_ok.
+  Canceled children are excluded from the expansion:
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or
   "Bundle Complete", without regard to letter case.
@@ -265,7 +266,7 @@ Validate-Completion:
   whose children are each worked as their own PR unit, with the container
   closing after its holder proves the shared outcome. The container's state passes for any live state (canceled
   fails closed) and needs no pre-posted summary: `issues complete --summary`
-  posts it at completion time. The expanded children still gate as above, so
+  posts it at completion time. Its expanded children must all be Done, so
   all_ok answers "may this container complete now?". The container checklist
   must have every box checked with its Evidence line. No merge time is needed.
   The flag fails closed:
@@ -273,7 +274,7 @@ Validate-Completion:
   same issue, and errors (exit 1) when the bundle has no non-canceled
   children — a leaf cannot validate as a container. A child of a container
   validates alone as its own session root. Use it only for containers;
-  explicit single-PR bundles keep the default children-Done-first contract.
+  explicit single-PR bundles use the default bundle-child contract above.
   A container without a branch outcome box refuses. Its holder adds the box
   when reading its source. Ordinary items without a checklist can complete.
 
@@ -3398,9 +3399,8 @@ validate_completion() {
     fi
 
     # If --include-children-of specified, fetch the bundle and expand its
-    # children as bundle-child validation targets. Per the documented bundle
-    # contract each child is expected to be "Done", so COMPLETED children must
-    # be INCLUDED (they are exactly what validates as Done) — not dropped.
+    # Completed children must remain in the validation set. A single-PR child
+    # can also carry verified branch work into post-merge verification.
     # Only CANCELED children are excluded: abandoned work can never be "Done",
     # is not a pending gap, and including it would permanently fail any bundle
     # that legitimately canceled a sub-issue. This mirrors the `children
@@ -3433,7 +3433,11 @@ validate_completion() {
         child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
             issue_ids+=("$child_id")
-            roles+=("bundle-child")
+            if [ "$container_mode" = true ]; then
+                roles+=("container-child")
+            else
+                roles+=("bundle-child")
+            fi
         done
     fi
 
@@ -3470,11 +3474,11 @@ validate_completion() {
         has_summary=$(echo "$comments" | jq 'any(.[]; .body | test("Completion Summary|Bundle Complete"; "i"))')
 
         local result description
-        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
+        description=$(jq -r '(.description // "") + "."' <<<"$issue") || return 1
+        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type" "${description%.}") || return 1
 
         if [ "$role" = "container" ]; then
             local checklist
-            description=$(jq -r '(.description // "") + "."' <<<"$issue") || return 1
             checklist=$(done_when_parse "${description%.}" '[]' '' '{}' container) || return 1
             result=$(jq -cn --argjson result "$result" --argjson checklist "$checklist" '
                 $result + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes, missing_outcome_box})

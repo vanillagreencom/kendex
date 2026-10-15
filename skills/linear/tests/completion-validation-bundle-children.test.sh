@@ -50,6 +50,12 @@ emit() { printf '%s___HTTP_CODE___200' "$1"; }
 single_issue() {
   local id="$1" sname="$2" stype="$3" parent="$4" parent_json="null" branch
   local description=null
+  if [[ ( "$id" == CC-912 || "$id" == CC-942 ) && -n "${CHILD_CHECKLIST_FILE:-}" ]]; then
+    description="$(jq -Rs . "$CHILD_CHECKLIST_FILE")"
+    sname="${CHILD_STATE:-Verifying}"
+    stype=started
+    [[ "$sname" != Done ]] || stype=completed
+  fi
   if [[ "$id" == CC-930 || "$id" == CC-940 ]]; then
     description='"## Done when\n- [x] Shared outcome\n  Evidence: holder read passed"'
   fi
@@ -67,6 +73,11 @@ single_issue() {
 # Args: identifier state_name state_type parent_identifier
 bundle_child() {
   local id="$1" sname="$2" stype="$3" parent="$4"
+  if [[ ( "$id" == CC-912 || "$id" == CC-942 ) && -n "${CHILD_CHECKLIST_FILE:-}" ]]; then
+    sname="${CHILD_STATE:-Verifying}"
+    stype=started
+    [[ "$sname" != Done ]] || stype=completed
+  fi
   printf '{"id":"uuid-%s","identifier":"%s","title":"%s","description":null,"state":{"name":"%s","type":"%s"},"assignee":null,"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"parent":{"identifier":"%s"},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}' \
     "$id" "$id" "$id" "$sname" "$stype" "$parent"
 }
@@ -105,6 +116,7 @@ elif [[ "$query" == *"ListComments"* ]]; then
   # parents (CC-930/CC-940) have none: their summary is posted by `issues
   # complete` at completion time, after validation.
   case "$vid" in
+  CC-912) if [[ "${CHILD_SUMMARY:-true}" == true ]]; then comments_with_summary; else comments_empty; fi ;;
   CC-922 | CC-930 | CC-940) comments_empty ;;
   CC-950) comments_with_summary 'Completion summary' ;;
   CC-951) comments_with_summary 'bUNDLE cOMPLETE' ;;
@@ -244,3 +256,29 @@ open|## Done when\n- [ ] Shared outcome at source|false|[1]|[]|false
 missing-evidence|## Done when\n- [x] Shared outcome at source|false|[]|[1]|false
 proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|[]|[]|false
 ROWS
+
+# A template-produced child can finish its branch work before its shared PR
+# merges. The parent accepts only the parser's qualified Verifying result.
+export CHILD_CHECKLIST_FILE="$TMP_ROOT/child.md"
+while IFS='|' read -r name state description expected; do
+  printf '%b' "$description" >"$CHILD_CHECKLIST_FILE"
+  out="$(CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
+  check "$name child controls bundle acceptance" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-912\") | .state == \"$state\" and .state_ok == $expected and .ok == $expected)"
+  if [[ "$state" == Verifying ]]; then
+    out="$(run_validate CC-940 --include-children-of CC-940 --container)"
+    check "$name Verifying child keeps container open" "$out" '.all_ok == false and (.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false)'
+  fi
+done <<'ROWS'
+qualified|Verifying|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+open-branch|Verifying|## Done when\n- [ ] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
+missing-evidence|Verifying|## Done when\n- [x] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
+invalid-post|Verifying|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: health|false
+empty|Verifying|No checklist|false
+done-open-branch|Done|## Done when\n- [ ] branch proof|false
+done-missing-evidence|Done|## Done when\n- [x] branch proof|false
+ROWS
+printf '%b' '## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h' >"$CHILD_CHECKLIST_FILE"
+out="$(CHILD_SUMMARY=false run_validate CC-910 --include-children-of CC-910)"
+check "Verifying child still needs its summary" "$out" '.all_ok == false and (.results[] | select(.id == "CC-912") | .state_ok == true and .has_summary == false and .ok == false)'
+out="$(run_validate CC-912)"
+check "Verifying remains invalid for a session root" "$out" '.all_ok == false and .results[0].state_ok == false'

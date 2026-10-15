@@ -177,7 +177,9 @@ Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree co
 .agents/skills/linear/scripts/linear.sh issues children [ISSUE] --pending --recursive
 ```
 
-Partition by `state_type`: `backlog` and `unstarted` are **safe** (`[SAFE_IDS]`); anything else is **active**. Both empty → § 5.
+For a single-PR bundle, first run `issues validate-completion [ISSUE] --include-children-of [ISSUE]`. A Verifying child whose result has `ok: true` stays attached for this PR's post-merge completion step. Exclude these children from the orphan partition. An unreadable validation result or tracker read stops the merge. Container children remain separate PR units.
+
+Partition the remaining children by `state_type`: `backlog` and `unstarted` are **safe** (`[SAFE_IDS]`); anything else is **active**. Both empty → § 5.
 
 Active children pause the merge and ask the user per orphan — was the work landed in this PR? Yes closes it Done; no appends it to `[SAFE_IDS]`; abort stops § 4.1 entirely.
 
@@ -374,6 +376,8 @@ Use the output as `MAIN_REPO_ROOT`.
    Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box. The text cites the recorded proof. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. Select `[MET_BOXES]` under that acceptance rule. Use `all` only when that rule accepts every box. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
+
+   **Complete the single-PR bundle's children.** Read `issues children [ISSUE] --recursive --format=safe` without `--pending`. The flat rows carry each child's `.id` and `.state_type`. Include children the GitHub integration already set Done. For each non-canceled child listed in this PR's child `Closes` lines, repeat this step's live read and `issues complete` command with that child's ID, its own box selections and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent. Keep post-merge boxes on each child. Record each child still Verifying in § 6 for the overseer. A child read or completion failure is a tracker-completion failure. The PR's child `Closes` links retain its merge evidence for the watch and reconciliation pass.
 
    **The container outcome is due for its holder’s read.** Read `.parent_id` from the live issue. If it is empty, continue to step 3. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR. Without that marker, children or an `agent:multi` label make it a container. For a container whose children are complete, record `container [PARENT_ID] outcome due for holder read` in § 6. Its holder reads the shared outcome through [oversee-events.md § Verification](../references/oversee-events.md#event-kinds). The last child’s merge supplies no outcome evidence. Repeat this classification for container ancestors. An unreadable parent is a tracker failure.
 
