@@ -7,6 +7,7 @@
 # and print the interrupt hint a running turn draws. The success row runs the
 # script inside the caller's own pane, whose close HUPs it.
 set -euo pipefail
+case "${OSTYPE:-}" in msys*|mingw*) export MSYS=winsymlinks:nativestrict ;; esac
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/copilot-context-world.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/copilot-context-world.sh"
@@ -80,6 +81,9 @@ for harness in claude codex copilot; do
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
+if [ -f "$TMP_ROOT/probe-handoff-staging" ]; then
+  find "$TMP_ROOT/work/tmp/handoffs" -maxdepth 1 -name '.handoff.*' -print > "$TMP_ROOT/handoff-staging-at-launch"
+fi
 $(checkout_stub_line)
 $trust_gate
 if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE successor startup waiting'; else echo 'esc to interrupt'; fi
@@ -2662,14 +2666,186 @@ for row in \
     "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=$row_expected|yes|0" \
     "handoff $row_name: refuse before launching"
 done
-# One current snapshot replaces the predecessor's stale header, then the real
-# succession launches and records the successor generation.
+# The production writer, never fixture_succession_handoff, supplies the header.
+HANDOFF_BODY="$TMP_ROOT/body replacement.md"
+printf '## State\nIn flight: replacement body without final newline' > "$HANDOFF_BODY"
+: > "$TMP_ROOT/probe-handoff-staging"
+HEADERCTL="$(mutant_scripts headerctl oversee-succeed)" || exit 1
+mutate_file "$HEADERCTL/oversee-succeed" \
+  "printf 'Start here: %s generation=%s\\n\\n' \"\$now\" \"\$generation\"" \
+  ": automatic-header-removed"
+handoff_success() {
+  [[ "$RC|$(caller_open)|$(overseers)|$(orec generation)" == '0|no|1|2' ]] || return 1
+  [[ "$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' "$HANDOFF_FILE")" == 1 ]] || return 1
+  tail -n +3 "$HANDOFF_FILE" > "$TMP_ROOT/written-body" || return 1
+  cmp -s -- "$HANDOFF_BODY" "$TMP_ROOT/written-body"
+}
+for row_script in normal control; do
+  fleet_state
+  new_caller "$MARK"
+  printf 'Start here: 2026-10-01T00:00:00Z generation=0\n\nRetained earlier body\n' > "$HANDOFF_FILE"
+  cp -- "$HANDOFF_FILE" "$TMP_ROOT/old-handoff"
+  HANDOFF_FIXTURE=off run_succeed "handoff-retained-$row_script" ''
+  unchanged=no
+  if cmp -s -- "$HANDOFF_FILE" "$TMP_ROOT/old-handoff"; then unchanged=yes; fi
+  assert_eq "$RC|$(caller_open)|$(overseers)|$unchanged" '1|yes|0|yes' \
+    'plain succession refuses and preserves the retained snapshot'
+  row_bin="$SUCCEED"
+  [[ "$row_script" != control ]] || row_bin="$HEADERCTL/oversee-succeed"
+  before_write="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
+  HANDOFF_FIXTURE=off SUCCEED_BIN="$row_bin" run_succeed "handoff-rewritten-$row_script" '' --handoff-body "$HANDOFF_BODY"
+  after_write="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
+  accepted=no
+  if handoff_success; then accepted=yes; fi
+  if [[ "$row_script" == control ]]; then
+    assert_eq "$accepted|$RC|$(caller_open)|$(overseers)|$(keyed handoff-stale "$OUT" | sed -n 1p)" \
+      'no|1|yes|0|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=1' \
+      'control: removing only the generated header fails the live success oracle at acceptance'
+    continue
+  fi
+  assert_eq "$accepted" yes 'the supplied complete body admits one succession with the generated header'
+  written_time="$(sed -n 's/^Start here: \(.*\) generation=1$/\1/p' "$HANDOFF_FILE")"
+  current_time=no
+  if [[ "$written_time" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ \
+     && ! "$written_time" < "$before_write" && ! "$written_time" > "$after_write" ]]; then current_time=yes; fi
+  assert_eq "$current_time" yes 'the live snapshot uses UTC time observed around its write'
+  writer_leak=no
+  launch_evidence="$(recorded claude) $(recorded_line)"
+  for word in "$HANDOFF_BODY" --handoff-body --write-only .handoff.; do
+    [[ "$launch_evidence" != *"$word"* ]] || writer_leak=yes
+  done
+  assert_eq "$writer_leak" no 'successor arguments and saved replay contain no writer input or staging path'
+  staging="$(cat -- "$TMP_ROOT/handoff-staging-at-launch")" || exit 1
+  assert_eq "$staging" '' 'writer staging ends before the successor runs'
+  recorded_line > "$TMP_ROOT/written-launch-line"
+done
+rm -- "$TMP_ROOT/probe-handoff-staging"
+
+# Replay survives removal of caller-owned body input and never reruns the writer.
+rm -- "$HANDOFF_BODY"
 fleet_state
 new_caller "$MARK"
-printf 'Start here: 2026-10-01T00:00:00Z generation=0\n' > "$HANDOFF_FILE"
-run_succeed handoff-rewritten ''
-assert_eq "$RC|$(caller_open)|$(overseers)|$(orec generation)" '0|no|1|2' \
-  'a replacement snapshot admits one succession'
+new_dead_pane
+cp -- "$TMP_ROOT/written-launch-line" "$TMP_ROOT/line-file"
+HANDOFF_FIXTURE=off run_succeed handoff-body-replay '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+assert_eq "$RC|$(overseers)|$(orec generation)|$(dead_open)" '0|1|2|no' \
+  'dead recovery replays the saved launch after the body file is removed'
+
+# Stop runs after the watch and pane have stopped. This direct invocation has
+# no TMUX, account or harness identity and keeps succession off.
+run_handoff_writer() {
+  RC=0
+  OUT="$(cd -- "$TMP_ROOT/work" && env -i HOME="$H" PATH="${WRITER_PATH:-$BIN:$PATH}" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" ORCH_OVERSEER_SUCCESSION=off \
+    ORCH_OVERSEER_HEADROOM_PCT="${WRITER_HEADROOM:-5}" "${SUCCEED_BIN:-$SUCCEED}" "$@" 2>&1)" || RC=$?
+}
+REAL_WRITER_CAT="$(command -v cat)" || exit 1
+REAL_WRITER_DATE="$(command -v date)" || exit 1
+REAL_WRITER_MV="$(command -v mv)" || exit 1
+for row in \
+  'same|handoff-body-invalid|reason=installed-handoff' \
+  'relative|handoff-body-invalid|reason=installed-handoff' \
+  'parent-alias|handoff-body-invalid|reason=installed-handoff' \
+  'hard-link|handoff-body-invalid|reason=installed-handoff' \
+  'source-symlink|handoff-body-invalid|reason=not-nonempty-regular' \
+  'destination-symlink|handoff-write-failed|step=destination-type' \
+  'empty|handoff-body-invalid|reason=not-nonempty-regular' \
+  'missing|handoff-body-invalid|reason=not-nonempty-regular' \
+  'header|handoff-body-invalid|reason=header' \
+  'read|handoff-write-failed|step=body-read' \
+  'date|handoff-write-failed|step=date' \
+  'rename|handoff-write-failed|step=rename' \
+  'generation|handoff-stale|expected=unknown' \
+  'clock|success|' \
+  ; do
+  IFS='|' read -r row_name row_key row_field <<<"$row"
+  fleet_state
+  rm -f -- "$HANDOFF_FILE" "$TMP_ROOT/body-link" "$HANDOFF_BODY"
+  printf 'Start here: 2026-10-01T00:00:00Z generation=0\n\nOld body\n' > "$HANDOFF_FILE"
+  cp -- "$HANDOFF_FILE" "$TMP_ROOT/old-handoff"
+  printf '## State\nComplete new snapshot\n' > "$HANDOFF_BODY"
+  row_body="$HANDOFF_BODY"
+  row_dest=tmp/handoffs/OVERSEER-HANDOFF.md
+  row_path="$TMP_ROOT/writer-$row_name"
+  mkdir -p -- "$row_path"
+  case "$row_name" in
+    same) row_body="$HANDOFF_FILE" ;;
+    relative) row_body=./tmp/handoffs/../handoffs/OVERSEER-HANDOFF.md ;;
+    parent-alias)
+      if ln -s -- "$TMP_ROOT/work/tmp/handoffs" "$TMP_ROOT/parent-alias" && [[ -L "$TMP_ROOT/parent-alias" ]]; then
+        row_body="$TMP_ROOT/parent-alias/OVERSEER-HANDOFF.md"
+      else echo 'skip: native symlinks unavailable for parent alias'; continue; fi ;;
+    hard-link) ln -- "$HANDOFF_FILE" "$TMP_ROOT/body-link"; row_body="$TMP_ROOT/body-link" ;;
+    source-symlink|destination-symlink)
+      if ! { ln -s -- "$HANDOFF_FILE" "$TMP_ROOT/body-link" && [[ -L "$TMP_ROOT/body-link" ]]; }; then
+        echo "skip: native symlinks unavailable for $row_name"; continue
+      fi
+      if [[ "$row_name" == source-symlink ]]; then row_body="$TMP_ROOT/body-link"; else row_dest="$TMP_ROOT/body-link"; fi ;;
+    empty) : > "$HANDOFF_BODY" ;;
+    missing) rm -- "$HANDOFF_BODY" ;;
+    header) printf '## State\nStart here: supplied metadata\n' > "$HANDOFF_BODY" ;;
+    generation)
+      jq '.overseer.generation = "invalid"' "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
+      mv -- "$FLEET_STATE.tmp" "$FLEET_STATE" ;;
+  esac
+  if [[ "$row_name" == read || "$row_name" == date || "$row_name" == rename || "$row_name" == clock ]]; then
+    cat > "$row_path/cat" <<STUB
+#!/usr/bin/env bash
+if [[ '$row_name' == read && "\${*: -1}" == '$HANDOFF_BODY' ]]; then exit 1; fi
+exec '$REAL_WRITER_CAT' "\$@"
+STUB
+    cat > "$row_path/date" <<STUB
+#!/usr/bin/env bash
+if [[ "\$*" == '-u +%Y-%m-%dT%H:%M:%SZ' ]]; then
+  [[ '$row_name' != date ]] || exit 1
+  if [[ '$row_name' == clock ]]; then printf '%s\n' '2026-10-15T12:34:56Z'; exit 0; fi
+fi
+exec '$REAL_WRITER_DATE' "\$@"
+STUB
+    cat > "$row_path/mv" <<STUB
+#!/usr/bin/env bash
+if [[ '$row_name' == rename && "\${*: -1}" == '$HANDOFF_FILE' ]]; then exit 1; fi
+exec '$REAL_WRITER_MV' "\$@"
+STUB
+    chmod +x "$row_path/cat" "$row_path/date" "$row_path/mv"
+  fi
+  HANDOFF_FIXTURE=off WRITER_HEADROOM=invalid WRITER_PATH="$row_path:$BIN:$PATH" run_handoff_writer --write-only --handoff-body "$row_body" --handoff "$row_dest"
+  if [[ "$row_key" == success ]]; then
+    printf 'Start here: 2026-10-15T12:34:56Z generation=1\n\n' > "$TMP_ROOT/expected-handoff"
+    cat -- "$HANDOFF_BODY" >> "$TMP_ROOT/expected-handoff"
+    exact=no
+    if cmp -s -- "$HANDOFF_FILE" "$TMP_ROOT/expected-handoff"; then exact=yes; fi
+    assert_eq "$RC|$exact|$OUT" '0|yes|' 'writer-only works without a pane and uses the clock with succession off'
+  else
+    unchanged=no
+    if cmp -s -- "$HANDOFF_FILE" "$TMP_ROOT/old-handoff"; then unchanged=yes; fi
+    category=no
+    if [[ "$OUT" == *"oversee-succeed: $row_key "* && "$OUT" == *"$row_field"* ]]; then category=yes; fi
+    assert_eq "$RC|$category|$unchanged" '1|yes|yes' "writer $row_name: specific refusal preserves the installed snapshot"
+  fi
+  staging="$(find "$TMP_ROOT/work/tmp/handoffs" -maxdepth 1 -name '.handoff.*' -print)" || exit 1
+  assert_eq "$staging" '' "writer $row_name: private staging is removed before return"
+done
+
+for row in \
+  '--write-only' \
+  '--write-only --handoff-body BODY --context 1:2' \
+  '--write-only --handoff-body BODY --harness claude' \
+  '--write-only --handoff-body BODY --wait-secs 1' \
+  '--write-only --handoff-body BODY --' \
+  '--handoff-body BODY --check-marks' \
+  '--handoff-body BODY --print-launch-line' \
+  "--handoff-body BODY --dead-pane %1 --line-file $TMP_ROOT/line-file" \
+  '--handoff-body BODY --walled-pane %1' \
+  '--handoff-body BODY --entry claude' \
+  '--handoff-body BODY --brief-file missing' \
+  ; do
+  read -r -a row_args <<<"$row"
+  HANDOFF_FIXTURE=off run_handoff_writer "${row_args[@]}"
+  conflict=no
+  [[ "$OUT" != *'oversee-succeed: mode-conflict '* ]] || conflict=yes
+  assert_eq "$RC|$conflict" '1|yes' "writer options refuse incompatible mode: $row"
+done
 
 # The watch recovers a predecessor that could not rewrite its handoff.
 # Its dead and walled modes must launch without a current snapshot.

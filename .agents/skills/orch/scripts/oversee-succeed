@@ -5,7 +5,8 @@
 #
 # Usage:
 #   oversee-succeed [--harness H] [--context TOKENS:WINDOW] [--handoff PATH] [--wait-secs N]
-#                   [-- HARNESS_FLAGS...]
+#                   [--handoff-body BODY] [-- HARNESS_FLAGS...]
+#   oversee-succeed --write-only --handoff-body BODY [--handoff PATH]
 #   oversee-succeed --print-launch-line [--entry ENTRY] [--harness H] [--handoff PATH | --brief-file PATH]
 #                   [-- HARNESS_FLAGS...]
 #   oversee-succeed --check-marks [--harness H] [--context TOKENS:WINDOW]
@@ -20,7 +21,13 @@
 #   succession that judges the marks, carries the caller's own flags, and
 #   serves recovery from death, a confirmed wall or a live launch reserve.
 #
-#   Five modes over ONE launch path. The first is an overseer succeeding
+#   `--handoff-body` replaces the complete snapshot from a separate nonempty
+#   headerless file. The writer adds Start here with the current fleet generation
+#   and UTC write time. `--write-only` does this without a pane or launch choice,
+#   even when succession is off. The source is caller-owned session scratch.
+#   Plain succession only checks the installed handoff and never stamps it.
+#
+#   The launch modes share ONE launch path. The first is an overseer succeeding
 #   ITSELF, described below. `--check-marks` stops after that judgement and
 #   reports it, so `oversee-watch` can wake an overseer whose own marks it
 #   reached without a second copy of the rule. The next two serve an overseer
@@ -69,8 +76,8 @@
 #   account evidence. This mode proves neither and judges no caller account
 #   mark. The contract is ../references/overseer-session-events.md, Recovery requests.
 #
-#   Run from the overseer's own tmux pane after the overseer handoff file is
-#   rewritten (../workflows/oversee.md § 5). In order:
+#   Run live succession from the overseer's own tmux pane with a replacement
+#   body or a handoff already written (../workflows/oversee.md § 5). In order:
 #     1. Read ORCH_OVERSEER_SUCCESSION, `on` (default) or `off`. `off` prints
 #        `succession-off`, exits 0 and launches nothing; any other value
 #        refuses `invalid-succession`. Under --check-marks `off` is reported on
@@ -315,6 +322,14 @@
 #                    Live self-succession checks its Start here generation
 #                    per ../references/communication-modes.md § Handoff.
 #                    Check and print modes read no handoff.
+#   --handoff-body BODY
+#                    Complete replacement body in a separate nonempty regular
+#                    file. A Start here line, a leaf symlink or the installed
+#                    handoff itself is refused. Valid for live succession and
+#                    --write-only. This option never reaches the harness.
+#   --write-only     Write the snapshot, then return without judging marks or
+#                    launching. Requires --handoff-body; only --handoff may also
+#                    be supplied. No pane or launch account is needed.
 #   --wait-secs N    Seconds the successor has to come up: ONE bound over
 #                    reading its account, waiting for its running turn, and
 #                    confirming the account once that turn shows, not one each.
@@ -489,6 +504,8 @@ message() { # KEY FIELD=VALUE...
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. Rewrite it before succession; no successor was launched.' ;;
+    handoff-body-invalid) text='Supply a separate nonempty regular body file with no Start here line.' ;;
+    handoff-write-failed) text='The snapshot could not replace the handoff. The previous handoff remains in place.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
@@ -700,8 +717,70 @@ if [[ "${1:-}" == --watch-restart ]]; then
   exit 0
 fi
 
+handoff_record_read() {
+  ol_record_read || die handoff-stale "path=$HANDOFF" expected=unknown
+  generation="$(jq -er '.generation // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+    || die handoff-stale "path=$HANDOFF" expected=unknown
+  [[ "$generation" =~ ^[0-9]+$ ]] \
+    || die handoff-stale "path=$HANDOFF" expected=unknown
+}
+
+# One active overseer owns the destination. The private directory owns both
+# staged files and ends before succession can create the successor.
+handoff_write() (
+  local source_parent destination_parent source_path destination_path stage now header_rc
+  [[ ! -L "$HANDOFF_BODY" && -f "$HANDOFF_BODY" && -s "$HANDOFF_BODY" ]] \
+    || die handoff-body-invalid "path=$HANDOFF_BODY" reason=not-nonempty-regular
+  source_parent="$(dirname -- "$HANDOFF_BODY")" \
+    || die handoff-body-invalid "path=$HANDOFF_BODY" reason=parent
+  source_parent="$(cd -- "$source_parent" && pwd -P)" \
+    || die handoff-body-invalid "path=$HANDOFF_BODY" reason=parent
+  source_path="$source_parent/$(basename -- "$HANDOFF_BODY")" \
+    || die handoff-body-invalid "path=$HANDOFF_BODY" reason=leaf
+  destination_parent="$(dirname -- "$HANDOFF")" \
+    || die handoff-write-failed "path=$HANDOFF" step=parent
+  mkdir -p -- "$destination_parent" \
+    || die handoff-write-failed "path=$HANDOFF" step=mkdir
+  destination_parent="$(cd -- "$destination_parent" && pwd -P)" \
+    || die handoff-write-failed "path=$HANDOFF" step=parent
+  destination_path="$destination_parent/$(basename -- "$HANDOFF")" \
+    || die handoff-write-failed "path=$HANDOFF" step=leaf
+  [[ ! -L "$destination_path" && ( ! -e "$destination_path" || -f "$destination_path" ) ]] \
+    || die handoff-write-failed "path=$HANDOFF" step=destination-type
+  [[ ! "$source_path" -ef "$destination_path" ]] \
+    || die handoff-body-invalid "path=$HANDOFF_BODY" reason=installed-handoff
+  stage="$(mktemp -d "$destination_parent/.handoff.XXXXXX")" \
+    || die handoff-write-failed "path=$HANDOFF" step=mktemp
+  trap 'rm -rf -- "${stage:?}"' EXIT
+  trap 'exit 1' HUP INT TERM
+  cat -- "$source_path" > "$stage/payload" \
+    || die handoff-write-failed "path=$HANDOFF" step=body-read
+  header_rc=0
+  grep '^Start here:' "$stage/payload" > /dev/null || header_rc=$?
+  case "$header_rc" in
+    0) die handoff-body-invalid "path=$HANDOFF_BODY" reason=header ;;
+    1) ;;
+    *) die handoff-write-failed "path=$HANDOFF" step=body-check ;;
+  esac
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    || die handoff-write-failed "path=$HANDOFF" step=date
+  printf 'Start here: %s generation=%s\n\n' "$now" "$generation" > "$stage/complete" \
+    || die handoff-write-failed "path=$HANDOFF" step=header-write
+  cat -- "$stage/payload" >> "$stage/complete" \
+    || die handoff-write-failed "path=$HANDOFF" step=body-write
+  [[ ! -L "$destination_path" && ( ! -e "$destination_path" || -f "$destination_path" ) ]] \
+    || die handoff-write-failed "path=$HANDOFF" step=destination-type
+  [[ ! "$source_path" -ef "$destination_path" ]] \
+    || die handoff-body-invalid "path=$HANDOFF_BODY" reason=installed-handoff
+  mv -f -- "$stage/complete" "$destination_path" \
+    || die handoff-write-failed "path=$HANDOFF" step=rename
+)
+
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
+HANDOFF_BODY=""
+BODY_GIVEN=0
+WRITE_ONLY=0
 WAIT_SECS=60
 # Account headroom, in percent of the binding bucket, at or below which the
 # overseer succeeds itself, Codex credit room aside (lanes --help, pick). One
@@ -734,45 +813,59 @@ WAIT_GIVEN=0
 CONTEXT_ARG=""
 CONTEXT_GIVEN=0
 HARNESS_ARG=""
+HARNESS_GIVEN=0
+FLAGS_GIVEN=0
+RECOVERY_GIVEN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry|--brief-file)
+    --handoff|--handoff-body|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry|--brief-file)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --context) CONTEXT_ARG="$2"; CONTEXT_GIVEN=1 ;;
-        --harness) HARNESS_ARG="$2" ;;
+        --harness) HARNESS_ARG="$2"; HARNESS_GIVEN=1 ;;
+        --handoff-body) HANDOFF_BODY="$2"; BODY_GIVEN=1 ;;
         --entry) ENTRY_ARG="$2"; ENTRY_GIVEN=1 ;;
         --brief-file) BRIEF_FILE="$2"; BRIEF_GIVEN=1 ;;
         --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
         --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
-        --dead-pane) DEAD_PANE="$2" ;;
-        --walled-pane) WALLED_PANE="$2" ;;
-        *) LINE_FILE="$2" ;;
+        --dead-pane) DEAD_PANE="$2"; RECOVERY_GIVEN=1 ;;
+        --walled-pane) WALLED_PANE="$2"; RECOVERY_GIVEN=1 ;;
+        *) LINE_FILE="$2"; RECOVERY_GIVEN=1 ;;
       esac
       shift 2
       ;;
     --print-launch-line) PRINT_LINE=1; shift ;;
     --check-marks) CHECK_MARKS=1; shift ;;
-    --) shift; HARNESS_FLAGS=("$@"); break ;;
+    --write-only) WRITE_ONLY=1; shift ;;
+    --) FLAGS_GIVEN=1; shift; HARNESS_FLAGS=("$@"); break ;;
     *) die unknown-option "arg=$1" ;;
   esac
 done
 matches "$WAIT_SECS" '^[1-9][0-9]*$' || die invalid-wait-secs "value=$WAIT_SECS"
 matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
-matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
-  || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
-HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
+if (( ! WRITE_ONLY )); then
+  matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
+    || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
+  HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
+fi
 
 # ONE tagged mode, matched by name at every site below, so no site conjoins two
 # flags and reads a third combination as one of the two.
 #   succeed  the overseer succeeding itself from its own live pane
+#   write    replace the snapshot without judging or launching
 #   check    the triggers judged and reported, nothing picked and nothing launched
 #   print    the line THIS overseer's successor would run, printed, nothing launched
 #   dead     the recorded line, sent into a dead overseer's window slot
 #   walled   a lane picked afresh for a caller-requested account recovery, sent
 #            into its window slot; no mark judged and no recorded line read
 MODE=succeed
-if [[ -n "$DEAD_PANE" ]]; then
+if (( WRITE_ONLY )); then
+  MODE=write
+  (( BODY_GIVEN && ! WAIT_GIVEN && ! CONTEXT_GIVEN && ! HARNESS_GIVEN && ! FLAGS_GIVEN \
+     && ! PRINT_LINE && ! CHECK_MARKS && ! ENTRY_GIVEN && ! BRIEF_GIVEN && ! RECOVERY_GIVEN )) \
+    && [[ -z "$DEAD_PANE" && -z "$WALLED_PANE" && -z "$LINE_FILE" ]] \
+    || die mode-conflict mode=write
+elif [[ -n "$DEAD_PANE" ]]; then
   MODE=dead
   [[ "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 && -z "$WALLED_PANE" ]] \
     || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "check=$CHECK_MARKS" \
@@ -797,6 +890,13 @@ elif [[ "$PRINT_LINE" -eq 1 ]]; then
   [[ -z "$LINE_FILE" ]] || die mode-conflict "print=1" "line-file=$LINE_FILE"
 else
   [[ -z "$LINE_FILE" ]] || die mode-conflict "line-file=$LINE_FILE" "dead-pane=none"
+fi
+(( ! BODY_GIVEN )) || [[ "$MODE" == succeed || "$MODE" == write ]] \
+  || die mode-conflict "mode=$MODE" handoff-body=1
+if [[ "$MODE" == write ]]; then
+  handoff_record_read
+  handoff_write
+  exit 0
 fi
 (( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"
 if (( BRIEF_GIVEN )); then
@@ -1556,16 +1656,13 @@ fi
 # run refused. Only live self-succession has a writer that can make the
 # handoff current; the requested recovery modes do not demand a new snapshot
 # from the predecessor (../references/communication-modes.md § Handoff).
-if ! ol_record_read; then
-  [[ "$MODE" != succeed ]] || die handoff-stale "path=$HANDOFF" expected=unknown
+if [[ "$MODE" != succeed ]] && ! ol_record_read; then
   message record-unwritten field=overseer step=read >&2
   [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi
 if [[ "$MODE" == succeed ]]; then
-  generation="$(jq -er '.generation // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
-    || die handoff-stale "path=$HANDOFF" expected=unknown
-  [[ "$generation" =~ ^[0-9]+$ ]] \
-    || die handoff-stale "path=$HANDOFF" expected=unknown
+  handoff_record_read
+  (( ! BODY_GIVEN )) || handoff_write
   handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF")" \
     || die handoff-stale "path=$HANDOFF" "expected=$generation"
   [[ "$handoff_generation" == "$generation" ]] \

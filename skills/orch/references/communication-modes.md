@@ -236,6 +236,8 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 
 Every hold in the handoff, the report's Next row or lane state names its items and an open owner ask id or a blocking pull request or tracker item. At each start, read the named ask from `lane-mail pending --item overseer --to owner` and the named blocker from GitHub or the live tracker. Drop a hold with no id, a resolved or absent ask, or a blocker whose live state is terminal. Count its items as ready, then apply `oversee.md` § 2 Select Work.
 
+The installed snapshot has this shape. The writer generates the Start here line.
+
 ```markdown
 Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
 
@@ -256,7 +258,9 @@ In flight: [EACH TRACKER ID WITH ONE NEXT ACTION]
 [CURRENT SESSION'S OPEN PROGRESS ONLY: ONE LINE PER ACTION WITH ITS TIME, OPERATION, OBSERVED RESULT AND DECISION REASON; EXCLUDE RULINGS AND FILING HISTORY (FLEET LOG), AND VERIFYING READINGS (THEIR TRACKER ITEMS)]
 ```
 
-The handoff is a current snapshot. At every rewrite, replace the file, never prepend. Use the exact UTC write time and the writer's fleet generation. For live self-succession, `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. Dead and walled recovery use the existing handoff plus bounded live records, even when the handoff is stale or absent: their callers cannot write a live snapshot. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
+The handoff is a current snapshot. Prepare the complete body below Start here in a separate ignored scratch file. Supply it to `oversee-succeed --handoff-body [BODY]` before `--` at live succession. Use `oversee-succeed --write-only --handoff-body [BODY]` at Stop or before a later plain succession. Add `--handoff [PATH]` when the fleet uses another destination. The writer replaces the complete snapshot and supplies its current fleet generation and UTC write time. It refuses the installed handoff as body input, links to it and any body with a Start here line. The body is replaceable session scratch with no archive role. The caller keeps ownership of it. The successor and recovery read only the installed handoff.
+
+For live self-succession, `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. Plain succession never rewrites retained content. Dead and walled recovery use the existing handoff plus bounded live records, even when the handoff is stale or absent: their callers cannot write a live snapshot. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
 
 Drop each closed tracker id from State. Keep its completion evidence on the item. Keep a line only when the successor would act wrongly or redo work without it. Remove a temporary instruction when its end event occurs or its standing home states it. An unresolved checkout condition belongs in State until its cause clears. Account, PID and lane facts stay in their own records. Hosted idle wakes use [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)'s Pane paste.
 
