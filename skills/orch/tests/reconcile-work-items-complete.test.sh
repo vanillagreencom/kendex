@@ -80,7 +80,7 @@ case "$query" in
     Todo) state_id=state-todo ;;
     *) printf 'unsupported workflow state: %s\n' "$state" >&2; exit 2 ;;
   esac
-  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id}]}}}'
+  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-verifying" then "started" else "unstarted" end)}]}}}'
   ;;
 *"issue(id:"*)
   jq -cjn --argjson d "$(jq -r ' .description | tojson' "$STATE/$id.json")" --arg id "$id" '{data:{issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:$d,state:{name:"In Review",type:"started"},team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},project:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}'
