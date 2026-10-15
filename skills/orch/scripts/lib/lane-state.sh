@@ -198,11 +198,23 @@ HARNESS_UP_RE="$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE|$CLAUDE_FOOTER_RE"
 PI_COMPACT_HEADER_RE='^ █▀ █ escape interrupt · ctrl\+c/ctrl\+d clear/exit · / commands · ! bash · ctrl\+o more[[:space:]]*$'
 PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working ─+[[:space:]]*$'
 
+# Pi's current screen pairs its title and footer with the bordered input area
+# and π prompt (fixtures/oversee-watch/pi-current.txt). These prove readiness,
+# not turn activity; title, account and model text remain variable.
+PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+─+[[:space:]]*$'
+PI_CURRENT_FOOTER_RE='^● .+ ─+ [0-9]+%[[:space:]]*$'
+PI_CURRENT_EDITOR_TOP_RE='^┏━+┓[[:space:]]*$'
+PI_CURRENT_EDITOR_BOTTOM_RE='^┗━+┛[[:space:]]*$'
+PI_CURRENT_PROMPT_RE='^π[[:space:]]*$'
+
 # pane_harness_up SCREEN — the predicate over one captured pane.
 pane_harness_up() {
   pane_working "$1" || grep -Eq -- "$HARNESS_UP_RE" <<<"$1" \
     || [[ "$(pane_turn_slice "$1" framed)" == framed ]] \
-    || { grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" && grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1"; }
+    || { grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" && grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1"; } \
+    || { grep -Eq -- "$PI_CURRENT_TITLE_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_FOOTER_RE" <<<"$1" \
+      && grep -Eq -- "$PI_CURRENT_EDITOR_TOP_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_EDITOR_BOTTOM_RE" <<<"$1" \
+      && grep -Eq -- "$PI_CURRENT_PROMPT_RE" <<<"$1"; }
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the

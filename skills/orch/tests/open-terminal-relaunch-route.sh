@@ -67,7 +67,7 @@ chmod +x "$RELAUNCH_PROVIDER"
 # The screen a working claude draws, which pane_harness_up reads as a harness.
 HARNESS_SCREEN="$TMP_ROOT/harness-screen"
 printf 'Working (esc to interrupt)\n' > "$HARNESS_SCREEN"
-PI_SCREEN="$TEST_DIR/fixtures/oversee-watch/pi-working.txt"
+PI_SCREEN="$TEST_DIR/fixtures/oversee-watch/pi-current.txt"
 
 # A claude that logs its argv, one line per run. A `--continue` run exits
 # $CLAUDE_CONTINUE_RC after the words claude prints where it finds no session;
@@ -486,6 +486,11 @@ control() { # NAME OLD NEW [FILE]
   orch_fixture_shared_libs "$TMP_ROOT/ctl-$1/orch"
   mutate_file "$scripts/$file" "$2" "$3"
 }
+control pi-current '|| { grep -Eq -- "$PI_CURRENT_TITLE_RE"' '|| { false && grep -Eq -- "$PI_CURRENT_TITLE_RE"' lib/lane-state.sh
+SELECT_KIND=matching run_ot pi "$PI_SCREEN" pi
+PI_CURRENT_RED="$(FAIL=0; assert_eq "rc=$RC launched=$(launched) closed=$(closed) status=$(status)" 'rc=0 launched=1 closed=0 status=running' control >/dev/null; printf '%s' "$FAIL")"
+assert_eq "$PI_CURRENT_RED" 1 'control: removing current Pi readiness rejects the retained hosted resume running assertion'
+OPEN_TERMINAL="$SHIPPED"
 control custom-retirement '"$RELAUNCH" == true && -n "$CMD_TEMPLATE" && -z "$host_line"' '"$RELAUNCH" == false && -n "$CMD_TEMPLATE" && -z "$host_line"'
 SAVED_FAIL="$FAIL"; FAIL=0
 custom_case > "$TMP_ROOT/custom-control.out"

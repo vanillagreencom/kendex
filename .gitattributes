@@ -4,6 +4,7 @@
 # in with `include_str!` and asserted to hold no carriage return, and the
 # authoring golden digest is over those same bytes.
 * -text
+skills/orch/tests/fixtures/oversee-watch/pi-current.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/orch/scripts/open-terminal text eol=lf
 skills/orch/scripts/lanes text eol=lf
 skills/orch/scripts/lane-host text eol=lf
