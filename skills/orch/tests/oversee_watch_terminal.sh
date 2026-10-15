@@ -16,7 +16,22 @@ CLOSE_SCRIPTS="$CLOSE_MAILBOX/../../orch/scripts"
 TERMINAL_WATCH="$(mutant_scripts terminal-watch/orch oversee-watch)/oversee-watch" || exit 1
 mkdir -p "$TMP_ROOT/terminal-watch/github/scripts"
 cp -R "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/terminal-watch/github/scripts/lib"
-ln -s "$REPO_ROOT/skills/harness-ci" "$TMP_ROOT/terminal-watch/harness-ci"
+mkdir -p "$TMP_ROOT/terminal-watch/harness-ci/scripts"
+cat > "$TMP_ROOT/terminal-watch/harness-ci/scripts/change-class" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_DIR/forbidden-classifier"
+exit 9
+EOF
+chmod +x "$TMP_ROOT/terminal-watch/harness-ci/scripts/change-class"
+mkdir -p "$TMP_ROOT/repo/.github/workflows" "$TMP_ROOT/repo/.github/actions/change-class"
+cp "$REPO_ROOT/.github/workflows/skill-tests.yml" "$TMP_ROOT/repo/.github/workflows/"
+cp "$REPO_ROOT/.github/actions/change-class/"{action.yml,classify,proof} "$TMP_ROOT/repo/.github/actions/change-class/"
+git -C "$TMP_ROOT/repo" add .github
+git -C "$TMP_ROOT/repo" -c user.name=test -c user.email=test@example.com commit -qm producer
+git -C "$TMP_ROOT/repo" -c user.name=test -c user.email=test@example.com commit -qm merge --allow-empty
+TERMINAL_MERGE="$(git -C "$TMP_ROOT/repo" rev-parse HEAD)"
+TERMINAL_BASE="$(git -C "$TMP_ROOT/repo" rev-parse HEAD^1)"
+export TERMINAL_MERGE TERMINAL_BASE
 cat > "$TMP_ROOT/terminal-watch/github/scripts/github.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -43,6 +58,17 @@ mv -- "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/gh-watch"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ ${1:-} == api && ${2:-} == repos/vanillagreencom/kendex/* ]]; then
+  printf '%s\n' "$*" >> "$STUB_DIR/evidence-reads"
+  case "$2" in
+    */check-runs\?*) jq -cn --arg head "$TERMINAL_MERGE" '[{total_count:1,check_runs:[{id:72,name:"Classify the diff",app:{slug:"github-actions"},head_sha:$head,status:"completed",conclusion:"success"}]}]' ;;
+    */actions/jobs/72) jq -cn --arg head "$TERMINAL_MERGE" '{id:72,run_id:20,check_run_url:"https://api.github.com/repos/vanillagreencom/kendex/check-runs/72",head_sha:$head,name:"Classify the diff",status:"completed",conclusion:"success"}' ;;
+    */actions/runs/20) jq -cn --arg head "$TERMINAL_MERGE" '{id:20,head_sha:$head,event:"merge_group",path:".github/workflows/skill-tests.yml",repository:{full_name:"vanillagreencom/kendex"},head_repository:{full_name:"vanillagreencom/kendex"},status:"completed",conclusion:"success"}' ;;
+    */actions/jobs/72/logs) printf 'base-rev: %s\nhead-rev: %s\nclass: class=micro measured=true cause=fixture\n' "$TERMINAL_BASE" "$TERMINAL_MERGE" ;;
+    *) exit 9 ;;
+  esac
+  exit 0
+fi
 if [[ "${1:-} ${2:-}" == 'pr view' ]]; then
   printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
   [[ ! -f "$STUB_DIR/pr-read-failed" ]] || exit 9
@@ -88,6 +114,7 @@ FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 
 terminal_case() { # NAME RECORD_STATUS TRACKER_STATE
   new_case "$1"
+  EVIDENCE_REPO=owner/repo
   mkdir -p "$STUB_DIR/fleet" "$STUB_DIR/remote"
   : > "$STUB_DIR/host.log"
   : > "$STUB_DIR/terminal-mail"
@@ -107,7 +134,7 @@ terminal_run() { # [WATCH_BIN] [CLOSE_BIN]
     OVERSEE_WATCH_LANE_CLOSE="${2:-$CLOSE_SCRIPTS/lane-close}" \
     OVERSEE_WATCH_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
     ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
-    LANE_HOST_STUB_LOG="$STUB_DIR/host.log" -- --max-loops 1 \
+    LANE_HOST_STUB_LOG="$STUB_DIR/host.log" -- --max-loops 1 --repo "$EVIDENCE_REPO" \
     --state "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/out" 2> "$STUB_DIR/err" || rc=$?
 }
 terminal_conditional_run() { # [CLOSE_BIN] [MODE]
@@ -162,9 +189,15 @@ terminal_busy() {
   printf '1\n' > "$STUB_DIR/prwatch.rc"
 }
 terminal_merged() {
+  if [[ ${1:-} == evidence ]]; then
+    EVIDENCE_REPO=vanillagreencom/kendex
+    printf '%s\n' "$EVIDENCE_REPO" > "$STUB_DIR/repoview.txt"
+    jq --arg repo "$EVIDENCE_REPO" '.lanes[0].repo=$repo | if .lanes[0].parked != null then .lanes[0].parked.repo=$repo else . end' "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+    mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
+  fi
   printf 'MERGED\n' > "$STUB_DIR/pr-state"
   printf '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-08T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
-  jq -n '{pr:1,repo:"owner/repo",state:"MERGED",merge_commit:"fixture-merge",
+  jq -n --arg merge "$TERMINAL_MERGE" --arg repo "$EVIDENCE_REPO" '{pr:1,repo:$repo,state:"MERGED",merge_commit:$merge,
     stamps:{first_commit:null,created:null,gate_met:null,ci_green:null,armed:null,queued:null,
       merged:"2026-10-08T00:00:00Z"},open_secs:null,push_times:[],bot_review_times:[],rounds:[]}' > "$STUB_DIR/timeline.json"
 }
@@ -193,7 +226,7 @@ for status in parked stopped; do
   for state in completed canceled started; do
     terminal_case "merged_${status}_${state}" "$status" "$state"
     terminal_busy
-    terminal_merged
+    terminal_merged evidence
     terminal_run
     expected='merged,lane-closed,pr-watch'
     if [[ "$state" == started ]]; then
@@ -207,6 +240,10 @@ for status in parked stopped; do
         "$status/$state: the provider sees the saved cycle before close" "$STUB_DIR/err"
       assert_eq "$(jq -r '[.fleet_log[]? | select(.kind == "cycle")] | length' "$STUB_DIR/fleet/workflow-state-oversee.json")" 1 \
         "$status/$state: the production recorder preserves its fleet report" "$STUB_DIR/err"
+      assert_eq "$(jq -c '.lanes[0].cycle | [.class,.target,.class_reason]' "$STUB_DIR/fleet/workflow-state-oversee.json")" '["micro",1200,"fixture"]' \
+        "$status/$state: terminal recording reads exact measured evidence" "$STUB_DIR/err"
+      assert_contains "$(cat "$STUB_DIR/evidence-reads")" '/actions/jobs/72/logs' "$status/$state: recorder reaches the evidence log"
+      assert_eq "$(test -e "$STUB_DIR/forbidden-classifier" && echo called || echo absent)" absent "$status/$state: terminal recording runs no classifier"
     fi
   done
 done

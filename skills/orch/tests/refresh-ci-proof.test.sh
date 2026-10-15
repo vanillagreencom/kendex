@@ -26,6 +26,10 @@ git -C "$FIXTURE" config user.email test@example.com
 git -C "$FIXTURE" config user.name test
 git -C "$FIXTURE" config gc.auto 0
 git -C "$FIXTURE" config maintenance.auto false
+mkdir -p "$FIXTURE/.github/workflows" "$FIXTURE/.github/actions/change-class"
+cp "$REPO_ROOT/.github/workflows/skill-tests.yml" "$FIXTURE/.github/workflows/"
+cp "$REPO_ROOT/.github/actions/change-class/"{action.yml,classify,proof} "$FIXTURE/.github/actions/change-class/"
+git -C "$FIXTURE" add .github
 printf 'old\n' > "$FIXTURE/product"
 git -C "$FIXTURE" add product
 git -C "$FIXTURE" commit -qm root
@@ -38,6 +42,15 @@ printf 'render\n' > "$FIXTURE/.agents/render"
 git -C "$FIXTURE" add .agents
 git -C "$FIXTURE" commit -qm render
 HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+ORIGINAL_HEAD=$HEAD_SHA
+# Each changed producer keeps matching logs and an unchanged product diff.
+for part in action.yml classify proof; do
+  git -C "$FIXTURE" checkout -q --detach "$ORIGINAL_HEAD"
+  printf '\n# altered producer\n' >> "$FIXTURE/.github/actions/change-class/$part"
+  git -C "$FIXTURE" commit -qam "alter $part"
+  git -C "$FIXTURE" update-ref "refs/heads/alter-$part" HEAD
+done
+git -C "$FIXTURE" checkout -q --detach "$ORIGINAL_HEAD"
 git -C "$FIXTURE" checkout -q --detach "$MEASURED_BASE"
 printf 'base advance\n' > "$FIXTURE/base-only"
 git -C "$FIXTURE" add base-only
@@ -62,7 +75,8 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$WORLD/calls"
-case "$*" in
+request=${*//vanillagreencom\/kendex/o\/r}
+case "$request" in
   'api repos/o/r/pulls/42')
     if [[ -e $WORLD/pr-read ]]; then cat "$WORLD/live.json"
     else touch "$WORLD/pr-read"; cat "$WORLD/pr.json"; fi ;;
@@ -84,7 +98,9 @@ EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
 world() {
-  local base_branch field original_revision
+  local base_branch field original_revision scenario=$1
+  MODE=refresh HEAD_SHA=$ORIGINAL_HEAD
+  if [[ $scenario == merged-* ]]; then MODE=merged; scenario=${scenario#merged-}; fi
   WORLD="$TMP_ROOT/world"
   rm -rf -- "$WORLD"
   mkdir -p "$WORLD"
@@ -109,16 +125,37 @@ world() {
     '2026-10-09T08:00:00.000Z render-proof: checked=1 failed=0' \
     '2026-10-09T08:00:01.000Z class: class=render measured=true cause=render-proof' \
     '2026-10-09T08:00:01.000Z ##[endgroup]' >> "$WORLD/log"
-  case "$1" in
+  if [[ $MODE == merged ]]; then
+    jq '.event="merge_group" | .path=".github/workflows/skill-tests.yml" |
+      .repository.full_name="vanillagreencom/kendex" | .head_repository=.repository |
+      .status="completed" | .conclusion="success"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json"
+    jq '.check_run_url="https://api.github.com/repos/vanillagreencom/kendex/check-runs/72"' "$WORLD/job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/job.json"
+  fi
+  case "$scenario" in
+    action.yml|classify|proof)
+      HEAD_SHA="$(git -C "$FIXTURE" rev-parse "refs/heads/alter-$scenario")"
+      jq --arg head "$HEAD_SHA" '.[0].check_runs[0].head_sha=$head' "$WORLD/checks.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/checks.json"
+      for entry in job run; do
+        jq --arg head "$HEAD_SHA" '.head_sha=$head' "$WORLD/$entry.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/$entry.json"
+      done
+      sed -e "s/$ORIGINAL_HEAD/$HEAD_SHA/g" -e "s/$MEASURED_BASE/$ORIGINAL_HEAD/g" "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log"
+      ;;
+    absent) printf '[{"total_count":0,"check_runs":[]}]\n' > "$WORLD/checks.json" ;;
+    head-repository) jq '.head_repository.full_name="other/r"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    run-failed) jq '.conclusion="failure"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    run-pending) jq '.status="in_progress"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    job-link) jq '.check_run_url="https://api.github.com/repos/other/r/check-runs/72"' "$WORLD/job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/job.json" ;;
+    workflow-origin) jq '.path=".github/workflows/other.yml"' "$WORLD/run.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/run.json" ;;
+    duplicate-class) printf 'class: class=render measured=true cause=render-proof\n' >> "$WORLD/log" ;;
     render|single-range) ;;
     remote-head|remote-base|fetch-failed)
       base_branch=base
-      [[ $1 != remote-base ]] || base_branch=old-base
+      [[ $scenario != remote-base ]] || base_branch=old-base
       READ_REPO="$WORLD/base-checkout"
       git clone -q --no-local --single-branch --branch "$base_branch" "$FIXTURE" "$READ_REPO"
       git -C "$READ_REPO" config gc.auto 0
       git -C "$READ_REPO" config maintenance.auto false
-      [[ $1 != fetch-failed ]] || git -C "$READ_REPO" remote set-url origin "$WORLD/absent-remote"
+      [[ $scenario != fetch-failed ]] || git -C "$READ_REPO" remote set-url origin "$WORLD/absent-remote"
       ;;
     caller) printf '[[{"filename":".github/workflows/kendex-refresh.yml"}]]\n' > "$WORLD/files.json" ;;
     workflow) printf '[[{"filename":".github/workflows/ci.yml"}]]\n' > "$WORLD/files.json" ;;
@@ -149,11 +186,11 @@ world() {
       jq '.id=74 | .run_id=30' "$WORLD/job.json" > "$WORLD/extra-job.json"
       jq '.id=30' "$WORLD/run.json" > "$WORLD/extra-run.json"
       cp "$WORLD/log" "$WORLD/extra-log"
-      case "$1" in
+      case "$scenario" in
         multiple-green) ;;
         latest-pending|latest-failed)
           state=in_progress conclusion=null
-          [[ $1 != latest-failed ]] || { state=completed; conclusion='"failure"'; }
+          [[ $scenario != latest-failed ]] || { state=completed; conclusion='"failure"'; }
           jq --arg state "$state" --argjson conclusion "$conclusion" '.[0].check_runs[1] += {status:$state,conclusion:$conclusion}' "$WORLD/checks.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/checks.json"
           jq --arg state "$state" --argjson conclusion "$conclusion" '. += {status:$state,conclusion:$conclusion}' "$WORLD/extra-job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/extra-job.json"
           ;;
@@ -174,7 +211,7 @@ world() {
     range-missing) sed '/base-rev:/d' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log" ;;
     conflicting-base|conflicting-head)
       field=base-rev original_revision="$MEASURED_BASE"
-      [[ $1 != conflicting-head ]] || { field=head-rev; original_revision="$HEAD_SHA"; }
+      [[ $scenario != conflicting-head ]] || { field=head-rev; original_revision="$HEAD_SHA"; }
       awk -v field="$field" -v old="$original_revision" -v other="$EARLIER_BASE" '
         !changed && index($0, field ": ") { sub(old, other); changed = 1 }
         { print }
@@ -188,11 +225,11 @@ world() {
     missing-caller) rm "$TMP_ROOT/skills/harness-ci/scripts/lib/change-class.sh" ;;
     *) fail 'fixture row exists' "$1"; exit 1 ;;
   esac
-  if [[ $1 == single-range ]]; then
+  if [[ $scenario == single-range ]]; then
     awk '/^.*base-rev:/ { if (base++) next } /^.*head-rev:/ { if (head++) next } { print }' "$WORLD/log" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/log"
   fi
   cp "$WORLD/pr.json" "$WORLD/live.json"
-  case "$1" in
+  case "$scenario" in
     moved) jq --arg sha "$EARLIER_BASE" '.head.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
     base-moved) jq --arg sha "$EARLIER_BASE" '.base.sha=$sha' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
     ref-moved) jq '.base.ref="other"' "$WORLD/live.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/live.json" ;;
@@ -207,7 +244,12 @@ world() {
 read_proof() {
   RC=0
   rm -f "$WORLD/pr-read"
-  (cd -- "$READ_REPO"; env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" 42 "$HEAD_SHA" --repo o/r) > "$WORLD/out" 2> "$WORLD/err" || RC=$?
+  local args=(42 "$HEAD_SHA" --repo o/r)
+  if [[ $MODE == merged ]]; then
+    merged_base="$(git -C "$READ_REPO" rev-parse "$HEAD_SHA^1")"
+    args=(--merged "$merged_base" "$HEAD_SHA" --repo vanillagreencom/kendex)
+  fi
+  (cd -- "$READ_REPO"; env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" WORLD="$WORLD" "$BASH" "$1" "${args[@]}") > "$WORLD/out" 2> "$WORLD/err" || RC=$?
   OUT="$(cat "$WORLD/out")"
   ERR="$(sed -n '/^refresh-ci-proof: cause=/p' "$WORLD/err")"
 }
@@ -247,7 +289,14 @@ while IFS='|' read -r row cause; do
     expected_job=72
     [[ $row != multiple-green ]] || expected_job=74
     assert_eq "$RC" 0 "$row exit" "$WORLD/err"
-    assert_eq "$OUT" "refresh-ci-proof: head=$HEAD_SHA class=render measured=true version=1.13.0 job=$expected_job" "$row proof"
+    if [[ $MODE == merged ]]; then
+      expected_class=render
+      [[ $row != merged-standard ]] || expected_class=standard
+      assert_eq "$(jq -r '.class' <<<"$OUT")" "$expected_class" "$row merged class"
+      assert_eq "$(jq -c '[.measured,.cause,.evidence]' <<<"$OUT")" '[true,"render-proof","render-proof"]' "$row merged proof"
+    else
+      assert_eq "$OUT" "refresh-ci-proof: head=$HEAD_SHA class=render measured=true version=1.13.0 job=$expected_job" "$row proof"
+    fi
   else
     assert_eq "$RC" 1 "$row exit" "$WORLD/err"
     assert_eq "$ERR" "refresh-ci-proof: cause=$cause" "$row cause"
@@ -256,6 +305,30 @@ while IFS='|' read -r row cause; do
   assert_not_contains "$OUT" $'\033' "$row output keeps log controls private"
   assert_not_contains "$(cat "$WORLD/err")" $'\033' "$row errors keep log controls private"
 done <<'EOF'
+merged-render|pass
+merged-absent|ci-proof-missing
+merged-log-failed|ci-proof-missing
+merged-unmeasured|class-unmeasured
+merged-log-empty|ci-proof-missing
+merged-standard|pass
+merged-action.yml|origin-untrusted
+merged-classify|origin-untrusted
+merged-proof|origin-untrusted
+merged-workflow-origin|ci-proof-missing
+merged-head-repository|ci-proof-missing
+merged-wrong-run-repo|ci-proof-missing
+merged-wrong-head|ci-proof-missing
+merged-job-head|ci-proof-missing
+merged-wrong-run-head|ci-proof-missing
+merged-job-link|ci-proof-missing
+merged-run-pending|ci-proof-missing
+merged-run-failed|ci-proof-missing
+merged-wrong-run-event|ci-proof-missing
+merged-different-range|ci-proof-missing
+merged-measured-head|ci-proof-missing
+merged-conflicting-base|ci-proof-missing
+merged-conflicting-head|ci-proof-missing
+merged-duplicate-class|class-unmeasured
 render|pass
 single-range|pass
 remote-head|pass
@@ -350,7 +423,7 @@ caller-origin|and . != $caller|and true
 forged-caller|and . != $caller|and true
 wrong-run-head|.head_sha == $head and .event|true and .event
 wrong-run-event|.event == "pull_request"|true
-wrong-run-repo|== ($repo|!= (""
+wrong-run-repo|--arg repo "$repo" --arg caller|--arg repo "other/r" --arg caller
 wrong-run-id|.id == $run and (.path|true and (.path
 latest-pending|max_by(.check.id)|min_by(.check.id)
 latest-failed|max_by(.check.id)|min_by(.check.id)
@@ -367,6 +440,13 @@ moved|.head == $initial.head|true
 base-moved|.base_sha == $initial.base_sha|true
 ref-moved|.base_ref == $initial.base_ref|true
 EOF
+
+# Removing the origin guard grants forged evidence from changed action code.
+world merged-classify
+mutate "$TMP_ROOT/skills/orch/scripts/no-origin" '[[ $origin_ok == true ]] || refuse origin-untrusted' ':'
+read_proof "$TMP_ROOT/skills/orch/scripts/no-origin"
+assert_eq "$RC" 0 'origin control makes altered-action refusal row red' "$WORLD/err"
+assert_eq "$(jq -r '.measured' <<<"$OUT")" true 'origin control reaches measured proof'
 
 # Reinstating the single-record rule rejects the normal producer sequence.
 world render

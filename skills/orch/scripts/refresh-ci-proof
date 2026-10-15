@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read the consumer's render proof through GitHub's check-run and job APIs.
+# Read classifier evidence through GitHub's check-run and job APIs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -33,6 +33,17 @@ parse_target() {
 if [[ ${1:-} == --help ]]; then
   cat <<'EOF'
 Usage: refresh-ci-proof PR_NUMBER HEAD_SHA --repo OWNER/REPO
+       refresh-ci-proof --merged BASE_SHA HEAD_SHA --repo OWNER/REPO
+
+--merged reads measured classification for the exact first-parent range.
+It supports kendex's skill-tests.yml merge-group producer. The workflow and
+local action.yml/classify/proof must equal their trusted first-parent files.
+Both run repositories, the check, job, run and logged range must match.
+It executes no classifier or proof. Missing evidence refuses ci-proof-missing;
+unsupported or changed producer code refuses origin-untrusted; an unmeasured
+or unsupported class refuses class-unmeasured. Success is a JSON object with
+class, measured, cause and evidence. It does not attest the classifier checkout
+revision, which the current producer record does not contain.
 
 Read the latest trusted GitHub Actions check named Classify the diff on HEAD_SHA.
 HEAD_SHA is a full lowercase commit SHA. The check and its job must have
@@ -67,8 +78,27 @@ EOF
   exit 0
 fi
 
-[[ $# == 4 && $1 =~ ^[1-9][0-9]*$ && $2 =~ ^[0-9a-f]{40}$ && $3 == --repo && $4 =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse ci-proof-missing
-pr=$1 head=$2 repo=$4
+mode=refresh
+if [[ ${1:-} == --merged ]]; then
+  [[ $# == 5 && $2 =~ ^[0-9a-f]{40}$ && $3 =~ ^[0-9a-f]{40}$ && $4 == --repo && $5 =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse ci-proof-missing
+  mode=merged base=$2 head=$3 repo=$5
+  range_base=$base range_head=$head
+  parent="$(env -i PATH="$PATH" git rev-parse --verify "$head^1^{commit}")" || refuse ci-proof-missing
+  [[ $parent == "$base" ]] || refuse ci-proof-missing
+  # Only kendex's established default-branch producer is supported. Candidate
+  # action code can forge logs even when the workflow itself is unchanged.
+  origin_ok=true
+  [[ $(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]') == vanillagreencom/kendex ]] || origin_ok=false
+  for producer in .github/workflows/skill-tests.yml .github/actions/change-class/action.yml .github/actions/change-class/classify .github/actions/change-class/proof; do
+    old="$(env -i PATH="$PATH" git ls-tree "$base" -- "$producer")" || refuse origin-untrusted
+    current="$(env -i PATH="$PATH" git ls-tree "$head" -- "$producer")" || refuse origin-untrusted
+    [[ $old == 100644\ blob\ * || $old == 100755\ blob\ * ]] || origin_ok=false
+    [[ -n $old && $old == "$current" ]] || origin_ok=false
+  done
+  [[ $origin_ok == true ]] || refuse origin-untrusted
+else
+  [[ $# == 4 && $1 =~ ^[1-9][0-9]*$ && $2 =~ ^[0-9a-f]{40}$ && $3 == --repo && $4 =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse ci-proof-missing
+  pr=$1 head=$2 repo=$4
 library="$SCRIPT_DIR/../../harness-ci/scripts/lib/change-class.sh"
 [[ -r $library ]] || refuse ci-proof-missing
 # harness-ci is optional: only this render route needs its caller contract.
@@ -112,6 +142,8 @@ jq -e --arg caller "$HARNESS_CI_REFRESH_CALLER" '
     (startswith(".github/workflows/") | not) or . == $caller)
 ' >/dev/null <<<"$files" || refuse workflow-changed
 
+fi
+
 checks="$(gh api "repos/$repo/commits/$head/check-runs?check_name=Classify%20the%20diff&filter=latest&per_page=100" --paginate --slurp)" || refuse ci-proof-missing
 candidates="$(jq -ec '
   if type == "array" and length > 0 and all(.[]; (.check_runs | type) == "array") and
@@ -139,11 +171,27 @@ while IFS= read -r candidate; do
   # required_contexts proves ruleset-required source definitions, not these
   # local CI jobs. The unchanged consumer workflow is trusted here; the
   # mutable refresh caller cannot supply its own ownership proof.
-  if jq -e --arg head "$head" --arg repo "$repo" --arg caller "$HARNESS_CI_REFRESH_CALLER" '
+  if [[ $mode == merged ]]; then
+    qualifies=false
+    if jq -e --arg repo "$repo" --argjson job "$job" '
+      (.check_run_url | ascii_downcase) == ("https://api.github.com/repos/" + ($repo | ascii_downcase) + "/check-runs/" + ($job | tostring))
+    ' >/dev/null <<<"$job_metadata" && jq -e --arg merge "$head" --arg repository "$repo" '
+      .event == "merge_group" and .head_sha == $merge and
+      .conclusion == "success" and .status == "completed" and
+      (.repository.full_name | ascii_downcase) == ($repository | ascii_downcase) and
+      (.head_repository.full_name | ascii_downcase) == ($repository | ascii_downcase) and
+      .path == ".github/workflows/skill-tests.yml"
+    ' >/dev/null <<<"$run_metadata"; then qualifies=true; fi
+  elif jq -e --arg head "$head" --arg repo "$repo" --arg caller "$HARNESS_CI_REFRESH_CALLER" '
     .head_sha == $head and .event == "pull_request" and
     (.repository.full_name | ascii_downcase) == ($repo | ascii_downcase) and
     (.path | split("@")[0] | startswith(".github/workflows/") and . != $caller)
   ' >/dev/null <<<"$run_metadata"; then
+    qualifies=true
+  else
+    qualifies=false
+  fi
+  if [[ $qualifies == true ]]; then
     trusted="$(jq -cn --argjson trusted "$trusted" --argjson check "$candidate" --argjson job "$job_metadata" --argjson run "$run_metadata" '
       $trusted + [{check:$check, job:$job, run:$run}]
     ')" || refuse ci-proof-missing
@@ -154,10 +202,12 @@ selected="$(jq -ec --arg head "$head" '
 ' <<<"$trusted")" || refuse ci-proof-missing
 # GitHub's PR links can follow live retargets. They identify the PR, while
 # only the classifier's emitted revisions identify its execution range.
+if [[ $mode == refresh ]]; then
 jq -e --argjson pr "$pr" --arg head "$head" '
   (.run.pull_requests | type) == "array" and
   any(.run.pull_requests[]; .number == $pr and .head.sha == $head)
 ' >/dev/null <<<"$selected" || refuse ci-proof-missing
+fi
 job="$(jq -er '.job.id' <<<"$selected")" || refuse ci-proof-missing
 job_metadata="$(jq -ec '.job' <<<"$selected")" || refuse ci-proof-missing
 jq -e --arg head "$head" --argjson job "$job" '
@@ -178,13 +228,24 @@ proof="$(awk '
     if (bases && !base_conflict) print base; if (heads && !head_conflict) print head
   }
 ' <<<"$log")" || refuse ci-proof-missing
+if [[ $mode == refresh ]]; then
 [[ $proof =~ (^|$'\n')class:\ class=render\ measured=true($|\ ) ]] || refuse class-not-render
 version="$(sed -nE 's/^render-verifier: verifier=[^ ]+ version=([^ ]+)$/\1/p' <<<"$proof")" || refuse engine-mismatch
 engine="$(jq -er '.engine' <<<"$target")" || refuse engine-mismatch
 [[ -n $version && $version == "$engine" ]] || refuse engine-mismatch
+fi
 proof_base="$(sed -nE 's/^base-rev: ([0-9a-f]{40})$/\1/p' <<<"$proof")" || refuse ci-proof-missing
 proof_head="$(sed -nE 's/^head-rev: ([0-9a-f]{40})$/\1/p' <<<"$proof")" || refuse ci-proof-missing
 [[ $proof_base == "$range_base" && $proof_head == "$range_head" ]] || refuse ci-proof-missing
+
+if [[ $mode == merged ]]; then
+  class_line="$(sed -n '/^class: /p' <<<"$proof")" || refuse class-unmeasured
+  [[ $class_line =~ ^class:\ class=(render|trivial|micro|small|standard)\ measured=true\ cause=([abcdefghijklmnopqrstuvwxyz0123456789-]+)($|\ ) ]] || refuse class-unmeasured
+  class=${BASH_REMATCH[1]} cause=${BASH_REMATCH[2]}
+  jq -cn --arg class "$class" --arg cause "$cause" --arg evidence "${class_line#* cause=}" \
+    '{class:$class, measured:true, cause:$cause, evidence:$evidence}'
+  exit 0
+fi
 
 # A push, retarget or Engine declaration update invalidates the proof.
 live="$(gh api "repos/$repo/pulls/$pr")" || refuse ci-proof-missing

@@ -24,13 +24,13 @@
 #
 # record reads the lane record ITEM names in the oversee state, the merged
 # pull request's stamps from the github skill's `pr-timeline`, and the class
-# of the merged diff from harness-ci's classifier through lib/change-class.sh,
+# of the merged diff from trusted Actions evidence through lib/change-class.sh,
 # over the merge commit's first parent to the merge commit, read from this
 # checkout, which fetches the merge commit from origin where it lacks it. Run
 # it from a checkout of the lane's repository: where the lane's worktree names
 # another origin, or --repo another repository, the class is unread with
 # cause checkout-other-repo. A classifier answer whose `measured=` marker is
-# not true is no class. --repo
+# not true is no class. Missing or mismatched evidence runs no local proof. --repo
 # defaults to the lane record's repo, then this checkout's. The recorded launch
 # tier wins; a differing --tier refuses as tier-mismatch naming launch and given.
 # A record whose tier is null, a launch that judged none, takes --tier where
@@ -46,8 +46,8 @@
 # `oversee-cycle: merged-unread commit=SHA cause=C`, C one of
 # repo-unresolved, base-unresolved, launch-unreadable, activity-unread,
 # compare-failed or no-push. Its first parent to the commit uses the same
-# classifier.
-# No CI check is read. pr_opened, gate_green, ci_green and armed are null,
+# stored evidence reader. A direct merge without exact evidence stays unclassified.
+# pr_opened, gate_green, ci_green and armed are null,
 # as are open, phase, gate waits, pr_rounds and refixed. The verdict compares
 # measured lane time with the class base. The cycle object carries commit
 # instead of pr, and the
@@ -485,9 +485,10 @@ elif ! base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")" \
   && ! { git -C "$checkout" fetch -q origin "$merge" 2>"$WORK/class.err" \
          && base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")"; }; then
   class_cause="merge-commit-absent"
-elif change_class_read "$base" "$merge" "$checkout" "$WORK/class.err"; then
-  class_evidence="$(sed -n 's/^class: class=[^ ]* measured=[^ ]* cause=//p' "$WORK/class.err" | tail -1)" \
-    || refuse class-log-unreadable "$ITEM"
+elif ! evidence_repo="$(unset GH_REPO; kendex_github_resolve_gh_repo "$checkout" 2>/dev/null)"; then
+  class_cause=repo-unresolved
+elif change_class_merged "$base" "$merge" "$checkout" "$evidence_repo" "$WORK/class.err"; then
+  class_evidence="$CHANGE_CLASS_EVIDENCE"
   class_reason="${class_evidence%% *}"
   if [[ "$CHANGE_CLASS_MEASURED" != true ]]; then
     class_cause="class-unmeasured"
