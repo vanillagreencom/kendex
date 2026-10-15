@@ -53,7 +53,7 @@
 # push runs carry no merge-group measurement. A kendex direct push records
 # class_cause=ci-proof-missing and verdict=unclassified. It produces no miss or
 # repeat-miss. Its timing remains in the unclassified rollup.
-# pr_opened, gate_green, ci_green and armed are null,
+# pr_opened, ready, gate_green, ci_green and armed are null,
 # as are open, phase, gate waits, pr_rounds, escaped and refixed.
 # The cycle object carries commit instead of pr, and the cycle line below
 # uses commit=SHA instead of pr=N. Exactly one of --pr and --commit is required.
@@ -80,7 +80,9 @@
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
 #             gate_green (pr-timeline's gate_met), ci_green, armed (armed,
 #             else queued), merged
-#   missing   the stamps that are null
+#             ready is the earliest non-null top-level ready_times entry,
+#             null without a ready event; it enters neither phase nor missing
+#   missing   the seven phase stamps that are null
 #   target    the class base plus merge_group and ci_clean, each null as 0
 #   merge_group  those merge-group CI seconds, `-` when null
 #   ci_head   pr-timeline's ci_head_secs, including earlier attempts
@@ -588,7 +590,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
     | [$union[] | .b - .a] | add // 0;
   def paused_seconds($from; $to): covered_seconds($pauses; $from; $to);
   def gate_waits($from; $to):
-    ([$t.ready_times[]? | fromdate | select(. <= $to)] | max) as $ready
+    ([$t.ready_times[]? | select(. != null) | fromdate | select(. <= $to)] | max) as $ready
     | ([$t.push_times[] | {at: fromdate, wait: "bot_wait"}] + [$t.bot_review_times[] | {at: fromdate, wait: "thread_fix"}]
        + (if $ready == null then [] else [{at: $ready, wait: "bot_wait"}] end)
      | sort_by(.at, .wait)) as $events
@@ -640,7 +642,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if $t.commit == null then {pr: $t.pr} else {commit: $t.commit} end)
     + {class: $class, class_cause: (if $cause == "" then null else $cause end),
      class_reason: (if $class_reason == "" then null else $class_reason end),
-     tier_inputs: $lane.tier_inputs, tier: $tier, stamps: $stamps, target: $target, merge_group: $merge_group, ci_head: $ci_head, ci_clean: $ci_clean, lane_secs: $lane_secs, actual: $actual, open: $open,
+     tier_inputs: $lane.tier_inputs, tier: $tier, stamps: ($stamps + {ready: ([$t.ready_times[]? | select(. != null)] | min)}), target: $target, merge_group: $merge_group, ci_head: $ci_head, ci_clean: $ci_clean, lane_secs: $lane_secs, actual: $actual, open: $open,
      verdict: (if $class == null then "unclassified" elif $lane_secs == null then "unmeasured"
                elif $lane_secs > $targets[$class] then "miss" else "met" end),
      phase: $dominant.phase, phase_secs: $dominant.secs, gate_waits: $waits,

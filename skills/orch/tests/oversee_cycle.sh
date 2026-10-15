@@ -230,7 +230,7 @@ assert_eq "$got" \
   "rc=0 cycle item=KEN-1 commit=$MERGE class=- tier=micro target=- merge_group=- ci_head=- ci_clean=- lane=1200 actual=1200 open=- verdict=unclassified phase=- phase_secs=- cause=- bot_wait=- draft=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=- tier_inputs=- class_reason=- escape_cause=- refixed=-" \
   "direct push prints its timing, unclassified verdict and absent PR fields"
 assert_eq "$(state '.lanes[0].cycle | [.commit, has("pr"), .class, .tier, .actual, .escaped, .stamps]')" \
-  "[\"$MERGE\",false,null,\"micro\",1200,null,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 1200)\"}]" \
+  "[\"$MERGE\",false,null,\"micro\",1200,null,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 1200)\",\"ready\":null}]" \
   "direct push persists its authored date and its push time, not its committer date, in UTC"
 assert_eq "$(grep -c '^api --paginate repos/vanillagreencom/kendex/activity?ref=refs%2Fheads%2Fmain&activity_type=push&per_page=100' "$CASE/gh.calls")|$(grep -c compare/ "$CASE/gh.calls" || true)" \
   "1|0" "the push is read from the base branch's push log, and a push leaving the branch at the commit needs no compare"
@@ -415,7 +415,7 @@ RUN_BIN="$CYCLE_CONTROL" record KEN-1 micro >/dev/null
 assert_eq "$(test -s "$CASE/class.calls" && echo called || echo absent)" called 'cycle control makes the no-execution assertion red'
 
 # --- the stamps are written to the record and read back ----------------------
-echo "=== the record carries its seven stamps, its class and its rounds ==="
+echo "=== the record carries its phase stamps, ready, class and rounds ==="
 new_case stamps
 printf micro > "$CASE/class"
 PR_ROUNDS='[{"kind":"review","head":"a","start":"s1","end":"e1","secs":600},{"kind":"fix","head":"a","start":"e1","end":"s2","secs":1200},{"kind":"review","head":"b","start":"s2","end":"e2","secs":300}]'
@@ -428,8 +428,8 @@ assert_eq "$(record KEN-2 micro)" \
   "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- ci_head=60 ci_clean=- lane=1500 actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 draft=0 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
-  "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
-  "the lane record reads back the class and the seven stamps"
+  "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\",\"ready\":null}]" \
+  "the lane record reads back the class, phase stamps and ready"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle.pr_rounds')" "$PR_ROUNDS" \
   "and the review and fix rounds pr-timeline read"
 assert_eq "$(state '[.lanes[] | select(.item != "KEN-2") | has("cycle")] | any')" "false" "no other record is written"
@@ -444,6 +444,34 @@ control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's over
   mutate_file "$dir/$2" "$3" "$4"
   RUN_BIN="$dir/oversee-cycle"
 }
+
+echo "=== first ready is recorded without changing phase accounting ==="
+control ready-control oversee-cycle 'stamps: ($stamps + {ready: ([$t.ready_times[]? | select(. != null)] | min)})' 'stamps: $stamps'
+READY_CONTROL="$RUN_BIN"
+unset RUN_BIN
+while IFS='|' read -r name ready_times want_ready want_draft; do
+  new_case "ready-$name"
+  printf micro > "$CASE/class"
+  timeline 600
+  edit_json "$CASE/timeline.json" ".ready_times = $ready_times"
+  got="$(record KEN-1 micro)"
+  assert_contains "$got" 'rc=0 cycle ' "$name records a cycle"
+  assert_eq "$(state '.lanes[0].cycle | [.stamps | has("ready"), .ready]')" \
+    "[true,$want_ready]" "$name records the earliest ready event or null"
+  assert_eq "$(state '.lanes[0].cycle | [.stamps.pr_opened, .phase, .phase_secs, .gate_waits, .missing]')" \
+    "[\"$(at 120)\",\"gate_green\",180,{\"bot_wait\":$((180 - want_draft)),\"draft\":$want_draft,\"thread_fix\":0,\"paused\":0},[]]" \
+    "$name retains creation time and phase accounting, including the last-ready draft share"
+  assert_eq "$(wc -l < "$CASE/github.calls" | tr -d ' ')" 1 "$name reuses the existing timeline read"
+  accounting="$(state '.lanes[0].cycle | [.phase, .phase_secs, .gate_waits, .missing]')"
+  RUN_BIN="$READY_CONTROL" record KEN-1 micro >/dev/null
+  assert_eq "$(state '.lanes[0].cycle.stamps | has("ready")')" false "$name control lacks the required ready field"
+  assert_eq "$(state '.lanes[0].cycle | [.phase, .phase_secs, .gate_waits, .missing]')" "$accounting" "$name phase accounting matches the control"
+done <<'ROWS'
+draft-then-ready|["2026-09-21T14:17:20Z"]|"2026-09-21T14:17:20Z"|120
+repeated-ready-with-nulls|[null,"2026-09-21T14:17:20Z","2026-09-21T14:16:20Z",null]|"2026-09-21T14:16:20Z"|120
+no-ready|[]|null|0
+only-null|[null]|null|0
+ROWS
 
 # The final-head timeline is pr-timeline's producer. Reruns have different
 # all-attempt and clean spans. The cycle log is the fleet audit's protocol.
