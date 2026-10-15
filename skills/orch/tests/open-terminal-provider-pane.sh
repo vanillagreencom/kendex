@@ -29,7 +29,10 @@ fi
 # A non-answering host leaves SSH blocked until its connection timer expires.
 if [[ -n "${SSH_CONNECT_STALL_FILE:-}" ]]; then
   printf '%s\n' "$connect_secs" > "$SSH_CONNECT_STALL_FILE"
-  exec perl -e '$SIG{ALRM} = sub { exit 255 }; alarm shift; sleep 60' "$connect_secs"
+  connection_rc=0
+  "$SSH_CONNECT_TIMEOUT" 5 perl -e '$SIG{ALRM} = sub { exit 255 }; alarm shift; sleep 60' "$connect_secs" || connection_rc=$?
+  printf '%s\n' "$connection_rc" > "$SSH_CONNECT_RESULT_FILE"
+  exit "$connection_rc"
 fi
 [[ -z "${SSH_PANE_CONTROL:-}" ]] || tmux send-keys -t %1 Enter
 [[ "${SSH_FAIL:-0}" == 0 ]] || exit "$SSH_FAIL"
@@ -68,21 +71,25 @@ failed_launch_contract() {
   assert_eq "rc=$RC local=$(local_input_count) stops=$(grep -c '^stop --item KEN-40 --harness claude ' "$RUN/host.log" || true) killed=$(grep -c '^kill-window ' "$RUN/tmux.log" || true)" "$1" "$2"
 }
 
-# Fixture creation stays outside the launch deadline so a slow fixture copy
-# cannot exhaust the connection test's parent bound before SSH runs.
+# The connection bound excludes independent launcher setup and cleanup.
 BOUND_OPEN_TERMINAL="$OPEN_TERMINAL"
 BOUND_MUTANT="$(mutant_scripts connection-bound/orch open-terminal)/open-terminal"
 orch_fixture_shared_libs "$TMP_ROOT/connection-bound/orch"
 mutate_file "$BOUND_MUTANT" '-o "ConnectTimeout=$LANE_SSH_PROMPT_SECS"' ''
-OPEN_TERMINAL="$(command -v timeout || command -v gtimeout)" || exit 1
-for row in 'live|1|1' 'control|124|0'; do
-  IFS='|' read -r code expected_rc expected_timer <<< "$row"
-  bound_command="$BOUND_OPEN_TERMINAL"
-  [[ "$code" != control ]] || bound_command="$BOUND_MUTANT"
-  run_ot "$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;SSH_CONNECT_STALL_FILE=$TMP_ROOT/ssh-bound-$code.reached" \
-    5 "$bound_command" --launch-flags "${CHOICE#flags=}" --harness claude --lane "$H/.eclaude" --repo o/r KEN-40
+BOUND_TIMEOUT="$(command -v timeout || command -v gtimeout)" || exit 1
+for row in 'live|255|1|0' 'control|124|0|1'; do
+  IFS='|' read -r code expected_connection_rc expected_timer expected_rejection <<< "$row"
+  OPEN_TERMINAL="$BOUND_OPEN_TERMINAL"
+  [[ "$code" != control ]] || OPEN_TERMINAL="$BOUND_MUTANT"
+  run_ot "$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;SSH_CONNECT_STALL_FILE=$TMP_ROOT/ssh-bound-$code.reached;SSH_CONNECT_TIMEOUT=$BOUND_TIMEOUT;SSH_CONNECT_RESULT_FILE=$TMP_ROOT/ssh-bound-$code.result" \
+    --launch-flags "${CHOICE#flags=}" --harness claude --lane "$H/.eclaude" --repo o/r KEN-40
   printf '%s\n' "$OUT" > "$TMP_ROOT/ssh-bound-$code.log"
-  assert_eq "$RC" "$expected_rc" "$code non-answering SSH connection respects the parent deadline" "$TMP_ROOT/ssh-bound-$code.log"
+  connection_rc="$(cat "$TMP_ROOT/ssh-bound-$code.result")" || connection_rc=missing
+  assert_eq "$connection_rc" "$expected_connection_rc" "$code records the connection dependency result" "$TMP_ROOT/ssh-bound-$code.log"
+  CONTROL_RC=0
+  ( FAIL=0; assert_eq "$connection_rc" 255 "$code non-answering SSH connection respects the parent deadline"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/ssh-bound-$code-control.log" 2>&1 || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" "$expected_rejection" "$code connection result assertion rejects a missing connection timer" "$TMP_ROOT/ssh-bound-$code-control.log"
+  failed_launch_contract 'rc=1 local=0 stops=1 killed=1' "$code failed connection stops its owned attempt and closes its window"
   assert_eq "$(cat "$TMP_ROOT/ssh-bound-$code.reached")" "$expected_timer" "$code reaches the non-answering SSH connection"
   [[ "$code" != live ]] || assert_file_contains "$TMP_ROOT/ssh-bound-$code.log" \
     'open-terminal: host-exec-failed item=KEN-40' 'the configured connection bound returns host-exec-failed'
