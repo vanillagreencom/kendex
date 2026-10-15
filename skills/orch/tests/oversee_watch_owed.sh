@@ -1170,8 +1170,8 @@ fi
 # The stage reads each issue and builds its box results in bulk records. Per
 # issue: its inventory record, the parser's description read, done_when_parse,
 # box selection, the judge's box records, its results and the printed lines,
-# less the inventory read every pass makes: six jq. A release issue adds its
-# two merged reads per repository and one merge record; a release box adds the
+# less the inventory read every pass makes: six jq. The merged index adds one
+# parse per repository. A release issue adds one merge record; a release box adds the
 # record pass over its own release list. No box field, release candidate or
 # box update starts a process. Only jq the watch starts is counted: the gh
 # stub's own jq is not the stage's work.
@@ -1234,10 +1234,10 @@ WORK_BASE="$WORK"
 WORK_ROWS='merge_one|1|KEN-30=t|6
 merge_boxes|1|KEN-30=t,t,t,t|6
 merge_issues|1|KEN-30=t KEN-31=t KEN-32=t|18
-release_one|1|KEN-30=r|11
-release_boxes|1|KEN-30=r,r,r|13
-release_candidates|5|KEN-30=r|11
-mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|28'
+release_one|1|KEN-30=r|9
+release_boxes|1|KEN-30=r,r,r|11
+release_candidates|5|KEN-30=r|9
+mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|24'
 while IFS='|' read -r name candidates issues want; do
   # shellcheck disable=SC2086 # ISSUES is a word list of ID=BOXES specs.
   work_world "work_$name" "$candidates" $issues
@@ -1309,7 +1309,7 @@ KEN-39 merged=2026-10-01T00:00:30Z' 'each shared-history item receives its own m
     MUTANT_WATCH="$(mutant_scripts shared-history-cap/orch oversee-watch)/oversee-watch" || exit 1
     ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
     ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-    mutate_verifying "$MUTANT_WATCH" '[[ -n "${6:-}" || "$rows" -lt "$MERGED_SEARCH_PAGE" ]]' '[[ "$rows" -lt "$MERGED_SEARCH_PAGE" ]]'
+    mutate_verifying "$MUTANT_WATCH" 'if any(.[]; length >= $cap)' 'if (add // [] | length >= $cap)'
     WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
   fi
   assert_eq "rc=$RC lines=$(verification_lines) key=$(grep -cxF 'oversee-watch: merged-search-truncated repo=owner/repo item=KEN-30 limit=1000' "$ERR" || true)" \
