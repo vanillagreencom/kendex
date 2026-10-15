@@ -1031,6 +1031,8 @@
   ".github/hooks/session-end-row.sh",
   ".github/hooks/session-start-row.json",
   ".github/hooks/session-start-row.sh",
+  ".github/hooks/worktree-session-claim.json",
+  ".github/hooks/worktree-session-claim.sh",
   ".kendex-generated.json",
   ".kendex-lock.json",
   ".pi/agents/auditor.md",
