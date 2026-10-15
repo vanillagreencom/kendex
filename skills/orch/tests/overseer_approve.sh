@@ -8,7 +8,8 @@ TEST_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "$TEST_DIR/../../.." && pwd -P)"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
-TMP_ROOT="$(mktemp -d)" || { echo 'overseer_approve: scratch=mktemp-failed' >&2; exit 1; }
+mkdir -p "$REPO_ROOT/tmp"
+TMP_ROOT="$(mktemp -d "$REPO_ROOT/tmp/overseer-approve.XXXXXX")" || { echo 'overseer_approve: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "overseer_approve: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'overseer_approve: scratch=resolve-failed' >&2; exit 1; }
 trap '[[ -z ${FOREIGN_PARENT_TOKEN:-} ]] || rm -f -- "$FOREIGN_PARENT_TOKEN"; rm -rf -- "${TMP_ROOT:?}"' EXIT
@@ -73,11 +74,39 @@ CHECK_READS="$TMP_ROOT/check-reads"
 HEAD_READS="$TMP_ROOT/head-reads"
 CLOCK="$TMP_ROOT/clock"
 SLEEPS="$TMP_ROOT/sleeps"
+REPLY_CALLS="$TMP_ROOT/reply-calls"
+SYSTEM_SLEEP="$(type -P sleep)" || exit 1
 
 # One `<GH_TOKEN>|<argv>` line per call; the POST's stdin is kept whole.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# Reader API calls use separate evidence so the existing approval-call
+# assertions keep their scope. The reader itself judges the Copilot body.
+case "$*" in
+  'api user --jq .login') echo 'review-app[bot]'; exit 0 ;;
+  'api graphql '*)
+    if [[ "$*" == *'viewer {'* ]]; then
+      echo '{"data":{"viewer":{"login":"review-app[bot]","databaseId":2002}}}'
+    else
+      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+    fi
+    exit 0 ;;
+  'api repos/o/r/pulls/42')
+    printf '%s|%s|%s\n' "${GH_TOKEN:-}" "${GH_REPO:-}" "$*" >> "$REPLY_CALLS"
+    case "$REPLY_MODE" in
+      unavailable) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+      malformed) echo '{}'; exit 0 ;;
+    esac
+    jq -nc --arg head "$REPLY_HEAD" '{head:{sha:$head},user:{login:"author",type:"User",id:1001}}'
+    exit 0 ;;
+  'api repos/o/r/pulls/42/reviews?per_page=100 --paginate')
+    if [[ "$REPLY_MODE" == body-findings ]]; then
+      jq -nc --arg head "$REPLY_HEAD" '[{id:5539256602,state:"COMMENTED",commit_id:$head,user:{login:"copilot-pull-request-reviewer[bot]",type:"Bot",id:3003},author_association:"NONE",body:"<!-- ccr-overview-v2 -->\n\n### Changes recommended\n\nTwo problems remain in the review body.\n\n**0 open findings**"}]'
+    else echo '[]'; fi
+    exit 0 ;;
+  'api repos/o/r/issues/42/comments?per_page=100 --paginate') echo '[]'; exit 0 ;;
+esac
 printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CALLS"
 case "$*" in
   'api repos/o/r/issues/42/timeline?per_page=100 --paginate --slurp')
@@ -174,6 +203,9 @@ EOF
 cat > "$TMP_ROOT/bin/sleep" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# GitHub authentication polls its own child with fractional sleeps. Only
+# whole-second Copilot waits advance this fixture's clock.
+case "$1" in *.*) exec "$REAL_SLEEP" "$@" ;; esac
 printf '%s\n' "$1" >> "$SLEEPS"
 now="$(cat "$CLOCK")"
 printf '%s\n' "$((now + $1))" > "$CLOCK"
@@ -185,18 +217,20 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   shift 4
   [[ -z "$token_file" ]] || setting=("ORCH_OVERSEER_REVIEW_TOKEN_FILE=$token_file")
   : > "$CALLS"
+  : > "$REPLY_CALLS"
   printf '0\n' > "$CHECK_READS"
   printf '0\n' > "$HEAD_READS"
   printf '0\n' > "$CLOCK"
   : > "$SLEEPS"
   rm -f -- "$INPUT"
   RC=0
-  (cd -- "$TMP_ROOT/cwd" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+  (cd -- "$TMP_ROOT/cwd" && env -i GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     ${setting[@]+"${setting[@]}"} \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
     CHECK_MODE="${CHECK_MODE-finishing}" CHECK_READS="$CHECK_READS" \
     HEAD_READS="$HEAD_READS" AFTER_HOLD_HEAD="${AFTER_HOLD_HEAD-$live}" \
     CLOCK="$CLOCK" SLEEPS="$SLEEPS" ORCH_COPILOT_HOLD_SECS="${HOLD_SECS-600}" \
+    REPLY_CALLS="$REPLY_CALLS" REPLY_MODE="${REPLY_MODE-pass}" REPLY_HEAD="${REPLY_HEAD-$live}" TMPDIR="$TMP_ROOT" REAL_SLEEP="$SYSTEM_SLEEP" \
     ORCH_OVERSEER_REVIEW_LOGIN="${REVIEW_LOGIN-review-app[bot]}" \
     "$BASH" "$script" "$@" > "$OUT" 2> "$ERR") || RC=$?
   STDERR_KEY="$(sed -n 1p "$ERR")"
@@ -216,6 +250,54 @@ assert_eq "$(jq -c . "$INPUT")" \
   "$(jq -cn --arg sha "$GIVEN" '{commit_id: $sha, event: "APPROVE", body: "Each decline holds.\n\"Quoted\" line\n"}')" \
   'the review binds the given commit, APPROVE and the body text' "$ERR"
 assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" 'approval prints no token'
+assert_eq "$(cat "$REPLY_CALLS")" "$TOKEN|o/r|api repos/o/r/pulls/42" \
+  'the reader uses the approval token and target repository' "$ERR"
+
+# The reader's verdict and full head, rather than the caller's short prefix,
+# decide whether a body-only finding can receive an approval.
+while IFS='|' read -r label mode reader_head want_rc want_post result; do
+  REPLY_MODE="$mode" REPLY_HEAD="$reader_head" CHECK_MODE=completed
+  run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok 42 "${GIVEN:0:8}" \
+    --body-file "$TMP_ROOT/body" --repo o/r --hold-copilot
+  posted=no
+  [[ ! -f "$INPUT" ]] || posted=yes
+  assert_eq "$RC|$posted" "$want_rc|$want_post" "$label" "$ERR"
+  if [[ "$want_rc" != 0 ]]; then
+    assert_eq "$(wc -l < "$ERR" | tr -d ' ')|${STDERR_KEY%% pr=*}" '1|overseer-approve: review-replies' \
+      "$label emits one keyed refusal" "$ERR"
+    assert_contains "$STDERR_KEY" "$result" "$label names the reader result" "$ERR"
+    assert_contains "$STDERR_KEY" ' fix=' "$label supplies a remedy" "$ERR"
+  fi
+done <<EOF
+Copilot COMMENTED body findings without a thread|body-findings|$GIVEN|1|no|suppressed-entry
+reader passes the bound head|pass|$GIVEN|0|yes|
+reader passes another head|pass|$MOVED|1|no|$MOVED
+reader cannot read the review|unavailable|$GIVEN|1|no|read-failed
+reader receives malformed evidence|malformed|$GIVEN|1|no|read-malformed
+EOF
+unset REPLY_MODE REPLY_HEAD CHECK_MODE
+
+scripts="$(mutant_scripts reader-missing/orch overseer-approve)" || exit 1
+mkdir -p "$TMP_ROOT/reader-missing/github/scripts"
+ln -s "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/reader-missing/github/scripts/lib"
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}"
+assert_eq "$RC|${STDERR_KEY%% pr=*}|$NCALLS" '1|overseer-approve: review-replies|1' \
+  'a missing reader refuses before the approval POST' "$ERR"
+assert_contains "$STDERR_KEY" 'result=unavailable fix=' 'a missing reader names its result and remedy' "$ERR"
+
+# Restore the prior approval behavior in a disposable copy. The body-only
+# row above must reject this approval, even though the reader found it.
+scripts="$(mutant_scripts reader-bypass/orch overseer-approve)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reader-bypass/github"
+mutate_file "$scripts/overseer-approve" \
+  '[[ "$reply_status" -eq 0 && "$reply_result" == "review-replies: pass head=$live" ]]' \
+  'true || [[ "$reply_status" -eq 0 && "$reply_result" == "review-replies: pass head=$live" ]]'
+REPLY_MODE=body-findings CHECK_MODE=completed
+run_approve "$scripts/overseer-approve" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}" --hold-copilot
+assert_eq "$RC|$(cat "$OUT")|$(jq -r .commit_id "$INPUT")" \
+  "0|APPROVED vanillagreen-overseer[bot] 0123456|$GIVEN" \
+  'must-fail: bypassing the reader result approves the Copilot body findings' "$ERR"
+unset REPLY_MODE CHECK_MODE
 
 # label | check response sequence | flag | bound | exit | POST | read count | final key
 while IFS='|' read -r label mode flag bound want_rc want_post want_reads want_key; do

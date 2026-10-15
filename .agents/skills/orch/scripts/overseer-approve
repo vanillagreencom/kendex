@@ -16,7 +16,8 @@ characters: the full head, or a prefix of it such as the 8-character head a
 pr-watch line prints. Before posting it reads the pull request's live head
 with the same token, and approves only when that head starts with HEAD_SHA.
 The review is one POST to pulls/PR_NUMBER/reviews with commit_id the full
-live head, event APPROVE and the text of the body file.
+live head, event APPROVE and the text of the body file. Before every approval,
+github.sh check-review-replies must pass for that full live head.
 
 Options:
   --body-file PATH   the review body, sent as its text
@@ -24,8 +25,8 @@ Options:
                      queued or in_progress on the live head, or its timeline
                      has pending Copilot work. Poll every 10
                      seconds with the same token. A completed hold exits 5
-                     without posting: run check-review-replies on the head
-                     again before another approval call. An expired hold
+                     without posting: retry the approval call, which runs
+                     check-review-replies before posting. An expired hold
                      rechecks the exact original live head, then approves
                      as usual. Every fallback approval passes this flag.
                      Proved-render refresh and copilot-declined-unchanged
@@ -86,7 +87,9 @@ Hold notices can precede it:
                      words follow.
                      Nothing is posted
   copilot-finished   a held run ended inside the bound. Nothing is posted;
-                     run check-review-replies on the head before retrying
+                     retry the approval call
+  review-replies     the reader is unavailable, failed, or did not pass for
+                     the bound head; result= names its answer, fix= the remedy
   payload            the review payload could not be built
   post-failed        GitHub refused the review; its message follows
   read-back-failed   the approval could not be confirmed after a failed POST;
@@ -98,7 +101,7 @@ Exit codes:
   0  approved
   1  repo-unresolved, repo-shape, head-read-failed, payload, post-failed,
      read-back-failed, response-unread, settings-load, scratch,
-     copilot-hold-setting, copilot-read-failed
+     copilot-hold-setting, copilot-read-failed, review-replies
   2  usage, body-file
   3  credential
   4  head-moved
@@ -170,7 +173,11 @@ oa_message() {
       ;;
     copilot-finished)
       printf 'overseer-approve: copilot-finished pr=%s repo=%s head=%s run=%s\n' "$1" "$2" "$3" "$4"
-      printf '%s\n' "Run check-review-replies on this head before approving again. Nothing was posted."
+      printf '%s\n' "Retry the approval call. Nothing was posted."
+      ;;
+    review-replies)
+      printf 'overseer-approve: review-replies pr=%s repo=%s head=%s exit=%s result=%q fix=%q\n' "$1" "$2" "$3" "$4" "$5" \
+        'Restore the github reader if unavailable; address its findings and retry approval for the current head.'
       ;;
     copilot-hold-expired)
       printf 'overseer-approve: copilot-hold-expired pr=%s repo=%s head=%s run=%s waited=%s\n' "$1" "$2" "$3" "$4" "$5"
@@ -320,6 +327,13 @@ if [[ "$HOLD_COPILOT" -eq 1 ]]; then
     sleep "$pause"
   done
 fi
+reply_reader="$SCRIPT_DIR/../../github/scripts/github.sh"
+[[ -x "$reply_reader" ]] || refuse 1 review-replies "$PR_NUM" "$REPO" "$live" 127 unavailable
+reply_status=0
+reply_result="$(GH_TOKEN="$token" GH_REPO="$REPO" "$reply_reader" -C "$PROJECT_ROOT" check-review-replies "$PR_NUM" 2>&1)" \
+  || reply_status=$?
+[[ "$reply_status" -eq 0 && "$reply_result" == "review-replies: pass head=$live" ]] \
+  || refuse 1 review-replies "$PR_NUM" "$REPO" "$live" "$reply_status" "$reply_result"
 payload="$(jq -c --arg sha "$live" '{commit_id: $sha} + .' "$SCRATCH/review")" \
   || refuse 1 payload "$PR_NUM" "$live"
 
