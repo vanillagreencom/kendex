@@ -379,9 +379,21 @@ environment_rows() {
 [2,"bash -c -O extglob 'env'","shell-command-string-shopt-operand-after-c"]
 [2,"{ command bash -c -o pipefail -- 'env'; }","forwarded-command-string-option-operand"]
 [2,"bash -c -o pipefail \"sh -c -e 'env'\"","nested-command-string-option-operand"]
-[2,"bash -c -e \"printf '%s' 'env'\"","shell-option-quoted-argument-data"]
-[2,"bash -c -o pipefail -- 'printenv NAME'","shell-option-named-read"]
-[2,"bash -co pipefail \"printf '%s' 'env'\"","shell-grouped-option-argument-data"]
+[0,"bash -c -e \"printf '%s' 'env'\"","shell-option-quoted-argument-data"]
+[0,"bash -c -o pipefail -- 'printenv NAME'","shell-option-named-read"]
+[0,"bash -co pipefail \"printf '%s' 'env'\"","shell-grouped-option-argument-data"]
+[0,"bash -c 'set -euo pipefail; jq -r \".[].id\" \"$1\" | while IFS= read -r job_id; do gh api \"repos/vanillagreencom/fleet/actions/jobs/${job_id}/logs\" | awk \"/check: member|fail|FAIL|deadline|cancel|Cancel|Error/ {print}\" > \"tmp/notes/g140/1292-log-${job_id}.txt\"; done' _ tmp/notes/g140/1292-first-ten.json","fleet-literal-command-string-setup"]
+[0,"bash -c 'set -e; printf done'","literal-source-set-option-on"]
+[0,"bash -c 'set +x; printf done'","literal-source-set-option-off"]
+[0,"bash -c 'set -- env printenv set; printf done'","literal-source-set-positional"]
+[0,"eval 'set -euo' 'pipefail; printf done'","literal-eval-joined-setup"]
+[0,"eval 'printenv' 'NAME'","literal-eval-joined-named-read"]
+[2,"bash -c 'set'","literal-source-bare-set"]
+[2,"bash -c 'set \"$@\"'","literal-source-unknown-set-operands"]
+[2,"bash -c 'set -e; env'","literal-source-setup-then-env"]
+[2,"bash -c 'set -e; printenv'","literal-source-setup-then-printenv"]
+[2,"bash \"$MODE\" -c 'set -e'","unproved-shell-option-before-setup"]
+[2,["bash","-c","$'s\\x65t' -e"],"literal-source-encoded-setup-head"]
 [2,"command bash -c -- 'env'","forwarded-command-string-options-end"]
 [2,"env NAME=value bash -c -- 'env'","env-command-string-options-end"]
 [2,"{ sudo -u NAME command bash -c -- 'env'; }","nested-forwarded-command-string"]
@@ -1029,6 +1041,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
+      defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
+        print "    if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++
+      }
       defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
       defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$incoming_sources\" ]", "false") }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
@@ -1093,6 +1108,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     fi
     row_label=${failed_row#FAIL environment: }; row_label=${row_label%%: exit=*}
     control_status=0
+    if [ "$defect" = literal-source-veto ]; then
+      env "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows "$row_label" \
+        >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
+    else
     (
       passed=0; failed=0
       cp -- "$mutant" "$hook"
@@ -1100,12 +1119,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       [ "$failed" -eq 0 ]
     ) >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
     cp -- "$hook_source" "$hook"
+    fi
     if [ "$control_status" -eq 1 ] && grep -F -- "$failed_row" "$scratch/environment-$defect.log" >/dev/null; then
       printf 'PASS environment control %s rejects its planted rule failure\n' "$defect"; passed=$((passed + 1))
     else
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
+literal-source-veto|FAIL environment: fleet-literal-command-string-setup: exit=2 expected=0
 quoted-data-cut|FAIL environment: quoted-operator-with-heredoc-remains-data: exit=2 expected=0
 no-check|FAIL environment: incident: exit=0 expected=2
 exec-context|FAIL environment: r12-exec-list-unnamed-declaration: exit=0 expected=2
