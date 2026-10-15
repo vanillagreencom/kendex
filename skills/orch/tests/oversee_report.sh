@@ -750,7 +750,7 @@ assert_eq "$(cloud_row)" "0||- KEN-7: validation unread, its host unreachable|Wa
   "control: a claude-cloud lane whose mailbox is read lists it as unreadable on a host-unreachable validation row"
 CLOUD_MUTANT="$(mutant_scripts cloud-report/orch lib/lane-gitfile.sh)" || exit 1
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/cloud-report/github"
-mutate_file "$CLOUD_MUTANT/lib/lane-gitfile.sh" '[[ "$files" != none ]] || return 0' '{ [[ "$files" != none ]] || true; } || return 0'
+mutate_file "$CLOUD_MUTANT/lib/lane-gitfile.sh" 'if [[ "$files" == none ]]; then' 'if [[ "$files" == none ]] && false; then'
 REPORT_UNDER_TEST="$CLOUD_MUTANT/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$(cloud_row | cut -d'|' -f1-2)" "2|oversee-report: item-state=KEN-7" \
   "control: a claude-cloud lane read for its state refuses the report"

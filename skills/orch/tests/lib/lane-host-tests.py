@@ -512,6 +512,9 @@ class LaneHostCallersTests(unittest.TestCase):
                     call = calls.search(line)
                     if call and not line.lstrip().startswith("#") and enclosing != function:
                         argument = re.findall(r'"[^"]*"', call.group(1))[-1]
+                        # An empty dispatcher selects local files, not a provider.
+                        if argument == '""':
+                            continue
                         targets.append(self.target(scripts, caller.relative_to(scripts), argument, enclosing, depth + 1))
             return "wrapper" if targets and all(t == "wrapper" for t in targets) else None
         script = self.SCRIPT.match(value or "")
