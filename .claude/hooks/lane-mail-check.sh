@@ -3032,7 +3032,7 @@ handoff_check() {
       # oversee register can know the model before watch start records a command.
       # Only the command owner can establish executable recovery evidence.
       recovery=$(jq -r '.launch_line // ""' <<<"$record") || recovery=""
-      if ! ol_command_read claude "$recovery" || [ -z "$OL_COMMAND_MODEL" ]; then
+      if ! ol_command_recovery "$recovery"; then
         cause=launch-command-unread
       fi
     fi

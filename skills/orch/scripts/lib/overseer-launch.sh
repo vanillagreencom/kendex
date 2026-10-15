@@ -643,6 +643,7 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # The brief is a positional prompt on claude, codex and pi; copilot takes it
 # as the interactive option's value, which starts the session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
+OL_HANDOFF_PROMPT='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at '
 ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   local brief_given=0 caller_brief=""
   if [[ "${1:-}" == --brief ]]; then
@@ -651,7 +652,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   fi
   local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" brief_join=" " model
   shift 4
-  brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff"
+  brief="$OL_HANDOFF_PROMPT$handoff"
   case "$harness" in
     claude) cmd="claude -n overseer" ;;
     copilot) cmd="copilot" brief_flag=" -i" ;;
@@ -697,14 +698,22 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 
 # Read the command ol_command_line writes. Its Claude argv ends with one
 # prompt, after the fixed session name. Prefix environment words stay outside
-# the returned flags. No command text is evaluated.
-OL_COMMAND_FLAGS=() OL_COMMAND_MODEL=""
+# the returned flags. The producer's handoff prompt also supplies its bound
+# destination; an arbitrary --brief has none. No command text is evaluated.
+OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF=""
 ol_command_read() { # HARNESS LINE
-  local i end
-  OL_COMMAND_FLAGS=() OL_COMMAND_MODEL=""
+  local i end prompt handoff
+  OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF=""
   launch_choice_shell_words "$2" || return 1
+  [[ ${#LAUNCH_CHOICE_ARGV[@]} -gt 0 ]] || return 1
   end=$((${#LAUNCH_CHOICE_ARGV[@]} - 1))
   [[ "$1" == claude ]] || return 1
+  prompt="${LAUNCH_CHOICE_ARGV[end]}"
+  if [[ "$prompt" == "$OL_HANDOFF_PROMPT"* ]]; then
+    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"
+    # Recovery must supply a path the public succession and watch can accept.
+    if [[ "$handoff" =~ ^[A-Za-z0-9._/-]+$ ]]; then OL_COMMAND_HANDOFF="$handoff"; fi
+  fi
   for ((i = 0; i + 1 < end; i++)); do
     [[ "${LAUNCH_CHOICE_ARGV[i]}" == -n && "${LAUNCH_CHOICE_ARGV[i+1]}" == overseer ]] || continue
     i=$((i + 2))
@@ -714,6 +723,14 @@ ol_command_read() { # HARNESS LINE
     return 0
   done
   return 1
+}
+
+# Recovery needs the complete launch contract. A flags-only read can still
+# preserve an executable model from an arbitrary brief, but cannot retain its
+# handoff state or tell the successor's watch where to read it.
+ol_command_recovery() { # LINE
+  OL_REASON=model-command-unavailable
+  ol_command_read claude "$1" && [[ -n "$OL_COMMAND_MODEL" && -n "$OL_COMMAND_HANDOFF" ]]
 }
 
 # The jq definitions every reader and writer of the record shares, so none
@@ -1089,7 +1106,7 @@ ol_model_recovery_check() { # REQUEST CURRENT
   OL_REASON=model-command-unavailable
   local line
   line="$(jq -er '.launch_line | strings | select(length > 0)' <<<"$1" 2>"$DEP_ERR")" || return 1
-  ol_command_read claude "$line" && [[ -n "$OL_COMMAND_MODEL" ]]
+  ol_command_recovery "$line"
 }
 
 # Every succession write compares and changes the record under the state

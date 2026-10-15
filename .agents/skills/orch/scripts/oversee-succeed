@@ -1071,6 +1071,7 @@ if [[ "$MODE" != dead ]]; then
       || die model-recovery-refused "reason=$OL_REASON" step=read
     MODEL_SWITCHED=1
     HARNESS_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})
+    HANDOFF="$OL_COMMAND_HANDOFF"
   fi
   if [[ "$OL_CUR_HARNESS" == claude ]]; then
     recorded_line="$(jq -r '.launch_line // ""' <<<"$OL_CUR_RECORD")" || die record-unread field=launch_line

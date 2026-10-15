@@ -195,7 +195,7 @@ judged() {
 # The harness acknowledges its argv before drawing its working-turn hint.
 model_switch_rows() (
   local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
-  local scenario line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window
+  local scenario handoff_path line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
@@ -209,6 +209,8 @@ model_switch_rows() (
   cat > "$BIN/claude" <<HARNESS
 #!/usr/bin/env bash
 set -euo pipefail
+for prompt in "\$@"; do :; done
+printf '%s\\n' "\$prompt" > '$TMP_ROOT/model.prompt'
 model=""
 while [[ \$# -gt 0 ]]; do
   if [[ \$1 == --model ]]; then model=\$2; break; fi
@@ -261,19 +263,23 @@ BARRIER
     mutate_file "$scripts/oversee-succeed.real" \
       '  if [[ -n "$OL_RECOVERY_RECORD" && -f "$destination_path" ]]; then' \
       '  if false; then'
+  elif [[ "${MODEL_OWNER_CONTROL:-}" == destination ]]; then
+    mutate_file "$scripts/lib/overseer-launch.sh" \
+      '    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"' \
+      '    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"; handoff=tmp/handoffs/OVERSEER-HANDOFF.md'
   fi
   claude_usage 10 10 10 Opus > "$FIXTURE_DIR/.claude.json"
-  for scenario in matching launch-missing observed-unread launch-command-unread displaced switched; do
+  while IFS='|' read -r scenario handoff_path; do
     new_caller claude
     rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
     [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
-    line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude -- \
+    line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --handoff "$handoff_path" -- \
       --model opus --effort high "$BYPASS")
     state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
       "$(jq -nc --arg line "$line" --arg cwd "$TMP_ROOT/work" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
     model_env "$BASH" -euo pipefail -c '
       SCRIPT_DIR=$1 SUCCEED=$1/oversee-succeed WORKFLOW_STATE=$1/workflow-state
-      HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md OVERSEER_HARNESS=claude
+      HANDOFF=$3 OVERSEER_HARNESS=claude
       WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "claude-opus-4-6[1m]" --effort high --dangerously-skip-permissions)
       DEP_ERR=$2
       . "$1/lib/lane-launch.sh"
@@ -281,7 +287,7 @@ BARRIER
       . "$1/lib/watch-overseer-record.sh"
       overseer_record_notice() { printf "%s\n" "$*" >&2; }
       overseer_command_record
-    ' _ "$scripts" "$TMP_ROOT/model.err"
+    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path"
     line=$(jq -r '.overseer.launch_line' "$FLEET_STATE")
     model=$(launch_choice_launch_model claude "$line")
     assert_eq "$model" 'claude-opus-4-6[1m]' "$scenario watch record retains the executable selector"
@@ -289,10 +295,24 @@ BARRIER
     case "$scenario" in
       launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
       launch-command-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.launch_line)' >/dev/null ;;
+      handoff-unread)
+        printf 'Continue the owner task.\n' > "$TMP_ROOT/model-brief"
+        line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --brief-file "$TMP_ROOT/model-brief" -- \
+          --model opus --effort high "$BYPASS")
+        "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.launch_line=$line' --arg line "$line" >/dev/null ;;
     esac
-    handoff="$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
+    handoff="$TMP_ROOT/work/$handoff_path"
     mkdir -p "${handoff%/*}"
     printf 'Start here: fixture generation=2\n\nRetain the owner constraint from the previous handoff.\n' > "$handoff"
+    if [[ "$scenario" == custom ]]; then
+      default_before=$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")
+    fi
+    # The real watch retains this command for handover after predecessor stop.
+    model_env "$BASH" -euo pipefail -c '
+      . "$1/lib/watch-pid.sh"
+      watch_pid_write "$2" "$3" hand "$1/oversee-watch" --repeat 60 --state "$2" --handoff "$4"
+      watch_pid_release "$2"
+    ' _ "$scripts" "$FLEET_STATE" "$CALLER_PANE" "$handoff_path"
     transcript="$TMP_ROOT/work/tmp/model-parent.jsonl"
     : > "$transcript"
     mkdir -p "${transcript%.jsonl}/subagents"
@@ -341,7 +361,7 @@ BARRIER
       ' _ "$scripts" "$TMP_ROOT/binding.err" "$captured"
       assert_eq "$(jq -r '.overseer.model_check.outcome' "$FLEET_STATE")" switched 'the failed competing attempt restores the acquired request'
       assert_eq "$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$old_pane" || :)" 1 'the displaced recovery keeps its predecessor running'
-    elif [[ "$scenario" == switched ]]; then
+    elif [[ "$scenario" == switched || "$scenario" == custom ]]; then
       deadline=$((SECONDS + 30))
       while [[ "$SECONDS" -lt "$deadline" ]] && tm list-panes -a -F '#{pane_id}' | grep -Fxq -- "$old_pane"; do sleep 0.05; done
       after=$(jq -r .overseer.pane "$FLEET_STATE")
@@ -351,16 +371,47 @@ BARRIER
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'a fallback records exactly one model-switched event'
       assert_eq "$(jq -r '.fleet_log[] | select(.kind=="model-switched") | .launch_identity.pane' "$FLEET_STATE")" "$old_pane" 'the model event names its predecessor'
       assert_file_contains "$handoff" 'Retain the owner constraint from the previous handoff.' 'model recovery preserves standing handoff notes'
-      assert_file_contains "$handoff" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" 'model recovery retains the active agent and its output path'
+      assert_file_contains "$handoff" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario model recovery retains its active agent and output path"
       assert_file_not_contains "$handoff" 'attached-agent=closed-agent' 'model recovery omits closed agents'
+      # ol_command_read parses this exact final prompt from a recorded command.
+      assert_eq "$(cat "$TMP_ROOT/model.prompt")" "${BRIEF%tmp/handoffs/OVERSEER-HANDOFF.md}$handoff_path" "$scenario successor prompt retains its handoff destination"
+      deadline=$((SECONDS + 30))
+      until watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PANE" == "$after" && "$WATCH_ORIGIN" == succession ]]; do
+        if (( SECONDS >= deadline )); then fail "$scenario successor watch claims its pane"; break; fi
+        sleep 0.05
+      done
+      watch_handoff=""
+      if watch_argv_read "$FLEET_STATE"; then
+        prompt=""
+        for word in "${WATCH_ARGV[@]}"; do
+          [[ "$prompt" != --handoff ]] || watch_handoff="$word"
+          prompt="$word"
+        done
+      fi
+      assert_eq "$watch_handoff" "$handoff_path" "$scenario watch handover retains its handoff destination"
+      if [[ "$scenario" == custom ]]; then
+        assert_eq "$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")" "$default_before" 'custom model recovery leaves the default handoff unchanged'
+      fi
       CALLER_PANE=$after
     elif [[ "$scenario" == matching ]]; then
       assert_eq "$(jq -c . "$FLEET_STATE")" "$before" 'matching models leave fleet state unchanged'
     else
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-unavailable")]|length' "$FLEET_STATE")" 1 "$scenario reports unavailable once" "$TMP_ROOT/model.out"
-      assert_eq "$(jq -r '.overseer.model_check.cause' "$FLEET_STATE")" "$scenario" "$scenario keeps its cause"
+      cause="$scenario"
+      [[ "$scenario" != handoff-unread ]] || cause=launch-command-unread
+      assert_eq "$(jq -r '.overseer.model_check.cause' "$FLEET_STATE")" "$cause" "$scenario keeps its cause"
+      assert_eq "$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$old_pane" || :)" 1 "$scenario keeps its predecessor running"
     fi
-  done
+  done <<'MODELS'
+matching|tmp/handoffs/OVERSEER-HANDOFF.md
+launch-missing|tmp/handoffs/OVERSEER-HANDOFF.md
+observed-unread|tmp/handoffs/OVERSEER-HANDOFF.md
+launch-command-unread|tmp/handoffs/OVERSEER-HANDOFF.md
+handoff-unread|tmp/handoffs/OVERSEER-HANDOFF.md
+displaced|tmp/handoffs/OVERSEER-HANDOFF.md
+switched|tmp/handoffs/OVERSEER-HANDOFF.md
+custom|tmp/handoffs/owner-state.md
+MODELS
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
   [[ "$FAIL" -eq 0 ]]
 )
@@ -1075,7 +1126,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR" | grep -o '^oversee-succeed: no-lane-qualif
 
 model_switch_rows || fail 'overseer model-switch behavior'
 succession_binding_rows || fail 'succession write ownership'
-for control in words identity handoff binding; do
+for control in words identity handoff binding destination; do
   status=0
   control_args=--model-switch
   [[ "$control" != binding ]] || control_args=--succession-binding
@@ -1088,6 +1139,7 @@ for control in words identity handoff binding; do
   [[ "$control" != identity ]] || failure='^  FAIL  matching watch record retains the executable selector$'
   [[ "$control" != handoff ]] || failure='^  FAIL  model recovery preserves standing handoff notes$'
   [[ "$control" != binding ]] || failure='^  FAIL  pending-unwritten refuses a displaced writer$'
+  [[ "$control" != destination ]] || failure='^  FAIL  custom model recovery retains its active agent and output path$'
   if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/model-$control.log"; then
     pass "control: main's $control recovery defect fails behavior proof"
   else
