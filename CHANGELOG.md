@@ -35,131 +35,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Agents reference required namespaced skills by their installed directory names in Claude Code, Codex, Copilot CLI and Pi.
 - Skills with long descriptions install across harnesses. Kendex cuts each delivered copy's description at a sentence or word boundary within 1024 characters and preserves the publisher's file and the skill body.
 
-### Packages
+### Changed
 
-#### bot-instructions
+- Publishing checks pending program fragments under the selected merge's policy and version level; independent package release history does not block it. The kendex release workflow owns its fixed changelog.d collation-head check.
 
-- Align review-bot test requests and validator guidance with protection against cost and one control for a new or changed instrument.
-
-#### code-quality
-
-- Judge tests by protection against run time and upkeep. Prove a new or changed instrument once without requiring a control for each surface, rule or row.
-
-#### command-safety
-
-- Refuse escaped ANSI-C arguments and input paths for recognized environment producers, so encoded words cannot bypass the environment-dump check.
-- Allow the required literal wrapper launchers and grouped set receipt. Preserve the existing ordinary quoted argument data class and the single- or double-quoted cat file-writing class. Restore main's conservative known-read refusal for other added producer, body, executable-string, prefix, redirect and inherited-input permissions. Retain unsupported context across executable-wrapper lists and registered bodies. Classify optional receiving bodies in their original command order, preserving earlier body data that main allows. Keep direct-head behavior and the existing stricter refusals.
-- Refuse dollar-quoted environment producers and command heads that contain ANSI-C escapes. Unsupported shell contexts also refuse ANSI-C escaped data. Named-variable reads and ordinary env launchers keep working.
-
-#### commit-guards
-
-- Release-version checks separate collated release entries from later pending entries. Publishing checks pending program fragments under the selected merge's policy and version level; independent package release history does not block it. The kendex release workflow owns its fixed changelog.d collation-head check.
-
-#### dev
-
-- Name omitted tests and their protection-against-cost judgement in the pull request body.
-- Permit the single in-round validation correction when changed files cause the failure, even if the failing test file is unchanged.
-
-#### docs-writing
-
-- Rewrites preserve each claim's authorizing source, exceptions and evidence status. Assistant-home examples keep policy, memory and handoffs with their owning contracts.
-
-#### github
-
-- `pr-timeline` reports `ready_times` so callers can separate draft work from bot review waits.
-
-#### harness-ci
-
-- Local validation can read the same lane decision as CI through `change-class --output`. Local runs do not reuse CI proof records.
 - Consumer refreshes that change bot review instructions can install the verifier and prove the render class. Each changed file still requires ownership proof.
-- CI runs each lane that claims a file a proved render deletes or moves, including moves that rewrite the file. In-place and addition-only renders keep their existing skip.
-
-#### iced-rs
-
-- Admit cache regression tests by protection against cost instead of requiring a test for each invalidation case.
-
-#### jarvis
-
-- Include the publicist agent for product video, social post and outreach drafts.
-- Jarvis ships a configurable Chromium browser driver, an optional 1Password session broker with a protected-file client, and Linux Wayland input and capture tools.
-- Jarvis keeps one local session per home through start, status and stop. It resumes the recorded conversation, confirms native identity before Start, and preserves an app's Off across repeated boot calls.
-- A fact that answers two messages gets a short reply in each thread.
-
-#### lane-mail-check
-
-- Bind overseer mail and context to its native session. Once the native session is bound, child sessions in the same pane receive no overseer mail and leave its cursor, context and gap records unchanged. A failed binding write leaves the caller unbound. An old pane writes no gap while the successor's native binding is empty. Check a Copilot session's reader under its own home.
-- Pi lane turn rows retain the working background-agent count from Stop hooks.
-
-#### linear
-
-- **Breaking:** Completion reads every Done-when checklist, refuses open branch boxes or checked boxes without evidence, and keeps open post-merge checks in Verifying. Containers require a shared-outcome box even on older descriptions. Supply box evidence with `--evidence-file` when ticking boxes.
-- `issues bulk-get --format=compact` returns compact issue rows without descriptions, URLs or timestamps.
-- Issue creation and description updates refuse post-merge release triggers without a repository and deadlines that are neither a duration nor a UTC time.
-
-#### mailbox
-
-- Share mailbox path checks, cursor reads and numbered snapshots with the Slack relay.
-- Owner asks accept a delivery id so a retry after the repeat window keeps the original ask and Slack thread.
-- Refuse mistaken local mailbox directories before appending new messages, while preserving mailbox read costs and repository ownership checks for cloud sessions.
-- Slack waits for an owner question's tracker outcome before it selects the item link or full question. A missing outcome releases the full question after 300 seconds.
-
-#### orch
-
-- **Breaking:** Hosted lane providers can run the harness without a local SSH viewer. Pane reads and input use provider verbs. A person can open the optional viewer when needed. Automatic recovery for provider-owned panes or relative provider executable paths is deferred to KEN-3996 before any stop or window change. A refused recovery keeps the harness, window and lane record.
-- Session consumers can build a prompt-free native launch and verify an exact recorded conversation through the existing launch and history readers.
-- Passing Skill Tests suites and jobs print GitHub warning annotations when they approach their time limits.
-- Judge test findings by needed protection against cost. Accept justified omissions and remove tests that protect nothing.
-- Container closure requires its holder’s shared-outcome evidence. The holder writes the proof while the parent stays open, then container-close validates the children, posts the bundle summary and completes it. Verification keeps missing or unproved outcomes visible without a merge time, using live issue and child reads.
-- Reuse a no-verdict validation run with no failed lane after a restack under the same conflict and tree rules as a passing run.
-- The succession handoff template excludes rulings, filing history and Verifying readings from the Progress log. It names the fleet log for rulings and filing history, and tracker items for Verifying readings.
-- Claude usage refusals now name an ended plan when the account profile confirms cancellation.
-- Copilot seats marked unlimited with no positive entitlement read as spent, so lane selection refuses paid overage.
-- Hosted relaunches stop the prior harness and start a fresh session after a handoff, with a custom command, or across a harness switch, so the new brief runs.
-- Warm account selection, listings and turn-end checks reuse parsed usage readings. Each read still checks current claims, walls, login expiry and account policy. Delayed reads check expiry before cached readings are used. Failed cache decoding stops selection. Interrupted provider reads release the refresh lock.
-- `lane-close` names the duplicate record count and the workflow-state repair when more than one fleet record names an item.
-- Clarify the local mailbox root refusal contract for sends in peer-mail instructions.
-- Owner replies stay in the thread of each message they answer, with one topic per thread.
-- Lane proposal comments can name a landed source commit when the consumer uses direct pushes.
-- Push-first lanes use scoped validation when CI does not cover the change class and the range selects every suite.
-- Overseer succession uses the agent-launch reserve, so a refused agent launch can hand over to a successor at the same context reading.
-- Record the overseer's native session ID. Clear its binding on a new launch or registration so a resumed session can receive its own mail.
-- A Pi lane with working background agents remains working after the lead's turn ends, so the watch sends no idle-after-return notice until its agents finish and the lead settles.
-
-#### project-management
-
-- Parent issue templates include a shared-outcome box that only the holder ticks after a passing source read, with its evidence recorded below the box.
-- Proposal sweeps accept direct-push source commits, verify their evidence at the landed commit, and return the source repository and PR or commit with each proposal outcome.
-
-#### publicist
-
-- Add a publicist agent that drafts product videos, posts and outreach and waits for the user's recorded approval before each send. Publisher setup requires consumer approval and verified licences at checked commits.
-
-#### review-gate
-
-- Refresh heads with passing CI now request overseer approval in the same watch pass when GitHub's suite-name filter would hide the CI check.
-
-#### reviewer-test
-
-- Judge needed test protection against cost. Accept justified omissions and suggest removal of tests with no protection instead of blocking on them.
-
-#### reviewer
-
-- Accept justified test omissions, repair needed evidence, and suggest removal of tests with no protection. Run mutation and stability pairing only for new or changed instruments.
-
-#### second-opinion
-
-- The default Claude command reads the standard model class from kendex. The default Codex command uses its harness default. An unresolved Claude class uses the harness default with one notice.
-
-#### slack
-
-- Read a named Slack channel without a relay binding, with message timestamps, edit times, authors and escaped text for scripts.
-- Read bound mailboxes inside the Slack relay process, so idle polls start no lane-mail processes.
-- The Slack relay skips a root after a local start or poll refusal and retries it each later poll. Other roots continue. A held listen lock stops a duplicate relay. Jarvis hold lock contention affects only its root.
-- A stalled Slack relay exits with its stage and wait age, so its service can restart after a blocked network call or name lookup.
-
-#### worktree
-
-- Write new Git ignore rules for worktree links with a leading slash so they do not match nested directories with the same name.
 
 ## [1.18.0] - 2026-10-13
 
@@ -178,258 +58,20 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 ### Fixed
 
 - Agent links and citations resolve from each harness's installed file, including agents from remote catalogs and captured local forks.
-- Validation reports missing relative imports as source failures, even when package dependencies are not installed.
-- Repository and CI checks warn about Rust formatting, Clippy warnings, and UI style while keeping compile and behavior errors blocking.
 - Signed local bundle instructions use a dedicated signing env file containing only the Tauri signing pair as 1Password references. Release signing stays in CI. Login environments and literal keys in files that skill scripts load are unsupported signing sources.
 - A refresh never records a source commit older than the one the project's install record already names for that source. A release build refreshing a project that a main build last refreshed keeps the newer commit, so the refresh changes only renders and `verify --at-record --base` passes.
 - Version releases build a selected merged commit through the reviewed main workflow. Release signing and AUR publication use the main-only environment.
 - The stable release procedure requires the Jarvis session or owner to move the release's major tag and verify its target after publication, so consumer refresh uses that release. A tag that already names a newer release stays there.
 
-### Packages
+### Changed
 
-#### auditor
-
-- The auditor reads its audit request from the task file its launch names and writes its result to the result file the launch names, so the Jarvis session never reads its transcript.
-
-#### block-argv-kill
-
-- Warn once and allow the shell call when required tools or payload input are unavailable. Keep the existing process-name text refusal.
-
-#### block-bare-cd
-
-- Stop installing bare-cd for Codex and Pi because each shell call starts a fresh process. Missing tools or unreadable payload warn once and allow the call. Keep the existing bare-line and here-document checks on supported harnesses.
-
-#### block-repo-copy
-
-- Warn once and allow the shell call when required tools or payload input are unavailable. Keep the existing repository-copy text refusal.
-
-#### block-unsafe-rm
-
-- Warn once and allow the shell call when required tools or payload input are unavailable. Keep the existing shared-root and empty-variable removal checks.
-
-#### bot-instructions
+- Stop installing bare-cd for Codex and Pi because each shell call starts a fresh process.
 
 - Installing bot-instructions into a repository with no `[bot-instructions]` table now succeeds, and verification succeeds with an empty owned-file report. Render and check write no bot files there. Adopt still refuses, and a stranded bot file still fails the orphan check.
 
-#### code-quality
-
-- Require controls for each independent production check rule in one test contract, with controls ready for the check's first commit.
-- Limit environment selection to launches that change identity, credentials or harness home. Use runner-supplied scratch and treat printed header help as CLI documentation.
-
-#### command-safety
-
-- Refuses recognized whole-environment reads in shell command text unless a filter names a variable. The refusal gives the filtered form. Project deny patterns cannot disable this check.
-- Warn once and allow the shell call when tools, payload, installed settings support or project settings cannot be read, or the deny pattern is invalid or empty. Keep matching raw command text and joined line continuations, including quoted examples. Capture installed support diagnostics below their keyed warning.
-
-#### commit-guards
-
-- Each commit-guards batch run records one row per guard, with its outcome and how long it took, in a log under the repository's git directory.
-
-#### critical-path-deny
-
-- Remove the instruction to move a long inline removal script into a file. Claude bypass launches now disable that prompt. The hook still denies remaining critical-path removal prompts and gives their rewrites.
-
-#### dev
-
-- Dev round instructions cover pending merge-group validation for queue-only work before a push-first pull request opens.
-- Apply the shared must-fail control rule when writing a check, before its first commit.
-- A dev round starts its full validation run only after every alone run of a test file it added or changed has passed, so a pending alone run holds the run as a red one does.
-
-#### docs-writing
-
-- Docs-writing adds a reader-and-job test for choosing between skill workflows and references, with a split rule for files that hold both steps and contracts.
-
-#### github
-
-- Read merge times and queue entries from their API fields, and check required workflow runs after adding a rule to an open pull request.
-- pr-timeline prints `ci_head_spans`: the start and end of each check run on the final head, including a superseded workflow run's.
-- Pull-request timelines now return the recorded merge route for merge-delay reports.
-- Count Copilot's “Needs a closer look” overview as one review finding that a head-bound Dispositions comment can answer.
-
-#### harness-ci
-
-- Shared launch-path classification now applies repository standard path floors, so orch uses the same class and cause for Location and changed paths.
-- Consumer CI templates and wiring examples pin GitHub-owned and third-party actions to full commit SHAs with release-version comments.
-- A change to `.github/ci-lanes.conf` selects only lanes whose names, claims or queue marks changed. Other paths keep default-branch claims. An unreadable declaration still runs every lane.
-- The Dependabot wiring guide ignores kendex workflow and action refs so the kendex refresh route owns their updates.
-
-#### jarvis
-
-- Continuing sessions update handoff state when it changes and reconcile it before transfer. Handoffs identify task and result locations. Changed state commits at scheduled reports by default. Finding dispositions stay on tracker items.
-- Wait for attached agent returns before succession and read existing child output before repeating work after an emergency handoff.
-- Jarvis reaches the agent in each of your kendex projects through that repository's mailbox: its setup check lists the reachable and unreachable repositories, it offers the mailbox install where one is missing, and until then it answers from the agent's session transcript, labelled as such.
-- Keep send results separate from output filters, read totals and ages from their source records, and remove sign-in query strings before logging browser tabs.
-- Jarvis builds a report's waiting-on-you list from live sources and lists as landed only merges it read in the session. It reports a fix sent to another owner as sent until it checks the fix where the problem was seen, and repairs the step behind each of its errors. It sweeps unanswered messages at each wake.
-- Jarvis adds a weekly efficiency audit that reads the consumer's own session, overseer and lane records and writes a report with an owner summary of at most 15 lines.
-- Setup workflows guide the assistant and user through connecting Slack, Linear, GitHub and a fleet machine, with protected credentials and a checked connection result.
 - Document the Jarvis update command and its CLI test: refresh updates the rendered skill while preserving your instructions, own skills, memory and state files.
-- The Jarvis efficiency audit reads the commit-guards run log and reports each guard's median seconds, violation rows and confirmed blocks. It lists a guard for redesign or removal only when evidence confirms two blocks in the audit week that found no defect.
-- **Breaking:** Jarvis continuing sessions require tracker access and a user-selected project for session tasks. The handoff keeps only session state in State, Sub-agents, Instructions in force and Progress log. Before replacement, Jarvis confirms that each predecessor record remains in its home and archives the predecessor handoff. Tasks and checks go to the tracker, facts and rulings to memory notes, and open exchanges stay in their mailboxes. A successor reads three short sections before its first decision.
-- Jarvis defines which home files travel between machines and provides a session workflow with a current handoff and an archive.
-
-  You do: move your handoff to state/handoff.md if your home used another path, such as state/delegate/handoff.md.
-- Jarvis installs its required agents with the skill. Its README lists each shipped part and uses one install command. On first load in a plain folder, Jarvis offers to add its persona to the user's instructions.
-- Jarvis installs the mailbox skill for repository questions, notices and answers.
-- Jarvis keeps each memory note under a subject heading and reads only the needed section at the acting step.
-- Jarvis keeps its scratch under `tmp/scratch/`, retained artifacts under `tmp/scratch/retained/`, and its scheduled scratch sweep deletes only there, leaving package state elsewhere under `tmp/` in place.
-- Jarvis treats its authority rules and the pre-handoff progress report as defaults: a dated entry in the user's responsibility map that names the action and quotes the user's words replaces the default for that action.
-- A Jarvis memory note that records a completed change supersedes the prior note in the same write and keeps dated observations and original sources as history.
-- Browser captures use absolute paths under the home's scratch folder.
-
-#### lane-mail-check
-
-- Refuse late attached agent launches before the context handoff mark, and name unfinished Claude agents so succession can wait for their returns.
-- Session mail checks use the mailbox skill beside orchestration.
-- A Jarvis session with its wake armed gets each overseer-mailbox message once, in full, from the hook, and the turn end does not hand it again. On Pi, mail the idle-session wake hands over is marked read only once its message is sent, so a send that fails no longer loses it.
-- A lane can end a continuing wait after it updates its status file, including a rewrite of the same text. The hook sends no idle notice for that update. A turn with no mail sent and no status update still meets the idle check.
-
-#### lane-mail-halt
-
-- Apply the existing context handoff reserve before attached agent launches while keeping wait and result tools available.
-
-#### linear
-
-- Read state-entry times from issue history, tick verified boxes through issue completion, and select an app token for cross-team relations.
-- `issues create`, `issues update --description` or `--description-file`, and `issues bulk-update --description` refuse a body whose first non-empty line is a `**Key**:` or `Reached by:` header, or that has a header line over 500 characters, naming the line and its length; `LINEAR_REQUIRE_REACH` set empty turns it off with the reach guard.
-- Owner asks can put their action line before a Linear issue's outcome sentence, so the question comment can post on the item again.
-
-#### mailbox
-
-- The overseer can close peer asks and asks with no audience. Pending lists and mailbox compaction recognize these closes.
-- Use the mailbox skill for repository questions, notices and answers without installing orchestration.
-- Mailbox directives preserve long Slack threads without exceeding the process argument limit. Envelope write failures report the write error and its cause.
-- Item owner asks reach Linear without a team setting. Close retains the applied label for cleanup, and unavailable tracker settings report their cause while the chat ask remains available.
-
-#### operator
-
-- The operator reads its approved step from the task file its launch names and writes its result to the result file the launch names, so the Jarvis session never reads its transcript.
-- Operator captures use absolute paths under the home's scratch folder.
-
-#### orch
-
-- Reserve context for attached agent returns and preserve unfinished child identities and known output paths during emergency succession.
-- Sessions read the Slack relay's delivered thread in full and fetch Slack history only when required history is missing.
-- Lane preferences can select hosted Pi with Anthropic API credit and fall through to Claude when the credit is below the floor.
-- Push-first queue-only work can record pending merge-group validation before its pull request opens when the base requires the merge queue and validation context.
-- Fleet log takeover skips `token` rows written by fleet's `reap`, so token events cannot displace rulings from a successor's takeover window.
-- Claude cloud sessions create ready pull requests through REST after their tests and internal review pass, then request Copilot review without a draft-to-ready step.
-- Item tier selection now uses `HARNESS_CI_STANDARD_PATHS` from the base checkout, so declared standard paths receive standard review depth.
-- Keep Verifying checks running when unrelated merged pull requests exceed the search limit. Share searches for bounded batches of Verifying item keys and branches per repository and pass.
-- Require the caller's on-screen Approve for destructive or money steps on a call.
-- Overseer turn-end mark checks reuse loaded settings and complete caller records to start fewer processes.
-- Reuse a lane provider's capability reply while its file stays unchanged, including the static SSH reply for providers that refuse the capability verb.
-- Copilot account records expose the usage response's raw month consumption as `credits_used`. An unavailable value stays null.
-- Long lanes with repeated fixes receive a design review before another patch round. The overseer also reviews a mechanism before filing its second fix in one day.
-- `review-artifact-check` accepts a `perf_qa` `metric_kind: "measure"` with a `name`, a free-text `unit`, numeric `values` and a `samples` count above zero, so byte rates and Criterion means are recorded under their true name and unit instead of outside the block or as a failed measurement.
-- Voice requests can carry step reports for Jarvis to speak or hold while the final reply remains pending.
-- The overseer watch's Verifying pass reads each issue's fields and builds its box results in bulk records, starting about half the processes per pass with the same verdicts, lines and errors.
-- Cycle targets forgive one clean final-head CI run and merge-group CI. Cycle records and progress reports show lane-controlled time beside open-to-merge time, with miss share based on lane-controlled time. Phase reports include work before a pull request opens and exclude forgiven CI. Direct pushes use measured lane time for their verdict. A cycle formatter failure stops report publication.
-- Findings on code from an earlier review fix round reach Step 1's revert rule.
-
-  You do: nothing (migrated on apply)
-- A fix round whose own change brings a new blocker gets one correction past the review cap per pull request; a second such blocker ends the fix rounds in a cut round or a design review.
-- The orch state schema names the fleet overseer cost meter as a reader of the overseer session rows and of the session record's `exit`, so a change to either tells the fleet overseer first.
-- Orch instructions and launch help name the Jarvis session and use Slack's Jarvis session hold settings.
-- Orchestration uses the mailbox skill for message delivery and keeps the former mailbox paths working during consumer migration.
-- Hosted Pi lanes on Anthropic models spend the provider account's API grant with the earliest expiry. The shared cloud and API credit floor now defaults to $10 instead of $0, so Claude cloud grants with $10 or less also refuse launch. Spent, expired and unread grants refuse launch. Excluded grants report no eligible account on fresh and cached readings. API claims leave Claude plan capacity available. Copilot claims use the monthly pool even when an SSH host declares cloud credit. Copilot relaunches count against their monthly pool when usage readings return. Provider account reads have a 30-second default limit to allow the account and API-credit listings to finish.
-- At merge, completion ticks a post-merge box the merged pull request's own tests, CI or diff prove, so the item does not wait in Verifying for it.
-- Validation rounds that reach their time limit retain the selection previewed at start when the log has no valid selection report.
-- oversee-watch prints `security-alerts-unread` only on the long pass whose set of failed reads changes, so a standing failure no longer wakes an overseer following the watch log on every pass.
-- An overseer progress report whose summary has an item line over 20 words, or more item lines than `ORCH_REPORT_SUMMARY_LINES`, is refused before anything is written or sent, so the overseer rewrites it and the owner receives only the short shape.
-- A validation start whose command already passed over the same worktree tree, from the same base and over no fewer changed paths, records that pass instead of running the same lanes again, so a fix round's receipt costs one run per tree.
-- A lane or session launched from a running session clears the parent's session identity on every route, including custom commands in tmux, so the child cannot write the parent's records or answer as the parent. Custom commands keep the pane's configured shell and functions.
-- A lane that restacks once reads `restacks=1` in the lane-long event and in `oversee-report`'s Rounds row, whatever validation route followed the restack: `worktree-push` records each completed restack it reconciles, where the count had read only restacks with a recorded range run or skip.
-- Keep account comparisons unchanged during unmeasured readings, except for expired or retired credentials. The next measured reading reports changes from the saved comparison.
-- Approval request actions read the base, all configured approval requirements and head through REST and request Copilot through REST. GitHub's draft-to-ready operation still requires GraphQL.
-- Claude bypass launches set `CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1` and `CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1` in the launch environment. Lanes, overseers and their subagents can run inline shell removals and recursive removals whose target is command substitution output without these prompts. The inline switch needs Claude Code v2.1.288 or later. Other critical-path checks remain. See [Critical paths](https://code.claude.com/docs/en/permission-modes#critical-paths) and [Environment variables](https://code.claude.com/docs/en/env-vars).
-- Cloud sessions request Copilot when they mark a pull request ready. The landing route requests ready heads whose draft opening skipped the request, without closing and reopening the pull request or repeating a finished error retry.
-- Validation reports unavailable host checks as no-verdict and preserves their cause.
-- Read the Codex launch account from the deepest Codex process. Codex helpers with another home no longer cause a lane mismatch. Codex started on another account still fails the check.
-- Merged hosted Pi lanes close automatically after two watch passes with their worktree and session rows removed.
-- `dev-validate-run --help` no longer says full subsets always keep local execution: under push-first a full request takes CI where the coverage checks pass.
-- **Breaking:** Event blocks print due or overdue verification rows only when their box keys change in the saved `verifying-deadline` row, plus new pull request attention keys. Changes outside those keys wait for the heartbeat, which keeps both full lists.
-- CI completion receipts expand short commit IDs before storage, so valid rounds pass artifact acceptance.
-- `workflow-state update` refuses a filter that yields several JSON values or none, and leaves the state file unchanged, instead of writing that output as the state.
-- Lane stops end harnesses that ignore SIGTERM with SIGKILL after the grace wait. The stop checks process identity again before SIGKILL.
-- Overseer handoffs use State, Sub-agents, Instructions in force and Progress log. Standing procedures, rulings and verification evidence stay in their existing homes.
-- oversee-cycle books a ci_green gap as `ci` only for the time a check run on the final head was in progress. Idle time between check runs records as `wait` and no longer counts toward the CI repeat-miss bar.
-- Overseer registration and launch check the recorded tmux server through its socket. A session on another server cannot replace a live overseer, even when both panes have the same number.
-- Read merged pull requests and releases once per repository in each watch verification pass.
-- Merge-delay misses now name pause holds, merge-group CI or the recorded merge route at every lane tier.
-- Park hosted lanes while they wait for another pull request to merge, and admit queue waits from the lane's checked-out second branch. Resume dependency waits through the existing fleet watch.
-- Overseer pull request attention covers the item repository and `ORCH_CONNECTED_REPOS`. Extra report repositories keep their merge and heartbeat reads.
-- Queue-only pull requests use required merge-group CI for validation when their base requires the merge queue and validation check. This avoids a duplicate local range run.
-- Unattended lanes update their status file when a wait continues and send notices only when their work changes.
-- Refuse a second overseer registration while the recorded pane still runs. Allow the recorded pane to register again and keep overseer succession available.
-- Copilot reviews from before a force push no longer count as reviews of the replacement head. Approval waits request a new review, hold approval until that head is reviewed, and read long pull request timelines without an argument-size error.
-- Static SSH hosts run the consumer worktree setup command once after private-file delivery on an existing clone.
-- Overseer token reads require a private regular file owned by the reader. The parent directory must belong to the reader and deny group and other write permission. Reads are bounded and refusals name the cause. Set token file permissions to `600`.
-
-#### preflight
-
-- Avoid repeated shell statement parsing when the existing fail-open rules cannot report a finding, so large changes with shell tests finish faster.
-- Run ShellCheck over the changed shell files across the available cores with a bounded worker pool to reduce the time for changes with many shell files.
-
-#### project-management
-
-- The issue template's Done-when guidance states when a post-merge box is admitted: a deployment or installation, live use over time, or a person's screen or hands.
-
-#### review-gate
 
 - Consumers check for kendex changes every hour instead of every 6 hours. A `kendex-refresh` dispatch still starts a run at once. Consumers take the new caller through their next refresh.
-- `pr-watch.sh` batches the initial pull request read into one GitHub CLI call per repository and one reduction. Extra review thread pages use shared calls for each page depth, so the process count stays independent of the pull request count. Shared page reads check for a changed head. The reducer streams large responses.
-
-#### reviewer-correctness
-
-- Trace mapped codes, record kinds and nullable fields to their producer lines during correctness review. Report missing mappings and mappings that change a value's meaning.
-
-#### reviewer-read-only
-
-- Warn once and allow a reviewer tool call when required tools, payload or the Git path check are unavailable. Keep the existing edit, write and raw Git-command checks, including refusal of every stash command.
-
-#### reviewer-test
-
-- Review must-fail controls against the shared test contract.
-
-#### reviewer
-
-- A review raises a post-merge Done-when box that the pull request already proves or whose reason does not qualify for a post-merge check. Completion ticks require cited proof. Unproved checks need a pre-merge test or a correction to their post-merge admission under the existing Disposition rule.
-- Reviews apply routed document rules to the behavior a change alters and report missing required work, including controls that prove a test can reject a defect.
-
-#### second-opinion
-
-- Fix false failures in the detached-run tests when worker cleanup is still active. The tests wait for all worker processes to exit before they check the final result.
-
-#### session-start-row
-
-- A session the Jarvis runtime launched records its harness's own session id and, when the harness payload supplies it, its session file in the runtime record's pending row at its start, on Claude Code, Codex, Copilot CLI and Pi, with no orch fleet or overseer mailbox. Other sessions in the same home write nothing there.
-
-#### slack
-
-- The Jarvis session hold uses `SLACK_JARVIS_SESSION_FILE` and `SLACK_JARVIS_SESSION_MAX_AGE`. Status shows `held-by=jarvis`; an unreadable hold file reports `jarvis-session-file-unreadable`. The old `SLACK_MASTER_FILE` and `SLACK_MASTER_MAX_AGE` keys still hold the relay until kendex 2.0.0, with one `setting-renamed` warning per old key and process. The new key takes precedence, including an empty value.
-
-  You do: rename the two keys in kendex.settings.toml before 2.0.0 removes the old ones
-- The Slack relay reads and writes through the mailbox skill.
-- `slack listen --status` reports a root's missing or unreadable binding as `state=failing` with `cause=binding-missing` or `cause=binding-unreadable` and the `slack setup --take CHANNEL --root DIR` fix, whatever the recorded connection.
-- The Slack relay's Jarvis session hold no longer pages the owner for work the session already handles. When `SLACK_JARVIS_SESSION_FILE` moves to a file not yet written, a running relay keeps holding on the replaced file until the new one is fresh or the replaced one stale. At the end of a hold, a seen ask, including a closed ask, at or below the session's `to-overseer.seen` count is journaled as skipped, with no post and no mention, including later overdue reminders and journal replay. Posted unread reserved asks keep their reminders. `slack post --mention` reads the relay's per-root OS hold lock and the current presence file. It posts with no mention during a live hold, including presence-file renames and Slack retries past the health record's expiry, and prints one `mention-held` line on stderr. Process exit releases the relay's hold lock.
-- A Slack thread reply now reaches the session with every owner and app thread message through that reply that the session has not yet received, each with its author and time, in place of a 300-character excerpt of the thread's first message; a successor session receives its unseen thread messages with its first directive, delivery marks survive journal compaction, accepted answers stay excluded without skipping earlier context, and `slack thread` heads each message with its author and UTC time.
-
-#### social-media-content-calendar
-
-- Plan social media campaigns as portable draft calendars with claim checks, asset briefs and recorded approval references.
-
-#### worktree
-
-- Add `WORKTREE_SETUP_CMD` to run a consumer command after a worktree receives its links, copied files, and directories. Create and Codex or Claude setup hooks refuse a failed command and keep the worktree for a retry. Hosted creates run the command on the lane host.
-- The worktree docs and `worktree --help` now say that a pnpm or Next.js project leaves `node_modules` out of `WORKTREE_SYMLINKS` and installs in each worktree, since pnpm (`ERR_PNPM_UNSAFE_MODULES_DIR`) and Turbopack refuse a linked `node_modules` that resolves outside the project root.
-
-#### xcode-run
-
-- The macOS workflow template names the exact release version of its pinned artifact-upload action.
-
-#### youtube-publish
-
-- Draft YouTube uploads, comments and replies. Send each request after the user's recorded approval, with synthetic-content disclosure on uploads.
 
 ## [1.17.0] - 2026-10-11
 
@@ -437,52 +79,13 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - A run can select the default catalog's revision with `KENDEX_CATALOG_REV`. A source's declared revision takes precedence.
 
-### Packages
-
-#### dev
-
-- Fix items that name an owner cover that owner's states in one table.
-- Dev agents keep the validation mode and base for the permitted in-round correction and rerun, without an overseer ask.
-
-#### github
-
-- Pull request timelines exclude reply-only bot reviews and Copilot review checks from CI time. They report a clean CI span from each workflow run's latest attempt on the final head. Partial reruns exclude copied job times from earlier attempts.
-
-#### harness-ci
+### Changed
 
 - Keep refresh pull requests in the render class when their only manifest change increases the top-level schema by one, including schema-only refreshes after head verification. Other manifest edits still require configuration review.
 - CI setup documentation describes how the trusted refresh caller selects the engine release.
-- Run the CI template's skip check from the default branch on every event, refuse a missing helper, and update checkout to v7 under the documented action pinning policy.
-
-#### linear
-
-- Issue updates clear the description when the supplied text or description file is empty. Closing an owner ask also removes its action line when no other text remains.
-
-#### orch
-
-- CI waits use the `CI_WAIT_MAX_SECS` setting when no positional budget is given. Set it above the longest required job's run time. The default stays at 600 seconds.
-
-  You do: nothing
-- **Breaking:** Owner asks with `--issue` require `--do` text. The issue description opens with the person's action and closing evidence. The ask replaces an existing action line and restores a removed line during the watch's existing read. Closing an ask shows the latest remaining tracker ask's action. Closing the last tracker ask for that issue removes the line and owner assignment.
-- Round acceptance treats a failing validation artifact as final after the dev workflow's permitted in-round correction and rerun.
-- Verification reports overdue boxes even with blockers. Readers show UTC deadlines and blocker ids. Invalid checklists no longer stop other items from being read. Reconciliation accepts fractional merge times and reports missing local merges without stopping the sweep.
-- Copilot review requests keep an active run, pending request or completed review at the current head. Error reviews still permit the existing retry. Failed evidence reads send no request.
-- Fix rounds detect a repeated rule across sites through its optional owner. Refused rounds leave audit rows that merged cycle records retain.
-- Release-triggered verification waits with no deadline until a matching release exists. Its line shows the merge date. The deadline starts at release publication. Merge-triggered deadlines keep their clock from merge.
-- Starting a new dev or review round closes every earlier open stage of the same kind as superseded. `oversee-cycle stages` marks those rows with `superseded=1`.
-
-#### project-management
-
-- Issues and parent issues open with their outcome and completion checks. Initiative and project descriptions use a plain outcome sentence and short sections, with ownership and resource fields set during roadmap creation.
-
-#### review-gate
 
 - Consumer refreshes render the default catalog at the installed release tag when the source has no declared revision. A declared revision takes precedence.
 - Consumer CI installs the release selected by its refresh caller. The refresh engine and verifier use the same version while a newer release waits for the major tag move.
-
-#### reviewer
-
-- Review findings can name the symbol that must hold a rule shared across sites.
 
 ## [1.16.0] - 2026-10-11
 
@@ -490,91 +93,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - Skills can declare `dependencies.agents` in `SKILL.md` to install and render required agents on selected harnesses that support them at the install scope. Package previews show required agents and their install state. Unsupported tools get a warning while the skill installs. Refresh updates the list, and removal with a sweep keeps agents also added by name.
 
-### Packages
+### Changed
 
-#### auditor
-
-- Add an auditor that compares source evidence with a stated standard and gives each gap an owner and closing check.
-
-#### cpa
-
-- Add a finance and tax preparer that reads original records and prepares work for the user's decision.
-
-#### decider
-
-- Reduce process starts when project settings load.
-
-#### github
-
-- Require a head-bound review disposition when a Copilot overview recommends changes without a review thread.
-- Reduce process starts when project settings load.
-
-#### harness-ci
-
-- Repositories can use `HARNESS_CI_STANDARD_PATHS` to require standard review for high-risk paths, even for a small change.
 - Consumer refresh CI guidance states when a render proof covers the bot-instructions check and keeps CodeQL, launcher or script tests, and other guard jobs running.
 
-#### lane-mail-check
-
-- The wake check names the Jarvis session in its summary and comments.
-
-#### legal
-
-- Add a legal preparer that checks original sources, jurisdiction and the event that requires another check.
-
-#### linear
-
-- Initiatives can set an owner, lead team, labels, and resource links. Projects can set a lead and resource links. Reads show these fields, repeated link URLs are skipped, and a failed link reports a partial write.
-- Reduce process starts when project settings load.
-
-#### operator
-
-- Add an operator that completes one approved browser or account step and checks the result at the service.
-
-#### orch
-
-- The lane age event and status report show separate review, fix receipt, validation, recorded restack and repeated class counts. Unavailable counts read `unread`. Lane status files have no write-side line cap. The overseer reads only the last non-empty lines to limit context use.
-- Set `ORCH_PR_ORDER` to choose `review-first`, `open-first` or `push-first` for any repository. Push-first lets covered implementation and internal-fix rounds defer validation to required pull request CI before publication. Submit verifies required CI on the published head before merge. Uncovered work keeps local validation.
-
-  You do: in `kendex.settings.toml` under `[env]`, set `ORCH_PR_ORDER = "push-first"` and `DEV_VALIDATE_CI_CONTEXT = "<the required status check whose pull request run covers DEV_VALIDATE_CMD>"`.
-
-- Mail delivery from a linked checkout finds the main checkout when either path contains a newline.
-- Lanes activate their Linear items without assigning the owner. Owner asks keep their existing assignment and removal route.
-- Reduce idle watcher, mailbox read, and default-root lookup process starts while retaining message output, cursor positions, and hosted read batching.
-- Retirement examples and test fixtures use neutral account names.
-- Running lanes keep their account handoff checks when a fleet state cannot be read. The check reports the unread overseer seats and uses the account's wall reading. Projected launch checks refuse with exit 8 before reading local or provider usage.
-
-#### preflight
-
-- Reduce process starts when project settings load.
-
-#### researcher
-
-- Keep user facts in the user's own skills or memory and return research to the caller when planner instructions or a tracker are unavailable.
-
-#### review-gate
-
 - Consumer refresh merges its published head directly when the base branch has no rules or protection, so GitHub's auto-merge refusal no longer fails the run.
-
-#### reviewer-arch
-
-- Keep user facts in the user's own skills or memory and preserve review output when instruction files are unavailable.
-
-#### scout
-
-- Keep user facts in the user's own skills or memory and report unread facts as unread.
-
-#### second-opinion
-
-- Reduce process starts when project settings load.
-
-#### slack
-
-- The Slack app manifest ships as `app-manifest.yaml`, linked from the Slack app setup instructions.
-
-#### worktree
-
-- Reduce startup work when mailbox readers resolve their worktree or checkout.
 
 ## [1.15.0] - 2026-10-10
 
@@ -594,194 +117,51 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - Refuse project refreshes from marked lanes after they change directory into the main checkout; `--lane-refresh` still permits refresh lanes.
 
-### Packages
+### Changed
 
-#### command-safety
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.frontend]` in the consumer manifest. This override wins over the source.
 
-- Command safety reads the command and working directory together, which reduces process starts per shell call.
-- Pass empty shell commands without an error on macOS, and use the caller's directory when the payload omits it.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.iced]` in the consumer manifest. This override wins over the source.
 
-#### decider
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.maintainer]` in the consumer manifest. This override wins over the source.
 
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+- Reduce settings-load shell work when the parent exports many variables.
 
-#### frontend
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.planner]` in the consumer manifest. This override wins over the source.
 
-- The frontend agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.frontend]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.researcher]` in the consumer manifest. This override wins over the source.
 
-#### github
-
-- A queued pull request keeps its queue position when a lane runs the direct merge attempt while GitHub still computes mergeability or cannot read it.
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
-
-#### harness-ci
-
-- Clarify that proof reuse excludes runner utilities whose versions cannot change a check's verdict, such as `timeout` or a container runtime running a tree-pinned image, from mutable tool inputs; tools whose output the check judges remain mutable inputs.
-
-#### iced
-
-- The iced agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.iced]` in the consumer manifest. This override wins over the source.
-
-#### jarvis
-
-- Add Jarvis with a standing persona, task references for delegated decisions, result checks and user communication, and a guide to personal skills and memory.
-- Jarvis adds task references for long sessions, memory, computer use, browser work, accounts, secrets and research.
-- Jarvis setup distinguishes a plain folder from an app-managed home and prevents a persona paste that would load the text twice.
-
-#### lane-mail-check
-
-- Mailbox discovery starts no process for each mailbox directory. Overseer delivery reuses the state path from its identity read.
-- Keep the mailbox check working on macOS when the identity read returns an empty state path.
-
-#### lane-mail-deliver
-
-- The delivery hook uses Bash to find its companion hook directory, which reduces process starts per tool call.
-
-#### lane-mail-halt
-
-- The halt hook uses Bash to find its companion hook directory, which reduces process starts per tool call.
-
-#### linear
-
-- Comment reads include the author's email. Issue lists accept an assignee email, and issue updates can remove the assignee.
-- A leaf issue can wait on an issue in another bundle. Blocking relations still refuse ancestor pairs and cross-bundle blocked containers. Structural repair keeps a completed leaf wait.
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
-- Completion help explains that release verification in the item's merge repository waits for a release that contains its latest merge commit.
-
-#### maintainer
-
-- The maintainer agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.maintainer]` in the consumer manifest. This override wins over the source.
-
-#### orch
-
-- Read one mailbox with `lane-mail events --box` and filter envelopes after a logical line number with `--after`, including after compaction.
-- Owner asks can assign and label their Linear item. The watch reads the person's comment once, and closure clears the assignment and label. Reports link the items that wait on the person.
-- `oversee-succeed --print-launch-line --entry harness:model:effort` prints a chosen successor's launch command with account selection, flag translation and folder trust. It refuses when that entry cannot run, without falling back to the caller's harness.
-- `oversee-succeed --print-launch-line --brief-file PATH` puts a caller's one-line brief in the launch command for Claude, Codex, Copilot, or Pi, including a named `--entry`. Briefs that start with `-` or `=` keep their text.
-- A ceo question to the owner shows each option as a bold line with Gains, Costs and Odds bullets, so a phone reader of the Slack post can tell the options apart.
-- A Claude cloud lane applies the repository formatter safe fixes to the files it changed before each commit.
-- Sequencing guidance uses the Linear blocking rule for cross-bundle waits. Bundle launches check current external blockers on pending child work.
-- Control-host subagent briefs forbid busy waits and assign private scratch directories for extraction and cleanup.
-- Owner reports put each item and figure on its own line. The summary limit counts item lines and defaults to 20. Long items and excess item lines produce an advisory notice after sending the report.
-- `lanes pick` judges an account the host provider marks `seat=1` as an overseer seat, including a seat held on another machine.
-- The fleet watch closes merged hosted lanes after two idle passes when their worktrees are gone, so finished lanes release their sandboxes.
-- The CI wait after a fix push counts only required checks, so an optional check failure does not start another fix round.
-- Fleet log writes through `workflow-state append` now refuse before changing state and direct callers to `append-file`, which stamps the record time.
-- Keep a local lane's close-out notices readable from its main checkout after worktree removal. Require close-out notices after removal so deletion cannot erase unread mail.
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
-- Let waiting lanes use overseer accounts above a configurable capacity reserve, return those accounts last, and hand running lanes off when they reach the reserve.
-- Direct missing-overseer mail refusals to `oversee register` and the remote host's checkout.
-- A successor launch starts the fleet watch when its stopped predecessor left a pre-1.0 or missing retained command, instead of failing with `watch-restart-failed step=argv`.
-- Accept measured process counts in performance QA without a false instrument-failure declaration.
-- Queue waits report `pr-view-failed` when the budget expires without a successful pull request read. A transient GitHub failure no longer reports the pull request as never armed.
-- Release verification in the item's merge repository starts at the first matching release that contains its latest merge commit.
-- Review-body findings use the same triage and recurring defect class checks as review threads.
-- Round checks record start, end and validation times automatically. `oversee-cycle stages ITEM` shows running lanes, resumed rounds and pushed restack validation runs.
-
-#### planner
-
-- The planner agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.planner]` in the consumer manifest. This override wins over the source.
-
-#### preflight
-
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
-
-#### project-management
-
-- Planners and audits use the Linear blocking rule. Roadmap output and issue creation keep a leaf's cross-bundle wait on that leaf.
-- Admit post-merge checks only for deployment, live use over time or a person's check, with readable evidence and a sample that occurs within the verification window.
-- Keep container parents in triage and backlog audits when they state one outcome for their children and hold no requirements or pull request of their own.
-- Release verification requirements start at a release that contains the item's latest merge commit when the release uses its merge repository.
-
-#### researcher
-
-- The researcher agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.researcher]` in the consumer manifest. This override wins over the source.
-
-#### review-gate
-
-- The Copilot request job uses `CI_RUNNER_2V` where it resolves and falls back to `ubuntu-latest`.
 - Consumer refresh pull requests carry the root manifest schema edit before refresh when the engine's schema is one above the committed value.
-- Skip the automatic Copilot request job on merge groups and draft pull requests before allocating a runner.
 - Consumer refresh uses the fetched default-branch tip when the branch advances after checkout, instead of stopping with `refresh-error=default-moved`.
 - Consumer refresh merges a clean pull request on its pushed head when GitHub refuses the auto-merge request.
-- The Copilot review request job skips lanes-app consumer refresh pull requests without allocating a runner.
 
-#### reviewer-arch
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-arch]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-arch agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-arch]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-correctness]` in the consumer manifest. This override wins over the source.
 
-#### reviewer-correctness
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-doc]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-correctness agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-correctness]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-error]` in the consumer manifest. This override wins over the source.
 
-#### reviewer-doc
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-perf]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-doc agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-doc]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-quality]` in the consumer manifest. This override wins over the source.
 
-#### reviewer-error
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-safety]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-error agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-error]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-security]` in the consumer manifest. This override wins over the source.
 
-#### reviewer-perf
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-test]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-perf agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-perf]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.runtime]` in the consumer manifest. This override wins over the source.
 
-#### reviewer-quality
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.rust]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-quality agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-quality]` in the consumer manifest. This override wins over the source.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.scout]` in the consumer manifest. This override wins over the source.
 
-#### reviewer-safety
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.swift]` in the consumer manifest. This override wins over the source.
 
-- The reviewer-safety agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-safety]` in the consumer manifest. This override wins over the source.
-
-#### reviewer-security
-
-- The reviewer-security agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-security]` in the consumer manifest. This override wins over the source.
-
-#### reviewer-test
-
-- The reviewer-test agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.reviewer-test]` in the consumer manifest. This override wins over the source.
-
-#### reviewer
-
-- **Breaking:** Linux mutation checks now require process-handle support. Upgrade your environment as described in [reviewer Setup](https://github.com/vanillagreencom/kendex/blob/main/skills/reviewer/README.md#setup). Mutation checks stop detached Linux processes before they remove the scratch workspace. They report cleanup failure and keep the workspace if safe cleanup is unavailable.
-- Document process-count evidence for performance QA without requiring latency measurements or an instrument-failure declaration.
-- Review findings can identify review-body sources by file and line.
-
-#### runtime
-
-- The runtime agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.runtime]` in the consumer manifest. This override wins over the source.
-
-#### rust
-
-- The rust agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.rust]` in the consumer manifest. This override wins over the source.
-
-#### scout
-
-- The scout agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.scout]` in the consumer manifest. This override wins over the source.
-
-#### second-opinion
-
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
-
-#### slack
-
-- Replies to messages the owner sends in the bound Slack channel post in their threads while the master hold is active; other mailbox posts stay held.
-- An owner ask on a tracker item posts one Slack line with the question and item link.
-- A running Slack relay takes changed master hold settings on its next poll without a restart. A failed settings read keeps that root's posts held while other roots continue.
-- Link Linear issue ids in Slack posts and relayed notices when workspace keys are available, including roots with no configured team.
-
-#### swift
-
-- The swift agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.swift]` in the consumer manifest. This override wins over the source.
-
-#### tpm
-
-- The tpm agent now requests the standard class whatever model the session runs: Opus on Claude Code, `standard` on Pi, and the session's model on Codex and Copilot when `[model-bindings.<harness>]` leaves the class unbound. To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.tpm]` in the consumer manifest. This override wins over the source.
-
-#### worktree
-
-- Reduce settings-load shell work when the parent exports many variables. Parent values keep their precedence over project files.
+- To keep the old behavior, set `model = "inherit"` under `[agent-frontmatter.<harness>.tpm]` in the consumer manifest. This override wins over the source.
 
 ## [1.14.4] - 2026-10-10
 
@@ -790,106 +170,26 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Pi package updates install runtime dependencies from a shipped package lock. An invalid new dev dependency no longer stops a locked install.
 - Linked worktrees now refuse cross-checkout project writes for guarded commands, including refresh, apply, and applying updates. The CLI answers the hook's capability question before startup writes so an independently updated hook can require this protection.
 
-### Packages
+### Changed
 
-#### block-worktree-refresh
-
-- Worktree advisories require one plain bare kendex call and its installed CLI project-write protection. Other plain project-writer matches retain baseline refusals, including PATH-changing compounds, prefixes and executable paths. Run the bare command from its project checkout. Non-plain text naming a standalone kendex word or a slash path ending in kendex, including quoted writers, titles, commit messages and heredoc data, passes silently in a linked or unknown checkout only after the installed CLI confirms its protection; otherwise the hook refuses with its update route. Other path and file-name occurrences, including lane paths and .kendex-lock.json, do not trigger that query. Known main checkouts and non-repositories pass without that query. This backstop covers accidental quoted and compound forms; the CLI guards actual writes, including deliberately hidden executable names. Plain global, read and preview commands pass. The hook never runs a proposed path.
-
-#### harness-ci
-
-- The CI template cancels superseded pull-request runs. The wiring guide adds native cache controls and the conditions for reusing complete lane proof.
-
-#### linear
-
-- Release trigger globs stored by Linear with Markdown escapes match release tags.
-
-#### orch
-
-- Reuse the watch's account roster for owed work on the same host. Resolve named launch lanes without listing account usage.
+- Worktree advisories require one plain bare kendex call and its installed CLI project-write protection.
 
 ## [1.14.3] - 2026-10-09
 
-### Packages
-
-#### block-bare-cd
-
-- Commands that write files through a here-document can contain a `cd` line without being refused. Bare `cd` lines outside a completed here-document still refuse the command.
-
-#### orch
-
-- Claude cloud sessions use a separate per-overseer cap, set by `ORCH_OVERSEER_CLOUD_LANES`. Cloud sessions no longer consume fleet lane slots. Their landing lanes still use the fleet cap.
-- Account records include their retirement date. `lanes list --cache-only` reads cached usage and credits without usage requests, token renewal, or provider account calls.
-- Wait for Copilot work before reading findings or requesting approval, close pending timeline work after a later Copilot review, and hold fallback notices while its review is running.
-- Progress reports list recorded direct pushes under Landed and count their items toward the report cadence.
-- Skip the successor account scan when an overseer has room and its qualifying mark cannot fire. Keep the below-mark result for this settled check.
-- Consumer refresh approval reads the latest proof from an unchanged consumer CI workflow and checks its engine version, pull request and measured diff. It fetches the remote proof commits without moving the checkout and accepts repeated matching range records. It accepts normal Actions log bytes privately. A different kendex build on the overseer host no longer rejects a proved refresh.
-
 ## [1.14.2] - 2026-10-09
 
-### Packages
-
-#### harness-ci
+### Changed
 
 - Consumer refreshes can prove adopted callers with preserved environment and secret mappings as render changes. Edits outside the accepted configuration still require standard review and product checks.
-
-#### orch
-
-- The overseer watch reports a Claude cloud lane when its pull request leaves draft or its account has no credit. Finished lanes wait for landing and bypass the stall close.
-- Cloud lane closes record the session and account together so the owner can archive finished sessions by account after later launches.
-- Review checks reject files with multiple JSON values before state import. An older review file cannot replace this rejection.
-
-#### review-gate
 
 - Refresh caller instructions describe the mappings adoption preserves and cite the adoption contract for accepted mappings.
 
 ## [1.14.1] - 2026-10-09
 
-### Packages
+### Changed
 
-#### dev
-
-- Dev rounds run each added or changed test file alone and fix failures before the validation run. Investigation runs remain available under the dev skill's validation rules.
-
-#### github
-
-- `pr-merge` distinguishes a failed mergeability read from GitHub still computing. Failed reads keep GitHub's error or exit code while preserving the existing retry route. Merge summaries and classifier help describe both causes.
-
-#### linear
-
-- Post-merge checks accept merge, UTC time, and release triggers with deadlines tied to the trigger.
-
-#### orch
-
-- Set `ORCH_ARCHIVE_ROOT` to choose where state cleanup and SSH lane close save archives. The default archive location stays the same.
-- **Breaking:** Lane preferences can select a host per entry. Claude cloud hosts now require cloud credit and no longer use weekly plan credit. Repositories with a Claude cloud grant can spend it first and fall back to Codex when the grant is exhausted, locked, expired or unavailable for the repository. To keep plan-credit fallback, add an entry without a host or with a plan host after the cloud entry.
-- **Breaking:** Golden-baseline capture, commit and push now require a baseline policy in `[skill-instructions].orch`. A CI skip requires a separate baseline-only CI exception. Consumers must select their capture criterion, visual QA target and approval, host and isolation gate there, and select the exception and its commit subject separately if needed.
-- **Breaking:** Development rounds call Cargo cleanup only when the consumer selects that cleanup policy. Consumers that need it must select the policy in `[skill-instructions].orch`; selected cleanup keeps the existing threshold, owned target scope and failure handling.
-- The watch lists due verification checks each pass. Failed checks keep merged items in Verifying with a blocking fix item.
-- Confirm an existing app approval after a failed GitHub review POST. Report an unconfirmed read separately so overseers check reviews before approving again.
-- Claude cloud lanes commit and push each finished part of their work. Cloud reviews and audits launch as recorded lanes, so a session that runs out of credit or time can leave its partial report on the item branch.
-- Fallback approvals wait for Copilot reviews already queued or running on the same head. A completed review returns to the review-reply check before approval. The hold has a configurable time limit.
-- Post-merge skips refresh and verification when the adopted refresh workflow owns the outputs, keeping the base checkout clean for the next merge.
-- Lane selection and account listing parse account settings once and reuse directory identities, so larger retirement lists do not start more commands for each account.
-- Merge guidance covers a failed mergeability read and GitHub still computing. Existing retry and merge routes stay unchanged.
-- Keep parked lanes while their recorded pull request is open, and resume merged lanes whose Done item still has an unchecked completion box. Retain PR identity through recovery so a failed resume cannot close a lane whose PR is still open.
-
-#### project-management
-
-- Post-merge checks name their evidence trigger and require readable evidence inside the deadline window.
-
-#### review-gate
-
-- Organization-wide immediate refresh dispatch moves to fleet through `fleet repos kendex-refresh`. Consumer scheduled refresh, manual refresh and the `kendex-refresh` event receiver remain available.
+- Consumer scheduled refresh, manual refresh and the `kendex-refresh` event receiver remain available.
 - Consumer refresh settings reports keep model selection in the consumer's model and provider configuration.
-
-#### reviewer-correctness
-
-- Correctness reviews check changed views for accessibility, read record producers, and inspect async targets and branches shared across modes.
-
-#### reviewer
-
-- Reviewers read the documents that repository Read-when lines route to each changed path and cite rules they find breached.
 
 ## [1.14.0] - 2026-10-09
 
@@ -907,97 +207,14 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Read and edit single-line TOML literal settings in the desktop app, keeping backslashes and valid quote delimiters. Private credential file selection also accepts these settings.
 - Settings pickers distinguish literal backslashes and double quotes from whitespace and empty values.
 
-### Packages
-
-#### commit-guards
+### Changed
 
 - Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### decider
-
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### deep-research
-
-- Accept single-line TOML literal strings in project settings, so a literal policy does not stop research commands.
-
-#### doc-limits
-
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### docs-writing
-
-- **Breaking:** Documentation rewrites migrate hand-written harness rules only when the consumer selects a migration policy and authorizes the affected files. Add the policy to `[skill-instructions].docs-writing` before an instruction migration.
-- Documentation rewrites follow the selected project's refresh owner and lane permissions when kendex-owned inputs change. Ordinary local checkouts with no declared owner or recorded lane run refresh and verification directly.
-
-#### github
-
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### lane-mail-check
-
-- Refuse an overseer's turn end when its succession reader follows an old log. Name the live watch log so the overseer can restore event delivery.
-
-#### linear
-
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### orch
-
-- Relaunch a walled lane from the watch on an account with room for its model. Preserve its launch choices and report `lane-relaunched` without requiring an operator launch action. Report failed launches even when their windows stay open. `ORCH_WALL_RELAUNCH=ask` reports the wall for the overseer to handle.
-- A stalled Claude cloud lane now records the cause of its stall: each directive sent to its session leaves the send's result, the CLI's words and the account's cloud credit (`remaining_dollars`, `locked_reason`) on the lane record as `directive_send`, `oversee-watch` closes a lane whose directive stays unanswered for `ORCH_CLOUD_STALL_MINUTES` (default 30) as `cloud-stall-closed` for a hosted relaunch on its branch, and `lane-close` writes that cause into the lane's fleet-log close row.
-- **Breaking:** Hosted watch mail passes read all lane mailboxes in one provider call per host. Providers must implement the `read-many` verb.
-- Scope a fix round's re-review and verification panels to the domains the fix diff touches and the defect classes it fixed, and refuse a panel copying every first-panel reviewer unless it says, per reviewer, why the fix diff concerns that domain.
-- **Breaking:** Post-merge retains checkout changes instead of restoring tracked files or removing new files. Route refresh through the declared repository owner and let that owner handle pending outputs. Local fleets with workflow-owned refresh use `post-merge --command-only` to synchronize and run their configured command without local refresh. Hosted control checkouts receive committed outputs through sync-base; refresh-only is reserved for an authorized owner outside the control host.
-- All-suite validation uses required pull-request CI when the classifier falls back to its conservative standard class. Local fallback records include the cause.
-- The succession helper and the restarted fleet watch each write their keyed lines to `oversee-watch.err` in one write, so neither line arrives torn by the other.
-- The overseer watch no longer reports an issue or pull request as an outside contribution when its author holds admin, maintain or write on the repository, so a private organization member's issues reach triage like any other fleet item.
-- `reconcile-work-items` reports an In Review item whose linked pull requests have all merged as `merged-in-review` on every sweep, whatever its age, with the `issues complete --post-merge-at` fix; before, only `started-stale` caught it, after a day with no update. Failed pull request probes report the issue and retain error details instead of reporting a clean sweep.
-- Let a consumer route its own kendex refresh pull request to the overseer instead of Copilot: `approval-wait --request-review` now answers `fallback cause=refresh` and sends no Copilot request for the head branch and app author the consumer declares in `REVIEW_GATE_REFRESH_REVIEW`, `REVIEW_GATE_REFRESH_BRANCH` and `REVIEW_GATE_REFRESH_AUTHOR`.
-- Stopping a repeat fleet watch run as a systemd user unit always removes its pid record, so the next start no longer reads a stale claim from that watch.
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-- Terminal launches in connected repositories use the overseer's fleet limit. Custom local terminal commands refuse an observed account mismatch.
-- Require a succession reader to follow the live watch log when arming repeat watch delivery.
-
-#### pre-commit-check
-
-- Commit checks distinguish bypass options from messages and Git data. A hook-path change before a bypass commit in the same command requires separate commands. Missing setup names the consent or main checkout owner route. Reader failures report an unavailable check and allow the command.
-
-#### preflight
-
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### review-gate
 
 - Consumer refresh accepts a declared protected environment with a complete `KENDEX_APP_ID` / `KENDEX_APP_PRIVATE_KEY` or `FLEET_GH_APP_ID` / `FLEET_GH_APP_PRIVATE_KEY` pair. Adoption preserves its environment and fixed mappings. Existing FLEET callers remain accepted; legacy secret-name inputs are ignored.
 - Environment data errors report the exception type without printing input values. Failed adoption reads terminate explicitly.
 - Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
 - Consumer refresh adoption refuses repository and organization Actions copies of its fixed credentials. Outside values cannot replace or complete the protected environment's pair, including credentials for optional upstream issue reporting.
-
-#### second-opinion
-
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
-
-#### session-drift-check
-
-- Ordinary worktrees keep actionable drift advice. Recorded lanes follow the declared refresh owner and retain explicit refresh-lane permissions.
-
-#### slack
-
-- Slack shows the chosen question option for an answer delivered by a program, without the program's raw record.
-
-#### worktree-prompt-claim
-
-- Blocks Claude prompts when the required worktree claim fails.
-
-#### worktree-session-claim
-
-- Required worktree claims block Claude prompts through the companion prompt hook and accept verified issue adoption from the same environment owner.
-
-#### worktree
-
-- Keeps required Claude prompts working after a workflow adopts the session's worktree lease under its issue ID.
-- Accept single-line TOML literal strings in project settings. Preserve backslashes as text so a valid literal no longer blocks settings reads.
 
 ## [1.13.0] - 2026-10-09
 
@@ -1016,52 +233,12 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Pi refresh prompts distinguish installs from updates and identify project or user packages. Declining a scope leaves it unchanged, keeps earlier project results, and permits later user updates. Duplicate-package notices explain why Pi cannot start and let you choose which copy to keep.
 - Plans, removal messages, verification remedies and editor saves in source-catalog projects name `kendex-local.toml`, where the project's declarations are stored. Existing custom hooks keep their recorded source identity when refreshed, changed or disabled.
 
-### Packages
-
-#### bot-instructions
+### Changed
 
 - With `codex = false` in a configured `[bot-instructions.bots]` table, `render`, `check` and `adopt` now report an `orphan` finding for each `## Code Review Rules` section of `AGENTS.md` that opens with this package's marker, however many such headings there are; before, a marked section under a second heading went unreported while Codex still loaded it.
 - A manifest with no `[bot-instructions]` table no longer hides the bot files this package rendered: `render`, `check` and `adopt` name each marked file or `AGENTS.md` region still in the tree as an `orphan` finding, under any number of `## Code Review Rules` headings, and refuse as `unconfigured` only when none remains, with a second `bot-instructions: renders=none` line that says so.
-- Fix the macOS file-check test while keeping device and FIFO refusal controls.
-
-#### commit-guards
-
-- Let commits through when bot-instructions is installed, the manifest has no `[bot-instructions]` table and no file the package rendered remains. The pre-commit chain prints `not-adopted=` for that lane and passes, but only when the package's refusal carries its `bot-instructions: renders=none` line; an older bot-instructions copy without that line still blocks, and the chain prints `unattested=` naming that copy as the cause, to be fixed by updating bot-instructions. Every other bot-instructions refusal still blocks the commit.
-
-#### github
-
-- Merge checks include the current required workflow's jobs in the consumer repository after proof of the configured source. Optional jobs with the same name stay optional. Optional failed, pending or queued checks no longer block a merge. Pending required workflows hold the merge, and unreadable workflow results refuse it even when visible jobs pass.
-
-#### harness-ci
 
 - Prove refreshes in partial clones, identify a missing source commit with its fetch remedy, and verify adopted refresh callers against their pinned released template.
-
-#### linear
-
-- Resolve issue project names within the issue team. Refuse duplicate live names and list each project with its team.
-
-#### orch
-
-- Codex lanes count finished threads against the thread cap and reuse eligible threads for review and fix work before reporting a capacity blocker.
-- Overseer launches start a detached fleet watch that survives session exit. Automatic death and wall recovery keep a watch for the successor and preserve the fleet start for new-item triage. Sessions read its log without taking a second watch claim.
-- Make the queue waiter retry tests independent of runner delays, so CPU contention does not cause false authentication failures in the skill test suite.
-- Make the lane-state test wait for its process fixture to finish renaming itself before reading its state, so a loaded runner no longer fails the orch-state skill tests.
-- `review-artifact-check` judges a performance artifact that declares `metric_kind: "instruction_count"` on its `instruction_counts`, refusing missing, empty or all-zero counts, instead of rejecting it as `zero_sample` for lacking latency percentiles it never measured; latency percentiles are required only for latency metrics, and an unknown `metric_kind` is refused.
-- Preserve every line of local Codex, Claude and Pi file briefs when the terminal shell starts slowly.
-- Replace an overseer whose harness reports an expired login on the first watch pass. Send lane login failures through the existing wall recovery route. Skip Claude accounts whose refresh login has ended when selecting a new session.
-- Prime source mirrors before the consumer refresh approval classifier runs.
-- Required-only CI waits ignore optional failed, pending or queued jobs, including jobs with the same name as required jobs after required workflows pass. Pending required workflows and unreadable results hold the wait even when visible jobs pass.
-- Accept a fix round's validation record when its run commit contains the restack-mapped round base.
-- Refuse to launch an item whose body names no Location: `item-tier --body` exits 1 with `item-tier-error: cause=no-location` instead of answering `tier=standard` on a size guess, and the overseer sends the item back to filing for a per-subsystem split.
-
-#### worktree
-
-- `worktree push` republishes a branch after a bare rebase when every remote commit has one exact local match in changed paths, modes and complete before/after file contents. Push and restack refuse moved edits, whitespace changes, same-file base updates, incomplete evidence, ambiguous matches and failed comparisons. The push pins the remote commit it read and refuses a later remote change.
-- The session guard reference distinguishes the session-start hook's default advisory mode from its optional required-claim mode and points to the hook declaration for each harness's refusal or advisory support.
-
-#### worktree-session-claim
-
-- Set `KENDEX_WORKTREE_CLAIM=required` in the session environment to stop Codex when the worktree lease cannot be claimed. Codex receives its supported SessionStart stop answer. Claude, Pi and Gemini receive nested advisory context. Copilot receives top-level advisory context. The hook clears inherited Git repository overrides and limits claim diagnostics to their first 4096 bytes.
 
 ## [1.12.2] - 2026-10-08
 
@@ -1073,83 +250,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Adding a package keeps unrelated installed packages and shared dependency files unchanged. It keeps their file records for verification and commit ownership. It refuses dependency version conflicts across coding tools before writing, with the conflicting package and both source commits. It also refuses an install position occupied by another retained package. The first project Pi output style also keeps global Pi instructions.
 - Refresh, Updates and Library reuse each catalog snapshot's receipt validation within one operation instead of hashing the full catalog for each package.
 
-### Packages
-
-#### bot-instructions
+### Changed
 
 - The checker can report verified regular output files for refresh classification, including disabled installations, and refuses output links.
-
-#### commit-guards
-
-- The default commit checks accept binary files without a size limit. Add `byte-ceiling` to `COMMIT_GUARDS_CHECKS` to enable the binary-size check.
-
-#### decider
-
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
-
-#### dev
-
-- Codex artifact-backed dev delegation points callers to the round wait that keeps their turn active until the completion artifact or deadline.
-
-#### github
-
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
-
-#### harness-ci
 
 - Refreshes that only regenerate Copilot instructions can classify as rendered changes after the trusted checker verifies them.
 - Generated-file refreshes keep the render class with released kendex verifiers that lack `--bot-instructions-from`. Whole Copilot instruction ownership requires a verifier that supports the option.
 
-#### linear
-
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
-
-#### orch
-
-- Closed lane records retain the start and end of each implementation, review and fix stage. Cycle reports show these times without reconstructing them from status messages.
-- The fleet watch reports long-running lanes after 3.5 hours by default. Its event includes recorded review rounds and patch rounds that repeat a finding class.
-- Cloud session launches keep a local Git claim without a source checkout, reducing disk use on the control host while retaining branch pushes and session mail.
-- Approval waits with `--item` retry a Copilot error review once per head. These waits keep the retry record across restarts. A second error asks the overseer for fallback approval.
-- CI waits reset confirmation after a commit change and reject failed latest Actions runs that the pull request's check list omits.
-- Send mail through the hosted lane's recorded provider and require its recorded mailbox root, so a different provider or root cannot receive mail with a false sent receipt.
-- Refetch cached account usage when a consumed bucket resets, so account selection and overseer succession use the reset capacity.
-- Hosted SSH lanes give scripts and hooks their own workflow state directory. Recovery, delegation, host reads, and close archives use that state.
-- Codex lanes wait for artifact-backed dev round completion in the same turn with either supported timeout command. CI fixes keep their return-message-plus-pushed-commit rule. The watch reports an idle Codex lane after a submitted turn on its first long pass.
-- Keep responsive reviewers running required mutation and stability measurements on the test-review deadline, regardless of agent name.
-- Close parked and stopped lanes when their tracker item is Done or Canceled, after recording a detected merge cycle. Resume open parked items for post-merge work. Report a sandbox close refusal once per lane record and tracker state.
 - Changes to the trusted bot-instructions checker require the merge queue and full checks because that checker can grant the rendered-change classification.
-- Hosted SSH lanes hide selected private settings files, their link targets, and provisioned copies, including accepted copy paths through directory aliases, in the clone and current worktree during dependency installation. Files and links are restored on success or failure. Installation refuses missing copy-path support or an older settings loader before project settings load, and refuses a private target outside both checkouts.
-- Codex callers keep reviewer watchdog waits in the current turn, so a delayed review artifact can continue the review without an external wake.
-- SSH lane hosts keep lifecycle work on its lock-owning connection, refuse success after connection loss, and bound shutdown of a stalled connection, so unfinished creation cannot be reported as an absent sandbox.
-- Report failed main-push Skill Tests runs to the overseer with the failed jobs and first failing suite line.
-
-#### preflight
-
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
-- Treat EXIT traps inside here-document bodies as data on Bash 3.2 and Bash 5, so preflight reports missing parent-script cleanup.
-
-#### review-gate
 
 - The consumer refresh workflow requests checks for kendex changes every 6 hours after adoption. Merges into kendex no longer dispatch a refresh. GitHub can delay, drop or disable scheduled runs. Run the catalog's dispatch workflow by hand when a fix cannot wait.
 - Consumer refreshes publish an unmeasured standard class through full review and CI instead of stopping before publication.
-
-#### reviewer-stop-check
-
-- Keep required review reports when another agent changes tracked files during a review. Attribute tracked edits from the reviewer's successful file changes instead of file times.
-
-#### reviewer
-
-- Clarify that reviewer completion checks preserve the required report and require evidence for tracked edits.
-- Completion polling accepts either supported timeout command and keeps the caller active until the job records its exit.
-
-#### second-opinion
-
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation.
-
-#### worktree
-
-- `worktree create --no-checkout` creates a fresh remote-work claim without source files. Push keeps its creation snapshot. Local reuse checks out its files, gets cloud commits, and applies project setup. Existing-branch and PR inspection require a full checkout.
-- Settings loading can report the private file it read and declares this capability before project settings load so callers can protect credentials during dependency installation. Shared setup-path parsing lets callers protect the same copy paths that worktree setup provisions.
 
 ## [1.12.1] - 2026-10-08
 
@@ -1169,83 +280,16 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `kendex verify` on a kept retired item whose installed files are gone or edited now names the item's kind, and `--global` for a personal-setup item, in the removal it suggests, as it does for a left-over item, so following it no longer also removes a live item of another kind with the same name.
 - `apply`, `refresh` and `updates --apply` with `--project-path` no longer add a linked git worktree, or a repository nested in one, to your projects, so removing the worktree leaves no stale entry in the app's Projects list or `kendex project list`; the run prints a `worktree-not-listed=PATH` line instead, and `kendex project add PATH` still lists a worktree you want to keep.
 
-### Packages
+### Changed
 
-#### commit-guards
-
-- The commit guards block only what the committer can fix. conflict-markers and md-format no longer judge a render `.kendex-generated.json` lists. Outside CI, an inventory the lanes cannot read turns their findings into `owner-unknown` warnings. md-format fails a fence or block left open. md-refs names a file it cannot read `unjudged` and refuses it only under `--strict`. py-names prints a `gap` notice when no ruff or pyflakes is usable, and a CI range or `--all` scan still refuses. The batch and the pre-commit chain name a check or companion script the package lacks as `package-incomplete` and skip it. In a linked worktree, `install-git-hooks` writes nothing and reports whether the main checkout armed the hooks, exiting 1 when it has not. The `core.hooksPath` notice points to the setting's owner.
-- The secrets check completes in a terminal when Bash updates its row count during the scan.
-- md-refs reads `COMMIT_GUARDS_MD_REFS_PATHS_EXTRA` and `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA`, globs added to the shipped document and source lists or to the values replacing them, so a project adding one path no longer restates the rest.
-
-#### decider
-
-- `decisions check` judges a missing Revisit When condition only on INDEX rows the change adds or edits against the base branch, including Date and Link text edits. Untouched legacy rows whose cell reads `None` pass; with no readable base every row is still judged.
-
-#### docs-writing
+- In a linked worktree, `install-git-hooks` writes nothing and reports whether the main checkout armed the hooks, exiting 1 when it has not. The `core.hooksPath` notice points to the setting's owner.
 
 - Correct Claude Code instruction guidance: kendex writes no CLAUDE.md and leaves existing root and nested imports with the project.
 
-#### harness-ci
-
 - Consumer refresh CI publishes the measured change class and skips product jobs after render proof. New generated files reach that proof through a prerequisite-only candidate. CI installs the latest released engine instead of a fixed older build.
 
-#### linear
-
-- Issue lookup hints omit ignored arguments from bulk reads and name `--with-bundle` for bundle reads.
-- Complete merged items to Verifying while a post-merge checklist box remains open, and to Done after the last box. Validate each box deadline against the real merge time.
-
-#### orch
-
-- A scope directive that reaches a lane while a dev or fix round runs now goes into the round's durable brief and counts as delivered only once the dev agent's transcript shows it. One still unconfirmed at the next watchdog return stops that agent and re-delegates the round through the new `round-recover --directive-unconfirmed`, which ends the worktree's validation runs, then always mints a fresh round id, whatever the agent reported or is still running, and spends no stall recovery; a run it cannot end refuses the re-delegation. A re-delegated fix round records the updated scope's items and protected additions, not the earlier round's. The lane's notice to the overseer says "confirmed in the dev agent's transcript at [TIME]" or "unconfirmed, re-delegating" instead of "reached" on a send.
-- Route green lanes-app refresh heads to overseer app approval without an owning lane, repeated agent reviews or a Copilot wait. Render proof and same-head CI remain required.
-- A lane claim store several fleet users share on one host now works across homes: claims are written group-readable, a claim whose tmux server another account owns is kept and counted instead of deleted, and `lanes` counts claims by account name, so one account reached from two homes is charged once with every claim on it.
-- oversee-watch prints an open security alert again, with `report=repeat`, on every long pass that reads `alerts_triaged` and the alert's own list, until `alerts_triaged` records its verdict or the alert closes, so an alert whose first line fell to an overseer succession or lost context is no longer left silent; a failed read or a scanning feature turned off prints no repeat for that source, and a repeat does not itself end the watch run.
-- oversee-watch repeats `directive-unread` every `ORCH_OVERSEER_MARK_REPEAT` mail passes while a reported directive stands unread, with its age counted from the send; `directive-read` still ends the repeats.
-- The `CI_WAIT_NO_CHECKS_GRACE` default the orch settings template declares is now `600`, the grace `ci-wait` waits when the key is unset, instead of `180`, so saving the template's defaults no longer shortens the no-checks grace. `ci-wait` now waits the full grace in seconds from the start of the wait (or from the first empty poll after checks vanish) rather than ending it up to one poll interval early, reports the no-checks error rather than a pending timeout when the grace ends on its `max_wait` deadline, reads a leading-zero value such as `090` as 90 instead of aborting, and its help and the template state that an empty or non-numeric value waits the default.
-- `oversee-succeed` at the context mark keeps an overseer's own account when the account policy admits it, it remains unmeasured and no account with room is found, so a Copilot overseer with an unreadable login opens its successor on its own pool instead of refusing `no-lane-qualifies` or moving to Claude; the run prints `successor-account-unmeasured` and writes one fleet-log row.
-- All-suite validation uses PR CI or scoped suites. CI checks decision ID collisions. Reused timeout evidence requires the current finding prefix.
-- Keep review and CI time out of the armed phase when a pull request arms before both checks are green. Ignore green stamps outside the pull request's open-to-merge span when placing the arm.
-- SSH lane close archives workflow state on macOS without a BSD tar error.
-- Hosted mailbox reads reuse SSH connections and skip repeated host probes for absent files.
-- Keep merged work with open post-merge checks on the same Linear item in Verifying. The watch lists each check and deadline, raises overdue events, and reconciliation reports overdue or empty verification.
-- SSH lane creation keeps the clone's private environment file absent during dependency installation and restores it when the install succeeds or fails.
-- CI validation respects the repository selector before it skips local checks. The selector receives the current fix round's changed files and base.
-
-#### preflight
-
-- The `mktemp-trap` lane reads an EXIT trap whose quoted action spans several lines, so a script with such a trap is no longer reported as leaving its scratch behind.
-
-#### project-management
-
-- Require branch proof before merge and keep post-merge checks on the same item with a named reading, location, reason and deadline within three days after merge.
-
-#### review-gate
-
-- Consumer refreshes waive product CI after render proof. The watcher reports green refresh heads for app approval. The central workflow requests Copilot for other PRs and warns on request failure.
-- The organization-standard report accepts the pinned kendex Copilot workflow after migration and retains native Copilot rule support.
+- Consumer refreshes waive product CI after render proof.
 - Consumer refresh disarms an armed rolling pull request before it pushes a new head, so the old arm cannot merge that head before its review; a disarm GitHub refuses stops the run.
-- The organization-standard report's ruleset-source row requires the organization `workflows` rule for kendex's `request-copilot-review.yml`, judged by repository and path at any pin, and no longer requires the native `copilot_code_review` rule.
-
-#### reviewer-stop-check
-
-- `reviewer-stop-check` now holds a reviewer whose named review artifact does not exist or is not JSON (`artifact=unreadable`), where a mere mention of the path used to pass, and holds a reviewer only for paths changed since the review started rather than for every dirty path. The start is the timestamp of the subagent transcript's first entry when that entry is the launch record (Codex's `session_meta` or Claude Code's prompt). A path counts as changed when its change time, a deleted path's directory's change time, or for a staged change the index's change time is not before the start. A submodule row, a quoted path and a path whose time cannot be read always block, as does every dirty path where no start can be read, Copilot among them. The author's deletion beside a file the reviewer created and removed, and the author's staged changes after a reviewer's `git status` refreshed the index, can still hold the reviewer for one stop.
-
-#### slack
-
-- `slack setup` without `--name` now names the channel `<person>-<repo>-<side>`, such as `bradm-kendex-vm`: the person from the new `KENDEX_USER_HANDLE` (else the local part of `KENDEX_USER_EMAIL`, said once on stderr), the repository from `origin`, and `vm` or `local` from the orch lane host, so two people's overseers of one repository no longer collide. Setup also writes the channel's purpose where it is empty (who oversees what and where, the GitHub description's first sentence, the repository and the Linear board), never over one already set. A checkout already bound keeps its channel and the channel's current name.
-
-#### task-completed-check
-
-- `task-completed-check` lints only the workspace members that own the changed Rust files and the members that depend on them, not the whole workspace. A file moved between members counts for both, and a Rust file outside every member's source directories lints the whole workspace. Only compile errors and deny-by-default lints refuse the completion; warnings complete the task and show under a `warnings=<count>` notice. A missing `cargo` or `jq`, or a git that cannot list the changed set, no longer blocks the task: it completes with one `missing-tools=` or `git=` notice saying the change was not checked.
-
-#### worktree
-
-- `worktree push` of a branch other than the default refuses with `worktree-push-base-fetch-failed` when its fetch of origin's default branch fails, instead of judging the branch contained or merging cleanly against a stale base and pushing it unrebased.
-- A paused restack now holds a conflicted script a declared harness hook executes, such as the lane-mail script the lane-mail-check hook runs, as it holds the libraries a hook sources, so the hook keeps running until the restack continues, skips or aborts.
-
-#### worktree-session-claim
-
-- The workflow and orchestration bundles install the session-start hook that gives a session opened by hand in an issue worktree a cleanup lease.
 
 ## [1.12.0] - 2026-10-07
 
@@ -1256,8 +300,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ### Changed
 
-- Merge groups reuse passing macOS tests for an unchanged pull request patch. Ubuntu tests still check the integrated tree. macOS tests run again after merge to detect failures from combined changes.
-- Building the desktop app's interface from source no longer prints the ineffective-dynamic-import and chunk-size warnings.
 - `kendex check` in a linked worktree that carries its own manifest offers `kendex update-pi --scope project` as a fix that runs there. In a worktree whose project is the main checkout's, every fix that writes it, `--project-path` forms included, is marked as the main checkout's refresh owner's to run there, and the next step says so; `kendex apply --plan` and `kendex updates` still run where you are.
 
 ### Removed
@@ -1276,214 +318,29 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Unsubscribing a marketplace transfers packages a surviving bundle carries to that bundle's source, so later audits avoid a source conflict in both remove and keep modes.
 - Consumer refresh gives a first mirror clone a longer timeout and one retry after a stalled or failed transfer.
 - pi-hooks: Codemode scripts retain structured tool output when PostToolUse hooks add context.
-- pi-output-policy: Codemode scripts retain structured tool output when the display is shortened or details are capped.
 - `kendex remove --keep-declaration` leaves kendex.toml untouched in a project whose kendex.toml still names an agent by a retired name. Before, the run renamed that setting and dropped the removed item's declaration while printing "kendex.toml unchanged".
 - `kendex remove` records a removal that has nothing installed to take: a declaration a refresh withheld leaves kendex.toml, a dependency already taken off disk with `--keep-declaration` is written to `[suppressed]`, and an optional extra chosen by hand is taken back. Before, it printed "Nothing removed" and the next refresh installed the item.
 - Pi package updates report unresolved sources and unreadable manifests as not evaluated, update other packages, and exit with an error.
 - Verification names scoped refresh actions for stale packages and missing recorded commits. JSON keeps version 1 with optional action metadata. Base revision failures carry no refresh action.
-- Mailbox wake tests cover delivery of overseer answers to idle Pi lanes.
-- Pi hook maintainer documentation delegates mailbox decisions to the lane-mail hook.
-
-### Packages
-
-#### block-worktree-refresh
-
-- `kendex update-pi` passes in a linked worktree whose project holds its own manifest, as every other writing verb does. A `--project-path` on `refresh`, `apply` or `updates --apply` is judged by the project it names: the main checkout of the same repository (`shared=`), a project with no manifest of its own (`refused=`) and a path the command does not spell plainly (`unproven=`) are refused. Without the commit-guards command reader, a command naming no kendex passes, a plain `kendex` command of its own run outside a linked worktree passes with a `missing-library=` report handed to the agent as context, and every other kendex command is refused, naming the main checkout or the plain spelling as the fix.
-
-#### bot-instructions
+### Changed
 
 - Stop stamping a package version into the generated-file marker, so two changes to the package no longer conflict on every marker line; a refresh rewrites only that line.
-- Define architecture guidance by the reader's task and the harmful mistake it prevents.
 
-#### code-quality
+- `install-git-hooks --check` compares script checksums.
 
-- A UI reference, `references/ui.md`: the polish bar a changed view is built to and judged against, in any UI stack, and the before and after screenshot set, in every theme the app has, that a UI review judges it from.
-- Two Windows rules in the bash reference: native launchers start bash by absolute path, never bare `bash`, and suites on MINGW/MSYS export `MSYS=winsymlinks:nativestrict` and check `[ -L ]` after `ln -s`.
-- § Tests states four Windows-safe test rules: byte-compared text fixtures are pinned `text eol=lf`, binary fixtures marked `binary` and deliberate CRLF fixtures marked `-text`, a liveness test uses only a process it started and still holds, deleting a held file accepts only success or the platform's held-file error and reaps owned processes before removing their scratch root, and a roster runs every member and, when any fails, exits non-zero naming each failed member.
-- Require disposable control copies and compiled artifacts outside the worktree, with Cargo target settings limited to control commands and cleanup after each control.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-
-#### commit-guards
-
-- A package `SKILL.md` with no version key owes no version raise; a version key with no non-empty `metadata.version` is a collection error. `install-git-hooks --check` compares script checksums.
-- md-refs accepts a decision ID whose INDEX row exists with no document, so a removed or retired record keeps its citations working; an ID with neither still fails.
-- Point check readers directly to the existing settings reference.
-- changelog-entries accepts `- **Breaking**:` beside `- **Breaking:**` as a Breaking entry, so a major release written the Pi package records' way passes.
-- Reserved decision IDs pass only in their own index row. References elsewhere must link to the rule's current home or name a tracked decision record.
-
-#### decider
-
-- A routine decision record may be removed once its reason lives in the code or principle doc it governs; its INDEX row keeps the ID reserved under the `Removed` status, its Link cell rewritten to the bare filename once the document is deleted, so no dead link remains. Before a retirement or a removal deletes the document, every citation of the ID or of the document's file name, a sibling record's link included, is repointed or removed.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- Keep significant withdrawn decisions with their reasons and record accepted costs and consequences.
-- Decision checks accept an inherited record renamed on either or both branches when each renamed side removes its old file and the index points to its new file.
-- Keep withdrawn decision links in the index template while reserving pointer-only entries for removed records.
-- `Retired` is documented again, as the legacy spelling of `Withdrawn`: repositories whose INDEX.md still holds `Retired` rows read them as withdrawn, and a change that touches such a record rewrites its status to `Withdrawn`.
-- Clarify that a reserved decision ID resolves only in its own index row. Other citations need a tracked decision document or a link to the rule's current home.
-- The decision checker rejects empty Revisit When cells and placeholder values. Each rejected row identifies its decision ID and line in the index.
-
-#### deep-research
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-
-#### dep-radar
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-
-#### dev
-
-- A dev round that changes a view, layout, styling or UI copy raises the `needs-ui-review` QA signal, builds the view to code-quality's polish bar and the design-system doc `QA_UI_DESIGN_DOC` names, and lists each changed view's screenshot set, as code-quality's UI reference defines it, in its completion, bundle or fix summary.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- The implement round's validation route now covers a `dev-validate-run` start that ends with no verdict because an earlier run already hit the bound over the same paths: it takes the same scoped-suite route as a run the bound cut off. The new optional `DEV_VALIDATE_FINDING_PREFIX` setting names the prefix the validation commands print findings with; with it empty, every run the timeout stopped counts as a possible failure.
-- Fix rounds use pull request CI when it covers the change. A failure in the round's own files permits one correction and one rerun.
-- Codex dev agents use the in-turn completion route for long commands run through the job runner.
-
-#### dev-stop-check
-
-- New hook `dev-stop-check` (Claude Code and Codex, `SubagentStop`): a subagent that ends its turn while a `dev-validate-run` it started in its worktree is still going is held and handed the `dev-validate-run --wait --run-dir` command to run next, so its round is no longer left with a verdict on disk and nothing committed. It is held again after each `--wait` that finds the run still going; a subagent that stops again without waiting passes with an `abandoned=` notice naming the run. A stop with no run still going passes unchanged.
-
-#### doc-limits
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-
-#### docs-writing
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- A docs rewrite may remove a routine decision record whose reason moves to the code or principle doc it governs, and repoints every surviving citation at that home, searching for the ID and the record's file name.
-- A docs rewrite selects each architecture doc by the reader's task and the harmful mistake it prevents, sorts every fact into one home (a decision record, an architecture doc, or the code, its tests and the tracker), turns a behaviour no test holds into a test item, keeps a human architecture page as product content, and rewrites an `AGENTS.md` or `SKILL.md` body only where the owner names it.
-- Clarify document ownership, task routes, reference contracts and supported harness instruction loading.
-- Align rewrite steps and examples with document ownership, nested reading routes and supported layouts.
-- Preserve withdrawn decisions and historical citations during documentation rewrites.
-
-#### frontend
-
-- The frontend agent builds each changed view to code-quality's polish bar and captures its screenshot set by code-quality's UI reference when the dev workflow calls for it.
-
-#### github
-
-- The base branch's required-context read moved from `pr-merge` into `lib/ci-run-correlation.sh` and takes an optional `owner/name`, so orch's `ci-wait --required-only` judges checks against the same required set the merge gate does.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- `pr-merge --auto` refuses, arming nothing, when the readiness check could not read the pull request as open, so a failed state lookup no longer arms a merge whose review replies were never checked.
-- `pr-list-ready` and `pr-cross-check` hand their PR lists to jq on stdin, so a repository with many open pull requests no longer fails them with "Argument list too long".
-
-#### harness-ci
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
 - Classify unowned and partially owned render paths as measured standard changes so consumers run full checks.
-- Use a render-only refresh PR to verify CI skips for render-tracking consumers; keep the hand-edit probe for harness-only wiring.
 
-#### iced-rs
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- The bundled `iced_wgpu` renderer source and the examples are now the published Iced 0.14.0 release, taken from its tag, in place of a copy that carried unreleased wgpu APIs and three examples 0.14.0 does not ship; `SKILL.md` names the tag commit and the directory mapping.
-
-#### linear
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- Completion validation accepts Completion Summary and Bundle Complete headings in any letter case.
-- Issue reads (`issues get`, `bulk-get`, `list`, `list-relations`) list a `related` relation on both issues, including the one that did not create it, which they previously left out.
-- A `--max` list no longer holds every page in the shell: the pager spools each page to a temporary file and merges them in one `jq` read, so a large backlog stays bounded by `jq`. `SKILL.md` routes a text search through `issues list --search`, never a `--max` list filtered locally.
-- Issue activation and completion accept `--format ids` to print only the identifier.
-
-#### orch
-
-- `scripts/claude-model-classes`: a Claude Code plugin, loaded with `--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`, that resolves each declared subagent model and a root `KENDEX_MODEL_REQUEST` through `kendex tier-model`. Without a working kendex 1.7.0 or later it denies every subagent spawn. On kendex 1.11.0 or older it prints one line asking for a kendex upgrade in place of core's warning.
-- `dev-validate-run --live --worktree PATH` prints the run still going in that worktree, `run-dir=… pid=N`, or `live=none` at exit 1, by the same judgment a start refuses on as run-live, and starts nothing.
-- A `needs-ui-review` QA signal, raised by the dev round or by a changed file matching the new `QA_UI_PATHS` setting, routes to `reviewer-quality`, which judges the before and after screenshots against the design-system doc the new `QA_UI_DESIGN_DOC` setting names.
-- On a repository GitHub reports private, a standard or small lane now pushes and opens its pull request right after the implement round's validated commit, and the one agent review runs on the open pull request beside Copilot's; its fix round and the fixes for Copilot's threads go out in one push, and the pull request is armed only once that review returned, as a review-first pull request is; a lane whose early open fails reports it and reviews first. A public or internal repository, or one whose visibility cannot be read, keeps review before push. The new `pr-order` script prints the order from `gh repo view --json visibility`, and from that review's start until the push carrying its fix round lands, the lane status file's `Review:` line reads pending, so the overseer approves nothing and requests no Copilot review on a head that push replaces; the lane then writes the verdict and routes the pushed head to Copilot once.
-- `tests/run-all.sh` stops a suite still running `RUN_ALL_SUITE_SECS` (default 900) after its own start, or at `RUN_ALL_DEADLINE_EPOCH`, a Unix time for the whole run, where that is set, and starts no suite past that deadline. A stopped suite gets TERM and then KILL through every process under it and reports red under a `run-all.sh: suite-timeout` or `run-all.sh: run-deadline` line with the last row it printed, and a suite the deadline left unstarted reports red as well. A CI job that sets the deadline inside its own ceiling therefore logs a hung suite's name instead of being cancelled with none.
-- small.md defines a subsystem once, and the oversee launch read sends an item spanning several back to filing unless its body names why it cannot land in parts.
-- `item-tier` reads a change to a `SKILL.md` `metadata.version` line as an instruction-file edit, and `restack-skip` re-tests a restack that conflicts in a `SKILL.md` or a render, since catalog skills no longer raise a version line on every change.
-- Lane close finishes for a terminal item when a failed mailbox read leaves its name only on an available host row.
-- `item-tier` accepts a stated zero in `**Expected delta**` (`0 lines`, `0 test lines`), and a malformed line now warns once on stderr, naming the line and the accepted forms, instead of being dropped silently; `--help` lists the accepted forms.
-- **Breaking:** `queue-wait` now names an armed PR that GitHub has not yet enqueued, judged only on the checks the base branch requires. While a required check is pending or has not registered, the verdict is `armed_awaiting_checks` with the pending check names, and merge-pr waits again on the same head under a `QUEUE_WAIT_ARMED_MINUTES` wall-clock budget (default 90) without spending a ci-fix recovery cycle. `armed_blocked` covers a failed required check (cause `check_failed`, which takes the recovery cycle) and every required check passed with still no queue entry (cause `not_mergeable`, which returns to a fresh readiness check). `progress_unobservable` now means only that a queue entry exists and its head could not be read, and a PR out of the queue with an unconfirmed exit reads `queued` with cause `exit_unconfirmed`. Migration: a caller routing `queue-wait --json` verdicts adds routes for `armed_awaiting_checks` and `armed_blocked`, reads a failed check on an armed PR under `armed_blocked` cause `check_failed` instead of `disarmed`, and routes `queued` cause `exit_unconfirmed` to one more wait. `ci-wait` gains `--required-only` and reports `rollup_key` in `--json`, both additive.
-- Single-pass fleet watches keep lane pauses, lane closure, and overseer records in the directory of the supplied state file.
-- `oversee register` reads a Claude, Codex or Pi overseer's turn-end hook from its checkout's inventory, so an installed hook no longer reads missing when the session's start directory lies outside the checkout or is gone.
-- `lane-close` now closes a hosted record whose sandbox the provider already removed, such as after `lane-host-daytona close --item ITEM --force`. Before, the mailbox read failed with `item-unknown` and every close refused as `mail-read-failed`. On a full close of a terminal item whose provider `list` names no sandbox for it, the close prints `host-absent`, skips the provider stop and close, and records the lane `done`.
-- An `APPROVED` Copilot review now runs the review-body findings check before the lane sends `copilot-approved-on-rerequest` or ends on an approved head, so a `Previously missed` or `Suppressed comments` finding is answered before the CI wait instead of failing the merge gate after it.
-- Codex lanes and overseers start without the shared background server warning or a hook trust review screen.
-- `dev-validate-run` no longer spends another hour on a run that an earlier run already showed would hit `DEV_VALIDATE_TIMEOUT_SECS`. The earlier run counts when it ran the same command text with the same change class, docs verdict and range base, hit the bound with no line in its log starting with the finding prefix the project declares in `DEV_VALIDATE_FINDING_PREFIX`, had a bound at least as high and read no path the new run doesn't. The new full or range start then records it as `bound-run=`, runs nothing, and ends with no verdict for the scoped-suite route. `--fresh` forces a fresh run, for example after changing a setting the command reads. `--last-pass` skips over such a no-verdict run with no finding line instead of naming it red, so `restack-skip` still skips a restack whose only conflicts are version lines. A run recorded without a declared prefix counts as possibly red.
-- Long-running lane warnings repeat at each age interval, including after relaunch. Warnings keep the lane's original launch time and suppress duplicates within the same interval.
-- Numeric overseer preferences use the target harness's default model when no caller model exists. Warnings name the conversion, and help links to the shared model selection rules.
-- Keep Claude callback test suites out of consumer skill installations so consumer test commands do not load kendex-only tests.
-- Keep hosted mailbox reads available during sandbox preparation and resume launches after a busy provider call.
-- Fix round records carry the pull request state so CI receipts work for every open pull request review source.
 - The Pi carrier recovery text says `update-pi` is refused only in a linked worktree with no manifest of its own.
-- `oversee-cycle record` reads a hosted lane's review and fix rounds in the state directory the lane itself uses, named by its worktree's settings, instead of the overseer's own `ORCH_STATE_DIR`. Once the host answers that the lane's worktree is gone, it reads them from the `kept=` archive its close left in the fleet log during the lane's current session. `lane-host-ssh close` now archives the item's workflow state wherever those settings place it, names that file in the archive's `lane-host-state` member, and stops as `state-unresolved` when the state directory cannot be resolved.
-- Codex lanes keep job-runner waiter completion inside the active turn so approval, CI and merge waits continue when the job ends.
-- Lane inboxes and mailbox watches deliver unread answers to notices. Answers returned by a wait stay read.
-- Cloud sessions launch landing lanes on the fleet's configured runner. A fleet configured only for cloud sessions keeps local landing because it has no runner that can land the change.
-- Issue descriptions and review comments use body files to preserve Markdown without shell expansion.
-- Remove temporary mailbox copies after an answered wait or a failed inbox or wait lock on hosts without flock.
-- A mailbox wait delivers earlier unread answers, directives and halts before advancing the read cursor.
 
-#### preflight
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-
-#### price-handling
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-
-#### project-management
-
-- An item whose work changes more than one subsystem is filed as one item per subsystem, each landing and reviewed alone; one that cannot land in parts says why.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- Use decider admission and approval rules and its current schema after research.
-- Complete research without a decision record when admission or approval rules do not permit one.
-
-#### review-gate
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
 - Consumer refresh calls the shared release workflow. Refresh scripts and checks run from that release checkout, so a stale consumer copy cannot block a released fix.
 - A consumer refresh run stuck waiting on the `kendex` environment gate no longer stops every later refresh: the next run force-cancels one that has waited past 30 minutes, re-reading each run just before the cancel and skipping one no longer waiting. The new release job takes the `actions: write` permission.
 - Publish refresh pull requests when new generated files accompany unowned bot instructions. Failed reads still stop publication.
 - Consumer refresh waits for the pushed commit before auto-merge and confirms its merge state. Pull request text explains when refresh leaves auto-merge unarmed.
-- Review-gate standard checks retry temporary GitHub server and connection errors before reporting a failed read.
-
-#### reviewer
-
-- The Mutation-Stability Pairing runs only on tests the diff, or a re-review's fix diff, adds or changes, and mutation-stability's summary line reports the call's elapsed seconds.
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- `mutation-stability` makes its workspace in `/tmp` when `TMPDIR` points inside the copied worktree or its common Git directory, so a run killed before its cleanup no longer leaves a full tree copy in the lane's `tmp/` and its park archive.
-
-#### reviewer-quality
-
-- A UI lens: under a `needs-ui-review` QA trigger, reviewer-quality judges the changed views' screenshot set, as code-quality's UI reference defines it, and their copy against code-quality's polish bar and the consumer's design-system doc. A missing screenshot is a blocker, and a missing doc is reported as a gap.
-
-#### reviewer-test
-
-- reviewer-test mutation-validates only the tests the diff, or a re-review's fix diff, adds or changes.
-
-#### second-opinion
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- Claude review attempts record the selected account name so fleet checks can identify which account ran.
-- The fleet settings example checks Claude account capacity before review. A review uses another Claude account with capacity or tries the next reviewer.
-- An entry whose `SECOND_OPINION_<NAME>_CMD` starts with `env VAR=value` is judged available on its program word, not on `env`, so a missing CLI is skipped for the next entry instead of failing with exit 127.
-
-#### slack
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- The relay reads `SLACK_BOT_TOKEN`, `SLACK_OWNERS` and every other setting the private env file carries: `slack setup`, `slack listen` and the installed unit no longer refuse `setting-missing` while the key sits in `.env.local`.
-- `slack listen --status` reads a status record an older relay wrote without the connection fields, printing its state with `connection=unknown` instead of raising `KeyError`.
-
-#### worktree
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- Worktree setup warns that npm ci on linked node_modules empties main's dependencies. Help explains that npm install creates a private install and leaves main intact.
-
-#### xcode-run
-
-- `SKILL.md` no longer states a `metadata.version`; the skill carries no version, and its changelog entries release under the skill's name alone.
-- The `screenshots` step captures the simulator it installed and launched the app on, rather than whichever simulator `simctl` picks among the booted ones. An installed `.github/workflows/mac-run.yml` keeps its old capture line: change `xcrun simctl io booted screenshot` to `xcrun simctl io "$simulator" screenshot`, or delete the workflow and reinstall.
 
 ## [1.11.0] - 2026-10-06
 
 ### Added
 
-- The Pi Claude bridge offers Claude Sonnet 5.5 (`claude-sonnet-5-5`) in the `pi-claude` model picker, released as `@vanillagreen/pi-claude-bridge` 4.1.0.
-- `linear.sh` refuses, before any write, an issue create, field change, archive or trash outside `LINEAR_TEAM`; reads, comments and relations still reach every team.
 - `kendex show` and the desktop package pages name the tools each package runs on, with a hook's reasons; `kendex index --json` lists its `unsupported`, `advisory` and `fallback` tools.
 - `kendex refresh --locked` re-renders at the catalog commits `.kendex-lock.json` records, so a project-only change moves no catalog.
 - Refresh removes leftovers nothing declares and keeps an installed item its catalog retires (`[retired]`) with a notice; `refresh --prune` removes it, its declaration and unedited adopted workflows.
@@ -1494,7 +351,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 ### Changed
 
 - A `kendex.toml` still declaring `[hooks.doc-drift-check]` refreshes and applies: the hook stays installed with one notice line opening `doc-drift-check: `, and `kendex refresh --prune` removes it.
-- Text and release notes have no size gate in commit guards. Missing pre-commit companions stay silent. Workflow tiers use estimates and paths; branch line counts do not block work.
 - At project scope, a Copilot hook file left with no hooks after a disable or removal goes to the trash instead of keeping only its version line.
 - Deleting or editing one package's table in `kendex.toml` and running `kendex apply` now changes only that package, even when the catalog mirror has moved past the commits `.kendex-lock.json` records. `kendex refresh` is the command that brings packages current; `kendex source refresh` followed by `kendex apply` no longer does.
 
@@ -1506,7 +362,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - Catalog CI also refreshes an install of the caller's base catalog: dropping or renaming a package that catalog shipped now fails until a released kendex retires it; keep a stub.
 - `kendex add` and `kendex apply` run without a terminal now exit 3 when a package you named, a member of a bundle or collection you named, or a package one of those requires, is skipped on conflict, such as files kendex did not write in its place or a package no tool can render, and name each such package on a `skipped-on-conflict=` line. A package held back only by your own edits, one its catalog retired, or a copy a retired bundle keeps, leaves the exit as it was. The rest of the install is still written: `kendex apply --replace-unmanaged` installs a skipped package when every conflict is files it can replace, and each conflict line names the way out for the rest.
-- Orch uses the trusted base checkout to classify review changes. A pull request cannot skip review by changing its own classifier.
 - `kendex verify` and `kendex refresh` no longer count a `__pycache__` or `.pytest_cache` folder in an installed skill as an edit.
 - `install.sh --version main-build-N-A-SHA` installs that main build from its own feed, not a missing `v`-prefixed tag, and records its command on the main channel.
 - kendex 1.10.1 refreshes again with `[hooks.doc-drift-check]` declared; the hook runs no check. `kendex remove doc-drift-check --scope project --sweep` removes the entry and its files.
@@ -1524,120 +379,13 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - TLS connections use rustls 0.23.45, which rejects TLS 1.3 handshake messages sent across encryption levels (GHSA-2mjx-qc3c-rqvc).
 
-### Packages
-
-#### bot-instructions 2.6.0
+### Changed
 
 - `render` now removes each marked file the TOML no longer produces, and a manifest with no `[bot-instructions]` table is refused as `unconfigured`.
-- Review doctrine asks for no doc beside code and no decision record below the decider bar; its shipped review surface covers `docs/architecture`.
-
-#### command-safety
-
-- The `command-safety` hook now refuses a `systemd-run` memory cap in kilobytes or megabytes with no setting; `COMMAND_SAFETY_DENY_PATTERN = "^$"` turns that refusal off.
-
-#### commit-guards 1.2.2
-
-- Catalog packages version on their own: a `changelog.d/<package>/<section>/` entry moves only that package's version, and a skill change must raise its `metadata.version`.
-- A root `package.json` beside the changelog record is judged from `changelog.d` and that record; a root `CHANGELOG.md` with `###` headings needs `COMMIT_GUARDS_CHANGELOG_RECORD` empty.
-- The `COMMIT_GUARDS_PROSE_PATHS` row in the configuration table names the default the prose lane scans: the `SKILL.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` load points.
-- pre-push no longer refuses a push for version bumps already on the remote's default branch, where it can establish that branch.
-- `changelog-entries --classify PATH...` names what the changelog settings make each path, and `--unversion` prints a JSON version file less its top-level version.
-
-#### decider 2.0.2
-
-- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
-- The decision record format puts a blank line between its metadata lines, so they render as separate lines and pass md-format.
-- **Breaking:** the `Revisited` status and a record's optional sections are gone: a record holds Decision, Why, Rejected and Revisit when. Mark a re-assessed record `Active` when its choice holds, or supersede it with a new record when the choice changed.
-
-#### dev 3.0.5
-
-- `DEV_VALIDATE_CI_CONTEXT` names the required check whose pull request run covers validation; a PR-comment fix round skips local validation only where the base requires it.
-- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
-- dev-implement finds a missing planning or research path by the project-management Planning artifacts route for the tracker.
-- Each test or sandbox run outside the validation gate names its question in the round notes first; two inconclusive answers in a row on one question send the agent back to code and logs.
-- A Codex dev agent holds its validation run inside the turn with exec_command and write_stdin polls, so a hosted lane no longer stalls when its turn ends mid-run.
-
-#### doc-limits 2.0.0
-
-- doc-limits measures only `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and every document over its limit fails; the other shipped classes, HTML and the warn-only budget are gone.
-- **Breaking:** `CLAUDE.md`, `GEMINI.md` and a root `SKILL.md` over their limit fail instead of warning, and the `GEMINI.md` and root `SKILL.md` limit drops from 64k to 24k. Trim or split the file.
-
-#### docs-writing 3.0.4
-
-- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
-- A docs rewrite keeps a decision record active while its choice holds, and retires only a choice withdrawn with nothing replacing it.
-- The decision record example puts a blank line between its metadata lines, so they render as separate lines and pass md-format.
-- **Breaking:** the `templates/` files are removed, `document.html` included; start a markdown document from its finished example under `examples/`. The architecture overview file and the topic file's `Covers:` line are gone: each `docs/architecture/<name>.md` holds one principle, listed with its trigger in the root `AGENTS.md`.
-
-#### github 2.1.0
-
-- `find-comment --self` finds the comments the current token wrote, by account id, for a user token and a GitHub App installation token alike.
-- `find-comment` and `check-review-replies` read every page of a pull request's comments, so a busy pull request's latest summary is found.
-
-#### harness-ci 1.1.4
 
 - A `:queue` lane in `.github/ci-lanes.conf` skips matching pull requests and runs in the merge queue they go to, once they and the default branch carry a kendex refresh reading it.
 - `HARNESS_CI_QUEUE_SELECTOR` names a repository command whose listed merge-group jobs make a change queue-only, so it merges through the queue rather than the admin route.
 - harness-ci's change classifier no longer classes a diff under `docs/plans/` as trivial at any size; a docs-only diff past `HARNESS_CI_TRIVIAL_MAX_LINES` measures like any other.
-- harness-ci's wiring reference no longer lets a lane or job whose check reads the event's base, such as a fragment or version check over `--base`, count as doing the same work on every event, so a merge group's proof never stands such a lane down.
-
-#### linear 2.1.0
-
-- `linear.sh` adds `comments bulk-list`, `attachments list` and `attachments fetch`, `--max` on every bounded list, and `--all-projects`, `--no-project` and `--labels` on `issues list`.
-- `linear.sh issues bulk-get` reads identifiers and UUIDs, archived included, resolves a moved issue's old identifier, and names in `missing` only issues Linear says it does not have.
-- Every bounded `linear.sh` list returns 75 rows by default, refuses a `--limit` that is not a positive whole number, and prints `linear-list: truncated` on stderr when rows were left unread.
-- `linear.sh` reads go to Linear's API and follow every page of each collection; a read whose page chain fails exits nonzero with no partial output, and `session-status` no longer syncs.
-- With a client pair, `linear.sh` keeps its OAuth token in `kendex/linear-oauth/` under `XDG_CACHE_HOME` or `~/.cache`, else under `TMPDIR`; delete stale `.cache/linear/oauth/` files.
-- A rate-limited `linear.sh` call prints the time Linear's request quota refills (`requests_reset`); only rate-limited, 5xx and unanswered requests are retried.
-- **Breaking:** `issues create` requires a `Reached by:` line when `LINEAR_REQUIRE_REACH` is unset. Set it empty to keep the old behavior.
-- Resolve a cited artifact reads the issue's `**Artifacts**` links first, so a linked-only issue resolves and a link beats an older same-path attachment.
-- `issues remove-relation` refuses a blocking relation whose blocker is Done or Canceled; `--peer-rule-violation` removes one only when the pair breaks the peer rule.
-- **Breaking:** `LINEAR_CACHE_ROOT` is retired: set anywhere, even empty, every `linear.sh` command exits 1 with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove the setting.
-- **Breaking:** `linear.sh sync` and `linear.sh cache` are removed with the local store; each exits 1, `cache` naming the live command (`issues get ID` for `cache issues get ID`).
-- `linear.sh initiatives get ID --format=raw` prints the raw reply; the option was dropped before reaching the command.
-- `linear.sh issues children --recursive --pending` keeps an open grandchild of a closed child, and `cycles list --type` refuses a type it has no filter for.
-
-#### orch 4.3.6
-
-- `oversee-watch` reports a lane once past `ORCH_WATCH_LANE_AGE_SECS` (default 4 hours) as `lane-long` with its stage, and the overseer names the cause.
-- `oversee-cycle report` prints the per-class rollup rows and writes nothing, so a reader without write access to the fleet state can read them; `rollup` still appends them to the fleet log.
-- A validation command can report `selection=battery`, and submit then reuses a fix round's full pass that ran the whole battery instead of running that battery again.
-- orch's `container-close`, `reconcile-work-items`, `oversee-report` and `branch-size-check` read Linear live, and a hosted lane's clone no longer receives `.cache/linear`.
-- `tests/run-all.sh --battery DIR` runs the suites in another directory under the same filters, worker pool and report, and the verdict line names that tree. Each `--alone NAME` after it names a suite of that directory to run alone; orch's own ALONE list applies only to orch's suites.
-- orch states that a plan or research report lives on its tracker issue, not as tracked content under `docs/`.
-- An overseer acts on the owner's plain yes, typed in Slack or spoken on a signed-in call, after saying the action back; only destructive, irreversible or money steps still wait for an explicit confirmation.
-- orch's `oversee-watch` checks the overseer mailbox once a second while it waits for the next mail pass, in a pass and in the `--repeat` sleep, and reads that mailbox alone as soon as it moves, so an owner, Slack or peer note reaches the watch output within about a second instead of up to `ORCH_WATCH_MAIL_INTERVAL`; the lane mailboxes keep their interval, now counted across runs.
-- `open-terminal` refuses a fleet launch from a repository other than the overseer's as `overseer-foreign`, unless the overseer's `ORCH_CONNECTED_REPOS` setting lists it.
-- `round-recover` takes `--state-dir`, so a hosted lane that keeps its workflow state in its own worktree can recover a stalled dev round.
-- `oversee-watch` names the failed refresh line as a refresh-failing cause, never a Pi carrier `kendex-hook-` warning while a higher-ranked line exists.
-- The pull request comment triage finds its own earlier summary under a GitHub App installation token, which answers `gh api user` with 403.
-- Before a fleet launch the overseer judges file overlap with running lanes and open pull requests, counting the tracked files that name each path an item deletes or renames, so a lane that would break another lane's files waits or takes them into scope.
-- orch micro checks each sentence its diff states about code against the code that defines or implements it before the commit, so a false claim is fixed before the pull request opens.
-- `oversee-report`'s Landed row and `oversee-watch`'s `merged` event find a lane's pull request by its parked record's number, its branch, or the item key in the title's conventional-commit scope or right after `Closes` on a body line, so a Claude cloud session's merge on a `claude/` branch is counted and reported, while a pull request that only mentions the item is not.
-- `lane-mail send --item ITEM --re ID` refuses as `ask-unknown`, appending nothing, when ID names no ask that lane sent. An answer to a lane's notice used to land where neither `inbox` nor `watch` reads it, so the lane never saw it; send such text with `--directive`.
-- `lane-close` closes an idle lane whose record carries its pull request's merge cycle and whose worktree its own close-out removed, while its tracker item stays open for a box the overseer checks itself, so a merged hosted lane no longer keeps its sandbox billing until that box is checked. A lane relaunched on the same item, whose worktree stands, still refuses as live.
-- The fleet watch reads a lane's stage from a `- Step:` list item in its status file, so a long-running lane report names the stage instead of `none`.
-- `item-tier` keeps an item micro when the only line a branch changes in a `SKILL.md`, or in its tracked render, is the frontmatter's `metadata.version`, so a catalog package fix no longer escapes the micro tier for its version raise.
-- On a static SSH lane host, `lane-host-ssh create` runs `npm ci` in the clone for each linked `node_modules` whose lockfile changed, so the worktree links it and validation runs.
-- Lane-host `close`, `stop` and `status` on an item the provider no longer holds answer `closed=absent`, `processes=0` and `exited`, so `lane-close` records it done; `lane-host-ssh` gives them.
-- codex-runtime.md names the in-turn validation wait for Codex, and dev-validate-run --help names --wait for Codex as well as Claude Code.
-- A restack skips its range re-test when it met no conflict, or only conflicts over changelog entries and the version field commit-guards reads; the lane records which.
-- `lanes pick` charges each lane already on an account the 5-hour session window it will spend before that window resets, whatever bucket binds, so a weekly-bound account no longer takes every new lane until its session walls them all; a refusal names the session window where it decided, and each launched lane's fleet record keeps the pick reading it was launched on.
-- item-tier and restack-skip read a SKILL.md metadata.version raise as version-only when a column-0 comment sits inside the frontmatter metadata map.
-
-#### preflight 1.1.0
-
-- `PREFLIGHT_SOURCED_LIB_GLOBS` names the sourced shell library directories, such as `tools/lib`, whose new non-executable files need no strict-mode preamble.
-
-#### project-management 4.0.2
-
-- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
-- Planning artifacts states where a plan lives and how a reader finds it on Linear, GitHub Issues or no tracker, and attaches each artifact once, to its source issue.
-- Planning files a body of batches that each land alone as one item per batch, blocking only where a batch needs another's change.
-- Audits keep a Done or Canceled blocker's relation, read `blocked_by_open` for open blockers, and lift a cross-bundle relation with `--peer-rule-violation`.
-- **Breaking:** an audit `create` needs `create_fields.reach` and `review_born`, and a review-born priority-2 create a `symptom`; an output missing one is invalid. This has held since kendex 1.0.0, and 4.0.0 marks it. Give each audit input item its `impact`, and a priority-2 review item its `symptom`.
-
-#### review-gate 2.3.2
 
 - The kendex refresh pull request lists retired settings and defaults and unset or unreadable queue settings, and flags Fable or Astra pins even without orch.
 - The consumer refresh pull request lists each retired item the refresh removed, with the catalog's migration; a retired copy the refresh holds stops the run as a conflict.
@@ -1645,89 +393,44 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A consumer refresh pull request that changes the bot-instructions package now carries its render, so the consumer's bot-instructions check passes.
 - The consumer refresh workflow reads only open refresh pull requests and those merged in the last 24 hours, so it no longer spends the app's API quota on every merged one.
 
-#### reviewer 3.0.0
-
-- Architecture docs hold one principle each, decision records a short body, and plans and research live in the tracker.
-
-#### session-drift-check
-
 - The description names the removal the drift report prints for an item gone from its source, `kendex remove --kind <kind> <name>`, with `--global` in a global section.
-
-#### skill-load-check
-
-- skill-load-check on Codex no longer counts a skill read that `max_output_tokens` cut, in any read form, and its refusal says to read the skill with no `max_output_tokens`.
-- skill-load-check counts a Codex `functions.exec` skill read printed through `text(await ...)` in a thread kept in Legacy history, so the call the skill gates is no longer refused.
-- skill-load-check counts a whole Codex `functions.exec` skill read printed through `text(await ...)` when the skill holds a DEL character, so the call the skill gates is no longer refused.
-
-#### slack 1.0.1
-
-- Slack messages link bare pull requests and resolvable commit hashes. Unresolved references stay visible with a warning.
-- The Slack relay swaps :eyes: for :white_check_mark: on an owner's reply in a question's thread once the overseer reads it, as it already did for a directive.
-- After a Socket Mode reconnect, a rate-limited catch-up read no longer stalls the poll: live delivery and outbound mail go on, and a later poll finishes the catch-up.
-
-#### worktree-session-claim
-
-- `worktree-session-claim` hook: a session that starts in a worktree `worktree create` returned, an adopted one included, claims it so cleanup leaves it; the workflow's issue claim takes it over.
-
-#### worktree 1.0.2
-
-- `worktree --help` names the host provider's create as the owner of the main-checkout install on a hosted lane.
-- `worktree push` lets pre-push hooks read the pushed branch's own `COMMIT_GUARDS_*` settings, not the main checkout's committed values.
 
 ## [1.10.1] - 2026-10-05
 
 ### Changed
 
 - Gemini projects' install record gains a `shims` entry. A `kendex verify` pinned to an earlier build fails the record row until the pin moves to this release.
-- commit-guards `CHECKS.md` § Release versions states the release-version rule: from 1.0, fixes and internal changes are a patch; a minor needs a user-facing capability or consumer-visible setting.
-- Issue writing cuts, and review blocks, a test that pins wording or a growing count, a compatibility clause the repository's policy does not require, or a new gate with no named failure.
-
 ### Fixed
 
 - Commit and restore keep your own keys in `.gemini/settings.json`. Dropping Gemini removes its `context.fileName` entry where a project has no `.git` of its own and after a broken file is fixed.
 - `kendex verify` fails the record row when `.kendex-lock.json` no longer carries the Gemini shim kendex keeps, or still carries one kendex no longer keeps; the next apply writes the record again.
-- The orch merge-pr rebundle no longer aborts the merge on a label the taxonomy does not declare: the new parent keeps only declared labels and names each dropped one.
-
 ## [1.10.0] - 2026-10-05
 
 ### Added
 
 - `kendex add --setting KEY=VALUE` writes a declared project setting into `kendex.settings.toml`; a key the file already assigns keeps its value.
 - commit-guards declares `COMMAND_SAFETY_DENY_PATTERN`, so the Customize tab and `kendex add --setting` can set the command-safety hook's pattern.
-- review-gate's `provision-environment.sh --repo ORG/NAME` provisions the standard's environment in one repository, after the same organization checks.
-
 ### Changed
 
 - Installing `lane-mail-check` also installs `session-start-row`, `session-end-row` and `stop-failure-row`, so the fleet overseer reads session rows.
 - `session-start-row`, `session-end-row` or `stop-failure-row` pinned to fewer harnesses than `lane-mail-check`, or removed, now withholds `lane-mail-check` there; widen the pin or restore the hook.
 - Commit-guards refusals in an unarmed clone name the tracked installer before `kendex guard install`. Re-arm each clone once: until then, hook checks report the helper outdated.
 - A consumer refresh pull request of any change class now arms auto-merge and merges once its required approval, thread resolution and checks pass. Before, only `render` armed.
-- Code-quality loads language rules on demand and clarifies test evidence and ownership. Preflight rejects direct environment mutation in Rust test files.
-
 ### Fixed
-
-- skill-load-check counts a Codex skill read whose text arrived whole in a `functions.exec` output that Codex truncated, and still refuses a read the cut reached.
-- skill-load-check counts a Codex skill read batched with other calls in one `functions.exec` when its own command succeeds, and its refusal names the read that passes.
-- `linear.sh sync --reconcile` handles a workspace-sized cache: no `Argument list too long` failure, and cached issues past the first 2500 are checked instead of pruned as deleted.
-- `oversee register` finds an installed `lane-mail-check` in the `kendex list` output instead of reporting `turn-end-hook=missing`.
 
 ## [1.9.0] - 2026-10-04
 
 ### Added
 
-- On Pi, the session-end-row and stop-failure-row hooks now install and run, and oversee-watch judges a Pi overseer's exit and usage limit from those rows instead of its pane.
+- On Pi, the session-end-row and stop-failure-row hooks now install and run
 
 ### Changed
 
-- The linear skill's app token requests every non-admin Linear data scope, initiatives and customers included. The first mint revokes every older app token; reissue the fleet token.
-
 ### Fixed
 
-- Command safety checks continued shell lines against the deny pattern. Memory caps split across continued lines are refused.
 - `kendex add` and the app picker keep declared tools and packages, `--commit` commits every file the run wrote unless it held your edits, and dropping a tool retires its shims and emptied files.
 - `kendex update --git` and `install.sh --git` refuse a main build older than the installed release instead of moving a stable install back a version.
 - The shared refresh caller maps `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` to its same-named secrets. A v1.8.0 caller stops at the token step: fix it by hand or run the adopter by hand.
-- Pi Claude keeps the pending request as live input after compaction or history navigation, and answers a prompt sent right after an abort. Reported by Janque (#3623).
 - Pi apply now removes a project `APPEND_SYSTEM.md` that is blank or holds only inherited global text, and a global style change no longer fails beside the last project package removal.
 - Pi projects retain global instructions after combined apply. Blockless installs keep the global prompt. Prompt links, non-files, and Pi directory links outside the project block package changes.
 - `kendex verify --at-record` asks the install record for the dependencies each held package required at its recorded commit, not for ones its catalog added since.
@@ -1736,19 +439,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ### Added
 
-- Consumer lane setups can install pinned gitleaks from commit-guards. The shared CI template installs it and scans every pull request for credentials.
-- The `critical-path-deny` hook denies Claude Code's critical-path rm prompt at once inside a launched orch lane, with the rewrite that passes, so an unattended lane no longer waits on it.
-- Linear label writes reject undeclared labels when a repository declares a taxonomy. The new `labels audit` command reports undeclared issue labels and duplicate team and workspace names.
 - On Codex, the reviewer-stop-check and session-end-row hooks now install and run; session-end-row times out after 3 seconds instead of 30 on every harness, the longest Codex runs a session-end hook.
 - Consumers can call the shared workflow `refresh-consumer.yml@v1`, which runs the refresh from the release that tag names.
 
 ### Changed
 
-- pi-background-tasks 2.2.0: tasks run at lower priority by default (CPU and disk on Linux, CPU only on macOS), and output wakes settle for 2 s with at most 10 per task.
-- pi-qol 2.4.0: the working indicator is a static dot by default, and session auto-rename allows 128 output tokens so a reasoning model returns a title.
-- code-quality: repositories without a build dependency graph can select tests by their paths and input notes. Tests with unclear inputs run on every change; full and release runs run every test.
-- code-quality: controls that plant defects in inputs, fixtures or uncompiled source copies stay with their tests and run each time. Controls that edit compiled source remain recorded one-time checks.
-- code-quality: a repository can set a per-change validation budget. Runs over budget report their time and need a separate item to split slow checks. Full and release runs have no budget.
 - A consumer refresh run whose push GitHub refuses because the merge queue holds the rolling branch ends as deferred, not as a push error.
 - A consumer refresh run ends as deferred, before it refreshes, when its open rolling pull request is already queued, merged or closed.
 
@@ -1759,11 +454,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A Pi package that is off, through its declaration or its own `enabled` setting, no longer adds its instructions to `APPEND_SYSTEM.md`.
 - kendex reads a project-installed Pi package's `enabled` setting from your user settings, then the project's, so a user-level off writes no `APPEND_SYSTEM.md` block there.
 - Main-channel builds finish during frequent merges, so machines that follow main can receive completed builds.
-- Named Claude cloud account choices use available cloud credit when plan usage is spent, including launch projections.
-- Named Claude cloud lanes now require repository access, as automatic account selection does, so a launch refuses an account that has no entry for the repository.
-- Overseer triage assigns a missing project and agent label before it records a kept issue, so kept issues can reach their work lanes.
-- GitHub review replies match paths with zero-width spaces after skill installation, so display-only characters no longer leave a finding impossible to answer.
-- `oversee-cycle` detects fixes made after an earlier approval, including an approval a later push dismissed, instead of reporting an unknown result from the retired review status.
 - Disabling a Pi package Pi already turned off removes its `APPEND_SYSTEM.md` instructions, and the next `apply` or `refresh` follows the package's own `enabled` setting.
 - A Pi output style no longer reads as stale after a Pi package update.
 - Main builds keep all platform targets until publication finishes, so later pushes cannot cancel a pending target in the active build.
@@ -1771,124 +461,54 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ### Security
 
-- The CI template runs credential scans with default-branch scripts, so a pull request cannot disable the scan by changing its scanner or installer.
-
 ## [1.7.0] - 2026-10-03
 
 ### Added
 
-- The github skill's `pr-merge` refuses, each time it runs, to merge or arm a pull request whose review replies track no issue, decline with no reason, or leave review-body findings unanswered.
-- commit-guards runs a default `secrets` lane: gitleaks refuses a credential a commit adds, by file, line and rule id, never the value. No gitleaks is a gap notice, except on a CI range or full scan.
 - `kendex verify --json --base REV` prints `base_owned`, the files and trees the base record owned whole, and a refresh whose only deletions are those renders classifies `render`.
 - On Codex, kendex now registers `SubagentStop` and `SessionEnd` hooks for every agent in `hooks.json`; before, a custom hook on these events was advisory prose and a package hook installed nothing.
 - Pi hooks: `SessionEnd` runs on session shutdown and `StopFailure` on a run that ends in error, through the pi-hooks carrier (0.18.0 or later).
 - On Copilot, the doc-drift-check, reviewer-stop-check, session-start-row and session-end-row hooks now install and run.
-- `open-terminal --host claude-cloud` launches a lane in a Claude Code cloud session that the fleet records, directs and watches, and `lanes pick` spends a Claude cloud credit before it expires.
 - Model classes resolve through the CLI and Pi. Unknown access or capacity keeps the native default. Exact pins survive rendering; project class overrides apply to global agents.
-- linear: `issues complete --done-when-met` ticks the named `## Done when` boxes as it sets Done, and orch's merge passes the boxes it verified, so a normal close leaves no `done-unchecked`.
-- `lane-mail ask --to owner --ref MSGID` binds an owner ask to the note it answers, as `notice --ref` does, so an ask raised for a voice request binds to the call.
-
 ### Changed
 
 - doc-limits: only an `AGENTS.md` or `SKILL.md` over its limit fails; other documents warn. The growth margin is gone: `--against` warns and does nothing until 2.0.
-- orch: a fix round on an open pull request leaves validation to the pull request CI where the repository has a GitHub Actions workflow and CI checks the change, and runs it locally otherwise.
-- A Copilot overseer's SessionStart row now names its session: the watch ignores a predecessor's context record, and `oversee register` installs the context reader in that session's Copilot home.
 - The kendex-refresh and harness-ci CI templates run on the `CI_RUNNER_2V` variable (organization or repository) when it is set, and on `ubuntu-latest` otherwise.
-- orch: an overseer's owner messages state a cost as its figure and source, report Claude, Codex and Copilot headroom side by side, and own a mistake in one line with its repair.
-
 ### Fixed
 
 - Non-render consumer refresh pull requests name the overseer or a maintainer as the merger through the merge queue after review and CI pass.
-- Pi session manager refuses to delete a session another running Pi has open, such as another lane's, and names that Pi.
-- The orch skill reads a Claude account walled in `lanes list` and `lanes pick` once a lane's harness banner states a weekly wall, until the reset it names, even where usage shows room.
-- pi-agents-tmux 3.3.3: a parallel sub-agent that fails with a long error returns it within `resultMaxBytes` and `resultMaxLines`; the full error stays in the saved full-output file.
-- orch's Copilot head route holds its decline and fallback notices, and the overseer's app approval, while a review-body finding at the head stands unanswered.
-- github: `pr-timeline` reads the final head's gate pass from its first approval, so `oversee-cycle` names each merged pull request's longest stage again.
-- The `reviewer-stop-check` hook now reads the reviewer's own transcript on Claude Code, not the parent session's, so the worktree it checks is the one that reviewer was given.
-- skill-load-check counts a Codex `functions.exec` skill read written as `text((await tools.exec_command(...)).output)`, so the next `linear.sh` call is no longer refused.
-- The linear skill's `statuses` reads and `--team` list filters take a team key such as `KEN`, and refuse an unknown or empty team instead of listing nothing or every team.
-- pi-codex-minimal-tools 2.1.4: an `openai-codex` request no longer fails when history holds a grammar tool call another provider made, as in Pi 1.0.0.
-- The linear skill's `issues create --labels` resolves labels against the issue's team, so a label name two teams share no longer fails the create.
-- The linear skill resolves a team key, such as `KEN`, as well as a team name: `--team` on `cycles`, `issues create`, `projects create` and `labels create`, and `teams get`.
 - review-gate: a consumer refresh no longer fails `Argument list too long` on a busy refresh pull request; `refresh-reviews.sh` gives jq the thread and comment documents on stdin.
-- `lanes` reports a Copilot account's `credits.used` as the pool granted minus what remains, the figure github.com shows and `monthly_pct` is judged from.
-- orch `round-prune` prunes a worktree paused mid-rebase under its own issue's lease instead of refusing `worktree-output-prune-lease-foreign`.
 - second-opinion: an external Claude review that ends with no review text records Claude's terminal reason in its `.failed.json` cause and exits 5.
-- `lane-close` closes a hosted lane whose tmux window is gone once its tracker item is terminal, so a control-VM tmux restart no longer leaves hosted lanes refusing `pane-missing`.
-- The github skill validates its credential once per command, so `pr-view` on an installation token makes 3 GitHub requests instead of 5.
 - A non-render consumer refresh whose rolling pull request is already queued, merged or closed defers and exits 0 instead of failing the scheduled run.
-- `oversee-watch` no longer reports a day-old refresh failure as a new incident when GitHub's run list returns a stale page.
-
 ## [1.6.0] - 2026-10-03
 
 ### Added
 
-- pi-qol 2.3.4: the package test suite runs copied extension code against the installed Pi packages, at one version at or above Pi 0.86.0, with no stand-in modules.
-- Dev rounds for an Apple item in a repository with the xcode-run `mac-run.yml` workflow run `fleet-mac-run test`, and the completion receipt refuses a pass or no-verdict that does not record it.
-- `lanes pick` keeps a Codex account at its plan limit pickable on a credit balance above `ORCH_LANE_CODEX_CREDIT_FLOOR` while its spend control is not reached, after every account with plan room.
 - The kendex refresh pull request, or the run summary when no render changed, lists each committed setting that pins Fable or Astra under Deprecated models, as a warning.
 - harness-ci: with `HARNESS_CI_QUEUE_PATHS` unset, every change stays queue-only and the classifier prints one warning to set it in `[env]` to the repository's CI inputs, or empty for none.
-- `lane-mail ask --to owner --draft` asks the owner to approve a Slack message or email sent as them, and records the recipient, medium, exact text and its SHA-256 hash.
-- Add a Linear page module that completes requested connection chains and handles large replies without passing response data as command arguments.
 - Release checks refuse, from 1.0, a patch version bump whose release holds an Added or Breaking entry and a minor bump whose release holds a Breaking entry, naming the first such entry.
-- orch: `overseer-approve` approves a pull request head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, and refuses when the live head has moved.
 - `kendex verify` names each hook whose `harnesses` pin keeps it off a default tool or names one it excludes; agent and skill adoption and the drift-check install write no pin equal to the default.
 
 ### Changed
 
-- orch: `REVIEW_MAX_CYCLES = "0"` now runs one blockers-only fix round, recorded in `review_fix_round` and accepted on its validation, with no re-review; before, it escalated nearly every blocker.
-- orch: an overseer's directive, item or fix now fixes the problem at its source first; a patch, shim, workaround or gate standing in for that fix needs a stated reason and an item to remove it.
-
 ### Deprecated
-
-- review-gate: `standard-required-approvals` and `standard-stale-dismissal` report advisory until 2.0 with one warning; meet them in the organization ruleset.
-- review-gate: an unset or empty `REVIEW_GATE_STANDARD_CONTEXTS` reports `standard-required-contexts` advisory until 2.0, and fails it while `Review gate` is required; set it in `[env]`.
-- review-gate: `standard-ruleset-source` reports advisory until 2.0 with one warning; move shared rules to organization rulesets, checks and queue to repository ones.
-- review-gate: the standard report reads an unset `REVIEW_GATE_STANDARD_APP`, `_ENVIRONMENT` or `_SECRETS` as its pre-1.3.0 value, with one warning to set it in `[env]`; this read ends at 2.0.
 
 ### Fixed
 
 - The warning for a legacy catalog agent name says compatibility remains until the next major release, no longer through 1.4.x.
 - A finding kendex accepts in its own packages stays accepted after an edit elsewhere in its file, including one that moves its line; an edit to the line itself still shows the finding again.
 - A consumer refresh whose only refused path is a retired rendered file now opens its pull request for review instead of stopping; removing a shared hook, MCP server or plugin entry still stops.
-- `lane-close` and the SSH lane host's `stop` end a lane's harness by its recorded launch identity, so a lane whose worktree was removed still stops, and a close also ends a woken turn.
-- pi-questions 2.1.0: interrupting the agent cancels its open question, an unanswered native dialog cancels it after `dialogTimeoutMinutes`, and a queued question stops leaking behind a popup.
-- Pi session manager: search no longer blocks typing or acts on stale results, a runaway `re:` pattern stops with an error, a hung `trash` times out, and prompt text is freed on close.
-- pi-session-bridge: session shutdown, reload and session replacement no longer hang on a client that never closes its connection; it is disconnected after one second.
-- pi-skills-manager: Pi keeps drawing while a deleted skill's files are removed, and scrolling a long skill preview or typing a search stays responsive with a large catalog.
-- pi-task-panel 3.0.5: an older point in the session tree restores its own task list, not the newest one; a fork that cannot recover a large list warns.
-- pi-tool-renderer 2.0.10: interrupted tool rows stop blinking, and a write over a file larger than 700 KB no longer reads the whole file before skipping its diff.
-- pi-caveman: a prompt with a long run of spaces after `git push` no longer stalls on submit; the force-push check now scans the prompt once.
-- pi-prompt-stash: the stash popup stays responsive with many large drafts, a stash is capped at 500 prompts and 8 MiB, and store writes no longer block Pi.
-- pi-agents-tmux: session shutdown stops a pane agent's inbox poller first, so a task queued during shutdown stays queued instead of reaching the closing session.
-- On Pi, a skill read in a `tool_batch` call now loads that skill when each batch call on that file is a read that reached the model whole, so skill-load-check passes the next guarded call.
-- `lanes` measures a Copilot CLI account whose login sits in the Linux Secret Service, read by `secret-tool`, and names an absent, locked, refused or empty keyring as its `no_credentials` reason.
 - A lane launched with `open-terminal --lane-refresh` is told at session start that `kendex refresh` and `kendex apply` run there with `--lane-refresh`, not that they never run.
-- Lane selection shares measured account usage across sampled claims, keeps busy accounts with room available, and refuses model windows whose live lanes will spend their room.
 - A Slack owner ask that carries a draft now shows the draft's recipient and medium, and its full text exactly as typed with no link or Markdown rendered in it.
 - `kendex verify --base` no longer reports a hook, MCP server or plugin registry as hand-edited after one of its hooks, servers or plugins is retired.
 - A running Slack relay loads new code by itself after `kendex apply` or `kendex refresh` updates the slack skill, and reads its settings again; `listen --status` shows the running code as `code=`.
-- `lane-mail` refuses an owner notice whose text matches one sent to the owner in the past 24 hours, whatever its attachment, naming the earlier notice as `owner-notice-repeated=overseer id=`.
-- pi-agents-tmux: background children and headless pane agents default to a 2-hour deadline, up from 30 minutes, so a dev round outlives its validation run; lower `bgTaskTimeoutMs` to shorten it.
-- `oversee-cycle` counts a ci_green miss toward `repeat-miss` only when the final head's checks caused it, so work rounds pushed after a pull request opened no longer raise a ci_green repeat miss.
-- pi-web-tools ends a stalled provider request, PDF helper or browser cookie read at its deadline instead of holding the tool call, and YouTube understanding honors `browserCookieAccess`.
-- A fleet lane that keeps its workflow state in its worktree's `tmp` now hands off from there: its turn-end hook, the overseer's watch and a local relaunch all read the handoff record in that `tmp`.
-
 ### Security
-
-- Refuse deletes of shared temporary or home directory roots, their direct globs, and child paths with . or .. segments. Keep a private mktemp directory for cleanup in the same shell call.
 
 ## [1.5.1] - 2026-10-02
 
 ### Fixed
 
-- Slack acknowledges messages during API and mailbox waits, resumes reconnect history from saved positions, and logs deliveries and refused eyes reactions.
 - Since 1.5.0, verify names `kendex source refresh` when a source mirror lacks a recorded commit, including stale render rows; the 1.5.0 notes missed it.
-- The built-in second-opinion Codex command now disables Codex hooks, so project Stop hooks no longer block the nested review. A custom `SECOND_OPINION_CODEX_CMD` needs `--disable hooks` added.
-- second-opinion keeps a review or audit answer a CLI printed on stdout with a zero exit, even when its stderr echoes quota or rate-limit text, instead of falling through.
-- github: `pr-merge` merges past the merge queue only when it is empty, so queued entries keep their CI; an occupied or unreadable queue takes the queue route (`queue-occupied`, `queue-unreadable`).
-- commit-guards: the byte ceiling exempts `.kendex-lock.json`, the install record kendex generates, as it exempts package-manager lockfiles.
-
 ## [1.5.0] - 2026-10-02
 
 ### Upgrading
@@ -1901,86 +521,48 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - List and toggle Copilot's built-in MCP servers per scope. Enable or disable installed packages from the CLI with `kendex enable` and `kendex disable`.
 - Set KENDEX_REAL_HOME to an absolute path for a portable home on Linux, macOS and Windows, including global toggle and verify operations.
-- Direct-push lanes can record cycle time and change class without a pull request, and join the fleet's per-class totals.
-- Orch archives expired, closed mailbox exchanges, including peer replies, without changing read positions and removes session records for panes that no longer run.
 - Install one output style per scope in Claude Code and Pi. Show safety findings, preserve user selections and unowned Pi blocks, and repair owned Pi edits with named discard.
-- Overseers audit growing or stale backlogs, decide aged Triage issues, batch protected changes for owner approval, and report created and closed counts.
 - Add the xcode-run skill to install a manual Mac workflow for Xcode builds, tests and simulator screenshots with one downloadable log and PNG artifact.
 
 ### Changed
 
 - Consumer refresh reports the exact engine version in its rolling pull request or current-run summary. The review-gate writer installs the latest release from its immutable installer commit.
-- Orch launch tiers use Expected delta counts. Lane records retain tier inputs, reject conflicting merge-time tiers, and explain estimate and path misses.
 - Claude Code agent rendering replaces the haiku tier with sonnet and reports one warning per run. KEN-2466 removes this substitution.
 
 ### Fixed
 
-- Overseer succession onto another harness carries only the translated permission word, a self-succession refused after launch is logged in the fleet log, and lanes reads Copilot CLI 1.0.90 logins.
-- Overseers refuse foreign repository work and route it by peer mail, default to a repository-named session, and keep the overseer window at the session's base index through succession.
-- Claude lanes use their own model's account limits at turn end. A full limit for another model no longer forces a handoff.
 - Shared CLI package commands accept output-style. Their kind help and unknown-kind choices include output-style while keeping existing aliases.
-- Codex skill reads through functions.exec count as loaded skills, so the next guarded command can run. Failed and compound reads still refuse.
 - List Copilot's built-in servers and switch them on or off per scope. Enable or disable any installed package from the CLI.
 - Git hook checks no longer emit a stray Broken pipe error when a helper program has changed.
 - Keep skill-load-check on Claude, Codex and Pi when skill-load-record is limited to Copilot. Hook headers can limit companion requirements with requires-on.
-- Branch checks no longer treat documentation or changelog files as an extra source subsystem. Their added lines still count toward the small size limit.
-- Owner notices print receipts. Mail refuses unkeyed repeats under its lock, including owner answers. Peer asks keep both pending records. Hosts require the repeat guard. Reports name their notice.
-- Slack records posts before sending, avoids repeats after lost responses or stops, redirects posts from deleted asks to the channel, and recovers replies in recently active old threads.
-- Agents popup scrolling reuses text layout and retains at most 16 task traces. Managed-agent saves refresh asynchronously with a 120-second deadline.
 - Consumer refresh preserves edited renders and stops before workflow adoption or publication instead of discarding the edits.
 - Consumer refresh preserves hand-edited workflows and accepts exact historical shipped workflows even without an adoption record.
 - Homebrew and Arch release packages install kendex 1.4.0.
-- Linear activation and label replacement resolve live labels for the issue's team, including workspace labels, and refuse unknown names before any write.
 - Windows add and subscription commands use the catalog directory name for native local paths instead of including the parent directories.
-- Voice and terminal replies stay out of Slack. Consequential voice requests can use a server-verified spoken one-time code or authenticated on-screen approval.
-- **Breaking:** `pr-merge` removes `--unless-admin`. Use `--auto` for normal arms; use `--auto --queue` for forced or unresolved-state arms.
 - Consumer refresh resolves outdated automatic review threads without filing them upstream. Live findings on paths no single package claims stay open for the consumer to answer.
-- Copilot pool picks keep the overseer's shared account and charge monthly use. Unread Copilot lane refusals name the status, cause and pool-reading repairs.
-- Hosted mailbox delivery continues with a warning when the host has an older append library. Current hosts still reject repeated messages.
-- Lane mail refuses local overseer deliveries and peer asks without a reply-visible overseer record; use the owner's owner-note tool for remote delivery.
-- Overseer handoffs replace old state and bound resume reads. Live self-succession refuses missing or stale generations. Dead and walled recovery remain available.
 - Pi package removal resolves bin link targets with platform path components before it checks package ownership.
 - Pi extension toggles work globally and per project without removing package files or other settings. Install and update keep disabled extensions off. Verification detects changed filters.
 - Pi package removal deletes owned bin links when Windows uses different path prefixes or a link uses a relative target. Links to other packages stay in place.
 - Pi package disable and disabled-package updates refuse to erase a saved extension selection. Enable and ordinary updates keep the selected extensions.
 - Consumer refresh defers refused pushes when its rolling pull request is queued, armed, merged or closed, or its branch was deleted. Other push failures still fail.
 - Keep skill-load checks installed with released engines. Refuse render classification for deletions without trusted whole-file ownership proof.
-- Codex skill reads through functions.exec now count when the command succeeds. Codex unloaded-skill refusals report the failed check step.
-- Slack delivers repeated replies as answers with eyes reactions until explicit close or deadline. Catalog updates preserve closed questions. Relay restarts retain closure state.
-- Slack holds mailbox posts per checkout using that checkout's master file and age limit. A checkout with no master file keeps posting when another checkout is held.
 - Template installs reject combined output-style declarations before writing any group, including copied styles and disabled declarations.
 
 ### Security
-
-- Pane capture separates bridge arguments from the fixed Bash lookup. Custom bridge paths remain supported, and shell execution stays disabled.
-- Pi pane command capture checks executable origin and keeps shell execution disabled. Shutdown tests pass paths as data, not child code.
-- Claude second opinions use restricted read-only tools, deny unapproved commands, and disable user and project hooks, including when the host defaults to bypass permissions.
 
 ## [1.4.0] - 2026-10-01
 
 ### Added
 
-- Set `ORCH_LANE_PREFERENCE` for model-free launches. Preserve task permissions and record the first eligible entry with room. Repeat the choice for tmux batch items and slot waits.
-- Overseer progress notices pause from midnight to 7 am in the owner's time zone. The morning brief includes overnight merges. Quiet hours and the owner's zone are configurable.
-- Add the `swift` agent for SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds and tests across all supported agent harnesses.
-
-- Linear accepts a pre-minted application token through `LINEAR_APP_TOKEN`. Use `auth-mint` on the credential host to print token and expiry JSON without writing files.
 - Project-scope `refresh`, `apply` without `--plan`, and `updates --apply` refuse writes in marked lane worktrees, including Windows worktrees. Refresh lanes can pass `--lane-refresh` to proceed.
 - Major release checks require a named Breaking entry for the app and Pi packages; all release channels use one version and migration standard.
-- Repeat-watch overseers and configured masters must arm their wake process before ending a fresh lead turn. The refusal prints the start command.
-
 ### Changed
 
 - The install lock lists rendered agent, command and hook files, not shared settings or registries. Apply and refresh keep declared Pi packages when clearing old file inventory.
-- **Breaking:** Update subscriptions and routes: generalist to maintainer; engineer to runtime. Frontend covers React/QML/JavaScript UI; runtime adds non-UI Go. Rust excludes Iced views.
-- Pi agent completion polling and task updates reuse the cached task registry, including after local child usage writes. External registry changes apply on the next poll or update.
+- **Breaking:** Update subscriptions and routes: generalist to maintainer; engineer to runtime.
 - Skill-load checks now support Codex and run by default on Claude, Copilot, Pi and Codex. Explicit opt-outs remain unchanged.
-- Slack routes owner thread replies at any age with parent context, keeps replies in their threads, supports thread reads, and shares one owner message standard for masters and overseers.
-- Validation records and fleet reports show which check lanes each round ran and whether the command selected all lanes or a subset.
-
 ### Removed
 
-- **Breaking:** Pi fleet lanes refuse pi-hooks without mail wake. Repair the reported root and scope on the lane machine per the refusal; retry hosted launches with `--relaunch`.
 - **Breaking:** GitHub approvals and thread resolution replace the custom review status. Remove the retired status from required checks before consumer refresh removes its workflow.
 
 ### Fixed
@@ -1988,145 +570,57 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Old consumer refresh scripts can open their update pull request. Automatic refresh keeps the retired writer until explicit trusted removal. Its retained template findings are accepted.
 - Hooks install required skills and companions together. Invalid harness IDs withhold callers. Skill removals stay removed. Hand-installed skill checks report dependency gaps without blocking.
 - Commit guard checks report an outdated hook helper after a pulled render and name the installer to run from the main checkout.
-- Pi agents share a child limit, cancel pane preparation, and drain stalled commands on shutdown. Inbox failures restore tasks.
-- Pi background tasks cache bounded log tails and command layouts, limit concurrent log reads, and stop notification regexes at their deadline instead of freezing Pi.
-- Regex session-search snippets keep the matched text in prompts with repeated spaces or newlines.
-- Pi QOL Copy and Fork load complete prompts before closing search. Copy and image refusals preserve newer editor drafts. Headless image refusals report errors.
-- Pi QOL indexes session searches asynchronously and stops slow regex searches with a deadline error. Image submissions use asynchronous reads and refuse totals above 20 MiB before reading files.
-- Overseer registration keeps unread identity fields and the launch command only for the same proven pane, and reports retained and freshly read fields.
-- Dead references in lock-listed kendex files warn instead of blocking consumer commits. Catalog CI checks references after installation, including hooks and scripts.
+- Catalog CI checks references after installation, including hooks and scripts.
 - Project refresh, apply and package updates refuse writes to a marked lane from a nested Git checkout unless you pass `--lane-refresh`.
-- Hosted lanes use pane judgment when their provider has no harness status verb, instead of remaining unjudged.
 - Consumer refresh uses the latest released kendex with read-only API authentication. Catalog CI checks declared hook delivery and honors caller advisory policy.
-- Codex requests stay cancellable after headers and stop when response streams or WebSockets go silent. Background image jobs have a concurrency limit and stop when the session ends.
-- Fleet lanes and overseers honor committed consumer REVIEW_GATE_MODE before Copilot requests. Disabled gates skip first and repeated requests without executing consumer-base scripts.
-- Copilot overseer launch, registration and succession install the context reader. Registration warns about missing turn-end hooks, and session start reports a missing reader.
 - Preserve authored legacy agent labels in in-place skills while updating labels in managed instructions and rendered copies.
-- Session Bridge reuses serialized events and saves raw history through a bounded asynchronous queue only while an event subscriber is attached, so unused bridges do not write large results to disk.
-- Cancelling a queued Claude message stops the replay child and releases the Pi turn without waiting for more output. Silent replay children also receive the idle deadline.
-- Second opinions advance after exit, timeout or quota refusal and report each attempt. kendex tries Claude Opus on Copilot before native harnesses.
 - Read deprecated numeric overseer preferences with a warning until the next minor release, and show refused or deprecated preferences in consumer refresh pull requests.
-- Account selection uses fresh local model readings when host windows are absent, and weights projected room by reset time with a bounded bonus.
-- Local completion checks catch document growth near byte limits before push, measured against the branch point.
 - Consumer refresh accepts legacy catalog agent names, keeps local agent names and customizations, updates agent labels, and reports affected settings. Compatibility remains through 1.4.x.
 - Copilot hook updates replace older commands for the same script instead of running both. Hooks for other scripts stay unchanged.
-- The Pi extension manager keeps scoped toggles after project moves, saves settings only after instruction scripts pass, caches search data, and bounds npm version requests.
-- Fix Pi QOL regression checks to load installed dependencies from disposable runtime copies.
 - Refresh removes recorded agents no longer declared in the selected scope, so agent renames do not need a separate remove before verification.
 - Refresh reports each Pi package that only needs npm install as a notice naming `kendex update-pi`. These notices no longer fail refresh. Other Pi drift still fails.
 - Homebrew and Arch packages install kendex 1.3.0. Review-gate workflows use its released CLI and an installer pinned to the release commit.
-- Slack continues routing healthy checkouts when another checkout's mailbox fails, and posts notices from older orch installs that omit mailbox positions.
 - kendex update retries failed release downloads without retaining partial bytes, supports older system curl, and names the actual attempts in the error.
 
 ### Security
 
-- Alert reads use the overseer app token, not lane credentials. Supply and renew its private file through `ORCH_SECURITY_ALERT_TOKEN_FILE` on the control VM.
 - Pi batch children pass through tool-call guards, so commands refused by pi-hooks cannot run through `tool_batch`. pi-tool-renderer requires Pi 0.99.0 or later; upgrade Pi before use.
 
 ## [1.3.0] - 2026-09-30
 
 ### Added
 
-- orch: `lanes` measures a Copilot CLI account's monthly AI credits from GitHub's usage endpoint with its stored login, and a Copilot lane's context comes from `copilot-statusline`.
-- orch: Copilot CLI lanes resume and take `open-terminal --wake`; Copilot commands get shared skills and, with `--allow-all`, folder trust; ones open-terminal builds get long context.
-- orch: fleet lanes and overseer successors can launch on Claude `sonnet` (Sonnet 5, 1M context) and `haiku` (Haiku 4.5, 200K context).
-- orch: an `ORCH_OVERSEER_PREFERENCE` entry may name Copilot CLI as `copilot:MODEL:EFFORT`; the overseer opens on the Copilot account `lanes` picks, with that model and effort.
-- CLI: `kendex hooks-off` names the Copilot settings file or `--hook-document` that turns hooks off; orch refuses a Copilot fleet lane whose hooks are off.
-- orch: a Copilot CLI lane's context comes first from a kendex Copilot extension the fleet launch installs, and falls back to `copilot-statusline` where that home turns extensions off.
-- review-gate: `REVIEW_GATE_STANDARD_QUEUE_BYPASS` and `REVIEW_GATE_STANDARD_CHECKS_BYPASS` name the bypass actors `validate-standard.sh` admits on a merge-queue-only and a checks-only ruleset.
-- orch: a Copilot fleet lane launched with allow-all whose managed settings block it now reports `stop-cause=allow-all-blocked-by-policy` in the watch, `lanes state` and its turn-end hook.
-- review-gate: `validate-standard.sh` adds the rows `standard-required-approvals` and `standard-stale-dismissal`, and judges required checks and the merge queue only from repository rulesets.
-- orch: the status report's `Escapes:` line counts merged pull requests that a revert, or a bug issue's `Regressed-by: #N` line, named within 14 days, this week, last week and the cap-change week.
-- commit-guards: `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` runs the repo-local pre-commit entry only for a commit that touches a path it names, and announces the skip otherwise.
-- orch: the `oversee-watch` heartbeat lists a Dependabot security pull request as `bot-fix pr=N alert=K`, and `alert=none` once every alert linking it has closed.
-- orch: `oversee-watch` reports each open Dependabot, code scanning and secret scanning alert once, until the fleet state records its verdict; `ORCH_SECURITY_ALERTS=off` turns the check off.
-- Add the `engineer` catalog agent for non-UI shell, Python and TypeScript runtime implementation. Dev routing and launch briefs select this role instead of using the maintenance-only generalist.
-- Owner notices that answer a delivered request carry its delivery id, so a relay can bind the reply to the request without a mailbox lookup.
-- Linear accepts OAuth app credentials beside personal keys, caches and renews tokens with fixed `read,write` scope, and reports the credential and actor in `auth-check`.
-- Fleet watches report consecutive consumer refresh failures with the latest run, cause and initial/repeat marker, so owners get a notice for each new incident without timed-repeat noise.
-
+- CLI: `kendex hooks-off` names the Copilot settings file or `--hook-document` that turns hooks off
 ### Changed
 
-- orch: Copilot CLI launches run on the account's stored login with `COPILOT_GITHUB_TOKEN` cleared, its skills and folder trust, on the 1M window, and local fleets take Copilot lanes.
-- orch: a local `open-terminal --relaunch` of a lane whose handoff record stands starts afresh from that record instead of resuming the session the lane ended.
-- lane mail: on Copilot CLI a lead session's tool calls now take and mark read its mail and see a halt's read command; a custom subagent's tool calls take none of the lead's mail.
 - The review-gate consumer refresh and writer templates pin the kendex v1.2.0 release and fetch its installer at the commit v1.2.0 names.
-- orch: `ORCH_OVERSEER_PREFERENCE` entries name their model and are the only model order overseer succession walks; a model name is not checked before launch.
-- orch: `lanes pick --harness pi` reads a Pi root's Copilot pool from the lane host's `accounts` row, with `ORCH_LANE_COPILOT_POOL` as the override; an unread pool's refusal names the failed read.
 - Skill renders, `kendex check --catalog`, the package preview and `kendex diff` leave out top-level `tests/`, `evals/` and `DEVELOPMENT.md`; the next refresh deletes old rendered copies.
-- **Breaking:** oversee: after upgrading, run `oversee register` in the overseer's pane; until then no session reads its mail, `oversee launch --predecessor` refuses it, and a watch start drops its launch identity.
-- lane mail: a `peer send --repo` note or `peer ask` reaches only the session the checkout's fleet record names (`oversee register` names one); the sender sees `no-reader` otherwise.
-- orch: `oversee-cycle` micro and small class targets are now 1200 and 1800 seconds, the owner's 20- and 30-minute open-to-merge figures; `oversee-cycle --help` states each target's span and class.
 - `kendex verify` warns, and exits 0, where a project ignores a path an installed agent declares as tracked output; `--strict` still fails the run on it.
 - **Breaking:** harness-ci reads every change as queue-only until the base commit's `[env]` sets `HARNESS_CI_QUEUE_PATHS`; set it empty for none.
-- github: `pr-merge` merges past the merge queue where the queue is all its token bypasses and the change is not queue-only; `--auto --unless-admin` arms only a PR the queue takes; `--admin` is gone.
-- **Breaking:** review-gate's standard scripts refuse until `kendex.settings.toml` `[env]` sets `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS`.
-- orch: `approval-wait` takes its mode, `approval` or `off`, from the PR's review decision and its base's rulesets; an open thread holds an approved head at `comments`.
-- **Breaking:** review-gate: `pr-watch.sh` reads GitHub's review state alone, with `disarmed` and `awaiting-stale` read from `reviewDecision`; `--heal`, `--no-evaluate` and the predicate kinds are gone.
-- **Breaking:** review-gate: `standard-required-approvals` and `standard-stale-dismissal` fail until the organization ruleset's pull-request rule requires 1 approval and dismisses stale approvals.
-- **Breaking:** review-gate: `standard-ruleset-source` fails an organization's required checks or merge queue (move both to repository rulesets) and an absent organization deletion or force-push rule.
-- **Breaking:** review-gate: `standard-required-contexts` fails until `[env]` sets `REVIEW_GATE_STANDARD_CONTEXTS` to the required checks; drop `Review gate` from the ruleset before the writer goes.
-- `pre-commit-check`, where git hooks are armed, reads the no-verify flag from the commit's git word on: a `-n` of tail or xargs in front of it passes, and a flag xargs reads from a pipe is unseen.
-- `pre-commit-check`, with no armed git hooks, refuses only a line whose command is git commit: a note or message that mentions it mid-line passes, and so does a commit that xargs, env or sudo runs.
-- orch: a restack runs `DEV_VALIDATE_RANGE_CMD` on the rebased branch before its push, stops unarmed on a red run, and reports the run's minutes; with no range command it restacks as before.
 - **Breaking:** `skill-load-check` runs on Copilot CLI; the `workflow` bundle adds `skill-load-record`. A scope that names the check alone must add that hook, or every guarded Copilot call is refused.
-- **Breaking:** lanes: every lane brief, on every harness, carries the unattended words, and a `--cmd` launch naming a harness is refused without them.
-- lanes: where kendex hooks run, a launched lane that ends a turn with no `lane-mail ask` or `notice` sent is held or reported to its overseer; the hooks never read the lane's words.
-- orch: `workflow-state prune` now keeps records for 5 days by default, not 14; set `ORCH_RECORD_RETENTION_DAYS` in `[env]` to keep another window.
-- orch: a lane asks Copilot once to re-review a head that moved since Copilot last read it, sends the overseer its answers on a head Copilot already read, and the status report counts each outcome.
-- orch: review before a pull request is one fix round and one re-review: `REVIEW_MAX_CYCLES` defaults to 1, not 4. Set it in `[env]` to allow more.
-- pi-codex-minimal-tools: Background image status reuses layout during redraws. Its timer updates elapsed time without reinstalling the widget.
-- pi-questions: Question results normalize requests once and reuse layout during redraws. Answer wrapping preserves ANSI styles and wraps long words with Pi’s text wrapper.
-- pi-task-panel: Task panels reuse layout and sorted order. Bulk replacement and import keep explicitly active tasks.
-- pi-tool-renderer: User messages reuse Markdown layout during typing and streaming. Width, content and theme changes rebuild the layout.
-- Pi agent previews use a cached inventory without render-time disk reads. File and directory changes update the cache. Bulk edits reload only changed files, not the whole inventory.
-- Overseer reports check the owner's short Slack format before writing. Owner guidance adds spoken replies and on-screen approval for consequential voice requests.
-
 ### Removed
-
-- **Breaking:** orch: an `ORCH_OVERSEER_PREFERENCE` tier rank is refused; write the model the rank named, so `claude:1:high` becomes `claude:fable:high`.
-- orch removes the custom review gate modes and their review, approval and check settings.
 
 ### Fixed
 
-- review-gate: a pull request whose change class cannot be measured gets a pending `unmeasured` status naming the cause, instead of failing the writer's whole pass. Run `kendex refresh` to update.
 - A catalog hook's preToolUse refusal on GitHub Copilot now shows the model its reason, not just `hook exited with code 2`. Run `kendex apply` in each project and `kendex apply --global` to update.
 - Copilot CLI no longer runs the hook scripts kendex installs for Claude Code, so a hook installed for both runs once there and a Claude-only one stays off Copilot; a command-declared hook still runs.
 - A hook matcher installed for Copilot names every tool its hooks are matched against, so a hook on `Write`, `Read`, `Edit` or `Bash` fires on `create`, `view`, `apply_patch` and `powershell` too.
 - `kendex verify` passes a hook that runs only on tools the project does not install on, and passes with no install record when every package the project declares is such a hook.
 - A command run below your home directory no longer takes a marked folder above home for its project. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.
-- `workflow-state remove --help` and `-h` now print the remove usage and change nothing, and an item key that starts with a dash is refused.
-- `lane-mail inbox --ack N` no longer marks a message read before it arrives. A count past the lines present stops at them, and a cursor already past them comes back down.
-- The Pi Claude bridge no longer reads the whole Claude binary or re-serializes history each turn, and its debug log no longer copies tool output or prompts (`@vanillagreen/pi-claude-bridge` 4.0.6).
-- A fleet overseer is told at its next tool call when it crosses its context mark, and its watch relaunches one whose context fills its window. Run `kendex apply` in each project to update.
-- With thinking Off, the Codex provider shim sends the model's Off reasoning effort, as Pi does since 0.86.0 (`@vanillagreen/pi-codex-minimal-tools` 2.0.4).
-- commit-guards: py-names passes a commit with no Python file without reading `.kendex-generated.json`, and an inventory refusal names its status, jq version and first rejected entry.
-- review-gate: a pull request whose base predates `.kendex-generated.json` gets a gate status again, and one with an unresolved change class gets `pending` while the rest converge.
 - A linked worktree is now judged by its own commit guards. `kendex check` reports them unverified until `kendex guard install` in the main checkout re-arms them.
 - Packages pages rows while keeping all results and selections. Safety previews stop queuing for rows you leave. Catalog reads share requests and offer a retry when they fail.
 - Hook and Pi session-start reports state the lane install rule and replace kendex fix advice with a drift-item count. Main-checkout reports stay unchanged.
 - Rolling consumer refreshes replace hand-edited renders when every conflict is a known edit hold, and list the held items in the pull request body.
 - Catalog checks and verification report failed delivery when a named harness cannot run a hook event. Intentional exclusions, advisory hooks, and unrelated skill reporting stay unchanged.
-- Detect hosted harness exits through the lane-host provider even when SSH stays open. Report confirmed exits in the same watch pass and leave failed status reads unjudged.
-- Pi tool renderer preserves structured tool results for codemode scripts, including bash output on Pi 0.99.0 and later, while keeping support for earlier Pi versions.
-- Codex sessions reject completed Responses streams with unfinished tool calls instead of running tools with incomplete arguments.
-- The Pi extension manager no longer lists built-in extension selectors as file-backed extension settings. Manage built-ins through `pi config`; configured extension paths remain listed.
 - `kendex updates` reuses its update report when it records the session-start snapshot, so listing updates no longer evaluates each package twice.
 - Updates reads only current and latest version details instead of complete package histories. Versions keeps its full history.
 - Consumer refreshes open pull requests at any measured class. Only render arms auto-merge; other classes show the classifier cause and path for maintainer review.
-- Slack relay WebSocket connections require TLS 1.2 or later on every supported Python version.
-- DuckDuckGo web search preserves escaped entity text in result titles and snippets instead of decoding it twice.
 - Refresh records supported hook copies when another harness cannot run the catalog event, warns for that harness, and keeps verification current for the rest of the install.
 - Pi's native session-start check sends `kendex-drift` only to lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
-- Pi hooks' `pi-contract.test.ts` rejects missing or extra literal `pi.on` events and dotted `pi`/`ctx` accesses in the update inventory. Named package exports remain manual.
-- The Slack relay skips notices the master already read when a hold ends. It records skipped ids to prevent repeats after a restart and preserves open questions and held answers.
 - Updates reflects package version changes, source fetches and project settings changes without a manual check or window refocus.
 - Returning to Updates keeps the current rows without repeating the background read. Startup reads them once. Check for updates and refreshes after changes or window focus still run.
 
 ### Security
-
-- The desktop app's interface build and test tools no longer carry the published security advisories against vitest, js-yaml and undici. The shipped app is unchanged.
-- Pi's tool renderer no longer freezes on Git diff headers with unterminated quoted paths and repeated backslashes.
 
 ## [1.2.0] - 2026-09-28
 
@@ -2134,27 +628,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - harness-ci: change-class reuses a passing run of the same tree, pull request to merge group to push, for all lanes under `covers-all-lanes` with no lane list, or each lane marked `:event-uniform`.
 - orch: the lane-mail hooks run on Copilot CLI: a lane reads its overseer's mail at session start, each prompt and its turn end, is shown it after each tool call, and stops at a halt.
-- `kendex verify` fails a project ignoring a `tracked-outputs:` path of an agent it installs, naming the rule; catalog checks warn. The planner declares its plan and research files in `docs/plans/`.
-- lane mail: a lead session in a checkout where no repeat fleet watch runs gets the notes `lane-mail peer send --repo` writes there, at its turn end and after each tool call.
-- orch: `oversee-watch` reads a Claude Code overseer's exit and usage limit from rows its hooks write, not its pane, and succeeds a walled overseer in the same pass.
-- orch: `open-terminal` starts and resumes Copilot CLI lanes in autopilot, the watch and `lane-close` handle them, and `lane-mail watch --once` exits at its first mail notice; fleets refuse Copilot.
+- `kendex verify` fails a project ignoring a `tracked-outputs:` path of an agent it installs, naming the rule; catalog checks warn.
 - `kendex check --report-only` leaves the project's install record as it is and reports each missing row with its path and hashes, or its settings file; every session drift hook runs it.
 - A hook can run on Claude Code's `StopFailure` event, which fires when a turn ends on an API error such as a usage limit.
 
 ### Changed
 
-- The overseer reads its turn-end context only from the transcript its own session owns, matched to the reported session id and recorded launch home; an unowned transcript leaves context unmeasured.
 - The review-gate consumer refresh and writer templates pin the kendex v1.1.0 release instead of a main build.
-- orch: on a merge-queue base, push and the freshness gate take a cleanly merging branch without a rebase, and a PR arms auto-merge on opening where its base requires the review gate.
-
 ### Fixed
 
-- A Claude overseer successor is given folder trust for its directory in its config dir before it starts, so it no longer parks on the trust dialog.
-- An overseer watch whose session record cannot be built or written says so as a notice and still judges the pane, relaunching a death only from a line the fleet state binds to that pane.
 - A `repo-effects` declaration carrying a key this kendex does not read, from a newer catalog or a typo, now reads and its disclosure names the key; `kendex refresh` no longer fails over it.
-- A path the size check counts as a test, by its built-in rule or `ORCH_SIZE_TEST_PATHS`, is no longer its own subsystem, so a script beside such a fixture keeps `micro` or `small`.
 - The review-gate consumer refresh and writer templates pin kendex main-build-299, whose repo-effects reader accepts the current catalog; main-build-261 refused every consumer refresh.
-- The overseer heartbeat now names each In Progress or In Review item with no live lane that the launch queue lacks, so a closed or stopped lane's item is no longer dropped.
 - `kendex check` no longer writes `.kendex-lock.json` off the default branch; a matching render there is reported as not in the install record.
 - `kendex verify` counts failed shim, arming, record, inventory and adopted workflow rows on its closing line; a stale copy's row names both hashes and the adoption step.
 - The review-gate writer and refresh templates fetch the kendex installer at the commit the release tag names, so a moved tag cannot run another installer before their credentialed steps.
@@ -2163,12 +647,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ### Added
 
-- In a launched lane, the hooks refuse the harness question tool and, on Claude Code and Pi, a turn ending in an unsent question, naming `lane-mail ask` as the route to the overseer.
 - `kendex harness-paths` prints, as JSON, every project path kendex's harness adapters read and whether each harness reads it as a root, a catalog, a registry or an instruction file.
-- review-gate: `scripts/provision-environment.sh` sets up the app-secret environment, its default-branch policy and its secrets in every unarchived repository of an organization.
-- The Customize tab takes your email address as `KENDEX_USER_EMAIL`, and the linear package assigns each unassigned issue it starts to the Linear user with that address.
-- orch: `oversee launch` opens a fleet's first overseer through the `overseer-host` adapter and `oversee register` records one opened by hand; `ORCH_TMUX_SESSION` drives lanes from outside tmux.
-- review-gate: `validate-standard.sh` reports `ci-context-missing` when a pull request or merge group ran no job named `CI`, and `merge-group-unobserved` when its head skipped the queue.
+- The Customize tab takes your email address as `KENDEX_USER_EMAIL`
 - harness-ci: lanes declared in `.github/ci-lanes.conf` get one change-class verdict each, and `aggregate-needs --lane` accepts a job's skip where its own lane verdict stood it down.
 - Verify checks adopted workflow copies against their declared package templates and records template hashes in the generated-file inventory.
 - Refresh installed kendex packages through a scheduled GitHub workflow that keeps one rolling pull request and uses an app token for auto-merge.
@@ -2179,14 +659,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A commit refused by the pre-commit check now leads with the failing check's findings; at a terminal the rest of the output is one choice away.
 - In a linked work tree, a skipped bot-instructions render names the main checkout that set it up, and the CLI offers to set it up in this work tree too.
 - The session-start check's remedies for a linked worktree with its own `kendex.toml` are the bare verbs; only the main checkout's project is named with `--project-path`.
-- The worktree guard passes a bare `refresh` or `apply` in a worktree with its own `kendex.toml`, reads every help form as a read, and offers `--project-path` only where the installed kendex has it.
-- The code-quality skill asks for one must-fail control per test surface, however many rows invoke it, and adds structure rules for resource ownership, module seams and exports.
 - `kendex check` on a terminal shows colour-coded sections, one symbol per item with its fix beneath, and a verdict; pipes, `NO_COLOR` and `TERM=dumb` get plain lines.
 - The harness-ci and review-gate workflow templates pin kendex main build 250, whose `kendex verify` takes `--at-record`.
 - The change classifier always passes `kendex verify --at-record`; a kendex without it answers `standard` for render diffs: an older CI pin, and v1.0.1 on PATH in dev-validate-run and pr-merge.
 - At a terminal, most write consents, the commit offer and the tool and delivery questions of `add` take one key; Escape cancels. `remove` and `add` into a new folder still ask for a typed yes.
-- docs-writing allows a focused edit without the full rewrite; doc-limits now requires docs-writing, and each over-limit finding names the docs-writing rule for its class.
-- code-quality asks for a control per independent guard rule, accepts a permitted empty input, keeps each resource's lifecycle with one owner and keeps test-only access out of shipped code.
 - harness-ci: the change-class action publishes `lanes` and `lanes_cause`, and the CI template forwards `lanes` rather than naming classes, so a docs-only diff runs no lane at any size.
 - Copilot agents: a tier alias no longer writes `model: auto`, so the agent runs the session's model, and every agent sets `include-custom-instructions: true` to read AGENTS.md.
 - CLI setup, sign-in and problem reports use the shared terminal style. Help opens with a command description before usage and options.
@@ -2194,8 +670,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Refresh, apply and add use terminal colours, status marks and wrapped lines for warnings, planned writes and repository change disclosures. Plain output stays unchanged.
 
 ### Removed
-
-- The code-quality skill drops its React rules, kendex-specific Bash notes (preflight lanes, jq 1.7.1, gg_chars), and the host-binary, numeral and one-row-per-planted-defect rules.
 
 ### Fixed
 
@@ -2220,16 +694,12 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Naming a folder under a temporary path with `apply`, `refresh` or `updates --apply` is refused unless `--throwaway` is passed; `apply --plan` and a bare `updates` listing are not asked.
 - A folder that declares nothing, a run that failed without writing, an `apply --plan` and a bare `updates` listing leave your projects list alone, even where `--project-path` names it.
 - `refresh`, `apply` and `updates` take `--project-path PATH`: the run reads and writes that project, not the one the command was typed in.
-- A hosted fleet launch (`open-terminal --state-dir`) returns within seconds when its host accepts the item and prepares it in the background, and `oversee-watch` reports the outcome.
-- orch: `workflow-state prune` archives, then removes, fleet records and control-host files past their retention, and never touches a live lane's files.
 - `kendex verify --json` prints each checked row with the positions it occupies, and a refresh that re-renders installed items of any kind now classifies as a render.
 - `kendex check` names a Pi extension a project declares that the global manifest declares too: Pi will not start with one registered twice, so keep the global declaration and drop the project's.
 - An apply, refresh, remove or update-pi drops trash entries older than `KENDEX_TRASH_KEEP_DAYS` days (30) or past `KENDEX_TRASH_KEEP_MB` MB (512); `kendex trash` lists and empties it.
 - The safety scan sets aside a finding kendex accepted in its own package, for a copy installed from kendex's own catalog at the exact file text; any other source or an edit flags it again.
-- A hosted lane's worktree (`worktree create --hosted`) sits at one path beside its clone, the same in every lane, so sccache hits workspace crates across lanes.
 - The `.deb`, `.rpm` and Windows setup install the `kendex` command on the PATH with the app; the macOS app carries it inside the bundle. A command inside the app updates with the app.
 - On first launch the macOS app offers once, when no `kendex` command is installed, to link `/usr/local/bin/kendex` to the command inside the app through one administrator prompt; Settings keeps it.
-- review-gate: `scripts/validate-standard.sh` reports, read-only, whether a repository's rulesets, required contexts, app installation and app-secret environment match `standard.json`.
 - Install only the `kendex` command with `install.sh --cli-only` (`curl -fsSL https://kendex.ai/install.sh | sh -s -- --cli-only`), on Linux as well as macOS.
 
 ### Changed
@@ -2237,41 +707,28 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A linked git worktree with its own `kendex.toml` is a project of its own: `project list` marks it a worktree of its checkout, and the session-start check names it wherever the verb takes it.
 - The commit offer drops the push where a GitHub branch's rules require a pull request, naming why; a push GitHub still refuses for that reason prints the commands that open one.
 - `kendex verify` closes non-zero when a declared package has no install-record entry, the unmanaged-copy state included: an install skipped on a conflict leaves its declaration as a gap.
-- `lane-mail send` and `peer send` print `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where `live` means a lane watch polls that mailbox, and refuse a repeat envelope within a minute.
 - The Terms of Service now state the trash's automatic deletion; the Terms and the Privacy Policy are at version 2, effective 25 September 2026, and the app and the CLI ask for acceptance once more.
 - In a project that keeps an install record, `kendex apply` records every source the plan reads, so `kendex verify` fails the record row until the next apply.
-- Catalog agents inherit the calling session's model instead of pinning `opus`, or `fable` for the planner, so a subagent keeps running when the pinned model's usage limit is spent.
 - A Homebrew kendex-cli 5.x install now upgrades to 1.0.0 through `brew upgrade`. The cask has no version scheme, so it says to uninstall the app and the kendex-cli formula, then reinstall.
 
 ### Removed
 
 - The Windows `.msi` is no longer built or published; the NSIS setup `.exe` is the Windows download.
-- **Breaking:** orch lanes merge only through the merge queue: `pr-merge --admin`, `--force` and `--admin-credential` are gone. A set `ORCH_MERGE_BYPASS` or `ORCH_ADMIN_MERGE_*` key is refused; delete it.
-
 ### Fixed
 
-- A fix round on a pull request with no issue id stamps again. Its `pr-N` state key names no issue, so the branch size check measures the branch and reports `allowance_missing`.
-- `open-terminal` opens every lane window in the fleet's named tmux session and records it as `SESSION:WINDOW`, so a detached launch no longer opens where the watch does not look.
 - The safety scan no longer flags a switch a shell script only names in a comment or printed message; kendex's guards scan clean, and a run closes on `safety: clean` or `not fully checked on safety`.
-- The pre-commit hook no longer refuses a command whose short no-verify flag belongs to another program, such as grep, sed or tail; a command it cannot split with confidence is still checked whole.
-- The Pi Claude bridge works on Pi 0.86 and later, where a `pi-claude` session had no file or shell tools and a new session's first turn got no reply. It now requires Pi 0.86.0 or later.
 - Companions are judged as the plan writes them: a wrapper is withheld where its declared judge is not; a rebind reports the conflict; a companion that only removed wrappers need goes too.
 - A Pi package counts as one package across every name it has shipped under, so `update-pi` now blocks a cross-scope duplicate where one scope names it currently and the other by an earlier name.
-- The Pi Claude bridge offers Claude Opus 5.5 (`claude-opus-5-5`) in the `pi-claude` model picker, released as `@vanillagreen/pi-claude-bridge` 4.0.3.
 - `kendex verify` holds every recorded source and set to a fresh read: an entry that differs, or one it cannot read fresh, fails the record row until an apply or a source refresh puts it right.
-- The worktree hook allows add and other one-project writes where the project owns a manifest, reads no redirection target or word after `--` as an option, and refuses `env -C` or `sudo -D` like `cd`.
 - Version 10 recovery works across retries and outside Git, updates renders, retires old hook registrations, keeps hand edits, ignores the recovery backup, and shows exact steps in the desktop.
 - No git call kendex makes runs the `core.fsmonitor` command a repository names in its own config; a catalog checkout kendex reads cannot run code through it.
 - The installed audit reads every adapter's view of one skill tree as the row that wrote it, and a hand copy elsewhere as nobody's, so an accepted finding is set aside only where kendex wrote.
 - A plan no longer starts a git process per source file when no file has CRLF line endings: `kendex refresh` of the kendex repository drops from about 90 s to about 5 s.
-- `lane-close` ends an idle Claude, Codex or Pi lane by SIGTERM to its harness instead of typing `/exit` into the pane, so an unsent draft no longer blocks the close.
 - The trash pass after an apply, refresh, remove, update-pi or desktop action no longer walks every kept entry: each size is recorded once in `sizes.json`, so a large trash no longer slows every run.
 - Every desktop action that moves a copy into the trash now brings the trash within its bounds, as the CLI does, so an app-only install no longer keeps every removed copy for good.
 - A render leaves an in-place skill source directory unchanged, and reports a missing link as a refresh instead of offering to take over the source.
 - The session drift report names each package whose source comparison is missing or outdated, gives the age of that comparison, and ends with a refresh command for the reported scope.
 - `kendex check` reads the current manifest only, groups missing installs by package, shows every row when run by hand, and prints the command for each repair it supports.
-- Hosted lanes install the locked UI dependencies and pinned Rust cross-compile targets before their worktree is created.
-- A `worktree push` that rebased and was then refused by a pre-push hook keeps that rewrite's force-with-lease authorization, so the retry publishes instead of stranding the branch.
 - The desktop app in the Arch `kendex` and `kendex-git` packages opens its interface; it showed a connection error for `localhost:5273`.
 - The Linux `.deb` and `.rpm` carry a description, a Development menu category and a git dependency; the Arch `kendex-bin` package carries the license file.
 - `kendex --version` from the Arch `kendex-git` and `kendex-cli-git` packages shows the built commit, and the Linux `.deb` names a maintainer with an address.
@@ -2281,8 +738,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ### Added
 
-- `preflight` fails an edit, deletion or rename of a migration the merge base carries: refinery and Flyway refuse a `V*__*.sql` whose checksum moved. `PREFLIGHT_MIGRATION_GLOBS` sets other paths.
-- A package header may carry `summary`, the line the Packages tab shows and searches and `kendex index` exports; without one the description stands in. Every kendex skill now has one.
+- A package header may carry `summary`, the line the Packages tab shows and searches and `kendex index` exports; without one the description stands in.
 - A package that changes the repository beyond kendex's own folders says so at install and waits for a yes, for that run alone. Declining installs it unarmed; a terminal needs `--allow-repo-effects`.
 - The app asks the same: installing such a package from a marketplace or bundle shows what it changes, writes and how to undo it, with its own Apply. `kendex apply` asks for a hand-declared one too.
 - `kendex remove <name> --keep-declaration` takes the files away and leaves kendex.toml untouched, so the next `kendex refresh` installs what it declares again. No manifest restore needed.
@@ -2291,14 +747,9 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
   package-manager install prints that manager's update command instead of
   replacing files it does not own.
 - Problems now lists a declared package whose place already holds files kendex did not write, with the ways out: keep those files, or install what kendex.toml asks for and send them to the trash.
-- Review carry-forward gains a `vendored` class: a `kendex refresh` push under the render trees declared by the repository carries the prior review, whatever the files' extensions.
 - The foot of the app's sidebar names the kendex.ai account you are signed in to, says Offline when the server could not be reached, and offers Sign in or Sign in again. Clicking opens Settings.
 - Settings > Account names the kendex.ai account and offers Sign out; it reads Offline when the server could not be reached, and asks for a fresh sign-in when the credential was rejected, saying why.
-- The review-gate skill ships a reviewer instruction for a repo that commits
-  its `kendex refresh` output: a finding over the render goes upstream rather
-  than into a thread the repo cannot act on.
 - New optional `harness-ci` skill: a classifier answering whether a CI diff touches only the kendex render trees, so heavy lanes stand down. It ships the script and tests; the workflow step is yours.
-- `review-gate` ships `scripts/validate.sh`, a CI step reporting whether a repo's gate install is sound: engine runnable, gate settings legal, exclusions live, workflow meeting the template.
 - Installing asks where it goes: the app and `kendex add` offer every supported tool, yours pre-checked, plus symlink or copy delivery. `--harness`, `--all-harnesses` and `--method` do it flag-only.
 - `kendex adopt hook <event>:<matcher>:<script>` manages a hook you registered yourself: the script moves into `.agents/hooks` and kendex takes over that one registration, leaving other entries alone.
 - Registering a project reports what it already holds that nothing manages,
@@ -2324,22 +775,11 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - New install channels: `curl -fsSL https://kendex.ai/install.sh | sh`,
   Homebrew (`kendex`, `kendex-cli`), and the AUR (`kendex-bin`, `kendex`,
   `kendex-git`).
-- The default catalog offers curated bundles and tagged packages:
-  orchestration, code-review, research, and commit-guards.
 - The Updates page says when it last reached your sources — "Last checked 3h ago" under the title and beside "Everything is up to date" — so a standing read offline no longer passes for a fresh check.
 - The commit offer names the declaration it cannot commit. Where an action changed your `kendex.toml`, the offer says the commit leaves that file out and asks you to commit it yourself.
 - Project cards and project views carry a Review changes line when kendex has written files there that are not committed. It opens one page to read the changes, commit them, or put them back.
-- Projects can configure a command-safety hook to refuse matching shell tool commands on harnesses that execute hooks. It loads policy support from its own install.
 - `bot-instructions`: render, check and adopt review-bot files from shared doctrine and the manifest's `[bot-instructions]` table.
-- The workflow bundle includes bot-instructions for generating GitHub review-bot files from shared rules and repository settings.
-- Three waits become callable: `LINEAR_RETRY_BASE_DELAY`, `MUTATION_STABILITY_SETTLE`, and one decimal place on the `KENDEX_GITHUB_*_TIMEOUT` bounds.
-- review-gate: Render-path settings names the harness render trees; a PR whose whole diff sits under them is approved without review evidence, CI still deciding the merge.
-- `linear.sh issues create` refuses a description with no `Reached by:` line, or a `--review-born --priority 2` body with no `Symptom:` line, where `LINEAR_REQUIRE_REACH` is set.
-- New `workflow` bundle: orchestration, code-review and commit-guards plus `deep-research` in one `kendex add --bundle workflow`, 30 members that carry what each other needs.
 - A catalog package's page and the install picker name what it requires and offer its optional dependencies; My Library says which package a dependency arrived with.
-- orch measures a branch's added production, test and render-mirror lines before the push and refuses past the allowance the issue's Expected delta line states; with none it reports the counts.
-- pr-watch's `disarmed` line carries the size recorded for the branch at submit: the production lines added and the allowance ratio, stale for another head and unavailable for none.
-- `docs-writing` skill: one writing standard for every markdown file a repo owns, a directive list and a template per file type, and the blank-page rewrite workflow.
 - Antigravity hooks: a hook installs into `hooks.json` under its own name at either scope, with its matcher in Antigravity's tool names, and the scan reads the registry back.
 - Antigravity CLI (`agy`) is a supported harness: agents and skills install at both scopes, MCP servers and plugins are shown read-only, and hooks are not yet supported.
 - MCP servers install on Antigravity in `mcp_config.json` at both scopes, a remote endpoint written as `serverUrl`, switched off on the entry's `disabled`.
@@ -2349,8 +789,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - MCP servers install on OpenCode under `mcp.<name>` in the scope's config file at both scopes, switch off on the entry's `enabled`, and an SSE declaration is refused for OpenCode with the reason.
 - Commands install on Pi as prompt templates (`prompts/<name>.md`) at both scopes, with the rename toggle and removal every managed kind has.
 - The desktop app registers the `kendex://` scheme on macOS, Linux and Windows, so a marketplace or package link opens in the app; a link it cannot follow shows why on the marketplace list.
-- The commit-guards pre-commit chain runs `bot-instructions check --staged` itself where that package is installed, resolved like doc-limits and preflight; consumers drop their wrapper scripts.
-- `tools/harness-smoke` also proves a rendered MCP server, command and Pi extension load, and asks Antigravity through its `agy` CLI instead of calling it an IDE with no CLI.
 - A place card on Projects, and My Library narrowed to an empty place, offer "Add packages to <place>". Browsing from there remembers the place, so the install opens on it.
 - A packages table gives each row a checkbox: tick several and one Install opens the same guided flow, with "Everything here" beside your selection on a marketplace page.
 - Out-of-date packages show wherever the package or its place is: Home counts them, a place's card counts its own, and a My Library row is marked "Update available".
@@ -2362,48 +800,26 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A package declares the credentials it reads in a `[secrets]` table, and Customize configures them: a masked field per key, saying whether one is stored and which file it goes to.
 - Change folder… is on every project's menu, and `kendex project reconnect --from <old> --to <new>` does the same from the shell.
 - A project whose folder moved offers Locate folder: point it at the folder it is in now, and it keeps the packages and files already there.
-- Hooks can declare a summary beside their description, the plain line a person browsing reads. Every package the kendex catalog offers now shows one.
-- `skill-load-check` hook: markdown edits wait for `docs-writing`, other edits for `code-quality` and `linear.sh` calls for `linear`; `KENDEX_SKILL_LOAD_RULES` adds a repository's rules.
+- Hooks can declare a summary beside their description, the plain line a person browsing reads.
 - commit-guards arms a third git hook, `pre-push`: a breach a rebase replayed in is refused. It runs the checks a push can scope and names the ones it skips. Re-arm each clone once.
-- The pre-push hook now also runs doc-limits, md-format and md-refs over what a push carries, so a breach a rebase or cherry-pick produced is refused before it leaves the machine.
-- `kendex tier-model <harness> <rank>` prints the model a tier-ladder rank names, and orch's `oversee-succeed` starts a successor overseer once a 1M-window overseer passes its context mark.
-- orch: `ORCH_OVERSEER_SUCCESSION = "off"` stops the overseer from launching its own successor; it writes its handoff and asks you to start the next session.
+- `kendex tier-model <harness> <rank>` prints the model a tier-ladder rank names
 - A `[hooks.<name>]` declaration takes an `env` table, and kendex sets each entry for that hook's script in the command it registers.
-- orch: an overseer reaches another repository's overseer with `lane-mail peer ask` and `peer send`, replies thread with `--re`, and a send into a lane another repository owns is refused.
-- On Claude Code, Codex and Pi, a lane-mail halt stops a working lane at its next tool call and mail arrives after each call; `open-terminal --wake` refuses a working Claude Code or live Codex lane.
-- orch: `lanes pick --model <name>` chooses an account on the usage window that walls that model rather than on its binding one.
-- orch: `lanes pick --lane <config-dir>` judges one named account on the fleet pick's own usage rule, measuring only that directory.
-- orch: `open-terminal` refuses a `--lane` that `lanes list` inventories when its usage window for the model in `--launch-flags` is full or unmeasured, so a launch does not open on a usage banner.
-- `open-terminal --state-dir` names the workflow-state directory a lane record is written to, so a launch run from another repository lands in the fleet state the watch reads.
-- orch: `lanes state <item>` prints one lane's state - working, idle, asking, walled, exited or unjudged - from the same judge the watch and the wake ask.
-- orch: a lane hands itself off. Its turn-end hook holds the turn at `ORCH_HANDOFF_CONTEXT_TOKENS` or `ORCH_HANDOFF_HEADROOM_PCT` until the lane writes its handoff record.
 - `kendex-cli-git` on the AUR: the kendex command alone, built from the latest commit, with none of the desktop app's dependencies.
-- Add one `lane-close` command that exits a finished lane, closes its hosted sandbox and tmux window, preserves whole-file render edits, and records the lane as done.
-- orch: the overseer hands itself over before it runs out. Its turn-end hook refuses the turn end at its own context and account marks, and the watch reports a reached mark as `overseer-mark`.
 - A tagged release candidate publishes as a pre-release, and a build that is itself a candidate takes its updates from the candidate channel in both the app and `kendex update`.
 - The app asks you to accept its Terms of Service and Privacy Policy when it first opens; the command line says so on its first run. The version and date are recorded on this computer.
 - `add`, `apply`, `check`, `refresh`, `remove` and `verify` frame and group their output on a terminal and close on what they did; others keep plain lines. `KENDEX_UI=plain|pretty` forces either.
 - `kendex marketplace check` reads a package's `kendex.settings.toml.example` the way a consumer's shell reads it, naming each defect with its line. TOML syntax errors surface one per run.
 - Plans and audits carry one note per settings key that installed packages ship with different defaults, naming every package, every default, and the one that would be seeded. Agreement stays silent.
 - A skill's Customize tab lists the settings it declares, with the author's explainer and the package default, and saves them into the project's `kendex.settings.toml`.
-- `audit-issues team` audits the team's Backlog, Todo, In Progress and In Review issues in one pass, including the ones sitting in no project, and recommends a project for each of those.
 - A package's page has a Projects tab: a card per project it is installed in, with when it landed there, its own Update, and a Remove that leaves the other projects alone.
-- growth-guards adds a `prose` lane, on by default: a date, an issue number or a past-state word fails in the markdown agents load. Scope: `GROWTH_GUARDS_PROSE_PATHS`; off: `GROWTH_GUARDS_CHECKS`.
-- `lanes context` reports each live lane's context use as percent consumed, read from its pane status line; `queue-wait` gains a `conflicting` verdict when a PR's head conflicts with its base.
 - `kendex version-compare <a> <b>` says where the first version stands against the second under SemVer precedence: newer, same, or older.
 - `kendex bookmark` lists, shows, saves, forgets and installs saved marketplace items, over the same saved list the app reads.
 - Bookmarks: save a package or curated set from a repository or folder marketplace in My Library. A saved item opens its own page and installs through the ordinary install; saving changes no project.
 - Add the code-scrub command to audit merged pull requests for unused code, duplicate logic, excess scope and unmet issue requirements.
-- growth-guards gains an opt-in `comments` lane: a history reference (issue id, `#NNN`, date, revision narration) in a source file's comment text fails, at commit scope and over the tree.
 - After a write into a git project, kendex offers to commit the files it wrote, commit and push, or open a pull request; the CLI also takes `--commit`, `--push`, `--pull-request` and `--leave`.
-- `doc-drift-check` (Claude Code Stop) blocks a stop once per set, naming unchanged docs over changed code, `Covers:` entries matching no file, and, if topics have entries, uncovered code.
-- preflight fails an added line piping a shell writer into an early-closing `head` or `grep -q`/`grep -m N`, whose SIGPIPE aborts a `pipefail` script or reads as a false no-match.
 - `apply`, `refresh` and `verify` manage instruction shims: a `CLAUDE.md` importing every tracked `AGENTS.md` for Claude Code, and `context.fileName` in `.gemini/settings.json` for Gemini.
 - `kendex marketplace check` refuses a `# required` marker alone on a comment line, where it marks nothing, in any case and inside anything but letters and digits. It counts after a value only.
 - Add `kendex update --git` and `install.sh --git` to install and follow authenticated, ordered builds from the main branch. Each install resolves one immutable set of prebuilt downloads.
-- growth-guards gains `md-format` (one paragraph per line, checked at commit on the files it touches), `md-refs` (dead links, citations and decision IDs) and the `md-reflow` rewriter.
-- commit-guards' `md-refs` lane fails a `<path>::<phrase>` citation in Markdown unless the path names a tracked file whose bytes hold the phrase.
-- `reviewer-read-only` and `reviewer-stop-check` hooks (Claude Code): a reviewer subagent's edit, repository write, commit or push is refused; a stop leaving the reviewed worktree dirty blocks once.
 - A settings template can declare the values a key takes, on one `# values: a | b | c` line. Customize offers a picker over them, and `kendex marketplace check` refuses a list nothing can pick from.
 - `kendex template` lists, shows, creates, edits, installs and deletes saved package selections, and registering a project can fill it from one.
 - Templates: save a group of packages in My Library and install it into any project. Create one from a marketplace selection, or from a project's own packages, leaving that project unchanged.
@@ -2412,30 +828,14 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 - The version number restarts at 1.0.0 after the vstack 5.x line. A 5.x install on the release channel, the Homebrew formula or cask, or install.sh is offered no update and is reinstalled fresh.
 - The Arch packages carry an epoch, so pacman upgrades a 5.x machine in place; the rolling main channel orders by build number, so a 5.x main build is still offered the newer one.
-- The seeded `WORKTREE_SYMLINKS` default lists only paths git does not carry. An entry does nothing when git carries every path under it, so drop those; one with untracked children still links them.
-- **Breaking:** the worktree skill no longer installs JS dependencies. Run installs in the main checkout and link its `node_modules` via `WORKTREE_SYMLINKS`; an unlinked JS worktree warns.
-- **Breaking:** skills resolve settings as env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` only; a lingering `.env` is ignored, so move it to `.env.local`.
-- Precedence exceptions: deep-research reads env and `.env.local` only; the review gate mode reads env and the committed `kendex.settings.toml` only.
-- A project `LINEAR_API_KEY` beats an inherited one, and `LINEAR_API_KEY_OVERRIDE` beats both.
 - **Breaking:** settings values are single-line double-quoted strings with no
   `"` or `\`; any other shape, a duplicate key, or an unparseable table header
   fails the load. Rewrite an offending value.
 - **Breaking:** kendex no longer reads the pre-2.0 mutable clone in the source cache. Nothing has written that layout since 2.0; a scope whose only copy is there reads Pending until a refresh.
-- **Breaking:** `byte-ceiling`'s staged lane judges a file a commit changes, not only one it adds, and reads type changes and moved-and-grown files. A repo editing an oversized file needs a row.
-- **Breaking:** `size-ratchet` refuses a test-class baseline row HEAD's baseline does not carry or carries lower. Rows already at HEAD keep; a test that outgrew its class is split, not frozen.
-- The review gate's pending status names the repo's own configured evidence sources — `no review evidence at <sha> yet; expected from <names>` — instead of reading as a block on someone's approval.
-- **Breaking:** the pi-hooks pre-commit listener (0.7.0) defers to the git hooks kendex armed and refuses a bypass or an unarmed repository. It runs no fmt or clippy; arm with `kendex guard install`.
 - **Breaking:** a `core.hooksPath` naming a directory answers "could not determine" from `kendex guard check`; the stand-down prints where git says it is set, then says to clear it there and arm.
 - **Breaking:** hooks are armed only when the marker is in both hook files, both are executable and `core.hooksPath` is unset. `guard install` stands down under any value. New: `kendex guard check`.
 - **Breaking:** `guard uninstall` disarms the repository. Every work tree and nested project shares one set of commit hooks, so an uninstall from any of them takes the hooks for all.
-- The worktree skill's broken-`.agents` recovery stops assuming one repo
-  layout, and asks you to link to it rather than paste it into `AGENTS.md` /
-  `CLAUDE.md`, where no refresh can reach a copy.
 - The `review-gate` writer workflow copies verbatim: no per-repo values left. Adopted copies drop each `default_branch || 'branch'` fallback; an optional check-run name enables `check_run` events.
-- Consumer CI runs `review-gate`'s validate step in place of the engine
-  selftest: package behaviour is proved upstream, so a repo checks only the
-  configuration and wiring it owns.
-- **Breaking:** carry-forward exclusions take one grammar, path characters plus `*`. Rewrite a `?`, `[...]` or backslash entry as a literal path or a `*` glob; `--check-config` names the offender.
 - A project's skills work on clone: every tool but Claude Code reads `.agents/skills` directly, and Claude's link is relative now, so both commit. Existing installs converge on the next refresh.
 - Committed symlinks need Developer Mode on Windows; without it, install with
   `--method copy`, which gives every tool a real tree of its own.
@@ -2461,7 +861,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
   catalog, and skills that require each other read `installing dev also installs
   orch, reviewer (required)`.
 - **Breaking:** in `kendex check --json` a not-yet-evaluated line has `"class": "unevaluated"` where it had `"class": "unknown"`. A parser matching that field exhaustively must accept the new value.
-- orch: the internal re-review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state set … rereview_panel` refuses once `cycles` is past it, so a review cannot run on before the PR opens.
 - **Breaking:** `index --json` is schema 2: the `checked.held_back` and `checked.warned` counts and each package's `safety.verdict` are gone, replaced by `checked.findings`.
 - **Breaking:** the default Homebrew formula installs the app; CLI-only
   moved to `kendex-cli`. Migrate with `brew uninstall kendex && brew
@@ -2475,13 +874,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
   beside every score, dot, and the About tab's wording.
 - A safety finding's message names what it fired on, never where.
 - The Updates page is one row per package, expanding to a row per place. "Update automatically" is now **Follow source**; nothing applies on its own, and `kendex updates` names the place on each line.
-- The `second-opinion` skill waits 18 minutes for an external review, up
-  from 5. A seeded `SECOND_OPINION_TIMEOUT = "300"` must be raised by hand.
 - The `dangerous-commands` check no longer reads a shell `case` pattern
   list as a command, ending false flags on skills that parse command lines.
-- The project-management skill's roadmap pipeline is spec-driven and asks
-  once: a reviewed plan is the spec, its approval carries through to issue
-  creation, and research runs inline by default.
 - `kendex init --kind skill` scaffolds now say what a SKILL.md body is for:
   commands and rules, never internals.
 - Polish: project cards open that project's library, links into My Library land on a clean filter strip, the app uses the Geist typeface, and dialogs ask in the words of the button that opened them.
@@ -2491,38 +885,25 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Adding a project says only that it was added. The start-of-session note for agents is offered on the project's card in plain words, with its state shown there.
 - The offer to commit follows the action you just took: it names what that action changed, appears only where that action wrote, and can commit only that work rather than everything waiting.
 - The project card's start-of-session note is now Package checks: a factual state read per coding tool, an info button explaining the check, and a confirmation listing every file the setup writes.
-- Let repositories tune prose and comment history terms, or run comment reference checks without revision narration.
 - Multi-paragraph review-rule additions render as nested bullets in AGENTS.md. Other bot files retain their paragraph format.
 - **Breaking:** move review-bot settings to `[bot-instructions]` in the effective manifest. Prefix each child table with `bot-instructions.`. Remove the separate bot configuration file and re-render.
 - A git older than 2.41 is refused with one sentence: what this host's git answered, that kendex needs git 2.41 or newer to write a checkout, and to install a newer git.
 - `kendex report` stamps the source commit and rendered hash the lock recorded for the reported asset into the issue marker, so triage can date a report; an undated asset stamps `unlocked`.
 - **Breaking:** the updater signing key rotated. An install of an earlier build cannot verify releases signed with the new key — reinstall once from kendex.ai.
-- kendex skill scripts load project settings without forking a subshell per line: reading the 310-line `kendex.settings.toml` in this repo gets about 12x faster.
-- `oversee-watch` puts a usage-limit banner's reset time on the event as `resets=`, and reports a reset that has gone by as `usage-limit-passed`, so the lane is bumped rather than left parked.
-- **Breaking:** the `block-repo-copy` and `block-unsafe-rm` hooks are one regex each and need `jq` and `cat`. Install jq wherever the hooks run.
-- A copy is judged by the words it spells: a `.git` or `target` source, a temp destination.
-- The `session-drift-check` hook needs `jq` too: without it, or on a payload it cannot parse, the drift report is skipped with that reason instead of being repeated on every compact.
-- Detached second-opinion waits reject forged completion, preserve state on cleanup failure, and tell callers to relaunch when a worker vanishes.
 - A changed entry of a `kendex.toml` list keeps any key kendex does not model only while the entries around it fix which slot was its own; two changes side by side do not, and the key goes.
 - An update, a version switch and a Follow source flip each say one thing: the tool whose copy went to the trash, else the tool whose copy was left as it is, else that the action landed.
 - Forking an edited rendered agent now keeps that rendering's body text instead of translating its harness vocabulary back to the catalog's wording.
-- `linear.sh issues add-relation` judges the blocking-level rule from each issue's own parent in one query; a cross-bundle rejection states the rule rather than prescribing a replacement pair.
 - A Customize save that refuses after a leaving package's uninstaller has already run now reports it as a failure naming what ran; the reload is offered where the refusal has nothing to report.
 - Deleting a package no longer waits on the read that names where to install it again: the note appears once that read lands, and Delete is live from the start.
-- Skill docs drop their `--help` and README restatements; orch's delegation, lifecycle and round-closure rules move to `references/skill-rules.md`, preflight's lane detail to `references/lanes.md`.
-- Clarified where code-quality and reviewer skills require package Markdown content to live.
 - The `report` command no longer appears in general help or bundled package instructions; owners can still invoke it directly.
 - The marketplace About tab is a profile: author, license, homepage, when it last changed, what it holds. Repository and homepage are links; Packages dates, sorts and says where each is installed.
 - A marketplace's on/off switch per project moved from its page header to that page's Projects tab, and Check for updates moved from each subscription's menu to the Marketplaces page header.
 - Marketplaces: Subscribed lists one card per marketplace naming the places that hold it, Packages sorts by name, Community is a card grid, and Subscribe says what it does.
 - The take-over confirmation says in one sentence that kendex moves the files and each tool goes on reading them at the same path.
-- The prose lane scans `docs/architecture/*.md` by default only once a repo sets `GROWTH_GUARDS_MD_SCOPE = "all"`, so a consumer's commits are not blocked before its docs rewrite.
-- Catalog agents use `high` effort and the `opus` tier, except the planner, which uses `fable`.
 - On Claude Code a model tier is a pin: `opus` renders as `opus`, not `inherit`. Say `inherit` to follow the session model.
 - A model of the wrong shape for a harness or an effort level it does not accept is refused at render, and an `[agent-frontmatter]` key a harness never renders is a manifest finding.
 - kendex no longer lists `~/.codex/prompts`, a directory Codex stopped reading in 0.118; a Codex command is a skill.
 - **Breaking:** `growth-guards` is now `commit-guards` and `size-ratchet` is now `doc-limits`; keys are `COMMIT_GUARDS_*` and `DOC_LIMITS_*`. Rename declarations and keys, then run `kendex apply`.
-- `tools/harness-smoke` asks Antigravity for its rendered project hook and MCP server with the scratch project attached as a workspace, and drops the agent row kendex renders nothing for.
 - A marketplace's Projects tab now lists the places that install from it and opens one. Switching a marketplace off in a place, and dropping it from a place, moved to that place's card on Projects.
 - `kendex source list`, `enable` and `disable` say what they do to the packages installed from a source rather than to its declaration.
 - "Scan a folder" is now "Find existing projects", and says before you choose a folder that it only searches for existing setup. Choosing a folder starts the search; a typed path has its own action.
@@ -2554,12 +935,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - An MCP file another program left empty is no longer a problem where the scope that writes it declares and records no server. One that will not parse or read, or lacks a managed server, still is.
 - The desktop app sorts what it shows into problems, decisions, notices and updates. Problems and the footer hold only what needs action; Home's notices and updates can be dismissed.
 - A failed scan or update check, missing installed files and an unreadable project folder show red on every screen, and a decision waiting on you shows orange.
-- `block-worktree-refresh` and `skill-load-check` read commands with the `commit-guards` skill's library, and refuse every shell call where that skill is not installed.
-- **Breaking:** a lane-host provider must implement an `append` verb, and hosted `lane-mail` sends refuse until it does. Refresh a lane host made before this release; the verb runs its clone library.
-- The orch overseer's fleet is one record: `open-terminal` writes each lane into the oversee workflow state, and `oversee-watch --state` reads the live fleet from it before every pass.
-- orch: `oversee-watch` and `open-terminal --wake` share one judge; a wake names the state it refused on and never resumes a lane mid-turn. Without `/proc` it refuses a lane whose harness is running.
-- orch: the overseer succeeds itself when its account headroom reaches `ORCH_OVERSEER_HEADROOM_PCT` too, onto an account above that trigger, so an account wall leaves no fleet unattended.
-- doc-limits: the shipped byte ceiling for a root `AGENTS.md` is 8 KiB instead of 16 KiB. A repository not rendering bot-instructions keeps the old ceiling by setting `DOC_LIMITS_CLASSES`.
 - bot-instructions: `[bot-instructions.repo] code_review_path` names the rendered doctrine file, which must sit directly under `.github/instructions/`.
 - bot-instructions: an `AGENTS.md` § Code Review Rules region longer than its directive line is a finding — `adopt` reports it under `agents-region`, `check` under `drift`, `render` replaces it.
 - bot-instructions: `.github/copilot-instructions.md` points at `.github/instructions/code-review.md` rather than restating five blocks, and CodeRabbit reads it through `code_guidelines`.
@@ -2570,27 +945,20 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `kendex check` records a matching committed render silently and reports a differing one as stale, once per state under one session-hook deadline; a copy whose file vanished is never recorded.
 - On Arch, `kendex` and `kendex-git` now install the desktop app as well as the command, and update guidance names the package that owns the install instead of guessing it.
 - kendex lists a loose `.mts`, `.mjs`, `.cts` or `.cjs` module under a Pi root's `extensions/` as a pi extension, beside the `.ts` and `.js` files it already showed.
-- orch: `ORCH_OVERSEER_HEADROOM_PCT` defaults to 10 instead of 20, so the overseer's successor may open on an account between 10 and 20 percent headroom, which the old default refused.
 - The app's **Update now** updates a `kendex` command an installer recorded, wherever it sits. Where another owns it or it needs permissions the app lacks, the card names what moves it instead.
-- second-opinion now detaches foreground-capped runs, reports its artifact and deadline, and supplies one wait command.
 - CLI stdout is byte-identical for all verbs. On stderr `apply` and `add` close on the outcome ledger, `remove` heads its ops `changes:`, `check` on a needs-attention line and `verify` on its verdict.
 - Keeping an edited agent as your own now reads its marketplace: the copy comes from the published file, so its `description:` and `tags:` come from there too.
 - Update all now brings each place current in one pass instead of one per row, so a project with several packages behind updates settles in a single apply.
 - The install record says where each bundle sits: the source it was read from, that source's repository, and the commit the set is held at.
 - An older kendex refuses a record this version wrote, so do not go back. Update every install sharing the project.
 - **Breaking:** a global skill installs into `~/.agents/skills/<name>`, the tree Codex, OpenCode, Pi, Gemini and Copilot read; Claude Code and Antigravity link at it. Reinstall global skills once.
-- Each skill declares the keys a consumer sets in its own `kendex.settings.toml.example`; keys only a maintainer touches stay in its docs. The repo-root example is gone; authoring: `docs/authoring`.
 - **Breaking:** `check --catalog --json` and `marketplace mine --json` are schema 3: the held-back and warned counts go, replaced by `safety_findings` on check and `safetyFindings` on mine.
 - In schema 3 a finding's `file` is a path to open and its line is in `line`, part of the finding's identity. Read `line`, never split `file`.
 - Taking over a skill kendex did not install reads as one action: "Manage these files" on the row, a confirmation naming the move and saying nothing is deleted, then Proceed, not a red "Keep them".
 - A package's safety check has its own Safety score tab, with the score on the tab beside the words. Overview opens on the package itself rather than on the check's findings.
-- Every issue audit recommends cancellations for work the code already satisfies or that duplicates other issues, not only the ones that also propose new issues.
 - The package page's `Remove…` is now `Delete`, and its dialog names every project the package goes from and the marketplace to install it from again.
 - A My Library row shows its customization mark when you hover the package name, so a package's description sits directly under the name at rest.
-- **Breaking:** the `commit-msg` lane caps the header at `GROWTH_GUARDS_SUBJECT_MAX` (72) and demands an entry for `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`; raise the cap for longer headers.
-- Commits are judged for work markers on what they add: `todo-ban --staged` runs in the pre-commit chain, the index-wide scan is CI's, preflight's lane is gone, and a quoted marker is out of scope.
 - **Breaking:** installing a package from a git repository needs git 2.41 or newer. Ubuntu 22.04, Debian 12 and the command line tools of Xcode 16 and earlier ship older ones — install a current git.
-- orch: the filing bar still decides at the review cap, so a below-bar finding is declined rather than filed there, and a finding asking for an unordered product decision never files.
 - **Breaking:** kendex reads only the format it writes. Move a refused lock file aside, keep it, and apply again: it is the only record naming a pi `hooks/` or `hooks.json` beside its root.
 - **Breaking:** a `kendex.toml` from another version is refused and left exactly as written. Move it aside and declare again, copying from the file you moved.
 - **Breaking:** a pi hook left in the older layout beside a scope root is no longer enforced: the carrier runs `kendex/hooks/<name>.sh` alone. Install the item fresh to have it guard again.
@@ -2601,48 +969,24 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A forked item's frontmatter `name` line is rewritten whole, so a trailing comment on that line does not survive the copy.
 - A conflict listing no longer offers `kendex apply --replace-unmanaged` where the plan shows an item the sweep would refuse on. Each item's own way out is unchanged.
 - `--replace-unmanaged` refuses the whole run when an item it swept up has a conflict replacing cannot settle, naming each blocked item and what blocks it. Nothing is planned or written.
-- A message, heredoc or comment naming one of those words is refused too, and so is a `commit` word the split leaves beside a `git` word. Pass the message with `git commit -F <file>`.
 - Pi now enforces the kendex hooks: `pi-hooks` spawns the rendered `.pi/kendex/hooks/*.sh` scripts instead of its own copies, so Claude, Codex and Pi run the same bytes.
-- A bypass is seen only where a word already spells it. One the shell would join, unquote or expand into the word is not seen: a quote, a backslash, a brace, a variable, an `include.path`.
-- **Breaking:** the `pre-commit-check` hook reads words, not shell, so a no-verify flag, an `-n` cluster or a `core.hooksPath` key refuses. It needs `jq`: install it wherever the hook runs.
 - `kendex check` relays growth-guards' own commit-hook verdict when it has one, and only where `.git/hooks` holds an install's helper. kendex reads no hook file; the stranded-shim report is gone.
-- second-opinion's detached runs no longer keep a supervisor process. The wait command owns the deadline, returns 124 there, and stops the worker when it still matches the identity recorded at launch.
 - A Mine folder whose GitHub remote is spelled with `www.`, mixed case or a trailing slash now resolves as the repository it is, so it can be submitted like any other.
 - **Breaking:** a hook selector spelling `planner` now gates every `role: planner` agent, and no rename rewrites it. Renaming a roleless `planner` agent drops its gate, so declare the role first.
 - **Breaking:** the visible-pane default follows `role: planner`, not the name, so an agent named `planner` with no role now renders in the background. Declare the role.
 - **Breaking:** Claude, Pi and OpenCode withhold the question tool by `role: planner`, not by the name `planner`, so a rename changes no tool. Declare the role on a `planner` agent that has none.
-- The review gate's awaiting status is one line naming the head, with no list of eligible sources, and the harness-render review rule moves into the review-gate skill's `references/vendored-paths.md`.
 - The `kendex` command an installer records is identified by its path alone, and Update now no longer refuses a command that changed under the card: it installs and says what became of it.
 - harness-ci's `harness-only` reads the manifest header shape kendex writes, and carves every skill path when a manifest says `in-place` on a line it cannot tie to a name.
-- Review dispositions decline an excluded class before examining the claim, and the dev rules now order a grep for a twin before new code and ban migration or compat code.
-- Coding agents now test the enforcing program at the smallest failing surface, require one control per changed review instrument, and decline redundant coverage requests.
 - A four-space-indented ``` at the top level no longer protects the text below it: markdown reads that indent as a code block whose one line is the backticks, not as an open fence.
 - Text inside a raw HTML block is left as authored, tool references included. A blank line ends a `<div>` or `<details>`; `<pre>`, `<script>` and `<!-- -->` end at their own closing marker.
 - Changelog checks accept edits to combined release notes. Fragment validation remains; collation checks its destination before writing.
-- Commit guards report stable message keys and values before their English explanations.
 - Hook and rendering notices start with stable reason keys, escaped values and the source of hook exclusions, followed by their English explanation.
-- A restored pi-background-tasks snapshot from before the exit-notification field replays its exit wake once on upgrade, instead of being treated as already notified.
-- **Breaking:** `buildWebFetchToolResult` takes an options object only. A positional `maxCharacters` argument is now ignored: pass `{ maxCharacters }` instead.
-- pi-agents-tmux reads subagent cwd dirty state with `git status`, so a worker repo's own clean/process filter runs during needs_completion triage as it does for any `git status` there.
-- **Breaking:** orch auto-continues post-PR work and auto-merges once gates pass. Restore prompts with `ORCH_DECISION_MODE=ask`, `ORCH_MERGE_AUTONOMY=ask`, `PR_REVIEW_ON_TIMEOUT=block`.
-- **Breaking:** size-ratchet checks document byte limits only. Delete size baselines and line/frozen settings. Trim oversized documents or add reasoned exclusions; seed, update and raise are removed.
-- Kendex commits compile changed Rust crates and check changed UI code. Full tests, documentation and cross-target checks run at development completion and in CI; submit reuses the same-commit result.
 - Preflight names checks that cannot run because an optional tool is unavailable. Its final result lists skipped lanes while preserving the existing exit status.
-- Move container closure and base synchronization from merge instructions into tested orchestration scripts.
-- Orch releases a lane after arming a merge, records its exact head, and resumes recovery or post-merge work from a detached queue verdict.
 - Where packages ship one key with different defaults and your `kendex.settings.toml` already sets it, the note says your line is what your scripts read, not a default none of them reads.
 - **Breaking:** a settings template may write nothing after a value but `# required`. A trailing comment now fails `kendex marketplace check` — move it into the comment block above the key.
 - `kendex refresh` writes nothing into `kendex.settings.toml`. An `add` seeds the arriving skill's `# required` keys; a save from the app writes the key it names. A key you delete stays deleted.
-- review-gate's `validate.sh` names a settings source it cannot read, instead of reporting on a file it never opened.
 - **Breaking:** `changelog-entries --collate` folds the changelog fragments in at release, replacing the removed `changelog-collate` tool and the `--list` output it read.
-- A Linear cache built before comment pagination is no longer rebuilt for you; its first-page-only threads stay until you run `linear.sh sync --full` once, or delete `.cache/linear`.
 - `kendex apply` manages a marked `.gitignore` block for the `tmp/` folder, install ledger, and cache in Git projects.
-- `md-refs` judges a `<path>.md § Heading` citation in a source file's comment text and in a TOML file's string literals, as it does in markdown. A decision ID with a `§` checks that heading too.
-- Doc-limits and suppression-ban read the render inventory instead of hand-kept ownership rows. An absent inventory excludes nothing; a malformed one refuses.
-- commit-guards `py-names` names its remedy when neither ruff nor pyflakes is installed: install one in a CI step ahead of the commit-guards step, on every run.
-- Prose and comments checks accept ordinary wording. Revision-word settings are removed; date and issue-reference checks remain.
-- size-ratchet ships byte classes for architecture docs (overview 12k, topics 16k), root `AGENTS.md` 16k, nested `AGENTS.md` 6k, `README.md` 16k and nested 12k.
-
 ### Removed
 
 - **Breaking:** vstack-era installs are not migrated. Install fresh and remove by hand the `vstack-hooks` directory (or `kendex-hooks`, from an earlier 5.x), its `core.hooksPath` and the v1 settings.
@@ -2661,42 +1005,22 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - **Breaking:** kendex.toml's `[safety-overrides]` and `[safety-reviews]`
   records decide nothing and are no longer read. The next apply removes both
   tables from the file.
-- **Breaking:** the `trading-design` skill is no longer offered. Run `kendex remove trading-design --scope all` wherever it is installed, or drop its `[skills.trading-design]` entries and apply.
+- Run `kendex remove trading-design --scope all` wherever it is installed, or drop its `[skills.trading-design]` entries and apply.
 - **Breaking:** nothing reads the old vstack names: the files, the `vstack2` directories, the repository redirect, the alias binary, `kendex import`. Rename them to `kendex` or reinstall the scope.
 - **Breaking:** `--scope` takes `project`, `global` or `all` only; the v1
   aliases `p`/`local`, `g`/`user` and `both`/`*` are gone. `-g` still means
   global.
-- **Breaking:** the lane chooser's `--refresh` flag is removed; renewal is automatic now. Drop the flag from any command or script that passes it, which otherwise fails as an unknown option.
-- Removed review-gate's `merged-sweep.sh` and its documented steps. Nothing shipped ran it; `pr-watch.sh` remains the reducer.
-- **Breaking:** `dev-return-write --kind analysis` (use `fix` or `implement`), `workflow-state init --team` (drop it), and bare-numeric `workflow-state` keys (pass the `issue-N` key init got).
-- **Breaking:** the orch settings `PR_REVIEW_QUORUM`, `PR_REVIEW_NUDGE`, `PR_REVIEW_NUDGE_SECS` and the `worktree-claim` script. Delete the three keys; the gate no longer nudges or awaits a quorum.
-- Removed the legacy outage-context setting from review-gate. **Breaking:** set the replacement override setting instead: it takes the same value and the same default.
-- **Breaking:** GitHub skill commands no longer accept deprecated `--json`; use `--format=safe`.
 - **Breaking:** A skill found only at its own pinned revision, not at the one its source points at, can no longer be assigned to an agent; pin the source there too. Other pins need no change.
 - The browser mock backend (`VITE_MOCK`) is gone; the app is exercised in the real window.
-- **Breaking:** preflight drops the `reviewer-attribution` and `workflow-run-syntax` lanes; `PREFLIGHT_BOT_NAMES` is gone, so delete that key. PyYAML is no longer read.
-- **Breaking:** the github skill's `pr-data` output drops `reactions` on the PR and its comments, along with the unused bot review-status helpers behind it. Bot reactions were never a gate.
-- The refusal that blocked `issues create`/`update` when `LINEAR_API_KEY_OVERRIDE` met a real checkout's cache. `LINEAR_INLINE_KEY_CACHE_OK` is inert; a test isolates its own cache dir.
-- `linear.sh cache issues validate-completion`. **Breaking:** use `linear.sh issues validate-completion`, the spelling every workflow already calls.
-- `linear.sh sync` no longer sweeps legacy per-issue `comments/*.json.lock` files. Remove them once with `rm -f .cache/linear/comments/*.json.lock`.
 - The Updates page's Follow source column and Held tag are gone. A package's own page holds it at a version, through its version picker.
-- **Breaking:** commit-guards no longer skips a repo-local doc-limits that refuses `--staged`: it is reported as a step that did not complete and blocks the commit or push. Make it accept `--staged`.
 - **Breaking:** the `post-edit-lint` hook and Pi's `postEditLint` setting are gone, so no `.rs` write runs clippy. Run `kendex refresh`, or `kendex remove post-edit-lint` if you declared the hook.
 - A pi `hooks/` or `hooks.json` beside a scope root is unmanaged: kendex reads, writes, scans, lists and removes nothing there, `kendex remove` included. Yours to look at and move aside.
 - The `auto-update-check` setting. No toggle exposed it, so hand-editing it to false was the only way to set it, and that no longer stops the check; the key is ignored now rather than refused.
 - **Breaking:** `kendex marketplace browse --community` is gone; it only reported that the community directory is not built yet. Browse a subscription by name instead.
-- **Breaking:** `worktree-session-guard release --expect-gen` and the `generation` field of its `status`/`list` JSON are gone; release by owner, or with `--stale`/`--force`.
-- **Breaking:** `worktree restack continue|skip|abort` now requires the tool-created pending marker and state token on every paused restack; re-create a worktree whose state predates them.
-- **Breaking:** The worktree skill removed `create --recover-local`; drop it from any script. Bare create still refuses a surviving local branch.
-- A surviving branch that was pushed is checked out with `create --base <branch>`; push an unpublished one first, or check it out in the main checkout.
-- **Breaking:** the worktree skill's `remove --force` released a held session lease; release it with `worktree-session-guard release` instead.
-- **Breaking:** pi-caveman reads only the `mode` setting. `enabled` and `defaultMode` are ignored, so a config using them now resolves to `off`; set `mode` to the mode you want.
-- **Breaking:** the Pi extensions drop their old-layout migrations. Reinstall on the current layout instead of upgrading in place.
 - `install-git-hooks` no longer rewrites the shebang of a hook it wrote earlier: a hook under an interpreter it cannot verify is refused. **Breaking:** delete that hook and re-run the installer.
 
 ### Fixed
 
-- `mutation-stability` no longer reads a stable test as unstable, or a killed mutant as a survivor, when the caller shares a build cache. What it writes is stamped past the build, so cargo rebuilds.
 - A blocked declaration now names every position its take-over empties. A
   tree read through a tool's own link sits at two, and `apply --plan` named
   one while `--replace-unmanaged` moved both.
@@ -2710,28 +1034,16 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `kendex report --upstream` takes a GitHub repo spelled any way — shorthand,
   https URL or `git@` — and files against it when your lock records the asset
   from that repo.
-- `worktree cleanup` and `worktree remove` prove a merge two ways and no other: ancestry into the default branch, or the pull request whose head commit is the branch tip. Every keep names its reason.
 - `kendex remove`, and any CLI apply, refresh or unsubscribe that drops a
   package, runs its declared uninstaller before the files go, so dropping
   `growth-guards` disarms the commit hooks.
 - A refresh cuts opencode.json's `kendex-hook-` `instructions` rows to what it renders now, so a row kendex wrote leaves with its render. Other rows are untouched; pre-rename rows go by hand once.
 - Removing a skill whose harness copies are only partly present now finishes. A copy already gone, or a link whose target was, failed the move to the trash and rolled the removal back on every retry.
 - harness-ci's `harness-only` reads manifests at the selected head and answers `false` for a diff touching an in-place skill or `.agents/hooks` script: project source no longer stands CI lanes down.
-- The `task-completed-check` hook counts untracked files as changes, and blocks on any nonzero clippy exit or a git that cannot say what changed. A new-file task and a killed clippy passed before.
-- **Breaking:** the `block-bare-cd` hook reads commands with `jq` and refuses every Bash call it matches on a host without it. Install jq wherever the hook runs. Its parser stopped at the first quote.
 - The Library's From column says "Your own" for a skill adopted in place; it read as a marketplace with no repository. The Mine import inventory reads such a skill's bytes from the tree it sits in.
 - `kendex fork` refuses an item that is already yours — `local`, or a skill
   adopted `in-place`, whose tree of record a fork would quietly demote to a
   render of a hidden copy.
-- The `block-bare-cd` hook refuses a bare `cd` with no path. It changes to
-  `$HOME` for every later tool call, the move the hook exists to stop, and
-  only `cd <path>` was caught before.
-- `worktree`: the recovery text consumers copy into `AGENTS.md` no longer calls a `.agents` directory broken. A repo committing its render has tracked files there, so a child is what breaks.
-- `worktree`: an untracked `.gitignore` under a tracked-content `WORKTREE_SYMLINKS` entry is copied, not symlinked, so the worktree ignores what the main checkout does and git's symlink warning stops.
-- The settings template no longer seeds `.cursor` into `WORKTREE_SYMLINKS`, so `worktree fix-links` passes in repos that do not use Cursor; one that does adds it back in `kendex.settings.toml`.
-- A later `Fixed in <sha>`, `Declined:`, or `Tracked: <issue>` reply clears
-  a review thread's tracking claim at the gate, and a `Fixed in <sha>` reply
-  is never a claim, whatever its prose says.
 - `kendex refresh` says when this clone's `info/exclude` ignores `.agents`, as it did for `.gitignore`, from any linked worktree too. That rule hides the tree from git status, so nothing commits it.
 - The lock records each skill's tree and links. **Breaking:** redo an install an older kendex made by hand: refresh, remove that scope's lock file and the trees and links kendex wrote, then apply.
 - On macOS the commit hooks were written but never made executable, so git
@@ -2767,27 +1079,18 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - The growth-guards `--check` reads an install whose `pre-commit` or
   `commit-msg` script is missing or not executable as not armed — that state
   blocks every commit.
-- The `pre-commit-check` hook stands aside only when both git hooks are
-  armed; with `commit-msg` missing it no longer waives the message gate.
 - The guard verbs run the package's scripts through `sh` on Windows, where
   `#!` lines are not honoured, instead of failing to start.
 - The growth-guards `--check` reads an empty `core.hooksPath` as hooks
   switched off, rather than measuring the repository root in its place.
-- The `pre-commit-check` hook no longer stands aside for a repository-root
-  file git never runs when `core.hooksPath` is set: any value at all reads
-  as not armed.
 - A hook of your own that mentions a guard marker mid-line is left alone: no longer refused, rewritten or reported as a stale shim. A line that ENDS with the marker is still the installer's own.
 - A blocked commit is told to run `kendex guard install`, which restores the
   helper, instead of `kendex refresh`, which does not.
 - The guard verbs find the package under the project's own root, so a kendex
   project below the git top level is no longer reported as having none.
-- **Breaking:** the `pre-commit-check` hook refuses a commit where no git hook is armed, naming `kendex guard install`, instead of running the repository's own guard scripts. Arm the hooks.
-- Agents no longer promise a `{{KENDEX_FAILURE_REF}}` that nothing defines:
-  the failure-routing line now points at `kendex report --help`.
 - OpenCode, Gemini, and Copilot agent renders list required skills at
   `.agents/skills/…` — the tree those tools read — instead of per-tool
   directories a default install no longer writes.
-- Preflight no longer flags upstream `TODO` markers in vendored harness mirrors, and reads `.pi/kendex/` as a managed mirror like the other harness trees, so repos committing their renders can pass.
 - Simultaneous app and CLI account calls share one token refresh, so they no
   longer invalidate the sign-in by rotating the same refresh token twice.
 - Registry refresh timeouts and rate limits no longer sign the machine out;
@@ -2799,24 +1102,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A project reached through a symlinked path no longer misreports an
   editor save conflict as a plain failure or loses package update
   timelines to a "history could not be read" warning.
-- The preflight skill's `unwired-suite` lane no longer flags new test files
-  that a bare `vitest`/`jest` script runs through the runner's default
-  include glob.
 - A pi-hooks carrier registered through a scoped path such as
   `./packages/@vanillagreen/pi-hooks` no longer draws the false "nothing
   will run it" warning from `kendex apply`.
-- The review-gate predicate matches review error patterns only in a review body's first line, so a review quoting a pattern in later text counts as evidence again.
 - Customize › Customized packages lists every package you changed at that location, hand-edited and forked ones included, so it matches the Library's "Customized in" mark instead of settings alone.
 - macOS builds are Developer ID signed and notarized: installing from any
   channel no longer ends in "kendex is damaged" or an `xattr -cr` workaround.
-- `preflight`'s fail-open lane no longer asks a non-executable file under `scripts/lib/` for a `set -euo pipefail` preamble; nothing runs it. An executable one keeps the check.
 - A settings or `kendex.toml` save from a copy something else wrote since — another window, a resize, the CLI — no longer puts the older file back: it is refused and retried, or offered Reload.
 - A refused apply's rollback keeps the hand edit that refused it — a
   `kendex.toml` change landing mid-apply — instead of restoring the older
   copy over it.
 - The Library works from the keyboard: each package name is a button, so Tab reaches it and Enter opens it. Dragging across text to copy it no longer opens anything, in any list or card.
-- The worktree skill's `push` refuses a flag it does not recognize and an empty target, rather than pushing the current checkout by default.
-- The worktree skill's `fix-links` no longer reports "Restored symlinks" for a path it did not restore: it names every configured entry left unhealthy and exits non-zero.
 - An apply is no longer refused as "scope is busy" while nothing else runs: locks release when an apply finishes instead of waiting on a file a just-launched program held open. Same for downloads.
 - Home's Installed tile counts what the Library counts — packages, not
   per-harness copies — so the tile and the table it opens agree.
@@ -2852,16 +1148,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `kendex adopt` binds an adopted item to the tools that were actually
   reading it, not the scope's full defaults.
 - Symlinked repository paths read as catalogs again.
-- The review-gate package's tests run in projects that install it, and
-  preflight no longer flags cross-repo citations like `kendex:docs/x.md`.
-- The project-management pipeline creates Linear issues in Backlog, not
-  the team's Triage default.
 - "How a marketplace repo works" can be read from the keyboard.
 - Match marketplace pages and the Community list against subscriptions by repository identity on any host, and keep two Windows drives declaring the same folder path as two marketplaces.
-- Name the directory a linear command could not resolve a repository from, and let second-opinion run on when its install sits outside one, instead of exiting at git's bare 128 in silence.
 - Say why the Settings page, the version it shows, and the marketplace authoring guide could not be read, instead of a blank page or a loading skeleton.
 - Keep Pi extension records after partial updates, honor pinned revisions, and route app reports when an install record is unreadable.
-- The second-opinion review reads a JSON verdict inside a code fence on macOS, where the fence extraction printed two sed errors on every run and never matched.
 - Keep Name, Kind, Safety and Status on screen in the Packages table at every window width, giving up the other columns by priority as the window narrows.
 - A config file several surfaces read is warned about once, so Home, Problems and the footer count one broken file as one.
 - Home's Needs attention rows say what is wrong and what to do: the edited row names each package and opens the Library narrowed to them; an unreadable config file gets a row and a Problems card.
@@ -2896,62 +1186,30 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - `kendex refresh` installs and records a declared Pi package with no install record, files matching its source and no `npm install`, once confirmed, asking again about anything that adds to its plan.
 - Codex/OpenCode: opus → `gpt-5.6-sol`, fable → `gpt-6-astra`, sonnet → `gpt-5.6-terra`, haiku → `gpt-5.6-luna`. Pi: same sonnet/haiku ids under `openai-codex/`; opus/fable inherit.
 - The commit offer after a refresh no longer reports a rebase in progress on a checkout holding only a leftover `REBASE_HEAD`, and its line names the rebase directory it found.
-- A Bash call whose prose, heredoc body or comment names a kendex write verb runs from a linked worktree; a verb the shell would run, quoted or in a heredoc it reads, is still refused.
-- A Claude account whose access token expired is renewed before the lane chooser measures it, so a launch gets a usable account rather than "expired"; an account that cannot be renewed is refused.
-- Prevent Claude-native MCP and unqualified Pi tool calls from being dispatched more than once — thanks @Destiner
 - `kendex check` no longer records a hook, MCP server or plugin whose settings entry was removed, broken or moved from under it after the deep pass proved it, so `kendex apply` does not put it back.
-- Pi web tools keep `web_fetch` on installs with no Exa key: its direct HTTP, GitHub, PDF and YouTube paths never needed one. — thanks @Aelbannan
-- Background task widgets disappear when their last finished task reaches its configured retention limit instead of showing zero tasks. — thanks @lhl
 - Report and library ownership work without a readable lock. Verification keeps record errors visible, and record-existing recovery preserves matching renders even when CI metadata is absent.
-- Let architecture topic `Covers:` entries match a directory, one file, or a shell glob.
 - CI derives generated files from the kendex writer inventory, so carrier extension source and unrecorded code always run product checks.
 - Pi updates preserve source ownership under the scope writer lock, and verification checks recorded package bytes for drift.
-- Keep comment findings from readable files when another file cannot be scanned, then report the incomplete measurement.
-- Let existing oversized files hold their size or shrink while the byte ceiling still rejects new oversized files and further growth.
-- Applied migrations and other immutable first-party files can use the shared comment and prose exclusions while configured migration checks protect their bytes.
-- Fixed the comments scanner for quotes and heredocs inside quoted Bash command substitutions.
-- preflight accepts `.jsonc` and configured JSON-with-comments paths, including VS Code color themes, while commit checks use only staged shared settings.
-- Preflight's `mktemp-trap` lane finds an `EXIT` trap in a shell file of any size, so a large new script is no longer reported as untrapped at random.
 - Count packages, not installations, on the Harnesses and Projects kind badges, so a badge's number is the number of rows in the Library view its click opens.
 - Cite a planned install's safety findings at the catalog file the bytes came from, not at a destination nothing has written yet; the line comes too, where the install is a verbatim copy.
 - The macOS app opened from Finder runs on the login shell's `PATH`, so it finds the git a person installed to clear the 2.41 floor; a login shell that stalls no longer holds the launch.
 - Bot instruction checks leave installed package files unchanged, so kendex verification does not report Python caches as local edits.
-- `oversee-watch` takes a repeated `--repo` and runs the review-gate reducer over every one, so a PR needing attention in a second repository is an event instead of silence.
-- Linear resolves a project name to the live project when a canceled one shares it, in `--project` writes and in `projects get` / `list-dependencies`; a name with no live match is refused.
 - Library, Browse, Updates, package details, Customize, Marketplaces, Sources, the report dialog, `kendex apply`, and `kendex remove` now show malformed record errors.
 - A check and the writes that change what it reports now wait for each other, and one write runs at a time, so a check answering mid-write no longer puts the old rows back.
-- The review gate now refuses a decline that answers a finding with a test count and the suite it belongs to: `Declined: lifecycle 104/104 and the full tools/guard pass` turns it red.
 - Pi resolves the project the way `kendex` does before rendering, so a session in a subdirectory gets the same guards. `PI_CODING_AGENT_DIR` is used only when root-anchored.
-- Linear issue output now separates open blockers from completed and canceled blocking-relation history.
-- second-opinion: a review CLI killed by a signal exits 6 naming the signal, distinct from a failed CLI (5); a union records a killed lane as status "killed" and exits 6 only when every lane failed.
 - **Breaking:** `import --json` is schema 2. An empty `hash` is a failed read only where `problem` is null. A set `problem` names bytes a catalog cannot store. Import refuses a Codex TOML agent.
-- `open-terminal` refuses a launch whose working directory is gone, and honours `$TERMINAL` then `xdg-terminal-exec` ahead of ghostty.
-- The GitHub skill's diff summary now keeps Rust risk flags on large diffs instead of dropping early matches under `pipefail`.
 - Refuse agent forks and hide fork actions when a harness cannot render their access settings, instead of recording a fork that may widen access.
 - The catalog's bundles installed nothing, and `kendex marketplace new` scaffolded the same mistake: members belong under `agents`/`skills`/`hooks` lists, not a `members` key.
 - The marketplace Bundles tab lists every curated set the catalog declares, including ones whose members it no longer offers. A pending read shows a loading line and a failed one shows its error.
 - A marketplace page opened for a repository outside GitHub no longer sits on a disabled "Checking subscriptions…" forever; it offers Subscribe once the subscription list has been read.
-- `ci-wait` now retries transient CI failures on large job logs, and `ci-logs` classifies and returns them instead of falling back to the job name or exiting empty.
 - `kendex check --catalog` fails a `[bundles.<name>]` body with a key kendex does not read, `add --bundle` refuses a set the catalog offers no member of, and apply keeps what such a catalog installed.
-- `linear.sh cache cycles list --team X` now filters the cached cycles to that team, in both the space and `--team=X` spellings; the flag was previously accepted and ignored.
 - The package page names a source no fetch has downloaded yet and drops the Try again beside it, instead of reporting a failed read that re-reading cannot lift.
 - The package page's file list says when its read did not land and offers it again, instead of drawing a package with no files.
-- Linear `cache projects get "<name>"` returns the one live project when a canceled one shares the name, instead of printing both as concatenated JSON at exit 0.
-- `linear.sh issues --milestone <name>` resolves inside its `--project`, refuses an ambiguous name naming the candidates, refuses a name with no project, and reports a lookup failure as one.
-- `oversee-watch` no longer exits 2 at start on a repo with no `LINEAR_TEAM`: the team triage check is skipped with one stderr note and the watch runs its other checks.
 - A read no longer fails because kendex could not write or delete its cache. A full or read-only home costs a re-fetch next time instead of an error, and an expired sign-in still says so.
 - The account now says so when the failure is on your machine — a refused credential lock, a full disk, a second kendex holding it. It used to read as "Offline", blaming a directory nothing had asked.
 - An update, discard, fork or install-beside whose apply fails re-reads the machine like one that landed, so Home and the audit stop counting copies its uninstallers removed.
 - The Library's From column and a marketplace's Installed in column keep the newest read of where each copy came from, so an older read answering late no longer puts a pre-install answer back.
-- The orch round that cuts an oversized branch can be recorded and accepted: `dev-round-write --cut` skips only the over-limit refusal, and acceptance refuses a cut that left the branch over the cap.
-- `worktree` run from outside a git repository now names that directory and the checkout to run from, instead of exiting 128 with no output.
 - A failed install, subscribe, repository change, source toggle, unsubscribe, editor save or audit action re-reads the machine like one that landed, so Home and the audit stop counting removed copies.
-- Three sourced kendex libraries build their first line or error detail in-shell, so a value past the pipe buffer cannot abort the sourcing script.
-- `gh` cross-PR verification records a build or test failure whose error output is one very long line, instead of ending the run with no result.
-- `linear.sh issues add-relation` and `remove-relation` no longer strip the team from the cached issues they refresh, which dropped those rows out of a `cache issues list --team X` listing.
-- `linear.sh cache` listings honor `--team` or refuse it: `issues list --team X` filters and resolves `--cycle current` inside X; a flag the cache cannot honor is refused, not ignored.
-- `linear.sh` cache date filters compare in UTC, so `--cycle`, `--updated-since` and `session-status` answer off a UTC host as they do on one; with no cycle running, previous and next cut at today.
-- `linear.sh cache projects list-dependencies` returns the live project for a name a canceled one shares, and refuses a reference with no live match instead of printing nothing at exit 0.
 - `kendex apply` keeps what a catalog installed when nothing declares it now and the catalog will not read, is gone, or is off — one declared by name included — and the plan names that catalog.
 - `kendex add --bundle` refuses a set whose members land on none of the tools the install targets, naming the set and the tools, instead of recording an install that puts nothing on disk.
 - Catalog checks report set members the catalog does not offer and fail the check with the set and member names.
@@ -2959,18 +1217,14 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Saving in the editor, installing a package, applying a repository effect, or checking your submissions now shows why when the app cannot reach its engine, instead of quietly going idle.
 - A Pi hook on `PostToolUse`, `Stop`, `TaskCompleted` or `SessionStart` runs: kendex registered it and reported it enforced while the pi-hooks carrier dispatched tool calls alone.
 - A project hook for Codex, Gemini, Copilot, Pi or Antigravity finds its script when it runs, so it works in a project with no git repository or below the git top level. Pi needs pi-hooks 0.10.0.
-- `worktree restack continue` names unstaged files instead of offering a `skip` that drops the resolved commit; `restack abort` exits a restack Git moved or dropped; suites drop an inherited git env.
 - A curated set's tool picker opens before any member is ticked, offering every tool the set could install to, and Install all is held back when that picker is emptied by hand.
 - Installing into a project from a personal marketplace whose alias the project already uses for a different repository is refused instead of silently rebinding the project's subscription.
 - An agent's rendered Required Skills list is preceded by a blank line, so the render passes the markdown format lane every harness reads it under.
 - `kendex add --pi-extension` names the real path (declare the package in `kendex.toml`, then `kendex update-pi`) instead of saying support is coming.
 - The CLAUDE.md shim is written beside a project's own AGENTS.md files only; an AGENTS.md inside a harness render tree such as a rendered skill gets none.
 - A hook's advisory instruction file (OpenCode, Cursor) renders one paragraph per line with blank lines between, so a fresh install passes the md-format lane.
-- The prose lane honours `GROWTH_GUARDS_MD_EXCLUDES`, so a vendored third-party skill is carved out with a reason instead of by narrowing the scan paths.
 - A person's edit to a Pi agent's `effort` key survives a fork instead of reverting to the publisher's value.
 - A Pi agent whose model inherits the session now renders its effort as an `effort` key, which `pi-agents-tmux` passes to the child as `--thinking`; before, the effort was dropped with the model id.
-- `open-terminal --help` states the default mode (tmux inside tmux, a GUI terminal outside), `--ghostty` inside tmux warns, and GUI terminals no longer inherit `TMUX` or `TMUX_PANE`.
-- `commit-guards all` runs byte-ceiling over every tracked file, and `all --base REF` over the changes since REF, so the batch summary names a scope it read; the CI `byte-ceiling --base` step goes.
 - Hold the marketplace Install buttons back when narrowing the tools on offer leaves nothing picked, rather than installing to no tool and reporting success; a hidden tool returns with its offer.
 - Agents install for Antigravity at the global root alone, the one `agy` reads: a project declaration now says Antigravity cannot hold one there rather than writing a file nothing reads.
 - The commit-guards installer refuses to arm from a linked work tree, where it would point every commit in the repository at scripts that vanish with that tree; run it from the main checkout.
@@ -3021,7 +1275,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A hook, command or MCP server installs by name from the local source, so a template carrying one installs every member; a template install that refused names what it wrote, or that nothing went in.
 - An installed package whose file was deleted outside kendex no longer reads as healthy: Home, the Library and the package page say so, and the package page offers Repair.
 - Head the commit window with what is uncommitted in the project, the way the terminal does, instead of attributing every pending file to the action just run.
-- Hold kendex's own committed render inventory to the set its render plan produces, so a change that lands a render without refreshing that inventory fails before it merges.
 - A refused push or pull request ends on git's or gh's own refusal rather than on a hook's output, with the hook's lines kept above it.
 - A package whose rendering was deleted outside kendex keeps its row in My Library, marked missing files with Repair, and a place's kind badges count it, instead of both dropping it.
 - A template, collection or `project add --template` install refused before it writes leaves no subscription, local copy, declaration or projects-list entry behind.
@@ -3030,29 +1283,17 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - A non-interactive refresh checks every selected scope before it writes, and reports prepared warnings and findings before it refuses missing consent.
 - `kendex refresh` over a fresh clone checked out with CRLF line endings (`core.autocrlf=true`, the Git for Windows default) leaves `git status` clean instead of reporting kendex's files modified.
 - Show a shortened path or name in full in a tooltip that stays open while the pointer moves over it or keyboard focus rests on it, and give screen readers the full value.
-- A lane launch runs through the account's own launcher command where the machine has one (`1claude` for `~/.1claude`), and a pane observed running another account than the one picked is closed.
 - `apply` and `remove` take an undeclared Pi extension whole: settings entry, append-system block, bin links, package directory and record; refresh reports the orphan instead of refusing.
 - A Copilot hook with an empty matcher is registered without a `matcher` key, so it runs on every tool instead of being skipped.
-- orch: a successor overseer stopped at a folder-trust dialog is reported as `successor-dialog` with the pane line, not as a deadline that names nothing.
-- orch: a successor overseer launches through the account's own command where the machine has one, instead of under an environment prefix that command overwrites.
-- A hosted mailbox that several overseers write keeps every line, where two writing at once used to keep only the later one with no error.
-- Relaunch an overseer lane in one call: the resumed session carries its continuation line, except on a hosted Codex lane, and a merged lane keeps its worktree instead of failing on a rebase.
-- The github skill's dismiss-review, and resolve-thread and unresolve-thread given several thread ids, print their summary and exit on whether the mutations landed instead of aborting.
-- Overseers sharing one watch state directory no longer re-report handled mail: each keeps its own mailbox read position.
 - Windows installs and later clones use one portable identity for rendered text, including first Pi package installs, removals across CRLF and LF checkouts, and a refresh over an uncommitted render.
-- session-drift-check: a session with no kendex command on PATH now gets the project's package count, the install route for its platform, and the rule that rendered trees are never hand-edited.
 - Armed app and CLI updates refresh bot instructions. Commit and restore preserve other AGENTS.md edits. Unarmed updates run no package code and show setup guidance. App errors show findings first.
 - Restore a Pi package registration during refresh when its installed files and lock record are still current.
-- Keep the drift-hook test stable on systems that install kendex in a system binary directory.
 - `kendex update-pi` and the session drift check name a second copy of a managed Pi package under either `extensions/` directory Pi loads, once per run, with the paths to move.
 - Cap the source cache: each marketplace keeps the snapshots its locks name plus the newest three (`KENDEX_SOURCE_CACHE_KEEP`), and a command-line refresh says how many older ones it removed.
-- orch: a Codex lane or overseer successor records folder trust for the directory it opens before the harness starts, so an unattended launch no longer parks on that question.
 - A dependency two items share stays on while either is on: switching one hook or skill off no longer parks a companion the other still runs.
 - A hook names the hooks it cannot work without: declaring `lane-mail-check` alone installs its two wrappers, and a wrapper is left out or removed wherever its judge will not run, naming both.
 - An edit to a package you forked is the fork's own content now: apply keeps the files, folds them into the fork, and stops reporting a conflict it offered no way out of.
 - The plan names each item and where its write lands, following a symlinked harness directory. A write leaving the project is refused, and a rollback puts bytes back only in the file they came from.
-- second-opinion now stops external model CLIs when callers terminate their process group.
-- orch: the re-review cap now counts only re-review cycles, so QA and pre-PR fix rounds stop spending it, and `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4) bounds external PR review rounds.
 - Renaming a fork now writes the new name into the package's own file, so the renamed skill or agent installs instead of being refused at the next apply for calling itself by its old name.
 - Keeping or renaming an edited agent no longer hands back denied access, drops its skills, hooks or a section, or changes what others render. It refuses a name it cannot hold or another agent uses.
 - Switching a package's version, and turning Follow source back on, now say when the copy on disk was held back instead of reporting an update that never reached the files.
@@ -3062,7 +1303,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - The warning that a command installed as a skill is offered by other tools names every tool that reads the directory it landed in, not Pi alone.
 - Forking, diffing or updating a skill installed with `method = "copy"` reads that tool's own copy. It could read a same-named skill out of the shared tree instead, or find nothing at all.
 - A skill whose shared rendering is refused no longer reports that the other tools reading that directory can see it; nothing is installed there to see.
-- Growth-guards and size-ratchet exclusion lists carve a tree back into the scan with a `!pattern` row. **Breaking:** an existing `!`-leading row now carves; escape it as `\!foo` to exclude.
 - Mine now says when it could not check your submissions, instead of reporting every marketplace as never submitted and offering to submit work already in review.
 - An expired sign-in now reads as expired everywhere instead of quietly signing you out: a submit that meets one stops offering the submit, and the submissions poll no longer hides it.
 - Signing in as another account no longer shows the previous account's name, or reports its sign-in as expired. An identity read belongs to one sign-in.
@@ -3074,68 +1314,45 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Forking in place, and keeping a marketplace's packages when you unsubscribe, now refuse a symlink inside `.kendex-local` that would have put the copy outside the project rather than in it.
 - Forking an agent from a rendering that says tool names in its own harness's words keeps the words the catalog published it in, wherever the capture can still tell which line is which.
 - A forked or kept agent keeps the skills it was rendered with; if the scope stops offering one, kendex refuses and names it rather than dropping the agent's Required Skills section.
-- Cycle planning, roadmap planning and creation, and the research workflows refresh a stale Linear cache before their first read, instead of planning against whatever the cache last held.
 - A package page's mark now answers for the package everywhere, as its Library row does. The Customize tab marks which places and settings hold your changes, and names the skills an agent gets.
 - Codex now loads the agents kendex renders for it. Every one carried a `tags` key Codex rejects, so it ignored all of them and warned at launch.
 - Forking an agent takes off exactly what the next render writes again — nothing of the person's or the publisher's own prose, and nothing left behind to stand twice.
 - Forking or renaming an agent onto a name that drops a built-in tool deny is refused, on every declared tool. Catalog settings carry; a fork needs one known revision across them, so refresh first.
 - A settings-template value spanning several lines now seeds whole, instead of an unterminated line that stopped `kendex.settings.toml` parsing. A value nothing closes is named, not written.
-- Syncing the Linear cache now fetches comments in their own paginated request and pages them to completion, so every thread it fetches is cached whole rather than cut off at its first page.
-- An issue audit now reads every issue's comments and compares against Canceled issues, so a duplicate or cancellation call no longer rests on the description alone.
-- Linear sync now warns when the page limit truncates an issue pull and reports how many issues it fetched.
-- Linear cache: `LINEAR_CACHE_ROOT` points the cache at another root, and per-issue comment lock files stop accruing. A sync clears the ones already there.
 - The package page follows an update started on its Projects tab, its buttons name the place they act on, a failed read says so with a retry, and a package with nothing to read stays quiet.
-- On Linux, `git commit --amend` no longer demands a changelog entry the commit already carries: the commit-msg gate judges an amend against the parent it will have.
 - The safety score no longer flags a dangerous switch a document writes in a code span, so a README or SKILL.md explaining one scores clean. The switch written as code still counts.
 - Windows: `kendex add`, `refresh` and `apply` no longer fail with "Access is denied" before changing anything, so packages can be installed there at all.
 - On Windows, hook commands and the uninstaller line a package prints are spelled with `/`, so a shell runs them; a root whose plain spelling names the same folder no longer shows as `\\?\C:\...`.
 - A skill only a pinned revision carries is available again, and one two pins disagree over is not: an agent's Required Skills row, and a fork of that agent, now match what the plan installs.
 - The desktop app can now update a `kendex` command installed before kendex recorded which file it had installed; running the command writes that record.
 - On Windows, a package a harness installs is now one kendex verbs can find, a project skill's link reaches the tree it names, and a package's history and its origin read the same as everywhere else.
-- Pi's end-of-turn clippy reaches the agent in every mode, headless included, not only the interactive screen; a run that proved nothing (no workspace, a timeout) says so instead of reading as clean.
-- growth-guards and preflight judge a file by its own bytes: neither a `-diff` attributes row nor a path named `0:name` hides a marker, a suppression or an added line from a scan reporting clean.
 - Adopting a plain skill no longer deletes an item a declared catalog stores deeper under that name: the adoption is refused and names what is stored.
 - A catalog checks out the same bytes on every machine: its own `.gitattributes` no longer converts line endings or runs a smudge filter, and the mirror kendex clones carries no host git template.
 - After an elevated `kendex update`, the next run of that command tells the app which bytes are installed, so the sidebar keeps offering to update it instead of falling silent.
 - A code span's reach in the safety score is the block markdown gives it: a fence, thematic break or HTML block ends it, a lazily quoted or indented continuation does not. Cached scores refresh.
 - On Windows, a refusal that names the item already stored in a name's slot spells its path with `/` instead of `\`.
 - On Windows, the three adopt refusals that name where an item was expected spell that path with `/` instead of `\`.
-- The commit gate no longer refuses an anchored grep over a `.git` path or behind a read-only `git log`.
 - Skill audits read markdown with a full parser: a switch a table row keeps out of a code span now scores as a live use, and one behind a list indent or autolink no longer does.
-- The commit gate no longer refuses `git config alias.st status`, which runs no commit, or a commit message continued across lines with a backslash, whose word it now joins as bash does.
 - `kendex check` no longer reports a repository's armed git hooks as unverifiable from a linked worktree, or from a checkout whose path contains an apostrophe.
 - `kendex verify` and `kendex check` now answer inside a git worktree, and `kendex refresh` there works on the worktree: a lock copied in from the main checkout reads against the tree it sits in.
-- orch: a delegation states its worktree as a cwd precondition the agent proves with `pwd -P` before anything repo-relative, so a shell in another lane's worktree is caught at the first command.
-- Merge-queue watch retries now consume the replacement supervisor's verdict instead of the failed supervisor's stale result.
-- Merge-queue cleanup now binds to the PR branch recorded for the watch; a worktree checked out on any other branch is kept instead of removed.
-- The review gate refuses a decline whose reason is empty or is nothing but a label it knows, such as `frozen` or `out of scope`. Colon or not: `Declined, out of scope` turns it red the same.
 - A version switch or Follow change that fails now re-reads the package. It could leave the old version on screen as settled, over a manifest the failed attempt had already moved.
-- second-opinion stops the external CLI's whole process tree when a call times out, and at a detached run's deadline when the worker still matches the identity recorded at launch.
 - Names and paths off a catalog or a scanned folder reach the terminal as their own characters wherever the CLI prints them. `kendex show --file` and `--readme` still print a file as its own lines.
-- On Bash 3.2, commit-guards admitted an uppercase commit type and refused its own helper on an apostrophe path; second-opinion, verification-scope and tools/guard aborted or misspelt a path.
-- Every shell suite but linear's runs on macOS `/bin/bash` 3.2 in CI, where the Bash 4 constructs the text scan cannot see fail.
 - `kendex.toml` is edited in place. Adding, forking, adopting and detaching change the keys they name, so the comments, blank lines and key order you wrote stay where you put them.
 - The Copilot mark now takes its harness colour in the app, instead of rendering black.
 - Importing a skill or agent under a new name writes that name into the copy's own declaration instead of landing a package named something else, and refuses where the file carries no frontmatter.
 - Pi now runs every `PreToolUse` hook kendex installs for it, custom ones included, not three built-in guards. Needs pi-hooks 0.9.0: `pi install npm:@vanillagreen/pi-hooks`.
-- **Breaking:** Mutation checks now require `--build CMD` and reject empty selections, non-compiling mutants, and timed-out runs instead of reporting misleading verdicts.
 - `refresh` and `apply` write back the install record a scope declaring only Pi extensions lost. **Breaking:** `verify` exits non-zero on a scope that declares items and has no install record.
 - A tool reference between backticks in two different table cells is now reworded for the reader's harness. The cells are separate blocks, so markdown never quoted it, but it used to pass through.
 - A rendered agent body keeps every byte of a code sample that sits in an indented block or in a backtick span closing on a later line; the prose rewrite used to edit tool names inside both.
 - `install.sh` installs the kendex command on macOS. Its elevated write passed `install -D`, a flag the mac's `install` reads as taking an operand, so the install exited instead.
 - The Marketplaces page and the Customize page no longer go blank when drawn before the settings read lands: reading the project list re-rendered the window until it crashed.
 - Switching Follow back on now re-reads the scan and the audit behind its own apply, so the machine inventory and the scores stop answering for the bytes the flip replaced.
-- A merge-queue supervisor whose runtime directory or repository is deleted under it now stops instead of retrying, and `queue-wait` refuses with a named error and exit 4.
 - An agent requiring a skill installed with `method = "copy"` is told to read it from the directory that copy wrote, not the shared tree a copy never writes.
 - A hook that names no harness in its `harnesses` line no longer installs on Antigravity, whose hook payload is not the shape such a hook reads; the plan notes the skip.
-- BSD sed, awk, wc, paste, touch, date, seq and mktemp differences are handled where the shipped scripts and their suites hit them; open-terminal and orch state writers need no setsid or flock.
-- Shipped workflow templates and scripts pass the comment checks that consumers install.
 - Count what a failed collection install already wrote: a step that subscribed or pinned before it failed now reports those changes in the closing ledger instead of none of them.
 - A command installed as a skill no longer warns that another tool offers it when that tool's loader would reject the installed name.
-- Comment checks use a configured tracker pattern for issue IDs, so technical names pass by default. Date and numeric issue checks remain enabled.
 - The note saying which other tools already see an installed skill no longer names a tool whose loader would reject the skill's name.
 - Refresh removes departed harness renders. OpenCode hook removal clears generated Bash permissions and trashes empty settings files while keeping user settings.
-- A detached second-opinion run whose worker died without publishing a status now reports at once, instead of waiting out the run's whole deadline.
 - Gemini commands now expand the arguments you type: a command body's `$ARGUMENTS` is written into the Gemini prompt as `{{args}}`, which Gemini reads.
 - Gemini CLI is detected by its `~/.gemini/settings.json`, so a machine with only Antigravity installed no longer reads as having Gemini CLI too.
 - CI stops treating a file as generated when the last rendered package becomes in-place source.
@@ -3143,7 +1360,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Refresh keeps committed inventory entries for skipped items.
 - Refresh replaces stale Codex and Pi hook commands and removes duplicate handlers after a command template changes.
 - Installer notices and errors start with stable keys and values. Invalid version options report option errors before a download starts.
-- pi-agents-tmux schedules a rate-limit retry from a usage-endpoint window that reports only a reset time, instead of ignoring it and falling back to a later source.
 - A dependency landing in a place whose lock can't be read now says its standing isn't known, instead of reading "not offered here", and the install picker won't let you ask for it.
 - A place whose lock kendex can't read no longer hides packages or blanks Updates: rows read "Not known" even from cache, pages there offer no install — a redirected one isn't checked — and say so.
 - A Problems card names the place and which of its files kendex couldn't read, stops calling a Personal problem a project's, and sets the error in body colour with its steps at body size.
@@ -3159,26 +1375,16 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Your git's line-ending configuration no longer decides what a package installs; on Windows it added a carriage return to every line. Reading your own repository is unchanged.
 - A catalog checked out before the line-ending fix is rebuilt after you upgrade, so the fix reaches what your cache already holds and not only what you download next.
 - A `# required` key you have not set is named even where kendex cannot write `kendex.settings.toml` at all — something else in its place, or `[[env]]` in the file. It was dropped in silence there.
-- `suppression-ban --update` keeps its baseline file's mode instead of rewriting it owner-only, and no longer stops for a prompt when that file is read-only.
-- A lane launches under one spelling of its work item, so the mailbox it writes is the one the overseer reads; a mailbox differing only in letter case is refused, never opened beside the first.
-- Markdown checks catch broken incoming references after target edits and check links followed by a section heading prefix.
-- Markdown section references accept sentence punctuation and bare numbered headings, and check section suffixes after anchored links.
 - Check recommends apply for missing recorded files so renamed packages do not cause a repeated refresh request.
-- `open-terminal` now refuses a custom command with an unbalanced quote before it opens a window.
 - Ownership routing checks every observed copy and accepts short Pi names. Pi check previews now refuse the same source conflicts as updates.
 - Ownership stays within each observed harness. Record-only recovery rejects unresolved declarations and post-preview edits while accepting ordinary notices.
 - Package pages keep the author's summary when a recorded copy is missing, using only that place's record.
 - Installing from a personal folder marketplace into a project reads the folder the marketplace was declared as, not a folder of the same name inside the project.
-- Pi compacting during a tool loop no longer leaves the Claude query on the replaced history: the bridge restarts it from the compacted context, carrying each tool result Pi recorded over once.
-- Pi Claude reports stable error identifiers for tool interruptions, connector failures, and session repair, with a readable explanation below.
-- Pi output-policy notices identify the affected count or error on a stable first line, with the explanation below it.
 - `kendex refresh` now updates a Pi extension whose source changed while its installed copy is unedited, instead of failing until `kendex update-pi` runs.
 - A Pi extension you disabled in the Pi extension manager stays disabled after `kendex update-pi` or `kendex refresh` reinstalls its package.
 - Pi reports share byte and completion checks. Check directs repairs to update-pi; refresh reports packages it cannot repair. Failed dependency installs stay pending until a retry completes.
 - Commands find the nearest project marked by kendex.toml even before it has a lock file or generated directories.
-- Markdown reflow removes its temporary file when replacement fails and preserves the original document.
 - Refresh reports final Pi safety and conflicts once, confirms its writes, and closes settled writes with commit handling, counts, and a drift snapshot on refusal or cancellation.
-- Reviews require recorded starting state and an explicit repository for saved artifacts. Repeat earlier reviews; dirty starts and changed commits are refused.
 - A package script kendex has just written now starts even while kendex itself still holds the file open: the start is retried within the call's time limit instead of failing with "Text file busy".
 - The CLI refuses a project in a temporary folder (`/tmp`, `$TMPDIR`, `.scratch`) unless `--throwaway` is passed; Home's line for a folder not found offers pointing it elsewhere or removing it.
 
@@ -3195,10 +1401,6 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - The update card no longer offers `sudo kendex update` for a `kendex` command it cannot write: the installer instead, or the download page where there is none. Neither is held to the release key.
 - A run with root privilege writes no `kendex` record file, so a `sudoers` policy keeping `HOME` cannot point a root write at a path the invoking account owns. The next unprivileged run records it.
 - Arming git hooks for one kendex project in a repository no longer lets a second project in that same repository run its own commit guards under that consent.
-- A committed `kendex.settings.toml` could choose which library an orch command sourced, and could redirect which setting `orch-env` reported. Project configuration no longer sets either.
-- Orch help answers `--help` and `help` before a checkout's `.env.local` is read, so it runs no shell that file holds. Bare `lanes` prints its command index and exits 0.
-- Linear resource help no longer executes `.env.local` from the current checkout.
-
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
 [Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.0..HEAD
