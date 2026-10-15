@@ -1,0 +1,12 @@
+# Restore the old update decision: a completed-type state ignores open boxes.
+control_expect "update refuses"
+control_replace scripts/commands/issues.sh 1 \
+    '        if [ "$state_type" = completed ]; then' \
+    '        if false; then'
+
+# Check each item only as it is written: the first eligible item changes before
+# a later open checklist refuses, which loses the whole-batch guarantee.
+control_expect "bulk writes nothing"
+control_replace scripts/commands/issues.sh 1 \
+    '        [ "$preflight_failed" = 0 ] || return 1' \
+    '        :'

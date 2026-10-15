@@ -73,7 +73,7 @@ update_out="$(printf 'SF-1\nSF-2' | run_live '
     # shellcheck disable=SC1090
     source "$1"
     update_issue() { printf "{\"success\":true,\"identifier\":\"%s\"}\n" "$1"; }
-    bulk_update_issues --stdin --state Todo
+    bulk_update_issues --stdin --title Updated
 ')" || update_rc=$?
 assert_eq "issues bulk-update --stdin exits zero" "$update_rc" 0
 assert_jq "issues bulk-update --stdin keeps the last identifier" "$update_out" \

@@ -39,7 +39,7 @@ out="$(
             esac
         }
 
-        bulk_update_issues CC-519 CC-524 CC-525 --state Todo
+        bulk_update_issues CC-519 CC-524 CC-525 --title Updated
     ' _ "$ISSUES_SH" 2>&1
 )" || rc=$?
 
@@ -74,7 +74,7 @@ warn_out="$(
             printf "{\"success\":true,\"identifier\":\"%s\"}\n" "$1"
         }
 
-        bulk_update_issues CC-600 CC-601 --state Todo
+        bulk_update_issues CC-600 CC-601 --title Updated
     ' _ "$ISSUES_SH" 2>/dev/null
 )" || warn_rc=$?
 warn_err_rc=0
@@ -90,7 +90,7 @@ warn_err="$(
             printf "{\"success\":true,\"identifier\":\"%s\"}\n" "$1"
         }
 
-        bulk_update_issues CC-600 --state Todo
+        bulk_update_issues CC-600 --title Updated
     ' _ "$ISSUES_SH" 2>&1 >/dev/null
 )" || warn_err_rc=$?
 

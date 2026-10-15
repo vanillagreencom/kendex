@@ -176,7 +176,7 @@ Comment on the research issue, omitting empty sections:
 For informational research that produced no decision, replace the Decision section with `### Key Findings` (2-3 bullets) and `### Outcome` (what was learned or why no action is needed).
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "Done"
+.agents/skills/linear/scripts/linear.sh issues complete [ISSUE_ID]
 ```
 
 ## 7. Return State

@@ -1430,7 +1430,7 @@ linear_finish_entity_write() {
 }
 
 # Resolve workflow state name to UUID for a specific team
-# Usage: resolve_state_id "In Progress" "team-uuid-or-name"
+# Usage: resolve_state_id "In Progress" "team-uuid-or-name" [raw]
 # Second arg can be team UUID, key or name (will resolve)
 resolve_state_id() {
     local state_name="$1"
@@ -1444,7 +1444,7 @@ resolve_state_id() {
     fi
 
     # Look up state by name + team
-    local query='query GetState($name: String!, $teamId: ID!, $after: String) { workflowStates(filter: {name: {eq: $name}, team: {id: {eq: $teamId}}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
+    local query='query GetState($name: String!, $teamId: ID!, $after: String) { workflowStates(filter: {name: {eq: $name}, team: {id: {eq: $teamId}}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id type } } }'
     local vars result
     vars=$(jq -cn --arg name "$state_name" --arg teamId "$team_id" '{name: $name, teamId: $teamId}')
     result=$(graphql_pages "$query" "$vars" workflowStates) || return 1
@@ -1466,7 +1466,11 @@ resolve_state_id() {
         return 1
     fi
 
-    echo "$state_id"
+    if [ "${3:-}" = raw ]; then
+        jq -c '.workflowStates.nodes[0]' <<<"$result"
+    else
+        echo "$state_id"
+    fi
 }
 
 # Resolve label name to UUID

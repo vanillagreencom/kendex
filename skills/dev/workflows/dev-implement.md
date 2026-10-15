@@ -316,7 +316,7 @@ One `--qa-label` per § 8 signal, none if nothing triggered. One `--label` per e
 
 Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
-**Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
+**Issue state.** A bundled Linear sub-issue is completed (`linear.sh issues complete [ISSUE_ID]`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
 **If single**, return now:
 

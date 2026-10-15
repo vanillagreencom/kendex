@@ -667,7 +667,7 @@ bulk_update_issues() {
     local from_stdin="false"
     local update_args=()
     local attach_paths=()
-    local description="" description_set="false"
+    local description="" description_set="false" state=""
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -681,6 +681,7 @@ bulk_update_issues() {
             # (--attach re-uploads per issue: Linear assets are issue-agnostic
             # but each issue gets its own embed/attachment)
             update_args+=("$1" "$2")
+            [[ "$1" != --state && "$1" != --status ]] || state="$2"
             [[ "$1" != --attach ]] || attach_paths+=("$2")
             if [[ "$1" == --description ]]; then
                 description="$2"
@@ -692,6 +693,7 @@ bulk_update_issues() {
             # Support --key=value syntax (AI agents often use this)
             local _key="${1%%=*}" _val="${1#*=}"
             update_args+=("$_key" "$_val")
+            [[ "$_key" != --state && "$_key" != --status ]] || state="$_val"
             [[ "$_key" != --attach ]] || attach_paths+=("$_val")
             if [[ "$_key" == --description ]]; then
                 description="$_val"
@@ -740,6 +742,23 @@ bulk_update_issues() {
     fi
     [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1
     linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
+
+    # A later refusal must not leave earlier issues Done or assets uploaded.
+    if [ -n "$state" ]; then
+        local preflight_failed=0 issue_result effective_description
+        for id in "${identifiers[@]}"; do
+            if ! issue_result=$(get_issue "$id" --format=raw); then
+                preflight_failed=1
+                continue
+            fi
+            effective_description="$description"
+            if [ "$description_set" != true ]; then
+                effective_description=$(jq -r '.issue.description // ""' <<<"$issue_result") || return 1
+            fi
+            resolve_issue_update_state "$issue_result" "$state" "$effective_description" >/dev/null || preflight_failed=1
+        done
+        [ "$preflight_failed" = 0 ] || return 1
+    fi
 
     # Process each issue
     local results=()
@@ -1567,6 +1586,35 @@ create_issue() {
     fi
 }
 
+# Both update routes use the description that will be written. Completion can
+# therefore tick verified boxes and set Done in one mutation, without a bypass.
+# FLT-1168 reached update from Verifying with an open post-merge box.
+resolve_issue_update_state() {
+    local issue_result="$1" state="$2" description="$3"
+    local issue_id team_id resolved parsed open_boxes state_type
+    issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
+    team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
+    if [ -z "$team_id" ]; then
+        jq -cn --arg issue "$issue_id" '{error: ("Issue team id missing: " + $issue)}' >&2
+        return 1
+    fi
+    resolved=$(resolve_state_id "$state" "$team_id" raw) || return 1
+    parsed=$(done_when_parse "$description" '[]') || return 1
+    open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
+    if [ "$open_boxes" != '[]' ]; then
+        state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
+        if [ -z "$state_type" ]; then
+            printf 'linear: refused=state-type-unavailable issue=%s state=%s\n' "$issue_id" "$state" >&2
+            return 1
+        fi
+        if [ "$state_type" = completed ]; then
+            printf 'linear: refused=done-when-open issue=%s open_boxes=%s fix=issues complete\n' "$issue_id" "$open_boxes" >&2
+            return 1
+        fi
+    fi
+    jq -r '.id' <<<"$resolved"
+}
+
 update_issue() {
     local issue_id="$1"
     shift
@@ -1788,6 +1836,15 @@ update_issue() {
     local issue_project_id
     issue_project_id=$(echo "$issue_result" | jq -r '.issue.project.id // empty')
 
+    local state_id="" effective_description="$description"
+    if [ -n "$state" ]; then
+        if [ "$description_set" != true ]; then
+            effective_description=$(jq -r '.issue.description // ""' <<<"$issue_result") || return 1
+        fi
+        state_id=$(resolve_issue_update_state "$issue_result" "$state" "$effective_description") || return 1
+        input_parts+=("\"stateId\": \"$state_id\"")
+    fi
+
     # Same rule as the label resolution below, applied to the pure argument
     # check: a combination that can only be refused must be refused before any
     # upload, or the refusal strands the uploaded asset in Linear storage.
@@ -1932,20 +1989,6 @@ update_issue() {
         fi
         linear_require_pattern --sort-order "$sort_order" '^-?[0-9]+(\.[0-9]+)?$' "a number" || return 1
         input_parts+=("\"sortOrder\": $sort_order")
-    fi
-
-    # Handle state (fail fast with available states on miss)
-    if [ -n "$state" ]; then
-        if [ -z "$team_id" ]; then
-            jq -cn --arg issue "$issue_id" '{error: ("Issue team id missing: " + $issue)}' >&2
-            return 1
-        fi
-        local state_id
-        state_id=$(resolve_state_id "$state" "$team_id")
-        if [ -z "$state_id" ]; then
-            return 1
-        fi
-        input_parts+=("\"stateId\": \"$state_id\"")
     fi
 
     # --labels REPLACES the issue's label set, so a name that does not become an

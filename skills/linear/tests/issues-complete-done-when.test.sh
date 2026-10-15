@@ -41,7 +41,7 @@ case "$query" in
     Todo) state_id=state-todo ;;
     *) printf 'unsupported workflow state: %s\n' "$state" >&2; exit 2 ;;
   esac
-  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id}]}}}'
+  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-verifying" then "started" else "unstarted" end)}]}}}'
   printf '___HTTP_CODE___200'
   ;;
 *"teams(filter:"*)
