@@ -66,8 +66,7 @@ Before the first Jarvis Start with Copilot CLI, open this home in native Copilot
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](references/long-session.md#handoff). |
 | Other files under `state/` | Committed | A consumer's file and shell tools write its work here. An app-managed home limits model file and shell writes to this folder. |
 | `${XDG_STATE_HOME:-$HOME/.local/state}/kendex/jarvis/<canonical-home-key>/jarvis-session.json` | Outside the home | The session runtime and the native SessionStart hook write the local controller record. The runtime writes no start-critical record under `state/`. |
-| `.agents/skills/` and each harness's skill directory, such as `.claude/skills/` | Committed | kendex renders or links installed skills here so a clone has them; VGS reads the Jarvis render when present. |
-| `skills/base/` | Local | VGS supplies this package copy when `.agents/skills/jarvis/` is absent; it removes the copy when that render is present. |
+| `.agents/skills/` and each harness's skill and agent directories, such as `.claude/skills/`, `.claude/agents/` and `.codex/agents/` | Committed | kendex renders or links installed skills and agents here so a clone has them. In a home where kendex did not install Jarvis, an assistant app such as VGS can copy a kendex-rendered package to these same paths. |
 | `tmp/` | Local | Scratch files stay on this machine under [Scratch files](references/computer-use.md#scratch-files). |
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
 
@@ -99,7 +98,11 @@ Consumer checks can append complete events under the [log contract](references/c
 
 ## Update
 
-Run `kendex refresh` from your assistant home to update `.agents/skills/jarvis/`. kendex leaves `AGENTS.md`, `skills/own/`, `memory/` and `state/` byte-identical and writes no `skills/base/` copy. Add `--verbose` for package details: the CLI test sees `skill jarvis [codex]: Stale` before the update and `refreshed 3 changes · safety: clean` after it. An edited Jarvis render stays in place; the output names `skill jarvis for Codex: edited on disk and changed upstream`. If you declare a private `operator`, `auditor` or `legal` from source `.`, your declaration wins. The test's plan prints `Install agent operator for Codex` and installs the private operator. The catalog copy can install only after you remove your own entry. A release that needs a user-file edit states it in a `You do:` line in its changelog entry.
+For an app-supplied package, the assistant app controls package updates. VGS updates the package files it wrote when it opens the home. It preserves files that kendex owns and your other files. Keep your changes in `AGENTS.md` and `skills/own/`.
+
+When your home's `.kendex-lock.json` records the `jarvis` skill, kendex controls package updates. VGS writes no package files in that home.
+
+Run `kendex refresh` from your kendex-managed assistant home to update `.agents/skills/jarvis/`. kendex leaves `AGENTS.md`, `skills/own/`, `memory/` and `state/` byte-identical. Add `--verbose` for package details: the CLI test sees `skill jarvis [codex]: Stale` before the update and `refreshed 3 changes · safety: clean` after it. An edited Jarvis render stays in place; the output names `skill jarvis for Codex: edited on disk and changed upstream`. If you declare a private `operator`, `auditor` or `legal` from source `.`, your declaration wins. The test's plan prints `Install agent operator for Codex` and installs the private operator. The catalog copy can install only after you remove your own entry. A release that needs a user-file edit states it in a `You do:` line in its changelog entry.
 
 ## Licence
 
