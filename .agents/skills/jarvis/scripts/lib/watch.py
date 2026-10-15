@@ -199,18 +199,18 @@ def mail_pass(bash, home, side, cursor):
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
+    mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
     for root in project_roots():
         key = str(root)
         prior = state.get(key, {})
         next_root = json.loads(json.dumps(prior))
-        mail = root / ".agents/skills/mailbox/scripts/lane-mail"
         cause = None
         root_events = []
         try:
             if not root.is_dir():
                 raise Failure("root-read", "missing", "root", "root-missing")
             if not mail.is_file():
-                raise Failure("root-read", "missing", "mailbox", "refresh-needed" if (root / ".agents/skills/orch").is_dir() else "no-mailbox")
+                raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
             common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
             for box in ("to-lane", "to-overseer"):
                 before = prior.get(box, {})
@@ -219,7 +219,7 @@ def mail_pass(bash, home, side, cursor):
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
                 if size is not None and size == before.get("size"):
                     continue
-                args = [mail, "events", "--item", "overseer", "--box", box,
+                args = [bash, mail, "events", "--item", "overseer", "--box", box,
                         "--after", str(before.get("count", 0))]
                 if box == "to-overseer":
                     args.append("--mark-read")
@@ -245,7 +245,7 @@ def mail_pass(bash, home, side, cursor):
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
-            receipts = checked([mail, "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
+            receipts = checked([bash, mail, "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
             index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
             if index is None:
                 raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
@@ -423,7 +423,7 @@ class Watch:
             payload.write(pending["body"])
             payload.flush()
             try:
-                result = run([self.home / ".agents/skills/mailbox/scripts/lane-mail", "send", "--item", "overseer",
+                result = run([self.bash, LIB.parents[2] / "mailbox/scripts/lane-mail", "send", "--item", "overseer",
                               "--directive", "--file", payload.name, "--delivery-id", pending["key"]], self.home)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 print("watch-loop: send=pending " + str(error), file=sys.stderr)
@@ -457,17 +457,25 @@ class Watch:
                  for name in ("vm-watch.sh", "lib/watch.py", "lib/jarvis-env.sh")}
         packages = LIB.parents[2]
         for name in ("slack/scripts/lib/settings.py", "slack/scripts/lib/refusals.py",
-                     "orch/scripts/lib/kendex-env.sh"):
+                     "orch/scripts/lib/kendex-env.sh", "mailbox/scripts/lane-mail",
+                     "mailbox/scripts/lib/file-lock.sh", "mailbox/scripts/lib/mailbox-append.sh",
+                     "mailbox/scripts/lib/common-root.sh", "mailbox/scripts/lib/kendex-env.sh",
+                     "mailbox/scripts/lib/lane-mail-store.py"):
             files[name] = base64.b64encode((packages / name).read_bytes()).decode()
-        bootstrap = """import base64,json,pathlib,subprocess,sys,tempfile
+        # The mailbox closure exceeds a host's single-argument limit. Keep
+        # stdin for presence permission replies and close the map before launch.
+        bootstrap = """import base64,json,os,pathlib,subprocess,sys,tempfile
+with os.fdopen(3) as source:
+ files=json.load(source)
 with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
  root=pathlib.Path(folder)
- for name,value in json.loads(sys.argv[1]).items():
+ for name,value in files.items():
   path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value))
- result=subprocess.run([sys.argv[2],str(root/'jarvis/scripts/vm-watch.sh'),*sys.argv[3:]])
+ result=subprocess.run([sys.argv[1],str(root/'jarvis/scripts/vm-watch.sh'),*sys.argv[2:]])
  sys.exit(result.returncode)
 """
-        return "python3 -c " + shlex.quote(bootstrap) + " " + shlex.quote(json.dumps(files)) + " \"$BASH\" " + shlex.join(args) + "\n"
+        return ("python3 -c " + shlex.quote(bootstrap) + " \"$BASH\" " + shlex.join(args) +
+                " 3<<'jarvis-files'\n" + json.dumps(files) + "\njarvis-files\n")
 
     def remote(self, host):
         args = ["--side", "host", "--cursor", json.dumps(self.cursors.get("host", {}))]

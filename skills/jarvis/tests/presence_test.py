@@ -44,10 +44,6 @@ class Presence(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(remote)], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(remote), "config", "gc.auto", "0"], check=True)
         subprocess.run(["git", "-C", str(remote), "config", "maintenance.auto", "false"], check=True)
-        for name in ("mailbox", "orch"):
-            path = remote / ".agents/skills" / name
-            path.mkdir(parents=True)
-            path.joinpath("scripts").symlink_to(REPO / "skills" / name / "scripts", target_is_directory=True)
         remote_hold = remote / "hold"
         local_slack = root / ".agents/skills/slack"
         local_slack.mkdir(parents=True, exist_ok=True)
@@ -77,6 +73,26 @@ class Presence(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
             hook("session-start-row.sh")
             context = root / "tmp/lane-mail/overseer/context.json"
+            hook("lane-mail-deliver.sh")
+            installed = root / ".agents/skills/orch"
+            saved = scratch / "target-orch"
+            installed.rename(saved)
+            try:
+                for target_code in ("absent", "refusing"):
+                    if target_code == "refusing":
+                        for file in ("lib/lane-context.sh", "lib/overseer-launch.sh", "workflow-state", "overseer-host"):
+                            path = installed / "scripts" / file
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text("exit 93\n")
+                            path.chmod(0o755)
+                    self.assertTrue(watch.live(epoch))
+                    renew()
+                    for hold in (root / "hold", remote_hold):
+                        self.assertEqual(hold.stat().st_mtime, epoch)
+            finally:
+                if installed.exists():
+                    shutil.rmtree(installed)
+                saved.rename(installed)
             # Tools and turn ends alternate. The existing hook is the only
             # writer of context activity; the producer alone touches holds.
             for index, elapsed in enumerate((0, 120, 240, 360, 480)):
@@ -187,26 +203,25 @@ class Presence(unittest.TestCase):
             state.write_text("idle")
             # Block the real mailbox events command after its start
             # acknowledgement. Presence must keep running in the same owner.
-            installed = root / ".agents/skills/mailbox/scripts"
-            installed.unlink()
-            installed.mkdir()
-            installed.joinpath("lib").symlink_to(REPO / "skills/mailbox/scripts/lib", target_is_directory=True)
             ready, release = scratch / "ready", scratch / "release"
             os.mkfifo(ready)
             os.mkfifo(release)
-            once = scratch / "blocked-once"
-            import shlex
-            script = installed / "lane-mail"
-            script.write_text('#!/bin/sh\nif [ "$1" = events ] && [ ! -e '+shlex.quote(str(once))+' ]; then\n'+
-                              'touch '+shlex.quote(str(once))+'\nprintf ready > '+shlex.quote(str(ready))+'\n'+
-                              'read -r ack < '+shlex.quote(str(release))+'\nfi\nexec '+
-                              shlex.quote(str(REPO / "skills/mailbox/scripts/lane-mail"))+' "$@"\n')
-            script.chmod(0o755)
+            blocked = False
+            original_run = module.run
+            def mailbox_run(args, *positional, **keywords):
+                nonlocal blocked
+                if not blocked and list(map(str, args[:3])) == [BASH, str(REPO / "skills/mailbox/scripts/lane-mail"), "events"]:
+                    blocked = True
+                    with ready.open("w") as out:
+                        out.write("ready")
+                    with release.open() as incoming:
+                        self.assertEqual(incoming.readline(), "ack\n")
+                return original_run(args, *positional, **keywords)
             watch.cursors = {}
             watch.state["cursors"] = watch.cursors
             watch.next_presence = {}
             read_fd = os.open(ready, os.O_RDONLY | os.O_NONBLOCK)
-            with ThreadPoolExecutor(max_workers=3) as passes:
+            with patch.object(module, "run", side_effect=mailbox_run), ThreadPoolExecutor(max_workers=3) as passes:
                 pending = passes.submit(watch.acquire, epoch+1080)
                 try:
                     self.assertTrue(select.select([read_fd], [], [], 30)[0])

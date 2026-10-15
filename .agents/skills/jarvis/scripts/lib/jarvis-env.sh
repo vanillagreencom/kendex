@@ -2,8 +2,9 @@
 # Settings and session evidence remain with their existing package owners.
 set -euo pipefail
 JARVIS_LIB="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
-MAILBOX_LIB="${2:?root required}/.agents/skills/mailbox/scripts/lib"
-ORCH_SCRIPTS="${2:?root required}/.agents/skills/orch/scripts"
+# Targets supply settings and session data, never dependency code.
+MAILBOX_LIB="$JARVIS_LIB/../../../mailbox/scripts/lib"
+ORCH_SCRIPTS="$JARVIS_LIB/../../../orch/scripts"
 [[ -r "$MAILBOX_LIB/kendex-env.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }
 source "$MAILBOX_LIB/kendex-env.sh"
 
@@ -18,6 +19,9 @@ jarvis_live() {
   local root="$1" pane server native harness account rows record start
   SCRIPT_DIR="$ORCH_SCRIPTS"
   DEP_ERR=/dev/stderr
+  [[ -r "$SCRIPT_DIR/lib/lane-context.sh" && -r "$SCRIPT_DIR/lib/overseer-launch.sh" ]] || {
+    echo 'jarvis: dependency=orch-missing' >&2; return 1;
+  }
   source "$SCRIPT_DIR/lib/lane-context.sh"
   source "$SCRIPT_DIR/lib/overseer-launch.sh"
   cd -- "$root" || return 1
@@ -55,6 +59,7 @@ case "${1:-}" in
     python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS")}))'
     ;;
   common-root)
+    [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }
     source "$MAILBOX_LIB/common-root.sh"
     mailbox_common_root "$2"
     ;;
