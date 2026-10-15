@@ -745,6 +745,13 @@ ol_command_read() { # HARNESS LINE
 # refusal, so a live pane a startless record names blocks a second overseer.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_model_launch: {server,server_start,pane,generation,launch_line,session_id};
+  def ol_recovery_bound($request): ol_model_launch == ($request | ol_model_launch)
+    and .model_check.outcome == "switched" and .model_check.session_id == .session_id
+    and .model_check.launch_identity == ol_model_launch;
+  def ol_succession_owned($written):
+    (ol_model_launch | del(.session_id)) == ($written | ol_model_launch | del(.session_id))
+    and (($written.session_id // "") == "" or .session_id == $written.session_id)
+    and .pending == $written.pending;
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
     and (.server_start | tostring) == $start;
@@ -1069,17 +1076,107 @@ ol_session_abandon() {
 # ol_session_verify's reasons at step 4 and stop-failed at step 5, the
 # provider's words in DEP_ERR, any successor left for the caller's
 # ol_session_abandon.
+# A competing record returns succession-unbound without overwriting it.
+# The hook passes its acquired record as private assertion data. Its absence
+# means ordinary succession. A missing command never removes a recovery request.
+OL_RECOVERY_RECORD=""
+OL_SUCCESSION_STAGE=""
+OL_SUCCESSION_EXPECTED=null
+OL_SUCCESSION_ORIGINAL_PENDING=null
+ol_model_recovery_check() { # REQUEST CURRENT
+  OL_REASON=model-recovery-unbound
+  jq -e --argjson request "$1" "$OL_JQ_DEFS"'ol_recovery_bound($request)' <<<"$2" > /dev/null 2>"$DEP_ERR" || return 1
+  OL_REASON=model-command-unavailable
+  local line
+  line="$(jq -er '.launch_line | strings | select(length > 0)' <<<"$1" 2>"$DEP_ERR")" || return 1
+  ol_command_read claude "$line" && [[ -n "$OL_COMMAND_MODEL" ]]
+}
+
+# Every succession write compares and changes the record under the state
+# writer's lock. The watch can publish a competing successor while the hook's
+# detached request is queued. An abandoned attempt restores only its own write.
+ol_succession_write() { # pending|current|restore PAYLOAD
+  local old_hup old_int old_term signal="" status=0
+  # A signal can arrive after the atomic write commits but before its reply
+  # reaches this shell. Finish recording ownership before the caller abandons.
+  local bounded="$SCRIPT_DIR/../../github/scripts/lib/bounded.sh"
+  [[ -r "$bounded" ]] && source "$bounded" || return 1
+  old_hup="$(trap -p HUP)" || return 1
+  old_int="$(trap -p INT)" || return 1
+  old_term="$(trap -p TERM)" || return 1
+  trap 'signal=HUP' HUP
+  trap 'signal=INT' INT
+  trap 'signal=TERM' TERM
+  ol_succession_update "$@" || status=$?
+  _kendex_github_restore_trap HUP "$old_hup"
+  _kendex_github_restore_trap INT "$old_int"
+  _kendex_github_restore_trap TERM "$old_term"
+  [[ -z "$signal" ]] || kill -s "$signal" "$$"
+  return "$status"
+}
+
+ol_succession_update() { # pending|current|restore PAYLOAD
+  local reply result prior
+  OL_REASON=succession-write-failed
+  reply="$("$SCRIPT_DIR/workflow-state" update-report oversee "$OL_JQ_DEFS"'
+      if (.overseer | ol_succession_owned($expected) | not)
+        or ($operation != "restore" and $request != null and (.overseer | ol_recovery_bound($request) | not))
+      then {state:., report:{result:"unbound"}}
+      else .overseer as $prior
+        | .overseer = (if $operation == "pending" then .overseer + {pending:$payload}
+          elif $operation == "current" then $payload
+          elif $operation == "restore" and $stage == "pending" then
+            .overseer | if $original_pending == null then del(.pending) else .pending=$original_pending end
+          elif $operation == "restore" then $payload
+          else error("succession-operation-invalid") end)
+        | {state:., report:{result:"written",prior:$prior,current:.overseer}}
+      end' --arg operation "$1" --arg stage "$OL_SUCCESSION_STAGE" \
+    --argjson expected "$OL_SUCCESSION_EXPECTED" --argjson request "${OL_RECOVERY_RECORD:-null}" \
+    --argjson payload "$2" --argjson original_pending "$OL_SUCCESSION_ORIGINAL_PENDING" \
+    2>"$DEP_ERR")" || return 1
+  result="$(jq -r .result <<<"$reply" 2>"$DEP_ERR")" || return 1
+  if [[ "$result" == unbound ]]; then OL_REASON=succession-unbound; return 2; fi
+  [[ "$result" == written ]] || return 1
+  if [[ "$1" == pending ]]; then
+    OL_PRIOR="$(jq -c .prior <<<"$reply" 2>"$DEP_ERR")" || return 1
+    OL_SUCCESSION_ORIGINAL_PENDING="$(jq -c '.pending // null' <<<"$OL_PRIOR" 2>"$DEP_ERR")" || return 1
+  elif [[ "$1" == current ]]; then
+    # Preserve a check acquired after pending was written. Remove only this
+    # attempt's pending command from the snapshot a refusal can restore.
+    prior="$(jq -c --argjson pending "$OL_SUCCESSION_ORIGINAL_PENDING" '
+      .prior | if $pending == null then del(.pending) else .pending=$pending end' <<<"$reply" 2>"$DEP_ERR")" || return 1
+    OL_PRIOR="$prior"
+  fi
+  OL_SUCCESSION_EXPECTED="$(jq -c .current <<<"$reply" 2>"$DEP_ERR")" || return 1
+  OL_SUCCESSION_STAGE="$1"
+  [[ "$1" != restore ]] || OL_SUCCESSION_STAGE=restored
+}
+
 ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM WAIT_SECS
   local predecessor="$1" cwd="$2" line="$3" identity="$4" pending="$5"
+  local write_rc=0
   shift 5
-  if [[ "$pending" == pending ]] && ! ol_record_pending "$line" "$identity"; then
-    ol_succession_hook pending-unrecorded || { OL_REASON=record-unwritten OL_STEP=pending; return 1; }
+  OL_SUCCESSION_STAGE=unwritten
+  OL_SUCCESSION_EXPECTED="${OL_PRIOR:-null}"
+  OL_SUCCESSION_ORIGINAL_PENDING="$(jq -c '.pending // null' <<<"$OL_SUCCESSION_EXPECTED" 2>"$DEP_ERR")" || return 1
+  if [[ "$pending" == pending ]]; then
+    ol_record_pending "$line" "$identity" || write_rc=$?
+    if (( write_rc != 0 )); then
+      OL_STEP=pending
+      (( write_rc != 2 )) && [[ -z "$OL_RECOVERY_RECORD" ]] || return 1
+      ol_succession_hook pending-unrecorded || { OL_REASON=record-unwritten; return 1; }
+    fi
   fi
   ol_session_open "$cwd" overseer "$line" --after "$predecessor" || return 1
   ol_succession_hook opened
-  if [[ -n "$OL_PRIOR" ]] \
-     && ! ol_record_write "$OL_RUNTIME" "$OL_SESSION" "$OL_WINDOW" "$OL_SERVER" "$identity" "$line"; then
-    ol_succession_hook record-unwritten || { OL_REASON=record-unwritten OL_STEP=write; return 1; }
+  write_rc=0
+  if [[ -n "$OL_PRIOR" ]]; then
+    ol_record_write "$OL_RUNTIME" "$OL_SESSION" "$OL_WINDOW" "$OL_SERVER" "$identity" "$line" || write_rc=$?
+    if (( write_rc != 0 )); then
+      OL_STEP=write
+      (( write_rc != 2 )) && [[ -z "$OL_RECOVERY_RECORD" ]] || return 1
+      ol_succession_hook record-unwritten || { OL_REASON=record-unwritten; return 1; }
+    fi
   fi
   ol_session_verify "$OL_SESSION" "$@" || return 1
   ol_succession_hook verified
@@ -1235,7 +1332,11 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
          fresh: ($fresh | field_names)}' 2>"$DEP_ERR")" || return 1
   record="$(jq -c '.record' <<<"$result" 2>"$DEP_ERR")" || return 1
   fields="$(jq -r '[.record.generation, .retained, .fresh] | @tsv' <<<"$result" 2>"$DEP_ERR")" || return 1
-  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
+  if [[ -n "$OL_SUCCESSION_STAGE" ]]; then
+    ol_succession_write current "$record" || return $?
+  else
+    "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
+  fi
   IFS=$'\t' read -r OL_GENERATION OL_RECORD_RETAINED OL_RECORD_FRESH <<<"$fields"
 }
 
@@ -1252,7 +1353,11 @@ ol_record_pending() { # LINE IDENTITY
   local record
   record="$(jq -cn --argjson identity "$2" --arg line "$1" '$identity + {launch_line: $line}' 2>"$DEP_ERR")" \
     || return 1
-  "$SCRIPT_DIR/workflow-state" set oversee overseer.pending "$record" >/dev/null 2>"$DEP_ERR"
+  if [[ -n "$OL_SUCCESSION_STAGE" ]]; then
+    ol_succession_write pending "$record"
+  else
+    "$SCRIPT_DIR/workflow-state" set oversee overseer.pending "$record" >/dev/null 2>"$DEP_ERR"
+  fi
 }
 
 # ol_record_current SERVER PANE — the launch identity the record holds for the
@@ -1382,7 +1487,11 @@ ol_caller_known() { # SERVER PANE DIR
 # launch line included. A prior of null removes the object. Returns 1 with
 # the writer's words in DEP_ERR.
 ol_record_restore() {
-  if [[ "${OL_PRIOR:-null}" == null ]]; then
+  if [[ "$OL_SUCCESSION_STAGE" == unwritten || "$OL_SUCCESSION_STAGE" == restored ]]; then
+    return 0
+  elif [[ -n "$OL_SUCCESSION_STAGE" ]]; then
+    ol_succession_write restore "${OL_PRIOR:-null}"
+  elif [[ "${OL_PRIOR:-null}" == null ]]; then
     "$SCRIPT_DIR/workflow-state" update oversee 'del(.overseer)' >/dev/null 2>"$DEP_ERR"
   else
     "$SCRIPT_DIR/workflow-state" set oversee overseer "$OL_PRIOR" >/dev/null 2>"$DEP_ERR"

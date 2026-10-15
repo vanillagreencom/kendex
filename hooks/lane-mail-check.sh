@@ -2959,7 +2959,7 @@ handoff_check() {
 
   if [ "$ARM" = model-switch ]; then
     [ "$HARNESS" = claude ] || return 0
-    local fleet record launched observed launch_id observed_id outcome cause="" report result handoff sd handoff_sd server="" identity association record_path body
+    local fleet record launched observed launch_id observed_id outcome cause="" report result handoff sd handoff_sd server="" identity association record_path body recovery
     observed=$(jq -er '.to_model | strings | select(length > 0)' <<<"$INPUT" 2>/dev/null) || observed=""
     fleet=$(cd -- "$ROOT" && "$SCRIPTS/workflow-state" path oversee 2>"$WORK_DIR/model.err") || {
       model_unavailable_notice state-unread "$observed"; return 0;
@@ -3028,6 +3028,14 @@ handoff_check() {
     elif [ -z "$observed_id" ]; then cause=observed-unread
     elif [ "$launch_id" = "$observed_id" ]; then return 0
     fi
+    if [ -z "$cause" ] && [ "$ROLE" = overseer ]; then
+      # oversee register can know the model before watch start records a command.
+      # Only the command owner can establish executable recovery evidence.
+      recovery=$(jq -r '.launch_line // ""' <<<"$record") || recovery=""
+      if ! ol_command_read claude "$recovery" || [ -z "$OL_COMMAND_MODEL" ]; then
+        cause=launch-command-unread
+      fi
+    fi
     outcome=switched
     [ -z "$cause" ] || outcome=unavailable
     report=$("$SCRIPTS/workflow-state" --state-dir "$sd" update-report oversee "$OL_JQ_DEFS"'
@@ -3045,7 +3053,7 @@ handoff_check() {
              launched:$launched, observed:$observed, at:$at, cause:$cause} as $check
           | .fleet_log = ((.fleet_log // []) + [$check + {kind:("model-" + $outcome), item:$item, text:("launched=" + $launched + " observed=" + $observed)}])
           | setpath($path + ["model_check"]; $check)
-          | {state: ., report: {result:"acquired"}}
+          | {state: ., report: {result:"acquired", record:getpath($path)}}
         end' --arg item "$ITEM" --arg session "$SESSION" --argjson record "$record" \
         --argjson path "$record_path" --arg role "$ROLE" --arg outcome "$outcome" --arg launched "$launched" --arg observed "$observed" --arg cause "$cause" --argjson identity "$identity" \
         2>"$WORK_DIR/model.err") || {
@@ -3058,20 +3066,30 @@ handoff_check() {
       return 0
     fi
     if [ "$ROLE" = overseer ]; then
+      recovery=$(jq -c .record <<<"$report") || return 0
       body=$(mktemp "$sd/model-handoff.XXXXXX") || {
         model_unavailable_notice handoff-unwritten "$observed"; return 0;
       }
-      printf '%s\n' "Resume the durable fleet state at $fleet. The predecessor changed from $launched to $observed. Read pending agent outputs and lane mail before repeating work." > "$body"
+      claude_attached_agents emergency "$fleet"
+      if ! printf '%s\n' "Resume the durable fleet state at $fleet. The predecessor changed from $launched to $observed. Read pending agent outputs and lane mail before repeating work." "$AGENT_ROWS" > "$body"; then
+        rm -f -- "$body"
+        model_unavailable_notice handoff-unwritten "$observed"
+        return 0
+      fi
       # Succession verifies its successor before stopping this bound session.
       # Its command owner recovers argv from the recorded executable command.
-      lane_run_detached "$sd/model-recovery-overseer.log" "$sd/model-recovery-overseer.log" \
+      if ! lane_run_detached "$sd/model-recovery-overseer.log" "$sd/model-recovery-overseer.log" \
         env ORCH_STATE_DIR="$sd" "$BASH" -c '
           body=$3
           cleanup() { rm -f -- "$body"; }
           trap cleanup EXIT
           cd -- "$1" || exit 1
-          "$2" --handoff-body "$body" --
-        ' _ "$ROOT" "$SCRIPTS/oversee-succeed" "$body"
+          "$2" --handoff-body "$body" --recovery-record "$4" --
+        ' _ "$ROOT" "$SCRIPTS/oversee-succeed" "$body" "$recovery"; then
+        rm -f -- "$body"
+        model_unavailable_notice recovery-unstarted "$observed"
+        return 0
+      fi
       message model-switched "$launched observed=$observed"
       return 0
     fi

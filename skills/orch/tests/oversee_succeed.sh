@@ -129,7 +129,7 @@ codex_usage() { # USED_PCT
 }
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 
-env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
+env PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/work/tmp" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g default-shell /bin/sh
 tm set-option -g renumber-windows off
@@ -1346,17 +1346,27 @@ assert_eq "$RC|generation=$(orec generation) pane=$(orec pane) account=$(orec ac
 # once the writer returns, and the writer may have committed: the abandon then
 # has to put the caller's record back although ol_record_write never returned.
 # A workflow-state stand-in commits the successor's record, TERMs the script
-# and exits 0, once; every other call is the real writer's.
+# and exits 0, once; every other call is the real writer's. The private launch
+# wrapper records its PID before exec, so the signal targets the launcher and
+# never the command-substitution child collecting the atomic writer's reply.
 # record_commit_run SCRIPTS_DIR — the run over that tree; sets OUT and RC.
 record_commit_run() { # SCRIPTS_DIR
-  rm -f -- "$1/workflow-state" "$TMP_ROOT/record-commit.fired"
+  rm -f -- "$1/workflow-state" "$1/oversee-succeed" "$1/oversee-succeed.real" "$TMP_ROOT/record-commit.fired" "$TMP_ROOT/record-commit.target"
+  cp -- "$SRC_DIR/oversee-succeed" "$1/oversee-succeed.real"
+  cat > "$1/oversee-succeed" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$\$" > "$TMP_ROOT/record-commit.target"
+exec "$1/oversee-succeed.real" "\$@"
+STUB
+  chmod +x "$1/oversee-succeed"
   cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
 if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
 "$SRC_DIR/workflow-state" "\$@" || exit
-if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-commit.fired" ]]; then
+if [[ "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation current" && ! -e "$TMP_ROOT/record-commit.fired" ]]; then
   : > "$TMP_ROOT/record-commit.fired"
-  kill -TERM "\$PPID"
+  target="\$(cat "$TMP_ROOT/record-commit.target")" || exit 1
+  kill -TERM "\$target"
 fi
 STUB
   chmod +x "$1/workflow-state"
@@ -1373,19 +1383,14 @@ record_commit_run "$RECCOMMIT"
 assert_eq "$RC|$(keyed interrupted "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)|$(jq -cS .overseer "$FLEET_STATE")" \
   "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0|$SEED_RECORD" \
   "a signal while the record's writer commits: refused, successor closed, the caller's record back"
-# The control: the put-back gated on a flag ol_record_write sets once its
-# writer returns, which a signal during the writer never lets it reach, so the
-# record keeps the closed successor's generation, one past the seeded 5.
+# Without signal deferral, abandonment runs before the atomic write's reply
+# establishes ownership, so it cannot restore the predecessor's record.
 RECCTL="$(mutant_scripts record-commit-ctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$RECCTL/lib/overseer-launch.sh" '  if [[ -n "$OL_PRIOR" ]] && ! ol_record_restore; then' \
-  '  if [[ -n "${OL_WRITE_RETURNED:-}" ]] && ! ol_record_restore; then'
-mutate_file "$RECCTL/lib/overseer-launch.sh" 'set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"' \
-  'set oversee overseer "$record" 2>"$DEP_ERR" >/dev/null || return 1; OL_WRITE_RETURNED=1'
+mutate_file "$RECCTL/lib/overseer-launch.sh" "  trap 'signal=TERM' TERM" '  : # leave the caller TERM handler active'
 record_commit_run "$RECCTL"
 assert_eq "$RC|$(caller_open)|$(overseers)|generation=$(orec generation)" \
   "1|yes|0|generation=6" \
-  "control: a put-back gated on the write returning leaves the closed successor recorded"
-
+  "control: immediate interruption loses the atomic write ownership needed for restore"
 new_caller "$UNDER_MARK"
 run_succeed under 'claude:fable:high'
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
@@ -3716,7 +3721,7 @@ done
 # in `print`. It then keeps the account the walled session was spending, and
 # the successor opens straight back into the wall.
 WALLCTL="$(mutant_scripts wallctl oversee-succeed)" || exit 1
-mutate_file "$WALLCTL/oversee-succeed" '    print:*) OL_WALK_CALLER_KEEP=1 ;;' '    print:* | walled:*) OL_WALK_CALLER_KEEP=1 ;;'
+mutate_file "$WALLCTL/oversee-succeed" '    print:* | *:*:model) OL_WALK_CALLER_KEEP=1 ;;' '    print:* | walled:* | *:*:model) OL_WALK_CALLER_KEEP=1 ;;'
 new_caller "$MARK"
 SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(recorded claude)" \

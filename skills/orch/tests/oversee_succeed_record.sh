@@ -97,7 +97,7 @@ mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
 jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
 printf 'payload.context_window = usage.contextWindow;\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
 
-env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
+env PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/work/tmp" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g default-shell /bin/sh
 # A relaunch types its line into a fresh pane: a non-login shell under this
@@ -195,7 +195,7 @@ judged() {
 # The harness acknowledges its argv before drawing its working-turn hint.
 model_switch_rows() (
   local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
-  local scenario line before after deadline old_pane model status delivery
+  local scenario line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
@@ -220,8 +220,30 @@ printf '%s\\n' 'esc to interrupt'
 exec sleep 100000
 HARNESS
   chmod +x "$BIN/claude"
+  mv -- "$scripts/oversee-succeed" "$scripts/oversee-succeed.real"
+  cat > "$scripts/oversee-succeed" <<BARRIER
+#!/usr/bin/env bash
+set -euo pipefail
+held=false
+for word in "\$@"; do
+  if [[ \$word == --recovery-record && -f '$TMP_ROOT/hold-recovery' ]]; then held=true; fi
+done
+if [[ \$held == true ]]; then
+  : > '$TMP_ROOT/recovery.ready'
+  deadline=\$((SECONDS + 30))
+  while [[ ! -f '$TMP_ROOT/recovery.release' ]]; do
+    (( SECONDS < deadline )) || exit 1
+    sleep 0.05
+  done
+fi
+status=0
+"\$BASH" "\$0.real" "\$@" || status=\$?
+[[ \$held != true ]] || printf '%s\n' "\$status" > '$TMP_ROOT/recovery.done'
+exit "\$status"
+BARRIER
+  chmod +x "$scripts/oversee-succeed"
   model_env() {
-    (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
+    (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/work/tmp" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
       LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
       ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 ORCH_OVERSEER_HEADROOM_PCT=5 \
       ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE='codex:gpt-6.1-sol:high' \
@@ -232,14 +254,19 @@ HARNESS
     mutate_file "$scripts/lib/lane-launch.sh" \
       '    tokens=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})' '    read -r -a tokens <<<"$text"'
   elif [[ "${MODEL_OWNER_CONTROL:-}" == identity ]]; then
-    mutate_file "$scripts/oversee-succeed" \
+    mutate_file "$scripts/oversee-succeed.real" \
       '  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$CALLER_EXEC_MODEL"' \
       '  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$OL_CUR_MODEL"'
+  elif [[ "${MODEL_OWNER_CONTROL:-}" == handoff ]]; then
+    mutate_file "$scripts/oversee-succeed.real" \
+      '  if [[ -n "$OL_RECOVERY_RECORD" && -f "$destination_path" ]]; then' \
+      '  if false; then'
   fi
   claude_usage 10 10 10 Opus > "$FIXTURE_DIR/.claude.json"
-  for scenario in matching launch-missing observed-unread switched; do
+  for scenario in matching launch-missing observed-unread launch-command-unread displaced switched; do
     new_caller claude
-    rm -f -- "${TMP_ROOT:?}/model.argv"
+    rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
+    [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
     line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude -- \
       --model opus --effort high "$BYPASS")
     state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
@@ -261,7 +288,17 @@ HARNESS
     assert_eq "$(jq -r .overseer.model "$FLEET_STATE")" claude-opus-4-6 "$scenario comparison model omits the selector"
     case "$scenario" in
       launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
+      launch-command-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.launch_line)' >/dev/null ;;
     esac
+    handoff="$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
+    mkdir -p "${handoff%/*}"
+    printf 'Start here: fixture generation=2\n\nRetain the owner constraint from the previous handoff.\n' > "$handoff"
+    transcript="$TMP_ROOT/work/tmp/model-parent.jsonl"
+    : > "$transcript"
+    mkdir -p "${transcript%.jsonl}/subagents"
+    : > "${transcript%.jsonl}/subagents/agent-running-agent.jsonl"
+    "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee \
+      '.child_sessions={runtime:{status:"active",agent_id:"running-agent"},retired:{status:"closed",agent_id:"closed-agent"}}' >/dev/null
     before=$(jq -c . "$FLEET_STATE")
     old_pane=$CALLER_PANE
     model=claude-opus-4-6
@@ -270,11 +307,41 @@ HARNESS
     for delivery in first repeated; do
       status=0
       model_env "$BASH" "$hook" \
-        <<<"$(jq -nc --arg model "$model" '{session_id:"s1",hook_event_name:"PostModelSwitch",to_model:$model}')" \
+        <<<"$(jq -nc --arg model "$model" --arg transcript "$transcript" '{session_id:"s1",hook_event_name:"PostModelSwitch",to_model:$model,transcript_path:$transcript}')" \
         >"$TMP_ROOT/model.out" 2>"$TMP_ROOT/model.err" || status=$?
       assert_eq "$status" 0 "$scenario $delivery callback remains advisory" "$TMP_ROOT/model.err"
     done
-    if [[ "$scenario" == switched ]]; then
+    if [[ "$scenario" == displaced ]]; then
+      await_marker "$TMP_ROOT/recovery.ready" || fail 'model recovery reaches the dispatch barrier'
+      captured="$(jq -c .overseer "$FLEET_STATE")"
+      other_pane="$(tm new-window -d -t fleet:2 -c "$TMP_ROOT/work" -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
+      other_window="$(tm display-message -p -t "$other_pane" '#{window_id}')"
+      # Production write and restore model the watch's verification interval.
+      model_env "$BASH" -euo pipefail -c '
+        SCRIPT_DIR=$1 DEP_ERR=$2
+        . "$1/lib/lane-launch.sh"
+        . "$1/lib/lane-context.sh"
+        . "$1/lib/overseer-launch.sh"
+        OL_PRIOR=$3
+        ol_identity claude "$4" "$4" claude-opus-4-6 high "$5"
+        ol_record_write tmux "$6" "$7" "$8" "$OL_IDENTITY" "$9"
+      ' _ "$scripts" "$TMP_ROOT/binding.err" "$captured" "$H/.claude" "$TMP_ROOT/work" "$other_pane" "$other_window" "$SERVER_PID" "$line"
+      competitor="$(jq -c .overseer "$FLEET_STATE")"
+      : > "$TMP_ROOT/recovery.release"
+      await_marker "$TMP_ROOT/recovery.done" || fail 'the displaced recovery reports its result'
+      assert_eq "$(cat "$TMP_ROOT/recovery.done")" 1 'a displaced model recovery refuses before ordinary mark handling'
+      assert_eq "$(jq -c .overseer "$FLEET_STATE")" "$competitor" 'the displaced model recovery leaves its competing successor intact'
+      assert_eq "$(jq '[.fleet_log[]? | select(.kind=="close" and (.text|startswith("oversee-succeed: model-recovery-refused ")))]|length' "$FLEET_STATE")" 1 'the displaced recovery records its bound failure'
+      assert_eq "$(jq -s '[.[] | select(.kind=="notice" and .to=="owner" and (.text|startswith("oversee-succeed: model-recovery-refused ")))]|length' "$TMP_ROOT/work/tmp/lane-mail/overseer/to-overseer.jsonl")" 1 'the displaced recovery reaches the owner'
+      model_env "$BASH" -euo pipefail -c '
+        SCRIPT_DIR=$1 DEP_ERR=$2
+        . "$1/lib/overseer-launch.sh"
+        OL_PRIOR=$3
+        ol_record_restore
+      ' _ "$scripts" "$TMP_ROOT/binding.err" "$captured"
+      assert_eq "$(jq -r '.overseer.model_check.outcome' "$FLEET_STATE")" switched 'the failed competing attempt restores the acquired request'
+      assert_eq "$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$old_pane" || :)" 1 'the displaced recovery keeps its predecessor running'
+    elif [[ "$scenario" == switched ]]; then
       deadline=$((SECONDS + 30))
       while [[ "$SECONDS" -lt "$deadline" ]] && tm list-panes -a -F '#{pane_id}' | grep -Fxq -- "$old_pane"; do sleep 0.05; done
       after=$(jq -r .overseer.pane "$FLEET_STATE")
@@ -283,6 +350,9 @@ HARNESS
       assert_eq "$(jq -r .overseer.account "$FLEET_STATE")" "$H/.claude" 'model recovery retains its account'
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'a fallback records exactly one model-switched event'
       assert_eq "$(jq -r '.fleet_log[] | select(.kind=="model-switched") | .launch_identity.pane' "$FLEET_STATE")" "$old_pane" 'the model event names its predecessor'
+      assert_file_contains "$handoff" 'Retain the owner constraint from the previous handoff.' 'model recovery preserves standing handoff notes'
+      assert_file_contains "$handoff" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" 'model recovery retains the active agent and its output path'
+      assert_file_not_contains "$handoff" 'attached-agent=closed-agent' 'model recovery omits closed agents'
       CALLER_PANE=$after
     elif [[ "$scenario" == matching ]]; then
       assert_eq "$(jq -c . "$FLEET_STATE")" "$before" 'matching models leave fleet state unchanged'
@@ -295,10 +365,81 @@ HARNESS
   [[ "$FAIL" -eq 0 ]]
 )
 
-if [[ "${1:-}" == --model-switch ]]; then
-  model_switch_rows
-  exit
+# A competing succession writes after our read but before the writer takes its
+# lock. The same owner must reject pending, current and restore mutations.
+succession_binding_rows() (
+  local scripts operation stage race label status before replacement payload
+  scripts="$(mutant_scripts bindingrun lib/overseer-launch.sh)" || exit 1
+  if [[ "${MODEL_OWNER_CONTROL:-}" == binding ]]; then
+    mutate_file "$scripts/lib/overseer-launch.sh" \
+      'if (.overseer | ol_succession_owned($expected) | not)' \
+      'if (false and (.overseer | ol_succession_owned($expected) | not))'
+  fi
+  new_caller claude
+  replacement="$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6)"
+  # Only record identity is read here; the test never probes a synthetic pid.
+  replacement="$(jq -c '.pane="%competing" | .generation=3' <<<"$replacement")"
+  printf '%s\n' "$replacement" > "$TMP_ROOT/binding-competitor.json"
+  rm -- "$scripts/workflow-state"
+  cat > "$scripts/workflow-state" <<STATE
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation \$BIND_OPERATION" && ! -f '$TMP_ROOT/binding.fired' ]]; then
+  : > '$TMP_ROOT/binding.fired'
+  if [[ \$BIND_RACE == request ]]; then
+    '$SRC_DIR/workflow-state' update oversee '.overseer.model_check={outcome:"switched",session_id:"s1"}' >/dev/null
+  else
+    '$SRC_DIR/workflow-state' update oversee '.overseer=\$record[0]' --slurpfile record '$TMP_ROOT/binding-competitor.json' >/dev/null
+  fi
 fi
+exec '$SRC_DIR/workflow-state' "\$@"
+STATE
+  chmod +x "$scripts/workflow-state"
+  while IFS='|' read -r operation stage race label; do
+    rm -f -- "${TMP_ROOT:?}/binding.fired"
+    before="$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6)"
+    state "$before"
+    payload='{"launch_line":"successor"}'
+    status=0
+    (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$PATH" ORCH_STATE_DIR="$TMP_ROOT/work/tmp" BIND_OPERATION="$operation" BIND_RACE="$race" "$BASH" -euo pipefail -c '
+      SCRIPT_DIR=$1 DEP_ERR=$2
+      . "$1/lib/overseer-launch.sh"
+      OL_PRIOR=$3 OL_SUCCESSION_EXPECTED=$3 OL_SUCCESSION_STAGE=$4
+      if [[ "$5" == restore ]]; then ol_record_restore
+      else
+        ol_succession_write "$5" "$6"
+        [[ "$BIND_RACE" != request ]] || ol_record_restore
+      fi
+    ' _ "$scripts" "$TMP_ROOT/binding.err" "$before" "$stage" "$operation" "$payload") || status=$?
+    if [[ "$race" == request ]]; then
+      assert_eq "$status" 0 "$label restores its predecessor" "$TMP_ROOT/binding.err"
+      assert_eq "$(jq -r '.overseer.model_check.outcome' "$FLEET_STATE")" switched "$label retains the acquired model request"
+    elif [[ "$stage" == restored || ( "$stage" == unwritten && "$operation" == restore ) ]]; then
+      assert_eq "$status" 0 "$label is already complete"
+      assert_eq "$(jq -c .overseer "$FLEET_STATE")" "$before" "$label leaves the record unchanged"
+    else
+      assert_eq "$status" 2 "$label refuses a displaced writer" "$TMP_ROOT/binding.err"
+      assert_eq "$(jq -c .overseer "$FLEET_STATE")" "$replacement" "$label cannot overwrite its competitor"
+    fi
+  done <<'BINDINGS'
+pending|unwritten|replacement|pending-unwritten
+current|unwritten|replacement|current-unwritten
+current|pending|replacement|current-pending
+restore|pending|replacement|restore-pending
+restore|current|replacement|restore-current
+restore|unwritten|replacement|restore-unwritten
+restore|restored|replacement|restore-complete
+current|pending|request|current-request
+restore|pending|request|pending-request
+BINDINGS
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+)
+
+case "${1:-}" in
+  --model-switch) model_switch_rows; exit ;;
+  --succession-binding) succession_binding_rows; exit ;;
+esac
 
 echo "=== oversee-succeed: the caller's launch record ==="
 
@@ -853,7 +994,7 @@ if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then
   return 0
 fi
 "$SRC_DIR/workflow-state" "\$@" || exit
-[[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || jq -c .overseer "$FLEET_STATE" > "$TMP_ROOT/pending.snap"
+[[ "\$1 \$2 \$4 \$5 \$6" != "update-report oversee --arg operation pending" ]] || jq -c .overseer "$FLEET_STATE" > "$TMP_ROOT/pending.snap"
 STUB
   chmod +x "$dir/workflow-state"
   new_caller claude
@@ -897,7 +1038,7 @@ if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then
   source "$SRC_DIR/workflow-state" || return \$?
   return 0
 fi
-if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-refused" ]]; then
+if [[ "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation current" && ! -e "$TMP_ROOT/record-refused" ]]; then
   touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
 fi
 exec "$SRC_DIR/workflow-state" "\$@"
@@ -933,15 +1074,20 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR" | grep -o '^oversee-succeed: no-lane-qualif
   "a succession is judged on its record's account and model, and opens nothing where none has room"
 
 model_switch_rows || fail 'overseer model-switch behavior'
-for control in words identity; do
+succession_binding_rows || fail 'succession write ownership'
+for control in words identity handoff binding; do
   status=0
-  MODEL_OWNER_CONTROL="$control" "$BASH" "${BASH_SOURCE[0]}" --model-switch >"$TMP_ROOT/model-$control.log" 2>&1 || status=$?
+  control_args=--model-switch
+  [[ "$control" != binding ]] || control_args=--succession-binding
+  MODEL_OWNER_CONTROL="$control" "$BASH" "${BASH_SOURCE[0]}" "$control_args" >"$TMP_ROOT/model-$control.log" 2>&1 || status=$?
   if [[ -n "${MODEL_CONTROL_LOG_DIR:-}" ]]; then
     mkdir -p -- "$MODEL_CONTROL_LOG_DIR"
     cp -- "$TMP_ROOT/model-$control.log" "$MODEL_CONTROL_LOG_DIR/$control.log"
   fi
   failure='^  FAIL  a working successor receives the exact launched model$'
   [[ "$control" != identity ]] || failure='^  FAIL  matching watch record retains the executable selector$'
+  [[ "$control" != handoff ]] || failure='^  FAIL  model recovery preserves standing handoff notes$'
+  [[ "$control" != binding ]] || failure='^  FAIL  pending-unwritten refuses a displaced writer$'
   if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/model-$control.log"; then
     pass "control: main's $control recovery defect fails behavior proof"
   else

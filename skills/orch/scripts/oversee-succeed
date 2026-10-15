@@ -506,6 +506,7 @@ message() { # KEY FIELD=VALUE...
     handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. Rewrite it before succession; no successor was launched.' ;;
     handoff-body-invalid) text='Supply a separate nonempty regular body file with no Start here line.' ;;
     handoff-write-failed) text='The snapshot could not replace the handoff. The previous handoff remains in place.' ;;
+    model-recovery-refused) text='The acquired model recovery could not complete for its recorded predecessor. Read the reason and recover that bound session or register its executable launch command before requesting recovery again.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
@@ -766,6 +767,11 @@ handoff_write() (
     || die handoff-write-failed "path=$HANDOFF" step=date
   printf 'Start here: %s generation=%s\n\n' "$now" "$generation" > "$stage/complete" \
     || die handoff-write-failed "path=$HANDOFF" step=header-write
+  if [[ -n "$OL_RECOVERY_RECORD" && -f "$destination_path" ]]; then
+    sed '1{/^Start here:/d;}' "$destination_path" >> "$stage/complete" \
+      || die handoff-write-failed "path=$HANDOFF" step=prior-read
+    printf '\n' >> "$stage/complete" || die handoff-write-failed "path=$HANDOFF" step=separator-write
+  fi
   cat -- "$stage/payload" >> "$stage/complete" \
     || die handoff-write-failed "path=$HANDOFF" step=body-write
   [[ ! -L "$destination_path" && ( ! -e "$destination_path" || -f "$destination_path" ) ]] \
@@ -818,12 +824,14 @@ FLAGS_GIVEN=0
 RECOVERY_GIVEN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--handoff-body|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry|--brief-file)
+    --handoff|--handoff-body|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness|--entry|--brief-file|--recovery-record)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --context) CONTEXT_ARG="$2"; CONTEXT_GIVEN=1 ;;
         --harness) HARNESS_ARG="$2"; HARNESS_GIVEN=1 ;;
         --handoff-body) HANDOFF_BODY="$2"; BODY_GIVEN=1 ;;
+        # Private call data from the model-switch hook, not a launch mode.
+        --recovery-record) OL_RECOVERY_RECORD="$2" ;;
         --entry) ENTRY_ARG="$2"; ENTRY_GIVEN=1 ;;
         --brief-file) BRIEF_FILE="$2"; BRIEF_GIVEN=1 ;;
         --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
@@ -893,6 +901,8 @@ else
 fi
 (( ! BODY_GIVEN )) || [[ "$MODE" == succeed || "$MODE" == write ]] \
   || die mode-conflict "mode=$MODE" handoff-body=1
+[[ -z "$OL_RECOVERY_RECORD" ]] || { [[ "$MODE" == succeed ]] && (( BODY_GIVEN )); } \
+  || die mode-conflict "mode=$MODE" recovery-record=1
 if [[ "$MODE" == write ]]; then
   handoff_record_read
   handoff_write
@@ -942,6 +952,7 @@ if [[ "$MODE" != print ]]; then
     *) die invalid-succession "ORCH_OVERSEER_SUCCESSION=$ORCH_OVERSEER_SUCCESSION" ;;
   esac
   if [[ "$SUCCESSION" == off && "$MODE" != check ]]; then
+    [[ -z "$OL_RECOVERY_RECORD" ]] || die model-recovery-refused reason=succession-off
     message succession-off ORCH_OVERSEER_SUCCESSION=off
     exit 0
   fi
@@ -1053,19 +1064,18 @@ if [[ "$MODE" != dead ]]; then
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
   [[ -z "$OL_KNOWN_CWD" ]] || CALLER_PATH="$OL_KNOWN_CWD"
-  # Only the bound launch's check can request model recovery. A successor's
-  # fresh record has no predecessor check and cannot inherit this request.
+  # Ordinary succession follows preference. The hook's explicit request
+  # retains its captured predecessor even when a competing watch writes first.
+  if [[ -n "$OL_RECOVERY_RECORD" ]]; then
+    ol_model_recovery_check "$OL_RECOVERY_RECORD" "$OL_CUR_RECORD" \
+      || die model-recovery-refused "reason=$OL_REASON" step=read
+    MODEL_SWITCHED=1
+    HARNESS_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})
+  fi
   if [[ "$OL_CUR_HARNESS" == claude ]]; then
     recorded_line="$(jq -r '.launch_line // ""' <<<"$OL_CUR_RECORD")" || die record-unread field=launch_line
     if [[ -n "$recorded_line" ]] && ol_command_read claude "$recorded_line"; then
       CALLER_EXEC_MODEL="$OL_COMMAND_MODEL"
-      if [[ "$MODE" == succeed ]] && jq -e "$OL_JQ_DEFS"'
-        .model_check.outcome == "switched" and .model_check.session_id == .session_id
-        and .model_check.launch_identity == ol_model_launch
-        ' <<<"$OL_CUR_RECORD" >/dev/null; then
-        MODEL_SWITCHED=1
-        HARNESS_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})
-      fi
     fi
   fi
 
@@ -1685,6 +1695,10 @@ if [[ "$MODE" != succeed ]] && ! ol_record_read; then
 fi
 if [[ "$MODE" == succeed ]]; then
   handoff_record_read
+  if [[ -n "$OL_RECOVERY_RECORD" ]]; then
+    ol_model_recovery_check "$OL_RECOVERY_RECORD" "$OL_PRIOR" \
+      || die model-recovery-refused "reason=$OL_REASON" step=handoff
+  fi
   (( ! BODY_GIVEN )) || handoff_write
   handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF")" \
     || die handoff-stale "path=$HANDOFF" "expected=$generation"
@@ -1803,6 +1817,11 @@ hand_over_watch() {
 if ! ol_succession "$CALLER_PANE" "$CALLER_PATH" "$cmd" "$OL_IDENTITY" "$PENDING" \
     "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS"; then
   case "$OL_REASON" in
+    succession-unbound|succession-write-failed)
+      if [[ -n "$OL_RECOVERY_RECORD" ]]; then
+        abandon model-recovery-refused "reason=$OL_REASON" "step=$OL_STEP"
+      fi
+      abandon launch-failed "reason=$OL_REASON" "step=$OL_STEP" ;;
     create-failed) abandon launch-failed "step=$OL_REASON" ;;
     stop-failed) abandon close-failed "window=$CALLER_WINDOW" ;;
     wrong-lane) abandon successor-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;

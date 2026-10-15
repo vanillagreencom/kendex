@@ -59,7 +59,7 @@ fixture_server_allocate() { # SIDE MODE PHASE
   FIXTURE_SOCKET="$TMUX_DIR/tmux-$uid/$FIXTURE_NAME"
 }
 fixture_server_start() {
-  env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L "$FIXTURE_NAME" -f /dev/null \
+  env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" ORCH_STATE_DIR="$TMP_ROOT/work/tmp" tmux -L "$FIXTURE_NAME" -f /dev/null \
     new-session -d -s fleet -x 200 -y 40 'exec sleep 100000' || return 1
   FIXTURE_SOCKETS+=("$FIXTURE_SOCKET")
   tmux -S "$FIXTURE_SOCKET" set-option -g default-shell /bin/sh || return 1
@@ -340,6 +340,7 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 # Sets OUT (both streams) and RC.
 run_oversee() {
   fixture_watch_neighbor "${OVERSEE_BIN:-$OVERSEE}"
+  tm set-environment -g ORCH_STATE_DIR "${RUN_DIR:-$TMP_ROOT/work}/tmp"
   local env_args=() pref=(ORCH_OVERSEER_PREFERENCE="${LAUNCH_PREF:-claude:fable:high}")
   [[ "${LAUNCH_PREF:-}" != unset ]] || pref=()
   while [[ $# -gt 0 && "$1" != -- ]]; do env_args+=("$1"); shift; done
@@ -938,7 +939,7 @@ pendfail_stub() { # SCRIPTS_DIR — a workflow-state there that refuses the pend
   cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
 if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
-[[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || { echo 'fixture: pending write refused' >&2; exit 1; }
+[[ "\$1 \$2 \$4 \$5 \$6" != "update-report oversee --arg operation pending" ]] || { echo 'fixture: pending write refused' >&2; exit 1; }
 exec "$SRC_DIR/workflow-state" "\$@"
 STUB
   chmod +x "$1/workflow-state"
@@ -961,7 +962,7 @@ recordfail_stub() { # SCRIPTS_DIR
   cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
 if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
-if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-refused" ]]; then
+if [[ ( "\$1 \$2 \$3" == "set oversee overseer" || "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation current" ) && ! -e "$TMP_ROOT/record-refused" ]]; then
   touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
 fi
 exec "$SRC_DIR/workflow-state" "\$@"
