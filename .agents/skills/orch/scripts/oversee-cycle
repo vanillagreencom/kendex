@@ -29,9 +29,13 @@
 # checkout, which fetches the merge commit from origin where it lacks it. Run
 # it from a checkout of the lane's repository: where the lane's worktree names
 # another origin, or --repo another repository, the class is unread with
-# cause checkout-other-repo. A classifier answer whose `measured=` marker is
-# not true is no class. Missing or mismatched evidence runs no local proof. --repo
-# defaults to the lane record's repo, then this checkout's. The recorded launch
+# cause checkout-other-repo. Classification supports only kendex's
+# Classify the diff merge-group job in .github/workflows/skill-tests.yml.
+# Consumer repositories have no supported producer: their cycles keep a null
+# class and verdict=unclassified with class_cause=origin-untrusted. Their timing
+# remains in the unclassified rollup. They produce no miss or repeat-miss.
+# An unmeasured answer is no class. Missing or mismatched evidence runs no local proof.
+# --repo defaults to the lane record's repo, then this checkout's. The recorded launch
 # tier wins; a differing --tier refuses as tier-mismatch naming launch and given.
 # A record whose tier is null, a launch that judged none, takes --tier where
 # given and otherwise records none, printed `-`, with escaped null.
@@ -45,14 +49,14 @@
 # such push, merged and actual are null and stderr carries
 # `oversee-cycle: merged-unread commit=SHA cause=C`, C one of
 # repo-unresolved, base-unresolved, launch-unreadable, activity-unread,
-# compare-failed or no-push. Its first parent to the commit uses the same
-# stored evidence reader. A direct merge without exact evidence stays unclassified.
+# compare-failed or no-push. Ordinary direct pushes have no classification:
+# push runs carry no merge-group measurement. A kendex direct push records
+# class_cause=ci-proof-missing and verdict=unclassified. It produces no miss or
+# repeat-miss. Its timing remains in the unclassified rollup.
 # pr_opened, gate_green, ci_green and armed are null,
-# as are open, phase, gate waits, pr_rounds and refixed. The verdict compares
-# measured lane time with the class base. The cycle object carries commit
-# instead of pr, and the
-# cycle line below uses commit=SHA instead of pr=N. actual and escaped still
-# enter the per-class rollup. Exactly one of --pr and --commit is required.
+# as are open, phase, gate waits, pr_rounds, escaped and refixed.
+# The cycle object carries commit instead of pr, and the cycle line below
+# uses commit=SHA instead of pr=N. Exactly one of --pr and --commit is required.
 # The round counts and stage times come from
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state. A hosted lane's is read on its host

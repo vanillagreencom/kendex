@@ -82,7 +82,9 @@ if [[ "$1" == api ]]; then
       base=$(git rev-parse "$head^1")
       printf '%s\n' "--base $base --head $head" >> "$CASE/evidence.calls"
       printf '%s' "$head" > "$CASE/request-head"
-      [[ -f $CASE/class ]] || { printf '[{"total_count":0,"check_runs":[]}]\n'; exit 0; }
+      # The production job skips pushes. Only PR timeline cases have a
+      # merge-group producer; a direct push has no classifier check.
+      [[ -f $CASE/timeline.json && -f $CASE/class ]] || { printf '[{"total_count":0,"check_runs":[]}]\n'; exit 0; }
       jq -cn --arg head "$head" '[{total_count:1,check_runs:[{id:72,name:"Classify the diff",app:{slug:"github-actions"},head_sha:$head,status:"completed",conclusion:"success"}]}]'; exit 0 ;;
     "api repos/vanillagreencom/kendex/actions/jobs/72")
       jq -cn --arg head "$(cat "$CASE/request-head")" '{id:72,run_id:20,check_run_url:"https://api.github.com/repos/vanillagreencom/kendex/check-runs/72",name:"Classify the diff",head_sha:$head,status:"completed",conclusion:"success"}'; exit 0 ;;
@@ -210,7 +212,7 @@ while IFS='|' read -r name form want_out want_err; do
     "${want_out//SHA/$MERGE}|$want_err" "delivery flags: $name"
 done <<'ROWS'
 PR|pr|rc=0 cycle item=KEN-1 pr=7 class=small tier=micro target=1800 merge_group=- ci_head=60 ci_clean=- lane=900 actual=900 open=780 verdict=met|
-direct push|commit|rc=0 cycle item=KEN-1 commit=SHA class=small tier=micro target=1800 merge_group=- ci_head=- ci_clean=- lane=900 actual=900 open=- verdict=met|
+direct push|commit|rc=0 cycle item=KEN-1 commit=SHA class=- tier=micro target=- merge_group=- ci_head=- ci_clean=- lane=900 actual=900 open=- verdict=unclassified|
 both|both|rc=2 |oversee-cycle: usage=--pr,--commit
 neither|neither|rc=2 |oversee-cycle: usage=--pr,--commit
 ROWS
@@ -225,10 +227,10 @@ RECORD_ARGS=(--commit "$MERGE")
 pushes "300:$BASE" "1200:$MERGE"
 got="$(record KEN-1 '')"
 assert_eq "$got" \
-  "rc=0 cycle item=KEN-1 commit=$MERGE class=small tier=micro target=1800 merge_group=- ci_head=- ci_clean=- lane=1200 actual=1200 open=- verdict=met phase=- phase_secs=- cause=- bot_wait=- draft=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
-  "direct push prints the commit, elapsed time to its push, escape and absent PR fields"
+  "rc=0 cycle item=KEN-1 commit=$MERGE class=- tier=micro target=- merge_group=- ci_head=- ci_clean=- lane=1200 actual=1200 open=- verdict=unclassified phase=- phase_secs=- cause=- bot_wait=- draft=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=- tier_inputs=- class_reason=- escape_cause=- refixed=-" \
+  "direct push prints its timing, unclassified verdict and absent PR fields"
 assert_eq "$(state '.lanes[0].cycle | [.commit, has("pr"), .class, .tier, .actual, .escaped, .stamps]')" \
-  "[\"$MERGE\",false,\"small\",\"micro\",1200,true,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 1200)\"}]" \
+  "[\"$MERGE\",false,null,\"micro\",1200,null,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 1200)\"}]" \
   "direct push persists its authored date and its push time, not its committer date, in UTC"
 assert_eq "$(grep -c '^api --paginate repos/vanillagreencom/kendex/activity?ref=refs%2Fheads%2Fmain&activity_type=push&per_page=100' "$CASE/gh.calls")|$(grep -c compare/ "$CASE/gh.calls" || true)" \
   "1|0" "the push is read from the base branch's push log, and a push leaving the branch at the commit needs no compare"
@@ -237,7 +239,7 @@ assert_eq "$(grep -o -- '--base [^ ]* --head [^ ]*' "$CASE/evidence.calls")" "--
   "direct push reads first-parent evidence"
 assert_eq "$(test -f "$CASE/github.calls" && echo called || echo absent)" absent "direct push reads no PR timeline"
 assert_contains "$(cd "$REPO" && "$BIN" --state-dir "$CASE/state" rollup)" \
-  'rollup class=small items=1 median=1200 p90=1200 lane_median=1200 open_median=- miss_share=0/1 misses=0' "rollup includes the direct push in its class"
+  'rollup class=unclassified items=1 median=1200 p90=1200 lane_median=1200 open_median=- miss_share=- misses=0' "rollup retains direct-push timing without a measured miss"
 
 # A push the log cannot place: each row is the base branch's push log, the
 # compare answers, and the merged stamp, actual and merged-unread cause the
@@ -467,25 +469,28 @@ no-green|1394|null|963|3557|pr|present|target=2163 ci_head=1394 ci_clean=- lane=
 no-group|1394|1394|null|2594|pr|present|target=2594 ci_head=1394 ci_clean=1394 lane=1200 verdict=met|[2594,1394,1394,1200,2474]
 no-ci|null|null|null|1200|pr|present|target=1200 ci_head=- ci_clean=- lane=1200 verdict=met|[1200,null,null,1200,1080]
 missing-launch|1394|1394|963|3557|pr|missing|target=3557 ci_head=1394 ci_clean=1394 lane=- verdict=unmeasured|[3557,1394,1394,null,3437]
-direct|null|null|null|1200|commit|present|target=1200 ci_head=- ci_clean=- lane=1200 verdict=met|[1200,null,null,1200,null]
+direct|null|null|null|1200|commit|present|target=- ci_head=- ci_clean=- lane=1200 verdict=unclassified|[null,null,null,1200,null]
 ROWS
   RECORD_ARGS=(--pr 7)
 }
 clean_ci_rows shipped
 RUN_BIN=""
 
-# Direct pushes use the same measured lane verdict as the rollup.
+# Direct pushes retain elapsed time without a class target or miss verdict.
 direct_verdicts() {
-  while IFS='|' read -r name secs verdict share misses; do
+  while IFS='|' read -r name secs; do
     new_case "direct-verdict-$1-$name"
     printf small > "$CASE/class"
     RECORD_ARGS=(--commit "$MERGE"); pushes "$secs:$MERGE"
     got="$(record KEN-1 micro)"
-    assert_eq "$(field verdict "$got") $(field target "$got") $(field ci_head "$got") $(field ci_clean "$got")|$(cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" report | grep -o 'miss_share=[^ ]* misses=[^ ]*')" \
-      "verdict=$verdict target=1800 ci_head=- ci_clean=-|miss_share=$share misses=$misses" "direct $name: record and rollup agree"
+    assert_eq "$(state '.lanes[0].cycle | [.class,.class_cause,.verdict,.actual,.lane_secs,.target]')" \
+      "[null,\"ci-proof-missing\",\"unclassified\",$secs,$secs,null]" "direct $name: absent production evidence preserves timing without classification"
+    assert_eq "$(field verdict "$got") $(field target "$got") $(field ci_head "$got") $(field ci_clean "$got")|$(cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" report | sed -E 's/ draft=.*//')" \
+      "verdict=unclassified target=- ci_head=- ci_clean=-|rollup class=unclassified items=1 median=$secs p90=$secs lane_median=$secs open_median=- miss_share=- misses=0" "direct $name: unclassified rollup retains elapsed time"
+    assert_not_contains "$(cat "$CASE/gh.calls")" '/actions/jobs/' "direct $name: discovery supplies no invented job or log"
   done <<'ROWS'
-boundary|1800|met|0/1|0
-miss|1801|miss|1/1|1
+earlier|1800
+later|1801
 ROWS
   RECORD_ARGS=(--pr 7)
 }
