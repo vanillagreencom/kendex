@@ -642,11 +642,15 @@ assert_eq "$RC|$(caller_open)|$(overseers)|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1
 # and leaves the checkout behind.
 work_head() { git -C "$TMP_ROOT/work" rev-parse HEAD; }
 unsynced() { grep -c "^oversee-succeed: checkout-unsynced cause=$1 path=$TMP_ROOT/work fix=[^ ]" <<<"$OUT" || true; }
+CHECKOUT_OPENED="$TMP_ROOT/checkout-opened"
+SYNCOPEN="$(mutant_scripts sync-open overseer-run)" || exit 1
+OPEN_LINE="$(CHECKOUT_STARTED="$CHECKOUT_OPENED" checkout_stub_line)" || exit 1
+mutate_file "$SYNCOPEN/overseer-run" $'\nset -euo pipefail\n' $'\nset -euo pipefail\n'"$OPEN_LINE"$'\n'
 WANT="$(checkout_advance)" || exit 1
 new_caller "$MARK"
 checkout_started_clear
-run_succeed synced 'claude:fable:high'
-assert_eq "$RC|$(caller_open)|$(work_head)|$(checkout_started)|$(unsynced '[^ ]*')" "0|no|$WANT|$WANT|0" \
+SUCCEED_BIN="$SYNCOPEN/oversee-succeed" run_succeed synced 'claude:fable:high'
+assert_eq "$RC|$(caller_open)|$(work_head)|$(cat "$CHECKOUT_OPENED")|$(checkout_started)|$(unsynced '[^ ]*')" "0|no|$WANT|$WANT|$WANT|0" \
   "a succession fast-forwards a clean checkout behind origin to origin's head before the successor opens"
 SYNCCTL="$(mutant_scripts syncctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$SYNCCTL/lib/overseer-launch.sh" '  ol_checkout_sync "$1" || ol_checkout_notice' '  :'
@@ -666,15 +670,17 @@ assert_eq "$RC|$(caller_open)|$(work_head)|$(unsynced dirty)|$(jq -r '[(.fleet_l
   "0|no|$BEHIND|1|1" \
   "a dirty checkout leaves the succession running and prints one keyed line naming the fix, also in the fleet log"
 git -C "$TMP_ROOT/work" checkout -q -- README || exit 1
-# The order's control: a launcher that syncs after the successor opens leaves
-# the checkout synced once it returns, and the successor started on the tree
-# behind it.
+# COMMAND waits for the launch record. Observe the wrapper before that wait,
+# so the late-sync control still proves the tree at session startup.
 LATECTL="$(checkout_late_sync latesyncctl)" || exit 1
+mutate_file "$LATECTL/lib/overseer-launch.sh" "$(printf '%q' "$CHECKOUT_STARTED")" "$(printf '%q' "$CHECKOUT_OPENED")"
+rm -- "${LATECTL:?}/overseer-run"
+cp -p -- "$SYNCOPEN/overseer-run" "$LATECTL/overseer-run"
 WANT="$(checkout_advance)" || exit 1
 new_caller "$MARK"
-checkout_started_clear
+rm -f -- "${CHECKOUT_OPENED:?}"
 SUCCEED_BIN="$LATECTL/oversee-succeed" run_succeed latesyncctl 'claude:fable:high'
-assert_eq "$RC|$(caller_open)|$(work_head)|$(checkout_started)" "0|no|$WANT|$BEHIND" \
+assert_eq "$RC|$(caller_open)|$(work_head)|$(cat "$CHECKOUT_OPENED")" "0|no|$WANT|$BEHIND" \
   "control: a succession that syncs after the successor opens starts it on the tree behind origin"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -1195,6 +1201,7 @@ LOGFAIL="$(mutant_scripts logfail)" || exit 1
 rm -f -- "${LOGFAIL:?}/workflow-state"
 cat > "$LOGFAIL/workflow-state" <<STUB
 #!/usr/bin/env bash
+if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
 [[ "\$1" != append-file ]] || { echo 'fixture: append refused' >&2; exit 1; }
 exec "$SRC_DIR/workflow-state" "\$@"
 STUB
@@ -1341,6 +1348,7 @@ record_commit_run() { # SCRIPTS_DIR
   rm -f -- "$1/workflow-state" "$TMP_ROOT/record-commit.fired"
   cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
+if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
 "$SRC_DIR/workflow-state" "\$@" || exit
 if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-commit.fired" ]]; then
   : > "$TMP_ROOT/record-commit.fired"

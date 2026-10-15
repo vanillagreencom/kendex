@@ -1124,14 +1124,24 @@ ol_fleet_log_notice() { # KEY FIELD=VALUE...
 # OL_PRIOR empty. The caller decides whether that absence permits a launch.
 OL_PRIOR=""
 ol_record_read() {
-  OL_PRIOR="$(ol_record_get)" || { OL_PRIOR=""; return 1; }
+  ol_record_get OL_PRIOR || { OL_PRIOR=""; return 1; }
 }
-# The object on stdout, `null` where the state carries none; the one read of
-# it, which ol_record_read snapshots and ol_record_current only queries.
-ol_record_get() {
-  local record
-  record="$("$SCRIPT_DIR/workflow-state" get oversee '.overseer // null' 2>"$DEP_ERR")" || return 1
-  printf '%s\n' "${record:-null}"
+# The record into OUT_VAR, or stdout when omitted, null where the state carries
+# none. An initialized caller resolves through the state owner without its CLI
+# startup. Standalone overseer-run has no PROJECT_ROOT and needs the
+# CLI's initialization. Status 1 means no state or path; status 2 means
+# unreadable JSON in an initialized caller, with detail in DEP_ERR.
+ol_record_get() { # [OUT_VAR]
+  local state_file _org_record
+  if [[ -n "${PROJECT_ROOT:-}" ]]; then
+    state_file="$( { source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee; } 2>/dev/null)" || return 1
+    [[ -f "$state_file" ]] || return 1
+    _org_record="$(jq -r '.overseer // null' "$state_file" 2>"$DEP_ERR")" || return 2
+  else
+    _org_record="$("$SCRIPT_DIR/workflow-state" get oversee '.overseer // null' 2>"$DEP_ERR")" || return 1
+  fi
+  if [[ -n "${1:-}" ]]; then printf -v "$1" '%s' "${_org_record:-null}"
+  else printf '%s\n' "${_org_record:-null}"; fi
 }
 
 # ol_record_write RUNTIME SESSION WINDOW SERVER IDENTITY [LINE] — the record
@@ -1233,13 +1243,9 @@ ol_record_pending() { # LINE IDENTITY
 # puts back, and a query is not a snapshot.
 OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
 ol_record_current() { # SERVER PANE
-  local record fields start state_file sep=$'\x1f'
+  local record fields start sep=$'\x1f'
   OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
-  # Resolve once through the state owner, then read that file without reloading settings.
-  state_file="$( { source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee; } 2>/dev/null)" || return 1
-  [[ -f "$state_file" ]] || return 1
-  record="$(jq -r '.overseer // null' "$state_file" 2>"$DEP_ERR")" || return 2
-  record="${record:-null}"
+  ol_record_get record || return $?
   # Unread, the start names no record bound to one: the caller keeps its own
   # readings, and nothing here acts on the record.
   start="$(ol_session_start "$1" "$2")" || start=""
@@ -1281,7 +1287,7 @@ ol_record_start() { # SERVER PANE PID PROCESS_START
   local start record generation run passes=50
   start="$(ol_session_start "$1" "$2")" || { printf 'server-start-unreadable\n' > "$DEP_ERR"; return 1; }
   while :; do
-    record="$(ol_record_get)" || return 1
+    ol_record_get record || { [[ -s "$DEP_ERR" ]] || printf 'record-unavailable\n' > "$DEP_ERR"; return 1; }
     generation="$(jq -r --arg server "$1" --arg start "$start" --arg pane "$2" "$OL_JQ_DEFS"'
       select(ol_names($server; $start; $pane)) | .generation // empty' <<<"$record" 2>"$DEP_ERR")" || return 1
     [[ -z "$generation" ]] || break

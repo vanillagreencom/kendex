@@ -937,6 +937,7 @@ pendfail_stub() { # SCRIPTS_DIR — a workflow-state there that refuses the pend
   rm -f -- "${1:?}/workflow-state"
   cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
+if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
 [[ "\$1 \$2 \$3" != "set oversee overseer.pending" ]] || { echo 'fixture: pending write refused' >&2; exit 1; }
 exec "$SRC_DIR/workflow-state" "\$@"
 STUB
@@ -959,6 +960,7 @@ recordfail_stub() { # SCRIPTS_DIR
   rm -f -- "${1:?}/workflow-state" "${TMP_ROOT:?}/record-refused"
   cat > "$1/workflow-state" <<STUB
 #!/usr/bin/env bash
+if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
 if [[ "\$1 \$2 \$3" == "set oversee overseer" && ! -e "$TMP_ROOT/record-refused" ]]; then
   touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
 fi

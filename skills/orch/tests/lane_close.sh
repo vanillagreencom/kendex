@@ -953,8 +953,8 @@ if proc_table_readable; then
     'rc=1 failed=1 timeout=0 lane=alive kill=0 status=running' 'a recorded pid that started at another time is never signalled and refuses as stale'
   kill "$LANE_PID" 2>/dev/null || true
   # Control: without the start comparison the later process is signalled.
-  MUTANT="$(lib_mutant start-check '  [[ -n "$start" && "$start" == "$2" ]] || { LANE_STOP_CAUSE=identity-stale; return 3; }' \
-    '  [[ -n "$start" ]] || { LANE_STOP_CAUSE=identity-stale; return 3; }')"
+  MUTANT="$(lib_mutant start-check '  [[ -n "$start" && "$start" == "$2" ]] || { LANE_IDENTITY_CAUSE=identity-stale; return 3; }' \
+    '  [[ -n "$start" ]] || { LANE_IDENTITY_CAUSE=identity-stale; return 3; }')"
   start_time_row "$MUTANT"
   assert_eq "lane=$(proc_state_after "$LANE_PID")" 'lane=gone' 'control: without the start comparison a reused pid is signalled'
 
@@ -972,7 +972,7 @@ if proc_table_readable; then
   kill "$LANE_PID" 2>/dev/null || true
   # Control: without the second state read the empty start reads as a pid that
   # exited, a stale identity.
-  MUTANT="$(lib_mutant empty-start-stale '      [[ -z "$state" || "$state" == Z ]] || { LANE_STOP_CAUSE=start-read-failed; return 1; }' '      :' \
+  MUTANT="$(lib_mutant empty-start-stale '      [[ -z "$state" || "$state" == Z ]] || { LANE_IDENTITY_CAUSE=start-read-failed; return 1; }' '      :' \
     "lane_process_start() { printf '\\n'; }")"
   empty_start_row "$MUTANT"
   assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=identity-stale\$" <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID")" \

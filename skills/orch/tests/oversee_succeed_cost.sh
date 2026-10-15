@@ -30,7 +30,9 @@ source = Path(os.environ.get('SUCCEED_SCRIPTS_UNDER_TEST', str(tests.parent / 's
 spec = importlib.util.spec_from_file_location('counter', tests / 'lib/process-count.py')
 counter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(counter)
-BOUND = 76
+# The recorded-harness observation adds the measured complete-workload cost.
+# Keep the earlier margin and reject the redundant initialization control.
+BOUND = 76 + (87 - 71)
 PATH_BOUND = 8
 RECORD_BOUND = 20
 
@@ -318,6 +320,7 @@ for name in ('lane-claims.sh', 'toml.sh', 'lane-home.sh', 'adapters/claude.sh'):
 path.write_text(text)
 record_file.write_text(json.dumps({'overseer': identity}) + '\n')
 control = run(root / 'mutant/orch/scripts/oversee-succeed', 'control')
+print('metric', 'control-own-processes', control[3], sep='\t')
 result('cost control: same workload exit', control[0], complete[0])
 result('cost control: same stdout bytes', int(control[1] == complete[1]), 1)
 result('cost control: same stderr bytes', int(control[2] == complete[2]), 1)

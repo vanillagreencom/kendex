@@ -202,7 +202,7 @@ inspect_settled() { pane_listed "$SESSION" || inspect_gone; }
 inspect_harness() { # SERVER PANE_STATE
   local record bound identity pid process_start server_start rc=0
   HARNESS_STATE=unknown HARNESS_CAUSE=record-unreadable
-  record="$(ol_record_get)" || return 0
+  ol_record_get record || return 0
   HARNESS_CAUSE=server-start-unreadable
   server_start="$(ol_session_start "$1" "$SESSION")" || return 0
   HARNESS_CAUSE=record-unbound

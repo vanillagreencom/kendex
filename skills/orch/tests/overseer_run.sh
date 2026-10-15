@@ -137,13 +137,8 @@ ROWS
 
 # A writable read with a refused atomic update still reaches COMMAND.
 REFUSED="$(mutant_scripts refused workflow-state)" || exit 1
-rm -- "${REFUSED:?}/workflow-state"
-cat > "$REFUSED/workflow-state" <<STUB
-#!/bin/sh
-if [ "\$1" = update ]; then printf 'fixture-write-refused\n' >&2; exit 1; fi
-exec "$SCRIPTS/workflow-state" "\$@"
-STUB
-chmod +x "$REFUSED/workflow-state"
+mutate_file "$REFUSED/workflow-state" '    update)    shift; cmd_update "$@" ;;' \
+  '    update)    printf "fixture-write-refused\n" >&2; exit 1 ;;'
 state %9
 RUN_BIN="$REFUSED/overseer-run" run %9 -- sh -c 'printf command-started; exit 5'
 assert_eq "$RC|$(cat "$TMP_ROOT/out")|$(exit_of)" '5|command-started|none' 'failed atomic start write keeps COMMAND and its status' "$ERR"
