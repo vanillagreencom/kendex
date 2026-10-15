@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 from session_test import BootReceiptScenario
 from fixtures.harness import native_launcher
 
@@ -73,8 +74,11 @@ def main():
             env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                                 "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
             if test not in clean:
+                started = time.monotonic()
+                print("control: start=baseline name=" + test, flush=True)
                 baseline = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/session.test.sh"),
                                            "SessionContract." + test], env=env, capture_output=True, text=True, timeout=90)
+                print(f"control: elapsed=baseline seconds={time.monotonic() - started:.3f} name={test}", flush=True)
                 assert baseline.returncode == 0, "clean case failed: " + test + "\n" + baseline.stdout + baseline.stderr
                 clean[test] = True
                 print("control: clean=" + test, flush=True)
@@ -86,8 +90,11 @@ def main():
             assert mutant != original
             path.write_text(mutant)
             try:
+                started = time.monotonic()
+                print("control: start=mutant name=" + name, flush=True)
                 result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/session.test.sh"),
                                          "SessionContract." + test], env=env, capture_output=True, text=True, timeout=90)
+                print(f"control: elapsed=mutant seconds={time.monotonic() - started:.3f} name={name}", flush=True)
                 assert result.returncode != 0, name + " passed its planted defect"
                 # The test runner's outcome distinguishes a red assertion from
                 # an import, fixture setup or command-launch failure.
