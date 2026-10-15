@@ -213,6 +213,7 @@
     "skills/linear/tests/issues-list-search-server-filter.test.sh": "linux-only",
     "skills/linear/tests/issues-remove-relation-completed-blocker.test.sh": "linux-only",
     "skills/linear/tests/issues-update-attach.test.sh": "linux-only",
+    "skills/linear/tests/issues-update-done-when.test.sh": "linux-only",
     "skills/linear/tests/issues-update-format-safe.test.sh": "linux-only",
     "skills/linear/tests/issues-update-unknown-label-refuses.test.sh": "linux-only",
     "skills/linear/tests/issues-view-action-hint.test.sh": "linux-only",
