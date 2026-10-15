@@ -722,7 +722,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
   local unsupported="" scan candidate limit producer_end code incoming_sources="" file_output file_body redirect_evidence head_start main_start
-  local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0
+  local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
@@ -781,7 +781,7 @@ environment_dump() { # command kind; arguments are already decoded data
       # quotes. Saving only the enclosing quote grants no inner permission.
       if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
         if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; quoted=""; compound=1
+        word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -832,15 +832,18 @@ environment_dump() { # command kind; arguments are already decoded data
             heredoc_expand[doc]=""; [ -n "$quoted" ] || heredoc_expand[doc]=1
             body_ids[$heredoc_origin]=$doc
             heredoc_op=""
-          # Only adjacent bare digits are shell descriptor syntax. Decoded
-          # numeric arguments cannot prove where stdout goes.
-          elif { [ "$c" = '<' ] || [ "$c" = '>' ]; } && [ -n "$active" ] &&
+          # A numeric target remains operand data before a compact redirect.
+          # Only a bare word outside that target can establish a descriptor.
+          elif [ -z "$needs_target" ] && { [ "$c" = '<' ] || [ "$c" = '>' ]; } && [ -n "$active" ] &&
                [ -n "$bare" ] && [ "$kind" = literal ] && [[ $word =~ ^[0-9]+$ ]]; then
             redirection_kind=operator-explicit-other
             [ "$word" != 2 ] || redirection_kind=operator-stderr
             active=""
           fi
-          if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+          if [ -n "$active" ]; then
+            unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
+            needs_target=""
+          fi
           word=""; active=""; kind=literal; bare=1; quoted=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
@@ -884,7 +887,10 @@ environment_dump() { # command kind; arguments are already decoded data
           esac
           unquoted_words[${#tokens[@]}]=""; tokens[${#tokens[@]}]=$c
           if [ "$c" = '<<' ] && [ "$math_depth" -ne 0 ]; then kinds[${#kinds[@]}]=arithmetic
-          else kinds[${#kinds[@]}]=$redirection_kind; fi ;;
+          else
+            kinds[${#kinds[@]}]=$redirection_kind
+            case "$c" in '<'* | '>'* | '&>'*) needs_target=1 ;; *) needs_target="" ;; esac
+          fi ;;
         *) word=$word$c; active=1 ;;
       esac
     done
