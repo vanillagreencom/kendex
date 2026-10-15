@@ -1,1 +1,0 @@
-- Hosted launches on providers that own their pane use the configured SSH connection limit when the host does not answer.
