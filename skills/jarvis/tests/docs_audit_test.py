@@ -1,4 +1,5 @@
 """Exercise the shipped report against committed trees through real Git."""
+import errno
 import json
 import os
 from pathlib import Path
@@ -73,10 +74,18 @@ class Report(World):
 
     def fixture(self):
         template = {"path": "adopted.md", "template": "templates/workflow.md", "templateHash": "fixture"}
+        odd = "odd\n\udcff.md"
+        try:
+            (self.repo / odd).write_bytes(b"odd\n")
+        except OSError as error:
+            if error.errno != errno.EILSEQ:
+                raise
+            # Keep newline coverage when the filesystem rejects the invalid byte sequence.
+            odd = "odd\nname.md"
         old = {"changed.md": b"old\n", "removed.md": b"remove\n", "becomes-generated.md": b"hand\n",
-               "odd\n\udcff.md": b"odd\n"}
+               odd: b"odd\n"}
         new = {"changed.md": b"old and new\n", "added.md": b"new\n", "manual.md": b"manual\n",
-               "odd\n\udcff.md": b"odd\n"}
+               odd: b"odd\n"}
         inventory_old = json.dumps(["generated.md", "manual.md", template]).encode()
         inventory_new = json.dumps(["generated.md", "becomes-generated.md", template]).encode()
         excluded = {name: (name + " excluded\n").encode() for name in

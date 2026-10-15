@@ -24,7 +24,7 @@ def timestamp(value):
 parser = argparse.ArgumentParser(description="Report committed Markdown snapshot growth.")
 parser.add_argument("--since", required=True, type=timestamp)
 parser.add_argument("--until", required=True, type=timestamp)
-parser.add_argument("--top", type=int, default=10)
+parser.add_argument("--top", type=int, default=10, help="Maximum growth rows per repository (default: %(default)s)")
 parser.add_argument("repos", nargs="+")
 args = parser.parse_args()
 if args.since > args.until or args.top < 0:
