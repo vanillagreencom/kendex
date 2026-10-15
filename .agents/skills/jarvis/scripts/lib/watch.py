@@ -43,7 +43,7 @@ def child_failure(operation, result):
     if first.startswith("jarvis: failure="):
         record = json.loads(first[len("jarvis: failure="):])
         return Failure(*record["key"], record["detail"])
-    keyed = re.match(r"^(?:lane-mail|kendex): ([a-z][a-z0-9-]*)=", first)
+    keyed = re.match(r"^(?:lane-mail|kendex|jarvis): ([a-z][a-z0-9-]*)=", first)
     return Failure(operation, "refusal" if keyed else "exit",
                    keyed[1] if keyed else result.returncode, detail)
 
@@ -124,6 +124,13 @@ def atomic_json(path, value):
             temporary.unlink()
 
 
+def permission_after_failure(permitted, error):
+    # A failed permission probe must not become ordinary inactivity on retry.
+    if isinstance(error, Failure) and error.record["key"][0] == "presence-live":
+        raise error
+    return permitted()
+
+
 def hold(root, permitted):
     if not permitted():
         return "skipped"
@@ -157,7 +164,7 @@ except Refusal as error:
             with path.open("a"):
                 os.utime(path, (at, at))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        if not permitted():
+        if not permission_after_failure(permitted, error):
             return "skipped"
         raise failure("presence-hold", error) from error
     return "ok"
@@ -442,8 +449,14 @@ class Watch:
     def live(self, now=None):
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "live", self.home])
-            if result.returncode:
-                return False
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            return False
+        if result.returncode:
+            error = child_failure("presence-live", result)
+            if error.record["key"][1:] == ["refusal", "dependency"]:
+                raise error
+            return False
+        try:
             at = datetime.datetime.fromisoformat(result.stdout.strip().replace("Z", "+00:00")).timestamp()
             if now is None:
                 now = epoch()
@@ -482,13 +495,16 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         return run(["ssh", host, "bash -s"], data=self.remote_command(args))
 
     def presence(self, side):
-        if not self.live():
-            return [(None, "skipped", None)]
         try:
-            return self._presence(side)
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             if not self.live():
                 return [(None, "skipped", None)]
+            try:
+                return self._presence(side)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                if not permission_after_failure(self.live, error):
+                    return [(None, "skipped", None)]
+                raise
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return [(None, "failed", failure("presence-" + side, error).record)]
 
     def _presence(self, side):

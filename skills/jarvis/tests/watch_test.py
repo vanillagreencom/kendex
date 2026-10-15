@@ -679,6 +679,67 @@ class Producer(unittest.TestCase):
                 watch.tick(0, watch.acquire(0))
                 self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
 
+    def test_dependency_failure_denies_presence_with_cause(self):
+        orch = self.packages / "orch"
+        orch.unlink()
+        env_reader = orch / "scripts/lib/kendex-env.sh"
+        env_reader.parent.mkdir(parents=True)
+        env_reader.symlink_to(REPO / "skills/orch/scripts/lib/kendex-env.sh")
+        expected = ["presence-live", "refusal", "dependency"]
+        original_run = self.module.run
+        mailbox_env = self.packages / "mailbox/scripts/lib/kendex-env.sh"
+        mailbox_env_bytes = mailbox_env.read_bytes()
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        self.settings["JARVIS_CONTROL_HOST"] = "fixture"
+        # Probe replies are clock inputs. The failure itself comes from the
+        # shipped helper against the incomplete private producer installation.
+        stages = (("mailbox-initial", 1), ("initial", 1), ("discovery", 2), ("target-entry", 3),
+                  ("before-touch", 4), ("settings-recovery", 4),
+                  ("touch-recovery", 5), ("operation-recovery", 2))
+        for side in ("local", "host"):
+            for stage, fail_at in stages:
+                with self.subTest(side=side, stage=stage), patch.dict(os.environ, self.env, clear=True), \
+                        patch.object(self.module, "epoch", return_value=0), contextlib.redirect_stdout(io.StringIO()):
+                    mailbox_env.write_bytes(mailbox_env_bytes)
+                    if stage == "mailbox-initial":
+                        mailbox_env.unlink()
+                    for root in (self.home, self.peer):
+                        hold = root / "hold"
+                        if hold.exists():
+                            hold.unlink()
+                        settings = ('SLACK_JARVIS_SESSION_FILE = "missing/hold"' if stage == "touch-recovery"
+                                    else 'SLACK_JARVIS_SESSION_FILE = "hold"')
+                        if stage == "settings-recovery":
+                            settings += '\nSLACK_JARVIS_SESSION_MAX_AGE = "bad"'
+                        root.joinpath("kendex.settings.toml").write_text('[env]\n'+settings+'\n')
+                    self.executable("kendex", '#!/bin/sh\n'+('exit 2\n' if side == "local" and stage == "operation-recovery"
+                                                            else 'cat "$REGISTRY"\n'))
+                    self.executable("ssh", '#!/bin/sh\n'+('exit 2\n' if side == "host" and stage == "operation-recovery"
+                                                         else 'exec '+shlex.quote(BASH)+' -s\n'))
+                    calls = 0
+                    def probe(args, *positional, **keywords):
+                        nonlocal calls
+                        if list(map(str, args[:3])) == [BASH, str(self.scripts / "lib/jarvis-env.sh"), "live"]:
+                            calls += 1
+                            if calls < fail_at:
+                                return subprocess.CompletedProcess(args, 0, "1970-01-01T00:00:00Z\n", "")
+                            if calls > fail_at:
+                                return subprocess.CompletedProcess(args, 1, "", "")
+                        return original_run(args, *positional, **keywords)
+                    self.settings["JARVIS_LOG_DIR"] = str(self.root / (side+"-"+stage))
+                    watch = self.watch()
+                    with patch.object(self.module, "run", side_effect=probe):
+                        results = watch.presence(side)
+                    failed = [cause for _, status, cause in results if status == "failed"]
+                    self.assertTrue(failed, results)
+                    self.assertEqual([cause["key"] for cause in failed], [expected])
+                    self.assertGreaterEqual(calls, fail_at)
+                    self.assertFalse(any(root.joinpath("hold").exists() for root in (self.home, self.peer)))
+                    watch.accept_presence(side, results)
+                    self.assertIn("EVENT presence-renew-failed", watch.log.read_text())
+                    recorded = watch.state["presence_failures"][side]
+                    self.assertEqual([cause["key"] for cause in recorded.values()], [expected])
+
     def test_log_checkpoint_skips_unchanged_and_processed_bytes(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
@@ -792,6 +853,23 @@ class Producer(unittest.TestCase):
                 case.scripts.joinpath("lib/watch.py").write_text(mutant)
                 with self.assertRaises(AssertionError):
                     case.test_producer_helpers_keep_target_data()
+            finally:
+                case.doCleanups()
+        with tempfile.TemporaryDirectory() as folder:
+            source = (SCRIPTS / "lib/watch.py").read_text()
+            old = 'if error.record["key"][1:] == ["refusal", "dependency"]:\n                raise error'
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, old.replace("raise error", "return False"))
+            self.assertNotEqual(source, mutant)
+            path = Path(folder) / "watch.py"
+            path.write_text(mutant)
+            case = Producer(methodName="test_dependency_failure_denies_presence_with_cause")
+            case.setUp()
+            try:
+                case.module = load(path)
+                case.module.LIB = case.scripts / "lib"
+                with self.assertRaises(AssertionError):
+                    case.test_dependency_failure_denies_presence_with_cause()
             finally:
                 case.doCleanups()
 
