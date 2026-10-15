@@ -1,1 +1,0 @@
-- Changes to the validation runner and restack validation gate require standard review, even for small edits.

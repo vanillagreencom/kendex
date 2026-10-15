@@ -6,6 +6,13 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-10-15
+
+### Fixed
+
+- Changes to the validation runner and restack validation gate require standard review, even for small edits.
+- Personal-account consumers can adopt shared refresh with their required repository and environment checks. Organization consumers retain organization-secret checks. The shared token request omits organization permissions for personal accounts.
+
 ## [1.19.0] - 2026-10-14
 
 ### Added
@@ -2930,7 +2937,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.1..HEAD
+[1.19.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.1
 [1.19.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.0
 [1.18.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.18.0
 [1.17.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.17.0

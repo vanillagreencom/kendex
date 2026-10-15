@@ -1,1 +1,0 @@
-- Personal-account consumers can adopt shared refresh with their required repository and environment checks. Organization consumers retain organization-secret checks. The shared token request omits organization permissions for personal accounts.
