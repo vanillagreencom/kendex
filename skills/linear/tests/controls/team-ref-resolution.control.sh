@@ -27,8 +27,8 @@ control_replace scripts/lib/common.sh 1 \
 control_expect "issues update --state: looks up no team but the configured one"
 control_expect "issues update --state: resolves the state under the issue's own team id"
 control_replace scripts/commands/issues.sh 1 \
-    '    team_id=$(echo "$issue_result" | jq -r '"'"'.issue.team.id // empty'"'"')' \
-    '    team_id=$team_name'
+    '    team_id=$(jq -r '"'"'.issue.team.id // empty'"'"' <<<"$issue_result") || return 1' \
+    '    team_id=$(jq -r '"'"'.issue.team.name // empty'"'"' <<<"$issue_result") || return 1'
 
 # Each team-filtered read filters on the raw reference as a team name again,
 # so the team key reads empty on that surface alone.
