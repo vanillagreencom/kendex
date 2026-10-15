@@ -18,11 +18,22 @@ cat > "$OT_STUB_BIN/ssh" <<'SH'
 set -euo pipefail
 [[ "$*" != *'workflow-state handoff-standing '* ]] || exec "${0%/*}/ssh-handoff" "$@"
 printf '%s\n' "$*" > "$LANE_HOST_STUB_LOG.ssh"
-[[ "$1" == -T && "$2" == -o && "$3" == BatchMode=yes && "$4" == -- && $# == 6 ]] || exit 1
+[[ "$1" == -T && "$2" == -o && "$3" == BatchMode=yes ]] || exit 1
+shift 3
+connect_secs=0
+if [[ "$1" == -o && "$2" == ConnectTimeout=* ]]; then
+  connect_secs="${2#ConnectTimeout=}"; shift 2
+fi
+[[ "$1" == -- && $# == 3 ]] || exit 1
 [[ -z "$(cat)" ]] || exit 1
+# A non-answering host leaves SSH blocked until its connection timer expires.
+if [[ -n "${SSH_CONNECT_STALL_FILE:-}" ]]; then
+  printf '%s\n' "$connect_secs" > "$SSH_CONNECT_STALL_FILE"
+  exec perl -e '$SIG{ALRM} = sub { exit 255 }; alarm shift; sleep 60' "$connect_secs"
+fi
 [[ -z "${SSH_PANE_CONTROL:-}" ]] || tmux send-keys -t %1 Enter
 [[ "${SSH_FAIL:-0}" == 0 ]] || exit "$SSH_FAIL"
-exec "$BASH" -c "$6"
+exec "$BASH" -c "$3"
 SH
 cat > "$TMP_ROOT/provider-prefix" <<'SH'
 #!/usr/bin/env bash
@@ -56,6 +67,31 @@ launch_contract() { printf '%s\n' "$OUT" > "$RUN/launch-errors"; assert_eq "rc=$
 failed_launch_contract() {
   assert_eq "rc=$RC local=$(local_input_count) stops=$(grep -c '^stop --item KEN-40 --harness claude ' "$RUN/host.log" || true) killed=$(grep -c '^kill-window ' "$RUN/tmux.log" || true)" "$1" "$2"
 }
+
+if [[ "${1:-}" == --ssh-bound-case ]]; then
+  if [[ "$2" == control ]]; then
+    OPEN_TERMINAL="$(mutant_scripts connection-bound/orch open-terminal)/open-terminal"
+    orch_fixture_shared_libs "$TMP_ROOT/connection-bound/orch"
+    mutate_file "$OPEN_TERMINAL" '-o "ConnectTimeout=$LANE_SSH_PROMPT_SECS"' ''
+  fi
+  run_ot "$CHOICE;$COMPACTION_OFF_ALL;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;SSH_CONNECT_STALL_FILE=$3" \
+    --harness claude --lane "$H/.eclaude" --repo o/r KEN-40
+  printf '%s\n' "$OUT"
+  exit "$RC"
+fi
+
+# The parent deadline bounds a broken transport too. It includes fixture setup
+# and launch cleanup; the SSH timer itself uses the configured one-second bound.
+for row in 'live|1|1' 'control|124|0'; do
+  IFS='|' read -r code expected_rc expected_timer <<< "$row"
+  bound_rc=0
+  "$(command -v timeout || command -v gtimeout)" 5 "$BASH" "$TEST_DIR/open-terminal-provider-pane.sh" \
+    --ssh-bound-case "$code" "$TMP_ROOT/ssh-bound-$code.reached" > "$TMP_ROOT/ssh-bound-$code.log" 2>&1 || bound_rc=$?
+  assert_eq "$bound_rc" "$expected_rc" "$code non-answering SSH connection respects the parent deadline" "$TMP_ROOT/ssh-bound-$code.log"
+  assert_eq "$(cat "$TMP_ROOT/ssh-bound-$code.reached")" "$expected_timer" "$code reaches the non-answering SSH connection"
+  [[ "$code" != live ]] || assert_file_contains "$TMP_ROOT/ssh-bound-$code.log" \
+    'open-terminal: host-exec-failed item=KEN-40' 'the configured connection bound returns host-exec-failed'
+done
 
 for row in 'delivered|0|0' 'composer|0|1' 'dialog|2|1'; do
   IFS='|' read -r initial viewer_status needs_send <<< "$row"

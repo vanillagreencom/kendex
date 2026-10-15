@@ -2430,7 +2430,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     # remote-prefix owns the detached sandbox session. The control process
     # holds no interactive terminal and the local window receives no input.
     HOST_PANE_LAUNCH=owned
-    ssh -T -o BatchMode=yes -- "$target" "$cmd" < /dev/null \
+    ssh -T -o BatchMode=yes -o "ConnectTimeout=$LANE_SSH_PROMPT_SECS" -- "$target" "$cmd" < /dev/null \
       || { ot_message host-exec-failed "item=$title" >&2; return 1; }
     local viewer viewer_rc=0
     viewer="$(host_transport viewer-prefix --item "$wt_id")" || viewer_rc=$?
