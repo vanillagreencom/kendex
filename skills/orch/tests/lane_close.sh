@@ -2289,9 +2289,9 @@ FOREIGN_WATCH_RESULT="$(
     jq -nc --arg state "$dependency_state" '{state:$state}' >"$STUB_DIR/dependency-9.json"
     out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err")" || { cat "$STUB_DIR/err" >&2; exit 1; }
     case "$dependency_state" in
-      OPEN) [[ "$out" != *'EVENT parked-merged '* && "$out" != *'EVENT parked-closed '* ]] || exit 1 ;;
-      MERGED) grep -xF 'EVENT parked-merged issue-2 pr=9 repo=other/repo' <<<"$out" ;;
-      CLOSED) grep -xF 'EVENT parked-closed issue-2 pr=9 repo=other/repo' <<<"$out" ;;
+      (OPEN) [[ "$out" != *'EVENT parked-merged '* && "$out" != *'EVENT parked-closed '* ]] || exit 1 ;;
+      (MERGED) grep -xF 'EVENT parked-merged issue-2 pr=9 repo=other/repo' <<<"$out" ;;
+      (CLOSED) grep -xF 'EVENT parked-closed issue-2 pr=9 repo=other/repo' <<<"$out" ;;
     esac
     [[ "$out" != *'EVENT merged '* ]] || exit 1
   done
