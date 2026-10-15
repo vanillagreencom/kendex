@@ -6,12 +6,12 @@ control_replace scripts/lib/common.sh 1 \
     '            code=429' \
     '            :'
 
-# Retry every non-200 answer again, so a scope or validation refusal costs
-# three requests and three waits before it fails.
+# Retry a generic HTTP 400, so a validation refusal spends three requests
+# before it fails.
 control_expect "a generic 400 fails on its first answer"
 control_replace scripts/lib/common.sh 1 \
-    '    *) return 1 ;;' \
-    '    *) ;;'
+    '    429) ;;' \
+    '    429|400) ;;'
 
 # Drop the header read, so a rate limit names no time the quota refills.
 control_expect "a rate limit names the Requests-Reset time"
