@@ -38,3 +38,11 @@ control_expect "early-verifying child controls bundle acceptance"
 control_replace scripts/lib/issue-validation.sh 1 \
     $'\t''if [[ "$role" == "bundle-child" && "$state_type" == started && "$state" != Verifying ]]; then' \
     $'\t''if [[ "$role" == "bundle-child" && "$state_type" == started ]]; then'
+
+# Restore the inherited display format that omits the required checklist.
+control_expect "compact-qualified child controls bundle acceptance"
+control_expect "compact-done-open-branch child controls bundle acceptance"
+control_expect "compact-done-missing-evidence child controls bundle acceptance"
+control_replace scripts/commands/issues.sh 1 \
+    '        issue=$(get_issue "$issue_id" --format=safe) || return 1' \
+    '        issue=$(get_issue "$issue_id") || return 1'

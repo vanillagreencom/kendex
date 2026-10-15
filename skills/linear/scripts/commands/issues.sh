@@ -3419,7 +3419,7 @@ validate_completion() {
     # from still-pending work.
     if [ -n "$include_children_of" ]; then
         local bundle
-        if ! bundle=$(get_issue "$include_children_of" --with-bundle); then
+        if ! bundle=$(get_issue "$include_children_of" --with-bundle --format=safe); then
             echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
             return 1
         fi
@@ -3469,7 +3469,7 @@ validate_completion() {
         local role="${roles[$i]}"
         # Get issue state
         local issue
-        issue=$(get_issue "$issue_id") || return 1
+        issue=$(get_issue "$issue_id" --format=safe) || return 1
         local state
         state=$(echo "$issue" | jq -r '.state // ""')
         local state_type

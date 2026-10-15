@@ -148,13 +148,11 @@ fi
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-# The scenarios below assert on the safe-format result objects, so the
-# invocation names the format it asserts on instead of inheriting the host
-# project's setting.
+# The child table also exercises the supported compact display preference.
 run_validate() {
   PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token \
-    LINEAR_FORMAT=safe \
+    LINEAR_FORMAT="${LINEAR_FORMAT:-safe}" \
     "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
     issues validate-completion "$@"
 }
@@ -260,25 +258,28 @@ ROWS
 # A template-produced child can finish its branch work before its shared PR
 # merges. The parent accepts only qualified started children at that phase.
 export CHILD_CHECKLIST_FILE="$TMP_ROOT/child.md"
-while IFS='|' read -r name state description expected; do
+while IFS='|' read -r name format state description expected; do
   printf '%b' "$description" >"$CHILD_CHECKLIST_FILE"
-  out="$(CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
+  out="$(LINEAR_FORMAT="$format" CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
   check "$name child controls bundle acceptance" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-912\") | .state == \"$state\" and .state_ok == $expected and .ok == $expected)"
   if [[ "$state" != Done ]]; then
-    out="$(CHILD_STATE="$state" run_validate CC-940 --include-children-of CC-940 --container)"
+    out="$(LINEAR_FORMAT="$format" CHILD_STATE="$state" run_validate CC-940 --include-children-of CC-940 --container)"
     check "$name started child keeps container open" "$out" '.all_ok == false and (.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false)'
   fi
 done <<'ROWS'
-qualified|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
-review|In Review|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
-custom-started|In QA|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
-open-branch|In Progress|## Done when\n- [ ] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
-missing-evidence|In Progress|## Done when\n- [x] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
-invalid-post|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: health|false
-empty|In Progress|No checklist|false
-early-verifying|Verifying|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
-done-open-branch|Done|## Done when\n- [ ] branch proof|false
-done-missing-evidence|Done|## Done when\n- [x] branch proof|false
+qualified|safe|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+review|safe|In Review|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+custom-started|safe|In QA|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+open-branch|safe|In Progress|## Done when\n- [ ] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
+missing-evidence|safe|In Progress|## Done when\n- [x] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
+invalid-post|safe|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: health|false
+empty|safe|In Progress|No checklist|false
+early-verifying|safe|Verifying|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
+done-open-branch|safe|Done|## Done when\n- [ ] branch proof|false
+done-missing-evidence|safe|Done|## Done when\n- [x] branch proof|false
+compact-qualified|compact|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+compact-done-open-branch|compact|Done|## Done when\n- [ ] branch proof|false
+compact-done-missing-evidence|compact|Done|## Done when\n- [x] branch proof|false
 ROWS
 printf '%b' '## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h' >"$CHILD_CHECKLIST_FILE"
 out="$(CHILD_SUMMARY=false run_validate CC-910 --include-children-of CC-910)"
