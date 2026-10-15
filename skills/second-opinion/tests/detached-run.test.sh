@@ -121,6 +121,7 @@ await_group_exit() {
     kill -0 -- "-$pid" 2>/dev/null || return 0
     sleep 0.05
   done
+  ps -axo pid=,ppid=,pgid=,state= | awk -v group="$pid" '$3 == group { printf "group-survivor: pid=%s ppid=%s pgid=%s state=%s\n", $1, $2, $3, $4 }' >&2
   fail "$1: the worker's process group outlived its bound"
 }
 

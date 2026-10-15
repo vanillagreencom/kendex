@@ -70,6 +70,7 @@ group_gone() { ! kill -0 -- "-$1" 2>/dev/null; }
 await_group_gone() { # GROUP — up to 10s
   local _
   for _ in $(seq 1 200); do group_gone "$1" && return 0; sleep 0.05; done
+  ps -axo pid=,ppid=,pgid=,state= | awk -v group="$1" '$3 == group { printf "group-survivor: pid=%s ppid=%s pgid=%s state=%s\n", $1, $2, $3, $4 }' >&2
   return 1
 }
 await_file() { # PATH [POLLS] — 0.05s apart, 200 polls (10s) by default
