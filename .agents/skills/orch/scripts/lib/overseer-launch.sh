@@ -700,10 +700,10 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # prompt, after the fixed session name. Prefix environment words stay outside
 # the returned flags. The producer's handoff prompt also supplies its bound
 # destination; an arbitrary --brief has none. No command text is evaluated.
-OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF=""
+OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
 ol_command_read() { # HARNESS LINE
   local i end prompt handoff
-  OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF=""
+  OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
   launch_choice_shell_words "$2" || return 1
   [[ ${#LAUNCH_CHOICE_ARGV[@]} -gt 0 ]] || return 1
   end=$((${#LAUNCH_CHOICE_ARGV[@]} - 1))
@@ -725,12 +725,23 @@ ol_command_read() { # HARNESS LINE
   return 1
 }
 
-# Recovery needs the complete launch contract. A flags-only read can still
-# preserve an executable model from an arbitrary brief, but cannot retain its
-# handoff state or tell the successor's watch where to read it.
-ol_command_recovery() { # LINE
+# The record retains both halves of a relative file reference. Public commands
+# keep the accepted destination under the recorded launch directory; the
+# internal writer needs its pathname from any recovery working directory.
+# A directory with spaces cannot be folded into the public handoff argument.
+ol_command_recovery() { # RECORD
+  local line directory
   OL_REASON=model-command-unavailable
-  ol_command_read claude "$1" && [[ -n "$OL_COMMAND_MODEL" && -n "$OL_COMMAND_HANDOFF" ]]
+  line="$(jq -er '.launch_line | strings | select(length > 0)' <<<"$1" 2>"$DEP_ERR")" || return 1
+  ol_command_read claude "$line" && [[ -n "$OL_COMMAND_MODEL" && -n "$OL_COMMAND_HANDOFF" ]] || return 1
+  directory="$(jq -er '.cwd // "" | strings' <<<"$1" 2>"$DEP_ERR")" || return 1
+  [[ -z "$directory" || "$directory" == /* ]] || return 1
+  case "$OL_COMMAND_HANDOFF" in
+    /*) OL_COMMAND_HANDOFF_FILE="$OL_COMMAND_HANDOFF" ;;
+    *) [[ -n "$directory" ]] || return 1
+       OL_COMMAND_HANDOFF_FILE="${directory%/}/$OL_COMMAND_HANDOFF" ;;
+  esac
+  OL_COMMAND_CWD="$directory"
 }
 
 # The jq definitions every reader and writer of the record shares, so none
@@ -761,7 +772,7 @@ ol_command_recovery() { # LINE
 # turn ends and tool calls; `oversee launch` reads it for its liveness
 # refusal, so a live pane a startless record names blocks a second overseer.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
-  def ol_model_launch: {server,server_start,pane,generation,launch_line,session_id};
+  def ol_model_launch: {server,server_start,pane,generation,launch_line,cwd,session_id};
   def ol_recovery_bound($request): ol_model_launch == ($request | ol_model_launch)
     and .model_check.outcome == "switched" and .model_check.session_id == .session_id
     and .model_check.launch_identity == ol_model_launch;
@@ -1103,10 +1114,7 @@ OL_SUCCESSION_ORIGINAL_PENDING=null
 ol_model_recovery_check() { # REQUEST CURRENT
   OL_REASON=model-recovery-unbound
   jq -e --argjson request "$1" "$OL_JQ_DEFS"'ol_recovery_bound($request)' <<<"$2" > /dev/null 2>"$DEP_ERR" || return 1
-  OL_REASON=model-command-unavailable
-  local line
-  line="$(jq -er '.launch_line | strings | select(length > 0)' <<<"$1" 2>"$DEP_ERR")" || return 1
-  ol_command_recovery "$line"
+  ol_command_recovery "$1"
 }
 
 # Every succession write compares and changes the record under the state

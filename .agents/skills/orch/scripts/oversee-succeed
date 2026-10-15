@@ -730,6 +730,7 @@ handoff_record_read() {
 # staged files and ends before succession can create the successor.
 handoff_write() (
   local source_parent destination_parent source_path destination_path stage now header_rc
+  HANDOFF="$HANDOFF_FILE"
   [[ ! -L "$HANDOFF_BODY" && -f "$HANDOFF_BODY" && -s "$HANDOFF_BODY" ]] \
     || die handoff-body-invalid "path=$HANDOFF_BODY" reason=not-nonempty-regular
   source_parent="$(dirname -- "$HANDOFF_BODY")" \
@@ -851,6 +852,7 @@ while [[ $# -gt 0 ]]; do
 done
 matches "$WAIT_SECS" '^[1-9][0-9]*$' || die invalid-wait-secs "value=$WAIT_SECS"
 matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
+HANDOFF_FILE="$HANDOFF"
 if (( ! WRITE_ONLY )); then
   matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
     || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
@@ -1072,6 +1074,8 @@ if [[ "$MODE" != dead ]]; then
     MODEL_SWITCHED=1
     HARNESS_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})
     HANDOFF="$OL_COMMAND_HANDOFF"
+    HANDOFF_FILE="$OL_COMMAND_HANDOFF_FILE"
+    [[ -z "$OL_COMMAND_CWD" ]] || CALLER_PATH="$OL_COMMAND_CWD"
   fi
   if [[ "$OL_CUR_HARNESS" == claude ]]; then
     recorded_line="$(jq -r '.launch_line // ""' <<<"$OL_CUR_RECORD")" || die record-unread field=launch_line
@@ -1701,10 +1705,10 @@ if [[ "$MODE" == succeed ]]; then
       || die model-recovery-refused "reason=$OL_REASON" step=handoff
   fi
   (( ! BODY_GIVEN )) || handoff_write
-  handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF")" \
-    || die handoff-stale "path=$HANDOFF" "expected=$generation"
+  handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF_FILE")" \
+    || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation"
   [[ "$handoff_generation" == "$generation" ]] \
-    || die handoff-stale "path=$HANDOFF" "expected=$generation"
+    || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation"
 fi
 # The successor is recorded BEFORE its window opens, not after the close: the
 # close kills this script's own window and a write placed after it may never

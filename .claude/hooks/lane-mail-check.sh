@@ -3031,8 +3031,7 @@ handoff_check() {
     if [ -z "$cause" ] && [ "$ROLE" = overseer ]; then
       # oversee register can know the model before watch start records a command.
       # Only the command owner can establish executable recovery evidence.
-      recovery=$(jq -r '.launch_line // ""' <<<"$record") || recovery=""
-      if ! ol_command_recovery "$recovery"; then
+      if ! DEP_ERR="$WORK_DIR/model.err" ol_command_recovery "$record"; then
         cause=launch-command-unread
       fi
     fi

@@ -195,7 +195,8 @@ judged() {
 # The harness acknowledges its argv before drawing its working-turn hint.
 model_switch_rows() (
   local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
-  local scenario handoff_path line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before
+  local scenario handoff_path relative_dir launch_dir line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before root_before root_handoff prior_pane
+  local producer_handoff=()
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
@@ -211,6 +212,11 @@ model_switch_rows() (
 set -euo pipefail
 for prompt in "\$@"; do :; done
 printf '%s\\n' "\$prompt" > '$TMP_ROOT/model.prompt'
+pwd -P > '$TMP_ROOT/model.cwd'
+if [[ -f '$TMP_ROOT/capture-handoff' ]]; then
+  handoff=\${prompt#'${BRIEF%tmp/handoffs/OVERSEER-HANDOFF.md}'}
+  cat -- "\$handoff" > '$TMP_ROOT/model.snapshot'
+fi
 model=""
 while [[ \$# -gt 0 ]]; do
   if [[ \$1 == --model ]]; then model=\$2; break; fi
@@ -267,27 +273,52 @@ BARRIER
     mutate_file "$scripts/lib/overseer-launch.sh" \
       '    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"' \
       '    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"; handoff=tmp/handoffs/OVERSEER-HANDOFF.md'
+  elif [[ "${MODEL_OWNER_CONTROL:-}" == base ]]; then
+    mutate_file "$scripts/lib/overseer-launch.sh" \
+      '       OL_COMMAND_HANDOFF_FILE="${directory%/}/$OL_COMMAND_HANDOFF" ;;' \
+      '       OL_COMMAND_HANDOFF_FILE="${directory%/}/$OL_COMMAND_HANDOFF"; OL_COMMAND_HANDOFF_FILE="$PWD/$OL_COMMAND_HANDOFF" ;;'
   fi
   claude_usage 10 10 10 Opus > "$FIXTURE_DIR/.claude.json"
-  while IFS='|' read -r scenario handoff_path; do
+  while IFS='|' read -r scenario handoff_path relative_dir; do
     new_caller claude
-    rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
+    rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/capture-handoff" "${TMP_ROOT:?}/model.snapshot" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
     [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
-    line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --handoff "$handoff_path" -- \
-      --model opus --effort high "$BYPASS")
-    state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
-      "$(jq -nc --arg line "$line" --arg cwd "$TMP_ROOT/work" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
+    launch_dir="$TMP_ROOT/work"
+    if [[ "$relative_dir" != . ]]; then launch_dir+="/$relative_dir"; fi
+    mkdir -p "$launch_dir"
+    [[ "$handoff_path" != absolute ]] || handoff_path="$TMP_ROOT/work/shared/owner-state.md"
+    if [[ "$relative_dir" == . ]]; then
+      line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --handoff "$handoff_path" -- \
+        --model opus --effort high "$BYPASS")
+      state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
+        "$(jq -nc --arg line "$line" --arg cwd "$launch_dir" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
+    else
+      # The public producer supplies the recorded base, actual pane cwd and
+      # retained watch command. Recovery below still starts at the repo root.
+      state none
+      prior_pane=$CALLER_PANE
+      producer_handoff=(--handoff "$handoff_path")
+      [[ "$scenario" != sub-default ]] || producer_handoff=()
+      model_env env ORCH_OVERSEER_PREFERENCE=claude:opus:high "$scripts/oversee" launch \
+        --session fleet --cwd "$launch_dir" ${producer_handoff[@]+"${producer_handoff[@]}"} --wait-secs 20 \
+        > "$TMP_ROOT/model-launch.out" 2> "$TMP_ROOT/model-launch.err"
+      CALLER_PANE=$(jq -r .overseer.pane "$FLEET_STATE")
+      tm kill-pane -t "$prior_pane"
+      "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.session_id="s1"' >/dev/null
+      assert_eq "$(jq -r .overseer.cwd "$FLEET_STATE")" "$launch_dir" "$scenario public producer records its launch directory"
+    fi
     model_env "$BASH" -euo pipefail -c '
       SCRIPT_DIR=$1 SUCCEED=$1/oversee-succeed WORKFLOW_STATE=$1/workflow-state
       HANDOFF=$3 OVERSEER_HARNESS=claude
       WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "claude-opus-4-6[1m]" --effort high --dangerously-skip-permissions)
       DEP_ERR=$2
+      cd -- "$4"
       . "$1/lib/lane-launch.sh"
       . "$1/lib/lane-context.sh"
       . "$1/lib/watch-overseer-record.sh"
       overseer_record_notice() { printf "%s\n" "$*" >&2; }
       overseer_command_record
-    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path"
+    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path" "$launch_dir"
     line=$(jq -r '.overseer.launch_line' "$FLEET_STATE")
     model=$(launch_choice_launch_model claude "$line")
     assert_eq "$model" 'claude-opus-4-6[1m]' "$scenario watch record retains the executable selector"
@@ -295,24 +326,34 @@ BARRIER
     case "$scenario" in
       launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
       launch-command-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.launch_line)' >/dev/null ;;
+      cwd-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.cwd)' >/dev/null ;;
       handoff-unread)
         printf 'Continue the owner task.\n' > "$TMP_ROOT/model-brief"
         line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --brief-file "$TMP_ROOT/model-brief" -- \
           --model opus --effort high "$BYPASS")
         "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.launch_line=$line' --arg line "$line" >/dev/null ;;
     esac
-    handoff="$TMP_ROOT/work/$handoff_path"
+    if [[ "$handoff_path" == /* ]]; then handoff="$handoff_path"; else handoff="$launch_dir/$handoff_path"; fi
     mkdir -p "${handoff%/*}"
     printf 'Start here: fixture generation=2\n\nRetain the owner constraint from the previous handoff.\n' > "$handoff"
     if [[ "$scenario" == custom ]]; then
       default_before=$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")
     fi
+    root_handoff=""
+    if [[ "$relative_dir" != . && "$handoff_path" != /* ]]; then
+      root_handoff="$TMP_ROOT/work/$handoff_path"
+      mkdir -p "${root_handoff%/*}"
+      printf 'The repository root handoff belongs to another directory.\n' > "$root_handoff"
+      root_before=$(cat "$root_handoff")
+    fi
     # The real watch retains this command for handover after predecessor stop.
-    model_env "$BASH" -euo pipefail -c '
-      . "$1/lib/watch-pid.sh"
-      watch_pid_write "$2" "$3" hand "$1/oversee-watch" --repeat 60 --state "$2" --handoff "$4"
-      watch_pid_release "$2"
-    ' _ "$scripts" "$FLEET_STATE" "$CALLER_PANE" "$handoff_path"
+    if [[ "$relative_dir" == . ]]; then
+      model_env "$BASH" -euo pipefail -c '
+        . "$1/lib/watch-pid.sh"
+        watch_pid_write "$2" "$3" hand "$1/oversee-watch" --repeat 60 --state "$2" --handoff "$4"
+        watch_pid_release "$2"
+      ' _ "$scripts" "$FLEET_STATE" "$CALLER_PANE" "$handoff_path"
+    fi
     transcript="$TMP_ROOT/work/tmp/model-parent.jsonl"
     : > "$transcript"
     mkdir -p "${transcript%.jsonl}/subagents"
@@ -321,6 +362,8 @@ BARRIER
       '.child_sessions={runtime:{status:"active",agent_id:"running-agent"},retired:{status:"closed",agent_id:"closed-agent"}}' >/dev/null
     before=$(jq -c . "$FLEET_STATE")
     old_pane=$CALLER_PANE
+    rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/model.snapshot"
+    : > "$TMP_ROOT/capture-handoff"
     model=claude-opus-4-6
     [[ "$scenario" == matching ]] || model=claude-sonnet-5-5
     [[ "$scenario" != observed-unread ]] || model=""
@@ -361,7 +404,7 @@ BARRIER
       ' _ "$scripts" "$TMP_ROOT/binding.err" "$captured"
       assert_eq "$(jq -r '.overseer.model_check.outcome' "$FLEET_STATE")" switched 'the failed competing attempt restores the acquired request'
       assert_eq "$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$old_pane" || :)" 1 'the displaced recovery keeps its predecessor running'
-    elif [[ "$scenario" == switched || "$scenario" == custom ]]; then
+    elif [[ "$scenario" == switched || "$scenario" == custom || "$relative_dir" != . ]]; then
       deadline=$((SECONDS + 30))
       while [[ "$SECONDS" -lt "$deadline" ]] && tm list-panes -a -F '#{pane_id}' | grep -Fxq -- "$old_pane"; do sleep 0.05; done
       after=$(jq -r .overseer.pane "$FLEET_STATE")
@@ -375,6 +418,8 @@ BARRIER
       assert_file_not_contains "$handoff" 'attached-agent=closed-agent' 'model recovery omits closed agents'
       # ol_command_read parses this exact final prompt from a recorded command.
       assert_eq "$(cat "$TMP_ROOT/model.prompt")" "${BRIEF%tmp/handoffs/OVERSEER-HANDOFF.md}$handoff_path" "$scenario successor prompt retains its handoff destination"
+      assert_eq "$(cat "$TMP_ROOT/model.cwd")" "$launch_dir" "$scenario successor keeps the recorded launch directory"
+      assert_file_contains "$TMP_ROOT/model.snapshot" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario successor reads the fresh handoff snapshot"
       deadline=$((SECONDS + 30))
       until watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PANE" == "$after" && "$WATCH_ORIGIN" == succession ]]; do
         if (( SECONDS >= deadline )); then fail "$scenario successor watch claims its pane"; break; fi
@@ -389,6 +434,10 @@ BARRIER
         done
       fi
       assert_eq "$watch_handoff" "$handoff_path" "$scenario watch handover retains its handoff destination"
+      assert_eq "$WATCH_CWD" "$launch_dir" "$scenario watch keeps the handoff resolution directory"
+      if [[ -n "$root_handoff" ]]; then
+        assert_eq "$(cat "$root_handoff")" "$root_before" "$scenario recovery leaves the repository root handoff unchanged"
+      fi
       if [[ "$scenario" == custom ]]; then
         assert_eq "$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")" "$default_before" 'custom model recovery leaves the default handoff unchanged'
       fi
@@ -398,19 +447,24 @@ BARRIER
     else
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-unavailable")]|length' "$FLEET_STATE")" 1 "$scenario reports unavailable once" "$TMP_ROOT/model.out"
       cause="$scenario"
-      [[ "$scenario" != handoff-unread ]] || cause=launch-command-unread
+      [[ "$scenario" != handoff-unread && "$scenario" != cwd-unread ]] || cause=launch-command-unread
       assert_eq "$(jq -r '.overseer.model_check.cause' "$FLEET_STATE")" "$cause" "$scenario keeps its cause"
       assert_eq "$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$old_pane" || :)" 1 "$scenario keeps its predecessor running"
     fi
   done <<'MODELS'
-matching|tmp/handoffs/OVERSEER-HANDOFF.md
-launch-missing|tmp/handoffs/OVERSEER-HANDOFF.md
-observed-unread|tmp/handoffs/OVERSEER-HANDOFF.md
-launch-command-unread|tmp/handoffs/OVERSEER-HANDOFF.md
-handoff-unread|tmp/handoffs/OVERSEER-HANDOFF.md
-displaced|tmp/handoffs/OVERSEER-HANDOFF.md
-switched|tmp/handoffs/OVERSEER-HANDOFF.md
-custom|tmp/handoffs/owner-state.md
+matching|tmp/handoffs/OVERSEER-HANDOFF.md|.
+launch-missing|tmp/handoffs/OVERSEER-HANDOFF.md|.
+observed-unread|tmp/handoffs/OVERSEER-HANDOFF.md|.
+launch-command-unread|tmp/handoffs/OVERSEER-HANDOFF.md|.
+handoff-unread|tmp/handoffs/OVERSEER-HANDOFF.md|.
+cwd-unread|tmp/handoffs/OVERSEER-HANDOFF.md|.
+displaced|tmp/handoffs/OVERSEER-HANDOFF.md|.
+switched|tmp/handoffs/OVERSEER-HANDOFF.md|.
+custom|tmp/handoffs/owner-state.md|.
+sub-default|tmp/handoffs/OVERSEER-HANDOFF.md|subdir
+sub-custom|tmp/handoffs/owner-state.md|subdir
+sub-space|tmp/handoffs/owner-state.md|sub dir
+absolute|absolute|subdir
 MODELS
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
   [[ "$FAIL" -eq 0 ]]
@@ -1126,7 +1180,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR" | grep -o '^oversee-succeed: no-lane-qualif
 
 model_switch_rows || fail 'overseer model-switch behavior'
 succession_binding_rows || fail 'succession write ownership'
-for control in words identity handoff binding destination; do
+for control in words identity handoff binding destination base; do
   status=0
   control_args=--model-switch
   [[ "$control" != binding ]] || control_args=--succession-binding
@@ -1140,6 +1194,7 @@ for control in words identity handoff binding destination; do
   [[ "$control" != handoff ]] || failure='^  FAIL  model recovery preserves standing handoff notes$'
   [[ "$control" != binding ]] || failure='^  FAIL  pending-unwritten refuses a displaced writer$'
   [[ "$control" != destination ]] || failure='^  FAIL  custom model recovery retains its active agent and output path$'
+  [[ "$control" != base ]] || failure='^  FAIL  sub-custom successor reads the fresh handoff snapshot$'
   if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/model-$control.log"; then
     pass "control: main's $control recovery defect fails behavior proof"
   else
