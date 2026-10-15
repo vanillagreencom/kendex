@@ -92,8 +92,9 @@ def main():
             try:
                 started = time.monotonic()
                 print("control: start=mutant name=" + name, flush=True)
+                # One assertion failure proves rejection; later subtests add no evidence.
                 result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/session.test.sh"),
-                                         "SessionContract." + test], env=env, capture_output=True, text=True, timeout=90)
+                                         "--failfast", "SessionContract." + test], env=env, capture_output=True, text=True, timeout=90)
                 print(f"control: elapsed=mutant seconds={time.monotonic() - started:.3f} name={name}", flush=True)
                 assert result.returncode != 0, name + " passed its planted defect"
                 # The test runner's outcome distinguishes a red assertion from
