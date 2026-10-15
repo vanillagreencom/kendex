@@ -204,7 +204,9 @@ PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working (─)+[[:space:]]*$'
 # editor still draws the prompt. Title, account and model text remain variable.
 # Group repeated glyphs so byte-oriented C locale repeats the whole character.
 PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+(─)+[[:space:]]*$'
-PI_CURRENT_FOOTER_RE='^● .+ (─)+ [0-9]+%[[:space:]]*$'
+# pi-qol's statusline can draw zero filled bar cells. Its variable footer content
+# and final percentage identify the row; bar fill does not prove editor readiness.
+PI_CURRENT_FOOTER_RE='^● .+ [0-9]+%[[:space:]]*$'
 PI_CURRENT_PROMPT_RE='^π[[:space:]]*$'
 
 # pane_harness_up SCREEN — the predicate over one captured pane.

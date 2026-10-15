@@ -106,6 +106,11 @@ screen_for() {
     pi_current_no_footer) sed '/^● fleet /d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_dashboard) sed '/^┏/,/^┗/d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_prompt) sed '/^π/d' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_empty_bar) sed '/^● fleet /{s/─/ /g;s/[0-9][0-9]*%/0%/;}' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_empty_bar_no_dashboard) screen_for pi_current_empty_bar | sed '/^┏/,/^┗/d' ;;
+    pi_current_empty_bar_no_title) screen_for pi_current_empty_bar | sed '1d' ;;
+    pi_current_empty_bar_no_footer) screen_for pi_current_empty_bar | sed '/^● fleet /d' ;;
+    pi_current_empty_bar_no_prompt) screen_for pi_current_empty_bar | sed '/^π/d' ;;
     pi_current_variable) sed -e '1s/Fleet PR 1326 Fallback Approval Review - issue-1326/Another session/' -e '/^● fleet /c\
 ● other-project (branch) Provider / Other model / setting                          ───────── 4%' "$CODEX_PANES/pi-current.txt" ;;
     pi_header_only) sed '/^──/,$d' "$CODEX_PANES/pi-working.txt" ;;
@@ -246,6 +251,16 @@ a reported current Pi screen is ready in C locale|pi_current|yes|C
 a reported current Pi screen is ready in UTF-8 locale|pi_current|yes|C.UTF-8
 current Pi without its optional dashboard is ready in C locale|pi_current_no_dashboard|yes|C
 current Pi without its optional dashboard is ready in UTF-8 locale|pi_current_no_dashboard|yes|C.UTF-8
+current Pi with an empty context bar is ready in C locale|pi_current_empty_bar|yes|C
+current Pi with an empty context bar is ready in UTF-8 locale|pi_current_empty_bar|yes|C.UTF-8
+current Pi with an empty bar and no dashboard is ready in C locale|pi_current_empty_bar_no_dashboard|yes|C
+current Pi with an empty bar and no dashboard is ready in UTF-8 locale|pi_current_empty_bar_no_dashboard|yes|C.UTF-8
+current Pi with an empty bar and no title is not ready in C locale|pi_current_empty_bar_no_title|no|C
+current Pi with an empty bar and no title is not ready in UTF-8 locale|pi_current_empty_bar_no_title|no|C.UTF-8
+current Pi with an empty bar and no footer is not ready in C locale|pi_current_empty_bar_no_footer|no|C
+current Pi with an empty bar and no footer is not ready in UTF-8 locale|pi_current_empty_bar_no_footer|no|C.UTF-8
+current Pi with an empty bar and no prompt is not ready in C locale|pi_current_empty_bar_no_prompt|no|C
+current Pi with an empty bar and no prompt is not ready in UTF-8 locale|pi_current_empty_bar_no_prompt|no|C.UTF-8
 current Pi readiness allows different title and footer content|pi_current_variable|yes
 current Pi without its title is not ready|pi_current_no_title|no
 current Pi without its footer is not ready|pi_current_no_footer|no
@@ -261,9 +276,9 @@ up=no
 assert_eq "$up" no 'current Pi readiness does not assert turn activity'
 PI_CURRENT_MUTANT="$(mutant_scripts pi-current lib/lane-state.sh)" || exit 1
 mutate_file "$PI_CURRENT_MUTANT/lib/lane-state.sh" '|| { grep -Eq -- "$PI_CURRENT_TITLE_RE"' '|| { false && grep -Eq -- "$PI_CURRENT_TITLE_RE"'
-pi_up="$(export LC_ALL=C; source "$PI_CURRENT_MUTANT/lib/lane-state.sh"; if pane_harness_up "$(screen_for pi_current_no_dashboard)"; then printf yes; else printf no; fi)"
+pi_up="$(export LC_ALL=C; source "$PI_CURRENT_MUTANT/lib/lane-state.sh"; if pane_harness_up "$(screen_for pi_current_empty_bar_no_dashboard)"; then printf yes; else printf no; fi)"
 pi_current_red="$(FAIL=0; assert_eq "$pi_up" yes control >/dev/null; printf '%s' "$FAIL")"
-assert_eq "$pi_current_red" 1 'control: removing current Pi readiness rejects the C-locale dashboard-free screen'
+assert_eq "$pi_current_red" 1 'control: removing current Pi readiness rejects the empty-bar dashboard-free screen'
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
 # caller could act on, and never the `idle` the session read claimed. The grep
