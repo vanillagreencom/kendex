@@ -3238,6 +3238,103 @@ table \
   'a --max-pct above 100 is rejected, so no threshold passes a spent wall||list --max-pct 150|rc=1 key=invalid-percent,option=--max-pct' \
   'a malformed --min-headroom-pct is rejected, and the refusal names the spelling that was passed||list --min-headroom-pct 999x|rc=1 key=invalid-percent,option=--min-headroom-pct'
 
+echo "=== recorded workflow facts belong to the launched lane ==="
+FACTS_ROOT="$TMP_ROOT/facts"
+mkdir -p "$FACTS_ROOT/fleet" "$FACTS_ROOT/local/tmp" "$FACTS_ROOT/host/.git" "$FACTS_ROOT/host/records"
+git -C "$FACTS_ROOT/local" init -q -b main
+git -C "$FACTS_ROOT/local" config gc.auto 0
+git -C "$FACTS_ROOT/local" config maintenance.auto false
+printf '[env]\nORCH_STATE_DIR = "records"\n' > "$FACTS_ROOT/host/kendex.settings.toml"
+printf 'ref: refs/heads/main\n' > "$FACTS_ROOT/host/.git/HEAD"
+FACTS_STATE='{"first_panel":{},"rereview_cycles":1,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa"},{"cause":"a","commit":"bbb"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"}],"restacks":4,"post_pr_stop":{"gate":"review","name":"review-round-cap","remaining":["private detail"]}}'
+FACTS_READ='{"item":"KEN-FACTS","status":"read","reason":null,"stage":"review","review_rounds":5,"fix_receipts":1,"validation_runs":2,"restacks":4,"repeated_class_rounds":1,"post_pr_stop":{"gate":"review","name":"review-round-cap"}}'
+FACTS_EMPTY='{"item":"KEN-FACTS","status":"read","reason":null,"stage":null,"review_rounds":0,"fix_receipts":"unread","validation_runs":0,"restacks":0,"repeated_class_rounds":"unread","post_pr_stop":null}'
+printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json"
+printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/host/records/workflow-state-KEN-FACTS.json"
+# The caller's recorded facts are deliberately different. A gone-root fallback
+# must read these bytes and fail the same assertion that protects the live verb.
+mkdir -p "$NOSETTINGS/tmp"
+printf '%s\n' "$FACTS_STATE" > "$NOSETTINGS/tmp/workflow-state-KEN-FACTS.json"
+printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/tmp/workflow-state-pr-42.json"
+
+facts_case() { # CASE EXIT STATUS REASON [EXPECTED_READ]
+  local kind="$1" expected_rc="$2" status="$3" reason="$4" expected="${5:-}" record env_list="" actual
+  record="$(jq -cn --arg root "$FACTS_ROOT/local" '{item:"KEN-FACTS",mail_root:$root,pending_pr:{pr:42}}')" || exit 1
+  printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json"
+  case "$kind" in
+    gone) record="$(jq --arg root "$FACTS_ROOT/gone" '.mail_root=$root' <<<"$record")" ;;
+    unbound) record="$(jq 'del(.mail_root)' <<<"$record")" ;;
+    root-file) record="$(jq --arg root "$FACTS_ROOT/local/tmp/workflow-state-pr-42.json" '.mail_root=$root' <<<"$record")" ;;
+    empty) printf '{}\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
+    absent) rm "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
+    malformed) printf '{\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
+    nonobject) printf '[]\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
+    invalid-count) printf '{"stages":42}\n' > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json" ;;
+    hosted|provider-failed|provider-busy|parked|files-none|host-gone)
+      record="$(jq --arg root "$FACTS_ROOT/host" --arg host "$HOST_FIXTURE" '.mail_root=$root|.host=$host' <<<"$record")"
+      env_list="LANE_HOST_STUB_LOG=$FACTS_ROOT/host.log;LANE_HOST_STUB_DIR=/"
+      : > "$FACTS_ROOT/host.log"
+      case "$kind" in
+        provider-failed) env_list+=";LANE_HOST_STUB_CAT_STATUS=7" ;;
+        provider-busy) env_list+=";LANE_HOST_STUB_CAT_STATUS=69" ;;
+        parked)
+          record="$(jq '.status="parked"|.parked={pr:42}' <<<"$record")"
+          env_list+=";LANE_HOST_STUB_CAT_STATUS=3;LANE_HOST_STUB_CAT_STATE=stopped" ;;
+        files-none) record="$(jq '.host="claude-cloud"' <<<"$record")" ;;
+        host-gone) record="$(jq --arg root "$FACTS_ROOT/host-gone" '.mail_root=$root' <<<"$record")" ;;
+      esac ;;
+  esac
+  jq -n --argjson record "$record" '{lanes:[$record]}' > "$FACTS_ROOT/fleet/workflow-state-oversee.json" || exit 1
+  case "$kind" in
+    missing) printf '{"lanes":[{"item":"KEN-OTHER"}]}\n' > "$FACTS_ROOT/fleet/workflow-state-oversee.json" ;;
+    ambiguous) jq -n --argjson record "$record" '{lanes:[$record,$record]}' > "$FACTS_ROOT/fleet/workflow-state-oversee.json" ;;
+    fleet-malformed) printf '{\n' > "$FACTS_ROOT/fleet/workflow-state-oversee.json" ;;
+  esac
+  run_lanes "$env_list" facts --state-dir "$FACTS_ROOT/fleet" KEN-FACTS
+  if [[ -z "$expected" ]]; then
+    expected="$(jq -cn --arg status "$status" --arg reason "$reason" '{item:"KEN-FACTS",status:$status,reason:$reason,stage:null,review_rounds:null,fix_receipts:null,validation_runs:null,restacks:null,repeated_class_rounds:null,post_pr_stop:null}')" || exit 1
+  fi
+  actual="$(jq -cs 'if length == 1 then .[0] else error("not one result") end' <<<"$OUT")" || actual=invalid
+  assert_eq "$RC|$actual" "$expected_rc|$(jq -c . <<<"$expected")" "facts $kind: $status with attributable fields" "$ERR"
+  if [[ "$kind" == parked || "$kind" == files-none ]]; then
+    assert_file_not_contains "$FACTS_ROOT/host.log" 'start ' "facts $kind never starts the sandbox"
+  fi
+}
+while IFS='|' read -r kind expected_rc status reason; do
+  [[ -n "$kind" ]] || continue
+  facts_case "$kind" "$expected_rc" "$status" "$reason"
+done <<'FACTS_CASES'
+gone|1|absent|root-gone
+unbound|2|failed|root-unbound
+root-file|2|failed|root-unread
+absent|1|absent|state-absent
+malformed|2|failed|state-unread
+nonobject|2|failed|state-invalid
+invalid-count|2|failed|state-invalid
+missing|2|failed|record-missing
+ambiguous|2|failed|record-ambiguous
+fleet-malformed|2|failed|fleet-unread
+provider-failed|2|failed|state-unread
+provider-busy|2|failed|state-unread
+parked|2|failed|state-unread
+files-none|1|absent|files-none
+host-gone|1|absent|state-absent
+FACTS_CASES
+facts_case local 0 read '' "$FACTS_READ"
+facts_case hosted 0 read '' "$FACTS_READ"
+facts_case empty 0 read '' "$FACTS_EMPTY"
+
+FACTS_MUTANT="$(mutant_scripts facts-caller-fallback lib/lane-gitfile.sh)" || exit 1
+mutate_file "$FACTS_MUTANT/lib/lane-gitfile.sh" 'elif [[ "${10:-false}" == true ]]; then' 'elif [[ "${10:-false}" == true ]] && false; then'
+FACTS_SHIPPED="$LANES"
+LANES="$FACTS_MUTANT/lanes"
+if (FAIL=0; facts_case gone 1 absent root-gone; [[ "$FAIL" -eq 0 ]]) > "$FACTS_ROOT/mutant.out"; then
+  fail 'facts caller-checkout fallback mutant passed the gone-root row'
+else
+  assert_file_contains "$FACTS_ROOT/mutant.out" '  FAIL  facts gone:' 'control: caller-checkout fallback fails the unchanged gone-root row'
+fi
+LANES="$FACTS_SHIPPED"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

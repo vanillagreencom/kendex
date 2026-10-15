@@ -24,6 +24,7 @@
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
+#   lanes facts --state-dir DIR ITEM
 #
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. A lane whose access token has expired is
@@ -367,6 +368,22 @@
 #          its per-home cap `lanes: lane-host-busy`, and either leaves the state
 #          alone. --json prints {"item":..,"state":..}. Exit 1 when a scan
 #          failed rather than answered.
+#   facts  Read one exact launched item from DIR's oversee workflow state.
+#          Print one JSON object: item; status (read, absent or failed); reason
+#          (null on read, a stable key otherwise); stage (the last recorded
+#          stage kind or null); review_rounds, fix_receipts, validation_runs,
+#          restacks and repeated_class_rounds (recorded-derived numbers or
+#          "unread", using lane_state_rounds); post_pr_stop (null or the recorded
+#          gate and name). Non-read results carry null for all facts.
+#          Exit 0 means read; 1 means confirmed absence; 2 means failed or
+#          unbound read. Absence reasons are root-gone, state-absent and
+#          files-none. Failure reasons are fleet-unread, record-missing,
+#          record-ambiguous, record-invalid, root-unbound, root-unread,
+#          state-unread, state-invalid and scratch-unavailable.
+#          DIR binds the fleet state. The lane's host and mail_root bind its
+#          own state. Reads use existing host capabilities and file transport.
+#          No read uses another item key or the caller checkout as fallback.
+#          A parked sandbox stays stopped. No live activity or GitHub is read.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
 #         or `lanes: lane-retired` when one does, so a caller can tell a
@@ -3885,6 +3902,8 @@ parse_argv() {
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
 			--exclude-lane) need_val "$@"; EXCLUDE_LANE="$2"; shift 2 ;;
 			--exclude-lane=*) EXCLUDE_LANE="${1#--exclude-lane=}"; need_val --exclude-lane "$EXCLUDE_LANE"; shift ;;
+			--state-dir) [[ "$SUB" == facts ]] || die unknown-option "$@"; need_val "$@"; FACTS_STATE_DIR="$2"; shift 2 ;;
+			--state-dir=*) [[ "$SUB" == facts ]] || die unknown-option "$@"; FACTS_STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$FACTS_STATE_DIR"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
 			--max-age) need_val "$@"; USAGE_MAX_AGE="$2"; shift 2 ;;
@@ -3893,7 +3912,7 @@ parse_argv() {
 			*)
 				# `check` takes one config dir and `state` one item; anything
 				# else is an option typo.
-				[[ ( "$SUB" == check || "$SUB" == state ) && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
+				[[ ( "$SUB" == check || "$SUB" == state || "$SUB" == facts ) && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
 				LANE_ARG="$1"
 				shift
 				;;
@@ -4284,9 +4303,76 @@ validate_lane_settings() {
 	[[ "$SUB" != check ]] || prune_usage_cache
 }
 
+facts_result() { # STATUS REASON
+	jq -cn --arg item "$LANE_ARG" --arg status "$1" --arg reason "$2" '
+		{item: $item, status: $status, reason: $reason, stage: null,
+		 review_rounds: null, fix_receipts: null, validation_runs: null,
+		 restacks: null, repeated_class_rounds: null, post_pr_stop: null}'
+}
+
+cmd_facts() (
+	local fleet records record host root scratch state result rc=0
+	[[ -n "$LANE_ARG" ]] || die missing-value facts
+	[[ -n "${FACTS_STATE_DIR:-}" ]] || die missing-value --state-dir
+	if ! fleet="$("$SCRIPT_DIR/workflow-state" --state-dir "$FACTS_STATE_DIR" get oversee)"; then
+		facts_result failed fleet-unread; exit 2
+	fi
+	if ! records="$(jq -ce --arg item "$LANE_ARG" '
+		if type == "object" and (.lanes | type) == "array"
+		then [.lanes[] | select(.item == $item)] else error("invalid fleet state") end
+	' <<<"$fleet")"; then
+		facts_result failed fleet-unread; exit 2
+	fi
+	case "$(jq 'length' <<<"$records")" in
+		0) facts_result failed record-missing; exit 2 ;;
+		1) ;;
+		*) facts_result failed record-ambiguous; exit 2 ;;
+	esac
+	record="$(jq -c '.[0]' <<<"$records")" || exit 2
+	if ! jq -e '(.host == null or (.host | type) == "string") and
+		(.mail_root == null or (.mail_root | type) == "string")' <<<"$record" >/dev/null; then
+		facts_result failed record-invalid; exit 2
+	fi
+	host="$(jq -r '.host // ""' <<<"$record")" || exit 2
+	root="$(jq -r '.mail_root // ""' <<<"$record")" || exit 2
+	scratch="$(mktemp -d)" || { facts_result failed scratch-unavailable; exit 2; }
+	trap 'rm -rf -- "${scratch:?}"' EXIT
+	# shellcheck source=lib/lane-gitfile.sh
+	source "$SCRIPT_DIR/lib/lane-gitfile.sh" || exit 2
+	lane_item_state "$SCRIPT_DIR/workflow-state" "$SCRIPT_DIR/lane-host" "${ORCH_STATE_DIR:-tmp}" \
+		"$LANE_ARG" "$host" "$root" "$scratch" "" "$LANE_ARG" true || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		[[ ! -s "$scratch/state.err" ]] || cat "$scratch/state.err" >&2
+		facts_result failed "${LANE_ITEM_STATE_REASON:-state-unread}"; exit 2
+	fi
+	if [[ -z "$LANE_ITEM_STATE" ]]; then
+		facts_result absent "${LANE_ITEM_STATE_REASON:-state-absent}"; exit 1
+	fi
+	state="$(jq -cse 'if length == 1 and (.[0] | type) == "object"
+		then .[0] else error("invalid item state") end' <<<"$LANE_ITEM_STATE")" || {
+		facts_result failed state-invalid; exit 2
+	}
+	lane_state_rounds "$state" "$scratch/state.err" || {
+		cat "$scratch/state.err" >&2
+		facts_result failed state-invalid; exit 2
+	}
+	result="$(jq -c --arg item "$LANE_ARG" \
+		--argjson review "$LANE_REVIEW_ROUNDS" --arg fix "$LANE_FIX_RECEIPTS" \
+		--argjson validation "$LANE_VALIDATION_RUNS" --argjson restacks "$LANE_RESTACKS" \
+		--arg repeated "$LANE_REPEATED_CLASS_ROUNDS" '
+		{item: $item, status: "read", reason: null, stage: (.stages[-1].kind // null),
+		 review_rounds: $review, fix_receipts: ($fix | fromjson? // $fix),
+		 validation_runs: $validation, restacks: $restacks,
+		 repeated_class_rounds: ($repeated | fromjson? // $repeated),
+		 post_pr_stop: (if .post_pr_stop == null then null else .post_pr_stop | {gate, name} end)}
+	' <<<"$state")" || { facts_result failed state-invalid; exit 2; }
+	printf '%s\n' "$result"
+)
+
 parse_argv "$@"
 
 case "$SUB" in
+	facts) cmd_facts; exit $? ;;
 	list)
 		HARNESS="${HARNESS:-all}"
 		[[ "$HARNESS" =~ ^(claude|codex|copilot|all)$ ]] || die invalid-harness "$@"

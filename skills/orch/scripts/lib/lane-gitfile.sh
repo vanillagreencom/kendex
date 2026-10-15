@@ -260,7 +260,7 @@ lane_state_rounds() { # STATE_JSON [ERRF]
   IFS=$'\t' read -r LANE_REVIEW_ROUNDS LANE_FIX_RECEIPTS LANE_VALIDATION_RUNS LANE_RESTACKS LANE_REPEATED_CLASS_ROUNDS <<<"$counts"
 }
 
-# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY]
+# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT]
 # ITEM identifies the launched lane for every host request. STATE_KEY defaults
 # to ITEM and selects only the workflow-state file, including older archives
 # without a recorded member. A PR-key fallback keeps the host's item identity.
@@ -282,14 +282,27 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # machine can read. 0 read, the state possibly
 # empty; 2 the read failed, SCRATCH/state.err saying why; 4 lane-host refused
 # the provider call at its per-home cap (lane-host-busy), SCRATCH/state.err
-# carrying its line.
+# carrying its line. STRICT=true binds the read to ROOT, with no caller-checkout
+# fallback. LANE_ITEM_STATE_REASON then identifies absent or unbound local roots
+# and hosts with files=none for the public lanes facts result.
 LANE_ITEM_STATE=""
 lane_item_state() {
   local path files rc=0 state_key="${9:-$4}"
-  LANE_ITEM_STATE=""
+  LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON=""
+  if [[ "${10:-false}" == true && -z "$6" ]]; then
+    LANE_ITEM_STATE_REASON=root-unbound
+    return 2
+  fi
   if [[ -z "$5" ]]; then
     if [[ -n "$6" && -d "$6" ]]; then
       path="$(cd -- "$6" && "$1" path "$state_key" 2>"$7/state.err")" || return 2
+    elif [[ "${10:-false}" == true ]]; then
+      if [[ -e "$6" || -L "$6" ]]; then
+        LANE_ITEM_STATE_REASON=root-unread
+        return 2
+      fi
+      LANE_ITEM_STATE_REASON=root-gone
+      return 0
     else
       path="$("$1" path "$state_key" 2>"$7/state.err")" || return 2
     fi
@@ -299,7 +312,10 @@ lane_item_state() {
   fi
   lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2
   lane_capability files files
-  [[ "$files" != none ]] || return 0
+  if [[ "$files" == none ]]; then
+    LANE_ITEM_STATE_REASON=files-none
+    return 0
+  fi
   ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" || rc=$?
   [[ "$rc" -eq 0 && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]] || return "$rc"
   lane_archived_state "$state_key" "$8" "$7" "$6"
