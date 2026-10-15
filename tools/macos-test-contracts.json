@@ -239,6 +239,7 @@
     "skills/linear/tests/rate-limited-http-400.test.sh": "linux-only",
     "skills/linear/tests/related-inverse.test.sh": "linux-only",
     "skills/linear/tests/removed-verbs.test.sh": "linux-only",
+    "skills/linear/tests/request-journal.test.sh": "linux-only",
     "skills/linear/tests/roster-orphan.test.sh": "linux-only",
     "skills/linear/tests/run-status-errexit.test.sh": "linux-only",
     "skills/linear/tests/session-status-cycles.test.sh": "linux-only",
