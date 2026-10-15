@@ -104,8 +104,7 @@ screen_for() {
     pi_current) cat "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_title) sed '1d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_footer) sed '/^● fleet /d' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_no_top) sed '/^┏/d' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_no_bottom) sed '/^┗/d' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_no_dashboard) sed '/^┏/,/^┗/d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_prompt) sed '/^π/d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_variable) sed -e '1s/Fleet PR 1326 Fallback Approval Review - issue-1326/Another session/' -e '/^● fleet /c\
 ● other-project (branch) Provider / Other model / setting                          ───────── 4%' "$CODEX_PANES/pi-current.txt" ;;
@@ -230,10 +229,10 @@ unset LANE_HOST_STUB_HARNESS_STATE LANE_HOST_STUB_PROBE_STATUS
 # Whether a launcher sees the harness up on a pane it opened: the Copilot
 # composer is two lines, so it is the one screen the one-line pattern misses.
 # A dialog answers no, the direction the launcher waits out.
-while IFS='|' read -r name screen want; do
+while IFS='|' read -r name screen want screen_locale; do
   [[ -n "$name" ]] || continue
   up=no
-  ! pane_harness_up "$(screen_for "$screen")" || up=yes
+  ! LC_ALL="${screen_locale:-C}" pane_harness_up "$(screen_for "$screen")" || up=yes
   assert_eq "$up" "$want" "$name"
 done <<'ROWS'
 a claude composer is the harness up|idle|yes
@@ -241,13 +240,15 @@ an idle copilot composer is the harness up|copilot_idle|yes
 a signed-out copilot composer is still the harness up|copilot_signed_out_idle|yes
 a copilot command in flight is the harness up|copilot_working|yes
 copilot's folder-trust dialog is not|copilot_trust|no
-a Pi compact working screen is the harness up|pi_working|yes
-a reported current Pi screen is ready|pi_current|yes
+a Pi compact working screen is the harness up in C locale|pi_working|yes|C
+a Pi compact working screen is the harness up in UTF-8 locale|pi_working|yes|C.UTF-8
+a reported current Pi screen is ready in C locale|pi_current|yes|C
+a reported current Pi screen is ready in UTF-8 locale|pi_current|yes|C.UTF-8
+current Pi without its optional dashboard is ready in C locale|pi_current_no_dashboard|yes|C
+current Pi without its optional dashboard is ready in UTF-8 locale|pi_current_no_dashboard|yes|C.UTF-8
 current Pi readiness allows different title and footer content|pi_current_variable|yes
 current Pi without its title is not ready|pi_current_no_title|no
 current Pi without its footer is not ready|pi_current_no_footer|no
-current Pi without its upper border is not ready|pi_current_no_top|no
-current Pi without its lower border is not ready|pi_current_no_bottom|no
 current Pi without its prompt is not ready|pi_current_no_prompt|no
 a Pi startup interrupted before its editor is not ready|pi_header_only|no
 a Working border without Pi startup is not proof of Pi|pi_editor_only|no
@@ -260,29 +261,9 @@ up=no
 assert_eq "$up" no 'current Pi readiness does not assert turn activity'
 PI_CURRENT_MUTANT="$(mutant_scripts pi-current lib/lane-state.sh)" || exit 1
 mutate_file "$PI_CURRENT_MUTANT/lib/lane-state.sh" '|| { grep -Eq -- "$PI_CURRENT_TITLE_RE"' '|| { false && grep -Eq -- "$PI_CURRENT_TITLE_RE"'
-pi_up="$(source "$PI_CURRENT_MUTANT/lib/lane-state.sh"; if pane_harness_up "$(screen_for pi_current)"; then printf yes; else printf no; fi)"
+pi_up="$(export LC_ALL=C; source "$PI_CURRENT_MUTANT/lib/lane-state.sh"; if pane_harness_up "$(screen_for pi_current_no_dashboard)"; then printf yes; else printf no; fi)"
 pi_current_red="$(FAIL=0; assert_eq "$pi_up" yes control >/dev/null; printf '%s' "$FAIL")"
-assert_eq "$pi_current_red" 1 'control: removing current Pi readiness turns the reported-screen assertion red'
-
-# Each requirement in Pi's readiness proof has its own inverse. The disabled
-# proof rejects the live capture; dropping either requirement accepts a partial
-# redraw. mutate_file asserts each edit on a private copy of the shared owner.
-for row in 'disabled|pi_working|no' 'header|pi_editor_only|yes' 'editor|pi_header_only|yes'; do
-  rule="${row%%|*}" rest="${row#*|}" screen="${rest%%|*}" want="${rest#*|}"
-  pi_mutant="$TMP_ROOT/pi-readiness-$rule.sh"
-  cp -- "$SCRIPTS_DIR/lib/lane-state.sh" "$pi_mutant"
-  case "$rule" in
-    disabled) mutate_file "$pi_mutant" '|| { grep -Eq -- "$PI_COMPACT_HEADER_RE"' '|| { false && grep -Eq -- "$PI_COMPACT_HEADER_RE"' ;;
-    header) mutate_file "$pi_mutant" 'grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" &&' 'true &&' ;;
-    editor) mutate_file "$pi_mutant" '&& grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1";' '&& true;' ;;
-  esac
-  pi_screen="$(screen_for "$screen")"
-  pi_up="$(
-    source "$pi_mutant"
-    if pane_harness_up "$pi_screen"; then printf yes; else printf no; fi
-  )"
-  assert_eq "$pi_up" "$want" "control: Pi readiness $rule changes the $screen answer"
-done
+assert_eq "$pi_current_red" 1 'control: removing current Pi readiness rejects the C-locale dashboard-free screen'
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
 # caller could act on, and never the `idle` the session read claimed. The grep

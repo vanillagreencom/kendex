@@ -196,15 +196,15 @@ HARNESS_UP_RE="$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE|$CLAUDE_FOOTER_RE"
 # the hook rows used by lane_state carry turn state, not editor readiness.
 # Keep this proof out of pane_working: the startup interrupt hint stays at idle.
 PI_COMPACT_HEADER_RE='^ █▀ █ escape interrupt · ctrl\+c/ctrl\+d clear/exit · / commands · ! bash · ctrl\+o more[[:space:]]*$'
-PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working ─+[[:space:]]*$'
+PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working (─)+[[:space:]]*$'
 
-# Pi's current screen pairs its title and footer with the bordered input area
-# and π prompt (fixtures/oversee-watch/pi-current.txt). These prove readiness,
-# not turn activity; title, account and model text remain variable.
-PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+─+[[:space:]]*$'
-PI_CURRENT_FOOTER_RE='^● .+ ─+ [0-9]+%[[:space:]]*$'
-PI_CURRENT_EDITOR_TOP_RE='^┏━+┓[[:space:]]*$'
-PI_CURRENT_EDITOR_BOTTOM_RE='^┗━+┛[[:space:]]*$'
+# Pi's current title, footer and π prompt prove readiness, not turn activity
+# (fixtures/oversee-watch/pi-current.txt). The Agents dashboard is optional:
+# pi-agents-tmux omits its frame when disabled, hidden or empty; pi-qol's compact
+# editor still draws the prompt. Title, account and model text remain variable.
+# Group repeated glyphs so byte-oriented C locale repeats the whole character.
+PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+(─)+[[:space:]]*$'
+PI_CURRENT_FOOTER_RE='^● .+ (─)+ [0-9]+%[[:space:]]*$'
 PI_CURRENT_PROMPT_RE='^π[[:space:]]*$'
 
 # pane_harness_up SCREEN — the predicate over one captured pane.
@@ -213,7 +213,6 @@ pane_harness_up() {
     || [[ "$(pane_turn_slice "$1" framed)" == framed ]] \
     || { grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" && grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1"; } \
     || { grep -Eq -- "$PI_CURRENT_TITLE_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_FOOTER_RE" <<<"$1" \
-      && grep -Eq -- "$PI_CURRENT_EDITOR_TOP_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_EDITOR_BOTTOM_RE" <<<"$1" \
       && grep -Eq -- "$PI_CURRENT_PROMPT_RE" <<<"$1"; }
 }
 
