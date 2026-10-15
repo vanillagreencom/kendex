@@ -3156,7 +3156,10 @@ host_launch_resume() { # [admitted]
   local key="$wt_id" query='.host_launch' pending
   if [[ "${1:-}" == admitted ]]; then
     if [[ "$HOST_PANE" == verb && "$RELAUNCH" == true ]]; then
-      [[ "$host_pending_step" != selection ]] || return 0
+      if [[ "$host_pending_step" == selection ]]; then
+        HOST_PANE_LAUNCH=owned
+        return 0
+      fi
       LANE_RECORD_VALUE=absent
       [[ "$FLEET" != true ]] || lane_record_read "$wt_id" status || return 1
       case "$LANE_RECORD_VALUE" in

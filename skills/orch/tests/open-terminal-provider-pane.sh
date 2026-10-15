@@ -370,28 +370,74 @@ assert_eq "$CONTROL_RC" 1 'the retention assertion rejects stop before replaceme
 OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
 
 # A compatible saved selection finishes the started successor without setup.
-for scope in fleet launch-only; do
-  prior_state="$TMP_ROOT/selection-$scope"
-  selection_args=() key=KEN-40 query=.host_launch
+SELECTION_MUTANT="$(mutant_scripts selection-ownership/orch open-terminal)/open-terminal"
+orch_fixture_shared_libs "$TMP_ROOT/selection-ownership/orch"
+mutate_file "$SELECTION_MUTANT" $'      if [[ "$host_pending_step" == selection ]]; then\n        HOST_PANE_LAUNCH=owned' \
+  $'      if [[ "$host_pending_step" == selection ]]; then\n        true || HOST_PANE_LAUNCH=owned'
+mutate_file "$RECORD_MUTANT" '[[ -n "$UNTAKEN_PANE" ]] || UNTAKEN_PANE="$LAUNCH_PANE"' '[[ -n "$UNTAKEN_PANE" ]] || return 1'
+for row in \
+  'fleet|complete|0|0|stopped item=KEN-40 processes=0|0|0' \
+  'launch-only|complete|0|0|stopped item=KEN-40 processes=0|0|0' \
+  'fleet|stopped|7|0|stopped item=KEN-40 processes=0|1|1' \
+  'launch-only|stopped|7|0|stopped item=KEN-40 processes=0|1|1' \
+  'fleet|stop-failed|7|7|stopped item=KEN-40 processes=0|1|0' \
+  'launch-only|stop-failed|7|7|stopped item=KEN-40 processes=0|1|0' \
+  'fleet|stop-unconfirmed|7|0|unconfirmed|1|0' \
+  'launch-only|stop-unconfirmed|7|0|unconfirmed|1|0' \
+  'fleet|taken|0|0|stopped item=KEN-40 processes=0|0|0' \
+  'fleet|control|7|0|stopped item=KEN-40 processes=0|1|1'; do
+  IFS='|' read -r scope outcome cat_status stop_status stop_out stops killed <<< "$row"
+  prior_state="$TMP_ROOT/selection-$scope-$outcome"
+  selection_args=() key=KEN-40 query=.host_launch selection_record_query=.
   if [[ "$scope" == fleet ]]; then
     seed_prior "$prior_state" preparing codex "$NATIVE_CHECKPOINT"
-    selection_args=(--state-dir "$prior_state"); key=oversee; query='.lanes[0].prepare'
+    selection_args=(--state-dir "$prior_state"); key=oversee; query='.lanes[0].prepare'; selection_record_query='.lanes[0]'
   else
     "$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" init KEN-40 >/dev/null
     "$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" set KEN-40 host_launch "$NATIVE_CHECKPOINT" >/dev/null
   fi
   selection_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query" | jq -Sc .)"
+  OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
   run_ot "flags=-m gpt-6-astra -c model_reasoning_effort=high;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$prior_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_CAT_STATUS=69" \
     --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
   assert_eq "$RC" 0 "$scope busy selection keeps its continuation"
   assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query" | jq -Sc .)" "$selection_saved" "$scope preserves the complete selection checkpoint"
   assert_eq "$(grep -cE '^(create|wait|put|stop) ' "$RUN/host.log" || true) $([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no)" '0 no' "$scope busy selection starts and stops no harness"
-  run_ot "flags=-m gpt-6-astra -c model_reasoning_effort=high;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$prior_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_SELECTION=resume" \
+  selection_record_saved="$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$selection_record_query" | jq -Sc .)"
+  printf 1 > "$RUN/panes"
+  case "$outcome" in
+    control) OPEN_TERMINAL="$SELECTION_MUTANT" ;;
+    taken) OPEN_TERMINAL="$RECORD_MUTANT" ;;
+  esac
+  run_ot "flags=-m gpt-6-astra -c model_reasoning_effort=high;$COMPACTION_OFF_ALL;ORCH_STATE_DIR=$prior_state;ORCH_LANE_HOST=$HOST_STUB;LANE_HOST_STUB_CAPABILITIES=$CAPS;LANE_HOST_STUB_CAPTURE_FILE=$CURRENT;LANE_HOST_STUB_SELECTION=resume;LANE_HOST_STUB_CAT_STATUS=$cat_status;LANE_HOST_STUB_STOP_STATUS=$stop_status;LANE_HOST_STUB_STOP_OUT=$stop_out;OT_TMUX_PANES=$RUN/panes" \
     --harness codex --lane "$H/.eclaude" --repo o/r --relaunch ${selection_args[@]+"${selection_args[@]}"} KEN-40
-  launch_contract "$scope saved selection completes"
-  assert_eq "$(grep -cE '^(create|wait|put|stop) ' "$RUN/host.log" 2>/dev/null || true) $([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no) $(if [[ -f "$RUN/tmux.log" ]]; then grep -c '^new-window ' "$RUN/tmux.log" || true; else printf 0; fi)" '0 no 0' "$scope selection does no new setup or launch"
-  assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query // null")" null "$scope retires the completed selection checkpoint"
+  printf '%s\n' "$OUT" > "$RUN/result.log"
+  expected_rc=1; [[ "$outcome" != complete ]] || expected_rc=0
+  got="rc=$RC local=$(local_input_count) stops=$(grep -c '^stop --item KEN-40 --harness codex ' "$RUN/host.log" || true) killed=$(if [[ -f "$RUN/tmux.log" ]]; then grep -c '^kill-window ' "$RUN/tmux.log" || true; else printf 0; fi)"
+  expected="rc=$expected_rc local=0 stops=$stops killed=$killed"
+  if [[ "$outcome" == control ]]; then
+    CONTROL_RC=0
+    ( FAIL=0; assert_eq "$got" "$expected" control; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/selection-control.log" 2>&1 || CONTROL_RC=$?
+    assert_eq "$CONTROL_RC" 1 'the selection cleanup assertion rejects lost successor ownership'
+  else
+    assert_eq "$got" "$expected" "$scope $outcome selection ownership" "$RUN/result.log"
+  fi
+  assert_eq "$(grep -cE '^(create|wait|put) ' "$RUN/host.log" || true) $([[ -e "$RUN/host.log.ssh" ]] && echo yes || echo no) $(if [[ -f "$RUN/tmux.log" ]]; then grep -c '^new-window ' "$RUN/tmux.log" || true; else printf 0; fi)" '0 no 0' "$scope $outcome selection does no new setup or launch"
+  [[ "$cat_status" == 0 ]] || assert_file_contains "$RUN/result.log" 'open-terminal: relaunch-selection-failed item=KEN-40 operation=cat' "$scope $outcome reaches the selection read failure"
+  case "$outcome" in
+    complete|stopped|control)
+      assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$query // null")" null "$scope $outcome retires the selection checkpoint"
+      [[ "$scope" != fleet || "$outcome" == complete ]] || assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get oversee '.lanes[0].status')" stopped "$outcome records confirmed cleanup" ;;
+    stop-failed|stop-unconfirmed|taken)
+      assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$prior_state" get "$key" "$selection_record_query" | jq -Sc .)" "$selection_record_saved" "$scope $outcome preserves the complete current record and checkpoint"
+      if [[ "$outcome" == taken ]]; then
+        assert_file_contains "$RUN/result.log" 'open-terminal: record-write-failed item=KEN-40' 'the selected successor survives a later record failure'
+      else
+        assert_file_contains "$RUN/result.log" 'open-terminal: host-stop-failed item=KEN-40' "$scope $outcome reports unconfirmed cleanup"
+      fi ;;
+  esac
 done
+OPEN_TERMINAL="$SHIPPED_OPEN_TERMINAL"
 
 # Fresh create responses can be saved before wait or marker completion.
 # This wrapper uses the real dispatcher's occupied pool slot producer.
