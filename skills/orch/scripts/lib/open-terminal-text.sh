@@ -147,7 +147,7 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     host-exec-failed) text='The non-interactive SSH command failed to start the hosted harness.' ;;
     host-viewer-invalid) text='The provider viewer command must be one nonempty line.' ;;
     host-viewer-failed) text='The provider could not read its viewer command.' ;;
-    host-stop-failed) text='The provider could not stop the detached harness. The local window and any current running or preparing record remain.' ;;
+    host-stop-failed) text='The provider failed to confirm harness stop. The current record remains. For provider-owned panes, failed prior stop starts no successor. The launcher may close the new dormant window. Whether the prior harness still runs is unknown. If successor cleanup cannot confirm stop, it keeps the window.' ;;
     host-stop-state-invalid) text='The launch holds an invalid detached harness ownership state.' ;;
     host-capture-failed) text='The provider could not read the harness screen. Repair the capture failure reported above, then relaunch.' ;;
     host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
@@ -432,7 +432,11 @@ Options:
                     stopped after cleanup, with its reason, logging to
                     lane-prepare-ITEM.log in the state directory; the summary
                     counts it as preparing. A failed provider stop keeps
-                    the window and current running or preparing record.
+                    the current running or preparing record. For pane=verb,
+                    failed prior stop starts no successor. The launcher may
+                    close the new dormant window. Whether the prior harness
+                    still runs is unknown. If successor cleanup cannot
+                    confirm stop, it keeps the window.
                     lane-close closes a record still preparing. With
                     --relaunch the provider keeps the tree. A pane=verb
                     replacement prepares before required prior retirement.
