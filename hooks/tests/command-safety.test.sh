@@ -388,6 +388,7 @@ environment_rows() {
 [0,"bash -c 'set -- env printenv set; printf done'","literal-source-set-positional"]
 [0,"eval 'set -euo' 'pipefail; printf done'","literal-eval-joined-setup"]
 [0,"eval 'printenv' 'NAME'","literal-eval-joined-named-read"]
+[2,"eval -- 'env'","literal-eval-option-terminator"]
 [2,"bash -c 'set'","literal-source-bare-set"]
 [2,"bash -c 'set \"$@\"'","literal-source-unknown-set-operands"]
 [2,"bash -c 'set -e; env'","literal-source-setup-then-env"]
