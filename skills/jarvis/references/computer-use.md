@@ -12,7 +12,7 @@
 ## Recovery
 
 - Diagnose the failed operation before replacing files or services. Read the failure at its source.
-- Back up work that replacement can destroy. Read the backup back and verify that it holds the required work.
+- Apply [SKILL.md:Cleanup and backups](../SKILL.md#cleanup-and-backups) before replacement. If a backup is needed, read it back and verify that it holds the required work.
 - Request replacement approval under [decisions.md:Authority](decisions.md#authority), then replace through the supported interface. Check that work survives and the operation resumes under [verification.md:Acceptance](verification.md#acceptance).
 - Keep a local patched build only as a named unblocker. Record the failure it removes, its owner and its removal condition. Remove it when that condition holds.
 

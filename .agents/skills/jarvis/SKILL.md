@@ -132,6 +132,12 @@ At first load, and when the user asks which repositories Jarvis can reach, judge
 
 Report both lists in one message, each unreachable folder with its cause.
 
+## Cleanup and backups
+
+Remove all unused code, files, keys, secret-store entries, databases, records and settings from every holder in the same change.
+
+Back up only if a step can lose the only copy; delete the backup after checking the result.
+
 ## Reading routes
 
 Read the linked workflow or reference for the task before acting.
