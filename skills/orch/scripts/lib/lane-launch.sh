@@ -463,8 +463,8 @@ launch_choice_permission_transferable() { # HARNESS TEXT...
 # open-terminal refuses the two together for that reason, as
 # launch-flags-unreachable, so its readings have one text to give.
 #
-# read -a, not `for tok in $2`, for the reason start_cmd states: a bare
-# expansion globs the very brackets a model id can carry.
+# Shell quoting belongs to launch_choice_shell_words, including the backslashes
+# printf %q adds around context selectors.
 launch_choice_value() { # SPELLINGS TEXT...
   local spellings="$1"
   shift
@@ -473,8 +473,8 @@ launch_choice_value() { # SPELLINGS TEXT...
   read -r -a words <<<"$spellings"
   for text in "$@"; do
     [[ -n "$text" ]] || continue
-    tokens=()
-    read -r -a tokens <<<"$text"
+    launch_choice_shell_words "$text" || return 1
+    tokens=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})
     i=0
     while (( i < ${#tokens[@]} )); do
       tok="${tokens[i]}"

@@ -191,6 +191,115 @@ judged() {
   printf '%s %s\n' "$key" "$fields"
 }
 
+# The hook, watch command writer and succession run production operations.
+# The harness acknowledges its argv before drawing its working-turn hint.
+model_switch_rows() (
+  local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
+  local scenario line before after deadline old_pane model status delivery
+  mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
+  cp -R -- "$SRC_DIR" "$scripts"
+  cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
+  cp -R -- "$SRC_DIR/../../mailbox" "$TMP_ROOT/work/.agents/skills/mailbox"
+  cp -- "$SRC_DIR"/../../github/scripts/lib/*.sh "$TMP_ROOT/work/.agents/skills/github/scripts/lib/"
+  cp -- "$TEST_DIR/../../../hooks/lane-mail-check.sh" "$hook"
+  git -C "$TMP_ROOT/work" init -q
+  git -C "$TMP_ROOT/work" config gc.auto 0
+  git -C "$TMP_ROOT/work" config maintenance.auto false
+  git -C "$TMP_ROOT/work" symbolic-ref HEAD refs/heads/main
+  cat > "$BIN/claude" <<HARNESS
+#!/usr/bin/env bash
+set -euo pipefail
+model=""
+while [[ \$# -gt 0 ]]; do
+  if [[ \$1 == --model ]]; then model=\$2; break; fi
+  shift
+done
+[[ \$model == 'claude-opus-4-6[1m]' ]] || exit 1
+printf '%s\\n' "\$model" > '$TMP_ROOT/model.argv'
+printf '%s\\n' 'esc to interrupt'
+exec sleep 100000
+HARNESS
+  chmod +x "$BIN/claude"
+  model_env() {
+    (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
+      LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+      ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 ORCH_OVERSEER_HEADROOM_PCT=5 \
+      ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE='codex:gpt-6.1-sol:high' \
+      ANTHROPIC_DEFAULT_OPUS_MODEL='claude-opus-4-6[1m]' CLAUDE_CONFIG_DIR="$H/.claude" \
+      GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "$@")
+  }
+  if [[ "${MODEL_OWNER_CONTROL:-}" == words ]]; then
+    mutate_file "$scripts/lib/lane-launch.sh" \
+      '    tokens=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})' '    read -r -a tokens <<<"$text"'
+  elif [[ "${MODEL_OWNER_CONTROL:-}" == identity ]]; then
+    mutate_file "$scripts/oversee-succeed" \
+      '  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$CALLER_EXEC_MODEL"' \
+      '  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$OL_CUR_MODEL"'
+  fi
+  claude_usage 10 10 10 Opus > "$FIXTURE_DIR/.claude.json"
+  for scenario in matching launch-missing observed-unread switched; do
+    new_caller claude
+    rm -f -- "${TMP_ROOT:?}/model.argv"
+    line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude -- \
+      --model opus --effort high "$BYPASS")
+    state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
+      "$(jq -nc --arg line "$line" --arg cwd "$TMP_ROOT/work" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
+    model_env "$BASH" -euo pipefail -c '
+      SCRIPT_DIR=$1 SUCCEED=$1/oversee-succeed WORKFLOW_STATE=$1/workflow-state
+      HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md OVERSEER_HARNESS=claude
+      WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "claude-opus-4-6[1m]" --effort high --dangerously-skip-permissions)
+      DEP_ERR=$2
+      . "$1/lib/lane-launch.sh"
+      . "$1/lib/lane-context.sh"
+      . "$1/lib/watch-overseer-record.sh"
+      overseer_record_notice() { printf "%s\n" "$*" >&2; }
+      overseer_command_record
+    ' _ "$scripts" "$TMP_ROOT/model.err"
+    line=$(jq -r '.overseer.launch_line' "$FLEET_STATE")
+    model=$(launch_choice_launch_model claude "$line")
+    assert_eq "$model" 'claude-opus-4-6[1m]' "$scenario watch record retains the executable selector"
+    assert_eq "$(jq -r .overseer.model "$FLEET_STATE")" claude-opus-4-6 "$scenario comparison model omits the selector"
+    case "$scenario" in
+      launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
+    esac
+    before=$(jq -c . "$FLEET_STATE")
+    old_pane=$CALLER_PANE
+    model=claude-opus-4-6
+    [[ "$scenario" == matching ]] || model=claude-sonnet-5-5
+    [[ "$scenario" != observed-unread ]] || model=""
+    for delivery in first repeated; do
+      status=0
+      model_env "$BASH" "$hook" \
+        <<<"$(jq -nc --arg model "$model" '{session_id:"s1",hook_event_name:"PostModelSwitch",to_model:$model}')" \
+        >"$TMP_ROOT/model.out" 2>"$TMP_ROOT/model.err" || status=$?
+      assert_eq "$status" 0 "$scenario $delivery callback remains advisory" "$TMP_ROOT/model.err"
+    done
+    if [[ "$scenario" == switched ]]; then
+      deadline=$((SECONDS + 30))
+      while [[ "$SECONDS" -lt "$deadline" ]] && tm list-panes -a -F '#{pane_id}' | grep -Fxq -- "$old_pane"; do sleep 0.05; done
+      after=$(jq -r .overseer.pane "$FLEET_STATE")
+      assert_not_contains "$after" "$old_pane" 'a fallback starts a verified successor' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
+      assert_eq "$(cat "$TMP_ROOT/model.argv" 2>/dev/null || :)" 'claude-opus-4-6[1m]' 'a working successor receives the exact launched model' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
+      assert_eq "$(jq -r .overseer.account "$FLEET_STATE")" "$H/.claude" 'model recovery retains its account'
+      assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'a fallback records exactly one model-switched event'
+      assert_eq "$(jq -r '.fleet_log[] | select(.kind=="model-switched") | .launch_identity.pane' "$FLEET_STATE")" "$old_pane" 'the model event names its predecessor'
+      CALLER_PANE=$after
+    elif [[ "$scenario" == matching ]]; then
+      assert_eq "$(jq -c . "$FLEET_STATE")" "$before" 'matching models leave fleet state unchanged'
+    else
+      assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-unavailable")]|length' "$FLEET_STATE")" 1 "$scenario reports unavailable once" "$TMP_ROOT/model.out"
+      assert_eq "$(jq -r '.overseer.model_check.cause' "$FLEET_STATE")" "$scenario" "$scenario keeps its cause"
+    fi
+  done
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+)
+
+if [[ "${1:-}" == --model-switch ]]; then
+  model_switch_rows
+  exit
+fi
+
 echo "=== oversee-succeed: the caller's launch record ==="
 
 # The existing Codex usage reader supplies the credit flags to the account
@@ -421,7 +530,7 @@ assert_eq "$SPLIT_RC|$(jq -r '.overseer | [.harness, .model] | join(" ")' "$FLEE
   "0|pi pi-claude/claude-fable-5-1|0|account-below-mark headroom=90" \
   "a split --provider launch records the model with its provider, and the next generation is judged on its claude account" "$TMP_ROOT/err"
 SPLITCTL="$(mutant_scripts splitctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$SPLITCTL/lib/overseer-launch.sh" '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$model" \' \
+mutate_file "$SPLITCTL/lib/overseer-launch.sh" '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_model_id "$harness" "$model" launch)" \' \
   '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "$*")" \'
 split_row "$SPLITCTL/oversee-succeed"
 assert_eq "$(jq -r '.overseer.model' "$FLEET_STATE")|$(judged)" \
@@ -822,6 +931,24 @@ run_succeed "CLAUDE_CONFIG_DIR=$H/.claude"
 assert_eq "$RC|$(sed -n 1p <<<"$ERR" | grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom')|$(tm list-windows -t fleet -F '#{window_name}' | grep -c '^overseer$' || true)" \
   "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom|0" \
   "a succession is judged on its record's account and model, and opens nothing where none has room"
+
+model_switch_rows || fail 'overseer model-switch behavior'
+for control in words identity; do
+  status=0
+  MODEL_OWNER_CONTROL="$control" "$BASH" "${BASH_SOURCE[0]}" --model-switch >"$TMP_ROOT/model-$control.log" 2>&1 || status=$?
+  if [[ -n "${MODEL_CONTROL_LOG_DIR:-}" ]]; then
+    mkdir -p -- "$MODEL_CONTROL_LOG_DIR"
+    cp -- "$TMP_ROOT/model-$control.log" "$MODEL_CONTROL_LOG_DIR/$control.log"
+  fi
+  failure='^  FAIL  a working successor receives the exact launched model$'
+  [[ "$control" != identity ]] || failure='^  FAIL  matching watch record retains the executable selector$'
+  if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/model-$control.log"; then
+    pass "control: main's $control recovery defect fails behavior proof"
+  else
+    fail "control: main's $control recovery defect must fail"
+    cat "$TMP_ROOT/model-$control.log"
+  fi
+done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

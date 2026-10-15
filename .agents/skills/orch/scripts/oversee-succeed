@@ -1043,6 +1043,8 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
 # reads no current-session identity, only the identity the record holds for
 # the line it replays (lib/overseer-launch.sh § ol_record_line_identity).
 CALLER_HARNESS="" CALLER_MODEL="" CALLER_ACCOUNT_HARNESS="" CALLER_ACCOUNT_MODEL=""
+MODEL_SWITCHED=0
+CALLER_EXEC_MODEL=""
 if [[ "$MODE" != dead ]]; then
   record_rc=0
   ol_caller_known "$CALLER_SERVER" "$CALLER_PANE" "$PROJECT_ROOT" || record_rc=$?
@@ -1051,6 +1053,22 @@ if [[ "$MODE" != dead ]]; then
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
   [[ -z "$OL_KNOWN_CWD" ]] || CALLER_PATH="$OL_KNOWN_CWD"
+  # Only the bound launch's check can request model recovery. A successor's
+  # fresh record has no predecessor check and cannot inherit this request.
+  if [[ "$OL_CUR_HARNESS" == claude ]]; then
+    recorded_line="$(jq -r '.launch_line // ""' <<<"$OL_CUR_RECORD")" || die record-unread field=launch_line
+    if [[ -n "$recorded_line" ]] && ol_command_read claude "$recorded_line"; then
+      CALLER_EXEC_MODEL="$OL_COMMAND_MODEL"
+      if [[ "$MODE" == succeed ]] && jq -e "$OL_JQ_DEFS"'
+        .model_check.outcome == "switched" and .model_check.session_id == .session_id
+        and .model_check.launch_identity == ol_model_launch
+        ' <<<"$OL_CUR_RECORD" >/dev/null; then
+        MODEL_SWITCHED=1
+        HARNESS_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})
+      fi
+    fi
+  fi
+
   reading_harness="" reading_model=""
   # A complete identity already supplies both facts the context row could add.
   reading_needed=1
@@ -1233,7 +1251,9 @@ fi
 # One line names one trigger. The level trigger leads when several fire on the
 # same reading because it also identifies the account that must not be reused.
 MARK_KIND=""
-if (( JUDGES )); then
+if (( MODEL_SWITCHED )); then
+  MARK_KIND=model
+elif (( JUDGES )); then
   if [[ "$CALLER_STATE" == at-trigger ]]; then
     MARK_KIND=headroom
   elif (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" == measured ]] \
@@ -1261,7 +1281,9 @@ build_entries() {
   # is appended to the walk and is not one of them, so an operator reads how many
   # entries were stated and that the fallback ran after all of them.
   NAMED_ENTRIES=0
-  if [[ "$MODE" == print ]]; then
+  if (( MODEL_SWITCHED )); then
+    ENTRIES=(caller)
+  elif [[ "$MODE" == print ]]; then
     # A requested entry names the only harness this caller wants a line for.
     if (( ENTRY_GIVEN )); then
       ol_preference_entries "$ENTRY_ARG" || die invalid-preference "entry=$OL_BAD_ENTRY"
@@ -1348,6 +1370,7 @@ walk_entries() {
   OL_WALK_CALLER_HARNESS="$CALLER_HARNESS" OL_WALK_CALLER_LANE="$CALLER_CFG"
   OL_WALK_CALLER_PICK_MODEL="$CALLER_MODEL" OL_WALK_CALLER_MODEL="" OL_WALK_CALLER_EFFORT=""
   [[ -z "$OL_CUR_MODEL" ]] || OL_WALK_CALLER_MODEL="$OL_CUR_MODEL" OL_WALK_CALLER_EFFORT="$OL_CUR_EFFORT"
+  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$CALLER_EXEC_MODEL"
   # A pi successor runs, and so records, the provider-bearing model its
   # caller's account was judged on, in place of a model from the record or
   # the flags that names no provider, so no generation's record holds a
@@ -1365,7 +1388,7 @@ walk_entries() {
   fi
   OL_WALK_CALLER_KEEP=0
   case "$MODE:$CALLER_STATE:$MARK_KIND" in
-    print:*) OL_WALK_CALLER_KEEP=1 ;;
+    print:* | *:*:model) OL_WALK_CALLER_KEEP=1 ;;
     *:has-room:rate | *:has-room:qualifying) ;;
     *:has-room:*) OL_WALK_CALLER_KEEP=1 ;;
   esac

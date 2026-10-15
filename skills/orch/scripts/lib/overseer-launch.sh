@@ -576,7 +576,8 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
   OL_FLAGS=() OL_FIELDS=()
   OL_REASON=launch-choice-failed
   words="$(launch_choice_write "$harness" "$model" "$effort")" || { OL_FIELDS=("harness=$harness"); return 1; }
-  [[ -z "$words" ]] || eval "OL_FLAGS=($words)"
+  launch_choice_shell_words "$words" || return 1
+  OL_FLAGS=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})
   if [[ -z "$model" && -z "$effort" ]]; then
     LAUNCH_CHOICE_KEPT=("$@")
   elif [[ "$harness" == "$source" ]]; then
@@ -585,7 +586,8 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
     OL_FIELDS=(reason=permission-transfer "source=${source:-none}" "target=$harness")
     [[ -z "$source" ]] || launch_choice_permission_transferable "$source" "$*" || return 1
     words="$(launch_choice_permission_write "$harness")" || return 1
-    eval "OL_FLAGS+=($words)"
+    launch_choice_shell_words "$words" || return 1
+    OL_FLAGS+=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})
     LAUNCH_CHOICE_KEPT=()
     OL_FIELDS=()
   fi
@@ -613,6 +615,7 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # record a launch writes names what the line runs and nothing a caller
 # restated beside it. An identity jq could not build is left empty, which the
 # record writers refuse as their own step rather than record as unknown.
+# OL_CMD keeps executable selectors. OL_IDENTITY.model is for comparison.
 #
 # lane_single_quote preserves the brief through the pane's shell. HANDOFF is
 # held to a shell-inert alphabet by every caller. One plain sentence on
@@ -688,8 +691,29 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   else
     OL_CMD="$(lane_launch_line "$cmd" "$harness" "" "" "$OL_FORM")" || return 1
   fi
-  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$model" \
+  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_model_id "$harness" "$model" launch)" \
     "$(launch_choice_effort "$harness" "$*")" "$launch_dir" || OL_IDENTITY=""
+}
+
+# Read the command ol_command_line writes. Its Claude argv ends with one
+# prompt, after the fixed session name. Prefix environment words stay outside
+# the returned flags. No command text is evaluated.
+OL_COMMAND_FLAGS=() OL_COMMAND_MODEL=""
+ol_command_read() { # HARNESS LINE
+  local i end
+  OL_COMMAND_FLAGS=() OL_COMMAND_MODEL=""
+  launch_choice_shell_words "$2" || return 1
+  end=$((${#LAUNCH_CHOICE_ARGV[@]} - 1))
+  [[ "$1" == claude ]] || return 1
+  for ((i = 0; i + 1 < end; i++)); do
+    [[ "${LAUNCH_CHOICE_ARGV[i]}" == -n && "${LAUNCH_CHOICE_ARGV[i+1]}" == overseer ]] || continue
+    i=$((i + 2))
+    [[ "${LAUNCH_CHOICE_ARGV[end-1]:-}" != -- ]] || end=$((end - 1))
+    OL_COMMAND_FLAGS=("${LAUNCH_CHOICE_ARGV[@]:i:end-i}")
+    OL_COMMAND_MODEL="$(launch_choice_launch_model "$1" "$2")" || return 1
+    return 0
+  done
+  return 1
 }
 
 # The jq definitions every reader and writer of the record shares, so none
@@ -720,6 +744,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # turn ends and tool calls; `oversee launch` reads it for its liveness
 # refusal, so a live pane a startless record names blocks a second overseer.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
+  def ol_model_launch: {server,server_start,pane,generation,launch_line,session_id};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
     and (.server_start | tostring) == $start;
@@ -1241,10 +1266,11 @@ ol_record_pending() { # LINE IDENTITY
 # words in DEP_ERR. The `pending` member is never read here, and OL_PRIOR is
 # left as it was: that is a launcher's snapshot, which an abandoned launch
 # puts back, and a query is not a snapshot.
-OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
+# oversee-succeed reads the bound command and model check from OL_CUR_RECORD.
+OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD="" OL_CUR_RECORD=null
 ol_record_current() { # SERVER PANE
   local record fields start sep=$'\x1f'
-  OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD=""
+  OL_CUR_HARNESS="" OL_CUR_ACCOUNT="" OL_CUR_HOME="" OL_CUR_MODEL="" OL_CUR_EFFORT="" OL_CUR_CWD="" OL_CUR_RECORD=null
   ol_record_get record || return $?
   # Unread, the start names no record bound to one: the caller keeps its own
   # readings, and nothing here acts on the record.
@@ -1253,6 +1279,7 @@ ol_record_current() { # SERVER PANE
       if ol_names($server; $start; $pane) then ol_identity | map(. // "" | tostring) | join($sep)
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
   [[ -n "$fields" ]] || return 1
+  OL_CUR_RECORD="$record"
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
 }
 
