@@ -196,7 +196,7 @@ judged() {
 model_switch_rows() (
   local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
   local scenario handoff_path relative_dir launch_dir line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before root_before root_handoff prior_pane
-  local producer_handoff=()
+  local producer_handoff=() control_scenario=""
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
@@ -259,27 +259,33 @@ BARRIER
       GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "$@")
   }
   if [[ "${MODEL_OWNER_CONTROL:-}" == words ]]; then
+    control_scenario=switched
     mutate_file "$scripts/lib/lane-launch.sh" \
       '    tokens=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})' '    read -r -a tokens <<<"$text"'
   elif [[ "${MODEL_OWNER_CONTROL:-}" == identity ]]; then
+    control_scenario=matching
     mutate_file "$scripts/oversee-succeed.real" \
       '  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$CALLER_EXEC_MODEL"' \
       '  [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$OL_CUR_MODEL"'
   elif [[ "${MODEL_OWNER_CONTROL:-}" == handoff ]]; then
+    control_scenario=switched
     mutate_file "$scripts/oversee-succeed.real" \
       '  if [[ -n "$OL_RECOVERY_RECORD" && -f "$destination_path" ]]; then' \
       '  if false; then'
   elif [[ "${MODEL_OWNER_CONTROL:-}" == destination ]]; then
+    control_scenario=custom
     mutate_file "$scripts/lib/overseer-launch.sh" \
       '    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"' \
       '    handoff="${prompt#"$OL_HANDOFF_PROMPT"}"; handoff=tmp/handoffs/OVERSEER-HANDOFF.md'
   elif [[ "${MODEL_OWNER_CONTROL:-}" == base ]]; then
+    control_scenario=sub-custom
     mutate_file "$scripts/lib/overseer-launch.sh" \
       '       OL_COMMAND_HANDOFF_FILE="${directory%/}/$OL_COMMAND_HANDOFF" ;;' \
       '       OL_COMMAND_HANDOFF_FILE="${directory%/}/$OL_COMMAND_HANDOFF"; OL_COMMAND_HANDOFF_FILE="$PWD/$OL_COMMAND_HANDOFF" ;;'
   fi
   claude_usage 10 10 10 Opus > "$FIXTURE_DIR/.claude.json"
   while IFS='|' read -r scenario handoff_path relative_dir; do
+    [[ -z "$control_scenario" || "$scenario" == "$control_scenario" ]] || continue
     new_caller claude
     rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/capture-handoff" "${TMP_ROOT:?}/model.snapshot" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
     [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
@@ -310,7 +316,7 @@ BARRIER
     model_env "$BASH" -euo pipefail -c '
       SCRIPT_DIR=$1 SUCCEED=$1/oversee-succeed WORKFLOW_STATE=$1/workflow-state
       HANDOFF=$3 OVERSEER_HARNESS=claude
-      WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "claude-opus-4-6[1m]" --effort high --dangerously-skip-permissions)
+      WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "claude-opus-4-6[1m]" --effort high "$5")
       DEP_ERR=$2
       cd -- "$4"
       . "$1/lib/lane-launch.sh"
@@ -318,7 +324,7 @@ BARRIER
       . "$1/lib/watch-overseer-record.sh"
       overseer_record_notice() { printf "%s\n" "$*" >&2; }
       overseer_command_record
-    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path" "$launch_dir"
+    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path" "$launch_dir" "$BYPASS"
     line=$(jq -r '.overseer.launch_line' "$FLEET_STATE")
     model=$(launch_choice_launch_model claude "$line")
     assert_eq "$model" 'claude-opus-4-6[1m]' "$scenario watch record retains the executable selector"
@@ -337,6 +343,8 @@ BARRIER
     mkdir -p "${handoff%/*}"
     printf 'Start here: fixture generation=2\n\nRetain the owner constraint from the previous handoff.\n' > "$handoff"
     if [[ "$scenario" == custom ]]; then
+      mkdir -p "$TMP_ROOT/work/tmp/handoffs"
+      printf 'The default handoff belongs to another owner.\n' > "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
       default_before=$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")
     fi
     root_handoff=""

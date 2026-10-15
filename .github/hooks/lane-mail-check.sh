@@ -2984,7 +2984,7 @@ handoff_check() {
         model_unavailable_notice launch-unbound "$observed"; return 0;
       }
     fi
-    if ! "$BASH" -euo pipefail -c '. "$1/lib/lane-launch.sh" && . "$1/lib/overseer-launch.sh"' _ "$SCRIPTS" 2>"$WORK_DIR/model.err"; then
+    if ! "$BASH" -euo pipefail -c '. "$1/lib/lane-launch.sh"; . "$1/lib/overseer-launch.sh"' _ "$SCRIPTS" 2>"$WORK_DIR/model.err"; then
       model_unavailable_notice adapter-unread "$observed" "$(cat -- "$WORK_DIR/model.err")"; return 0
     fi
     . "$SCRIPTS/lib/lane-launch.sh" 2>"$WORK_DIR/model.err"

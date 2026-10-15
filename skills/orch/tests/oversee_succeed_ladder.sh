@@ -219,7 +219,7 @@ assert_eq "$RC|$(caller_open)|$(launched claude)" \
 # Its control: a walled recovery that walks the caller entry alone stays on
 # Fable and refuses the fleet the ladder recovers on.
 WALLEDCTL="$(mutant_scripts walledctl oversee-succeed)" || exit 1
-mutate_file "$WALLEDCTL/oversee-succeed" '  if [[ "$MODE" == print ]]; then' '  if [[ "$MODE" == print || "$MODE" == walled ]]; then'
+mutate_file "$WALLEDCTL/oversee-succeed" '  elif [[ "$MODE" == print ]]; then' '  elif [[ "$MODE" == print || "$MODE" == walled ]]; then'
 new_caller
 SUCCEED_BIN="$WALLEDCTL/oversee-succeed" run_succeed walledctl unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $3}')|$(caller_open)|$(launched claude)" \

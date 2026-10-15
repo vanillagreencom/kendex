@@ -326,7 +326,7 @@ counted() {
 #   refused       the first field of the lane-refused line, or none
 #   failed        the first field of the lane-resolution-failed line, or none
 observe() {
-  local got="" token name value
+  local got="" token name value i
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -339,6 +339,14 @@ observe() {
         # The tmux stub logs events before the command; the model reader takes
         # one command line, not the complete event log.
         value="$(sed -n '/^clear; .* CLAUDE_CONFIG_DIR=/{p;q;}' "$RUN/tmux.log")" || return 1
+        # Custom launches carry the harness command as Bash's one -c operand.
+        launch_choice_shell_words "$value" || return 1
+        for ((i = 1; i + 1 < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
+          if [[ "${LAUNCH_CHOICE_ARGV[i-1]}" == "$BASH" && "${LAUNCH_CHOICE_ARGV[i]}" == -c ]]; then
+            value="${LAUNCH_CHOICE_ARGV[i+1]}"
+            break
+          fi
+        done
         value="$(launch_choice_launch_model claude "$value")" || return 1
         value="${value:-none}"
         ;;
