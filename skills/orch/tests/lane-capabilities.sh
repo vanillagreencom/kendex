@@ -23,7 +23,7 @@ LIB="$SCRIPTS/lib/lane-capabilities.sh"
 PROVIDER="$TMP_ROOT/repo/provider"
 SSH=$'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane'
 write_provider() { # REPLY STATUS WORDS
-  printf '#!%s\nset -euo pipefail\nprintf "capabilities\\n" >> "$CAPABILITY_CALLS"\nprintf "%%s\\n" %q\nprintf "%%s" %q >&2\nexit %s\n' \
+  printf '#!%s\nset -euo pipefail\nif [[ "${2:-}" == --cache-key ]]; then echo cache-key=v1; exit 0; fi\nprintf "capabilities\\n" >> "$CAPABILITY_CALLS"\nprintf "%%s\\n" %q\nprintf "%%s" %q >&2\nexit %s\n' \
     "$BASH" "$1" "$3" "$2" > "$PROVIDER"
   chmod +x "$PROVIDER"
 }
@@ -131,6 +131,49 @@ for dimension in mtime size; do
   rc=0
   ( FAIL=0; assert_eq "$CALLS" 2 'identity invalidation'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-$dimension.log" || rc=$?
   assert_eq "$rc" 1 "$dimension: the invalidation assertion rejects a cache that ignores file identity"
+done
+
+# A wrapper's answer and declared key change in a separate file. The wrapper
+# itself keeps identical bytes, mtime and size across both reads.
+LIB="$SCRIPTS/lib/lane-capabilities.sh"
+WRAPPER="$TMP_ROOT/repo/wrapper"
+printf '#!%s\nset -euo pipefail\nif [[ "${2:-}" == --cache-key ]]; then printf "cache-key=%%s\\n" "$(cksum < "${0}.answer")"; exit 0; fi\nprintf "capabilities\\n" >> "$CAPABILITY_CALLS"\ncat "${0}.answer"\n' "$BASH" > "$WRAPPER"
+# cksum has a space between checksum and size. Give the key one token.
+mutate_file "$WRAPPER" '$(cksum < "${0}.answer")' '$(cksum < "${0}.answer" | tr " " -)'
+chmod +x "$WRAPPER"
+wrapper_change() {
+  rm -rf -- "$TMP_ROOT/state"
+  : > "$TMP_ROOT/calls"
+  printf '%s\n' "$SSH"$'\tpane=local' > "$WRAPPER.answer"
+  read_capabilities "$WRAPPER"
+  printf '%s\n' "$SSH"$'\tpane=verb' > "$WRAPPER.answer"
+  read_capabilities "$WRAPPER"
+}
+wrapper_change
+assert_eq "$(cat "$TMP_ROOT/out")" "$SSH"$'\tpane=verb' 'unchanged wrapper returns the changed answer'
+read_capabilities "$WRAPPER"
+assert_eq "$CALLS" 2 'changed wrapper answer is cached under the new key'
+CONTROL="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts capability-revision lib/lane-capabilities.sh)"
+mutate_file "$CONTROL/lib/lane-capabilities.sh" 'identity="$revision:$identity"' 'identity="$identity"'
+LIB="$CONTROL/lib/lane-capabilities.sh"
+wrapper_change
+rc=0
+( FAIL=0; assert_eq "$(cat "$TMP_ROOT/out")" "$SSH"$'\tpane=verb' 'wrapper invalidation'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-revision.log" || rc=$?
+assert_eq "$rc" 1 'the wrapper assertion rejects a cache that ignores the declared key'
+LIB="$SCRIPTS/lib/lane-capabilities.sh"
+# Older providers can reject or ignore the option. Neither may reuse a reply.
+for key in absent ignored empty invalid failed; do
+  printf '#!%s\nset -euo pipefail\nif [[ "${2:-}" == --cache-key ]]; then\n' "$BASH" > "$WRAPPER"
+  case "$key" in
+    absent) printf 'exit 2\n' >> "$WRAPPER" ;;
+    ignored) printf 'cat "${0}.answer"\nexit 0\n' >> "$WRAPPER" ;;
+    empty) printf 'echo cache-key=\nexit 0\n' >> "$WRAPPER" ;;
+    invalid) printf 'echo "cache-key=two words"\nexit 0\n' >> "$WRAPPER" ;;
+    failed) printf 'echo cache-key=v1\nexit 65\n' >> "$WRAPPER" ;;
+  esac
+  printf 'fi\nprintf "capabilities\\n" >> "$CAPABILITY_CALLS"\ncat "${0}.answer"\n' >> "$WRAPPER"
+  wrapper_change
+  assert_eq "$(cat "$TMP_ROOT/out")" "$SSH"$'\tpane=verb' "$key key reads the live answer"
 done
 
 # Exercise each production caller across process boundaries. The mail and

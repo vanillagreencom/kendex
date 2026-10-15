@@ -16,11 +16,11 @@ lane_capabilities_read() { # LANE_HOST_CLI HOST [DIR]
   LANE_CAPABILITIES="$(lane_capabilities_answer "$1" "$2" "${3:-.}")"
 }
 
-# The provider interpreter is unnecessary while its file stays unchanged.
+# A provider declares a cheap key covering code behind an unchanged wrapper.
 # This local cache keeps lane-host as the capability validator and uses the
 # existing per-host usage store. A cache failure still asks the dispatcher.
 lane_capabilities_answer() { # LANE_HOST_CLI HOST [DIR]
-  local host="$2" root identity sum cache="" tmp="" cleanup key line words="" word rc=0
+  local host="$2" root identity revision sum cache="" tmp="" cleanup key line words="" word rc=0
   cd -- "${3:-.}" || return 1
   case "$host" in
     local|claude-cloud) ORCH_LANE_HOST="$host" "$1" capabilities; return $? ;;
@@ -28,8 +28,11 @@ lane_capabilities_answer() { # LANE_HOST_CLI HOST [DIR]
     *) host="$PWD/$host" ;;
   esac
   if [[ -f "$host" && -x "$host" ]] &&
+     revision="$("$host" capabilities --cache-key 2>/dev/null)" &&
+     [[ "$revision" == cache-key=?* && "$revision" != *[$'\t\r\n ']* ]] &&
      identity="$(LC_ALL=C TZ=UTC stat -Lc '%y:%s' -- "$host" 2>/dev/null || LC_ALL=C stat -Lf '%.9Fm:%z' -- "$host" 2>/dev/null)" &&
      sum="$(printf '%s' "$host" | cksum)"; then
+    identity="$revision:$identity"
     # Some readers, including lane-mail, do not otherwise need claim helpers.
     declare -F lane_claims_dir >/dev/null || source "${BASH_SOURCE[0]%/*}/lane-claims.sh" || return 1
     root="${PROJECT_ROOT:-}"
