@@ -719,7 +719,7 @@ environment_program_text() {
 
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
-  local j start=0 end n fd target proc output input_redirect input_escaped pos program value named flags
+  local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
   local unsupported="" scan candidate limit producer_end code incoming_sources="" file_output file_body redirect_evidence head_start main_start
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0
@@ -824,6 +824,7 @@ environment_dump() { # command kind; arguments are already decoded data
       esac
       case "$c" in
         ' ' | $'\t' | $'\r' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>')
+          redirection_kind=operator
           if [ -n "$heredoc_op" ] && [ -n "$active" ]; then
             [ "$kind" != ansi-escaped ] || return 0
             doc=${#heredocs[@]}
@@ -831,6 +832,13 @@ environment_dump() { # command kind; arguments are already decoded data
             heredoc_expand[doc]=""; [ -n "$quoted" ] || heredoc_expand[doc]=1
             body_ids[$heredoc_origin]=$doc
             heredoc_op=""
+          # Only adjacent bare digits are shell descriptor syntax. Decoded
+          # numeric arguments cannot prove where stdout goes.
+          elif { [ "$c" = '<' ] || [ "$c" = '>' ]; } && [ -n "$active" ] &&
+               [ -n "$bare" ] && [ "$kind" = literal ] && [[ $word =~ ^[0-9]+$ ]]; then
+            redirection_kind=operator-explicit-other
+            [ "$word" != 2 ] || redirection_kind=operator-stderr
+            active=""
           fi
           if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
           word=""; active=""; kind=literal; bare=1; quoted=""
@@ -864,8 +872,9 @@ environment_dump() { # command kind; arguments are already decoded data
               done ;;
             *)
               case "$c$next" in
-                '&&' | '||' | '>>' | '>&' | '<&' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
+                '&&' | '||' | '>>' | '>&' | '<&' | '<>' | '&>' | '<<') c=$c$next; i=$((i + 1)) ;;
               esac
+              if [ "$c" = '&>' ] && [ "${text:$i:1}" = '>' ]; then c=$c'>'; i=$((i + 1)); fi
               if [ "$c" = '<<' ] && [ "${text:$i:1}" = '<' ]; then c='<<<'; i=$((i + 1)); fi
               if [ "$c" = '<<' ] && [ "$math_depth" -eq 0 ]; then
                 compound=1
@@ -875,7 +884,7 @@ environment_dump() { # command kind; arguments are already decoded data
           esac
           unquoted_words[${#tokens[@]}]=""; tokens[${#tokens[@]}]=$c
           if [ "$c" = '<<' ] && [ "$math_depth" -ne 0 ]; then kinds[${#kinds[@]}]=arithmetic
-          else kinds[${#kinds[@]}]=operator; fi ;;
+          else kinds[${#kinds[@]}]=$redirection_kind; fi ;;
         *) word=$word$c; active=1 ;;
       esac
     done
@@ -918,23 +927,21 @@ environment_dump() { # command kind; arguments are already decoded data
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); arg_roles=()
     proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; file_output=""; file_body=""; redirect_evidence=""
     for ((j=start; j<end; j++)); do
-      if [ "${kinds[$j]}" = operator ]; then
-        fd=""; n=${#args[@]}
-        if [ "$n" -gt 0 ] && [[ ${args[$((n - 1))]} =~ ^[0-9]+$ ]]; then
-          fd=${args[$((n - 1))]}; unset 'args[n-1]' 'arg_kinds[n-1]' 'arg_unquoted[n-1]'
-        fi
+      case "${kinds[$j]}" in operator | operator-stderr | operator-explicit-other)
+        fd=${kinds[$j]}
         j=$((j + 1)); target=${tokens[$j]:-}
         case "${tokens[$((j - 1))]}" in
-          '<')
+          '<' | '<>')
             input_redirect=1
             [ "${kinds[$j]:-}" != ansi-escaped ] || input_escaped=1
-            [[ $target != /proc/*/environ ]] || proc=1 ;;
+            [[ $target != /proc/*/environ ]] || proc=1
+            [ "${tokens[$((j - 1))]}" != '<>' ] || output=1 ;;
           '<&') input_redirect=1 ;;
           '<<' | '<<-')
             input_redirect=1
             doc=${body_ids[$((j - 1))]:-}
             [ -n "$doc" ] || return 0
-            if [ -z "$fd" ] && [ "${tokens[$((j - 1))]}" = '<<' ] &&
+            if [ "$fd" = operator ] && [ "${tokens[$((j - 1))]}" = '<<' ] &&
                [ "${kinds[$j]:-}" = literal ]; then
               file_body=1; [ -z "${heredoc_expand[$doc]}" ] || file_body=expanding
             fi
@@ -943,17 +950,17 @@ environment_dump() { # command kind; arguments are already decoded data
             input_redirect=1; doc=${#literal_inputs[@]}; literal_inputs[doc]=$target
             data_source="$data_source $doc" ;;
           '>')
-            [ "$fd" = 2 ] || output=1
-            if [ -z "$fd" ] && [ "${kinds[$j]:-}" = literal ]; then file_output=1; fi ;;
+            [ "$fd" = operator-stderr ] || output=1
+            if [ "$fd" = operator ] && [ "${kinds[$j]:-}" = literal ]; then file_output=1; fi ;;
           '>>')
-            [ "$fd" = 2 ] || output=1
-            if [ -z "$fd" ] && [ "${kinds[$j]:-}" = literal ]; then file_output=append; fi ;;
-          '>&') [ "$fd" = 2 ] || output=1 ;;
-          '&>') output=1 ;;
+            [ "$fd" = operator-stderr ] || output=1
+            if [ "$fd" = operator ] && [ "${kinds[$j]:-}" = literal ]; then file_output=append; fi ;;
+          '>&') [ "$fd" = operator-stderr ] || output=1 ;;
+          '&>' | '&>''>') output=1 ;;
         esac
         if environment_main_evidence "$target"; then redirect_evidence=1; fi
-        continue
-      fi
+        continue ;;
+      esac
       n=${#args[@]}
       args[n]=${tokens[$j]}; arg_kinds[n]=${kinds[$j]}; arg_unquoted[n]=${unquoted_words[$j]}
     done
