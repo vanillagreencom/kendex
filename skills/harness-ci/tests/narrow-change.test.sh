@@ -127,6 +127,8 @@ a preflight script is excluded|class=standard measured=true cause=excluded-path|
 a doc-limits script is excluded|class=standard measured=true cause=excluded-path|skills/doc-limits/scripts/check.sh=2
 a guard chain script is excluded|class=standard measured=true cause=excluded-path|skills/commit-guards/scripts/chain.sh=2
 the lane launcher is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/open-terminal=2
+the restack validation gate is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/restack-skip=2
+the validation runner is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/dev-validate-run=2
 a root AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|AGENTS.md=10
 a nested AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|skills/AGENTS.md=3
 a SKILL.md edit is held to small|class=small measured=true cause=instruction-file|skills/orch/SKILL.md=3
@@ -163,6 +165,17 @@ control() { # LABEL EXPECTED EDIT NAME SCRIPT LINE REPLACEMENT...
 CONTROL_READ=verdict_of
 
 MICRO="class=micro measured=true cause=production-within-micro"
+
+# Removing a validation gate's exclusion lets its small edit measure as micro.
+awk '
+  $0 == "path *skills/orch/scripts/dev-validate-run" { hits++; next }
+  { print }
+  END { exit hits == 1 ? 0 : 3 }
+' "$ORCH_PACKAGE/references/narrow-change.conf" >"$SANDBOX/validation-gate.conf"
+control "a list without the validation runner measures its edit as micro" "$MICRO" \
+  skills/orch/scripts/dev-validate-run=2 validation-gate change-class \
+  'NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"' \
+  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\""
 
 # harness-only that never judges the inventory's change leaves it on the
 # path set, where the list excludes it and the test-removed row answers
