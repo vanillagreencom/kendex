@@ -48,8 +48,8 @@ printf '%s\n' "$kind" >>"$LOG/sends"
 n=$(awk -v kind="$kind" '$0 == kind {n++} END {print n+0}' "$LOG/sends")
 code=200
 case "${MODE:-}:$kind:$n" in
-retry:graphql:1) code=503 ;;
-renewal:graphql:1|download:download:1) code=401 ;;
+retry:graphql:1|renewal:graphql:1|download:download:1|download-budget:download:1|download-budget:download:3|download-budget:download:4) code=503 ;;
+renewal:graphql:2|download:download:2|download-budget:download:2) code=401 ;;
 rate:graphql:*) code=400 ;;
 write:graphql:*) code=503 ;;
 transport:graphql:*) code=000 ;;
@@ -96,7 +96,7 @@ chmod +x "$PROJECT/bin/date" "$PROJECT/bin/mkdir" "$PROJECT/bin/curl"
 printf 'private-file-body\n' >"$PROJECT/note.pdf"
 
 run_linear() {
-    (cd -- "$PROJECT" && env -i PATH="$PROJECT/bin:$PATH" HOME="$TMP_ROOT/home" \
+    (cd -- "${CALLER_REPOSITORY:-$PROJECT}" && env -i PATH="$PROJECT/bin:$PATH" HOME="$TMP_ROOT/home" \
         LOG="$LOG" REAL_MKDIR="$REAL_MKDIR" MODE="$MODE" \
         LINEAR_API_KEY_OVERRIDE="${KEY:-private-personal-key}" \
         LINEAR_CLIENT_ID="${CLIENT_ID:-}" LINEAR_CLIENT_SECRET="${CLIENT_SECRET:-}" \
@@ -108,19 +108,21 @@ run_linear() {
 for row in \
     'default|auth|1|0|0|off' \
     'active|auth|1|1|0|active' \
-    'retry|auth|2|2|0|active' \
-    'renewal|auth|4|4|0|active' \
-    'download|download|4|4|0|active' \
-    'upload|upload|4|4|0|active' \
+    'retry|auth|2|2|0|active|[["graphql",0,1],["graphql",0,2]]|1' \
+    'renewal|auth|5|5|0|active|[["mint",0,1],["graphql",0,1],["graphql",0,2],["mint",0,1],["graphql",1,1]]|3' \
+    'download|download|5|5|0|active|[["mint",0,1],["download",0,1],["download",0,2],["mint",0,1],["download",1,1]]|3' \
+    'download-budget|download|6|6|1|active|[["mint",0,1],["download",0,1],["download",0,2],["mint",0,1],["download",1,1],["download",1,2]]|3' \
+    'upload|upload|4|4|0|active||4' \
     'missing|auth|1|1|0|active' \
     'changed|auth|1|1|0|active' \
     'cap|auth|1|0|0|byte-cap' \
     'stop|auth|1|0|0|stopped' \
+    'stop-expired|none|0|0|0|expired' \
     'expiry|auth|1|0|0|expired' \
     'transport|auth|3|3|1|active' \
     'rate|auth|3|3|1|active' \
     'write|write|1|1|1|active'; do
-    IFS='|' read -r MODE action sends records expected_rc state <<<"$row"
+    IFS='|' read -r MODE action sends records expected_rc state sequence logical_requests <<<"$row"
     LOG="$TMP_ROOT/$MODE"
     mkdir -p "$LOG"
     printf '1000\n' >"$LOG/now"
@@ -130,7 +132,7 @@ for row in \
     JOURNAL="$LOG/journal"
     KEY=private-personal-key CLIENT_ID='' CLIENT_SECRET=''
     CALLER=fixture-caller ITEM=TEAM-1
-    if [[ "$MODE" == renewal || "$MODE" == download ]]; then
+    if [[ "$MODE" == renewal || "$MODE" == download || "$MODE" == download-budget ]]; then
         CLIENT_ID="fixture-client-$MODE" CLIENT_SECRET=private-client-secret
     fi
     if [[ "$MODE" == default ]]; then
@@ -145,13 +147,15 @@ for row in \
     [[ "$MODE" != changed ]] || KEY=other-private-key
     [[ "$MODE" != missing ]] || { CALLER=''; ITEM=''; }
     [[ "$MODE" != stop ]] || run_linear journal stop >"$LOG/stop-result"
-    [[ "$MODE" != expiry ]] || printf '4600\n' >"$LOG/now"
+    case "$MODE" in stop|stop-expired|expiry) printf '4600\n' >"$LOG/now" ;; esac
+    [[ "$MODE" != stop-expired ]] || run_linear journal stop >"$LOG/stop-result"
     rc=0
     case "$action" in
     auth) run_linear auth-check >"$LOG/out" 2>"$LOG/err" || rc=$? ;;
     download) run_linear attachments fetch https://uploads.linear.app/private-path --output "$LOG/downloaded" >"$LOG/out" 2>"$LOG/err" || rc=$? ;;
     upload) run_linear comments create TEAM-1 --body private-request-body --attach "$PROJECT/note.pdf" >"$LOG/out" 2>"$LOG/err" || rc=$? ;;
     write) run_linear comments create TEAM-1 --body private-request-body >"$LOG/out" 2>"$LOG/err" || rc=$? ;;
+    none) ;;
     esac
     assert_eq "$MODE: request result" "$rc" "$expected_rc"
     assert_eq "$MODE: actual attempts" "$(wc -l <"$LOG/attempts" | tr -d ' ')" "$sends"
@@ -173,7 +177,17 @@ for row in \
         assert_jq "$MODE: final block excludes interim and invalid headers" "$all" \
             'all(.[]; .headers["x-complexity"] != "777" and .headers["x-ratelimit-invalid"] == null)'
         assert_jq "$MODE: attempt fields are explicit" "$all" \
-            'all(.[]; .attempt >= 1 and .authorization_phase >= 0 and (.request_id | type == "string"))'
+            'all(.[]; .attempt >= 1 and .authorization_phase >= 0 and (.request_id | type == "string" and length > 0))'
+        if [[ -n "$sequence" ]]; then
+            assert_jq "$MODE: exact authorization phases and send ordinals" "$all" \
+                "map([.transport,.authorization_phase,.attempt]) == $sequence"
+            assert_jq "$MODE: resends retain one logical request ID" "$all" \
+                '[.[] | select(.transport != "mint") | .request_id] | unique | length == 1'
+        fi
+        if [[ -n "$logical_requests" ]]; then
+            assert_jq "$MODE: unrelated logical requests have distinct IDs" "$all" \
+                "map(.request_id) | unique | length == $logical_requests"
+        fi
         if [[ "$MODE" == changed ]]; then
             assert_jq 'changed: actor identity stays unread' "$all" 'all(.[]; .actor.id == null and .actor.source == "unread")'
         else
@@ -186,7 +200,7 @@ for row in \
         assert_jq 'active: only returned complexity is summed' "$summary" '.totals.known_complexity == 5 and .totals.complexity_measured == 1 and .top_five_by_attempts[0].attempts == 1'
         assert_jq 'active: caller and item are attributed' "$summary" '.totals.caller_supplied == 1 and .totals.item_known == 1 and .callers[0].caller.script == "fixture-caller"'
         first_bytes=$(wc -c <"$JOURNAL/attempts.jsonl") ;;
-    renewal|download)
+    renewal|download|download-budget)
         assert_jq "$MODE: renewal cause is recorded" "$all" 'any(.[]; .transport == "mint" and .cause == "401-renewal") and any(.[]; .authorization_phase == 1)' ;;
     missing)
         assert_jq 'missing: complexity and caller coverage stay explicit' "$summary" '.totals.complexity_measured == 0 and .totals.complexity_missing == 1 and .totals.known_complexity == 0 and .totals.item_known == 0 and .totals.caller_supplied == 0' ;;
@@ -197,12 +211,46 @@ for row in \
         assert_jq 'expiry: read explains incomplete attempt and process coverage' "$summary" '.complete and (.limitations | length > 0)' ;;
     cap|stop)
         assert_jq "$MODE: partial hour is not complete" "$summary" '.complete == false' ;;
+    stop-expired)
+        assert_jq 'stop after expiry preserves the complete hour without a later request' "$(cat "$LOG/stop-result")" '.status == "expired" and .complete'
+        assert_jq 'stop after expiry remains complete on read' "$summary" '.complete' ;;
     rate)
         assert_jq 'rate: actual HTTP status survives logical rate classification' "$all" 'all(.[]; .http_status == "400")' ;;
     write)
         assert_file_contains 'write: unconfirmed write notice survives observation' "$LOG/err" 'write=unconfirmed' ;;
     esac
 done
+
+MODE=active LOG="$TMP_ROOT/callers" JOURNAL="$TMP_ROOT/callers/journal"
+KEY=private-personal-key CLIENT_ID='' CLIENT_SECRET='' CALLER=watch ITEM=TEAM-1
+mkdir -p "$LOG"
+printf '1000\n' >"$LOG/now"
+: >"$LOG/attempts"; : >"$LOG/sends"
+run_linear journal start --max-bytes 100000 --actor-id 00000000-0000-0000-0000-000000000001 >"$LOG/start"
+for pair in watch:TEAM-1 watch:TEAM-2 audit:TEAM-1; do
+    CALLER="${pair%%:*}" ITEM="${pair#*:}"
+    run_linear auth-check >"$LOG/out"
+done
+CALLER_REPOSITORY="$TMP_ROOT/other-project"
+mkdir -p "$CALLER_REPOSITORY"
+git -C "$CALLER_REPOSITORY" init -q -b main
+git -C "$CALLER_REPOSITORY" config gc.auto 0
+git -C "$CALLER_REPOSITORY" config maintenance.auto false
+CALLER=watch ITEM=TEAM-1
+run_linear auth-check >"$LOG/other-out"
+unset CALLER_REPOSITORY
+summary=$(run_linear journal read)
+all=$(jq -s . "$JOURNAL/attempts.jsonl")
+assert_jq 'caller totals combine carrying items and retain repository boundaries' "$summary" \
+    '.callers | length == 3 and ([.[] | select(.caller.script == "watch") | .attempts] | sort == [1,2])'
+assert_jq 'top caller includes its combined attempts and returned complexity' "$summary" \
+    '.top_five_by_attempts[0] | .caller.script == "watch" and .attempts == 2 and .known_complexity == 10 and .complexity_measured == 2 and .item_known == 2'
+assert_jq 'caller totals do not assign one carrying item to the whole caller' "$summary" \
+    'all(.callers[]; .caller | has("item") | not)'
+assert_jq 'attempt records retain each carrying item' "$all" \
+    '[.[] | select(.caller.script == "watch") | .caller.item] | sort == ["TEAM-1","TEAM-1","TEAM-2"]'
+assert_jq 'separate entry invocations keep distinct logical request IDs' "$all" \
+    'map(.request_id) | unique | length == 4'
 
 # Acknowledgements prove the first writer holds the lock before the second
 # reaches it. Both real request processes are reaped before fixture cleanup.

@@ -76,7 +76,7 @@ Collection stops after one hour, before an append would exceed the byte limit, o
 
 Read reports the session state, per-caller attempt counts, the top five callers by attempts, separate transport counts and identity/label/complexity coverage. It sums only returned valid `X-Complexity` values. Missing values stay unread. Shared remaining-quota changes are never request costs. A rate-limit refusal does not establish which caller spent the shared quota.
 
-Only participating installed transport processes on this host are covered. The window uses the host clock and records completed attempts. An attempt completed after expiry, or killed before its record, can be absent. A stopped, capped or failed collection is not a complete hour. Storage attempts need not consume GraphQL quota. Jarvis and Fleet run their separately authorized normal-load hours only after merge and consumer adoption, then leave collection off.
+Only participating installed transport processes on this host are covered. The window uses the host clock and records completed attempts. An attempt completed after expiry, or killed before its record, can be absent. A collection stopped before expiry, capped or failed is not a complete hour. Storage attempts need not consume GraphQL quota.
 
 ## Team Target
 

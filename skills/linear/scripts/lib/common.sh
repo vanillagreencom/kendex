@@ -378,17 +378,18 @@ EOF
         [[ $# == 0 ]] || return 1
         linear_journal_load || { printf 'linear-journal: state=unavailable cause=session-unread\n' >&2; return 1; }
         linear_journal_lock || { linear_journal_incomplete lock-unavailable; return 1; }
+        now=$(date +%s) || return 1
+        [[ "$now" =~ ^[0-9]{1,12}$ ]] || return 1
+        if ((now >= $(jq -r '.expires_at' <<<"$_LJ_SESSION"))); then status=expired; fi
         if [[ "$action" == stop ]]; then
             if [[ ! -e "$LINEAR_JOURNAL_DIR/stopped" ]]; then
-                printf '%s\n' stopped >"$LINEAR_JOURNAL_DIR/stopped" || return 1
+                [[ "$status" == expired ]] || status=stopped
+                printf '%s\n' "$status" >"$LINEAR_JOURNAL_DIR/stopped" || return 1
             fi
         fi
         if [[ -f "$LINEAR_JOURNAL_DIR/stopped" && ! -L "$LINEAR_JOURNAL_DIR/stopped" ]]; then
             status=$(cat -- "$LINEAR_JOURNAL_DIR/stopped") || return 1
         fi
-        now=$(date +%s) || return 1
-        [[ "$now" =~ ^[0-9]{1,12}$ ]] || return 1
-        if [[ "$status" == active ]] && ((now >= $(jq -r '.expires_at' <<<"$_LJ_SESSION"))); then status=expired; fi
         jq -s --argjson session "$_LJ_SESSION" --arg status "$status" \
             --arg output "$LINEAR_JOURNAL_DIR/attempts.jsonl" '
             def counts:
@@ -399,8 +400,9 @@ EOF
                  actor_known:([.[] | select(.actor.id != null)] | length),
                  caller_supplied:([.[] | select(.caller.source == "supplied")] | length),
                  item_known:([.[] | select(.caller.item != null)] | length)};
-            (group_by(.caller.repository,.caller.script,.caller.item) |
-                map({caller:.[0].caller} + counts) | sort_by(-.attempts,.caller.repository,.caller.script)) as $callers |
+            (group_by(.caller.repository,.caller.script) |
+                map({caller:(.[0].caller | {repository,script})} + counts) |
+                sort_by(-.attempts,.caller.repository,.caller.script)) as $callers |
             {status:$status,output:$output,started_at:$session.started_at,expires_at:$session.expires_at,
              complete:($status == "expired"),totals:counts,callers:$callers,
              top_five_by_attempts:$callers[:5],

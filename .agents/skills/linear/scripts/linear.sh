@@ -120,14 +120,14 @@ case "$resource" in
 esac
 
 case "$resource" in
-    # The local store is gone. Each removed verb answers with one line naming
-    # what to run instead and exits nonzero, so a caller still running it fails
-    # rather than reading a store that no longer exists.
     journal)
         LINEAR_SKIP_API_KEY_RESOLUTION=1
         source "$SCRIPT_DIR/lib/common.sh"
         linear_journal_command "$@"
         ;;
+    # The local store is gone. Each removed verb answers with one line naming
+    # what to run instead and exits nonzero, so a caller still running it fails
+    # rather than reading a store that no longer exists.
     sync)
         echo "linear: removed=sync replacement=none: every read goes to the live API, so drop the sync step" >&2
         exit 1
