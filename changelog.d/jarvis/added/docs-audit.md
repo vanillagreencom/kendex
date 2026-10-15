@@ -1,1 +1,0 @@
-- Jarvis reports committed Markdown counts, bytes and positive growth for explicit repositories and time ranges.
