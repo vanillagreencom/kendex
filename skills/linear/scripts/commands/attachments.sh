@@ -89,6 +89,8 @@ list_attachments() {
 
 # A subshell, so the EXIT trap removes the temporary file on every path.
 fetch_attachment() (
+    local _LJ_TRANSPORT=download _LJ_OPERATION=attachment-download _LJ_METHOD=GET
+    local _LJ_REQUEST_ID="$BASHPID-$RANDOM-$RANDOM" _LJ_PHASE=0 _LJ_CAUSE=request
     local url="${1:-}" output authorization header url_quote raw code headers renewed=0 attempt=1 temp
     local delimiter="___HTTP_CODE___"
     if [[ "$#" -ne 3 || "${2:-}" != --output || -z "${3:-}" ]]; then
@@ -116,9 +118,11 @@ fetch_attachment() (
         fi
         code="${raw##*"$delimiter"}"
         headers="${raw%"$delimiter"*}"
+        linear_journal_record "$code" "$headers" "$attempt"
         # An app token Linear's upload server refuses is renewed once, as the
         # GraphQL transport renews it.
         if [[ "$code" == 401 && "$LINEAR_AUTH_KIND" == app && "$renewed" == 0 ]]; then
+            _LJ_PHASE=1
             authorization=$(linear_authorization renew) || return 1
             header=$(curl_config_quote "Authorization: $authorization") || return 1
             renewed=1

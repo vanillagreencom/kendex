@@ -174,6 +174,9 @@ source "$_LIB_DIR/cycle-dates.sh"
 # shellcheck source=auth.sh
 source "$_LIB_DIR/auth.sh"
 
+_LINEAR_JOURNAL_ENTRY="${BASH_SOURCE[1]:-linear.sh}"
+_LINEAR_JOURNAL_ENTRY="${_LINEAR_JOURNAL_ENTRY##*/}"
+
 # Every command but auth-mint reads the selected credential, so op://
 # references resolve at startup and an authentication failure surfaces before
 # any read or write. auth-mint resolves the client pair on its own.
@@ -189,6 +192,232 @@ check_api_key() {
 curl_config_quote() {
     printf '%s' "$1" | jq -Rs .
 }
+
+# The session directory owns the journal, its stop state and its writer lock.
+# No timer process is needed: every writer and reader checks the fixed expiry.
+linear_journal_binding() {
+    case "$LINEAR_AUTH_KIND" in
+    app) linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE" ;;
+    app-token) linear_key_fingerprint "app-token:$LINEAR_APP_TOKEN" ;;
+    api-key) linear_key_fingerprint "api-key:$LINEAR_API_KEY" ;;
+    *) return 1 ;;
+    esac
+}
+
+linear_journal_load() {
+    local dir="${LINEAR_JOURNAL_DIR:-}" file
+    [[ "$dir" == /* && -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 1
+    for file in session.json attempts.jsonl; do
+        [[ -f "$dir/$file" && ! -L "$dir/$file" && -O "$dir/$file" ]] || return 1
+    done
+    _LJ_SESSION=$(jq -ce '
+        select(.schema == 1 and .status == "active") |
+        select(.started_at | type == "number" and . == floor) |
+        select(.expires_at == (.started_at + 3600)) |
+        select(.max_bytes | type == "number" and . > 0 and . <= 999999999 and . == floor) |
+        select(.binding | type == "string" and test("^[0-9a-f]{12}$")) |
+        select(.actor.id | type == "string" and test("^[0-9a-fA-F-]{36}$")) |
+        select(.actor.source == "supplied") |
+        select(.actor.kind == "application" or .actor.kind == "user")' "$dir/session.json") || return 1
+}
+
+linear_journal_incomplete() {
+    # An exclusive, fixed marker also reports a lock owner that never returned.
+    (set -o noclobber; printf '%s\n' incomplete >"$LINEAR_JOURNAL_DIR/stopped") 2>/dev/null || true
+    printf 'linear-journal: state=incomplete cause=%s\n' "$1" >&2
+}
+
+linear_journal_lock() {
+    local tries
+    for ((tries = 0; tries < 20; tries++)); do
+        if mkdir -- "$LINEAR_JOURNAL_DIR/writer.lock" 2>/dev/null; then
+            trap 'rmdir -- "$LINEAR_JOURNAL_DIR/writer.lock"' EXIT
+            return 0
+        fi
+        sleep 0.05 || return 1
+    done
+    return 1
+}
+
+linear_journal_headers() {
+    jq -Rn '
+        reduce inputs as $line ({};
+            if $line | startswith("HTTP/") then {}
+            else ($line | ascii_downcase |
+                (capture("^(?<key>x-ratelimit-[a-z0-9-]+|x-complexity):[ \\t]*(?<value>[0-9]{1,15}(?:\\.[0-9]{1,6})?)[ \\t\\r]*$")? // null)) as $h |
+                if $h == null then . else .[$h.key] = $h.value end
+            end)' <<<"$1"
+}
+
+linear_journal_record() (
+    [[ -n "${LINEAR_JOURNAL_DIR:-}" ]] || return 0
+    local _LJ_SESSION binding now headers actor caller item record bytes used
+    if ! linear_journal_load; then
+        printf 'linear-journal: state=unavailable cause=session-unread\n' >&2
+        return 0
+    fi
+    [[ ! -e "$LINEAR_JOURNAL_DIR/stopped" ]] || return 0
+    if ! linear_journal_lock; then
+        linear_journal_incomplete lock-unavailable
+        return 0
+    fi
+    [[ ! -e "$LINEAR_JOURNAL_DIR/stopped" ]] || return 0
+    if ! now=$(date +%s) || ! [[ "$now" =~ ^[0-9]{1,12}$ ]]; then
+        linear_journal_incomplete clock-unavailable
+        return 0
+    fi
+    if ((now >= $(jq -r '.expires_at' <<<"$_LJ_SESSION"))); then
+        printf '%s\n' expired >"$LINEAR_JOURNAL_DIR/stopped" || linear_journal_incomplete stop-write
+        return 0
+    fi
+    if ! binding=$(linear_journal_binding) || ! headers=$(linear_journal_headers "$2"); then
+        linear_journal_incomplete metadata-unavailable
+        return 0
+    fi
+    actor=$(jq -c --arg binding "$binding" '
+        if .binding == $binding then .actor
+        else {kind: null, id: null, source: "unread"} end' <<<"$_LJ_SESSION") || return 0
+    caller="${LINEAR_JOURNAL_CALLER:-$_LINEAR_JOURNAL_ENTRY}"
+    item="${LINEAR_JOURNAL_ITEM:-}"
+    # These are identifiers, never free text or a command line.
+    if ! [[ "$caller" =~ ^[a-zA-Z0-9_.-]{1,160}$ ]] ||
+        [[ "$caller" == *lin_* || "$caller" == *ghp_* || "$caller" == *ghs_* || "$caller" == *gho_* || "$caller" == *ghu_* || "$caller" == *github_pat_* || "$caller" == *sk-ant-* ]]; then
+        caller="$_LINEAR_JOURNAL_ENTRY"
+    fi
+    if ! [[ "$item" =~ ^[A-Za-z][A-Za-z0-9_-]*-[0-9]+$ || "$item" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$ ]]; then
+        item=''
+    fi
+    if ! record=$(jq -cn --argjson session "$_LJ_SESSION" --argjson actor "$actor" \
+        --argjson headers "$headers" --argjson at "$now" --arg binding "$binding" \
+        --arg request "${_LJ_REQUEST_ID:-$BASHPID}" --arg repository "$PROJECT_ROOT" \
+        --arg caller "$caller" --arg supplied "${LINEAR_JOURNAL_CALLER:-}" --arg item "$item" \
+        --arg credential "$LINEAR_AUTH_KIND" --arg transport "${_LJ_TRANSPORT:-graphql}" \
+        --arg operation "${_LJ_OPERATION:-unnamed}" --arg method "${_LJ_METHOD:-POST}" \
+        --arg cause "${_LJ_CAUSE:-request}" --arg status "$1" \
+        --argjson attempt "$3" --argjson phase "${_LJ_PHASE:-0}" '
+        {schema:1, session_id:$session.started_at, request_id:$request, at:$at,
+         actor:$actor, credential:{kind:$credential,binding:$binding},
+         caller:{repository:$repository,script:$caller,
+             source:(if $supplied == $caller then "supplied" else "entry" end),
+             item:(if $item == "" then null else $item end)},
+         transport:$transport,operation:$operation,method:$method,cause:$cause,
+         http_status:$status,transport_ok:($status != "000"),attempt:$attempt,
+         authorization_phase:$phase,headers:$headers}'); then
+        linear_journal_incomplete record-unavailable
+        return 0
+    fi
+    if ! bytes=$(printf '%s\n' "$record" | LC_ALL=C wc -c) ||
+        ! used=$(LC_ALL=C wc -c <"$LINEAR_JOURNAL_DIR/attempts.jsonl"); then
+        linear_journal_incomplete size-unavailable
+        return 0
+    fi
+    if ((used + bytes > $(jq -r '.max_bytes' <<<"$_LJ_SESSION"))); then
+        printf '%s\n' byte-cap >"$LINEAR_JOURNAL_DIR/stopped" || linear_journal_incomplete stop-write
+        return 0
+    fi
+    printf '%s\n' "$record" >>"$LINEAR_JOURNAL_DIR/attempts.jsonl" || linear_journal_incomplete append-failed
+    return 0
+)
+
+linear_journal_command() (
+    local action="${1:-help}" max='' actor='' binding now _LJ_SESSION status=active
+    shift || true
+    if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
+        cat <<'EOF'
+Usage: linear.sh journal start --max-bytes BYTES --actor-id UUID
+       linear.sh journal stop
+       linear.sh journal read
+
+Set LINEAR_JOURNAL_DIR to an absolute new directory before start and in each
+participating process. Output is <directory>/attempts.jsonl. Start records a
+supplied actor bound to the selected credential without an API probe. Each
+session stops after one hour, at its byte cap, or on a journal error. Use a
+new directory for each session. The byte cap covers the journal; small fixed
+session, stop and lock metadata are additional. Stop and read need no credential.
+LINEAR_JOURNAL_CALLER and LINEAR_JOURNAL_ITEM label known callers and items.
+EOF
+        return 0
+    fi
+    if [[ "${LINEAR_JOURNAL_DIR:-}" != /* || "$LINEAR_JOURNAL_DIR" == */ ]]; then
+        printf 'linear-journal: refused=directory value=absolute-new-directory-required\n' >&2
+        return 1
+    fi
+    case "$action" in
+    start)
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+            --max-bytes) max="${2:-}" ;;
+            --actor-id) actor="${2:-}" ;;
+            *) printf 'linear-journal: refused=option\n' >&2; return 1 ;;
+            esac
+            [[ $# -ge 2 ]] || return 1
+            shift 2
+        done
+        if ! [[ "$max" =~ ^[1-9][0-9]{0,8}$ && "$actor" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            printf 'linear-journal: refused=start-fields\n' >&2
+            return 1
+        fi
+        linear_check_credentials && linear_resolve_credentials || return 1
+        binding=$(linear_journal_binding) || return 1
+        now=$(date +%s) || return 1
+        [[ "$now" =~ ^[0-9]{1,12}$ ]] || return 1
+        umask 077
+        mkdir -m 700 -- "$LINEAR_JOURNAL_DIR" || return 1
+        trap 'rm -f -- "$LINEAR_JOURNAL_DIR/session.json" "$LINEAR_JOURNAL_DIR/attempts.jsonl"; rmdir -- "$LINEAR_JOURNAL_DIR"' EXIT
+        : >"$LINEAR_JOURNAL_DIR/attempts.jsonl" || return 1
+        jq -cn --argjson now "$now" --argjson max "$max" --arg actor "$actor" \
+            --arg binding "$binding" --arg kind "$LINEAR_AUTH_KIND" '
+            {schema:1,status:"active",started_at:$now,expires_at:($now+3600),max_bytes:$max,
+             binding:$binding,actor:{id:$actor,source:"supplied",
+             kind:(if $kind == "api-key" then "user" else "application" end)}}' \
+            >"$LINEAR_JOURNAL_DIR/session.json" || return 1
+        trap - EXIT
+        jq -cn --arg path "$LINEAR_JOURNAL_DIR/attempts.jsonl" '{status:"active",output:$path}'
+        ;;
+    stop|read)
+        [[ $# == 0 ]] || return 1
+        linear_journal_load || { printf 'linear-journal: state=unavailable cause=session-unread\n' >&2; return 1; }
+        linear_journal_lock || { linear_journal_incomplete lock-unavailable; return 1; }
+        if [[ "$action" == stop ]]; then
+            if [[ ! -e "$LINEAR_JOURNAL_DIR/stopped" ]]; then
+                printf '%s\n' stopped >"$LINEAR_JOURNAL_DIR/stopped" || return 1
+            fi
+        fi
+        if [[ -f "$LINEAR_JOURNAL_DIR/stopped" && ! -L "$LINEAR_JOURNAL_DIR/stopped" ]]; then
+            status=$(cat -- "$LINEAR_JOURNAL_DIR/stopped") || return 1
+        fi
+        now=$(date +%s) || return 1
+        [[ "$now" =~ ^[0-9]{1,12}$ ]] || return 1
+        if [[ "$status" == active ]] && ((now >= $(jq -r '.expires_at' <<<"$_LJ_SESSION"))); then status=expired; fi
+        jq -s --argjson session "$_LJ_SESSION" --arg status "$status" \
+            --arg output "$LINEAR_JOURNAL_DIR/attempts.jsonl" '
+            def counts:
+                {attempts:length,
+                 complexity_measured:([.[] | select(.headers["x-complexity"] != null)] | length),
+                 complexity_missing:([.[] | select(.headers["x-complexity"] == null)] | length),
+                 known_complexity:([.[] | .headers["x-complexity"]? // empty | tonumber] | add // 0),
+                 actor_known:([.[] | select(.actor.id != null)] | length),
+                 caller_supplied:([.[] | select(.caller.source == "supplied")] | length),
+                 item_known:([.[] | select(.caller.item != null)] | length)};
+            (group_by(.caller.repository,.caller.script,.caller.item) |
+                map({caller:.[0].caller} + counts) | sort_by(-.attempts,.caller.repository,.caller.script)) as $callers |
+            {status:$status,output:$output,started_at:$session.started_at,expires_at:$session.expires_at,
+             complete:($status == "expired"),totals:counts,callers:$callers,
+             top_five_by_attempts:$callers[:5],
+             transports:(group_by(.transport) | map({transport:.[0].transport} + counts)),
+             limitations:["Only participating installed transport processes on this host are covered.",
+               "Only returned X-Complexity contributes to known complexity; shared bucket deltas are not costs.",
+               "Missing complexity values leave the complexity total partial.",
+               "Supplied actor identity is not independently verified; changed credentials leave it unread.",
+               "The window uses the host clock and includes completed attempts only.",
+               "Attempts completed after expiry or killed before recording can be absent.",
+               "A quota refusal does not identify who exhausted a shared bucket.",
+               "Storage attempts need not consume Linear GraphQL quota."]}' \
+            "$LINEAR_JOURNAL_DIR/attempts.jsonl"
+        ;;
+    *) printf 'linear-journal: refused=action\n' >&2; return 1 ;;
+    esac
+)
 
 # Validate field length and return error if exceeded
 # Usage: validate_length "field_name" "$value" $max_length
@@ -298,6 +527,7 @@ linear_http_post() {
             headers="${body%%$'\r\n\r\n'*}"
             body="${body#*$'\r\n\r\n'}"
         done
+        linear_journal_record "$code" "$headers" "$attempt"
         if jq -e '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1 <<<"$body"; then
             code=429
         fi
@@ -332,6 +562,12 @@ graphql_request() {
     fi
     local authorization auth_renewed=0 payload reply http_code response kind=write
     local read_pattern='^[[:space:]]*query[^_[:alnum:]]'
+    local _LJ_REQUEST_ID="$BASHPID-$RANDOM-$RANDOM" _LJ_PHASE=0
+    local _LJ_TRANSPORT=graphql _LJ_METHOD=POST _LJ_OPERATION=unnamed _LJ_CAUSE=request
+    local operation_pattern='^[[:space:]]*(query|mutation)[[:space:]]+([_A-Za-z][_A-Za-z0-9]*)'
+    if [[ "$query" =~ $operation_pattern ]]; then
+        _LJ_OPERATION="${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
+    fi
     if [[ "$query" =~ $read_pattern ]]; then
         kind=read
     fi
@@ -399,6 +635,7 @@ graphql_request() {
             ;;
         401)
             if [[ "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then
+                _LJ_PHASE=1
                 authorization=$(linear_authorization renew) || return 1
                 auth_renewed=1
                 continue

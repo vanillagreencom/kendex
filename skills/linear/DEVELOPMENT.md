@@ -66,6 +66,8 @@ Each test stands up its own fixture root and a `curl` shim on `PATH`, so none re
 
 `tests/oauth-auth.test.sh` distinguishes the selected credential from unused key provenance in credential reports. `tests/api-key-precedence.test.sh` and `tests/team-target-fail-closed.test.sh` cover personal-key and team warnings.
 
+`tests/request-journal.test.sh` drives the installed controls and HTTP send owners with offline curl and clock fixtures. Its independent send ledger covers retries, renewal, downloads and upload PUTs. Its expiry control disables the production deadline guard. Writer acknowledgements prove byte-cap serialization without timing sleeps.
+
 The `tests/live-resource-pages-replay-*.test.sh` suites drive each read verb through `linear.sh` against the GraphQL replies in `tests/lib/fixtures/recorded/`, recorded from Linear or derived in their shape where the token cannot read, through `recorded_read_case` in the assertion library, which also refuses a fixture holding anything but fixture values (the fixtures' README): the complete chain returns every row, and a later page that fails leaves stdout empty. A new read verb adds a recorded fixture and a row in one of those suites. `PROJECT_ROOT` is not a redirect and cannot be made one: `common.sh` assigns it from `git rev-parse` on every source, so a value you export never survives to be read.
 
 ### Assertions

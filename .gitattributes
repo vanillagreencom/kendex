@@ -25,6 +25,7 @@ skills/orch/scripts/oversee-watch text eol=lf
 skills/orch/scripts/lib/verifying.sh text eol=lf
 skills/linear/scripts/commands/issues.sh text eol=lf
 skills/linear/scripts/lib/issue-validation.sh text eol=lf
+skills/linear/scripts/lib/common.sh text eol=lf
 skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf
 .agents/skills/orch/scripts/oversee-watch text eol=lf
 .agents/skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf

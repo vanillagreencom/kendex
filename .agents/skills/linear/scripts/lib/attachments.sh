@@ -138,8 +138,18 @@ attach_upload_file() {
         put_config_lines+=("header = $(curl_config_quote "$header_line")")
     done < <(echo "$result" | jq -r '.fileUpload.uploadFile.headers // [] | .[] | "\(.key): \(.value)"')
 
-    local http_code
-    if ! http_code=$(printf '%s\n' "${put_config_lines[@]}" | curl -s -o /dev/null -w "%{http_code}" -K -); then
+    local http_code raw headers delimiter=___HTTP_CODE___
+    local _LJ_TRANSPORT=upload _LJ_OPERATION=attachment-upload _LJ_METHOD=PUT
+    local _LJ_REQUEST_ID="$BASHPID-$RANDOM-$RANDOM" _LJ_PHASE=0 _LJ_CAUSE=request
+    if [[ -n "${LINEAR_JOURNAL_DIR:-}" ]]; then
+        if ! raw=$(printf '%s\n' "${put_config_lines[@]}" 'dump-header = "-"' |
+            curl -s -o /dev/null -w "${delimiter}%{http_code}" -K -); then
+            raw="${delimiter}000"
+        fi
+        http_code="${raw##*"$delimiter"}"
+        headers="${raw%"$delimiter"*}"
+        linear_journal_record "$http_code" "$headers" 1
+    elif ! http_code=$(printf '%s\n' "${put_config_lines[@]}" | curl -s -o /dev/null -w "%{http_code}" -K -); then
         http_code=000
     fi
     case "$http_code" in

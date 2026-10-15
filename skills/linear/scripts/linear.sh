@@ -32,6 +32,7 @@ Resources:
   session-status  Aggregated session status for /start workflow
   auth-check      Credential, actor and team preflight (--strict fails with no team)
   auth-mint       Mint app token JSON from the client pair without writing files
+  journal         Opt-in bounded attempt metadata (start, stop, read)
 
 Every read goes to Linear's API as it runs; no local copy is kept. The
 removed cache verb refuses naming the live command to run instead, and the
@@ -122,6 +123,11 @@ case "$resource" in
     # The local store is gone. Each removed verb answers with one line naming
     # what to run instead and exits nonzero, so a caller still running it fails
     # rather than reading a store that no longer exists.
+    journal)
+        LINEAR_SKIP_API_KEY_RESOLUTION=1
+        source "$SCRIPT_DIR/lib/common.sh"
+        linear_journal_command "$@"
+        ;;
     sync)
         echo "linear: removed=sync replacement=none: every read goes to the live API, so drop the sync step" >&2
         exit 1

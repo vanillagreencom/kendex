@@ -130,6 +130,8 @@ linear_authorization() (
         fi
     fi
 
+    local _LJ_CAUSE=initial-mint
+    [[ "${1:-}" != renew ]] || _LJ_CAUSE=401-renewal
     cached=$(linear_mint_token) || return 1
     token=$(jq -er '.access_token' <<<"$cached") || return 1
     # A store that fails loses only the reuse: this request still runs on the
@@ -147,6 +149,9 @@ linear_authorization() (
 
 # Mint once from the pair and print {access_token, expires_at}; never write files.
 linear_mint_token() (
+    local _LJ_TRANSPORT=mint _LJ_OPERATION=oauth-token _LJ_METHOD=POST
+    local _LJ_REQUEST_ID="$BASHPID-$RANDOM-$RANDOM" _LJ_PHASE=0
+    local _LJ_CAUSE="${_LJ_CAUSE:-explicit-mint}"
     if [[ -z "${LINEAR_CLIENT_ID:-}" || -z "${LINEAR_CLIENT_SECRET:-}" ]]; then
         local LINEAR_AUTH_KIND="incomplete-app"
         linear_check_credentials

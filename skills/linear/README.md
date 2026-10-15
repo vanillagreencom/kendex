@@ -8,6 +8,7 @@ A shell CLI for Linear issues, projects and planning data. Every read and write 
 - Read every page a read asks for, or fail with no partial output.
 - Upload attachments, list the files an issue references and download one.
 - Check configured issue requirements during creation and completion.
+- Observe request attempts with an opt-in journal that stops after one hour.
 - Apply and create only the labels the repository's label taxonomy declares, and list the labels that drift from it.
 
 ## Install
@@ -38,6 +39,9 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_REQUIRE_REACH` | Enforces the `Reached by:` and `Symptom:` lines at create, and at create, on `issues update --description` or `--description-file`, and on `issues bulk-update --description` refuses a body whose first non-empty line is a `**Key**:` or `Reached by:` header or that has a header line over 500 characters; on when unset, off when empty |
 | `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
 | `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a rate-limited call, or of a query or attachment download answered 5xx or not at all, doubling after |
+| `LINEAR_JOURNAL_DIR` | Explicit absolute directory for a bounded observation session; unset or empty keeps collection off. See [request journal](SKILL.md#request-journal). |
+| `LINEAR_JOURNAL_CALLER` | Known parent script identifier, without arguments; otherwise the journal names the Linear command script |
+| `LINEAR_JOURNAL_ITEM` | Known carrying issue identifier or `owner/repo#number`; absent or invalid stays unread |
 | `KENDEX_USER_EMAIL` | Your email address, in the project's private env file; `issues activate` assigns an unassigned issue to the Linear user with that address |
 
 Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names another private file. Enable client credentials tokens in the application's Linear settings. Credential precedence is `LINEAR_APP_TOKEN`, then the client pair, then `LINEAR_API_KEY`. Without a token, a partial pair refuses instead of changing actors. Application values use process environment precedence over project files. The personal key keeps its project-file precedence over inherited keys.
