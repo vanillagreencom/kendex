@@ -307,7 +307,8 @@ assert_eq "$RECOVERY_ROUTE_CONTROL" 2 'control: accepting a native checkpoint dr
 OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-command-stop/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-command-stop/orch"
-mutate_file "$OPEN_TERMINAL" '    host_harness_stop prior || return 1' '    true || return 1'
+mutate_file "$OPEN_TERMINAL" $'    host_harness_stop prior || return 1\n    host_launch_ready completed || return 1' \
+  $'    true || host_harness_stop prior || return 1\n    host_launch_ready completed || return 1'
 RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
 recovery_case route-stop-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' neutral custom fleet 1 > "$TMP_ROOT/command-stop-control.out"
 RECOVERY_ROUTE_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"
@@ -315,7 +316,8 @@ assert_eq "$RECOVERY_ROUTE_CONTROL" 1 'control: clearing the checkpoint without 
 OPEN_TERMINAL="$RECOVERY_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-selection-handoff/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-selection-handoff/orch"
-mutate_file "$OPEN_TERMINAL" '[[ "$host_pending_step" != selection ]] || return 0' '[[ "$host_pending_step" != selection ]] || true'
+mutate_file "$OPEN_TERMINAL" $'  if [[ "$host_pending_step" == selection ]]; then\n    [[ "$HARNESS" != codex ]] || HOST_SELECTION_FILE="tmp/lane-mail/$2/relaunch-selection"' \
+  $'  if false && [[ "$host_pending_step" == selection ]]; then\n    [[ "$HARNESS" != codex ]] || HOST_SELECTION_FILE="tmp/lane-mail/$2/relaunch-selection"'
 RECOVERY_SAVED_FAIL="$FAIL"; FAIL=0
 recovery_case codex-cat-ssh-control codex put /srv/lane/tmp/lane-mail/KEN-3241/context.json selection '' failed > "$TMP_ROOT/selection-handoff-control.out"
 RECOVERY_HANDOFF_CONTROL="$FAIL"; FAIL="$RECOVERY_SAVED_FAIL"
