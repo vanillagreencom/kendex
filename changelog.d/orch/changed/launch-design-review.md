@@ -1,1 +1,0 @@
-- Launch rulings record go, change or drop after judging the approach. A consequential design choice or uncertain approach receives one architecture review in the lane before implementation.

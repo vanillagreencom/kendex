@@ -1,1 +1,0 @@
-- Keep fleet supervision active when a live coordinator reaches its credit launch reserve and no successor qualifies. Lane questions, owner messages and ask deadlines continue through bounded reserve recovery.

@@ -1,1 +1,0 @@
-- Keep referral checks in the session's own task project so verification still reads them after the other owner marks the referred item Done.

@@ -1,1 +1,0 @@
-- Jarvis mailbox reads record which owner notices and questions the session read, so Slack does not post them again when its hold ends.

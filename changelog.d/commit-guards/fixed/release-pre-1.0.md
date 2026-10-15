@@ -1,1 +1,0 @@
-- `changelog-entries --release` accepts pre-1.0 program versions under the release standard, including a patch with an Added entry and a minor with a Breaking entry.

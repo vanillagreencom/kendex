@@ -1,1 +1,0 @@
-- Filing and launch reads judge whether an approach produces its outcome, can remove or simplify existing work, or works around a rule. Containers close when their holder reads the shared outcome at its source.

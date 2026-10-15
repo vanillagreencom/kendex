@@ -1,1 +1,0 @@
-- Review findings on work the item's Done-when does not need become follow-up candidates or declines with a reason. Small size and relatedness no longer add that work to the pull request.

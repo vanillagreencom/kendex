@@ -1,1 +1,0 @@
-- Count draft review work separately from bot wait in cycle records and rollups. Bot wait starts after the pull request is ready and the head is pushed.

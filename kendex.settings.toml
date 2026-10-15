@@ -338,24 +338,19 @@ GUARD_FULL_CROSS_DOC = "run"
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The fragment scope of the changelog-entries lane. The two-segment glob
-# keeps changelog.d/README.md out — its bullets document the format and are
-# not entries. changelog.d/<package>/<section>/ holds a catalog package's
-# own entries, which choose no part of kendex's version; the package setting's
-# comment below says which packages carry a version.
-# CHANGELOG.md is the lane's other scope,
-# COMMIT_GUARDS_CHANGELOG_RECORD, judged by a different rule: entries there
-# are the collator's, so only lines this commit ADDS under [Unreleased] are
-# refused and the released history no one may rewrite is never measured.
-COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md changelog.d/*/*/*.md"
+# keeps changelog.d/README.md out: its bullets document the format and are
+# not entries. Catalog content uses no kendex release fragment.
+# COMMIT_GUARDS_CHANGELOG_RECORD names the combined program release notes.
+# Ordinary checks read that record as evidence for a configured version bump.
+COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
 # The app version equals the workspace version (crates/cli/tests/compat.rs).
 # Package manifests keep their own adjacent release records.
 COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "crates/app/tauri.conf.json pi-extensions/*/package.json"
 
-# The catalog packages a changelog.d/<package>/ fragment may name. Skills,
-# hooks and agents are declared by their own file and carry no version, so
-# a change to one owes no raise.
-COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = "skills/*/SKILL.md hooks/*.sh agents/*.md"
+# Disable catalog package fragments. Independent Pi package versions keep
+# their own checks through COMMIT_GUARDS_CHANGELOG_VERSION_PATHS above.
+COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = ""
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg
 # lane: crates/ and ui/ are what a consumer sees. [no-changelog] in the

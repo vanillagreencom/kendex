@@ -1,1 +1,0 @@
-- Overseers read the proving artifact before accepting outcomes. Progress report summaries open with dated source readings.

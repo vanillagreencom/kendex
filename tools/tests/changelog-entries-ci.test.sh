@@ -4,10 +4,10 @@
 # passed through. The step's working directory and command are read from the
 # workflow and run in a fixture shaped as the job's checkout: the candidate
 # tree at a merge commit of the branch into a base that moved, with this
-# repository's commit-guards scripts and settings, and BASE at the base tip,
-# or at the branch point for the pull request run of a stacked branch. The
-# step's BASE expression is read from the workflow too and evaluated on a
-# pull request's and a merge group's payload, the two events
+# repository's commit-guards scripts and explicit package settings, and BASE
+# at the base tip, or at the branch point for the pull request run of a
+# stacked branch. The step's BASE expression is read from the workflow too
+# and evaluated on a pull request's and a merge group's payload, the two events
 # tools/tests/ci-aggregate.test.sh holds the step to running on.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -120,7 +120,13 @@ fixture() { # NAME MOVE BRANCH
   mkdir -p "$R/skills/commit-guards" "$R/skills/demo/scripts"
   g -c init.defaultBranch=main init -q
   cp -R "$REPO/skills/commit-guards/scripts" "$R/skills/commit-guards/scripts"
-  cp "$REPO/kendex.settings.toml" "$R/kendex.settings.toml"
+  # The generic package scenarios need their own policy, independent of this
+  # repository's program-only release policy.
+  cat >"$R/kendex.settings.toml" <<'SETTINGS'
+[env]
+COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md changelog.d/*/*/*.md"
+COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = "skills/*/SKILL.md"
+SETTINGS
   printf -- '---\nname: demo\nmetadata:\n  version: "1.0.0"\n---\n\n# Demo\n' >"$R/skills/demo/SKILL.md"
   printf 'echo one\n' >"$R/skills/demo/scripts/run"
   g add -A

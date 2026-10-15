@@ -1,1 +1,0 @@
-- Slack skips the notices and questions Jarvis read when a hold ends, including relays bound to a linked worktree.

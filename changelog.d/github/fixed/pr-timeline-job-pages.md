@@ -1,1 +1,0 @@
-- Merged pull request cycle records read rerun jobs in smaller pages when GitHub rejects a large job response.
