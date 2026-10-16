@@ -15,11 +15,26 @@ cp -- "$(command -v sleep)" "$TMP_ROOT/bin/hold/claude"
 cat > "$TMP_ROOT/bin/claude" <<'HARNESS'
 #!/usr/bin/env bash
 set -euo pipefail
+# Freeze the production record at harness entry, before any acknowledgement.
+# A later read could hide a harness that ran before launch_record_finish.
+record=null
+[[ ! -r "$MODEL_WORKTREE/tmp/workflow-state-oversee.json" ]] || record="$(< "$MODEL_WORKTREE/tmp/workflow-state-oversee.json")"
 printf '%s\n' "$@" > "$MODEL_ARGV"
-printf '%s\n' "$$" > "$MODEL_PID"
 . "$MODEL_SCRIPTS/lib/lane-state.sh"
+session="$(awk 'prev=="--session-id" {print;exit} {prev=$0}' "$MODEL_ARGV")"
+lane="$(jq -c '[.lanes[]? | select(.item=="KEN-4022")] | first // null' <<<"$record")"
+root="$(jq -r '.launch.pid // empty' <<<"$lane")"
+start="$(jq -r '.launch.start // empty' <<<"$lane")"
+process_matches=false
+if [[ -n "$root" && -n "$start" ]] && lane_identity_status "$root" "$start"; then
+  table="$(lane_process_table)"
+  process_matches="$(lane_process_below "$table" "$root" '' 1 '' pids | awk -v pid="$$" '$2==pid {found=1} END {print found ? "true" : "false"}')"
+fi
+jq -nc --arg session "$session" --argjson lane "$lane" --argjson process_matches "$process_matches" \
+  '{session:$session,lane:$lane,process_matches:$process_matches}' > "$MODEL_WORKTREE/tmp/startup.$$.json"
 lane_identity_record "$MODEL_WORKTREE/tmp/process.$$"
 printf '%s\n' "$$" >> "$MODEL_STARTS"
+printf '%s\n' "$$" > "$MODEL_PID"
 exec "$MODEL_HOLD" 90
 HARNESS
 cat > "$TMP_ROOT/bin/terminal" <<'TERMINAL'
@@ -56,12 +71,18 @@ cleanup_gui() {
 }
 trap cleanup_gui EXIT
 
+startup_contract() { # DIRECTORY PID LABEL
+  assert_eq "$(jq -r '.session!="" and .lane.session_id==.session and .lane.status=="running" and .lane.surface=="gui" and .lane.launch.pid!=null and .lane.launch.start!=null and .process_matches' "$1/startup.$2.json")" \
+    true "$3 sees its own session and verified process binding before acknowledging start"
+}
+
 recovery_contract() { # STATE ARGUMENTS STARTS
   assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$1")" 1 'fresh GUI fallback writes one model-switched row'
   assert_eq "$(wc -l < "$3" | tr -d ' ')" 2 'the real replacement launcher starts a second harness'
   assert_eq "$(jq -r '.lanes[0] | .status=="running" and .surface=="gui" and .launch.pid!=null and .launch.start!=null' "$1")" true 'the replacement is a recorded GUI launch'
   assert_eq "$(awk '/^--model$/{getline;model=$0} /^--effort$/{getline;effort=$0} /^--dangerously-skip-permissions$/{permissions="bypass"} END{print model "|" effort "|" permissions}' "$2")" \
     'claude-opus-4-8|high|bypass' 'the real replacement keeps the launched model, effort and permissions'
+  startup_contract "${3%/*}" "$(tail -n 1 "$3")" 'the replacement harness'
 }
 
 while IFS='|' read -r name control; do
@@ -86,6 +107,14 @@ while IFS='|' read -r name control; do
   fi
   if [[ "$control" == tmux ]]; then
     mutate_file "$S/lib/lane-relaunch.sh" 'terminal=--ghostty' 'terminal=--tmux'
+  fi
+  if [[ "$control" == early ]]; then
+    # Preserve the ready barrier below this insertion. The mutation starts
+    # the real harness before that barrier and exits when its harness ends.
+    mutate_file "$S/open-terminal" '  lane_identity_record "$gui_dir/identity" || exit 1' \
+      '  lane_identity_record "$gui_dir/identity" || exit 1
+  eval "$3"
+  exit $?'
   fi
   expected_failure="" expected_cause=""
   case "$control" in
@@ -146,7 +175,13 @@ while IFS='|' read -r name control; do
   read -r pid < "$LANE/tmp/harness.pid"
   session="$(awk 'prev=="--session-id" { print; exit } {prev=$0}' "$LANE/tmp/fresh.argv")"
   [[ -n "$session" ]] || session=old-native-session
+  if [[ "$control" == early ]]; then
+    control_failures="$(FAIL=0; startup_contract "$LANE/tmp" "$pid" 'the initial harness' > "$LANE/tmp/control.log"; printf '%s' "$FAIL")"
+    assert_eq "$control_failures" 1 'control: the startup assertion rejects a harness run before the ready barrier'
+    continue
+  fi
   if [[ "$control" != old ]]; then
+    startup_contract "$LANE/tmp" "$pid" 'the initial harness'
     assert_eq "$(jq -r --arg s "$session" '.lanes[0] | [.session_id==$s, .launch.pid!=null, .launch.start!=null, .launch.pane==null, .surface=="gui"] | all' "$LANE/tmp/workflow-state-oversee.json")" true 'fresh GUI records its native session and process without a pane'
     identity="$(jq -r '.lanes[0].launch | "\(.pid) \(.start)"' "$LANE/tmp/workflow-state-oversee.json")"
     assert_eq "$(lane_harness_identity "${identity%% *}" claude | cut -d ' ' -f1)" "$pid" 'the recorded process owns the launched harness'
@@ -190,6 +225,7 @@ done <<'ROWS'
 fresh-gui|current
 old-gui|old
 forced-tmux|tmux
+early-harness|early
 late-terminal|slow
 uuid-failed|uuid
 git-dir-failed|git
