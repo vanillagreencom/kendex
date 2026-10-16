@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Platform: Linux. Desktop openers return at once, so the browser starts in the background.
+set -euo pipefail
+"${0%/*}/../jarvis-browser" "$1" </dev/null >/dev/null 2>&1 &

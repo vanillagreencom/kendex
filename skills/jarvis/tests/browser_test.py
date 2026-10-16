@@ -1,5 +1,10 @@
-"""Surface: jarvis-browser configured launch, detected browsers and refused input."""
+"""Surface: jarvis-browser configured launch, detected browsers, reports, launchers and refused input."""
+import json
 import os
+from pathlib import Path
+import select
+import shutil
+import subprocess
 import sys
 import unittest
 from types import SimpleNamespace
@@ -35,12 +40,76 @@ class Browser(World):
             ("JARVIS_BROWSER_PORT", "not-a-port", "https://example.org"),
             ("JARVIS_BROWSER_COMMAND", "missing-browser", "https://example.org"),
             ("JARVIS_BROWSER_PROFILE", str(self.root / "profile"), "javascript:alert(1)"),
+            ("JARVIS_BROWSER_DOWNLOADS", "relative-downloads", "https://example.org"),
+            ("JARVIS_BROWSER_PROFILE", str(self.root / "profile"), None),
         ]:
             with self.subTest(setting=setting, value=value):
                 self.env = dict(base, **{setting: value})
-                result = self.run_tool("jarvis-browser", url)
+                result = self.run_tool("jarvis-browser", *([url] if url else []))
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertFalse(self.log.exists())
+
+    def test_downloads_and_class(self):
+        self.executable("google-chrome")
+        profile, downloads = self.root / "profile", self.root / "downloads"
+        self.env.update(JARVIS_BROWSER_PROFILE=str(profile), JARVIS_BROWSER_DOWNLOADS=str(downloads),
+                        JARVIS_BROWSER_CLASS="jarvis-assistant")
+        preferences = profile / "Default/Preferences"
+        kept = {"profile": {"name": "assistant"}, "download": {"prompt_for_download": True}}
+        url = "https://example.org"
+        for state in ("first-launch", "closed", "open"):
+            with self.subTest(state=state):
+                if state != "first-launch":
+                    preferences.parent.mkdir(parents=True, exist_ok=True)
+                    preferences.write_text(json.dumps(kept))
+                if state == "open":
+                    (profile / "SingletonLock").symlink_to("host-1234")
+                result = self.run_tool("jarvis-browser", url)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.calls()[-1][-2:], ["--class=jarvis-assistant", url])
+                expected = {"download": {"default_directory": str(downloads)}}
+                if state == "closed":
+                    expected = dict(kept, download=dict(kept["download"], default_directory=str(downloads)))
+                elif state == "open":
+                    expected = kept
+                self.assertEqual(json.loads(preferences.read_text()) if preferences.exists() else None, expected)
+                self.assertEqual(sorted(path.name for path in preferences.parent.iterdir()), ["Preferences"])
+
+    def test_port_and_shim(self):
+        for configured, expected in (("9444", b"9444\n"), (None, b"9222\n")):
+            with self.subTest(port=configured):
+                self.env.pop("JARVIS_BROWSER_PORT", None)
+                if configured:
+                    self.env["JARVIS_BROWSER_PORT"] = configured
+                result = self.run_tool("jarvis-browser", "--port")
+                self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
+        result = self.run_tool("jarvis-browser", "--shim")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        shim = Path(result.stdout.decode().rstrip("\n"))
+        self.assertTrue(shim.is_absolute())
+        launchers = ("xdg-open", "x-www-browser", "www-browser")
+        self.assertEqual([name for name in launchers if not os.access(shim / name, os.X_OK)], [])
+        self.assertFalse(self.log.exists())
+        # The launchers run the script through its own interpreter lookup.
+        for name in ("bash", "python3"):
+            self.bin.joinpath(name).symlink_to(shutil.which(name) if name == "bash" else sys.executable)
+        ack_path = self.root / "ack"
+        os.mkfifo(ack_path, 0o600)
+        ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, ack)
+        self.executable("google-chrome", "import json,os,sys\n"
+            "with open(os.environ['TOOL_LOG'],'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            "with open(os.environ['HOME']+'/ack','wb',buffering=0) as f: f.write(b'B')\n")
+        self.env["JARVIS_BROWSER_PROFILE"] = str(self.root / "profile")
+        for name in launchers:
+            with self.subTest(launcher=name):
+                url = "https://example.org/device?name=" + name
+                result = subprocess.run([str(shim / name), url], env=self.env, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(select.select([ack], [], [], 10)[0], "the launcher did not open the browser")
+                self.assertEqual(os.read(ack, 1), b"B")
+                self.assertEqual(self.calls()[-1][-1], url)
+                self.assertIn("--user-data-dir=" + str(self.root / "profile"), self.calls()[-1])
 
     def test_platform_refusal(self):
         module = load("jarvis-browser")

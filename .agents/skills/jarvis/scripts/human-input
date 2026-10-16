@@ -13,6 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         "Platform: Linux Wayland. move/click require ydotool and its configured daemon; "
         "type/key require wtype and compositor virtual-keyboard support; shot requires grim. "
+        "type reads its text from stdin and prints nothing, so human-input type < FILE types a mode-600 file "
+        "without the text reaching argv or output. "
         "shot creates an absolute output file with mode 600 and refuses replacement."))
     verbs = parser.add_subparsers(dest="verb", required=True)
     move = verbs.add_parser("move")
@@ -20,7 +22,7 @@ def main():
     move.add_argument("y", type=int)
     click = verbs.add_parser("click")
     click.add_argument("button", choices=("left", "right", "middle"), default="left", nargs="?")
-    verbs.add_parser("type")
+    verbs.add_parser("type", help="type stdin, for example human-input type < FILE")
     key = verbs.add_parser("key")
     key.add_argument("keysym")
     shot = verbs.add_parser("shot")

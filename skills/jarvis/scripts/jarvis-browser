@@ -2,11 +2,37 @@
 # Platform: Linux and macOS with Python 3 and a Chromium-based browser.
 """Open a URL in the configured assistant profile. Chromium owns profile reuse."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
 import sys
 from urllib.parse import urlsplit
+import uuid
+
+
+def set_downloads(profile, downloads):
+    # Chromium has no downloads switch. It reads this preference when the profile
+    # opens, and a running browser owns the file, so only a closed profile is edited.
+    if os.path.lexists(profile / "SingletonLock"):
+        return
+    profile.mkdir(mode=0o700, exist_ok=True)
+    (profile / "Default").mkdir(mode=0o700, exist_ok=True)
+    preferences = profile / "Default" / "Preferences"
+    try:
+        values = json.loads(preferences.read_text())
+    except FileNotFoundError:
+        values = {}
+    values.setdefault("download", {})["default_directory"] = str(downloads)
+    temporary = preferences.with_name("Preferences." + uuid.uuid4().hex)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(values, stream)
+        os.replace(temporary, preferences)
+    except BaseException:
+        temporary.unlink()
+        raise
 
 
 def main():
@@ -14,17 +40,38 @@ def main():
         "Platform: Linux and macOS. JARVIS_BROWSER_PROFILE: required absolute assistant profile. "
         "JARVIS_BROWSER_COMMAND: optional executable name/path; otherwise detect Chromium, Chrome, Brave or Edge. "
         "JARVIS_BROWSER_PORT: loopback debugging port, default 9222. "
-        "The browser replaces this process; background the first launch when needed."))
-    parser.add_argument("url")
+        "JARVIS_BROWSER_DOWNLOADS: optional absolute downloads directory, applied when the profile is not open. "
+        "JARVIS_BROWSER_CLASS: optional window class, the Wayland app id on Linux. "
+        "The browser replaces this process; background the first launch when needed. "
+        "The --shim launchers start the browser in the background and return at once."))
+    parser.add_argument("url", nargs="?", help="URL to open; required unless a report flag is given")
+    report = parser.add_mutually_exclusive_group()
+    report.add_argument("--port", action="store_true", help="print the configured debugging port")
+    report.add_argument("--shim", action="store_true",
+                        help="print a directory whose xdg-open, x-www-browser and www-browser open their URL here")
     args = parser.parse_args()
     if sys.platform not in ("linux", "darwin"):
         parser.exit(2, "jarvis-browser: platform=unsupported\n")
+    port = os.environ.get("JARVIS_BROWSER_PORT", "9222")
+    if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+        parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PORT\n")
+    if args.port:
+        print(port)
+        return
+    if args.shim:
+        print(Path(__file__).resolve().parent / "browser-shim")
+        return
+    if args.url is None:
+        parser.error("a URL is required to launch the browser")
     # CLI URLs can otherwise become Chromium flags instead of navigation.
     if urlsplit(args.url).scheme not in ("http", "https", "about", "file"):
         parser.exit(2, "jarvis-browser: url=unsupported-scheme\n")
     profile = Path(os.environ.get("JARVIS_BROWSER_PROFILE", ""))
     if not profile.is_absolute():
         parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PROFILE\nSupply an absolute assistant-owned profile path.\n")
+    downloads = os.environ.get("JARVIS_BROWSER_DOWNLOADS")
+    if downloads and not Path(downloads).is_absolute():
+        parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_DOWNLOADS\n")
     command = os.environ.get("JARVIS_BROWSER_COMMAND")
     candidates = [command] if command else [
         "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
@@ -38,13 +85,13 @@ def main():
     browser = next((found for name in candidates if (found := shutil.which(name))), None)
     if browser is None:
         parser.exit(2, "jarvis-browser: dependency=chromium-browser\nSet JARVIS_BROWSER_COMMAND to an installed Chromium-based browser.\n")
-    port = os.environ.get("JARVIS_BROWSER_PORT", "9222")
-    if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
-        parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PORT\n")
+    if downloads:
+        set_downloads(profile, Path(downloads))
+    window = os.environ.get("JARVIS_BROWSER_CLASS")
     # This launcher passes the caller's desktop environment unchanged.
     os.execv(browser, [browser, "--user-data-dir=" + str(profile),
                       "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=" + port,
-                      "--no-first-run", args.url])
+                      "--no-first-run", *(["--class=" + window] if window else []), args.url])
 
 
 if __name__ == "__main__":
