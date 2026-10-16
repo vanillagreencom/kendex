@@ -305,6 +305,14 @@ assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
 assert_eq "launch=$(launch_of CC-2) unread=$(grep -c '^open-terminal: launch-identity-unread item=CC-2 pane=%1 step=harness$' <<<"$ERR" || true)" \
   'launch=["%1","number",null,null] unread=1' \
   "a tmux launch whose pane runs no harness records its pane and server, no harness, and says so"
+# A launch that declares the owner's live display records the declaration;
+# the full-record rows above hold its absence from every other launch.
+RUN_TMUX=stub,1,0 run_ot --tmux --live-display "${FLEET_CMD[@]}" CC-5
+assert_eq "rc=$RC live_display=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-5") | .live_display')" \
+  "rc=0 live_display=true" "a --live-display launch records the declaration in its lane record"
+RUN_TMUX=stub,1,0 run_ot --tmux "${FLEET_CMD[@]}" CC-5
+assert_eq "rc=$RC live_display=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-5") | .live_display')" \
+  "rc=0 live_display=null" "a later launch without the option drops the declaration"
 gui_launch="$(launch_of CC-1)"
 assert_eq "launch=$gui_launch" 'launch=null' "a GUI launch records no launch identity"
 

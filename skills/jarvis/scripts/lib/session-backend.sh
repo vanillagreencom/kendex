@@ -56,6 +56,8 @@ case "$verb" in
     cmd="$LANE_SESSION_CMD" var="$LANE_SESSION_ACCOUNT_VAR"
     form="$(lane_launch_form "$cmd" "$harness" "$LANE_TRUST_HOME" "")"
     child_env="JARVIS_RECORD=$(lane_single_quote "$6") JARVIS_GENERATION=$(lane_single_quote "$7")"
+    # Jarvis acts on the owner's desktop, so its session keeps the live display.
+    lane_launch_keep_live_session
     line="$(lane_launch_line "$cmd" "$harness" "$var" "$LANE_TRUST_HOME" "$form" "" "$child_env")" || exit 1
     jq -cn --arg line "$line" --arg var "$var" --arg home "$LANE_TRUST_HOME" \
       '{line:$line, var:$var, effective_home:$home}' ;;

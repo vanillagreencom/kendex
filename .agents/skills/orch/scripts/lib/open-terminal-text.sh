@@ -707,6 +707,18 @@ Options:
                     A parked record keeps its slot under --state-dir's fleet
                     cap, so this relaunch replaces the lane it holds and is
                     never refused as cap-reached.
+  --live-display    Keep the owner's live desktop session for the lane:
+                    WAYLAND_DISPLAY, DISPLAY and HYPRLAND_INSTANCE_SIGNATURE,
+                    which every other launch clears with the launching
+                    session's identity, so a key, pointer or capture tool in
+                    the lane cannot reach the owner's screen. Pass it only
+                    for an item whose brief declares that need; a lane that
+                    needs any screen runs its own nested display. Recorded
+                    as live_display true in the lane record under
+                    --state-dir, and repeated by an automatic recovery
+                    relaunch. A --wake without it clears them. A GUI
+                    terminal keeps them to open its window, and the lane's
+                    shell inside it clears them.
   --wake            Wake an idle lane in its existing worktree: resume its
                     newest matching Claude, Codex or Copilot session in print
                     mode, a Copilot one as the value of -p, or
@@ -799,7 +811,8 @@ record names host and kind claude-cloud, its session id and the item's
 window, whose pane runs the session's local client, its mail_root the local
 worktree), mail_root, surface, model, session_id, session_since
 (the time this launch or relaunch read before its terminal opened), allow_all
-(whether a copilot command grants --allow-all or --yolo), and recovery,
+(whether a copilot command grants --allow-all or --yolo), live_display
+(true on a --live-display launch, absent otherwise), and recovery,
 whose private choices lib/lane-relaunch.sh uses for automatic same-harness
 recovery. Legacy records without those choices require a manual relaunch.
 The record also carries launched_at,

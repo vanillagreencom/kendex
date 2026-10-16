@@ -100,6 +100,7 @@ class SessionContract(unittest.TestCase):
             target.chmod(0o755)
         self.env = os.environ | {"PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
                                  "XDG_STATE_HOME": str(self.root / "state"), "XDG_SESSION_ID": "fixture-login",
+                                 "WAYLAND_DISPLAY": "fixture-wayland", "DISPLAY": ":fixture",
                                  "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"]}
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
@@ -239,6 +240,8 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(first["home"], str(self.home))
         self.assertEqual(first["account"], str(self.account))
         before = self.started()[-1]
+        # Jarvis acts on the owner's desktop: its session keeps the live display.
+        self.assertEqual(before["display"], ["fixture-wayland", ":fixture"])
         actual_record = Path(before["record"])
         self.assertTrue(actual_record.is_relative_to(Path(self.env["XDG_STATE_HOME"])))
         self.assertFalse(actual_record.is_relative_to(self.home))

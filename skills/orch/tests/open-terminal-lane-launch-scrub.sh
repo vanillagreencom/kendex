@@ -5,7 +5,10 @@
 # that route; the detached route is open-terminal-mode.sh's and the hosted one
 # open-terminal-lane-hosted.sh's. Each row runs the line as open-terminal's
 # launch_finish wraps a local launch, under a parent environment holding every
-# listed name, and reads the child's environment from a harness fixture.
+# listed name, and reads the child's environment from a harness fixture. The
+# live desktop session's names are on that list: the raw tmux rows start the
+# server with them in its global environment, as a server started inside the
+# desktop session holds them, and a --live-display launch keeps them.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -15,7 +18,7 @@ LIB="${LAUNCH_LIB_UNDER_TEST:-$TEST_DIR/../scripts/lib}"
 # A real tmux route keeps shell initialization and custom functions intact.
 # The server, rather than only the launcher process, holds the parent identity.
 if [[ "${1:-}" == --raw-case ]]; then
-  ROOT="$2" OT="$3" PANE_SHELL="$4" DEFAULT_COMMAND="$5"
+  ROOT="$2" OT="$3" PANE_SHELL="$4" DEFAULT_COMMAND="$5" LIVE="$6"
   source "$TEST_DIR/lib/open-terminal-stubs.sh"
   source "$LIB/lane-launch.sh"
   REAL_TMUX="$(command -v tmux)" || exit 1
@@ -43,6 +46,9 @@ STUB
   env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$PANE_SHELL" \
     "${parent[@]}" SCRUB_NAMES="${LANE_LAUNCH_SCRUB[*]}" PROBE_RESULT="$ROOT/result" \
     "$REAL_TMUX" -S "$ROOT/socket" -f /dev/null new-session -d -s fixture -x 200 -y 50
+  for live_name in "${LANE_LAUNCH_LIVE_SESSION[@]}"; do
+    tm show-environment -g "$live_name" >/dev/null || { echo "raw-case: server-env=missing name=$live_name" >&2; exit 1; }
+  done
   tm set-option -g default-shell "$PANE_SHELL"
   command=""
   if [[ "$DEFAULT_COMMAND" == configured ]]; then
@@ -50,10 +56,12 @@ STUB
     else printf -v command 'exec %q --noprofile --rcfile %q -i' "$PANE_SHELL" "$ROOT/bashrc"; fi
   fi
   tm set-option -g default-command "$command"
+  live_args=()
+  [[ "$LIVE" != declared ]] || live_args=(--live-display)
   env -i PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" ORCH_TMUX_SESSION=fixture \
     ORCH_LANE_HOST=local ORCH_STATE_DIR="$ROOT/state" WORKTREE_CLI="$ROOT/bin/worktree" \
     OT_WT_LOG="$ROOT/worktree.log" OT_WT_FIXED="$ROOT/worktree" LINEAR_TEAM= \
-    "$OT" --tmux --cmd raw_probe KEN-1 > "$ROOT/launch.log" 2>&1
+    "$OT" --tmux ${live_args[@]+"${live_args[@]}"} --cmd raw_probe KEN-1 > "$ROOT/launch.log" 2>&1
   for i in {1..100}; do [[ ! -s "$ROOT/result" ]] || exit 0; sleep 0.02; done
   tm capture-pane -p -t fixture:KEN-1 >> "$ROOT/launch.log"
   exit 1
@@ -156,11 +164,11 @@ done < "$TMP_ROOT/rows"
 if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
   LIVE="$(mutant_scripts scrub-live)/open-terminal" || exit 1
   orch_fixture_shared_libs "$TMP_ROOT/scrub-live"
-  raw_case() { # NAME SCRIPT SHELL DEFAULT_COMMAND EXPECTED_HELD
-    local case_name="$1" script="$2" shell="$3" command="$4" held="$5" rc=0 actual=missing
+  raw_case() { # NAME SCRIPT SHELL DEFAULT_COMMAND EXPECTED_HELD [declared]
+    local case_name="$1" script="$2" shell="$3" command="$4" held="$5" live="${6:-}" rc=0 actual=missing
     local root="$TMP_ROOT/$case_name"
     mkdir -p "$root"
-    timeout 20 "$BASH" "$TEST_DIR/open-terminal-lane-launch-scrub.sh" --raw-case "$root" "$script" "$shell" "$command" > "$root/log" 2>&1 || rc=$?
+    timeout 20 "$BASH" "$TEST_DIR/open-terminal-lane-launch-scrub.sh" --raw-case "$root" "$script" "$shell" "$command" "$live" > "$root/log" 2>&1 || rc=$?
     [[ ! -f "$root/result" ]] || actual="$(cat "$root/result")"
     [[ ! -f "$root/launch.log" ]] || cat "$root/launch.log" >> "$root/log"
     assert_eq "exit=$rc $actual" "exit=0 held=$held|origin=$root/worktree|function=called" \
@@ -173,6 +181,29 @@ if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
       raw_case "${shell##*/}-$command" "$LIVE" "$shell" "$command" -
     done
   done <<< "$RAW_SHELLS"
+  # The live desktop session, read from the shipped list, with the names the
+  # owner's lanes carried as its floor.
+  LIVE_NAMES="$(env -i PATH="$PATH" "$BASH" -c 'source "$1/lane-launch.sh" && printf "%s," "${LANE_LAUNCH_LIVE_SESSION[@]}"' _ "$TEST_DIR/../scripts/lib")" \
+    || { echo "lane-launch-scrub: live=unread" >&2; exit 1; }
+  for name in WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE; do
+    assert_contains ",$LIVE_NAMES" ",$name," "the scrub's live session names $name"
+    assert_contains " $NAMES" " $name " "the scrub list names $name"
+  done
+  # open-terminal-record.sh holds the lane record's live_display.
+  raw_case "${BASH##*/}-live-display" "$LIVE" "$BASH" configured "$LIVE_NAMES" declared
+  # Must-fail control: today's list, without the live session, leaves the lane
+  # every live-session name the tmux server holds.
+  LIVE_CONTROL="$(mutant_scripts live-session-scrub lib/lane-launch.sh)" || exit 1
+  orch_fixture_shared_libs "${LIVE_CONTROL%/scripts}"
+  mutate_file "$LIVE_CONTROL/lib/lane-launch.sh" $'  JARVIS_RECORD JARVIS_GENERATION\n  "${LANE_LAUNCH_LIVE_SESSION[@]}"\n' $'  JARVIS_RECORD JARVIS_GENERATION\n'
+  SAVED_FAIL="$FAIL"
+  FAIL=0
+  raw_case control-live "$LIVE_CONTROL/open-terminal" "$BASH" configured - > "$TMP_ROOT/live-control.out"
+  LIVE_CONTROL_FAIL="$FAIL"
+  FAIL="$SAVED_FAIL"
+  assert_eq "$LIVE_CONTROL_FAIL" 1 'control: a scrub without the live session fails the tmux row'
+  assert_contains "$(cat "$TMP_ROOT/live-control.out")" "held=$LIVE_NAMES|" \
+    'control: the lane holds every live-session name the server holds'
   RAW_CONTROL="$(mutant_scripts raw-shell-scrub lib/lane-launch.sh)" || exit 1
   orch_fixture_shared_libs "${RAW_CONTROL%/scripts}"
   mutate_file "$RAW_CONTROL/lib/lane-launch.sh" \

@@ -77,7 +77,8 @@ def main():
     rows = Path(fixture["rows"])
     with rows.open("a") as stream:
         stream.write(json.dumps({"harness": harness, "id": identity, "argv": args, "cwd": os.getcwd(),
-                                 "account": str(account), "record": str(record_path), "pid": os.getpid()}) + "\n")
+                                 "account": str(account), "record": str(record_path), "pid": os.getpid(),
+                                 "display": [os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY")]}) + "\n")
     gate = Path(fixture["gate"])
     if gate.exists():
         with gate.open() as stream:

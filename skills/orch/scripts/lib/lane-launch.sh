@@ -1415,9 +1415,11 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
   esac
 }
 
-# The variables that name the session a launch is made from, cleared from every
-# child a launcher starts so the child never writes that session's records or
-# answers as it: lane_launch_line opens each `env` line it renders with them,
+# The variables that name the session a launch is made from, and those that
+# reach the owner's live desktop session (LANE_LAUNCH_LIVE_SESSION), cleared
+# from every child a launcher starts so the child never writes that session's
+# records, answers as it, or types into or captures the owner's screen:
+# lane_launch_line opens each `env` line it renders with them,
 # open-terminal's run_detached clears them from the detached terminal or wake,
 # and its hosted command, POSIX shell text, clears them with `unset`. A tmux
 # window takes the server's environment rather than the launcher's, so the
@@ -1440,12 +1442,31 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 #                (lib/session-rows.sh session_rows_jarvis_write).
 # Copilot is not listed: kendex reads a Copilot session's id from its hook
 # payload alone.
+#   Live session WAYLAND_DISPLAY, DISPLAY and HYPRLAND_INSTANCE_SIGNATURE: a
+#                tmux server started inside the desktop session holds them, and
+#                a key, pointer or capture tool in the lane reaches the
+#                owner's screen through them. A lane that needs a screen runs
+#                its own nested display; one that needs the owner's declares
+#                it at launch, and lane_launch_keep_live_session keeps them.
+LANE_LAUNCH_LIVE_SESSION=(WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE)
 LANE_LAUNCH_SCRUB=(
   CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_PROJECT_DIR
   CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
   PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
   JARVIS_RECORD JARVIS_GENERATION
+  "${LANE_LAUNCH_LIVE_SESSION[@]}"
 )
+
+# Drop the live-session names from LANE_LAUNCH_SCRUB for every launch this
+# process makes after the call: open-terminal --live-display, and a Jarvis
+# session, which acts on the owner's desktop.
+lane_launch_keep_live_session() {
+  local name kept=()
+  for name in "${LANE_LAUNCH_SCRUB[@]}"; do
+    [[ " ${LANE_LAUNCH_LIVE_SESSION[*]} " == *" $name "* ]] || kept+=("$name")
+  done
+  LANE_LAUNCH_SCRUB=("${kept[@]}")
+}
 
 # Start the pane's configured shell with no parent session identity. Scrubbing
 # before shell initialization preserves functions and the shell language of a

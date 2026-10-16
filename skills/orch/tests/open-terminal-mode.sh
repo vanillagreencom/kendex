@@ -36,7 +36,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # Stub bin. A GUI terminal stub logs its own name, its argv, the tmux
 # identity it was handed (`<unset>` when the variable is absent, which is what a
 # scrub must produce and what an empty value would fake) and which names in
-# $OT_SCRUB_NAMES it holds (`-` for none). The $TERMINAL stub
+# $OT_SCRUB_NAMES it holds (`-` for none), then runs the lane's shell command,
+# its last argument, and logs which of those names that shell holds. The
+# $TERMINAL stub
 # `term` is on every run's PATH and named in $TERMINAL unless a row says
 # otherwise, so no case resolves the developer's own terminal; the
 # xdg-terminal-exec and ghostty stubs sit in bins of their own, on PATH only for
@@ -51,7 +53,8 @@ gui_stub() {
 printf '%s %s\n' "${0##*/}" "$*" >> "$OT_TERM_LOG"
 held=""
 for name in ${OT_SCRUB_NAMES:-}; do [[ -z "${!name+set}" ]] || held+="$name,"; done
-printf 'env TMUX=%s TMUX_PANE=%s identity=%s\n' "${TMUX-<unset>}" "${TMUX_PANE-<unset>}" "${held:--}" >> "$OT_TERM_LOG"
+lane="$(bash -c "exec 3>&1 >/dev/null; ${*: -1}"$'\n''for name in ${OT_SCRUB_NAMES:-}; do [[ -z "${!name+set}" ]] || printf "%s," "$name" >&3; done')"
+printf 'env TMUX=%s TMUX_PANE=%s identity=%s lane=%s\n' "${TMUX-<unset>}" "${TMUX_PANE-<unset>}" "${held:--}" "${lane:--}" >> "$OT_TERM_LOG"
 exit 0
 STUB
   chmod +x "$1"
@@ -125,6 +128,10 @@ SCRUB_NAMES="$(bash -c 'source "$1/scripts/lib/lane-launch.sh" && printf "%s " "
 for name in CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID JARVIS_RECORD; do
   assert_contains " $SCRUB_NAMES" " $name " "the scrub list names $name"
 done
+# The live desktop session's names, which a GUI terminal keeps to open its
+# window and the lane's shell inside it clears.
+LIVE_HELD="$(bash -c 'source "$1/scripts/lib/lane-launch.sh" && printf "%s," "${LANE_LAUNCH_LIVE_SESSION[@]}"' _ "$REPO")" \
+  || { echo "fixture: LANE_LAUNCH_LIVE_SESSION unread" >&2; exit 2; }
 RUN_PARENT=false
 
 # run NAME OT WHERE ARGS... — WHERE is `in` (a tmux controller: TMUX and
@@ -266,8 +273,8 @@ while IFS='|' read -r arm path terminal argv; do
   run "scrub-$arm" "$REPO/scripts/open-terminal" in --ghostty CC-1
   assert_eq "$RC" "0" "$arm arm: the override launch succeeds"
   assert_contains "$TERM_LOG_TEXT" "$argv" "$arm arm: the launch went through this arm"
-  assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset> identity=-" \
-    "$arm arm: the GUI terminal receives neither TMUX, TMUX_PANE nor the session identity"
+  assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset> identity=$LIVE_HELD lane=-" \
+    "$arm arm: the GUI terminal receives the live session and neither TMUX, TMUX_PANE nor the session identity, and its lane shell none of them"
 done <<<"$ARM_ROWS"
 RUN_PATH=""
 RUN_TERMINAL="term"
@@ -282,6 +289,15 @@ mutate_file "$MUTANT_SCRUB_OT" 'for name in "${LANE_LAUNCH_SCRUB[@]}" TMUX TMUX_
 run mut_scrub "$MUTANT_SCRUB_OT" in --ghostty CC-1
 assert_eq "$RC" "0" "control: the unscrubbed launch still opens"
 assert_contains "$TERM_LOG_TEXT" "identity=${SCRUB_NAMES// /,}" "control: without the scrub the terminal holds every identity name"
+# Must-fail control: a lane shell that does not clear the scrub keeps the live
+# session the terminal was handed.
+MUTANT_LANE_REPO="$TMP_ROOT/mutant-lane-shell"
+MUTANT_LANE_OT="$(mutant_scripts mutant-lane-shell open-terminal)/open-terminal" || exit 1
+git -C "$MUTANT_LANE_REPO" init -q
+orch_fixture_shared_libs "$MUTANT_LANE_REPO"
+mutate_file "$MUTANT_LANE_OT" 'local shell_cmd="unset ${LANE_LAUNCH_SCRUB[*]}; ' 'local shell_cmd="'
+run mut_lane "$MUTANT_LANE_OT" in --ghostty CC-1
+assert_contains "$TERM_LOG_TEXT" "identity=$LIVE_HELD lane=$LIVE_HELD" "control: without the lane shell's unset the lane holds the live session"
 RUN_PARENT=false
 
 echo "=== the GUI launch happens on a host with no setsid ==="

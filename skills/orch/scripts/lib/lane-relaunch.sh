@@ -16,7 +16,7 @@
 # must refuse before stopping a lane. The host and tracker retain their existing
 # lane-record meanings, including null host meaning local.
 lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
-  local fields item harness flags refresh tracker repo rc=0 model effort choice launch_model launch_id selector_id surface terminal=--tmux
+  local fields item harness flags refresh tracker repo live rc=0 model effort choice launch_model launch_id selector_id surface terminal=--tmux
   local -a words=() choice_words=()
   LANE_RECOVERY_CAUSE=permission-choice-unrecorded
   LANE_RECOVERY_ARGS=() LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
@@ -24,9 +24,10 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
       and (.recovery.cwd | type) == "string" and (.recovery.cwd | length) > 0
       and (.recovery.flags | type) == "string" and (.recovery.refresh | type) == "boolean")
     | [.item, .harness, .recovery.cwd, .recovery.flags, (.recovery.refresh | tostring),
-       (.host // "local"), (.recovery.session // ""), .tracker, (.repo // ""), (.surface // "tmux")]
+       (.host // "local"), (.recovery.session // ""), .tracker, (.repo // ""), (.surface // "tmux"),
+       (.live_display == true | tostring)]
     | join("\u001f")' <<<"$1")" || return 1
-  IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo surface <<<"$fields"
+  IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo surface live <<<"$fields"
   # The launcher records relative provider paths without their resolution base.
   case "$LANE_RECOVERY_HOST" in
     local|claude-cloud|/*) ;;
@@ -66,6 +67,7 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
     --launch-flags "$flags" --state-dir "$3" --host "$LANE_RECOVERY_HOST" --tracker "$tracker")
   [[ -z "$repo" ]] || LANE_RECOVERY_ARGS+=(--repo "$repo")
   [[ "$refresh" != true ]] || LANE_RECOVERY_ARGS+=(--lane-refresh)
+  [[ "$live" != true ]] || LANE_RECOVERY_ARGS+=(--live-display)
   # An omitted account preserves the launcher's inherited-account behavior.
   [[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")
   if [[ "$tracker" == github ]]; then LANE_RECOVERY_ARGS+=("${item#issue-}")

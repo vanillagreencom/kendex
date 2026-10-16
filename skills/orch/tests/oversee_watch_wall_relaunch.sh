@@ -59,7 +59,7 @@ mutate_file "$TMP_ROOT/bin/lanes-stub.sh" 'if [[ "${1:-}" == pick ]]; then' \
 # composer and `working` a turn in flight printing the same words; PICK is
 # `fresh` (FRESH qualifies), `spent` (the pick hands back SPENT) or `none`.
 stage() {
-  local screen="${1%%:*}" profile="${1#*:}" harness=claude model="$MODEL" flags="--model $MODEL --effort high --permission-mode dontAsk" item=KEN-2 tracker=linear host="" cwd="$TMP_ROOT/repo" refresh=false
+  local screen="${1%%:*}" profile="${1#*:}" harness=claude model="$MODEL" flags="--model $MODEL --effort high --permission-mode dontAsk" item=KEN-2 tracker=linear host="" cwd="$TMP_ROOT/repo" refresh=false live=false
   PROFILE_ENV=()
   new_case "wall_$((++CASE_SEQ))"
   printf '900 %%3\n' > "$STUB_DIR/panes.txt"
@@ -95,6 +95,7 @@ stage() {
       [[ "$profile" != stop-unconfirmed ]] || PROFILE_ENV+=(LANE_HOST_STUB_STOP_OUT=unconfirmed) ;;
     peer) cwd="$STUB_DIR/peer"; mkdir -p "$cwd" ;;
     refresh) refresh=true ;;
+    live-display) live=true ;;
     codex) harness=codex; model=gpt-5; flags='-m gpt-5 -c model_reasoning_effort=high --ask-for-approval never' ;;
     copilot) harness=copilot; flags='--model claude-opus-5-5 --reasoning-effort high --allow-all-tools' ;;
     pi) harness=pi; model=pi-claude/claude-opus-5-5; flags='--model pi-claude/claude-opus-5-5 --thinking high' ;;
@@ -109,11 +110,12 @@ stage() {
       > "$mail_root/tmp/lane-mail/$item/session-rows.jsonl"
   fi
   jq -n --arg spent "$SPENT" --arg model "$model" --arg harness "$harness" --arg flags "$flags" --arg root "$mail_root" \
-    --arg item "$item" --arg tracker "$tracker" --arg cwd "$cwd" --arg host "$host" --argjson refresh "$refresh" \
+    --arg item "$item" --arg tracker "$tracker" --arg cwd "$cwd" --arg host "$host" --argjson refresh "$refresh" --argjson live "$live" \
     '{triaged: [], lanes: [{item: $item, tracker: $tracker, repo: "owner/repo",
       host: (if $host == "" then null else $host end),
       window: "gh-2", harness: $harness, mail_root: $root, model: $model, effort: "high", account: $spent, status: "running",
-      recovery: {cwd: $cwd, flags: $flags, session: "main", refresh: $refresh}}]}' \
+      recovery: {cwd: $cwd, flags: $flags, session: "main", refresh: $refresh}}
+      + (if $live then {live_display: true} else {} end)]}' \
     > "$STUB_DIR/oversee-state.json"
   case "$profile" in
     legacy|hosted-legacy) jq 'del(.lanes[].recovery)' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/edited"; mv "$STUB_DIR/edited" "$STUB_DIR/oversee-state.json" ;;
@@ -227,7 +229,8 @@ wall_table "$ROW_RELAUNCH" \
   "a legacy record cannot replace unknown original permissions|walled:legacy|fresh|auto|rc=0 out~EVENT+usage-limit=true err~cause%epermission-choice-unrecorded=true killed=none relaunch~--relaunch=false" \
   "a removed launch checkout keeps the original lane|walled:checkout-gone|fresh|auto|rc=0 out~EVENT+usage-limit=true err~cause%echeckout-unavailable=true killed=none relaunch~--relaunch=false" \
   "a peer checkout remains the launch directory|walled:peer|fresh|auto|rc=0 cwd=peer relaunch~--host+local=true" \
-  "an authorized refresh lane carries its refresh option|walled:refresh|fresh|auto|rc=0 relaunch~--lane-refresh=true" \
+  "an authorized refresh lane carries its refresh option|walled:refresh|fresh|auto|rc=0 relaunch~--lane-refresh=true relaunch~--live-display=false" \
+  "a lane that declared the live display keeps the declaration|walled:live-display|fresh|auto|rc=0 relaunch~--live-display=true" \
   "GitHub recovery converts the state item to the launcher number|walled:github|fresh|auto|rc=0 first=EVENT+lane-relaunched+issue-2+lane=$FRESH+from=$SPENT relaunch~--tracker+github=true relaunch~--repo+owner/repo=true relaunch~issue-2=false relaunch~2=true" \
   "Codex recovery keeps its restricted approval choice|walled:codex|fresh|auto|rc=0 relaunch~--ask-for-approval+never=true relaunch~--dangerously-bypass-approvals-and-sandbox=false" \
   "Copilot recovery keeps tools-only permission|walled:copilot|fresh|auto|rc=0 relaunch~--allow-all-tools=true relaunch~--yolo=false" \

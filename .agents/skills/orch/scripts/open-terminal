@@ -55,6 +55,7 @@ parse_argv() {
   WAKE=false
   WAIT_SLOT=false
   OVER_CAP=false
+  LIVE_DISPLAY=false
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -87,6 +88,7 @@ parse_argv() {
       --wake) WAKE=true; shift ;;
       --wait-slot) WAIT_SLOT=true; shift ;;
       --over-cap) OVER_CAP=true; shift ;;
+      --live-display) LIVE_DISPLAY=true; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -171,6 +173,7 @@ LANE_SSH_PROMPT_DEFAULT=60
 LANE_SSH_PROMPT_SECS="${ORCH_LANE_SSH_PROMPT_SECS:-$LANE_SSH_PROMPT_DEFAULT}"
 
 parse_argv "$@"
+[[ "$LIVE_DISPLAY" != true ]] || lane_launch_keep_live_session
 # The threshold is FORWARDED, never defaulted here: `lanes` owns the bound, its
 # default and ORCH_LANE_MAX_PCT, and a second default in this script is what let
 # a pick typed from the oversee directive refuse an account this gate allowed.
@@ -1426,9 +1429,9 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # window, so no write here inits by hand; a wake creates nothing and writes
 # into the state a launch already made. Every field the launch does not know is
 # null, never "": a reader tests presence, and a hosted lane is one whose host
-# is set. LAUNCH_PREPARE is recorded as `prepare`,
-# and any other launch or relaunch drops an earlier one, as it drops the
-# `parked` record a park left: the resumed lane is running again. A launch or
+# is set. LAUNCH_PREPARE is recorded as `prepare`, and --live-display as
+# `live_display`; any other launch or relaunch drops an earlier one, as it
+# drops the `parked` record a park left: the resumed lane is running again. A launch or
 # relaunch recording the lane running stamps `running_at` with the time it
 # does so, which a relaunch renews and a wake keeps: oversee-watch measures a
 # lane's start from it, never from launched_at, which a background
@@ -1475,7 +1478,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$record_model" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
-    --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
+    --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" --argjson live_display "$LIVE_DISPLAY" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" --argjson cloud_repo_access "${LAUNCH_REPO_ACCESS:-null}" \
@@ -1484,6 +1487,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + {recovery: (if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)}
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
+       + (if $live_display then {live_display: true} else {} end)
        + (if $pick == null then {} else {pick: ($pick | {account: .config_dir, binding_bucket, claims,
            burn_pct_per_lane_hour, session_burn_pct_per_lane_hour, session_charge_hours,
            binding_projected_headroom_pct, session_projected_headroom_pct, projected_headroom_pct, selection_score})} end)
@@ -1522,7 +1526,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
        | if $rec.over_cap == null then . else . + {over_cap: $rec.over_cap} end
        | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
-       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
+       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare, .live_display) | unpark($rec.launched_at)
          | if $rec.status == "running" or $rec.prepare.step == "selection" then del(.preference_entry, .pick) | del(.cloud_repo_access) else . end end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
@@ -2668,7 +2672,9 @@ open_gui() {
   # launcher runs: only the ghostty arm carries --title, and it is tried last.
   # The title is the item id, validated against GH_ISSUE_PATTERN before it
   # reaches here — the premise `cd '$dir'` already rests on.
-  local shell_cmd="printf '\033]0;%s\007' '$title'; cd '$dir' && $cmd"
+  # The lane's shell clears what the scrub lists, the terminal having kept the
+  # live session below.
+  local shell_cmd="unset ${LANE_LAUNCH_SCRUB[*]}; printf '\033]0;%s\007' '$title'; cd '$dir' && $cmd"
   launchable_dir "$dir" "$title" || return 1
   local -a launcher=()
   if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
@@ -2688,7 +2694,9 @@ open_gui() {
   # carrying arguments — is otherwise substituted in silence.
   [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
     ot_message terminal-fallback "requested=$TERMINAL" "selected=$chosen" "item=$title" >&2
-  run_detached /dev/null "${launcher[@]}"
+  # The terminal opens its window on the owner's desktop, so it keeps the live
+  # session the scrub would clear.
+  ( lane_launch_keep_live_session && run_detached /dev/null "${launcher[@]}" )
   ot_message terminal-opened "item=$title" "path=$dir"
 }
 
