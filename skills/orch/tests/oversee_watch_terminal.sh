@@ -9,7 +9,13 @@
 # and checklist protections. Tracker and PR fixtures drive production close.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watch-phase-profile.sh"
+watch_phase_begin oversee_watch_terminal
 source "$(dirname "${BASH_SOURCE[0]}")/lib/oversee-watch-harness.sh"
+watch_phase_ready "$TMP_ROOT"
+watch_phase_wrap fixture new_case mutate_file
+watch_phase_wrap exercise run_watch
+watch_phase_wrap assertion assert_eq assert_contains assert_not_contains assert_le assert_file_contains assert_file_not_contains
 
 CLOSE_MAILBOX="$(mutant_scripts terminal-close/orch lane-mail)" || exit 1
 CLOSE_SCRIPTS="$CLOSE_MAILBOX/../../orch/scripts"
@@ -204,6 +210,9 @@ terminal_merged() {
 terminal_events() {
   awk '/^EVENT / {printf "%s%s",sep,$2;sep=","}' "$STUB_DIR/out"
 }
+watch_phase_wrap fixture terminal_case terminal_busy terminal_merged
+watch_phase_wrap exercise terminal_conditional_run terminal_recovery_run
+watch_phase_wrap assertion terminal_result terminal_events
 
 for status in parked stopped; do
   for state in completed canceled started; do
@@ -830,5 +839,6 @@ LANE_HOST_STUB_CLOSE_STATUS=4 terminal_run "$MUTANT"
 assert_eq "$(terminal_result)" 'rc=0 status=stopped close=1 mail=0 closed=0 refused=0' \
   'control: without the item-open discriminator a provider failure becomes a quiet open-item result' "$STUB_DIR/err"
 
+watch_phase_finish
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

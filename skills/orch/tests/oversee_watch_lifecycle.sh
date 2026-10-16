@@ -11,6 +11,8 @@
 # The restart itself is oversee-succeed's, in oversee_succeed_watch.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watch-phase-profile.sh"
+watch_phase_begin oversee_watch_lifecycle
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
@@ -19,6 +21,10 @@ source "$REPO_ROOT/skills/orch/scripts/lib/watch-pid.sh"
 # mutant_scripts, under the mutant helper below.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
+watch_phase_ready "$TMP_ROOT"
+watch_phase_wrap fixture new_case mutate_file
+watch_phase_wrap exercise run_watch
+watch_phase_wrap assertion assert_eq assert_contains assert_not_contains assert_le assert_file_contains assert_file_not_contains
 
 REAL_SLEEP="$(command -v sleep)"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
@@ -1034,5 +1040,6 @@ for row in \
   assert_eq "$FINISHED_FACTS" "$expected" "finished hosted $name: close and retry contract" "$STUB_DIR/run2.err"
 done
 
+watch_phase_finish
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
