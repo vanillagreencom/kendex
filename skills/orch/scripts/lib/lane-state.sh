@@ -1163,10 +1163,16 @@ lane_state() {
       *) printf -v "$_ls_out" unjudged; return 0 ;;
     esac
   fi
-  if grep -Eq -- "$RATE_LIMIT_SWITCH_RE" <<<"$_ls_slice" && grep -Eq -- "$DIALOG_ROW_RE" <<<"$_ls_slice"; then
-    printf -v "$_ls_out" rate-limit-switch; return 0
+  if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then
+    # A selected row also matches LANE_ASKING_RE, so the reminder is read only
+    # on a pane already asking; every other lane pays no process for it.
+    if grep -Eq -- "$RATE_LIMIT_SWITCH_RE" <<<"$_ls_slice" && grep -Eq -- "$DIALOG_ROW_RE" <<<"$_ls_slice"; then
+      printf -v "$_ls_out" rate-limit-switch
+    else
+      printf -v "$_ls_out" asking
+    fi
+    return 0
   fi
-  if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
   if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
   # The supplied process read, whole, before any rung that could answer `idle`.
   # Anything but `idle` here answers by itself: `busy` is a turn the screen has
