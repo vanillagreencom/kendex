@@ -1986,12 +1986,12 @@ done
 # --check-marks' one control: the judgement runs on past its own answer. It is
 # the launch path's own steps that follow, so a check that does not stop opens
 # a successor window and spends an account every pass the watch makes. The
-# line is matched whole: an indented twin of it answers the unmeasured states.
+# reached-mark branch identifies the guard separately from runtime setup and
+# unmeasured answers.
 CHECKCTL="$(mutant_scripts checkctl oversee-succeed)" || exit 1
-awk -v line='if [[ "$MODE" == check ]]; then' \
-  '$0 == line { print "if false; then"; hits++; next } { print }
-   END { if (hits != 1) exit 1 }' "$SUCCEED" > "$CHECKCTL/oversee-succeed" \
-  || { echo "fixture: checkctl found no single site to mutate" >&2; exit 1; }
+mutate_file "$CHECKCTL/oversee-succeed" 'if [[ "$MODE" == check ]]; then
+  if [[ "$MARK_KIND" == headroom ]]; then' 'if false; then
+  if [[ "$MARK_KIND" == headroom ]]; then'
 new_caller "$UNDER_MARK"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
@@ -2321,11 +2321,9 @@ fleet_state
 # every printed line go through, so the copy whose builder skips it is what a
 # print without the preparation would record.
 PRINTSKIP="$(mutant_scripts printskip lib/overseer-launch.sh)" || exit 1
-awk -v call='  if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then' \
-  '$0 == call { print "  LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none LANE_TRUST_REASON=\"\"; if false; then"; calls++; next }
-   { print }
-   END { if (calls != 1) exit 1 }' "$SRC_DIR/lib/overseer-launch.sh" > "$PRINTSKIP/lib/overseer-launch.sh" \
-  || { echo "fixture: printskip found no single site to mutate" >&2; exit 1; }
+mutate_file "$PRINTSKIP/lib/overseer-launch.sh" \
+  '  if ! lane_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then' \
+  '  LANE_TRUST_HOME="$lane_dir" LANE_TRUST_ROUTE=none LANE_TRUST_REASON=""; if false; then'
 assert_eq "$(cmp -s "$PRINTSKIP/lib/overseer-launch.sh" "$SRC_DIR/lib/overseer-launch.sh" && echo same || echo differs)|$(bash -n "$PRINTSKIP/lib/overseer-launch.sh" && echo parses || echo broken)" \
   "differs|parses" "control printskip really drops the preparation from the builder"
 new_caller "$CODEX_SCREEN" 'Context 48% left'
