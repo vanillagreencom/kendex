@@ -18,7 +18,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset) ;;
+    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset|reset-warning) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -472,6 +472,64 @@ retired-pane|predecessor|s1|s1|0
 ROWS
 fi
 
+if model_case reset-warning; then
+echo '=== reset dependency failures preserve Stop and later model notices ==='
+# workflow-state and tmux can fail at a replacement's first Stop. Their
+# warnings must not take the once-only slot for a later PostModelSwitch.
+while IFS='|' read -r fault cause; do
+  model_world "reset-warning-$fault" claude-fable-5-1
+  "$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
+  "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
+    (.lanes[0] | {launch,launched_at}) as $identity
+    | .lanes[0].model_check={outcome:"switched",session_id:"previous",recovery_started:true,
+        launch_identity:($identity | .launch.pane="%old")}
+    | .fleet_log=[{kind:"model-switched",item:"KEN-3916",recovery:"replaced"}]' >/dev/null
+  before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
+  printf 'wait\n' > "$LANE/tmp/lane-status-KEN-3916.md"
+  mv -- "$S/workflow-state" "$S/workflow-state.real"
+  cat > "$S/workflow-state" <<'STATE'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${MODEL_RESET_FAULT:-}:$*" in
+  state:'path oversee'|read:'--state-dir '*" get oversee"|write:'--state-dir '*" update oversee "*)
+    printf 'workflow-state: reset-fault=%s\n' "$MODEL_RESET_FAULT" >&2
+    exit 1 ;;
+esac
+if [[ "$1" == handoff-standing ]]; then
+  : > "$0.handoff-read"
+fi
+exec "$0.real" "$@"
+STATE
+  chmod +x "$S/workflow-state"
+  CALL_ENV+=("MODEL_RESET_FAULT=$fault")
+  [[ "$fault" != pane ]] || CALL_ENV+=(TMUX_SERVER_ID=)
+  run_payload '{"hook_event_name":"Stop","session_id":"s1","stop_hook_active":false}'
+  assert_eq "$RC" 0 "$fault reset warning passes Stop"
+  assert_eq "$(first_line)" "lane-mail-check: model-unavailable=$cause" "$fault Stop emits the keyed warning"
+  assert_eq "$(cause_below)" present "$fault warning keeps detail below the key"
+  assert_eq "$(cat "$TMP_ROOT/stdout")" '' "$fault Stop emits no context event"
+  assert_eq "$(jq -c '.model_checks.s1' "$LANE/tmp/workflow-state-KEN-3916.json")" null "$fault keeps the model-switch notice slot"
+  assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "$fault leaves the recovery count unchanged"
+  assert_eq "$([[ -f "$S/workflow-state.handoff-read" ]] && echo yes)" yes "$fault permits the handoff check"
+  assert_eq "$([[ -s "$LANE/tmp/lane-mail/KEN-3916/sent-count" ]] && echo yes)" yes "$fault permits the idle check"
+  CALL_ENV+=(MODEL_RESET_FAULT= "TMUX_SERVER_ID=$OVERSEER_SERVER")
+  rm -- "$S/lib/adapters/claude.sh"
+  event claude-opus-4-8
+  assert_eq "$(jq -r '.hookSpecificOutput.hookEventName' "$TMP_ROOT/stdout")" PostModelSwitch "$fault later notice uses the real event"
+  assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|split("\n")[0]' "$TMP_ROOT/stdout")" \
+    'lane-mail-check: model-unavailable=adapter-unread' "$fault later unavailable notice reaches the model"
+  assert_eq "$(jq -r '.model_checks.s1.cause' "$LANE/tmp/workflow-state-KEN-3916.json")" adapter-unread "$fault records only the model-switch notice"
+  event claude-opus-4-8
+  assert_eq "$(cat "$TMP_ROOT/stdout")" '' "$fault later notice retains duplicate suppression"
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+done <<'ROWS'
+state|reset-state-unread
+read|reset-launch-unread
+pane|reset-launch-unbound
+write|reset-record-unwritten
+ROWS
+fi
+
 if model_case missing-judge; then
 echo '=== missing companion judge ==='
 model_world missing-judge claude-fable-5-1
@@ -511,6 +569,7 @@ old, new = {
     "roster": ('(.child_sessions // {}) as $children', '{} as $children'),
     "unavailable": ('if .model_checks[$session] != null then', 'if false then'),
     "reset": ('    model_recovery_reset\n', '    : # model_recovery_reset\n'),
+    "reset-warning": ('message model-unavailable reset-launch-unread', 'model_unavailable_notice reset-launch-unread ""'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -540,6 +599,7 @@ standing|complete
 unbound|gui-session
 notice|adapter
 reset|reset
+reset-warning|reset-warning
 CONTROLS
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"
