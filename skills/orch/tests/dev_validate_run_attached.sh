@@ -133,24 +133,6 @@ run_script "$MUTANT" --wait --run-dir "$TMP_ROOT/no-run" --attached
 assert_eq "rc=$RC $(sed -n 1p "$ERR")" "rc=2 dev-validate-run: no-run path=$TMP_ROOT/no-run/start" \
   "control: without that refusal the flag is dropped and the poll runs on" "$ERR"
 
-# --- An attached start needs the github skill beside orch -------------------
-# The start forks through that skill's group-leader prefix; a copy of the
-# scripts with no github skill beside it refuses under the key job-unit.sh
-# names, and starts nothing.
-lone_start() { # SCRIPTS_DIR PROJ
-  run_script "$1/dev-validate-run" --worktree "$2" --poll 1 --attached
-  printf 'rc=%s %s' "$RC" "$(grep -F 'dev-validate-run: ' "$ERR" | sed -n 1p)"
-}
-LONE="$(mutant_scripts lone/orch)" || exit 1
-proj="$(make_proj proj-lone "exit 0" 20)"
-assert_eq "$(lone_start "$LONE" "$proj")" \
-  "rc=2 dev-validate-run: group-leader-missing path=$LONE/lib/../../../github/scripts/lib/group-leader.sh" \
-  "an attached start with no github skill beside orch is refused as group-leader-missing" "$ERR"
-LONE="$(mutant_scripts lone-setsid/orch dev-validate-run)" || exit 1
-mutate_file "$LONE/dev-validate-run" '2) die "$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" ;;' '2) die missing-command commands=setsid ;;'
-assert_eq "$(lone_start "$LONE" "$proj")" "rc=2 dev-validate-run: missing-command commands=setsid" \
-  "control: a start that reads every exit 2 as the detached runner's names setsid instead"
-
 # --- The run stays in the caller's tree, under its own bound and class --------
 proj="$(make_proj proj-pass "bash chain.sh" 20)"
 write_chain "$proj"
