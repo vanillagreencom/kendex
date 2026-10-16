@@ -2623,25 +2623,32 @@ new_caller "$MARK"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed nostate ''
 assert_eq "$RC|$(keyed handoff-stale "$OUT" | sed -n 1p)|$(overseers)|$(caller_open)" \
-  "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=unknown|0|yes" \
+  "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=unknown found=none|0|yes" \
   "a succession without fleet state refuses before opening a successor"
 mv -- "$TMP_ROOT/fleet-state.away" "$FLEET_STATE"
 
 # The predecessor writes this text protocol (../references/communication-modes.md § Handoff).
 # Older handoffs have no header; a delayed writer can carry an earlier generation.
 HANDOFF_FILE="$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
+TRAILINGCTL="$(mutant_scripts trailingctl oversee-succeed)" || exit 1
+mutate_file "$TRAILINGCTL/oversee-succeed" \
+  'found=substr($i,12); break' 'if (i == NF) found=substr($i,12); break'
 for row in \
-  'legacy|1|In flight: open item|1' \
-  'stale|1|Start here: 2026-10-01T00:00:00Z generation=0|1' \
-  'future|1|Start here: 2026-10-01T00:00:00Z generation=2|1' \
-  'prepended|1|Start here: 2026-10-01T00:00:00Z generation=1\nStart here: 2026-10-01T00:00:00Z generation=1|1' \
-  'missing|1||1' \
-  'empty-generation|""|In flight: open item|unknown' \
-  'text-generation|"current"|Start here: 2026-10-01T00:00:00Z generation=1|unknown' \
-  'fractional-generation|1.5|Start here: 2026-10-01T00:00:00Z generation=1|unknown' \
-  'negative-generation|-1|Start here: 2026-10-01T00:00:00Z generation=1|unknown' \
+  'trailing|1|Start here: 2026-10-01T00:00:00Z generation=1 current handoff|1||0' \
+  'trailing-control|1|Start here: 2026-10-01T00:00:00Z generation=1 current handoff|1|none|1' \
+  'first-word|1|Start here: 2026-10-01T00:00:00Z xgeneration=2 generation=1 generation=2|1||0' \
+  'legacy|1|In flight: open item|1|none|1' \
+  'stale|1|Start here: 2026-10-01T00:00:00Z generation=0|1|0|1' \
+  'future|1|Start here: 2026-10-01T00:00:00Z generation=2|1|2|1' \
+  'prepended|1|Start here: 2026-10-01T00:00:00Z generation=1\nStart here: 2026-10-01T00:00:00Z generation=1|1|several|1' \
+  'second-legacy|1|Start here: 2026-10-01T00:00:00Z generation=1\nStart here: old handoff|1|several|1' \
+  'missing|1||1|none|1' \
+  'empty-generation|""|In flight: open item|unknown|none|1' \
+  'text-generation|"current"|Start here: 2026-10-01T00:00:00Z generation=1|unknown|none|1' \
+  'fractional-generation|1.5|Start here: 2026-10-01T00:00:00Z generation=1|unknown|none|1' \
+  'negative-generation|-1|Start here: 2026-10-01T00:00:00Z generation=1|unknown|none|1' \
   ; do
-  IFS='|' read -r row_name row_generation row_text row_expected <<<"$row"
+  IFS='|' read -r row_name row_generation row_text row_expected row_found row_rc <<<"$row"
   fleet_state
   jq --argjson generation "$row_generation" '.overseer.generation = $generation' \
     "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
@@ -2649,9 +2656,16 @@ for row in \
   new_caller "$MARK"
   printf '%b\n' "$row_text" > "$HANDOFF_FILE"
   [[ "$row_name" != missing ]] || rm -- "$HANDOFF_FILE"
-  HANDOFF_FIXTURE=off run_succeed "handoff-$row_name" ''
+  row_bin="$SUCCEED"
+  [[ "$row_name" != trailing-control ]] || row_bin="$TRAILINGCTL/oversee-succeed"
+  HANDOFF_FIXTURE=off SUCCEED_BIN="$row_bin" run_succeed "handoff-$row_name" ''
+  if [[ "$row_rc" == 0 ]]; then
+    assert_eq "$RC|$(caller_open)|$(overseers)|$(orec generation)" '0|no|1|2' \
+      "handoff $row_name: launch one successor with the next generation"
+    continue
+  fi
   assert_eq "$RC|$(keyed handoff-stale "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
-    "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=$row_expected|yes|0" \
+    "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=$row_expected found=$row_found|yes|0" \
     "handoff $row_name: refuse before launching"
 done
 # The production writer, never fixture_succession_handoff, supplies the header.
@@ -2687,7 +2701,7 @@ for row_script in normal control; do
   if handoff_success; then accepted=yes; fi
   if [[ "$row_script" == control ]]; then
     assert_eq "$accepted|$RC|$(caller_open)|$(overseers)|$(keyed handoff-stale "$OUT" | sed -n 1p)" \
-      'no|1|yes|0|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=1' \
+      'no|1|yes|0|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=1 found=none' \
       'control: removing only the generated header fails the live success oracle at acceptance'
     continue
   fi

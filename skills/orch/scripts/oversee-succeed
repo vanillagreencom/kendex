@@ -500,7 +500,7 @@ message() { # KEY FIELD=VALUE...
     unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
-    handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. Rewrite it before succession; no successor was launched.' ;;
+    handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. found= names what the reader took from the handoff. Rewrite it before succession; no successor was launched.' ;;
     handoff-body-invalid) text='Supply a separate nonempty regular body file with no Start here line.' ;;
     handoff-write-failed) text='The snapshot could not replace the handoff. The previous handoff remains in place.' ;;
     model-recovery-refused) text='The acquired model recovery could not complete for its recorded predecessor. Read the reason and recover that bound session or register its executable launch command before requesting recovery again.' ;;
@@ -716,11 +716,11 @@ if [[ "${1:-}" == --watch-restart ]]; then
 fi
 
 handoff_record_read() {
-  ol_record_read || die handoff-stale "path=$HANDOFF" expected=unknown
+  ol_record_read || die handoff-stale "path=$HANDOFF" expected=unknown found=none
   generation="$(jq -er '.generation // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
-    || die handoff-stale "path=$HANDOFF" expected=unknown
+    || die handoff-stale "path=$HANDOFF" expected=unknown found=none
   [[ "$generation" =~ ^[0-9]+$ ]] \
-    || die handoff-stale "path=$HANDOFF" expected=unknown
+    || die handoff-stale "path=$HANDOFF" expected=unknown found=none
 }
 
 # One active overseer owns the destination. The private directory owns both
@@ -1726,10 +1726,12 @@ if [[ "$MODE" == succeed ]]; then
       || die model-recovery-refused "reason=$OL_REASON" step=handoff
   fi
   (( ! BODY_GIVEN )) || handoff_write
-  handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF_FILE")" \
-    || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation"
+  handoff_generation="$(awk '
+    /^Start here:/ { lines++; for (i=3; i<=NF; i++) if ($i ~ /^generation=[0-9]+$/) { found=substr($i,12); break } }
+    END { print (lines > 1 ? "several" : (found == "" ? "none" : found)) }' 2>"$DEP_ERR" < "$HANDOFF_FILE")" \
+    || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation" found=none
   [[ "$handoff_generation" == "$generation" ]] \
-    || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation"
+    || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation" "found=$handoff_generation"
 fi
 # The successor is recorded BEFORE its window opens, not after the close: the
 # close kills this script's own window and a write placed after it may never
