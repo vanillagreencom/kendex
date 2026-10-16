@@ -3016,10 +3016,6 @@ handoff_check() {
       ;;
   esac
 
-  if [ "$ARM" = stop ] && [ "$HARNESS" = claude ] && [ "$ROLE" != overseer ]; then
-    model_recovery_reset
-  fi
-
   if [ "$ARM" = model-switch ]; then
     [ "$HARNESS" = claude ] || return 0
     local fleet record launched observed launch_id observed_id outcome cause="" report result handoff sd handoff_sd server="" identity association record_path body recovery
@@ -3179,15 +3175,7 @@ handoff_check() {
   # settings it loads.
   handoff_recorded
   case "$HANDOFF_STATE" in
-    stands)
-      # A lane's item carries one lane's record and no other session reaches
-      # it. The fleet item is shared by every overseer of the fleet in turn,
-      # so there the record has to name its writer.
-      if [ "$ROLE" != overseer ] || handoff_is_mine; then
-        exit 0
-      fi
-      ;;
-    none) ;;
+    stands | none) ;;
     unreadable)
       message handoff-unreadable "${HANDOFF_FILE:-$ITEM}" "$STATE_CAUSE"
       exit 0
@@ -3195,6 +3183,22 @@ handoff_check() {
     *)
       message handoff-unanswered "$SCRIPTS/workflow-state" "$STATE_CAUSE"
       exit 0
+      ;;
+  esac
+
+  # Shared settings failures belong to the handoff reader above. A reset
+  # still precedes the standing-record exit because recovery preserves that
+  # record when it replaces the session.
+  if [ "$ARM" = stop ] && [ "$HARNESS" = claude ] && [ "$ROLE" != overseer ]; then
+    model_recovery_reset
+  fi
+  case "$HANDOFF_STATE" in
+    stands)
+      # A lane's item carries one lane's record and no other session reaches
+      # it. The shared fleet record must name its overseer writer.
+      if [ "$ROLE" != overseer ] || handoff_is_mine; then
+        exit 0
+      fi
       ;;
   esac
 

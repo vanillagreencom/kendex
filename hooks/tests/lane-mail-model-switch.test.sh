@@ -436,6 +436,11 @@ echo '=== a replacement first turn resets the recovery count ==='
 while IFS='|' read -r name check prior_session stop_session wanted; do
   model_world "reset-$name" claude-fable-5-1
   [[ "$name" != retired-pane ]] || CALL_ENV+=(TMUX_PANE=%old)
+  if [[ "$name" == standing-handoff ]]; then
+    "$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
+    "$S/workflow-state" --state-dir "$LANE/tmp" set KEN-3916 handoff \
+      '{"branch":"KEN-3916","worktree":"fixture","merged":[],"remaining":[],"open_pr":null,"traps":[]}' >/dev/null
+  fi
   "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
     (.lanes[0] | {launch,launched_at}) as $identity
     | .lanes[0].model_check={outcome:(if $check=="unavailable" then "unavailable" else "switched" end),
@@ -465,6 +470,7 @@ while IFS='|' read -r name check prior_session stop_session wanted; do
 done <<'ROWS'
 fresh|predecessor|previous|s1|1
 resumed|predecessor|s1|s1|1
+standing-handoff|predecessor|s1|s1|1
 current-mismatch|current|s1|s1|0
 current-unavailable|unavailable|s1|s1|0
 stale-session|predecessor|previous|previous|0

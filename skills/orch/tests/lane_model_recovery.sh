@@ -68,7 +68,7 @@ while IFS='|' read -r NAME PRIOR BOUND LAUNCH_EXIT WANT; do
       + [{kind:"model-switched",item:"KEN-4033",session_id:"current",launch_identity:$identity}]
     ' --argjson r "$RECORD" --arg prior "$PRIOR" >/dev/null
   run_recovery
-  GOT="$RC|$(wc -l < "$CASE/starts" 2>/dev/null || printf 0)|$(jq '[.fleet_log[] | select(.kind=="model-recovery-limit")]|length' "$CASE/workflow-state-oversee.json")"
+  GOT="$RC|$(wc -l < "$CASE/starts" | tr -d ' ')|$(jq '[.fleet_log[] | select(.kind=="model-recovery-limit")]|length' "$CASE/workflow-state-oversee.json")"
   assert_eq "$GOT" "$WANT" "$NAME replacement and refusal result"
   if [[ "$RC" -eq 0 ]]; then
     assert_eq "$(jq -r '.fleet_log[-1].recovery' "$CASE/workflow-state-oversee.json")" replaced "$NAME records a successful replacement"
@@ -83,7 +83,7 @@ while IFS='|' read -r NAME PRIOR BOUND LAUNCH_EXIT WANT; do
     if [[ "$NAME" == nth ]]; then
       "$S/workflow-state" --state-dir "$CASE" update oversee 'del(.lanes[0].model_check.recovery_started)' >/dev/null
       run_recovery "$TEST_DIR/fixtures/lane-model-recovery-base.sh"
-      assert_eq "$RC|$(wc -l < "$CASE/starts")" '0|1' 'base control starts the refused Nth replacement'
+      assert_eq "$RC|$(wc -l < "$CASE/starts" | tr -d ' ')" '0|1' 'base control starts the refused Nth replacement'
     fi
   else
     assert_eq "$(jq -r '.fleet_log[-1].recovery' "$CASE/workflow-state-oversee.json")" failed 'a failed launch is not a successful replacement'
