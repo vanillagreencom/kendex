@@ -140,6 +140,20 @@ mkdir -p "$runtime_world/skills/linear/scripts" \
 git -C "$runtime_world" init -q
 git -C "$runtime_world" config gc.auto 0
 git -C "$runtime_world" config maintenance.auto false
+runtime_git="$(command -v git)" || exit 2
+mkdir "$runtime_world/bin"
+# Git for Windows and its shell can spell one root differently. The alias
+# exercises that comparison on this host; every other Git call passes through.
+cat >"$runtime_world/bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "$#" -eq 2 ] && [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ] &&
+    [ -n "$BASH32_LINT_TEST_ROOT_ALIAS" ]; then
+  printf '%s\n' "$BASH32_LINT_TEST_ROOT_ALIAS"
+else
+  exec "$BASH32_LINT_TEST_GIT" "$@"
+fi
+SH
+chmod +x "$runtime_world/bin/git"
 plant="skills/linear/tests/quota-hold.test.sh"
 cp "$ROOT/tools/tests/data/quota-hold-758c4c32a8.txt" "$runtime_world/$plant"
 cp "$LINT" "$runtime_world/lint"
@@ -155,7 +169,7 @@ changed = source.replace(needle, '*) : ;;')
 assert changed != source
 path.write_text(changed)
 PY
-while IFS='|' read -r name declaration owner directory expected; do
+while IFS='|' read -r name declaration owner directory expected root_alias tests_present; do
   cp "$ROOT/tools/tests/data/quota-hold-758c4c32a8.txt" "$runtime_world/$plant"
   if [ "$declaration" != none ]; then
     sed "1a\\
@@ -164,8 +178,16 @@ while IFS='|' read -r name declaration owner directory expected; do
     mv "$runtime_world/declared" "$runtime_world/$plant"
   fi
   cp "$ROOT/tools/tests/data/quota-hold-758c4c32a8.txt" "$runtime_world/skills/demo/tests/quota-hold.test.sh"
+  if [ "$tests_present" = no ]; then
+    mv "$runtime_world/skills/linear/tests" "$runtime_world/saved-tests"
+  fi
   status=0
-  out="$(cd "$runtime_world" && "$owner" "$directory" 2>&1)" || status=$?
+  out="$(cd "$runtime_world" && PATH="$runtime_world/bin:$PATH" \
+    BASH32_LINT_TEST_GIT="$runtime_git" BASH32_LINT_TEST_ROOT_ALIAS="$root_alias" \
+    "$owner" "$directory" 2>&1)" || status=$?
+  if [ "$tests_present" = no ]; then
+    mv "$runtime_world/saved-tests" "$runtime_world/skills/linear/tests"
+  fi
   if [ "$status" -eq "$expected" ] && { [ "$expected" -eq 0 ] ||
       grep -Fqx "bash32-lint: bash-runtime-required=$plant" <<<"$out"; }; then
     ok "$name"
@@ -173,11 +195,13 @@ while IFS='|' read -r name declaration owner directory expected; do
     bad "$name (exit $status)" "$out"
   fi
 done <<ROWS
-published KEN-4113 suite refuses|none|$LINT|skills/linear/tests|1
-declared Bash 4 suite passes|4|$LINT|skills/linear/tests|0
-declared Bash 3.2 suite passes|3.2|$LINT|skills/linear/tests|0
-control: removing only the declaration refusal permits the published suite|none|$runtime_world/lint|skills/linear/tests|0
-another skill needs no declaration|none|$LINT|skills/demo/tests|0
+published KEN-4113 suite refuses|none|$LINT|skills/linear/tests|1||yes
+published suite refuses with an equivalent Git root|none|$LINT|skills/linear/tests|1|$runtime_world/.|yes
+declared Bash 4 suite passes|4|$LINT|skills/linear/tests|0||yes
+declared Bash 3.2 suite passes|3.2|$LINT|skills/linear/tests|0||yes
+control: removing only the declaration refusal permits the published suite|none|$runtime_world/lint|skills/linear/tests|0||yes
+another skill needs no declaration|none|$LINT|skills/demo/tests|0||yes
+another skill needs no declaration without runtime tests|none|$LINT|skills/demo/tests|0||no
 ROWS
 
 # --- 3. teeth: a planted construct reds EVERY roster directory ----------

@@ -389,10 +389,9 @@ for f in $files; do
   # NO_SCAN owns which skills demand Bash 4; do not keep another family list.
   for runtime_scripts in $NO_SCAN; do
     case "$f" in *.test.sh) ;; *) continue ;; esac
-    runtime_tests="$(at_root "${runtime_scripts%/scripts}/tests")"
+    runtime_tests="${runtime_scripts%/scripts}/tests"
     # Suites live directly in tests/; control runners and lib/ are not suites.
-    runtime_parent="$(cd -- "${f%/*}" && pwd -P)" || die scan "$f"
-    if [ "$runtime_parent" = "$runtime_tests" ]; then
+    if [ -d "$(at_root "$runtime_tests")" ] && excepted "${f%/*}" "$runtime_tests"; then
       runtime_header="$(sed '/^[^#[:space:]]/q' "$f")" || die scan "$f"
       runtime="$(printf '%s\n' "$runtime_header" | sed -n '/^# bash-runtime:/p')" || die scan "$f"
       case "$runtime" in
