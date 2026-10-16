@@ -237,6 +237,7 @@
     "skills/linear/tests/oauth-auth.test.sh": "linux-only",
     "skills/linear/tests/project-name-canceled-duplicate.test.sh": "linux-only",
     "skills/linear/tests/projects-list-pagination.test.sh": "linux-only",
+    "skills/linear/tests/quota-hold.test.sh": "linux-only",
     "skills/linear/tests/rate-limited-http-400.test.sh": "linux-only",
     "skills/linear/tests/related-inverse.test.sh": "linux-only",
     "skills/linear/tests/removed-verbs.test.sh": "linux-only",
