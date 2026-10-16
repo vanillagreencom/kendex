@@ -368,7 +368,25 @@ assert_eq "$(observe "launched=2 copilot_home=copilot1,copilot2 statusline=none"
 rm -rf -- "${H:?}/.copilot1" "${H:?}/.copilot2"
 rm -f -- "${OT_STUB_BIN:?}/kendex"
 
-table "a local Anthropic launch has no provider credit reading|cmd=true --model anthropic/claude-opus-5-5 --thinking high|--harness pi --lane auto KEN-3747|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=anthropic/claude-opus-5-5"
+PI_API='cmd=true --model anthropic/claude-opus-5-5 --thinking high'
+PI_API_REFUSAL='rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=anthropic/claude-opus-5-5'
+PI_API_ROWS="$TMP_ROOT/api-credit.tsv"
+printf 'account=%s\tharness=pi\tstatus=ok\tcredit-limit=200.00\tcredit-spent=0.00\tcredit-remaining=150\tcredit-expires=2099-10-06T00:00:00Z\n' \
+  "$H/.eclaude" > "$PI_API_ROWS"
+table \
+  "a local Anthropic launch has no provider credit reading|$PI_API|--harness pi --lane auto KEN-3747|$PI_API_REFUSAL" \
+  "a Claude auto pool cannot bypass a Pi launch's missing API grant|$PI_API|--harness pi --lane auto:claude KEN-3848|$PI_API_REFUSAL" \
+  "a Pi auto pool takes the same missing API grant refusal|$PI_API|--harness pi --lane auto:pi KEN-3848|$PI_API_REFUSAL" \
+  "a Pi auto pool keeps its API refusal for another launch harness|cmd=true --model anthropic/claude-opus-5-5 --effort high|--harness claude --lane auto:pi KEN-3848|$PI_API_REFUSAL" \
+  "a measured API grant cannot authorize another harness's auto pool|$PI_API;LANE_HOST_STUB_ACCOUNTS=$PI_API_ROWS|--host $TEST_DIR/fixtures/lane-host --harness pi --lane auto:claude KEN-3848|rc=1 launched=nolog creates=nolog pickrefusal=lane-pool-mismatch,lane=auto:claude,harness=pi,pool=api-credit"
+pi_control ctl-pi-api-auto open-terminal '    pick_harness="$LAUNCH_HARNESS"' '    pick_harness="$LANE_HARNESS"' \
+  "$PI_API" --harness pi --lane auto:claude KEN-3848
+control_rc=0
+( FAIL=0; assert_eq "$(observe "$PI_API_REFUSAL")" "$PI_API_REFUSAL" 'Pi API credit refusal'; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/pi-api-auto-control.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control: the same API assertion rejects the previous auto pool resolution'
+assert_eq "$(observe 'rc=0 launched=1 creates=1')" 'rc=0 launched=1 creates=1' \
+  'control: the previous auto pool resolution opens a session without an API grant'
 
 echo "=== a Pi launch on a pi-claude model is judged on the Claude seat it spends ==="
 # pi-claude-bridge runs Claude Code on the Claude seat CLAUDE_CONFIG_DIR names,

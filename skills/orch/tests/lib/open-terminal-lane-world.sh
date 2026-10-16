@@ -364,7 +364,7 @@ observe() {
         value="${value:-none}"
         ;;
       pickrefusal)
-        value="$(awk '$1 == "open-terminal:" && $2 ~ /^(copilot-pool-|lane-provider-unmeasured$|lane-unavailable$)/ { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' <<<"$OUT")"
+        value="$(awk '$1 == "open-terminal:" && $2 ~ /^(copilot-pool-|lane-provider-unmeasured$|lane-unavailable$|lane-pool-mismatch$)/ { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
       hostseat)
