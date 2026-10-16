@@ -34,7 +34,7 @@ PUSH_COMMAND="$(awk '/^   \.agents\/skills\/orch\/scripts\/worktree-push / { sub
 PREPARE_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/worktree-push --prepare-base / { print; exit }' "$SUBMIT")"
 PUBLISH_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/worktree-push --publish-base / { print; exit }' "$SUBMIT")"
 REVIEW_COMMAND="$(awk '/^if ! BASE_REVIEW_STATE=/ { copy=1 } copy && /^```/ { exit } copy { print }' "$SUBMIT")"
-ROOT_COMMAND="$(awk '/^if ! MAIN_REPO_ROOT=/ { copy=1 } copy && /^```/ { exit } copy { print }' "$SUBMIT")"
+ROOT_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/git-context common-root / { print; exit }' "$SUBMIT")"
 GITHUB_COMMAND="$(awk '/^gh issue close / { print; exit }' "$SUBMIT")"
 PR_COMMAND="$(awk '/^   \.agents\/skills\/github\/scripts\/github.sh .* pr-create / { sub(/^   /, ""); print; exit }' "$SUBMIT")"
 COMPLETE_COMMAND="$(awk '/^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/linear\/scripts\/linear.sh issues complete / { sub(/^   /, ""); print; exit }' "$MERGE")"
@@ -120,9 +120,9 @@ SH
 }
 
 workflow_command() { # COMMAND
-  local command="$1" main_root_ref='${MAIN_REPO_ROOT}'
+  local command="$1"
   command="${command//\[WORKTREE_PATH\]/$wt}"
-  command="${command//\[MAIN_REPO_ROOT\]/$main_root_ref}"
+  command="${command//\[MAIN_REPO_ROOT\]/${completion_root:-}}"
   command="${command//\[ISSUE_ID\]/KEN-1}"
   command="${command//\[ISSUE\]/KEN-1}"
   command="${command//\[PREFIX\]/feat}"
@@ -139,7 +139,7 @@ workflow_command() { # COMMAND
   command="${command//.agents\/skills\/mailbox\/scripts\/lane-mail/$MAIL}"
   command="${command//.agents\/skills\/orch\/scripts\/workflow-state/$STATE}"
   command="${command//.agents\/skills\/orch\/scripts\/git-context/$REPO_ROOT\/skills\/orch\/scripts\/git-context}"
-  (cd "$wt" && FIXTURE_ROOT="$root" BODY_FILE="$wt/tmp/body" "$BASH" -c "$command")
+  (cd "$wt" && env -u MAIN_REPO_ROOT FIXTURE_ROOT="$root" BODY_FILE="$wt/tmp/body" "$BASH" -c "$command")
 }
 
 prepare_step() { # PUSH_SCRIPT
@@ -167,8 +167,8 @@ transport_step() { # PUSH_SCRIPT
     landed="${landed%% *}"
     pushed_at="${receipt##* at=}"
     if [[ "$tracker" == linear ]]; then
-      # No caller root is bound. The production init and completion share a shell.
-      workflow_command "$ROOT_COMMAND"$'\n'"$COMPLETE_COMMAND"
+      completion_root="$(workflow_command "$ROOT_COMMAND")" || return $?
+      workflow_command "$COMPLETE_COMMAND"
     else
       workflow_command "$GITHUB_COMMAND"
       github_number=2 workflow_command "$GITHUB_COMMAND"
@@ -220,6 +220,28 @@ for mode in push-base unset pr; do
     assert_eq "$(git --git-dir="$root/origin.git" rev-parse ken-1)" "$item_head" "delivery=$mode publishes the item branch"
     assert_eq "$([[ -s "$root/pr-call" ]] && echo called || echo absent)" called "delivery=$mode keeps PR publication"
   fi
+done
+
+# Separate tool shells can use only the visible common-root output. The
+# silent row reproduces the previous shipped command as a must-fail control.
+for completion_case in visible:0 silent:127; do
+  completion_mode="${completion_case%%:*}"
+  new_fixture "completion-$completion_mode" push-base
+  completion_expected_rc="${completion_case##*:}"
+  completion_command="$ROOT_COMMAND"
+  completion_expected_root="$main"
+  completion_expected_call=called
+  if [[ "$completion_mode" == silent ]]; then
+    printf -v completion_command 'if ! MAIN_REPO_ROOT="$(%s)"; then\n  exit 1\nfi' "$ROOT_COMMAND"
+    completion_expected_root=''
+    completion_expected_call=absent
+  fi
+  completion_root="$(workflow_command "$completion_command")"
+  completion_rc=0
+  workflow_command "$COMPLETE_COMMAND" 2>"$root/completion.err" || completion_rc=$?
+  assert_eq "$completion_root" "$completion_expected_root" "$completion_mode root output binds the next command"
+  assert_eq "$completion_rc" "$completion_expected_rc" "$completion_mode completion runs in a separate fresh shell" "$root/completion.err"
+  assert_eq "$([[ -e "$root/linear-call" ]] && echo called || echo absent)" "$completion_expected_call" "$completion_mode reaches only the resolved completion owner"
 done
 
 # The gate is the workflow's executable acceptance rule, not its prose.

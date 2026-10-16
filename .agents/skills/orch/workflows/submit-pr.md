@@ -251,15 +251,13 @@ This call runs the existing worktree preparation, normal commit hooks and SHA re
 
 This call refuses a changed head before validation. It validates the prepared head locally, checks it again, then uses the existing pinned base transport without rebasing. Micro runs its final path check after the normal preparation hooks. Read `delivery: mode=push-base base=[BASE] commit=[PUSHED_SHA] at=[PUSHED_AT]` only after exit zero. `worktree-push --help` owns the failure contract. A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal returns to [merge-pr-restack.md](merge-pr-restack.md). That direct route returns here after its guarded restack and rules reload. A red validation publishes nothing. A failed push sends no completion notice.
 
-**Linear completion.** Bind the common checkout before entering the reused step, including for a standalone caller:
+**Linear completion.** Read the common checkout before entering the reused step, including for a standalone caller:
 
 ```bash
-if ! MAIN_REPO_ROOT="$(.agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]")"; then
-  exit 1
-fi
+.agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]"
 ```
 
-Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Keep open post-merge boxes for the overseer. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded.
+Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute that value into the next command; a shell variable from this command does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Keep open post-merge boxes for the overseer. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded.
 
 **GitHub completion.** Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
 
