@@ -93,7 +93,7 @@
 # record a pass for a commit it never judged, and submit would reuse a full one
 # whose class covered the branch as the whole battery. An implement round has no round record and no binding.
 #
-# The Apple gate. Where the base branch holds the mac-run workflow, which
+# The Apple gate. Where the base branch holds the configured Apple workflow, which
 # GitHub dispatches only from there, the receipt declares the item's labels
 # (--label per entry of the delegation's Labels: line, or --no-labels), and a
 # round whose item carries an Apple label or whose branch changes an Apple
@@ -228,7 +228,7 @@ die() {
       scratch-failed) printf 'mktemp could not create the file the Apple gate lists changed paths in.\n' ;;
       labels-conflict) printf 'The item either carries the --label entries or carries no labels; supply one.\n' ;;
       apple-git-failed) printf 'The Apple gate could not read the base branch workflow or the paths the branch changes: %s\n' "${BRANCH_GROWTH_ERROR:-git failed}" ;;
-      labels-undeclared) printf 'The base branch holds the mac-run workflow, so the receipt declares the item labels: one --label per entry of the delegation Labels: line, or --no-labels when it reads none.\n' ;;
+      labels-undeclared) printf 'The base branch holds the configured Apple workflow, so the receipt declares the item labels: one --label per entry of the delegation Labels: line, or --no-labels when it reads none.\n' ;;
       mac-run-missing) printf 'The item meets the Apple gate trigger. Run fleet-mac-run test, which fleet installs on the lane PATH, and record the run id it prints as the --validate-note line "mac run test: pass run=ID"; when it fails or is not on PATH, return --validate "FAILING: mac run test".\n' ;;
     esac
   } >&2
@@ -312,7 +312,9 @@ Every single-valued flag may be supplied at most once
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
 
-Apple gate: where the base branch holds the workflow below, a pass or
+Apple gate: ORCH_APPLE_WORKFLOW and ORCH_APPLE_LABELS use consumer [env]
+settings through orch-env for --worktree, with the defaults below.
+Where the base branch holds that workflow, a pass or
 no-verdict declares the item's labels, with --label or --no-labels, and for an
 item the trigger names needs a --validate-note line matching the record. A
 FAILING result needs neither. Elsewhere the receipt is unchanged.
@@ -830,6 +832,12 @@ if objects:
 apple_base_ref=""
 apple_armed=""
 if [[ "$validate" != FAILING:* ]]; then
+  # orch-env selects settings from its working directory, not the caller's.
+  APPLE_WORKFLOW="$(cd -- "$worktree" && "$SCRIPT_DIR/orch-env" ORCH_APPLE_WORKFLOW "$APPLE_WORKFLOW")" \
+    || die unreadable-setting setting=ORCH_APPLE_WORKFLOW "path=$worktree"
+  apple_labels="$(cd -- "$worktree" && "$SCRIPT_DIR/orch-env" ORCH_APPLE_LABELS "${APPLE_LABELS[*]}")" \
+    || die unreadable-setting setting=ORCH_APPLE_LABELS "path=$worktree"
+  IFS=' ' read -r -a APPLE_LABELS <<<"$apple_labels"
   BRANCH_GROWTH_ERROR=""
   branch_growth_base_ref "$worktree" "$SCRIPT_DIR/resolve-base-branch" apple_base_ref \
     || die apple-git-failed "path=$worktree" "commit=$commit"

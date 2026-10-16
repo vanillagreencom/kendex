@@ -1,4 +1,9 @@
 [env]
+# Apple proof uses the workflow on the base branch and these space-separated
+# issue labels. The path and labels default to the existing mac-run consumer.
+ORCH_APPLE_WORKFLOW = ".github/workflows/mac-run.yml"
+ORCH_APPLE_LABELS = "ios macos"
+
 # Publication order, resolved by pr-order: review-first, open-first or push-first.
 # Leave unset to keep the defaults described by pr-order --help.
 # ORCH_PR_ORDER = "review-first"

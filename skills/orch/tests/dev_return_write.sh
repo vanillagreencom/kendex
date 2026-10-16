@@ -382,6 +382,33 @@ APPLE_ROWS=(
   "a FAILING mac run test needs no pass line and no labels|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=0 .validate=FAILING:+mac+run+test roundtrip=valid"
 )
 table "${APPLE_ROWS[@]}"
+
+# Consumer settings bind another workflow and replace the default labels.
+# run invokes the writer from this checkout, so these rows also prove that
+# --worktree, rather than the caller's repository, owns the settings read.
+CW="$(new_repo apple-configured)"
+mkdir -p "$CW/.github/workflows" "$CW/App.xcodeproj" "$CW/App"
+printf 'name: apple-run\n' > "$CW/.github/workflows/apple-run.yml"
+cp "$AW/App.xcodeproj/project.pbxproj" "$CW/App.xcodeproj/project.pbxproj"
+printf 'source\n' > "$CW/App/Greeting.swift"
+git -C "$CW" add .
+git -C "$CW" commit -q -m base-project
+C_PLAIN="$(git -C "$CW" rev-parse HEAD)"
+git -C "$CW" switch -q -c work
+printf 'changed\n' > "$CW/App/Greeting.swift"
+git -C "$CW" add App/Greeting.swift
+git -C "$CW" commit -q -m source
+C_SOURCE="$(git -C "$CW" rev-parse HEAD)"
+printf '[env]\nORCH_APPLE_WORKFLOW = ".github/workflows/apple-run.yml"\nORCH_APPLE_LABELS = "apple-mobile apple-desktop"\n' > "$CW/kendex.settings.toml"
+CP="--worktree $CW --kind implement --issue issue-apple --round-id 30-30 --branch b --validate pass --validate-run-dir $VRUN"
+table \
+  "a configured workflow with an unlabeled Xcode source change|$CP --commit $C_SOURCE --no-labels|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App/Greeting.swift=true" \
+  "a configured label from the space-separated set|$CP --commit $C_PLAIN --label apple-desktop|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=apple-desktop=true" \
+  "a default label outside the configured set|$CP --commit $C_PLAIN --label ios|rc=0 written=yes .validate_note=null"
+# Fix receipts skip the implement growth measurement's earlier settings read.
+printf '[env]\nORCH_APPLE_WORKFLOW = false\n' > "$FW/kendex.settings.toml"
+table "a settings read failure refuses the receipt|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit $FIX_HEAD --validate pass --validate-run-dir $VRUN_FIX_9 --no-labels --item 3 Blocked x|rc=2 written=no stderr~dev-return-write:+unreadable-setting+setting=ORCH_APPLE_WORKFLOW=true"
+rm -- "$FW/kendex.settings.toml"
 # Each project is private to its row: unsupported names must not arm the
 # neutral fixture used to prove unrelated and Linux source exclusions.
 ESCAPE_ROWS=(
@@ -499,6 +526,8 @@ byte_equal_rows
 # One control per rule: each mutant disables one rule of the gate. In OLD and
 # NEW, \| is a literal bar and \n a newline.
 APPLE_CONTROLS=(
+  "workflow binding|APPLE_WORKFLOW=\"\$(cd -- \"\$worktree\" && \"\$SCRIPT_DIR/orch-env\" ORCH_APPLE_WORKFLOW \"\$APPLE_WORKFLOW\")\"|APPLE_WORKFLOW=\"\$APPLE_WORKFLOW\"|$CP --commit $C_SOURCE --no-labels|rc=0 written=yes .validate_note=null"
+  "label binding|IFS=' ' read -r -a APPLE_LABELS <<<\"\$apple_labels\"|:|$CP --commit $C_PLAIN --label apple-desktop|rc=0 written=yes .validate_note=null"
   "labels|if [[ \"\$label\" == \"\$apple\" ]]; then|if false; then|$AP --commit $A_PLAIN --label ios|rc=0"
   "labels on a fix receipt|if [[ \"\$label\" == \"\$apple\" ]]; then|if false; then|$AFIX --label ios|rc=0"
   "label declaration|if [[ \"\$no_labels\" == false ]] && (( \${#labels[@]} == 0 )); then|if false; then|$AP --commit $A_PLAIN|rc=0"
