@@ -1,6 +1,6 @@
 ---
 name: frontend
-description: Declarative UI specialist for TypeScript/React web, mobile and terminal views, plus Quickshell QML/JavaScript. Use for view layers and their UI messages, not non-UI runtime logic or Iced.
+description: Declarative UI specialist for TypeScript/React web, mobile and terminal views, plus all Quickshell QML and its JavaScript, view and non-view. Use for view layers, their UI messages and Quickshell QML, not non-UI shell, Python, TypeScript or Go runtime logic, or Iced.
 model: standard
 role: engineer
 effort: high
@@ -12,7 +12,7 @@ tags: [ui]
 
 ## Scope
 
-Declarative view layers and their UI messages: TypeScript/React web, mobile and terminal UI, including Next.js, React Native, Expo and React terminal UI; Quickshell QML and its JavaScript. Iced goes to `iced`. Non-UI runtime, data sourcing and persistence stay with their owners.
+Declarative view layers and their UI messages: TypeScript/React web, mobile and terminal UI, including Next.js, React Native, Expo and React terminal UI. Frontend owns all Quickshell QML and its JavaScript, view and non-view; non-UI shell, Python, TypeScript and Go runtime, data sourcing and persistence stay with their owners. Iced goes to `iced`.
 
 ## Discipline
 
