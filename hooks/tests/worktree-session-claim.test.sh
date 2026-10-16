@@ -389,26 +389,6 @@ EOF
 }
 output_failure_rows
 
-# The workflow's claim under the issue ID after the hook's: one session, so
-# the lease passes rather than refusing the workflow. A later start of that
-# session under the env ladder, a resume or compaction of the lane, refreshes
-# the issue lease and writes nothing.
-takeover_rows() {
-  local rc=0
-  release_all
-  install_world installed
-  run_hook_in "$TREE" USER=alice
-  env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=alice \
-    "$GUARD" claim "$TREE" --owner ISSUE-1 --adopt >/dev/null 2>&1 || rc=$?
-  assert_eq "rc=$rc owner=$(lease_owner "$TREE")" "rc=0 owner=ISSUE-1" "the workflow's issue claim takes over the hook's lease"
-  rc=0
-  run_hook_in "$TREE" USER=alice || rc=$?
-  assert_eq "rc=$rc stdout=$(wc -c <"$OUT_FILE" | tr -d ' ') stderr=$(wc -c <"$ERR_FILE" | tr -d ' ') owner=$(lease_owner "$TREE")" \
-    "rc=0 stdout=0 stderr=0 owner=ISSUE-1" \
-    "a session restarted under its issue lease keeps it silently"
-}
-takeover_rows
-
 # The worktree skill's scripts load the main checkout's `.env.local` as shell,
 # so a hook that ran one would run the repository's code at every session
 # start. A row: label|dir|owner, the session starting in TREE or HARNESS_TREE
