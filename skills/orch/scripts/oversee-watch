@@ -503,10 +503,16 @@ mail_rows_serialize() {
 # The same two-phase flush triage uses, on the same file: nothing is written
 # when the pass changed nothing, and the event has already printed.
 lane_row_commit() {
-  [[ "$1" != "${PW_SEEN[0]}" ]] || return 0
-  pw_stage_state "$(pw_state_file "${REPOS[0]}")" "$1"
+  local next="$1"
+  # A tracker refusal can arrive after a caller took its local row snapshot.
+  # That later receipt must survive the caller's merge or terminal commit.
+  if [[ -n "${TRACKER_QUOTA:-}" ]]; then
+    next="$(lane_row_set tracker-quota "$next" fleet "$TRACKER_QUOTA")" || die state-read-failed "" "row=tracker-quota"
+  fi
+  [[ "$next" != "${PW_SEEN[0]}" ]] || return 0
+  pw_stage_state "$(pw_state_file "${REPOS[0]}")" "$next"
   pw_commit_state "$(pw_state_file "${REPOS[0]}")"
-  PW_SEEN[0]="$1"
+  PW_SEEN[0]="$next"
 }
 # The same flush, on the mail pass's file.
 MAIL_SEEN=""
@@ -1297,8 +1303,9 @@ item_state_dir() { # ITEM
 }
 # Run the one lane close-out verb where a hosted item's lane-exited is reported,
 # once per pane, after its merge. Exit 3 is a checkout with user-owned changes:
-# the user settles it, so it is reported and never retried or forced. Any other
-# exit returns 1 with its message on stderr: the caller commits the rows it
+# the user settles it, so it is reported and never retried or forced. A quota
+# refusal defers close. Any other exit returns 1 with its message on stderr:
+# the caller commits the rows it
 # already settled, other lanes' closes among them, before the pass exits 2.
 #
 # A TERM part way through, how a repeat loop stops its pass, is noted in
@@ -1309,9 +1316,31 @@ item_state_dir() { # ITEM
 # early. pass_stop spares its tree, read from CLOSE_PID_FILE.
 CLOSE_TERMED=""
 CLOSE_RESULT=failed
+lane_tracker_held() { # ITEM
+  [[ "$TRACKER_STOP" != 0 ]] || return 1
+  local tracker
+  tracker="$(jq -r --arg item "$1" '[.lanes[]? | select(.item == $item) | .tracker // empty] | first // empty' <<<"${FLEET_STATE:-"{}"}")" \
+    || die state-invalid "" "path=$STATE_FILE" "field=tracker"
+  [[ -n "$tracker" ]] || tracker="$(lane_key_tracker "$1")"
+  [[ "$tracker" == linear ]]
+}
+
+lane_terminal_read() { # ITEM; publishes LANE_TERMINAL
+  local rc=0
+  LANE_TERMINAL=unknown
+  lane_tracker_held "$1" && return 0
+  LANE_TERMINAL="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" --terminal-state "$1" 2>"$WORK_DIR/terminal.err")" || rc=$?
+  if [[ "$rc" -ne 0 ]] && tracker_quota_refusal "$WORK_DIR/terminal.err"; then
+    LANE_TERMINAL=unknown
+    return 0
+  fi
+  return "$rc"
+}
+
 close_hosted_lane() { # ITEM [--if-terminal]
   local out line path="" rc=0 close_pid
   CLOSE_RESULT=failed
+  if lane_tracker_held "$1"; then CLOSE_RESULT=deferred; return 0; fi
   trap 'CLOSE_TERMED=1' TERM
   "$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$@" > "$WORK_DIR/lane-close.out" 2>&1 &
   close_pid=$!
@@ -1324,6 +1353,10 @@ close_hosted_lane() { # ITEM [--if-terminal]
   rm -f -- "$CLOSE_PID_FILE"
   trap - TERM
   out="$(cat -- "$WORK_DIR/lane-close.out")"
+  if [[ "$rc" -ne 0 ]] && tracker_quota_refusal "$WORK_DIR/lane-close.out"; then
+    CLOSE_RESULT=deferred
+    return 0
+  fi
   case "$rc" in
     0)
       CLOSE_RESULT=closed
@@ -1379,16 +1412,18 @@ close_finished_hosted_lane() { # LANE ROW KEY; updates check_lanes' asking_state
     # Commit before the irreversible close so a stopped pass cannot repeat it.
     lane_row_commit "$asking_state"
     if ! close_hosted_lane "$LANE_ITEM"; then
-      asking_state="$(lane_row_set "$2" "$asking_state" "$1" "$3")"
       close_failed=1
+    fi
+    if [[ "$CLOSE_RESULT" == failed || "$CLOSE_RESULT" == deferred ]]; then
+      asking_state="$(lane_row_set "$2" "$asking_state" "$1" "$3")"
     fi
     [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$asking_state"; exit 143; }
   fi
 }
 
 # Stopped and parked records have no pane or mailbox to watch. Read the close
-# verb's terminal judge, including a retained PR wait and Done-when boxes, on every
-# fleet pass, and keep only provider refusals:
+# verb's terminal judge, including a retained PR wait and Done-when boxes, on each
+# fleet pass unless its tracker is held, and keep only provider refusals:
 # user-owned changes need an overseer's action, not another provider call.
 check_terminal_lanes() {
   [[ -n "$STATE_FILE" ]] || return 0
@@ -1402,14 +1437,16 @@ check_terminal_lanes() {
       || die state-invalid "" "path=$STATE_FILE" "field=item"
     items+=("$item")
     rc=0
-    terminal="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" --terminal-state "$item" 2>"$WORK_DIR/terminal.err")" || rc=$?
+    lane_terminal_read "$item" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
       ow_message lane-close-failed "item=$item" "exit=$rc" >&2
       cat -- "$WORK_DIR/terminal.err" >&2
       PASS_FAILED=1
       continue
     fi
+    terminal="$LANE_TERMINAL"
     case "$terminal" in
+      unknown) continue ;;
       open) rows="$(lane_row_clear terminal-close "$rows" "$item")"; continue ;;
       completed|canceled) ;;
       *) die state-invalid "$terminal" "item=$item" "field=terminal-state" ;;
@@ -1460,7 +1497,7 @@ check_terminal_lanes() {
       if [[ "$CLOSE_RESULT" == refused ]]; then rows="$(lane_row_set terminal-close "$rows" "$item" "$key")"; fi
       # A close may have rewritten the fleet. Read it before pane and merge
       # checks, so they cannot report a closed record as still parked.
-      if [[ "$CLOSE_RESULT" != open ]]; then refreshed=true; PASS_EVENT=1; fi
+      if [[ "$CLOSE_RESULT" != open && "$CLOSE_RESULT" != deferred ]]; then refreshed=true; PASS_EVENT=1; fi
     else
       PASS_FAILED=1
     fi
@@ -1712,6 +1749,7 @@ check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo pr hit hits prior keys fresh key line until view dependency_state dependency_record own_pr own_repo state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
+    PARKED_MERGE_DEFERRED=0
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     PARKED_KEY=""
     item_parked "$item" || true
@@ -1728,11 +1766,11 @@ check_merged() {
         || die state-read-failed "" "item=$item" "row=parked-until"
       if [[ "$key" != "$prior" ]]; then
         case "$dependency_state" in
-          MERGED) parked_merged_line "$item" "$PARKED_KEY"; PASS_EVENT=1 ;;
+          MERGED) parked_merged_line "$item" "$PARKED_KEY"; [[ "$PARKED_MERGE_DEFERRED" == 1 ]] || PASS_EVENT=1 ;;
           CLOSED) echo "EVENT parked-closed $item pr=$until repo=$repo"; PASS_EVENT=1 ;;
         esac
       fi
-      state="$(lane_row_set parked-until "$state" "$item" "$key")"
+      if [[ "$PARKED_MERGE_DEFERRED" == 0 ]]; then state="$(lane_row_set parked-until "$state" "$item" "$key")"; fi
       # The dependency is not this item's merge and earns no item cycle.
     fi
     # Its own delivery still needs a merged row before terminal close can
@@ -1806,12 +1844,15 @@ check_merged() {
 # the heartbeat's repeat.
 parked_merged_line() { # ITEM KEY
   local terminal rc=0
-  terminal="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" --terminal-state "$1" 2>"$WORK_DIR/terminal.err")" || rc=$?
+  PARKED_MERGE_DEFERRED=0
+  lane_terminal_read "$1" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     cat -- "$WORK_DIR/terminal.err" >&2
     die lane-close-failed "" "item=$1" "exit=$rc"
   fi
+  terminal="$LANE_TERMINAL"
   case "$terminal" in
+    unknown) PARKED_MERGE_DEFERRED=1; return 0 ;;
     completed|canceled) return 0 ;;
     open) echo "EVENT parked-merged $1 pr=${2##*#} repo=${2%#*}" ;;
     *) die state-invalid "$terminal" "item=$1" "field=terminal-state" ;;
@@ -5063,7 +5104,13 @@ heartbeat() {
     open="$(security_mark_open "$baseline" "$repo" "$open")" || die state-read-failed "" "path=$file" "row=bot-fix"
     open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
-  hands="$(parked_merged_owed "$baseline")" || die state-read-failed "" "path=$file" "row=merged"
+  PW_SEEN[0]="$baseline"
+  if [[ "$TRACKER_STOP" == 0 && -n "$(lane_row_get tracker-quota "$baseline" fleet)" ]]; then
+    tracker_begin
+  fi
+  parked_merged_owed "${PW_SEEN[0]}" >"$WORK_DIR/parked-hands.out" || die state-read-failed "" "path=$file" "row=merged"
+  hands="$(cat -- "$WORK_DIR/parked-hands.out")" || die state-read-failed "" "path=$WORK_DIR/parked-hands.out"
+  baseline="${PW_SEEN[0]}"
   # The current fleet's alone: a row clears on the item's next good read,
   # and an item that left the fleet is read no more.
   if ! failing="$(ow_items="$(printf '%s\n' overseer ${ITEMS[@]+"${ITEMS[@]}"})" awk -F'\t' '
@@ -5107,7 +5154,7 @@ heartbeat() {
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
 LONG_RETURNS=(LONG_EVENT LONG_FAILED OWNER_TRACKER_DELIVERED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES TRACKER_QUOTA)
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES TRACKER_QUOTA TRACKER_STOP)
 long_pass() {
   local i state_file
   PASS_EVENT=0

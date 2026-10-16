@@ -158,6 +158,155 @@ assert_eq "$(jq -sc '[.[] | select(.[0:2] == ["statuses","list"])] | length' "$S
 assert_eq "$(wc -l <"$STUB_DIR/report.calls" | tr -d ' ')" 2 'report due runs in both repeat children' "$STUB_DIR/err"
 assert_contains "$OUT" 'EVENT heartbeat' 'the held repeat child reaches heartbeat' "$STUB_DIR/err"
 
+# lane-close relays tracker stderr through its own diagnostics. The watch owns
+# the result handling; the earlier terminal-suite measurement uses the real
+# close verb to establish this response boundary.
+cat >"$TMP_ROOT/bin/quota-close" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+jq -cn --args '$ARGS.positional' -- "$@" >>"$STUB_DIR/close.calls"
+mode=$(cat "$STUB_DIR/close-mode")
+if [[ " $* " == *' --terminal-state '* ]]; then
+    count=$(wc -l <"$STUB_DIR/close.calls")
+    if [[ "$mode" == open || "$mode" == bare || ( "$mode" == heartbeat && "$count" -lt 2 ) ]]; then printf 'open\n'; exit 0; fi
+    if [[ "$mode" == conditional ]]; then printf 'completed\n'; exit 0; fi
+fi
+if [[ "$mode" != open ]]; then
+    cat "$STUB_DIR/refusal" >&2
+    printf 'lane-close: tracker-read-failed\n' >&2
+    exit 2
+fi
+SH
+chmod +x "$TMP_ROOT/bin/quota-close"
+lane_world() { # NAME STATUS
+    world "$1" none future
+    : >"$STUB_DIR/close.calls"
+    jq -nc --arg status "$2" '{lanes:[{item:"KEN-1",tracker:null,status:$status,window:null,
+      parked:(if $status == "parked" then {pr:1,repo:"owner/repo"} else null end)}]}' >"$STUB_DIR/fleet.json"
+}
+lane_watch() {
+    watch ORCH_OWNER_EMAIL= LINEAR_TEAM= OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/quota-close" "$@"
+}
+close_calls() { wc -l <"$STUB_DIR/close.calls" | tr -d ' '; }
+lane_merged() {
+    printf '[{"number":1,"headRefName":"ken-1","mergedAt":"1970-01-01T00:00:01Z"}]\n' >"$STUB_DIR/merged.json"
+}
+for entry in stopped parked conditional dependency; do
+    status=stopped
+    case "$entry" in parked|dependency) status=parked ;; esac
+    lane_world "indirect_$entry" "$status"
+    mode=terminal
+    [[ "$entry" != conditional ]] || mode=conditional
+    printf '%s\n' "$mode" >"$STUB_DIR/close-mode"
+    [[ "$status" != parked ]] || lane_merged
+    if [[ "$entry" == dependency ]]; then
+        jq '.lanes[0].parked.until_pr=2' "$STUB_DIR/fleet.json" >"$STUB_DIR/next"
+        mv -- "$STUB_DIR/next" "$STUB_DIR/fleet.json"
+        printf '{"state":"MERGED"}\n' >"$STUB_DIR/dependency-2.json"
+        printf '{"number":1,"headRefName":"ken-1","mergedAt":null,"headRepositoryOwner":{"login":"owner"}}\n' >"$STUB_DIR/dependency-1.json"
+    fi
+    lane_watch
+    assert_eq "$RC" 0 "$entry indirect quota keeps the pass available" "$STUB_DIR/err"
+    assert_contains "$OUT" 'EVENT tracker-quota status=future' "$entry classifies the close refusal" "$STUB_DIR/err"
+    assert_not_contains "$OUT" 'EVENT lane-closed' "$entry quota cannot establish terminality" "$STUB_DIR/err"
+    assert_eq "$(cat "$STUB_DIR/report.calls")" due "$entry indirect quota still checks report due" "$STUB_DIR/err"
+    before="$(close_calls)"
+    lane_watch
+    assert_eq "$RC:$(close_calls)" "0:$before" "$entry saves the hold across row commits and processes" "$STUB_DIR/err"
+    assert_contains "$OUT" 'EVENT heartbeat' "$entry held pass reaches heartbeat" "$STUB_DIR/err"
+    if [[ "$status" == parked ]]; then
+        printf '20000\n' >"$STUB_DIR/now.epoch"
+        printf 'open\n' >"$STUB_DIR/close-mode"
+        lane_watch
+        assert_eq "$RC" 0 "$entry reset permits the parked probe" "$STUB_DIR/err"
+        assert_contains "$OUT" 'EVENT parked-merged KEN-1' "$entry deferred notification replays after reset" "$STUB_DIR/err"
+    fi
+done
+
+# A non-quota failure from the same indirect reader remains a failed pass.
+lane_world indirect_ordinary stopped
+printf 'terminal\n' >"$STUB_DIR/close-mode"
+printf '{"code":"HTTP_ERROR"}\n' >"$STUB_DIR/refusal"
+lane_watch
+assert_eq "$RC" 2 'ordinary terminal probe failures remain failed passes' "$STUB_DIR/err"
+assert_not_contains "$OUT" 'EVENT tracker-quota' 'ordinary terminal failures create no quota event' "$STUB_DIR/err"
+
+# A running hosted record reaches the unqualified close after its worktree
+# disappears. The existing hosted provider fixture supplies that lifecycle.
+world indirect_hosted none future
+: >"$STUB_DIR/close.calls"
+printf 'bare\n' >"$STUB_DIR/close-mode"
+host="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+remote="$STUB_DIR/remote"
+mkdir -p "$remote/srv/lane/issue-2" "$remote/srv/clone/tmp/lane-mail/issue-2"
+git -C "$remote/srv/clone" init -q
+git -C "$remote/srv/clone" config gc.auto 0
+git -C "$remote/srv/clone" config maintenance.auto false
+printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' >"$remote/srv/lane/issue-2/.git"
+printf '{"handoff":{"written_at":"t"}}\n' >"$remote/srv/clone/tmp/workflow-state-issue-2.json"
+jq -nc --arg host "$host" '{lanes:[{item:"issue-2",tracker:"linear",window:"gh-2",host:$host,
+  mail_root:"/srv/lane/issue-2",harness:"claude",status:"running"}]}' >"$STUB_DIR/fleet.json"
+printf '[{"number":2,"headRefName":"issue-2","mergedAt":"1970-01-01T00:00:01Z"}]\n' >"$STUB_DIR/merged.json"
+hosted_watch() {
+    lane_watch ORCH_LANE_HOST="$host" LANE_HOST_STUB_DIR="$remote" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+        LANE_HOST_STUB_HARNESS_STATE="$1"
+}
+hosted_watch running
+assert_eq "$RC" 0 'hosted quota fixture learns its clone before exit' "$STUB_DIR/err"
+rm -rf -- "$remote/srv/lane/issue-2"
+hosted_watch exited
+assert_eq "$RC:$(close_calls)" '0:1' 'unqualified close quota defers without failing the pass' "$STUB_DIR/err"
+assert_contains "$OUT" 'EVENT tracker-quota status=future' 'unqualified close classifies its quota refusal' "$STUB_DIR/err"
+hosted_watch exited
+assert_eq "$RC:$(close_calls)" '0:1' 'a saved hold defers unqualified close rechecks' "$STUB_DIR/err"
+printf '20000\n' >"$STUB_DIR/now.epoch"
+printf 'open\n' >"$STUB_DIR/close-mode"
+hosted_watch exited
+assert_eq "$RC:$(close_calls)" '0:2' 'deferred hosted close remains eligible after reset' "$STUB_DIR/err"
+assert_contains "$OUT" 'EVENT lane-closed issue-2' 'the reset permits the hosted close result' "$STUB_DIR/err"
+
+# A recorded GitHub identity wins over a Linear-looking key during a hold.
+lane_world held_github stopped
+printf 'open\n' >"$STUB_DIR/close-mode"
+printf 'statuses\n' >"$STUB_DIR/fail-target"
+watch
+jq '.lanes[0].tracker="github"' "$STUB_DIR/fleet.json" >"$STUB_DIR/next"
+mv -- "$STUB_DIR/next" "$STUB_DIR/fleet.json"
+lane_watch
+assert_eq "$RC:$(close_calls)" '0:1' 'a held tracker does not suppress a recorded GitHub lane probe' "$STUB_DIR/err"
+
+# Heartbeat can learn the hold after the long pass succeeded. Its receipt must
+# stay in the parent, so the heartbeat prints it and the next process defers.
+heartbeat_quota() {
+    lane_world "$1" parked
+    lane_merged
+    printf 'open\n' >"$STUB_DIR/close-mode"
+    lane_watch
+    : >"$STUB_DIR/close.calls"
+    printf 'heartbeat\n' >"$STUB_DIR/close-mode"
+    lane_watch
+}
+heartbeat_quota heartbeat_indirect
+assert_eq "$RC" 0 'heartbeat quota leaves the watch available' "$STUB_DIR/err"
+assert_contains "$OUT" 'EVENT heartbeat' 'a heartbeat probe refusal still prints heartbeat' "$STUB_DIR/err"
+assert_eq "$(awk '/^tracker-quota /' <<<"$OUT")" 'tracker-quota status=future reset=1970-01-01T05:33:20Z limit=unknown' \
+    'heartbeat quota state remains in the parent' "$STUB_DIR/err"
+before="$(close_calls)"
+lane_watch
+assert_eq "$RC:$(close_calls)" "0:$before" 'a heartbeat refusal persists for the next child' "$STUB_DIR/err"
+
+PARENT_SCRIPTS="$(mutant_scripts quota-parent/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/quota-parent/github"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/quota-parent/linear"
+mutate_file "$PARENT_SCRIPTS/oversee-watch" \
+    '  parked_merged_owed "${PW_SEEN[0]}" >"$WORK_DIR/parked-hands.out"' \
+    '  ( parked_merged_owed "${PW_SEEN[0]}" ) >"$WORK_DIR/parked-hands.out"'
+WATCH_BIN="$PARENT_SCRIPTS/oversee-watch" heartbeat_quota heartbeat_parent_control
+control_rc=0
+( FAIL=0; assert_eq "$(awk '/^tracker-quota /' <<<"$OUT")" 'tracker-quota status=future reset=1970-01-01T05:33:20Z limit=unknown' \
+    'parent owns quota state'; [[ "$FAIL" == 0 ]] ) >"$STUB_DIR/control.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control rejects quota changes lost in a heartbeat subshell' "$STUB_DIR/err"
+
 MUTANT_SCRIPTS="$(mutant_scripts quota-schedule/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/quota-schedule/github"
 ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/quota-schedule/linear"
