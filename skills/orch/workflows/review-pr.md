@@ -41,7 +41,7 @@ An answer `change_class=trivial` with `measured=true` in the classifier diagnost
 .agents/skills/decider/scripts/decisions search "[KEYWORDS_OF_THE_CHANGED_AREA]"
 ```
 
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. A decision binds only after its full record and status are read: one marked superseded binds only what its status leaves active, and a retired one binds nothing. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Read each full record and apply [decider’s status meanings](../../decider/SKILL.md#decider) before using it as policy. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]

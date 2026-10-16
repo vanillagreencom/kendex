@@ -32,6 +32,8 @@ tags: [review]
 |----------|---------|
 | `workflows/review-pass.md` | A pull request changes a screen |
 
+The review workflow reads `references/pair-record.md` when it handles `pair-ready` or prepares attachment approval. That reference owns the event meaning and approval-packet fields, as the [reference example](reference.md) shows.
+
 ---
 
 ## Not this
@@ -41,3 +43,20 @@ tags: [review]
 > We tried letting each author pick sizes in July, and reviews disagreed about whether a layout broke. The 1.2 release fixed three sizes in `sizes.conf` (see LUM-880) and ...
 
 Rationale and history stay in context once the skill loads; the reason goes in an admitted principle doc, a decision under decider's bar or a comment at `sizes.conf`, and the rule stays here.
+
+> On `pair-ready`, capture every changed screen, compare against the base, ask for approval and attach the pairs. The event means comparison finished. The approval needs the record path, pull request revision, attachment action and owner's answer.
+
+The event definition belongs in `references/pair-record.md`, with the approval-packet contract. The ordered job belongs in `workflows/review-pass.md`:
+
+```markdown
+# Review screenshot pairs
+
+Run when a pull request changes a screen.
+
+1. Capture every changed screen at the configured sizes.
+2. Compare each capture with the base. On `pair-ready`, read `references/pair-record.md` for the event meaning and conditional remedies.
+3. Prepare the approval packet from that reference and request the owner's approval for the current revision.
+4. Attach only the approved images for that revision.
+```
+
+The skill entry keeps the activation and reading routes. The workflow keeps the ordered job. The reference keeps the reusable contract.

@@ -43,3 +43,19 @@ What a screen says and where it places the components; a screen composes them as
 > | `text.h1` | `.market-contribute h2` | mono, 24 px, bold, line height 1.55 | sans, -.01em, line height 1.333, a 32 px line box |
 
 A value table in a doc is a second copy of the token file that is wrong the day the file changes, and the fetch provenance is a fact no reader acts on.
+
+### Display specification
+
+> The account page shows a green badge beside connected accounts. It has an 8 px gap and says Connected. Clicking it opens the account dialog. The dialog puts Reconnect before Remove. A screen must use the shared status component so its error state remains readable in every theme.
+
+Keep the principle in the architecture doc:
+
+> Use the shared status component for account state. Draw its error state in every supported theme. Review holds the choice of component; the gallery holds the theme states.
+
+Inspect the account component, its behavior tests and `ui/theme/tokens.ts`. Delete the badge behavior and mirrored spacing from the architecture doc when those sources hold them. Keep wording in the application's strings. If a required behavior lacks a test, record that test item through the tracker route. Move a user instruction such as how to reconnect to the app's account help after inspecting that help. A display specification does not become a principle by moving it to `references/`.
+
+### Operating sequence
+
+> Run the gallery, switch between light and dark, enable reduced motion, capture each state and attach the pairs to the pull request. The capture command loads the gallery and iterates over its entries.
+
+Keep the rule that every component has a gallery entry for each supported state. Move the ordered review actions into the screenshot skill's `workflows/review-pass.md` after inspecting it. Delete the capture implementation account. The workflow routes to the screenshot record contract for its fields; the architecture doc keeps no copy of them.

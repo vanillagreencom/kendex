@@ -74,13 +74,6 @@ Before the first Jarvis Start with Copilot CLI, open this home in native Copilot
 
 The [session command](workflows/session.md#session-command) keeps one tmux controller per canonical home. Its record stays across logins and restarts. Each home uses a separate tmux socket. Status names that socket and the owned session, window and pane.
 
-The contract rows use real tmux, the shipped SessionStart carrier and native CLI fixtures. They prove the package boundary. A release follow-up checks the real apps in the owner's home.
-
-- Claude Code: `start`, `status` and `stop` meet the contract in `test_claude_contract`.
-- Codex: `start`, `status` and `stop` meet the contract in `test_codex_contract`.
-- Copilot CLI: `start`, `status` and `stop` meet the contract in `test_copilot_contract`.
-- Pi: `start`, `status` and `stop` meet the contract in `test_pi_contract`.
-
 ## Control-host events
 
 Start the event source through the [session workflow](workflows/session.md#control-host-events). It reads mail on this machine and, when configured, on an SSH control host. A fixed settle combines a burst into one session mailbox directive. The session's existing mailbox route supplies the body.
@@ -102,7 +95,7 @@ For an app-supplied package, the assistant app controls package updates. VGS upd
 
 When your home's `.kendex-lock.json` records the `jarvis` skill, kendex controls package updates. VGS writes no package files in that home.
 
-Run `kendex refresh` from your kendex-managed assistant home to update `.agents/skills/jarvis/`. kendex leaves `AGENTS.md`, `skills/own/`, `memory/` and `state/` byte-identical. Add `--verbose` for package details: the CLI test sees `skill jarvis [codex]: Stale` before the update and `refreshed 3 changes · safety: clean` after it. An edited Jarvis render stays in place; the output names `skill jarvis for Codex: edited on disk and changed upstream`. If you declare a private `operator`, `auditor` or `legal` from source `.`, your declaration wins. The test's plan prints `Install agent operator for Codex` and installs the private operator. The catalog copy can install only after you remove your own entry. A release that needs a user-file edit states it in a `You do:` line in its changelog entry.
+Run `kendex refresh` from your kendex-managed assistant home to update `.agents/skills/jarvis/`. kendex keeps your standing instructions, own skills, memory and handoffs. Add `--verbose` for package details. An edited Jarvis render stays in place and the output reports the conflict. If you declare a private `operator`, `auditor` or `legal` from source `.`, your declaration wins. The catalog copy can install only after you remove your own entry. A release that needs a user-file edit states it in a `You do:` line in its changelog entry.
 
 ## Licence
 

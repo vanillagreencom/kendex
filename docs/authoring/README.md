@@ -215,9 +215,12 @@ A package that writes neither shows no line. That is a supported state: kendex n
 
 ## A consumer's own instructions
 
-A project adds its own text to an installed skill or command in its manifest, never by editing the installed copy. `[skill-instructions]` writes into a skill's `SKILL.md`, and `[command-instructions]` writes into every tool's copy of a command:
+A project adds its own text to an installed skill, agent or command in its manifest, never by editing the installed copy. `[skill-instructions]` writes into a skill's `SKILL.md`, and `[command-instructions]` writes into every tool's copy of a command. `[agent-additional-instructions]` adds text to an agent's `## Additional Instructions` section:
 
 ```toml
+[agent-additional-instructions]
+maintainer = "Read the project's writing rules before editing documentation."
+
 [command-instructions]
 all = "Every command reads this."
 code-scrub = """
@@ -225,7 +228,7 @@ Merge review: a second reviewer signs off before merge.
 """
 ```
 
-A key names the package; `all` or `*` names every package of that kind. kendex renders the shared text first, then the package's own, as a `## Project Instructions` block between `kendex:project-instructions` markers, directly after the frontmatter and above the publisher's body. The publisher's body is never edited and still updates, so a project keeps its text without copying the command. A tool that reads a command file of its own gets the block in that file. Gemini gets it in the TOML `prompt`. Codex gets it in the generated skill. With no key for a command, every copy is the publisher's own rendering, byte for byte. In a source-catalog checkout the table goes in `kendex-local.toml`, which configures that checkout alone and ships to no install.
+A key names the package; `all` or `*` names every package of that kind. kendex renders the shared text first, then the package's own. Skills and commands get a `## Project Instructions` block between `kendex:project-instructions` markers, directly after the frontmatter and above the publisher's body. The publisher's body is never edited and still updates, so a project keeps its text without copying the command. A tool that reads a command file of its own gets the block in that file. Gemini gets it in the TOML `prompt`. Codex gets it in the generated skill. With no key for a command, every copy is the publisher's own rendering, byte for byte. In a source-catalog checkout the table goes in `kendex-local.toml`, which configures that checkout alone and ships to no install.
 
 A paragraph several skills share, but not every skill, is written once under a name in `[shared-text]`. A `[skill-instructions]` value places it with `{{shared-text:NAME}}`, where the token stands. Each skill picks its own paragraphs and their order:
 

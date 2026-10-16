@@ -40,3 +40,19 @@ What a plugin does inside its slot, and the design of a host's own API; the firs
 ```
 
 It narrates call order, a test row, a date and task history: an agent reads it and learns no rule it could break, while every name in it goes stale at the next rename.
+
+### Dense safety text
+
+> Unload calls `revoke_routes`, then `stop_service`, then `release_slot`. The manager must revoke a plugin's host access before its code can run again. It must not follow a plugin symlink outside the plugin root or remove a user's plugin directory. `stop_service` waits on the worker before closing its socket. Set `sandbox = "strict"` in every manifest.
+
+Keep the boundaries in the architecture doc:
+
+> Only the plugin manager grants host access. Revoke that access before unloading plugin code. Never write outside the canonical plugin root or remove a user's plugin directory. Review holds these boundaries.
+
+Inspect `shell/plugins/manifest.schema.json` before cutting the sandbox sentence. The declaration owns the allowed value; user setup belongs in the plugin README. Inspect the unload implementation before cutting the wait and socket order. A local reason the code cannot show goes in a comment there. Delete the function sequence after those checks. Moving the whole paragraph to a reference would keep the implementation account.
+
+### Operating sequence
+
+> To test a local plugin, run `plugins validate`, start the shell with `--plugin-dir`, then run `plugins reload` after each edit. The manager scans manifests, resolves hosts and starts each service.
+
+Move the commands, in that order, to `DEVELOPMENT.md` § Test a local plugin after inspecting that section. Delete the manager's call sequence. Keep the architecture rule that a plugin declares each required host before it can use it. The operating steps and the access boundary have different readers.
