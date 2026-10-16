@@ -130,7 +130,7 @@ Record this tier after either state route. Direct publication uses it to retain 
 
 ## 3. Push And Open The PR
 
-`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication) through the shared entry below. It runs this tier's commit hooks and final path check before the base push. A wider tier stops before transport and takes § Escape condition 3. On successful direct delivery, restore the main checkout as below, then go to § 5. Report `[PUSHED_SHA]` and `[BASE]` in place of the PR and merge rows. Skip § 4.
+`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication) through the shared entry below, which stops an item with an open post-merge box. It runs this tier's commit hooks and final path check before the base push. A wider tier stops before transport and takes § Escape condition 3. On successful direct delivery, restore the main checkout as below, then go to § 5. Report `[PUSHED_SHA]` and `[BASE]` in place of the PR and merge rows. Skip § 4.
 
 **Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. That range owns the push and its `sha-reconcile:` routing, and the create. The body is the three lines below rather than step 3's template. No headings and no other section.
 

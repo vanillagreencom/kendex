@@ -48,7 +48,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 ## 4. Submit
 
-`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication). Keep § 3's local validation and internal review. Report its pushed commit and take the direct-delivery finalize route below.
+`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication), which stops an item with an open post-merge box. Keep § 3's local validation and internal review. Report its pushed commit and take the direct-delivery finalize route below.
 
 Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
 

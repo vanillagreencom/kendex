@@ -225,7 +225,11 @@ Once the PR exists, this run is a continuing action. Clear any stop a capped run
 
 ### 2.1 Base publication
 
-`pr-order` selects `review-first` for `ORCH_DELIVERY=push-base`, so no early pull request exists. Apply § 6.1 Gate 1 before preparation. Bind `[LIFECYCLE]` to `managed` or `self`. For a managed caller, bind `[REVIEW_VERDICT]` to the internal review's returned verdict. A standalone caller needs a non-empty `json_paths` record. Section 1.2's advisory external review supplies no substitute. Micro keeps its explicit internal-review exception.
+`pr-order` selects `review-first` for `ORCH_DELIVERY=push-base`, so no early pull request exists.
+
+**Open post-merge boxes.** Before any other step here, read the root item live, and for a single bundle each non-canceled child the commit implements: `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub. The overseer's verification route takes its merge evidence from a merged pull request, and direct delivery creates none. An item whose Done-when holds an open post-merge box, in the form the project-management skill's SKILL.md § Disposition states, therefore takes the PR route. Write `[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md` with one `delivery-post-merge: issue=[ID] route=pr` line per such item, print it, send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md"`, and stop. The stop prepares, pushes and completes nothing. The overseer relaunches the item with `ORCH_DELIVERY=pr`. A failed read stops publication.
+
+Apply § 6.1 Gate 1 before preparation. Bind `[LIFECYCLE]` to `managed` or `self`. For a managed caller, bind `[REVIEW_VERDICT]` to the internal review's returned verdict. A standalone caller needs a non-empty `json_paths` record. Section 1.2's advisory external review supplies no substitute. Micro keeps its explicit internal-review exception.
 
 ```bash
 if ! BASE_REVIEW_STATE="$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{tier: (.tier // "standard"), json_paths: (.json_paths // [])}')"; then
@@ -257,7 +261,7 @@ This call refuses a changed head before validation. It validates the prepared he
 .agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]"
 ```
 
-Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute that value into the next command; a shell variable from this command does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Keep open post-merge boxes for the overseer. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded.
+Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute that value into the next command; a shell variable from this command does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded.
 
 **GitHub completion.** Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
 

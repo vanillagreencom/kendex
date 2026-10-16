@@ -12,7 +12,8 @@ ORCH_APPLE_LABELS = "ios macos"
 # Publication destination. pr also applies when unset. push-base keeps the
 # tier's local validation and internal review, then fast-forward pushes the
 # resolved base branch without a pull request. The overseer records the
-# pushed commit through the existing direct-push cycle route.
+# pushed commit through the existing direct-push cycle route. An item with an
+# open post-merge box stops for the PR route: workflows/submit-pr.md § 2.1.
 # ORCH_DELIVERY = "push-base"
 
 # How a pull request is reviewed, merged and handed on, and how much of
