@@ -121,7 +121,7 @@ if mutant_guard 's/      \*) tree=tools; rel="\.\.\/\$f" ;;/      *) continue ;;
 else
   bad 'external-input control changes the guard'
 fi
-if mutant_guard 's/^    inputs=$(sed .*$/    inputs=/' ; then
+if mutant_guard 's/if (text ~ \/\^# Inputs: \/)/if (0)/' ; then
   git -C "$R" reset -q --hard "$BASE"
   printf '# changed\n' >> "$R/skills/input/tests/lib/evaluator.py"
   preview range true "$MUTANT_TOOLS/guard"
@@ -236,13 +236,21 @@ exec "$READER_GREP" "$@"
 SH
 cat > "$TMP/reader-bin/awk" <<'SH'
 #!/usr/bin/env bash
-case "${2:-}" in
-  reader_phase=*)
-    phase=${2#*=}
-    [ "$((phase + 1))" != "$READER_FAILURE" ] || exit 2
+program=$1
+shift
+case "$program:$READER_FAILURE" in
+  *'function scan_file('*:[1234])
+    needle='for (reader_phase = 0; reader_phase < 4; reader_phase++) {'
+    [[ $program == *"$needle"* ]] || exit 2
+    rest=${program#*"$needle"}
+    [[ $rest != *"$needle"* ]] || exit 2
+    phase=$((READER_FAILURE - 1))
+    replacement="$needle if (reader_phase == $phase) injected_failure = 1;"
+    program=${program/"$needle"/"$replacement"}
+    program+=$'\nEND { if (injected_failure) exit 2 }'
     ;;
 esac
-exec "$READER_AWK" "$@"
+exec "$READER_AWK" "$program" "$@"
 SH
 cat > "$TMP/reader-bin/sed" <<'SH'
 #!/usr/bin/env bash
@@ -286,7 +294,7 @@ reader_grep_row "$GUARD" \
   && ok 'two inputs reuse one tree reader scan without per-reader grep' \
   || bad 'two inputs reuse one tree reader scan without per-reader grep' "calls=$reader_grep_calls rc=$RC out=$OUT"
 if mutant_guard '/^    doc_readers "\$rel" || return 2$/a\
-    grep -qF -e "/$rel" <<<"${SCAN_READ_CODE[*]}" || [ $? -eq 1 ] || return 2'; then
+    grep -qF -e "/$rel" -- ${SCAN_PATH[@]+"${SCAN_PATH[@]}"} || [ $? -eq 1 ] || return 2'; then
   if reader_grep_row "$MUTANT_TOOLS/guard"; then
     bad 'control: repeated reader grep turns the cached comparison assertion red'
   else
@@ -313,7 +321,7 @@ for failure in 1 2 3 4 sed; do
 done
 # The same injected failures must redden the contract when they are accepted
 # as no match. Keep all comparisons so the control still reaches the error.
-if mutant_guard '/reader_data.*|| return 2$/s/|| return 2/|| true/; s/^  token=\(.*\) || return 2$/  token=\1 || true/'; then
+if mutant_guard '/scan_input.*|| return 2$/s/|| return 2/|| true/; s/^  token=\(.*\) || return 2$/  token=\1 || true/'; then
   for failure in 1 sed; do
     reader_failure .github/workflows/skill-tests.yml true "$failure" "$MUTANT_TOOLS/guard"
     [ -s "$SUITE_LOG" ] && [[ $OUT != *'guard: mapped-suites=2 '* ]] \

@@ -721,7 +721,7 @@ MAP_CONTROLS=(
   "control: without the source-line needle the script a script sources goes unreached and the whole set runs~append~skills/mapped/scripts/base~s/^          \*) names=\${SCAN_SOURCED\[i\]} ;;$/          *) names=\"\" ;;/~$MAPPED_ALL"
   "control: with one scan loaded for every tree the second tree's path reaches nothing and its whole set runs~append~hooks/alpha.sh skills/mapped/scripts/runner~s/\[ \"\${SCAN_DIR-}\" = \"\$dir\" \] || scan_load/[ -n \"\${SCAN_DIR-}\" ] || scan_load/~$TWO_TREES_ONE_SCAN"
   "control: with a suite adding its name the readers of the lib sharing it run~append~skills/mapped/scripts/driven~s/^    suite) ;;$/    suite) next_any+=(\"\${2##*\/}\") ;;/~deep helped probed wrap wrapped"
-  "control: with comment lines read as code the suite citing a lib in a comment runs~append~skills/mapped/scripts/lib/pid.sh~s/'^\[\[:space:\]\]\*/'^NEVER/~cited deep drives pid_direct runner wrapped"
+  "control: with comment lines read as code the suite citing a lib in a comment runs~append~skills/mapped/scripts/lib/pid.sh~s|/^\[\[:space:\]\]\*#|/^NEVER#|~cited deep drives pid_direct runner wrapped"
   "control: with one pass of the scan the suites two files away stand down~append~skills/mapped/scripts/lib/pid.sh~s/^  while \[ \"\${#next_any\[@\]}\" -gt 0 \] || \[ \"\${#next_script\[@\]}\" -gt 0 \]; do$/  for _ in 1; do/~pid_direct runner"
   "control: without a joining file adding its needle only the suite naming the lib itself runs~append~skills/mapped/scripts/lib/pid.sh~/^      reach_join \"\${SCAN_ROLE\[i\]}\" \"\${SCAN_PATH\[i\]}\" || return 3$/d~pid_direct"
   "control: without the name rule for a reached script its named suite stands down~append~skills/mapped/scripts/lib/pid.sh~s/^  for f in \${reach_scripts\[@\]+\"\${reach_scripts\[@\]}\"}; do$/  for f in; do/~deep drives pid_direct wrapped"
@@ -732,7 +732,7 @@ MAP_CONTROLS=(
   "control: without a module's folder seed only its file readers run~append~skills/mapped/scripts/plugin/hooks/x.js~/^      next_any+=(\"\${name%%\/\*}\")$/d~"
   "control: with module rejection restored a module runs the whole set~append~skills/mapped/scripts/unused/data.json~s/in test-module) return 1/in module | test-module) return 1/~$MAPPED_ALL"
   "control: without the hook doc role README runs the whole hooks set~append~hooks/README.md~/^    hooks:\*.md) echo doc ;;$/d~$HOOKS_ALL"
-  "control: without the script read filter a printed brief reaches its suites~append~skills/mapped/SKILL.md~/^      script | lib)$/,/^        ;;$/d~brief catalogscan rootglob skillmd walker"
+  "control: without the script read filter a printed brief reaches its suites~append~skills/mapped/SKILL.md~s/if (role != \"script\" && role != \"lib\")/if (1)/~brief catalogscan rootglob skillmd walker"
   "control: with bare for recognized as a read command the shipped launch briefs reach their suite~append~skills/mapped/SKILL.md~s/(cat|grep|sed|awk|head|tail|read|find)/(cat|grep|sed|awk|head|tail|read|find|for)/~brief catalogscan rootglob skillmd walker"
   "control: without cat as a read command the workflow script reader stands down~append~skills/mapped/workflows/flow.md~s/(cat|grep|sed|awk|head|tail|read|find)/(grep|sed|awk|head|tail|read|find)/~catalogscan flowdir flowread walker"
   'control: without quoted directory paths the find and assigned directory readers stand down~append~skills/doc-readers/workflows/flow.md~s/|\[\\"'"'"'\](.*$/"/~catalogscan'
@@ -747,7 +747,7 @@ MAP_CONTROLS=(
   "control: with no skill-root pattern for a root doc the root's globber stands down~append~skills/mapped/SKILL.md~s/^    \*) dir='.*' ;;$/    *) dir=NEVER ;;/~catalogscan skillmd walker"
   "control: with every doc's directory read as references the workflow directory's globber stands down~append~skills/mapped/workflows/flow.md~s|dir=\"/\\\${rel%%/\\*}(|dir=\"/references(|~catalogscan docscan flowread readflow refsuse walker"
   'control: with the reference matched by its bare name the suite naming table.conf in another directory runs~append~skills/mapped/references/table.conf~s|reader_patterns=("/[$]rel"|reader_patterns=("/${rel:11}"|~catalogscan docscan refsuse tool tool_extra toolbox walker'
-  "control: with comment lines read as code the script citing a reference in a comment runs its suite~append~skills/plain/references/note.md~s/'^\[\[:space:\]\]\*/'^NEVER/~alpha.test.sh catalogscan"
+  "control: with comment lines read as code the script citing a reference in a comment runs its suite~append~skills/plain/references/note.md~s|/^\[\[:space:\]\]\*#|/^NEVER#|~alpha.test.sh catalogscan"
   'control: without the whole-token match the suite reading the schema doc through a table stands down~append~skills/mapped/schemas/rec.md~s/"[$]token" "[$]dir"/"NEVER" "$dir"/~catalogscan walker'
   'control: without the directory-reader match the glob readers stand down~append~skills/mapped/references/table.conf~s/"[$]token" "[$]dir"/"$token" "NEVER"/~catalogscan tool tool_extra walker'
   'control: with the directory pattern taking any reference path a reader of another reference runs~append~skills/mapped/references/table.conf~s,}(/?\\\$|,}(/|/?\\\$|,~catalogscan docscan helped probed refsuse tool tool_extra walker wrap'
@@ -756,7 +756,7 @@ MAP_CONTROLS=(
   "control: with a path ending in /skills no longer taken as a walk start the skills-directory walker stands down~append~skills/mapped/references/table.conf~s#^  catalog_root=.*#  catalog_root=NEVER#~docscan refsuse tool tool_extra walker"
   "control: with a reference whose readers reach no suite taken as read by none it runs nothing~append~skills/plain/references/lone.md~s/^      tests\/\*\/\*) ;;$/      references\/*) return 0 ;; tests\/*\/*) ;;/~catalogscan"
   'control: without the local no-reader arm a reference only a comment and prose cite runs the whole set~append~skills/plain/references/note.md~s#^    \[ -n "\$readers" \] || return 0$#    [ -n "$readers" ] || { case "$rel" in ../*) return 0 ;; esac; return 1; }#~'"$PLAIN_CATALOG"
-  "control: with an empty file taken as unreadable a reference only a comment and prose cite runs the whole set~append~skills/plain/references/note.md~s#^\\(    code=.*\\) || \\[ \\\$? -eq 1 \\] || return 2\$#\\1 || { [ \"\$f\" != skills/plain/scripts/empty.sh ] || return 2; }#~$PLAIN_CATALOG"
+  "control: with an empty file taken as unreadable a reference only a comment and prose cite runs the whole set~append~skills/plain/references/note.md~s@if (!scan_file(i)) exit 2@if (scan_paths[i] == \"skills/plain/scripts/empty.sh\" || !scan_file(i)) exit 2@~$PLAIN_CATALOG"
   "control: without the whole-set fallback the unmapped script runs nothing~append~skills/mapped/scripts/orphan~s/unmapped path=\$f\"; run=all; break ;;/unmapped path=\$f\"; break ;;/~"
   "control: with each path's suites overwriting the last only the last path's run~append~skills/mapped/scripts/tool skills/mapped/tests/other.sh~s/^            run=\"\$run\$sel$/            run=\"\$sel/~other"
   "control: with the no-runner loop reading the whole set every suite runs~append~skills/plain/scripts/alpha.sh~s/^        done <<<\"\$run\"$/        done <<<\"\$(skill_suites \"\$d\")\"/~$PLAIN_ALL"
@@ -807,29 +807,48 @@ else
   bad "control: reach_join's refusal could not be deleted from a guard copy"
 fi
 # A file the scan cannot read is no evidence it names nothing: the skill runs
-# whole, and the note names the read, not the rule. The stub fails the scan's
-# read, the grep -v that drops comment lines, of the file FAIL_GREP names: a
+# whole, and the note names the read, not the rule. The stub points the
+# named file record at a missing file so the batch read fails: a
 # lib the scan passes through, a suite it ends on, and a reader of the whole
 # directory.
-REAL_GREP="$(command -v grep)"
-cat >"$SCAN_BIN/grep" <<'SH'
+cat >"$SCAN_BIN/awk" <<'SH'
 #!/usr/bin/env bash
-for a in "$@"; do :; done
-if [ -n "${FAIL_GREP:-}" ] && [ "$1" = -v ] && [ "$a" = "$FAIL_GREP" ]; then
-  echo "grep: $a: Permission denied" >&2
-  exit 2
+program=$1
+shift
+if [ -n "${FAIL_READ:-}" ] && [[ $program == *'function scan_file('* ]]; then
+  data=$(cat) || exit 2
+  edited=""
+  matches=0
+  while IFS= read -r record; do
+    case "$record" in
+      'F '*)
+        path=${record#F }; path=${path#* }; path=${path#* }
+        if [ "$path" = "$FAIL_READ" ]; then
+          record="${record%"$path"}$path.missing"
+          matches=$((matches + 1))
+        fi
+        ;;
+    esac
+    edited+="$record"$'\n'
+  done <<<"$data"
+  if [ "$matches" -eq 0 ]; then
+    [ "${edited%$'\n'}" = "$data" ] || exit 2
+  else
+    [ "$matches" -eq 1 ] && [ "${edited%$'\n'}" != "$data" ] || exit 2
+  fi
+  exec "$REAL_AWK" "$program" "$@" <<<"$edited"
 fi
-exec "$REAL_GREP" "$@"
+exec "$REAL_AWK" "$program" "$@"
 SH
-chmod +x "$SCAN_BIN/grep"
-range_grep_fails() { # FILE GUARD
+chmod +x "$SCAN_BIN/awk"
+range_read_fails() { # FILE GUARD
   OUT=""
   RC=0
   : >"$CALLS"
-  OUT="$(cd "$R" && env FAIL_GREP="$1" REAL_GREP="$REAL_GREP" PATH="$SCAN_BIN:$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$2" --range "$mapped_base" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env FAIL_READ="$1" REAL_AWK="$REAL_AWK" PATH="$SCAN_BIN:$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$2" --range "$mapped_base" 2>&1 </dev/null)" || RC=$?
 }
 # The one rule: the read's failure is not taken as a file naming nothing.
-LENIENT='s/^\(    code=.*\) || \[ \$? -eq 1 \] || return 2$/\1 || true/'
+LENIENT='s/if (!scan_file(i)) exit 2/scan_file(i)/'
 # changed path#unreadable file#suites that start once its failed read is
 # taken as no match
 UNREAD_ROWS=(
@@ -840,14 +859,14 @@ UNREAD_ROWS=(
 for row in "${UNREAD_ROWS[@]}"; do
   IFS='#' read -r changed unread lenient <<<"$row"
   change append "$changed"
-  range_grep_fails "$unread" "$GUARD"
+  range_read_fails "$unread" "$GUARD"
   [ "$RC" -eq 0 ] && [ "$(started)" = "$MAPPED_ALL" ] \
     && [[ "$OUT" == *"$(note_for unreadable "$changed")"* ]] \
     && [[ "$OUT" != *"no explanation is defined for this value"* ]] \
     && ok "an unreadable $unread runs the whole set and names the read" \
     || bad "an unreadable $unread runs the whole set and names the read" "rc=$RC started=$(started) out=$OUT"
   if mutant_guard "$LENIENT"; then
-    range_grep_fails "$unread" "$MUTANT_TOOLS/guard"
+    range_read_fails "$unread" "$MUTANT_TOOLS/guard"
     [ "$(started)" = "$lenient" ] \
       && ok "control: with the failed read of $unread taken as no match the set shrinks silently" \
       || bad "control: with the failed read of $unread taken as no match the set shrinks silently" "rc=$RC started=$(started) out=$OUT"
@@ -856,7 +875,7 @@ for row in "${UNREAD_ROWS[@]}"; do
   fi
   back_to_mapped
 done
-rm -- "$SCAN_BIN/grep"
+rm -- "$SCAN_BIN/awk"
 
 # second-opinion reads assigned schema paths with sed. Its extraction must
 # finish before the tree can be reused for another changed document.
@@ -866,12 +885,12 @@ cat >"$SCAN_BIN/awk" <<'SH'
 case "${1:-}" in
   *read_names*)
     code=$(cat) || exit 2
-    if [[ $code == *'schemas/review-finding-prompt.md'* ]]; then
+    if [[ $code == *' skills/doc-readers/'* ]]; then
       printf 'extract\n' >>"$0.log"
     fi
-    if [ -f "$0.fail" ] && [[ $code == *'schemas/review-finding-prompt.md'* ]]; then
+    if [ -f "$0.fail" ] && [[ $code == *' skills/doc-readers/'* ]]; then
       # Partial output from a failed dependency is still unreadable.
-      printf 'sed "$schema_file"\n'
+      printf 'N\t0\t/partial\n'
       exit 2
     fi
     exec "${0%/*}/real-awk" "$@" <<<"$code"
@@ -908,7 +927,7 @@ for row in "${READ_ROWS[@]}"; do
   esac
 done
 # Breaking the tree reset must redden the cross-tree reader assertion.
-if mutant_guard '/^  SCAN_READ_CODE=()$/d'; then
+if mutant_guard '/^  SCAN_RELS=()$/d; /^  SCAN_READERS=()$/d'; then
   map_row append "hooks/README.md $SCHEMA_PATH" none "$MUTANT_TOOLS/guard"
   [ "$RC" -eq 0 ] && [ "$(started)" != 'assigned-lib assigned-script beta.test.sh catalogscan quoted-find' ] \
     && ok "control: retained read metadata fails the next tree's reader assertion" \
@@ -933,7 +952,7 @@ map_row append "$SCHEMA_PATH" "$(note_for unreadable "$SCHEMA_PATH")"
   && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
   && ok "a failed reader extraction runs the whole tree" \
   || bad "a failed reader extraction runs the whole tree" "$VERDICT out=$OUT"
-if mutant_guard '/<<<"\$code") || return 2$/s/|| return 2/|| true/'; then
+if mutant_guard '/scan_input.*|| return 2$/s/|| return 2/|| true/'; then
   map_row append "$SCHEMA_PATH" none "$MUTANT_TOOLS/guard"
   [ "$RC" -eq 0 ] && [ "$(started)" != "$DOC_CATALOG" ] \
     && ok "control: ignoring the extraction failure skips the whole-tree fallback" \

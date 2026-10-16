@@ -170,7 +170,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     suites)
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
-        *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; grep's own error is above." ;;
+        *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
         *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
@@ -1434,80 +1434,38 @@ skill_files() { # DIR
 }
 # What the scan holds of each file skill_files lists for the tree SCAN_DIR,
 # loaded once for all of the tree's changed paths, one index per file:
-# SCAN_PATH, SCAN_ROLE, SCAN_CODE, its lines that are no `#` comment,
-# SCAN_READ_CODE, those lines filtered to document reads for scripts/libs,
-# SCAN_NAMES, each `/<name>` that code spells, and SCAN_SOURCED, each
+# SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
+# spells, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
 # and SCAN_INPUTS, the repository path patterns in its input notes.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
-# or repository input in this tree. Reader comparison phases run once per tree.
+# or repository input in this tree. One batch extracts file metadata and
+# compares the document-read lines, retaining source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
 # `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f code read_code names lines sourced inputs tree rel path i q phase pairs
-  local reader_data="" reader_patterns=() nl=$'\n'
+  local role f files tree rel path i q kind value record cache
+  local scan_input="" reader_patterns=() nl=$'\n'
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
-  SCAN_CODE=()
-  SCAN_READ_CODE=()
   SCAN_NAMES=()
   SCAN_SOURCED=()
   SCAN_INPUTS=()
   SCAN_RELS=()
   SCAN_READERS=()
+  files=$(skill_files "$1") || return 2
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
-    code=$(grep -v '^[[:space:]]*#' -- "$f") || [ $? -eq 1 ] || return 2
-    read_code=$code
-    case "$role" in
-      script | lib)
-        # Read commands and the path assignments they use share one checked
-        # extraction. A failed process cannot publish a valid empty scan.
-        read_code=$(awk '
-          {
-            lines[NR] = $0
-            if ($0 ~ /(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find)[[:space:]]|\/[^[:space:]]*["}]*[[:space:]]*\/?\*/) {
-              keep[NR] = 1
-              rest = $0
-              while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*/)) {
-                name = substr(rest, RSTART, RLENGTH)
-                sub(/^\$\{?/, "", name)
-                read_names[name] = 1
-                rest = substr(rest, RSTART + RLENGTH)
-              }
-            }
-            rest = $0
-            while (match(rest, /(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[.\/])/)) {
-              name = substr(rest, RSTART, RLENGTH)
-              sub(/^[;&|({[:space:]]*/, "", name)
-              sub(/=.*/, "", name)
-              assignment_names[++assignments] = name
-              assignment_lines[assignments] = NR
-              rest = substr(rest, RSTART + RLENGTH)
-            }
-          }
-          END {
-            for (i = 1; i <= assignments; i++)
-              if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
-            for (i = 1; i <= NR; i++) if (keep[i]) print lines[i]
-          }
-        ' <<<"$code") || return 2
-        ;;
-    esac
-    names=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$code") || [ $? -eq 1 ] || return 2
-    lines=$(grep -E '(^|[;&|({[:space:]])(source|\.)[[:space:]]' <<<"$code") || [ $? -eq 1 ] || return 2
-    sourced=$(grep -oE '/[[:alnum:]._-]*[[:alnum:]_-]' <<<"$lines") || [ $? -eq 1 ] || return 2
-    inputs=$(sed -n 's/^# Inputs: //p' "$f" | tr ' ' '\n') || return 2
+    i=${#SCAN_PATH[@]}
     SCAN_PATH+=("$f")
     SCAN_ROLE+=("$role")
-    SCAN_CODE+=("$code")
-    SCAN_READ_CODE+=("$read_code")
-    SCAN_NAMES+=($'\n'"$names"$'\n')
-    SCAN_SOURCED+=($'\n'"$sourced"$'\n')
-    SCAN_INPUTS+=("$inputs")
-  done <<<"$(skill_files "$1")"
+    SCAN_NAMES+=("")
+    SCAN_SOURCED+=("")
+    SCAN_INPUTS+=("")
+    scan_input="${scan_input}F $i $role $f$nl"
+  done <<<"$files"
   while IFS=$'\t' read -r tree rel path; do
     [ "$tree" = "$1" ] || continue
     case "$rel" in
@@ -1518,57 +1476,117 @@ scan_load() { # DIR
     SCAN_RELS+=("$rel")
     SCAN_READERS+=("")
     doc_readers "$rel" || return 2
-    reader_data="${reader_data}Q $q$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl"
+    scan_input="${scan_input}Q $q$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl"
   done <<<"$tree_paths"
-  if [ "${#SCAN_RELS[@]}" -gt 0 ]; then
-    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-      code=${SCAN_READ_CODE[i]}
-      lines=${code//$'\n'/}
-      reader_data="${reader_data}C $i $((${#code} - ${#lines} + 1))$nl$code$nl"
-    done
-    # Each phase compares every requested input against the loaded tree.
-    # Line counts keep source lines separate from scan records.
-    for phase in 0 1 2 3; do
-      pairs=$(awk -v reader_phase="$phase" '
-        $1 == "Q" {
-          q = $2
-          for (p = 0; p < 4; p++) {
-            if (getline <= 0) exit 2
-            if (p == reader_phase) reader_patterns[q] = $0
-          }
-          next
+  # File text stays inside the batch. Bash receives only reach metadata.
+  cache=$(awk '
+    function scan_names(reader, text, kind, rest, name) {
+      rest = text
+      while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
+        name = substr(rest, RSTART, RLENGTH)
+        if (!name_seen[kind, reader, name]++)
+          print kind "\t" reader "\t" name
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, j, notes, note_count) {
+      path = scan_paths[reader]; role = scan_roles[reader]
+      while ((status = (getline text < path)) > 0) {
+        if (text ~ /^# Inputs: /) {
+          note_count = split(substr(text, 11), notes, /[ ]/)
+          for (j = 1; j <= note_count; j++)
+            if (notes[j] != "") print "I\t" reader "\t" notes[j]
         }
-        $1 == "C" {
-          reader = $2; count = $3
-          reader_counts[reader] = count
-          for (line = 0; line < count; line++) {
-            if (getline <= 0) exit 2
-            reader_lines[reader, line] = $0
-          }
-          next
+        if (text ~ /^[[:space:]]*#/) continue
+        code[++count] = text
+        scan_names(reader, text, "N")
+        if (text ~ /(^|[;&|({[:space:]])(source|\.)[[:space:]]/)
+          scan_names(reader, text, "S")
+        if (role != "script" && role != "lib") {
+          keep[count] = 1
+          continue
         }
-        { exit 2 }
-        END {
-          # GNU Awk caches the last dynamic regex at each match site.
-          for (q in reader_patterns) {
-            pattern = reader_patterns[q]
-            for (reader in reader_counts) {
-              for (line = 0; line < reader_counts[reader]; line++) {
-                if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
-                  print q, reader
-                  break
-                }
+        if (text ~ /(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find)[[:space:]]|\/[^[:space:]]*["}]*[[:space:]]*\/?\*/) {
+          keep[count] = 1
+          rest = text
+          while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*/)) {
+            name = substr(rest, RSTART, RLENGTH)
+            sub(/^\$\{?/, "", name)
+            read_names[name] = 1
+            rest = substr(rest, RSTART + RLENGTH)
+          }
+        }
+        rest = text
+        while (match(rest, /(^|[;&|({[:space:]])[[:alpha:]_][[:alnum:]_]*=["'\'']?(\$|[.\/])/)) {
+          name = substr(rest, RSTART, RLENGTH)
+          sub(/^[;&|({[:space:]]*/, "", name)
+          sub(/=.*/, "", name)
+          assignment_names[++assignments] = name
+          assignment_lines[assignments] = count
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+      }
+      closed = close(path)
+      if (status < 0 || closed != 0) {
+        printf "guard: scan-file=%s operation=%s\n", path, (status < 0 ? "read" : "close") > "/dev/stderr"
+        return 0
+      }
+      for (i = 1; i <= assignments; i++)
+        if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
+      for (i = 1; i <= count; i++)
+        if (keep[i]) reader_lines[reader, ++reader_counts[reader]] = code[i]
+      return 1
+    }
+    $1 == "F" {
+      i = $2; scan_roles[i] = $3
+      path = $0
+      sub(/^F [^ ]+ [^ ]+ /, "", path)
+      scan_paths[i] = path
+      scan_count++
+      next
+    }
+    $1 == "Q" {
+      q = $2; queries[q] = 1
+      for (p = 0; p < 4; p++) {
+        if (getline <= 0) { failed = 1; exit 2 }
+        query_patterns[q, p] = $0
+      }
+      next
+    }
+    NF == 0 { next }
+    { failed = 1; exit 2 }
+    END {
+      if (failed) exit 2
+      for (i = 0; i < scan_count; i++)
+        if (!scan_file(i)) exit 2
+      # GNU Awk caches the last dynamic regex at each match site.
+      for (reader_phase = 0; reader_phase < 4; reader_phase++) {
+        for (q in queries) {
+          pattern = query_patterns[q, reader_phase]
+          for (reader in reader_counts) {
+            for (line = 1; line <= reader_counts[reader]; line++) {
+              if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
+                print "R\t" q "\t" reader
+                break
               }
             }
           }
         }
-      ' <<<"${reader_data%$'\n'}") || return 2
-      while read -r q i; do
-        [ -n "$q" ] || continue
-        [[ ${SCAN_READERS[q]} == *"$nl$i$nl"* ]] || SCAN_READERS[q]+="$nl$i$nl"
-      done <<<"$pairs"
-    done
-  fi
+      }
+    }
+  ' <<<"$scan_input") || return 2
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    kind=${record%%$'\t'*}; record=${record#*$'\t'}
+    i=${record%%$'\t'*}; value=${record#*$'\t'}
+    case "$kind" in
+      N) SCAN_NAMES[i]+="$nl$value$nl" ;;
+      S) SCAN_SOURCED[i]+="$nl$value$nl" ;;
+      I) SCAN_INPUTS[i]+="$value$nl" ;;
+      R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
+      *) return 2 ;;
+    esac
+  done <<<"$cache"
   SCAN_DIR=$1
 }
 # The comparison patterns for scanned files that read the doc REL, cached
