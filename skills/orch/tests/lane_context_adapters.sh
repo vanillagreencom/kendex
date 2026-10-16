@@ -118,10 +118,10 @@ ROWS
 
 echo "=== Claude families and native aliases need no version pins ==="
 echo "=== resolved Claude launch identity ==="
-while IFS='|' read -r model pin want mode; do
+while IFS='|' read -r model pin want mode recorded; do
   got="$(env -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_FABLE_MODEL \
     ANTHROPIC_DEFAULT_SONNET_MODEL="$pin" "$BASH" -euo pipefail -c \
-    '. "$1"; lane_adapter_claude_model_id "$2" "$3"' _ "$LIB" "$model" "${mode:-resolved}")"
+    '. "$1"; lane_adapter_claude_model_id "$2" "$3" "$4"' _ "$LIB" "$model" "${mode:-resolved}" "$recorded")"
   assert_eq "$got" "$want" "${mode:-resolved} identity $model pin=$pin"
 done <<'ROWS'
 fable-5-1||claude-fable-5-1
@@ -135,10 +135,18 @@ fable||
 best||
 default||
 opus||
-sonnet|claude-sonnet-4-6||recorded
-fable|||recorded
+sonnet|claude-sonnet-4-6|sonnet|recorded
+fable||fable|recorded
+opus[1m]||opus|recorded
+haiku||haiku|recorded
 fable-5-1||claude-fable-5-1|recorded
 claude-opus-4-8-20261001||claude-opus-4-8-20261001|recorded
+claude-sonnet-4-6|claude-sonnet-5-5|sonnet|resolved|sonnet
+claude-opus-4-8||opus|resolved|opus[1m]
+claude-fable-5-1||fable|resolved|fable
+claude-haiku-5-5||haiku|resolved|haiku
+claude-opus-4-8||claude-opus-4-8|resolved|sonnet
+claude-opus-4-8||claude-opus-4-8|resolved|claude-opus-4-6
 opusplan||opusplan|launch
 MyProviderModel||MyProviderModel|launch
 fable-5-1[1m]||claude-fable-5-1|launch
@@ -553,7 +561,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'copilot {"session_id":"s1","cwd":"/w","current_tokens":150000'
   control model-override adapters/claude.sh 'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}' 'model=sonnet' \
     'resolved identity sonnet pin=claude-sonnet-4-6'
-  control version-identity adapters/claude.sh 'printf '\''%s\n'\'' "$model"' 'printf '\''%s\n'\'' "${model%-20261001}"' \
+  control version-identity adapters/claude.sh '  printf '\''%s\n'\'' "$model"' '  printf '\''%s\n'\'' "${model%-20261001}"' \
     'resolved identity claude-opus-4-8-20261001 pin='
   control unresolved-model adapters/claude.sh '      *) model="" ;;' '      *) : ;;' \
     'resolved identity best pin='

@@ -3026,7 +3026,7 @@ handoff_check() {
     fi
     launched=$(jq -r '.model // ""' <<<"$record") || return 0
     launch_id=$(launch_choice_model_id claude "$launched" recorded) || launch_id=""
-    observed_id=$(launch_choice_model_id claude "$observed" resolved) || observed_id=""
+    observed_id=$(launch_choice_model_id claude "$observed" resolved "$launched") || observed_id=""
     if [ -z "$launched" ]; then cause=launch-missing
     elif [ -z "$launch_id" ]; then cause=launch-unresolved
     elif [ -z "$observed_id" ]; then cause=observed-unread

@@ -33,18 +33,16 @@ lane_adapter_claude_window() { # MODEL [notice]
   printf '%s\n' "$LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"
 }
 
-# lane_adapter_claude_model_id MODEL — the model id a launch writes for MODEL:
-# Aliases use their launch-time family override. Explicit versions retain all
-# their version fields. The recorded form never resolves a historical family
-# alias through the current environment.
-lane_adapter_claude_model_id() { # MODEL [launch|resolved|recorded]
-  local model
+# Aliases use their launch-time family override. Recorded aliases stay native
+# recovery selectors. A concrete observation matches an alias only in its own
+# family; explicit recorded IDs retain every version field.
+lane_adapter_claude_model_id() { # MODEL [launch|resolved|recorded] [RECORDED_SELECTOR]
+  local model recorded
   model="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" || return 1
   case "${2:-}" in launch | resolved | recorded) model=${model%\[1m\]} ;; esac
-  # Historical records cannot recover the environment that resolved an alias.
-  # Only launch writers may consult family overrides.
+  # A later environment cannot redefine the selector saved by a launch.
   if [[ "${2:-}" == recorded ]]; then
-    case "$model" in sonnet | haiku | opus | fable) return 0 ;; esac
+    case "$model" in sonnet | haiku | opus | fable) printf '%s\n' "$model"; return 0 ;; esac
   fi
   case "$model" in
     sonnet) model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model} ;;
@@ -68,6 +66,14 @@ lane_adapter_claude_model_id() { # MODEL [launch|resolved|recorded]
     fi
   elif [[ -z "$model" ]]; then
     model=${1:-}
+  fi
+  if [[ -n "${3:-}" ]]; then
+    recorded=$(printf '%s' "$3" | tr '[:upper:]' '[:lower:]') || return 1
+    recorded=${recorded%\[1m\]}
+    case "$recorded" in
+      sonnet | haiku | opus | fable)
+        case "$model" in claude-"$recorded"-[0-9]*) model=$recorded ;; esac ;;
+    esac
   fi
   printf '%s\n' "$model"
 }

@@ -246,6 +246,9 @@ while IFS='|' read -r item model expected; do
     "the production lane writer retains launch evidence for $model"
 done <<'ROWS'
 CC-39161|opusplan|opusplan
+CC-39165|sonnet|sonnet
+CC-39166|fable|fable
+CC-39167|haiku|haiku
 CC-39163|fable-5-1[1m]|claude-fable-5-1
 ROWS
 MODEL_RECORD_CTL="$(mutant_scripts model-recordctl open-terminal)" || exit 1

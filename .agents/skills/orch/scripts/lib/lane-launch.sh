@@ -565,12 +565,12 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
 # holds no row for that harness. A row with no effort spelling omits effort.
 # Claude family overrides retain their explicit IDs. Unpinned aliases stay
 # native aliases so a harness model release needs no launcher edit.
-launch_choice_model_id() { # HARNESS MODEL [launch|resolved|recorded]
-  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}" "${3:-}"; else printf '%s\n' "${2:-}"; fi
+launch_choice_model_id() { # HARNESS MODEL [launch|resolved|recorded] [RECORDED_SELECTOR]
+  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}" "${3:-}" "${4:-}"; else printf '%s\n' "${2:-}"; fi
 }
 
-launch_choice_write() { # HARNESS MODEL EFFORT
-  local row model_spellings effort_spellings attach word out
+launch_choice_write() { # HARNESS MODEL EFFORT [recorded]
+  local row model_spellings effort_spellings attach word out model
   [[ -n "$2" || -n "$3" ]] || return 0
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
@@ -578,7 +578,10 @@ launch_choice_write() { # HARNESS MODEL EFFORT
   out=""
   if [[ -n "$2" ]]; then
     read -r word _ <<<"$model_spellings"
-    out="$word $(printf %q "$(launch_choice_model_id "$1" "$2")")"
+    # Recovery repeats its saved selector, including any context suffix.
+    if [[ "${4:-}" == recorded ]]; then model=$2
+    else model="$(launch_choice_model_id "$1" "$2")" || return 1; fi
+    out="$word $(printf %q "$model")"
   fi
   if [[ "$effort_spellings" != - && -n "$3" ]]; then
     read -r word _ <<<"$effort_spellings"

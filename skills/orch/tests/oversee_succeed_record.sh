@@ -195,7 +195,7 @@ judged() {
 # The harness acknowledges its argv before drawing its working-turn hint.
 model_switch_rows() (
   local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
-  local scenario handoff_path relative_dir launch_dir line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before root_before root_handoff prior_pane
+  local scenario handoff_path relative_dir launch_dir line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before root_before root_handoff prior_pane executable recorded override
   local producer_handoff=() control_scenario=""
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
@@ -222,7 +222,7 @@ while [[ \$# -gt 0 ]]; do
   if [[ \$1 == --model ]]; then model=\$2; break; fi
   shift
 done
-[[ \$model == 'claude-opus-4-6[1m]' ]] || exit 1
+case \$model in 'claude-opus-4-6[1m]' | 'opus[1m]') ;; *) exit 1 ;; esac
 printf '%s\\n' "\$model" > '$TMP_ROOT/model.argv'
 printf '%s\\n' 'esc to interrupt'
 exec sleep 100000
@@ -255,7 +255,7 @@ BARRIER
       LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
       ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 ORCH_OVERSEER_HEADROOM_PCT=5 \
       ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE='codex:gpt-6.1-sol:high' \
-      ANTHROPIC_DEFAULT_OPUS_MODEL='claude-opus-4-6[1m]' CLAUDE_CONFIG_DIR="$H/.claude" \
+      ANTHROPIC_DEFAULT_OPUS_MODEL="$override" CLAUDE_CONFIG_DIR="$H/.claude" \
       GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "$@")
   }
   if [[ "${MODEL_OWNER_CONTROL:-}" == words ]]; then
@@ -286,6 +286,8 @@ BARRIER
   claude_usage 10 10 10 Opus > "$FIXTURE_DIR/.claude.json"
   while IFS='|' read -r scenario handoff_path relative_dir; do
     [[ -z "$control_scenario" || "$scenario" == "$control_scenario" ]] || continue
+    executable='claude-opus-4-6[1m]' recorded=claude-opus-4-6 override='claude-opus-4-6[1m]'
+    case "$scenario" in native-*) executable='opus[1m]' recorded='opus[1m]' override="" ;; esac
     new_caller claude
     rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/capture-handoff" "${TMP_ROOT:?}/model.snapshot" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
     [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
@@ -305,7 +307,7 @@ BARRIER
       prior_pane=$CALLER_PANE
       producer_handoff=(--handoff "$handoff_path")
       [[ "$scenario" != sub-default ]] || producer_handoff=()
-      model_env env ORCH_OVERSEER_PREFERENCE=claude:opus:high "$scripts/oversee" launch \
+      model_env env "ORCH_OVERSEER_PREFERENCE=claude:$executable:high" "$scripts/oversee" launch \
         --session fleet --cwd "$launch_dir" ${producer_handoff[@]+"${producer_handoff[@]}"} --wait-secs 20 \
         > "$TMP_ROOT/model-launch.out" 2> "$TMP_ROOT/model-launch.err"
       CALLER_PANE=$(jq -r .overseer.pane "$FLEET_STATE")
@@ -316,7 +318,7 @@ BARRIER
     model_env "$BASH" -euo pipefail -c '
       SCRIPT_DIR=$1 SUCCEED=$1/oversee-succeed WORKFLOW_STATE=$1/workflow-state
       HANDOFF=$3 OVERSEER_HARNESS=claude
-      WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "claude-opus-4-6[1m]" --effort high "$5")
+      WORKFLOW_STATE_ARGS=() OVERSEER_FLAGS=(--model "$6" --effort high "$5")
       DEP_ERR=$2
       cd -- "$4"
       . "$1/lib/lane-launch.sh"
@@ -324,11 +326,11 @@ BARRIER
       . "$1/lib/watch-overseer-record.sh"
       overseer_record_notice() { printf "%s\n" "$*" >&2; }
       overseer_command_record
-    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path" "$launch_dir" "$BYPASS"
+    ' _ "$scripts" "$TMP_ROOT/model.err" "$handoff_path" "$launch_dir" "$BYPASS" "$executable"
     line=$(jq -r '.overseer.launch_line' "$FLEET_STATE")
     model=$(launch_choice_launch_model claude "$line")
-    assert_eq "$model" 'claude-opus-4-6[1m]' "$scenario watch record retains the executable selector"
-    assert_eq "$(jq -r .overseer.model "$FLEET_STATE")" claude-opus-4-6 "$scenario comparison model omits the selector"
+    assert_eq "$model" "$executable" "$scenario watch record retains the executable selector"
+    assert_eq "$(jq -r .overseer.model "$FLEET_STATE")" "$recorded" "$scenario comparison model omits the selector"
     case "$scenario" in
       launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
       launch-command-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.launch_line)' >/dev/null ;;
@@ -373,7 +375,7 @@ BARRIER
     rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/model.snapshot"
     : > "$TMP_ROOT/capture-handoff"
     model=claude-opus-4-6
-    [[ "$scenario" == matching ]] || model=claude-sonnet-5-5
+    [[ "$scenario" == matching || "$scenario" == native-matching ]] || model=claude-sonnet-5-5
     [[ "$scenario" != observed-unread ]] || model=""
     for delivery in first repeated; do
       status=0
@@ -412,12 +414,14 @@ BARRIER
       ' _ "$scripts" "$TMP_ROOT/binding.err" "$captured"
       assert_eq "$(jq -r '.overseer.model_check.outcome' "$FLEET_STATE")" switched 'the failed competing attempt restores the acquired request'
       assert_eq "$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$old_pane" || :)" 1 'the displaced recovery keeps its predecessor running'
+    elif [[ "$scenario" == matching || "$scenario" == native-matching ]]; then
+      assert_eq "$(jq -c . "$FLEET_STATE")" "$before" "$scenario models leave fleet state unchanged"
     elif [[ "$scenario" == switched || "$scenario" == custom || "$relative_dir" != . ]]; then
       deadline=$((SECONDS + 30))
       while [[ "$SECONDS" -lt "$deadline" ]] && tm list-panes -a -F '#{pane_id}' | grep -Fxq -- "$old_pane"; do sleep 0.05; done
       after=$(jq -r .overseer.pane "$FLEET_STATE")
       assert_not_contains "$after" "$old_pane" 'a fallback starts a verified successor' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
-      assert_eq "$(cat "$TMP_ROOT/model.argv" 2>/dev/null || :)" 'claude-opus-4-6[1m]' 'a working successor receives the exact launched model' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
+      assert_eq "$(cat "$TMP_ROOT/model.argv" 2>/dev/null || :)" "$executable" 'a working successor receives the exact launched model' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
       assert_eq "$(jq -r .overseer.account "$FLEET_STATE")" "$H/.claude" 'model recovery retains its account'
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'a fallback records exactly one model-switched event'
       assert_eq "$(jq -r '.fleet_log[] | select(.kind=="model-switched") | .launch_identity.pane' "$FLEET_STATE")" "$old_pane" 'the model event names its predecessor'
@@ -450,8 +454,6 @@ BARRIER
         assert_eq "$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")" "$default_before" 'custom model recovery leaves the default handoff unchanged'
       fi
       CALLER_PANE=$after
-    elif [[ "$scenario" == matching ]]; then
-      assert_eq "$(jq -c . "$FLEET_STATE")" "$before" 'matching models leave fleet state unchanged'
     else
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-unavailable")]|length' "$FLEET_STATE")" 1 "$scenario reports unavailable once" "$TMP_ROOT/model.out"
       cause="$scenario"
@@ -461,6 +463,8 @@ BARRIER
     fi
   done <<'MODELS'
 matching|tmp/handoffs/OVERSEER-HANDOFF.md|.
+native-matching|tmp/handoffs/OVERSEER-HANDOFF.md|subdir
+native-switched|tmp/handoffs/OVERSEER-HANDOFF.md|subdir
 launch-missing|tmp/handoffs/OVERSEER-HANDOFF.md|.
 observed-unread|tmp/handoffs/OVERSEER-HANDOFF.md|.
 launch-command-unread|tmp/handoffs/OVERSEER-HANDOFF.md|.

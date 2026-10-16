@@ -16,7 +16,7 @@
 # must refuse before stopping a lane. The host and tracker retain their existing
 # lane-record meanings, including null host meaning local.
 lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
-  local fields item harness flags refresh tracker repo rc=0 model effort choice launch_model launch_id
+  local fields item harness flags refresh tracker repo rc=0 model effort choice launch_model launch_id selector_id
   local -a words=() choice_words=()
   LANE_RECOVERY_CAUSE=permission-choice-unrecorded
   LANE_RECOVERY_ARGS=() LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
@@ -38,18 +38,18 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
     model="$(launch_choice_model_id "$harness" "$model" recorded)" || return 1
     [[ -n "$model" ]] || return 1
     launch_model="$(launch_choice_launch_model "$harness" "$flags")" || return 1
-    launch_id="$(launch_choice_model_id "$harness" "$launch_model" recorded)" || return 1
-    # Family aliases cannot recover their old overrides. Carry only their
-    # selector onto the recorded target; a conflicting explicit ID cannot.
+    launch_id="$(launch_choice_model_id "$harness" "$model" recorded "$launch_model")" || return 1
+    selector_id="$(launch_choice_model_id "$harness" "$launch_model" recorded)" || return 1
+    # Carry the suffix only from a matching explicit ID or family selector.
     if [[ "$harness" == claude && "$launch_model" == *\[1[mM]\]
-        && ( -z "$launch_id" || "$launch_id" == "$model" ) ]]; then
+        && "$launch_id" == "$selector_id" ]]; then
       model="${model}[1m]"
     fi
     effort="$(jq -r '.effort // ""' <<<"$1")" || return 1
     [[ -n "$effort" ]] || effort="$(launch_choice_effort "$harness" "$flags")" || return 1
     read -r -a words <<<"$flags"
     launch_choice_strip "$harness" ${words[@]+"${words[@]}"} || return 1
-    choice="$(launch_choice_write "$harness" "$model" "$effort")" || return 1
+    choice="$(launch_choice_write "$harness" "$model" "$effort" recorded)" || return 1
     # The writer emits shell words; --launch-flags takes plain tokens instead.
     eval "choice_words=($choice)" || return 1
     flags="${LAUNCH_CHOICE_KEPT[*]+${LAUNCH_CHOICE_KEPT[*]}}${LAUNCH_CHOICE_KEPT[*]:+ }${choice_words[*]+${choice_words[*]}}"

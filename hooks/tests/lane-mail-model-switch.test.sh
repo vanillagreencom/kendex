@@ -18,7 +18,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account) ;;
+    matching|family-alias|native-sonnet|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -79,9 +79,10 @@ await_recovery() {
 }
 
 echo '=== model outcomes ==='
-while IFS='|' read -r name launched observed outcome cause; do
+while IFS='|' read -r name launched observed outcome cause override; do
   model_case "$name" || continue
   model_world "$name" "$launched"
+  CALL_ENV+=("ANTHROPIC_DEFAULT_SONNET_MODEL=$override")
   before=$(cat "$LANE/tmp/workflow-state-oversee.json")
   event "$observed"
   if [[ "$outcome" == matching ]]; then
@@ -101,7 +102,10 @@ while IFS='|' read -r name launched observed outcome cause; do
 done <<'ROWS'
 matching|claude-fable-5-1|claude-fable-5-1|matching|
 equivalent|fable-5-1|claude-fable-5-1|matching|
-family-alias|fable|claude-fable-5-1|unavailable|launch-unresolved
+family-alias|fable|claude-fable-5-1|matching|
+sonnet-alias|sonnet|claude-sonnet-4-6|matching||claude-sonnet-5-5
+opus-alias|opus[1m]|claude-opus-4-8|matching|
+haiku-alias|haiku|claude-haiku-5-5|matching|
 launch-missing||claude-opus-4-8|unavailable|launch-missing
 launch-alias|best|claude-opus-4-8|unavailable|launch-unresolved
 observed-missing|claude-fable-5-1||unavailable|observed-unread
@@ -268,10 +272,12 @@ ACCOUNTS
 fi
 
 echo '=== recovery validates before stopping ==='
-while IFS='|' read -r preparation launched original override expected_model; do
+while IFS='|' read -r preparation launched original override expected_model observed; do
   model_case "$preparation" || continue
   model_world "$preparation" "$launched" "$preparation" "--dangerously-skip-permissions $original --effort high"
-  CALL_ENV+=("ANTHROPIC_DEFAULT_OPUS_MODEL=$override")
+  CALL_ENV+=("ANTHROPIC_DEFAULT_OPUS_MODEL=$override" "ANTHROPIC_DEFAULT_SONNET_MODEL=$override"
+    "ANTHROPIC_DEFAULT_FABLE_MODEL=$override" "ANTHROPIC_DEFAULT_HAIKU_MODEL=$override")
+  observed=${observed:-claude-opus-4-8}
   # Existing emergency state must survive an unpushed round.
   "$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
   "$S/workflow-state" --state-dir "$LANE/tmp" update KEN-3916 '.dev_round="unfinished"' >/dev/null
@@ -286,7 +292,7 @@ while IFS='|' read -r preparation launched original override expected_model; do
   extra=$(jq -nc --arg t "$transcript" --arg p "$preparation" \
     '{stop_hook_active:true,transcript_path:$t} + (if $p == "complete" then
       {background_tasks:[{type:"subagent",id:"a1",status:"running"}]} else {} end)')
-  event claude-opus-4-8 "$extra"
+  event "$observed" "$extra"
   assert_eq "$(switch_count)" 1 "$preparation switch is recorded"
   if [[ "$(switch_count)" == 1 ]]; then
     if [[ "$preparation" != broken ]]; then
@@ -313,10 +319,10 @@ while IFS='|' read -r preparation launched original override expected_model; do
     [[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
     wait "$OWNED_CHILD" 2>/dev/null || :
     OWNED_CHILD=""
-    event claude-opus-4-8
+    event "$observed"
     assert_eq "$(switch_count)" 1 "$preparation repeated delivery writes no second record"
     assert_eq "$(jq -r '.fleet_log[]|select(.kind=="model-switched")|[.session_id,.launched,.observed,(.at|type)]|join("|")' "$LANE/tmp/workflow-state-oversee.json")" \
-      "s1|$launched|claude-opus-4-8|string" "$preparation switch has launch, observation and writer time"
+      "s1|$launched|$observed|string" "$preparation switch has launch, observation and writer time"
     assert_eq "$(jq -r '.dev_round' "$LANE/tmp/workflow-state-KEN-3916.json")" unfinished "$preparation keeps unfinished round"
     assert_eq "$(jq -c '.handoff | [.remaining,.merged,.open_pr,(.traps|index("standing trap")!=null)]' "$LANE/tmp/workflow-state-KEN-3916.json")" \
       '[["old"],["landed"],42,true]' "$preparation retains standing handoff work"
@@ -358,6 +364,10 @@ while IFS='|' read -r preparation launched original override expected_model; do
   if [[ -n "$OWNED_CHILD" ]]; then kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""; fi
 done <<'ROWS'
 complete|claude-fable-5-1|--model claude-opus-4-8||claude-fable-5-1
+native-sonnet|sonnet|--model sonnet|claude-sonnet-5-5|sonnet
+native-fable|fable|--model fable|claude-fable-5-5|fable
+native-haiku|haiku|--model haiku|claude-haiku-5-5|haiku
+native-opus|opus|--model opus[1m]|claude-opus-5-5|opus[1m]|claude-fable-5-1
 extended|claude-opus-4-6|--model claude-opus-4-6[1m]||claude-opus-4-6[1m]
 uppercase-selector|claude-opus-4-6|--model CLAUDE-OPUS-4-6[1M]||claude-opus-4-6[1m]
 version-selector|claude-opus-4-6|--model=opus-4-6[1m]|claude-opus-5-5|claude-opus-4-6[1m]
@@ -448,6 +458,7 @@ source, target, rule = sys.argv[1:]
 text = Path(source).read_text()
 old, new = {
     "comparison": ('elif [ "$launch_id" = "$observed_id" ]; then return 0', 'elif false; then return 0'),
+    "family": ('observed_id=$(launch_choice_model_id claude "$observed" resolved "$launched")', 'observed_id=$(launch_choice_model_id claude "$observed" resolved)'),
     "duplicate": ('elif $current.model_check.session_id == $session', 'elif false and $current.model_check.session_id == $session'),
     "history": ('and $current.model_check.launch_identity == $identity', 'and true'),
     "callback": ('.launch.pane == $pane and (.launch.server | tostring) == $server', 'true'),
@@ -475,6 +486,7 @@ CONTROL
   done <<'CONTROLS'
 baseline|complete
 comparison|matching
+family|family-alias
 duplicate|complete
 history|complete
 callback|retired-callback
@@ -498,7 +510,8 @@ old, new = {
     "pin": ('if [[ "${5:-}" == model-switched ]]; then', 'if false; then'),
     "binding": ('[[ "$claim" == true ]] || return 0', ':'),
     "selector": ('model="${model}[1m]"', 'model="$model"'),
-    "selector-id": ('&& ( -z "$launch_id" || "$launch_id" == "$model" )', '&& true'),
+    "selector-id": ('&& "$launch_id" == "$selector_id"', '&& true'),
+    "native": ('choice="$(launch_choice_write "$harness" "$model" "$effort" recorded)"', 'choice="$(launch_choice_write "$harness" "$model" "$effort")"'),
     "words": ('eval "choice_words=($choice)" || return 1', 'choice_words=("$choice")'),
     "account": ('[[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")', 'LANE_RECOVERY_ARGS+=(--lane "$2")'),
 }[rule]
@@ -522,6 +535,7 @@ pin|fresh-shell
 binding|stale-launch
 selector|extended
 selector-id|conflicting-selector
+native|native-sonnet
 words|extended
 account|optional-account
 CONTROLS
