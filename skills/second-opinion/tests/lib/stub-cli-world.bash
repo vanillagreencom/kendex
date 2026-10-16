@@ -643,6 +643,7 @@ err_word() {
     # the gate: failed:<reason>:<where the record landed>[:<detail>], then the
     # cause block by its source
     failed:exit:*) printf 'error=claude exited with code %s — refusing to write a review artifact response=%s\n→ external CLI failed: claude exited with code %s\n' "$c" "$(record_path "$b")" "$c" ;;
+    failed:quota:*) printf 'error=claude reported a quota/rate-limit refusal — refusing to write a review artifact response=%s\n→ external CLI failed: claude reported a quota/rate-limit refusal\n' "$(record_path "$b")" ;;
     failed:empty:*) printf 'error=claude returned an empty response on a zero exit — check CLI auth and configuration — refusing to write a review artifact response=%s\n→ external CLI failed: claude returned an empty response on a zero exit — check CLI auth and configuration\n' "$(record_path "$b")" ;;
     failed:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) — refusing to write a review artifact response=%s\n→ external CLI failed: claude ended without a review on a zero exit (claude result subtype=%s)\n' "$c" "$(record_path "$b")" "$c" ;;
     failed:retry-exit:*) printf 'error=claude exited with code %s during the recovery retry — refusing to write a review artifact response=%s\n→ external CLI failed: claude exited with code %s during the recovery retry\n' "$c" "$(record_path "$b")" "$c" ;;
@@ -662,6 +663,7 @@ err_word() {
     not-preserved) printf '→ failed invocation could not be preserved anywhere — the cause above is the whole record\n' ;;
     generic:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) target=claude\n' "$b" ;;
     generic:exit:*) printf 'error=claude exited with code %s target=claude\n' "$b" ;;
+    generic:quota) printf 'error=claude reported a quota/rate-limit refusal target=claude\n' ;;
     generic:empty) printf 'error=claude returned an empty response on a zero exit — check CLI auth and configuration target=claude\n' ;;
     # the home
     home-rejected:*) printf '→ artifact home rejected (%s\n' "$(home_reason "$a" "$b")" ;;

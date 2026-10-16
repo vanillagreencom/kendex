@@ -16,8 +16,8 @@
 
 DEFAULTS="output:out rc:1 stdout:- stderr:quota"
 
-FAILED="out.failed.json=failed(exited with code 1|claude stderr|quota)"
-GATE="header:review failed:exit:out:1 cause:stderr preserved:out"
+FAILED="out.failed.json=failed(reported a quota/rate-limit refusal|claude stderr|quota)"
+GATE="header:review failed:quota:out cause:stderr preserved:out"
 CLEAN="home=absent tmp=0 dirty=-"
 NONE="calls=0 files=- $CLEAN"
 # the caller's files under the prefix, in the sweep's own (glob) order, `+` where this run's record lands
@@ -35,13 +35,13 @@ a bad-flag run still reclaims a retired lane and still destroys no bystander|pla
 a dash-leading --output is cleared and swept, its bystander kept|output:dash plant:stale plant:ours:retired-model.json plant:mine:bak|review|5|-|$GATE|calls=1 files=out.bak=mine,$FAILED $CLEAN
 glob metacharacters in --output match literally in the sweep|output:glob plant:stale plant:ours:retired-model.json plant:mine:bak|review|5|-|$GATE|calls=1 files=out.bak=mine,$FAILED $CLEAN
 a dash-leading (relative) TMPDIR leaves no temp files behind; the class is kept, though the relative path is lost after the script's own cd and the CLI never runs|tmpdir:dash|review|5|-|header:review dashtmp-lost failed:exit:out:1 preserved:out|calls=0 files=out.failed.json=failed(exited with code 1|-|-) home=absent tmp=0 dashtmp=0 dirty=-
-a failing quick run leaves no stale answer at --output; a roster-named sibling and the five sidecar names, the caller's here, survive|plant:previous plant:mine:claude.json plant:sidecars-mine|quick|1|-|header:quick generic:exit:1 cause:stderr|calls=1 files=out.claude.json=mine,out.failed.json=mine,out.incomplete.json=mine,out.noreview.json=mine,out.raw.txt=mine,out.retry.txt=mine $CLEAN
-a failing challenge run likewise|plant:previous plant:mine:claude.json plant:sidecars-mine|challenge|1|-|header:challenge generic:exit:1 cause:stderr|calls=1 files=out.claude.json=mine,out.failed.json=mine,out.incomplete.json=mine,out.noreview.json=mine,out.raw.txt=mine,out.retry.txt=mine $CLEAN
+a failing quick run leaves no stale answer at --output; a roster-named sibling and the five sidecar names, the caller's here, survive|plant:previous plant:mine:claude.json plant:sidecars-mine|quick|1|-|header:quick generic:quota cause:stderr|calls=1 files=out.claude.json=mine,out.failed.json=mine,out.incomplete.json=mine,out.noreview.json=mine,out.raw.txt=mine,out.retry.txt=mine $CLEAN
+a failing challenge run likewise|plant:previous plant:mine:claude.json plant:sidecars-mine|challenge|1|-|header:challenge generic:quota cause:stderr|calls=1 files=out.claude.json=mine,out.failed.json=mine,out.incomplete.json=mine,out.noreview.json=mine,out.raw.txt=mine,out.retry.txt=mine $CLEAN
 a quick refusal, which never reaches the CLI, clears --output too|plant:previous target:- current:claude models:claude|quick|1|-|same:claude:claude refused:claude:claude|$NONE
 a challenge refusal likewise|plant:previous target:- current:claude models:claude|challenge|1|-|same:claude:claude refused:claude:claude|$NONE
 control: a successful quick run writes the fresh answer to --output|plant:previous rc:0 stdout:answer stderr:-|quick|0|<out>|header:quick written|calls=1 files=out=answer $CLEAN
 detect has no output slot and clears nothing|plant:previous|detect|0|claude|-|calls=0 files=out=previous $CLEAN
-audit clears its own slot, keeps a roster-named sibling holding the caller's data, and reclaims one carrying our marker|plant:stale plant:mine:claude.json plant:ours:ours.json|audit|5|-|header:audit failed:exit:out:1 cause:stderr preserved:out|calls=1 files=out.claude.json=mine,$FAILED $CLEAN
+audit clears its own slot, keeps a roster-named sibling holding the caller's data, and reclaims one carrying our marker|plant:stale plant:mine:claude.json plant:ours:ours.json|audit|5|-|header:audit failed:quota:out cause:stderr preserved:out|calls=1 files=out.claude.json=mine,$FAILED $CLEAN
 a response with a null agent is written with this skill's own marker, the rest untouched|rc:0 stdout:agent-null stderr:-|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:provider text $CLEAN
 a response with a foreign agent is stamped the same way|rc:0 stdout:agent-foreign stderr:-|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:provider text $CLEAN
 a stamped artifact is reclaimed once its target has left the roster|plant:stamped-retired|review|5|-|$GATE|calls=1 files=$FAILED $CLEAN

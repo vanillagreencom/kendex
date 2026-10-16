@@ -2656,6 +2656,8 @@ result_envelope_reason() {
 
 # Claude can report login/quota failures on stdout with an empty stderr.
 # Select the failure text before another invocation replaces either stream.
+# Codex echoes the prompt on stderr ahead of its own error, so the stderr cause
+# is every ERROR: line above the last 20 lines, then those 20.
 select_cli_failure_cause() {
   local partial="$1"
   CLI_FAILURE_CAUSE=""; CLI_FAILURE_CAUSE_SOURCE=""
@@ -2663,7 +2665,9 @@ select_cli_failure_cause() {
     CLI_FAILURE_CAUSE="$RESULT_ENVELOPE_CAUSE"
     CLI_FAILURE_CAUSE_SOURCE="claude result"
   elif [[ -s "$STDERR_TMP" ]]; then
-    CLI_FAILURE_CAUSE=$(head -20 "$STDERR_TMP")
+    CLI_FAILURE_CAUSE=$(awk '{ line[NR] = $0 } END {
+      for (i = 1; i <= NR - 20; i++) if (line[i] ~ /^ERROR:/) print line[i]
+      for (i = (NR > 20 ? NR - 19 : 1); i <= NR; i++) print line[i] }' "$STDERR_TMP")
     CLI_FAILURE_CAUSE_SOURCE="${TARGET_CLI} stderr"
   elif [[ -n "$partial" ]]; then
     CLI_FAILURE_CAUSE=$(printf '%s\n' "$partial" | tail -20)
@@ -2795,7 +2799,8 @@ response_incomplete_schema() {
 
 # review/audit carry the no-verdict contract (the EXIT_* codes); challenge/quick do not.
 ATTEMPTS_JSON="[]"
-# Claude, Codex and Pi can emit refusal text with a zero exit. There is no
+# Claude, Codex and Pi can emit refusal text with a zero exit, and Codex prints
+# its usage-limit refusal with exit 1 and a curly apostrophe. There is no
 # common structured error interface across configured commands; match only
 # upstream error codes and refusal prefixes on stderr, not the opinion text.
 # Codex also echoes the prompt and tool output on stderr, so a review of text
@@ -2805,7 +2810,7 @@ ATTEMPTS_JSON="[]"
 REFUSAL_PATTERNS=(
   'rate_limit_error|rate_limit_exceeded'
   'insufficient_quota|You exceeded your current quota'
-  "You've hit your (usage )?limit|You have hit your limit"
+  "You('|’)ve hit your (usage )?limit|You have hit your limit"
 )
 # Use the same fall-through for primary calls and the existing format retry.
 # A new target receives the original request, never another model's retry,
@@ -2823,19 +2828,23 @@ collect_response() {
     attempt_seconds=$((attempt_finished - attempt_started))
     attempt_cause=answered
     if [[ $EXIT_CODE -eq 124 ]]; then attempt_cause=timeout
-    elif [[ $EXIT_CODE -ne 0 ]]; then attempt_cause="exit-$EXIT_CODE"
-    elif [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") \
+    elif signal_name "$EXIT_CODE" >/dev/null; then attempt_cause="exit-$EXIT_CODE"
+    elif [[ $EXIT_CODE -eq 0 ]] && [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") \
       && ! response_incomplete_schema "$answer_json"; then
       :
     else
+      [[ $EXIT_CODE -eq 0 ]] || attempt_cause="exit-$EXIT_CODE"
       for pattern in "${REFUSAL_PATTERNS[@]}"; do
         refusal_rc=0
         grep -Ei -- "$pattern" "$STDERR_TMP" >/dev/null || refusal_rc=$?
         [[ $refusal_rc -le 1 ]] || { echo "second-opinion: stderr-read-failed path=$STDERR_TMP" >&2; exit 1; }
-        if [[ $refusal_rc -eq 0 ]]; then attempt_cause=quota; EXIT_CODE=1; break; fi
+        if [[ $refusal_rc -eq 0 ]]; then attempt_cause=quota; break; fi
       done
-      # A zero-exit envelope failure stays with this target: no retry on empty.
-      [[ $attempt_cause == quota || -z "$RESULT_ENVELOPE_CAUSE" ]] || attempt_cause="result-$RESULT_ENVELOPE_SUBTYPE"
+      case $attempt_cause in
+        quota) [[ $EXIT_CODE -ne 0 ]] || EXIT_CODE=1 ;;
+        # A zero-exit envelope failure stays with this target: no retry on empty.
+        answered) [[ -z "$RESULT_ENVELOPE_CAUSE" ]] || attempt_cause="result-$RESULT_ENVELOPE_SUBTYPE" ;;
+      esac
     fi
     # Fleet acceptance reads the account from real attempt records. Use the
     # launch prefix already selected, never the room check's other env values.
