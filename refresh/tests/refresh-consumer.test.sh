@@ -854,8 +854,9 @@ git -C "$repo" push -q origin main
 for row in \
   'claude:1:high||deprecated|claude:1:high' \
   'claude:opus:high||clean|' \
+  'claude::high||clean|' \
   'claude:opus:high|codex:2:low|deprecated|codex:2:low' \
-  'claude::high,codex:0:low||refused|claude::high' \
+  'claude::high,codex:0:low||refused|codex:0:low' \
   'claude:1:high|claude:fable:high|clean|' \
   'claude:1:high|claude:fable:high|clean||private.env'; do
   IFS='|' read -r committed private status entry private_path <<<"$row"

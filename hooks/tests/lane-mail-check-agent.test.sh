@@ -36,7 +36,8 @@ launch 250000 Agent
 assert_eq "$(sed -n 's/^lane-mail-check: detached-route=//p' "$ERR_FILE")" orch-job-runner 'refusal names the existing detached route'
 usage_line sonnet 100000 > "$TRANSCRIPT"
 ARM_ARGS=(halt)
-run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Agent"}')"
+# An enabled-compaction session has no managed handoff budget.
+run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Agent"}')" DISABLE_AUTO_COMPACT=0
 expect 2 'lane-mail-check: agent-input=context-unmeasured' 'an unknown capacity establishes no launch room'
 run_payload '{"session_id":"s1","tool_name":"Agent"}'
 expect 2 'lane-mail-check: agent-input=transcript-unnamed' 'an absent reading establishes no launch room'

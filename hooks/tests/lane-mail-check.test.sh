@@ -417,8 +417,8 @@ expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is
 ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
 .claude/hooks|claude|400000||context=400000|claude 400000 1000000
 .claude/hooks|claude|500000||context=500000|claude 500000 1000000
-.claude/hooks|sonnet|399999||window-unread=claude-sonnet-4-6|claude 399999 null
-.claude/hooks|sonnet|400000||context=400000|claude 400000 null
+.claude/hooks|sonnet|180000||GAP|claude 180000 200000
+.claude/hooks|sonnet|180001||context=180001|claude 180001 200000
 .codex/hooks|codex|232560||GAP|codex 232560 258400
 .codex/hooks|codex|232561||context=232561|codex 232561 258400
 .pi/kendex/hooks|pi|180000|200000|GAP|pi 180000 200000
@@ -1618,14 +1618,14 @@ expect 2 "lane-mail-check: headroom=4" \
 assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
   "named=1 route=1" "and the refusal names the judge's own setting and the succession"
 
-# A reading whose window the adapter could not name is handed on with that
+# A session with compaction enabled has no managed handoff window. It passes that
 # window empty, to the judge and to the succession the refusal names alike, so
 # the judge reports the context unmeasured rather than judging a stored figure.
 new_overseer overseer_window_unread
 usage_line sonnet 999999 > "$TRANSCRIPT"
 judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
+stop_at "$TRANSCRIPT" false $(overseer_env) DISABLE_AUTO_COMPACT=0
 assert_eq "argv=$(judge_argv | tail -n 1) route=$(grep -cF -- "/oversee-succeed --context 999999: -- [THE PERMISSION" "$ERR_FILE")" \
   "argv=--check-marks --context 999999: route=1" \
   "an overseer reading with no window hands its judge and its succession the tokens and no window" "$ERR_FILE"

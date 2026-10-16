@@ -386,9 +386,9 @@ CMD_ARGS=()
 # quotes each flag.
 CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust'"
 # And the words that turn codex's own compaction off, so a lane hands off at its
-# own mark first. A claude resume below names no model, so no window names its
-# mark and it keeps its compaction.
+# own mark first. Claude also disables compaction for the native default.
 CODEX_COMPACTION="'-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0'"
+CLAUDE_COMPACTION='--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
 # Every command it builds also takes the harness question tool away, in the
 # same quoting: a lane asks its overseer through lane-mail ask.
 CLAUDE_QUESTION_OFF="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
@@ -420,7 +420,7 @@ await_file "$LATE"
 assert_eq "$(cat "$LATE" 2>/dev/null || true)" "$RELAUNCH_LINE" "the wait bounded by time reads a late launcher's recorded line whole"
 CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
 mkdir -p "${CONTEXT_FILE%/*}"
-for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222| $UNATTENDED_TEXT" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444| $UNATTENDED_TEXT" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl||$PI_SESSION_ID| $UNATTENDED_TEXT"; do
+for row in "claude|claude -n CC-1 '$CLAUDE_COMPACTION' $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222| $UNATTENDED_TEXT" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444| $UNATTENDED_TEXT" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl||$PI_SESSION_ID| $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected rearm context_session unattended <<<"$row"
   context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}')"
   printf '%s\n' "$context_record" > "$CONTEXT_FILE"
@@ -640,7 +640,7 @@ exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/mailbox/scripts/lane-mail inbox --item CC-1 and act on every envelope it prints, answers and directives alike, as its text directs."
-for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" "codex|codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $UNATTENDED_TEXT"; do
+for row in "claude|claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" "codex|codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
@@ -648,16 +648,15 @@ for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMod
   assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
 done
 # A wake starts a new claude process, which takes none of the first launch's
-# settings. The session above names no model, so it keeps its compaction; one
-# whose transcript names a model the claude adapter holds a window for is woken
-# with its compaction off, as its own launch was.
+# settings. Both the native default and a recorded family budget require
+# compaction off in that new process.
 CLAUDE_TRANSCRIPT="$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
 cp -p -- "$CLAUDE_TRANSCRIPT" "$TMP_ROOT/claude-transcript.keep"
 printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_read_input_tokens":500000,"output_tokens":7}}}' >>"$CLAUDE_TRANSCRIPT"
 touch -r "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
 OT_CAPTURE="$TMP_ROOT/wake-claude-opus.cmd" LANES_HOME="$SESSION_HOME" run_case wake-claude-opus -- --wake --harness claude CC-1
 assert_eq "$(cat "$TMP_ROOT/wake-claude-opus.cmd" 2>/dev/null)" \
-  "claude -n CC-1 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" \
+  "claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" \
   "a claude wake of a session on a model with a named window turns its compaction off"
 mv -- "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
 # A GitHub item is the issue number while its worktree id is issue-<n>, and the
@@ -841,7 +840,7 @@ WT_CC1="$TMP_ROOT/wt/CC-1"; mkdir -p "$WT_CC1"
 # holds session files named for live pids, and a collision there would decide
 # the row.
 WAKE_HOME="$TMP_ROOT/wake-home"; mkdir -p "$WAKE_HOME/.claude/sessions"
-LIVE_RESUME_claude="claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT"
+LIVE_RESUME_claude="claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT"
 LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT"
 
 # table_wake HARNESS [SCRIPT] — a HARNESS wake on CC-1 through SCRIPT, over the
