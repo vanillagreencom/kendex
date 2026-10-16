@@ -276,11 +276,18 @@ echo "=== the Apple gate: a triggered pass carries the mac run test line ==="
 # [CONTENT] writes PATH, or deletes it with no CONTENT, and prints the commit.
 AW="$(new_repo apple-wt)"
 mkdir -p "$AW/.github/workflows" "$AW/ios" "$AW/App.xcodeproj" "$AW/App" "$AW/AppTests"
+mkdir -p "$AW/linux-package/Sources/LinuxUtility"
 printf 'name: mac-run\n' > "$AW/.github/workflows/mac-run.yml"
 printf 'let package = Package(platforms: [.tvOS(.v17)])\n' > "$AW/Package.swift"
 printf 'moved\n' > "$AW/ios/Moved.swift"
 printf 'source\n' > "$AW/App/Greeting.swift"
 printf 'test\n' > "$AW/AppTests/GreetingTests.swift"
+cat > "$AW/linux-package/Package.swift" <<'SWIFT'
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(name: "LinuxUtility", targets: [.target(name: "LinuxUtility")])
+SWIFT
+printf 'public let message = "base"\n' > "$AW/linux-package/Sources/LinuxUtility/LinuxEntry.swift"
 cat > "$AW/App.xcodeproj/project.pbxproj" <<'PBX'
 // !$*UTF8*$!
 {
@@ -303,7 +310,7 @@ cat > "$AW/App.xcodeproj/project.pbxproj" <<'PBX'
   };
 }
 PBX
-git -C "$AW" add .github Package.swift ios App.xcodeproj App AppTests
+git -C "$AW" add .github Package.swift ios App.xcodeproj App AppTests linux-package
 git -C "$AW" commit -q -m workflow
 apple_commit() {
   git -C "$AW" checkout -q --detach main &&
@@ -321,6 +328,7 @@ A_TEST="$(apple_commit AppTests/GreetingTests.swift changed)" || exit 1
 A_SYNC="$(apple_commit Features/New.swift added)" || exit 1
 A_RELATIVE="$(apple_commit Assets/new.txt added)" || exit 1
 A_UNRELATED="$(apple_commit Tools/notes.txt unrelated)" || exit 1
+A_LINUX_SOURCE="$(apple_commit linux-package/Sources/LinuxUtility/LinuxEntry.swift 'public let message = "changed"')" || exit 1
 A_XCODEPROJ="$(apple_commit App.xcodeproj/project.pbxproj objects)" || exit 1
 A_XCWORKSPACE="$(apple_commit App.xcworkspace/contents.xcworkspacedata workspace)" || exit 1
 A_IOS="$(apple_commit ios/App.swift app)" || exit 1
@@ -361,6 +369,7 @@ APPLE_ROWS=(
   "a synchronized Xcode folder member|$APN --commit $A_SYNC|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Features/New.swift=true"
   "a relative reference directory component|$APN --commit $A_RELATIVE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Assets/new.txt=true"
   "an unrelated group name|$APN --commit $A_UNRELATED|rc=0 written=yes .validate_note=null"
+  "a Linux package source-only change|$APN --commit $A_LINUX_SOURCE|rc=0 written=yes .validate_note=null"
   "a Package.swift naming .iOS|$APN --commit $A_PKG_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Package.swift=true"
   "a nested Package.swift naming .macOS|$APN --commit $A_PKG_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=pkg/Package.swift=true"
   "a no-verdict is held as a pass is|$AW_ARGS --commit $A_PLAIN --label ios --validate no-verdict --validate-run-dir $VRUN_CUT --validate-note scoped+suites+green|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=no-verdict=true"
@@ -451,6 +460,7 @@ APPLE_CONTROLS=(
   "directory globs|if [[ \"\$segment\" == \$glob ]]; then|if false; then|$APN --commit $A_IOS|rc=0"
   "Xcode source names|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] && false; then|$APN --commit $A_SOURCE|rc=0"
   "Xcode test names|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] && false; then|$APN --commit $A_TEST|rc=0"
+  "Linux source exclusion|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] \|\| [[ \"\$path\" == *.swift ]]; then|$APN --commit $A_LINUX_SOURCE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=linux-package/Sources/LinuxUtility/LinuxEntry.swift=true"
   "renamed paths|--name-only --no-renames -z|--name-only -z|$APN --commit $A_MOVED|rc=0"
   "manifest platforms|if LC_ALL=C grep -Eq -- \"\$APPLE_MANIFEST_PLATFORMS\" <<<\"\$manifest\"; then|if false; then|$APN --commit $A_PKG_IOS|rc=0"
   "deleted manifest|[[ -n \"\$listed\" ]] \|\| continue|[[ -n \"\$listed\" ]] \|\| true|$APN --commit $A_PKG_DELETED|rc=2"
