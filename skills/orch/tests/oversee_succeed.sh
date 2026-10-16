@@ -2905,13 +2905,13 @@ mutate_file "$HANDOFFGENCTL/oversee-succeed" \
   '[[ "$generation" =~ ^[0-9]+$ ]]' \
   '[[ "$generation" =~ ^[0-9]+$ ]] || true'
 fleet_state
-jq '.overseer.generation = ""' "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
+jq '.overseer.generation = "none"' "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
 mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 new_caller "$MARK"
 printf 'In flight: open item\n' > "$HANDOFF_FILE"
 HANDOFF_FIXTURE=off SUCCEED_BIN="$HANDOFFGENCTL/oversee-succeed" run_succeed handoffgenctl ''
 assert_eq "$RC|$(caller_open)|$(overseers)" '0|no|1' \
-  'control: disabling generation validation admits an empty generation without Start here'
+  'control: disabling generation validation admits a non-numeric generation without Start here'
 
 # --dead-pane's one control: the dead pane asked for its harness after all.
 # It runs none, so the relaunch refuses and the fleet keeps no overseer —
