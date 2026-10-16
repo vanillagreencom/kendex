@@ -67,6 +67,8 @@ set +e
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
+OPEN_TERMINAL="$(mutant_scripts lane-world/orch)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/lane-world/orch"
 
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"

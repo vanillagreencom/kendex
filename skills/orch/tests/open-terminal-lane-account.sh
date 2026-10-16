@@ -121,6 +121,8 @@ TMP_ROOT="$(mktemp -d)" || { echo 'lane-account: scratch=mktemp-failed' >&2; exi
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || exit 1
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+LIVE="$(mutant_scripts account-live)/open-terminal"
+orch_fixture_shared_libs "$TMP_ROOT/account-live"
 CONTROL="$(mutant_scripts custom-unchecked lib/lane-launch.sh)"
 orch_fixture_shared_libs "${CONTROL%/scripts}"
 mutate_file "$CONTROL/lib/lane-launch.sh" "printf 'custom\n'; return;" "printf 'unchecked\n'; return;"
@@ -143,9 +145,9 @@ run_case() { # NAME SCRIPT MODE EXPECT [HARNESS]
   assert_eq "child=$rc $actual" "child=0 $want" "$name: real account, pane, record and fleet admission" "$RUN/log"
 }
 
-run_case preserved "$SCRIPTS_DIR/open-terminal" preserved '{"rc":0,"account":".neutralclaude","pane":true,"record":"running"}'
+run_case preserved "$LIVE" preserved '{"rc":0,"account":".neutralclaude","pane":true,"record":"running"}'
 while IFS='|' read -r harness account; do
-  run_case "auto-$harness-preserved" "$SCRIPTS_DIR/open-terminal" auto-preserved \
+  run_case "auto-$harness-preserved" "$LIVE" auto-preserved \
     "{\"rc\":0,\"account\":\"$account\",\"pane\":true,\"record\":\"running\"}" "$harness"
 done <<'ROWS'
 claude|.neutralclaude
@@ -156,7 +158,7 @@ if ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_process_env_readable ); th
   while IFS='|' read -r name script want; do
     run_case "$name" "$script" wrong "$want"
   done <<ROWS
-wrong-account|$SCRIPTS_DIR/open-terminal|{"rc":1,"account":".claude","pane":false,"record":"none"}
+wrong-account|$LIVE|{"rc":1,"account":".claude","pane":false,"record":"none"}
 control-unchecked|$CONTROL/open-terminal|{"rc":0,"account":".claude","pane":true,"record":"running"}
 ROWS
   RAW_CONTROL="$(mutant_scripts raw-harness open-terminal)"
@@ -165,7 +167,7 @@ ROWS
     'launch_form="$(lane_launch_form "$cmd" "$LAUNCH_HARNESS" "$launch_home" "$CMD_TEMPLATE")"' \
     'launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")"'
   while IFS='|' read -r harness account; do
-    run_case "auto-$harness-wrong" "$SCRIPTS_DIR/open-terminal" auto-wrong \
+    run_case "auto-$harness-wrong" "$LIVE" auto-wrong \
       "{\"rc\":1,\"account\":\"$account\",\"pane\":false,\"record\":\"none\"}" "$harness"
     run_case "control-auto-$harness-unchecked" "$RAW_CONTROL/open-terminal" auto-wrong \
       "{\"rc\":0,\"account\":\"$account\",\"pane\":true,\"record\":\"running\"}" "$harness"
@@ -177,8 +179,8 @@ ROWS
   while IFS='|' read -r name script mode want; do
     run_case "$name" "$script" "$mode" "$want"
   done <<ROWS
-relaunch-wrong|$SCRIPTS_DIR/open-terminal|relaunch|{"rc":1,"account":".claude","pane":false,"record":"stopped","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":false,"next_rc":0,"next_record":"running","next_pane":true}
-relaunch-close-fails|$SCRIPTS_DIR/open-terminal|close-fails|{"rc":1,"account":".claude","pane":true,"record":"running","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":true,"next_rc":1,"next_record":"none","next_pane":false}
+relaunch-wrong|$LIVE|relaunch|{"rc":1,"account":".claude","pane":false,"record":"stopped","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":false,"next_rc":0,"next_record":"running","next_pane":true}
+relaunch-close-fails|$LIVE|close-fails|{"rc":1,"account":".claude","pane":true,"record":"running","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":true,"next_rc":1,"next_record":"none","next_pane":false}
 control-relaunch-stop|$STOP_CONTROL/open-terminal|relaunch|{"rc":1,"account":".claude","pane":false,"record":"running","prior_account":true,"prior_harness":true,"mail_root":true,"record_unchanged":true,"next_rc":1,"next_record":"none","next_pane":false}
 ROWS
 else

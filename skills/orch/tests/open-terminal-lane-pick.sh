@@ -77,7 +77,7 @@ control_rc=0
   > "$TMP_ROOT/alias-list-control.log" || control_rc=$?
 assert_eq "$RC:$control_rc:$(grep -cx 'list --local --json' "$TMP_ROOT/alias-lanes.log" || true)" '0:1:1' \
   "the alias assertion rejects the base behavior's list call"
-OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
+OPEN_TERMINAL="$TMP_ROOT/lane-world/orch/scripts/open-terminal"
 
 # The same resolution owner handles check's direct callers and the launcher.
 shared_scripts="$(mutant_scripts shared-alias lanes)" || exit 1

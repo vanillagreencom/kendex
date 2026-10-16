@@ -15,6 +15,8 @@ ot_message() { # REASON FIELD=VALUE...
   case "$reason" in
     missing-value) text='The option requires a value.' ;;
     helper-missing) text='The required helper is not executable.' ;;
+    launch-blocked) text='An item or its ancestor has an open blocker. Complete the named blockers before launching this item.' ;;
+    launch-blocked-unread) text='The live blocker read failed. Restore the tracker read before launching this item.' ;;
     entry-permission-untransferable) text='The caller permissions cannot transfer to this harness. The preference walk skips this entry.' ;;
     items-missing) text='Specify a work item.' ;;
     tracker-invalid) text='The tracker must be linear or github.' ;;

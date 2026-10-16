@@ -46,6 +46,8 @@ source "$SCRIPTS_DIR/lib/lane-state.sh"
 # mutant_scripts and mutate_file, the two halves of each control.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
+OPEN_TERMINAL="$(mutant_scripts relaunch-live)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/relaunch-live"
 
 # Every launch runs on the fixture's measured eclaude account, named `work`.
 FETCHER="$TMP_ROOT/fetch"

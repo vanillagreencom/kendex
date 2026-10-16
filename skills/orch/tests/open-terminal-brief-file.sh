@@ -147,7 +147,8 @@ received() {
   if [[ -f "$RECEIVED" ]]; then cmp -s "$RECEIVED" "$BRIEF_WANT" && echo verbatim || echo altered; else echo unrun; fi
 }
 
-OT="$SCRIPTS_DIR/open-terminal"
+OT="$(mutant_scripts brief-live)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/brief-live"
 mkdir -p "$TMP_ROOT/home"
 
 # A valid file lets the repository refusal run before the quoted-placeholder

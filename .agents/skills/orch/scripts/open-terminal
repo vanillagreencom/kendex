@@ -3672,6 +3672,38 @@ lane_rejudge() { # ITEM
   fi
 }
 
+# Linear owns blocker status normalization. A fresh fleet lane must read that
+# live result before creating a worktree or spending a host launch. This local
+# dispatch check implements the existing Ancestor gate, not a new policy.
+launch_blockers_gate() { # ITEM
+  local selected="$1" next="$1" row parent blockers="[]" seen=" " records
+  local linear="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+  [[ "$FLEET" == true && "$TRACKER" == linear ]] || return 0
+  if [[ "$RELAUNCH" == true || "$WAKE" == true ]]; then
+    records="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || return 1
+    if jq -e --arg item "$selected" 'any(.[]; .item == $item)' <<<"$records" >/dev/null; then return 0; fi
+  fi
+  while [[ -n "$next" ]]; do
+    if [[ "$seen" == *" $next "* ]] || [[ ! -x "$linear" ]] \
+      || ! row="$("$linear" issues get "$next")" \
+      || ! jq -e --arg id "$next" '
+          .id == $id and (.parent_id | type == "string")
+          and (.blocked_by_open | type == "array" and all(.[]; type == "string" and length > 0))
+        ' <<<"$row" >/dev/null; then
+      ot_message launch-blocked-unread "item=$selected" "read=$next" >&2
+      return 1
+    fi
+    seen+="$next "
+    blockers="$(jq -cn --argjson known "$blockers" --argjson row "$row" '$known + $row.blocked_by_open | unique')" || return 1
+    parent="$(jq -r '.parent_id' <<<"$row")" || return 1
+    next="$parent"
+  done
+  blockers="$(jq -r 'join(",")' <<<"$blockers")" || return 1
+  [[ -n "$blockers" ]] || return 0
+  ot_message launch-blocked "item=$selected" "blockers=$blockers" "fix=complete blockers $blockers before launch" >&2
+  return 1
+}
+
 repo="$(resolve_repo)"
 # The checkout, not GH_REPO or --repo, owns the fleet. GitHub names and
 # configured Linear team names are resolved by their existing tracker owners.
@@ -3774,6 +3806,10 @@ for raw in "${ITEMS[@]}"; do
         || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
     fi
     state_ready=true
+  fi
+  if ! launch_blockers_gate "$item"; then
+    failed=$((failed + 1))
+    continue
   fi
   # `--lane auto` is re-resolved for every item after the first: the claim the
   # previous window recorded is what moves this item off that account, and a

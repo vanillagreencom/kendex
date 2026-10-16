@@ -25,4 +25,15 @@ orch_fixture_shared_libs() {
   dest="$(dirname -- "$fixture_root")/mailbox/scripts"
   mkdir -p "$dest"
   cp -R "$_ORCH_TEST_REPO_ROOT/skills/mailbox/scripts/." "$dest/"
+  # Launch fixtures have no live tracker. Private blocker cases replace this
+  # neutral sibling; no fixture can spend the developer's Linear credentials.
+  dest="$(dirname -- "$fixture_root")/linear/scripts"
+  mkdir -p "$dest"
+  cat > "$dest/linear.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-} ${2:-}" == 'issues get' ]] || exit 1
+jq -cn --arg id "$3" '{id:$id, parent_id:"", blocked_by_open:[]}'
+EOF
+  chmod +x "$dest/linear.sh"
 }

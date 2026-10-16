@@ -153,6 +153,8 @@ done < "$TMP_ROOT/rows"
 # Execute the launch in each configured shell, including a default-command
 # that initializes the custom function. A bounded child owns each tmux server.
 if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
+  LIVE="$(mutant_scripts scrub-live)/open-terminal" || exit 1
+  orch_fixture_shared_libs "$TMP_ROOT/scrub-live"
   raw_case() { # NAME SCRIPT SHELL DEFAULT_COMMAND EXPECTED_HELD
     local case_name="$1" script="$2" shell="$3" command="$4" held="$5" rc=0 actual=missing
     local root="$TMP_ROOT/$case_name"
@@ -167,7 +169,7 @@ if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
   if fish_path="$(command -v fish)"; then RAW_SHELLS+=$'\n'"$fish_path"; fi
   while IFS= read -r shell; do
     for command in login configured; do
-      raw_case "${shell##*/}-$command" "$TEST_DIR/../scripts/open-terminal" "$shell" "$command" -
+      raw_case "${shell##*/}-$command" "$LIVE" "$shell" "$command" -
     done
   done <<< "$RAW_SHELLS"
   RAW_CONTROL="$(mutant_scripts raw-shell-scrub lib/lane-launch.sh)" || exit 1

@@ -117,6 +117,8 @@ TMP_ROOT="$(mktemp -d)" || { echo 'brief-startup: scratch=mktemp-failed' >&2; ex
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || exit 1
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+LIVE="$(mutant_scripts brief-live)/open-terminal"
+orch_fixture_shared_libs "$TMP_ROOT/brief-live"
 OLD="$(mutant_scripts command-brief open-terminal)"
 orch_fixture_shared_libs "${OLD%/scripts}"
 git -C "${OLD%/scripts}" init -q
@@ -139,7 +141,7 @@ run_case() { # NAME SCRIPT HARNESS SHELL
 }
 
 while IFS='|' read -r harness shell; do
-  run_case "$harness-${shell##*/}" "$SCRIPTS_DIR/open-terminal" "$harness" "$shell"
+  run_case "$harness-${shell##*/}" "$LIVE" "$harness" "$shell"
   assert_eq "$RC" 0 "the complete $harness brief reaches argv and the first message before ${shell##*/} startup finishes" "$RUN/log"
 done <<ROWS
 codex|$REAL_FISH
