@@ -765,20 +765,22 @@ line_is_code() { # FILE LINE: 0 code, 1 data, 2 dependency/input failure
   [ "$2" -gt 1 ] || return 0
   prefix="$(sed -n "1,$(($2 - 1))p" <"$1")" || return 2
   diagnostic="$(LC_ALL=C bash -n <<<"$prefix" 2>&1)" || rc=$?
-  # Incomplete shell prefixes are normal here. Other parser exits cannot
-  # establish whether a finding-shaped line is code or quoted data.
-  case "$rc" in 0 | 2) ;; *) return 2 ;; esac
+  # Bash 5.2 can report an array's open quote with exit 1 instead of 2.
+  # Only an incomplete quote or here-document diagnostic admits exit 1.
+  case "$rc" in 0 | 1 | 2) ;; *) return 2 ;; esac
   case "$diagnostic" in
     *'unexpected EOF while looking for matching '* | *'here-document at line '*' delimited by end-of-file'*) return 1 ;;
   esac
+  [ "$rc" -ne 1 ] || return 2
   # Bash 3.2 emits no warning for an open here-document. An unmatched quote
   # on a new line produces a quote diagnostic only when it is read as code.
   rc=0
   diagnostic="$(LC_ALL=C bash -n <<<"$prefix"$'\n\x27' 2>&1)" || rc=$?
-  case "$rc" in 0 | 2) ;; *) return 2 ;; esac
+  case "$rc" in 0 | 1 | 2) ;; *) return 2 ;; esac
   case "$diagnostic" in
     *'unexpected EOF while looking for matching '*) return 0 ;;
   esac
+  [ "$rc" -ne 1 ] || return 2
   return 1
 }
 # The signal operands of the trap command opening on LINE whose quoted action

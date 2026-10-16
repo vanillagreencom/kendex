@@ -523,6 +523,60 @@ for action in "trap ':' EXIT" $'trap \x27\n  echo cleanup\n\x27 EXIT'; do
   clean "an EXIT trap after the here-document delimiter arms parent cleanup" 1
 done
 
+echo "=== array quote text is data until the quote closes ==="
+seed array-quote-boundary
+cat >"$R/scripts/array.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(mktemp -d)"
+r=(a b -c '
+trap ":" EXIT
+')
+echo "${r[@]}"
+EOF
+run_pf
+fires "an EXIT trap in an array's quoted text leaves scratch untrapped" "scripts/array.sh:3: [mktemp-trap]"
+
+# Bash 5.2 can report an array's open quote with exit 1 instead of 2.
+# Reverting only that handling must reject the same finding assertion.
+original_pf="$PF"
+mkdir -p "$TMP/array-quote-control"
+cp -R "${original_pf%/*}/lib" "$TMP/array-quote-control/"
+PF="$TMP/array-quote-control/preflight"
+awk '
+  /^line_is_code\(\)/ { inside=1 }
+  inside && /case "\$rc" in 0 \| 1 \| 2\)/ {
+    sub(/0 \| 1 \| 2/, "0 | 2"); changed++
+  }
+  inside && /\[ "\$rc" -ne 1 \] \|\| return 2/ { changed++; next }
+  inside && /^}$/ { inside=0 }
+  { print }
+  END { if (changed != 4) exit 1 }
+' "$original_pf" >"$PF"
+chmod +x "$PF"
+run_pf
+quote_status=0
+bash -n <<<"r=(a b -c '" 2>"$TMP/array-quote-diagnostic" || quote_status=$?
+case "$quote_status" in
+  1)
+    if [ "$RC" -eq 2 ] && grep -Fx 'preflight: mktemp-trap=scripts/array.sh' <<<"$OUT" >/dev/null && (
+      FAIL=0
+      fires "array quote control" "scripts/array.sh:3: [mktemp-trap]"
+      [ "$FAIL" -eq 1 ]
+    ) >"$TMP/array-quote-control.log" 2>&1; then
+      ok "the array quote assertion rejects the pre-fix scanner when Bash returns 1"
+    else
+      bad "the array quote assertion rejects the pre-fix scanner when Bash returns 1" "rc=$RC out=$OUT"
+    fi
+    ;;
+  0 | 2) fires "the pre-fix scanner reads the array quote when Bash does not return 1" "scripts/array.sh:3: [mktemp-trap]" ;;
+  *) bad "Bash reports an incomplete array quote" "rc=$quote_status" ;;
+esac
+PF="$original_pf"
+printf '%s\n' "trap ':' EXIT" >>"$R/scripts/array.sh"
+run_pf
+clean "an EXIT trap after the array's closing quote arms cleanup" 1
+
 echo "=== a temp-path literal is a finding only in a creation call's hands ==="
 seed tmppath
 mkdir -p "$R/src"
