@@ -577,6 +577,17 @@ pick_cache_case() { # ROW
       jq --argjson at "$expected" '.usage.five_hour.resets_at = ($at | todate) | del(.normalized)' "$record" > "$record.tmp"
       mv -- "$record.tmp" "$record"
       FAKE_NOW=1792140001 cache_run "$state" "$policy" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" ;;
+    refused)
+      # store_usage_refusal's form: the kept figure under its own older stamp,
+      # beside an expired refusal stamped later.
+      local kept_at=$((fetched - 30))
+      expected=$((kept_at + 300))
+      jq --argjson kept "$kept_at" --argjson at "$fetched" \
+        '.usage_fetched_at = $kept | .fetched_at = $at | del(.normalized)
+         | .refusal = {endpoint: "usage", status: "rate_limited", code: "429", detail: "HTTP 429", expires_at: ($at - 1)}' \
+        "$record" > "$record.tmp"
+      mv -- "$record.tmp" "$record"
+      FAKE_NOW=1792140001 cache_run "$state" "$policy" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" ;;
     no-credentials)
       mv -- "$H/.claude/.credentials.json" "$H/.claude/.credentials.held"
       FAKE_NOW=1792140001 cache_run "$state" "$policy" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" || [[ $? == 5 ]]
@@ -587,7 +598,7 @@ pick_cache_case() { # ROW
   assert_eq "$(jq -r '.usage_cache | [.path, .served_until] | @tsv' "$TMP_ROOT/out")" \
     "$(printf '%s\t%s' "$record" "$expected")" "pick cache $row names its measured file and serve bound"
 }
-for row in fetched cached wider reset no-credentials; do pick_cache_case "$row"; done
+for row in fetched cached wider reset refused no-credentials; do pick_cache_case "$row"; done
 control_dir="$(mutant_scripts pick-cache-control lanes)" || exit 1
 mutate_file "$control_dir/lanes" '.usage_cache = (if $cache != ""' '.usage_cache = (if false and $cache != ""'
 control_rc=0
