@@ -1596,7 +1596,7 @@ for context_role in overseer lane; do
 done
 # Restore main's overseer explanation while retaining the same refusal and reading.
 mutant context-percentage-only \
-  -e 's@tokens used: handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). Succeed@tokens used, with an effective percentage setting of %s. Succeed@' \
+  -e 's@tokens used\. Without an agent reserve, handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). This overseer also requires handoff when tokens used plus its configured agent reserve reach either limit. Equality requires handoff on this reserve check. Succeed@tokens used, with an effective percentage setting of %s. Succeed@' \
   -e '/^            "\$2" "\$MARK" "\$WINDOW" "\$HANDOFF_INSTRUCTION"$/s@ "\$WINDOW"@@'
 CONTEXT_RULE_CONTROL_LOG="$(PASS=0 FAIL=0; context_rule_row overseer control_context_rule "$MUTANT_PATH"; [ "$FAIL" -eq 0 ])" && CONTEXT_RULE_CONTROL_RC=0 || CONTEXT_RULE_CONTROL_RC=$?
 assert_eq "$CONTEXT_RULE_CONTROL_RC" 1 'control: main context text fails the overseer context-limit assertion'

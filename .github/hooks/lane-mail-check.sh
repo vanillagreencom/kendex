@@ -417,7 +417,7 @@ message() { # KEY VALUE [CAUSE]
         ;;
       context=*)
         if [ "$ROLE" = overseer ]; then
-          printf 'this overseer requires handoff under the shared context rule at %s tokens used: handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n%s\n' \
+          printf 'this overseer requires handoff under the shared context rule at %s tokens used. Without an agent reserve, handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). This overseer also requires handoff when tokens used plus its configured agent reserve reach either limit. Equality requires handoff on this reserve check. Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n%s\n' \
             "$2" "$MARK" "$WINDOW" "$HANDOFF_INSTRUCTION"
         else
           printf 'this lane requires handoff under the shared context rule: tokens used=%s, effective capacity=%s. Handoff is required at 400000 tokens used, or strictly past %s percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n%s\n' \
