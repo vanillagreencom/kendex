@@ -605,11 +605,23 @@ assert_eq "$RC|$(recorded_argv)" \
 tm kill-window -t "$(recorded window)"
 
 # A fleet whose settings name no preference: the first launch walks the default
-# order and opens on its standard Sonnet alias.
+# order and opens on its standard Opus alias.
 LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
+  "0|opus|lane=$H/.claude;-n;overseer;--model;opus;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+  "an unset preference launches the first overseer on the standard Opus alias"
+tm kill-window -t "$(recorded window)"
+DEFAULTCTL="$(mutant_scripts defaultctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$DEFAULTCTL/lib/overseer-launch.sh" \
+  'OL_DEFAULT_PREFERENCE="claude:opus:high,codex::high"' 'OL_DEFAULT_PREFERENCE="claude:sonnet:high,codex::high"'
+OVERSEE_BIN="$DEFAULTCTL/oversee" LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
   "0|sonnet|lane=$H/.claude;-n;overseer;--model;sonnet;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "an unset preference launches the first overseer on the standard Sonnet alias"
+  "control: the Sonnet default breaks the unset launch's Opus contract"
+control_status=0
+(FAIL=0; assert_eq "$(recorded model)" opus "unset launch model"; [[ "$FAIL" -eq 0 ]]) \
+  > "$TMP_ROOT/default-control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: the Opus assertion rejects the Sonnet launch"
 tm kill-window -t "$(recorded window)"
 
 # A pi entry ahead of a claude entry with room: the launch table names no
@@ -1061,11 +1073,11 @@ STUB
   fi
   LAUNCH_PREF=claude:1:high run_oversee -- launch ${predecessor[@]+"${predecessor[@]}"} --wait-secs 20
   assert_eq "$RC|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(recorded_argv)" \
-    "0|1|claude|$H/.eclaude|sonnet|high|lane=$H/.eclaude;-n;overseer;--model;sonnet;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+    "0|1|claude|$H/.eclaude|opus|high|lane=$H/.eclaude;-n;overseer;--model;opus;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
     "a numeric $verb preference uses the default preference model under $form"
   conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
   assert_eq "$(grep -c '^preference-deprecated ' <<<"$OUT")|$(field "$conversion" entry)|$(field "$conversion" replacement)|$(field "$(keyed overseer-launch "$OUT")" form)" \
-    "1|claude:1:high|claude:sonnet:high|$want_form" \
+    "1|claude:1:high|claude:opus:high|$want_form" \
     "the numeric $verb warning names its conversion and the launch reports $form"
   tm kill-window -t "$(recorded window)"
 done
@@ -1073,8 +1085,8 @@ rm -- "$BIN/eclaude"
 # The migration diagnostic pairs the original consumer entry with its own
 # conversion before an account or permission refusal can skip that entry.
 for row in \
-  'later-account|claude:1:high,codex:2:high|95|20|0|codex|claude:1:high|claude:sonnet:high|' \
-  'all-walled|claude:1:high,codex:2:high|95|99|3|none|claude:1:high|claude:sonnet:high|' \
+  'later-account|claude:1:high,codex:2:high|95|20|0|codex|claude:1:high|claude:opus:high|' \
+  'all-walled|claude:1:high,codex:2:high|95|99|3|none|claude:1:high|claude:opus:high|' \
   'permission-skip|pi:1:high,claude:2:high|60|99|0|claude|pi:1:high||harness-default'; do
   IFS='|' read -r case_name preference claude_used codex_used expected_rc selected original replacement native_model <<<"$row"
   claude_usage "$claude_used" 20 5 Opus > "$FIXTURE_DIR/.claude.json"

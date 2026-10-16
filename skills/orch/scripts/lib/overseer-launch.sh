@@ -105,9 +105,9 @@ ol_runtime_supported() {
   [[ "$OL_RUNTIME" == tmux ]] || { OL_REASON=runtime-unsupported; return 1; }
 }
 
-# Claude's standard family alias, then Codex's native default, keep the account
+# Claude's Opus family alias, then Codex's native default, keep the account
 # order without pinning a model release. An empty setting names no entries.
-OL_DEFAULT_PREFERENCE="claude:sonnet:high,codex::high"
+OL_DEFAULT_PREFERENCE="claude:opus:high,codex::high"
 ol_preference() {
   printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"
 }
