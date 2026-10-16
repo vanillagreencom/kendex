@@ -134,6 +134,31 @@ for lane in auto "$H/.eclaude"; do
   run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane "$lane" --repo o/r KEN-3747
   assert_eq "$(api_launch_result)" 'rc=1 creates=0 launched= cause=cause=api-credit,retry-at=none,' 'credit at the floor creates no hosted lane'
 done
+api_pick_refusal_case() { # CREDIT EXCLUDE EXPECTED
+  api_hosted_rows "$1"
+  run_ot "$API_ENV;ORCH_LANE_EXCLUDE=$2" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-3844
+  assert_eq "$(api_launch_result) $(observe 'pickrefusal=none')" "$3" \
+    'an automatic API pick reports the cause from its grant refusals'
+}
+API_EXCLUDED_EXPECT='rc=1 creates=0 launched= cause= pickrefusal=lane-unavailable,harness=pi'
+while IFS='|' read -r credit exclude expected; do
+  api_pick_refusal_case "$credit" "$exclude" "$expected"
+done <<ROWS
+150|eclaude|$API_EXCLUDED_EXPECT
+4||rc=1 creates=0 launched= cause=cause=api-credit,retry-at=none, pickrefusal=none
+ROWS
+API_NO_CANDIDATE_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-api-no-candidate/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-no-candidate/orch"
+mutate_file "$OPEN_TERMINAL" 'if [[ "$grant_refused" == false ]]; then' 'if false && [[ "$grant_refused" == false ]]; then'
+API_SAVED_FAIL="$FAIL"; FAIL=0
+api_pick_refusal_case 150 eclaude "$API_EXCLUDED_EXPECT" > "$TMP_ROOT/api-no-candidate-control.out"
+API_CONTROL="$FAIL"; FAIL="$API_SAVED_FAIL"
+assert_eq "$API_CONTROL" 1 'control: the prior API mapping fails the excluded-account row'
+assert_eq "$(api_launch_result)" 'rc=1 creates=0 launched= cause=cause=api-credit,retry-at=none,' \
+  'control: the prior API mapping reports a credit refusal without a refused grant'
+awk '$1 == "open-terminal:" && $2 == "lane-credit-refused"' <<<"$OUT"
+OPEN_TERMINAL="$API_NO_CANDIDATE_SHIPPED"
 api_hosted_rows 150 expired
 run_ot "$API_ENV" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-3747
 assert_eq "$(api_launch_result)" 'rc=1 creates=0 launched= cause=cause=api-credit,retry-at=none,' 'a provider-expired grant creates no lane'

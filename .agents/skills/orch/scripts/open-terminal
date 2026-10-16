@@ -1014,10 +1014,18 @@ pi_lane_root_apply() {
 # read measured any pool, a read to repair as the `fix=` line `lanes` printed
 # above says, or one on a provider nothing measures; anything else is lanes
 # failing, a failed accounts read that a retry can answer among them.
-auto_pick_refusal() { # RC [FIELD...]
-  local rc="$1"
-  shift
+auto_pick_refusal() { # RC RECORD [FIELD...]
+  local rc="$1" record="$2" grant_refused
+  shift 2
   if [[ "$(lane_pick_pool "$LANE_HARNESS" "$LAUNCH_MODEL")" == api-credit ]]; then
+    if [[ "$rc" -eq 3 ]]; then
+      grant_refused="$(jq -r 'any(.refusals[]; .refusal.cause == "api-credit")' <<<"$record")" \
+        || { ot_message lane-resolution-failed step=pick-record "$@" >&2; return; }
+      if [[ "$grant_refused" == false ]]; then
+        ot_message lane-unavailable "harness=$LANE_HARNESS" "$@" >&2
+        return
+      fi
+    fi
     case "$rc" in
       3) ot_message lane-credit-refused cause=api-credit retry-at=none "$@" ;;
       5) ot_message lane-provider-unmeasured "harness=$LANE_HARNESS" "model=${LAUNCH_MODEL:-none}" "$@" ;;
@@ -1229,7 +1237,7 @@ if [[ -n "$LANE" ]]; then
       if [[ -n "$PREFERENCE_ENTRY" ]]; then LANE_ENV="$PREFERENCE_LANE_ENV"
       else
         LANE_PICK_RECORD="$(pick_auto_lane)" || lane_rc=$?
-        [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc"; exit 1; }
+        [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc" "$LANE_PICK_RECORD"; exit 1; }
         LANE_ENV="$(pick_record_env "$LANE_PICK_RECORD")" || exit 1
       fi
       ;;
@@ -3654,7 +3662,7 @@ lane_rejudge() { # ITEM
     [[ "$FLEET" != true || "$LAUNCH_HARNESS" != copilot ]] || COPILOT_HOOKS_GATED=true
   elif [[ "$LANE_AUTO" == true ]]; then
     record="$(pick_auto_lane)" || rc=$?
-    [[ "$rc" -eq 0 ]] || { auto_pick_refusal "$rc" "item=$1" "launched=$launched"; return 1; }
+    [[ "$rc" -eq 0 ]] || { auto_pick_refusal "$rc" "$record" "item=$1" "launched=$launched"; return 1; }
     next="$(pick_record_env "$record")" || return 1
     LANE_PICK_RECORD="$record"
     ! lane_value_error "$next" || return 1
