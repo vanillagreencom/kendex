@@ -181,6 +181,9 @@ For the Jarvis session and every overseer, a conversation stays in the medium wh
 10. Report account headroom for every harness the fleet runs (Claude, Codex, Copilot), side by side.
 11. Own a mistake in one line, with its repair.
 12. Attach a screenshot or an image when it shows the point better than words: `slack post --file`, with `--thread TS` to place it under a message.
+13. Give every number the owner reads its yardstick and its verdict in the same bullet: the earlier value, the target or the normal range; good, bad or not known; and what is done about it. When the yardstick is not read yet, say so and name the reading that settles it (the owner's Slack messages 1792172820, 1792172887 and 1792172957; Jarvis note 1792173119).
+14. Report a measure that depends on load against that load: a lane's or session's length beside the work it handled, a machine's use beside what ran on it. Length or use alone never claims an improvement (the owner's Slack messages 1792172820, 1792172887 and 1792172957; Jarvis note 1792173119).
+15. Before posting, read each topic once as the owner and ask "so what for me?". A topic whose text does not answer that gets the answer or is cut (the owner's Slack messages 1792172820, 1792172887 and 1792172957; Jarvis note 1792173119).
 
 Markup for a text posted alone, standard Markdown:
 
