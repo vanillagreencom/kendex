@@ -99,7 +99,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   ! cmp -s "$HOOK" "$INSTALL/worktree-prompt-claim.sh" || exit 1
   log=$(PASS=0 FAIL=0 rows) || :
   assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
-    'foreign required lease: prompt decision;foreign required lease: no advisory output;same session after issue adoption: keyed reason;same session after issue adoption: no advisory output;same session after issue refresh: keyed reason;same session after issue refresh: no advisory output;another session after issue adoption: prompt decision;another session after issue adoption: no advisory output;issue lease without verified adoption: prompt decision;issue lease without verified adoption: no advisory output;' 'forwarding control: event reaches decision owner'
+    'foreign required lease: prompt decision;foreign required lease: no advisory output;another session after issue adoption: prompt decision;another session after issue adoption: no advisory output;issue lease without verified adoption: prompt decision;issue lease without verified adoption: no advisory output;' 'forwarding control: event reaches decision owner'
   cp "$HOOK" "$INSTALL/worktree-prompt-claim.sh"
   assert_eq "$(grep -cxF '  exit 2' "$HOOK" || :)" 1 'missing owner control: unique anchor'
   sed 's/^  exit 2$/  exit 0/' "$HOOK" >"$INSTALL/worktree-prompt-claim.sh"

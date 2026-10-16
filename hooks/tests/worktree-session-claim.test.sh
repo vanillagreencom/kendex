@@ -259,11 +259,13 @@ required_rows() {
 }
 required_rows
 
-# Verified adoption serves only the prompt path. Codex and Copilot keep
-# their SessionStart owner decision and their existing output format.
+# The workflow adopts the session's lease under its issue ID. A resume,
+# /clear, compaction or relaunch starts again under the owner that adoption
+# recorded and refreshes the issue lease silently. A session under any other
+# owner meets a lease with no matching association and is refused.
 adopted_start_rows() {
   local harness rc label
-  for harness in codex copilot-project copilot-global; do
+  for harness in claude codex copilot-project copilot-global; do
     release_all
     install_world installed "$harness"
     run_hook_in "$TREE" USER=alice KENDEX_WORKTREE_CLAIM=required
@@ -272,6 +274,11 @@ adopted_start_rows() {
     rc=0
     run_hook_in "$TREE" USER=alice KENDEX_WORKTREE_CLAIM=required || rc=$?
     label="$harness: adopted SessionStart"
+    assert_eq "rc=$rc stdout=$(wc -c <"$OUT_FILE" | tr -d ' ') first=$(first_line) owner=$(lease_owner "$TREE")" \
+      'rc=0 stdout=0 first=- owner=ISSUE-1' "$label: the same session refreshes the issue lease"
+    rc=0
+    run_hook_in "$TREE" USER=carol KENDEX_WORKTREE_CLAIM=required || rc=$?
+    label="$harness: foreign SessionStart"
     assert_eq "rc=$rc owner=$(lease_owner "$TREE")" 'rc=0 owner=ISSUE-1' "$label: lease unchanged"
     assert_eq "$(first_line)" "worktree-session-claim: held=$TREE" "$label: owner decision"
     assert_eq "$(jq -r '.continue' <"$OUT_FILE")" false "$label: stop request"
@@ -384,8 +391,8 @@ output_failure_rows
 
 # The workflow's claim under the issue ID after the hook's: one session, so
 # the lease passes rather than refusing the workflow. A later start of that
-# session under the env ladder, a resume or compaction of the lane, leaves the
-# issue lease and writes nothing.
+# session under the env ladder, a resume or compaction of the lane, refreshes
+# the issue lease and writes nothing.
 takeover_rows() {
   local rc=0
   release_all
@@ -447,19 +454,17 @@ control() { # NAME LINE REPLACEMENT ROWS-FUNCTION EXPECTED-FAILS [ARG]
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # A hook that never runs the guard leaves the tree unclaimed.
-  control no-claim 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' 'exit 0' claim_rows \
+  control no-claim 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' 'exit 0' claim_rows \
     "a session in a linked worktree claims it under USER;the ladder's top rung names the owner;a session in a subdirectory claims the worktree root;a project install in the worktree claims it;a hook in a harness root outside the home claims through the home's guard;an inherited GIT_DIR does not move the claim;a guard that fails is reported;a guard that fails is reported: the guard's keyed line is replayed;a required session claims its worktree;"
 
   # A hook that drops what the guard wrote.
   control no-cause '  [ -z "$cause" ] || text="$text"$'"'"'\n'"'"'"$cause"' '  :' claim_rows \
     "a guard that fails is reported: the guard's keyed line is replayed;"
 
-  # A hook that reports a lock already holding the tree tells every resumed
-  # lane its own issue lease is foreign.
+  # A hook that reports every lock already holding the tree speaks where a
+  # foreign lease must stay silent.
   control held-notice '    [ "${KENDEX_WORKTREE_CLAIM:-}" != required ] || notice held "$ROOT" \' '    notice held "$ROOT" \' claim_rows \
     "another owner's lease is kept silently;"
-  control held-notice-takeover '    [ "${KENDEX_WORKTREE_CLAIM:-}" != required ] || notice held "$ROOT" \' '    notice held "$ROOT" \' takeover_rows \
-    "a session restarted under its issue lease keeps it silently;"
 
   # A hook that takes the open repository's guard whatever its own install
   # runs code the repository planted.
@@ -502,8 +507,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "required: claude broken encoder stop request;required: claude broken encoder: context contract;required: codex broken encoder stop request;required: codex broken encoder: context contract;"
   control codex-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks | */.codex/hooks) COPILOT=true ;;' output_failure_rows \
     "required: codex normal encoder: context contract;required: codex broken encoder: context contract;"
-  control session-flag-at-start 'if [ "$PROMPT" = true ]; then' 'if true; then' adopted_start_rows \
-    'codex: adopted SessionStart: owner decision;codex: adopted SessionStart: stop request;codex: adopted SessionStart: context contract;copilot-project: adopted SessionStart: owner decision;copilot-project: adopted SessionStart: stop request;copilot-project: adopted SessionStart: context contract;copilot-global: adopted SessionStart: owner decision;copilot-global: adopted SessionStart: stop request;copilot-global: adopted SessionStart: context contract;'
+  # A SessionStart claim without the session association meets the lease its
+  # own workflow adopted as foreign.
+  control session-flag-at-start 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' adopted_start_rows \
+    'claude: adopted SessionStart: the same session refreshes the issue lease;codex: adopted SessionStart: the same session refreshes the issue lease;copilot-project: adopted SessionStart: the same session refreshes the issue lease;copilot-global: adopted SessionStart: the same session refreshes the issue lease;'
   control copilot-project-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks) : ;;' output_failure_rows \
     "required: copilot-project normal encoder: context contract;required: copilot-project broken encoder: context contract;"
   control copilot-global-context '[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true' ':' output_failure_rows \
@@ -517,8 +524,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "a worktree with no issue record runs no project file;"
 
   # A hook that asks the worktree script runs the repository's `.env.local`.
-  control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' \
-    'CAUSE=$("${FOUND%/*}/worktree" list >/dev/null 2>&1; "$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' env_rows \
+  control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' \
+    'CAUSE=$("${FOUND%/*}/worktree" list >/dev/null 2>&1; "$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' env_rows \
     "a skill-created worktree runs no project file;"
 fi
 

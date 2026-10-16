@@ -414,9 +414,9 @@ case "$command" in
 			lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" "The worktree lock belongs to another tool." >&2; exit "$EXIT_OWNED"; }
 			recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
 			session_owner="$(lease_field "$LEASE_TEXT" session_owner 2>/dev/null)" || session_owner=''
-			# Only verified adoption writes this association. Prompt claims
-			# use it without changing the issue owner; SessionStart and an
-			# explicit --owner claim keep their existing owner check.
+			# Only verified adoption writes this association. The session
+			# hook's start and prompt claims use it without changing the
+			# issue owner; an explicit --owner claim keeps its owner check.
 			if [[ "$session" == true && "$owner_set" != true && -n "$session_owner" && "$session_owner" == "$OWNER" ]]; then
 				OWNER="$recorded"
 			fi
