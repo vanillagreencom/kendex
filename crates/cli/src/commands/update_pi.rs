@@ -691,7 +691,7 @@ fn install_rows(
                 ));
                 for bin in &outcome.unbuilt_bins {
                     say(&format!(
-                        "  ! {}: bin '{bin}' is not built, so no command was linked",
+                        "  ! {}: declared bin '{bin}' is missing; the package publisher must ship this file. Its command was not linked",
                         row.name
                     ));
                 }

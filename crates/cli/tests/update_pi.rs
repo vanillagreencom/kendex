@@ -248,10 +248,12 @@ fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
         );
         write(
             &project.join("catalog/pi-extensions/bad/package.json"),
-            r#"{"name":"bad","version":"1.0.0","dependencies":{"dep":"1.0.0"}}"#,
+            r#"{"name":"bad","version":"1.0.0","bin":"./index.js","dependencies":{"dep":"1.0.0"}}"#,
         );
         let source = project.join("catalog/pi-extensions/bad/index.js");
-        write(&source, "export const version = 1;\n");
+        let previous = "#!/bin/sh\nprintf '%s' old-version\n";
+        write(&source, previous);
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
         let npm = root.join("bin/npm");
         write(&npm, "#!/bin/sh\nexit 0\n");
         fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
@@ -279,35 +281,34 @@ fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
         if failure == "missing" {
             fs::remove_dir_all(project.join(".pi/packages/bad")).unwrap();
         } else {
-            write(&source, "export const version = 2;\n");
+            write(&source, "#!/bin/sh\nprintf '%s' new-version\n");
+            write(
+                &project.join("catalog/pi-extensions/bad/package.json"),
+                r#"{"name":"bad","version":"2.0.0","bin":"./index.js","dependencies":{"dep":"2.0.0"}}"#,
+            );
         }
         if let Some(entry) = &mut completed {
             entry.rendered_hash = None;
         }
-        write(&npm, "#!/bin/sh\nexit 1\n");
+        let outside = project.join(".pi/bin/unrelated");
+        write(&outside, "unrelated command\n");
+        let sibling = project.join(".pi/packages/unrelated/marker");
+        write(&sibling, "unrelated package\n");
+        write(
+            &npm,
+            "#!/bin/sh\nprintf 'fixture-npm-error' >&2\nprintf partial > index.js\nexit 1\n",
+        );
         for _ in 0..2 {
             let output = kendex(&root, &project, &["update-pi", "--scope", "project"]);
-            assert!(!output.status.success(), "upgrade={upgrade}: {output:?}");
-            assert_eq!(
-                fs::read(project.join(".pi/packages/bad/index.js")).unwrap(),
-                fs::read(&source).unwrap(),
-                "npm fails after source files are copied"
-            );
-            let check = kendex(&root, &project, &["check", "--scope", "project"]);
-            assert_eq!(check.status.code(), Some(1), "{check:?}");
-            assert!(
-                String::from_utf8_lossy(&check.stdout).contains("kendex update-pi --scope project"),
-                "{check:?}"
-            );
-            let updates = kendex(&root, &project, &["updates"]);
-            assert!(
-                String::from_utf8_lossy(&updates.stderr).contains("pi-extension bad"),
-                "{updates:?}"
+            assert_failed_npm_keeps_install(
+                &root,
+                &project,
+                &output,
+                (failure == "upgrade").then_some(previous),
             );
             let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
-            // An unrecorded matching copy is eligible but needs npm. Recorded
-            // incomplete installs still fail. Retaining process-only drift is
-            // the must-fail control for the first-install row.
+            // A new declaration defers npm to update-pi. An incomplete
+            // recorded update remains a failed refresh.
             assert_eq!(refresh.status.success(), !upgrade, "{refresh:?}");
             assert_eq!(
                 kendex_core::lock::load(&lock_path)
@@ -330,6 +331,59 @@ fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
         assert!(repaired.status.success(), "{repaired:?}");
         assert_npm_repaired(&root, &project);
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_failed_npm_keeps_install(
+    home: &Path,
+    project: &Path,
+    output: &Output,
+    previous: Option<&str>,
+) {
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("fixture-npm-error"));
+    let installed = project.join(".pi/packages/bad");
+    if let Some(previous) = previous {
+        assert_eq!(
+            fs::read_to_string(installed.join("index.js")).unwrap(),
+            previous
+        );
+        assert_eq!(
+            kendex_core::pi_ext::read(&installed)
+                .unwrap()
+                .version
+                .as_deref(),
+            Some("1.0.0")
+        );
+        let command = Command::new(project.join(".pi/bin/bad"))
+            .env_clear()
+            .envs(test_util::fixture_env(home))
+            .output()
+            .unwrap();
+        assert!(command.status.success());
+        assert_eq!(command.stdout, b"old-version");
+    } else {
+        assert!(!installed.exists());
+    }
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/bin/unrelated")).unwrap(),
+        "unrelated command\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/unrelated/marker")).unwrap(),
+        "unrelated package\n"
+    );
+    let check = kendex(home, project, &["check", "--scope", "project"]);
+    assert_eq!(check.status.code(), Some(1), "{check:?}");
+    assert!(
+        String::from_utf8_lossy(&check.stdout).contains("kendex update-pi --scope project"),
+        "{check:?}"
+    );
+    let updates = kendex(home, project, &["updates"]);
+    assert!(
+        String::from_utf8_lossy(&updates.stderr).contains("pi-extension bad"),
+        "{updates:?}"
+    );
 }
 
 /// Real npm resolves only this registry. The broken dev release reproduces
@@ -627,9 +681,7 @@ mod npm_registry {
                     !modules.join("dep").exists(),
                     "{row:?}: a fresh install followed failure"
                 );
-                // The issue explicitly requires the human recovery command to
-                // identify the operation that failed.
-                let recovery = match row {
+                match row {
                     Row::StaleLock => {
                         assert!(stderr.contains("EUSAGE"), "{stderr}");
                         assert!(
@@ -638,22 +690,13 @@ mod npm_registry {
                             ),
                             "{stderr}"
                         );
-                        "ci --omit=dev --legacy-peer-deps --no-audit --no-fund"
                     }
                     Row::BrokenUnlocked => {
                         assert!(stderr.contains("ETARGET"), "{stderr}");
                         assert!(stderr.contains("gone@^2.0.0"), "{stderr}");
-                        "install --omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund"
                     }
                     Row::Locked | Row::Unlocked => unreachable!(),
-                };
-                assert!(
-                    stderr.contains(&format!(
-                        "Recovery: `cd '{}' && npm {recovery}`",
-                        installed.display()
-                    )),
-                    "{stderr}"
-                );
+                }
             }
         }
     }

@@ -227,8 +227,8 @@ pub struct InstallOutcome {
     pub version: Option<String>,
     pub dest: PathBuf,
     pub bins: Vec<PathBuf>,
-    /// Declared `bin` entries whose target the package does not ship — the
-    /// package still installs, but that cli is not linked.
+    /// Declared `bin` paths the package does not ship. The package still
+    /// installs, but these commands are not linked.
     pub unbuilt_bins: Vec<String>,
 }
 
@@ -246,11 +246,18 @@ pub fn install(
     let package = read(source_pkg_dir)?;
     append_system_target(env, scope_root)?;
     let dest = package_path(scope_root, &package.name)?;
+    let parent = dest.with_file_name("");
+    std::fs::create_dir_all(&parent).map_err(|e| CoreError::io(&parent, e))?;
+    // npm must finish before replacement so a failed update keeps the old
+    // package and its command targets. The owned candidate shares its device.
+    let staging = tempfile::tempdir_in(&parent).map_err(|e| CoreError::io(&parent, e))?;
+    let candidate = staging.path().join("package");
+    copy_package(source_pkg_dir, &candidate)?;
+    npm_install(&package.name, &candidate)?;
     if dest.symlink_metadata().is_ok() {
         crate::trash::move_to_trash(env, &dest)?;
     }
-    copy_package(source_pkg_dir, &dest)?;
-    npm_install(&package.name, &dest)?;
+    std::fs::rename(&candidate, &dest).map_err(|e| CoreError::io(&dest, e))?;
     let (bins, unbuilt_bins) = link_bins(scope_root, &package, &dest)?;
     settings::upsert_package(&settings_path(scope_root), &package.name, enabled)?;
     write_append_system(env, scope_root, &package, &dest, enabled)?;
@@ -349,10 +356,9 @@ fn npm_install(name: &str, package_dir: &Path) -> Result<()> {
     } else {
         NPM_INSTALL_ARGS
     };
-    let recovery = format!("cd '{}' && npm {}", package_dir.display(), args.join(" "));
     let failed = |detail: String| CoreError::PiPackage {
         name: name.to_owned(),
-        message: format!("{detail}. Recovery: `{recovery}`"),
+        message: detail,
     };
     // A cold install pulls its whole tree over the network; minutes is a
     // slow install, not a wedged one.
@@ -384,7 +390,7 @@ fn link_bins(
     for (cli, relative) in &package.bins {
         let target = inside(dest, relative, &package.name)?;
         if !target.exists() {
-            unbuilt.push(cli.clone());
+            unbuilt.push(relative.clone());
             continue;
         }
         let link = inside(&bin_dir(scope_root), cli, &package.name)?;

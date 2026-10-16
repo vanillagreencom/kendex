@@ -423,15 +423,23 @@ fn a_real_file_in_the_bin_dir_is_a_conflict_not_a_clobber_target() {
 }
 
 #[test]
-fn a_bin_the_package_has_not_built_is_reported_not_linked() {
+fn a_missing_declared_bin_is_reported_and_other_commands_link() {
     let f = scope();
     let source = fixture(&f.root, "pi-widgets", "Guidance.\n");
-    std::fs::remove_file(source.join("cli.js")).unwrap();
+    write(
+        &source.join("package.json"),
+        r#"{"name":"pi-widgets","bin":{"missing":"./dist/missing.js","working":"./cli.js"}}"#,
+    );
 
     let outcome = install(&f.env, &f.scope, &source, true).unwrap();
-    assert_eq!(outcome.unbuilt_bins, ["pi-widgets"]);
-    assert!(outcome.bins.is_empty());
-    assert!(!f.scope.join("bin/pi-widgets").exists());
+    assert_eq!(outcome.unbuilt_bins, ["./dist/missing.js"]);
+    assert_eq!(outcome.bins, [f.scope.join("bin/working")]);
+    assert!(!f.scope.join("bin/missing").exists());
+    assert_eq!(
+        std::fs::read(f.scope.join("bin/working")).unwrap(),
+        std::fs::read(source.join("cli.js")).unwrap()
+    );
+    assert_eq!(list_installed(&f.scope).unwrap(), ["pi-widgets"]);
 }
 
 #[test]

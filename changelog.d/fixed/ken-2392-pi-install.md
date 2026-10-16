@@ -1,0 +1,1 @@
+- Pi extension updates keep the installed version and its commands when npm fails. Missing declared command files are reported as files the package publisher must ship, while the package and its other commands install.
