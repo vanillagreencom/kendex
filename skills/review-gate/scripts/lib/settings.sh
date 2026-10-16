@@ -1,8 +1,9 @@
 # shellcheck shell=bash
-# Settings resolution for the reducer and organization-standard tools.
+# Settings resolution for the organization-standard tools, consumer refresh
+# and orch's approval-wait.
 #
 # Resolution order for every key read through rg_setting (the REVIEW_GATE_*
-# family, plus shared keys like PR_REVIEW_WAIT_SECS):
+# family, plus shared keys like ORCH_OVERSEER_PREFERENCE):
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller (or the selftest) can force "explicitly empty";
 #   2. .env.local, or rg_setting's PRIVATE_FILE argument (KEY=value, quotes

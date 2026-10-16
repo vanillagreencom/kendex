@@ -1,7 +1,7 @@
 [env]
 
-# The review bot this project trusts, the shape of its issue ids, and how
-# long GitHub commands may take.
+# The review bot this project trusts, the shape of its issue ids, how long
+# GitHub commands may take, and the pull-request watcher's quiet period.
 
 # The login of the review bot whose verdict this project reads. Empty means
 # review-bot[bot]: most commands match that login alone, and only the
@@ -32,3 +32,9 @@ KENDEX_GITHUB_AUTH_TIMEOUT = "10"
 # Seconds allowed for one read of a pull request. 0 removes the bound, and a
 # step finer than a tenth of a second is refused.
 KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
+
+# Seconds a pull request's head may wait unapproved before the watcher
+# reports it awaiting-stale. Whole seconds only, at most nine digits;
+# anything else fails loudly. The orchestration package reads the same
+# number for its review wait.
+PR_REVIEW_WAIT_SECS = "900"

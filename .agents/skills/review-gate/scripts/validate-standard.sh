@@ -321,7 +321,7 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   # RULES already parsed as an array of rule objects, so a failed query
   # here is this script's own fault.
   # The organization ruleset requests the Copilot review through kendex's
-  # workflow (references/automatic-review.md). The source row judges the
+  # workflow (references/adoption.md). The source row judges the
   # workflow's identity, its repository and path, because the owner re-pins
   # the sha on each workflow change; the review row also requires the pin.
   # An unrelated required workflow satisfies neither.

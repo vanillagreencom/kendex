@@ -69,6 +69,27 @@ table \
   "a fresh reopen restarts the quiet period|--awaiting-after 3600|STUB_REOPENED_AT=$NOW;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=0 kinds=none" \
   "a fresh re-review request restarts the quiet period|--awaiting-after 3600|STUB_REREQUEST_AT=$NOW;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=0 kinds=none"
 
+echo "=== PR_REVIEW_WAIT_SECS from the project settings ==="
+# The project's settings at the working directory's git root set the quiet
+# period. The default 900 keeps a ten-minute-old head silent; 60 reports it.
+PROJECT="$TMP_ROOT/project"
+mkdir -p "$PROJECT/sub"
+git -C "$PROJECT" init -q
+git -C "$PROJECT" config gc.auto 0
+git -C "$PROJECT" config maintenance.auto false
+printf '[env]\nPR_REVIEW_WAIT_SECS = "60"\n' >"$PROJECT/kendex.settings.toml"
+RECENT="$(date -u -d "@$((WATCH_NOW - 600))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$((WATCH_NOW - 600))" +%Y-%m-%dT%H:%M:%SZ)"
+RECENT_ENV="STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$RECENT"
+table "outside a project the default quiet period holds a recent head silent||$RECENT_ENV|rc=0 kinds=none"
+WATCH_CWD="$PROJECT/sub"
+table "the project setting drives the clock from a subdirectory||$RECENT_ENV|rc=1 kinds=awaiting-stale"
+mutant_watch settings-load 's#kendex_load_project_env "\$project_root" &&#: \&\&#' 'kendex_load_project_env "$project_root" &&'
+table "must-fail: without the project load the default holds the head silent||$RECENT_ENV|rc=0 kinds=none"
+WATCH_BIN="$LIVE_WATCH"
+printf '[env]\nPR_REVIEW_WAIT_SECS = 60\n' >"$PROJECT/kendex.settings.toml"
+table "an unreadable project setting refuses the pass||$RECENT_ENV|rc=2 kinds=none diagnostic=pr-watch:+watch-settings-unreadable+value=$PROJECT"
+WATCH_CWD="$TMP_ROOT/cwd"
+
 echo "=== a head commit that is not the PR's head ==="
 # One read describes one moment; a push landing during it leaves the head
 # commit read beside the PR on another sha. That is head-moved, never the

@@ -18,21 +18,20 @@
 # Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
-  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
-  exit 2
-fi
-. "$script_dir/lib/diagnostics.sh" 2>/dev/null || {
-  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
-  exit 2
+# The diagnostic record: `pr-watch: CODE value=VALUE`, the value escaped
+# with Bash printf %q, then the explanation.
+watch_message() { # CODE VALUE MESSAGE
+  printf 'pr-watch: %s value=%q\n%s\n' "$1" "$2" "$3"
 }
-# shellcheck source=lib/settings.sh
-. "$script_dir/lib/settings.sh"
-if [ ! -r "$script_dir/lib/refresh-identity.sh" ] || ! . "$script_dir/lib/refresh-identity.sh"; then
-  rg_message error refresh-identity-load "$script_dir/lib/refresh-identity.sh" 'Could not load the refresh identity rule.' >&2
-  exit 2
-fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for lib in refresh-identity kendex-env; do
+  # shellcheck source=/dev/null
+  if [ ! -r "$script_dir/lib/$lib.sh" ] || ! . "$script_dir/lib/$lib.sh"; then
+    watch_message "$lib-load" "$script_dir/lib/$lib.sh" "Could not load lib/$lib.sh." >&2
+    exit 2
+  fi
+done
 
 print_usage() {
   cat <<'USAGE'
@@ -118,6 +117,10 @@ Exit codes:
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
 
+Settings: PR_REVIEW_WAIT_SECS from the environment, else the project
+settings at the git root of the working directory, read as the github.sh
+router reads them. Unreadable project settings are a global failure.
+
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
 wait with on-timeout policy; orch's oversee consumes it through
@@ -134,7 +137,7 @@ for arg in "$@"; do
 done
 
 if [ -z "${GH_REPO:-}" ]; then
-  rg_message error watch-repo-missing "${GH_REPO:-}" "::error::pr-watch: GH_REPO is required" >&2
+  watch_message watch-repo-missing "${GH_REPO:-}" "::error::pr-watch: GH_REPO is required" >&2
   exit 2
 fi
 
@@ -146,23 +149,23 @@ while [ $# -gt 0 ]; do
       shift
       AWAITING_AFTER="${1:-}"
       case "$AWAITING_AFTER" in
-        ''|*[!0-9]*) rg_message error watch-wait-invalid "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
+        ''|*[!0-9]*) watch_message watch-wait-invalid "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
       esac
       # Same bound as the settings path: past Bash's integer range the later
       # [ -gt ] comparisons fail silently inside their ifs. Leading zeros
       # are stripped first so a zero-padded fixed-width value is judged by
       # its numeric magnitude, not its character count.
-      AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
+      AWAITING_AFTER="${AWAITING_AFTER#"${AWAITING_AFTER%%[!0]*}"}"
       [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
       if [ "${#AWAITING_AFTER}" -gt 9 ]; then
-        rg_message error watch-wait-range "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
+        watch_message watch-wait-range "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
         exit 2
       fi
       ;;
-    -*) rg_message error watch-flag-unknown "$1" "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
+    -*) watch_message watch-flag-unknown "$1" "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
     *)
       case "$1" in
-        ''|*[!0-9]*) rg_message error watch-pr-invalid "$1" "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
+        ''|*[!0-9]*) watch_message watch-pr-invalid "$1" "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
       esac
       # Base-10 normalization: a zero-padded "09" is not valid JSON for the
       # --argjson binding check downstream.
@@ -173,7 +176,13 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$AWAITING_AFTER" ]; then
-  AWAITING_AFTER="$(rg_setting PR_REVIEW_WAIT_SECS "900")" || exit 2
+  # The project's settings load in a subshell, as the github.sh router finds
+  # them, so the project files set nothing else in this process.
+  project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || project_root=""
+  AWAITING_AFTER="$(kendex_load_project_env "$project_root" && printf '%s' "${PR_REVIEW_WAIT_SECS-900}")" || {
+    watch_message watch-settings-unreadable "$project_root" "::error::pr-watch: the project settings could not be read for PR_REVIEW_WAIT_SECS" >&2
+    exit 2
+  }
   # Fail-loud, same as --awaiting-after: a typo ("90s") must never silently
   # become the 900 default — a silent fallback CHANGES the review-silence
   # policy the operator thinks they set. Digit-only AND bounded: a digit
@@ -183,14 +192,14 @@ if [ -z "$AWAITING_AFTER" ]; then
   # is bound enough.
   case "$AWAITING_AFTER" in
     ''|*[!0-9]*)
-      rg_message error watch-wait-setting-invalid "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
+      watch_message watch-wait-setting-invalid "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
       exit 2
       ;;
   esac
-  AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
+  AWAITING_AFTER="${AWAITING_AFTER#"${AWAITING_AFTER%%[!0]*}"}"
   [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
   if [ "${#AWAITING_AFTER}" -gt 9 ]; then
-    rg_message error watch-wait-setting-range "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
+    watch_message watch-wait-setting-range "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
     exit 2
   fi
 fi
@@ -215,7 +224,7 @@ PR_FIELDS="$PR_STATE_FIELDS reviewThreads(first:100){pageInfo{hasNextPage endCur
 owner="${GH_REPO%%/*}"
 name="${GH_REPO#*/}"
 now="$(date +%s)" || {
-  rg_message error watch-clock-failed "" "::error::pr-watch: could not read the clock" >&2
+  watch_message watch-clock-failed "" "::error::pr-watch: could not read the clock" >&2
   exit 2
 }
 
@@ -239,11 +248,11 @@ else
   mode=list
   main="$(gh api graphql --paginate -f owner="$owner" -f name="$name" \
       -f query="query(\$owner:String!,\$name:String!,\$endCursor:String){repository(owner:\$owner,name:\$name){pullRequests(states:OPEN,first:50,after:\$endCursor,orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{...PR}}}} fragment PR on PullRequest{$PR_FIELDS}")" || {
-    rg_message error watch-list-failed "$GH_REPO" "::error::pr-watch: could not list open PRs" >&2
+    watch_message watch-list-failed "$GH_REPO" "::error::pr-watch: could not list open PRs" >&2
     exit 2
   }
   if [ -z "$main" ]; then
-    rg_message error watch-list-empty "$GH_REPO" "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
+    watch_message watch-list-empty "$GH_REPO" "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
     exit 2
   fi
 fi
@@ -481,7 +490,7 @@ while :; do
       --arg state_fields "$PR_STATE_FIELDS" \
       --arg owner "$owner" --arg name "$name" --argjson now "$now" --argjson wait "$AWAITING_AFTER" \
       "def refresh_identity: $REFRESH_IDENTITY_JQ; $REDUCE_JQ")" || {
-    rg_message error watch-reduce-failed "$GH_REPO" "::error::pr-watch: the reduction failed" >&2
+    watch_message watch-reduce-failed "$GH_REPO" "::error::pr-watch: the reduction failed" >&2
     exit 2
   }
   control="${reduced%%$'\n'*}"
@@ -498,11 +507,11 @@ done
 case "$control" in
   exit$'\t'[012]) ;;
   global$'\t'watch-list-malformed)
-    rg_message error watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
+    watch_message watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
     exit 2
     ;;
   *)
-    rg_message error watch-reduce-unexpected "$control" "::error::pr-watch: the reduction answered no known control line" >&2
+    watch_message watch-reduce-unexpected "$control" "::error::pr-watch: the reduction answered no known control line" >&2
     exit 2
     ;;
 esac

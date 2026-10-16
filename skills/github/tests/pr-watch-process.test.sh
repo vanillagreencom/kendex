@@ -17,7 +17,12 @@ COUNT_DIR="$TMP_ROOT/count"
 PATH="$TMP_ROOT/bin:$PATH" process_count_install "$COUNT_DIR" pr-watch.sh
 mkdir -p "$TMP_ROOT/before/lib"
 cp "$TEST_DIR/fixtures/pr-watch-before.txt" "$TMP_ROOT/before/pr-watch.sh"
-cp "$TMP_ROOT/scripts/lib/"* "$TMP_ROOT/before/lib/"
+cp "$TMP_ROOT/scripts/lib/refresh-identity.sh" "$TMP_ROOT/before/lib/"
+# The original sourced two review-gate libraries. Every pass here gives
+# --awaiting-after and reads healthy GitHub answers, so it reaches neither
+# the settings reader nor a diagnostic.
+printf '%s\n' 'rg_message() { exit 70; }' >"$TMP_ROOT/before/lib/diagnostics.sh"
+printf '%s\n' 'rg_setting() { exit 70; }' >"$TMP_ROOT/before/lib/settings.sh"
 chmod +x "$TMP_ROOT/before/pr-watch.sh"
 
 pass_cost() { # PRS [PAGES] [NAMED] sets COST, GH_CALLS, JQ_CALLS, OUT

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# The review-gate reducer pass of oversee-watch: pr-watch over the item
+# The github skill's reducer pass of oversee-watch: pr-watch over the item
 # repository and ORCH_CONNECTED_REPOS, each repo's rising edge against its
 # own persisted baseline, and the full heartbeat output. Sourced by
 # oversee-watch, and like the rest of its lib/ it reads that script's globals

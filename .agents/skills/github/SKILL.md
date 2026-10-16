@@ -1,11 +1,11 @@
 ---
 name: github
-description: "Load to work a GitHub pull request: threads, comments, reviews, CI logs, merges."
-summary: "GitHub API CLI for pull requests: threads, comments, reviews, CI logs, merging, and cross-PR analysis."
+description: "Load to work or watch GitHub pull requests: threads, comments, reviews, CI logs, merges."
+summary: "GitHub API CLI for pull requests: threads, comments, reviews, CI logs, merging, cross-PR analysis and an attention watcher."
 license: MIT
 user-invocable: true
 dependencies:
-  optional: [review-gate, harness-ci]
+  optional: [harness-ci]
 metadata:
   author: vanillagreen
   source: kendex
@@ -22,7 +22,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 <!-- kendex:shared-instructions:end -->
 <!-- kendex:project-instructions:end -->
 
-# GitHub Queries
+# GitHub pull requests
 
 ```bash
 .agents/skills/github/scripts/github.sh [-C <path>] <command> [options]
@@ -66,7 +66,7 @@ Contracts: `label-add --help`, `edit-comment --help`, `git-https-auth --help`, `
 
 The `pr-merge` readiness check blocks only on contexts the base branch requires, read from its rulesets and classic protection. Required workflows contribute check identities from their current completed runs on the head, executed in the consumer repository. Workflow file metadata must prove the source repository, path and configured revision. Distinct source definitions cannot share an execution. Classic required contexts remain name-based. A red check outside that set is a `ci_optional_failed:` warning, matching what GitHub itself merges over. A required context that has registered no check on the head is `ci_pending: <context> (missing)`. Optional pending or queued checks hold neither the merge nor the required-only CI wait. A pending required workflow or unregistered workflow jobs hold as ci_pending. Unreadable workflow evidence refuses as ci_fetch_failed, even when every visible job passes. A failed required workflow holds as ci_failed. Other unreadable protection, unnameable rule types and a base that requires nothing count every check. `--check`, the immediate merge and `--auto` run that readiness check; `ci-classify-refusal` reads the same required set. The orch `ci-wait` waiter counts every red check by default; `ci-wait --required-only`, which orch `queue-wait` runs, applies the same required set.
 
-Full contract: `pr-merge --help`. Exit `75` is volatile: the caller arms one exact head and waits on that head with the orch skill's `queue-wait`, whose `--help` § Verdicts maps each verdict to a route; an unrecognized verdict is never re-armed. With the review-gate skill installed, its watcher output contract is `pr-watch.sh --help`. If `can_merge` is false with no `issues`, read `state`. `pr-merge` resolves no review thread. The readiness check each call runs (`--check`, the merge and the `--auto` arm) runs the reply check below, which holds at that moment and no later: `--auto` arms nothing while the check fails, and `pr-merge` does not read again a PR armed before its replies existed while it stays armed or queued. `--auto` refuses with `arm: no-merge-gate=required_approval`, `required_thread_resolution` or `dismiss_stale_reviews` where the base's rulesets do not require an approval, thread resolution and stale-approval dismissal, because GitHub would merge that armed PR before any review, past an open thread, or on an approval of an earlier head; the rule is `pr-merge --help` § Approvals and review threads. On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`, except on an admin route without `--queue`: where the route below reads admin, it arms nothing and exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line. The immediate merge first reads its route under the merge's own token and names it on a `merge-route:` line: where the merge queue is all `--admin` would skip and the harness-ci skill's `change-class` reads the PR not queue-only, it merges with `--admin` bound to the verified head and exits `0`; any other answer passes `--auto`, which enrolls the PR, and exits `75`, since GitHub refuses a merge on a queue base that passes neither `--auto` nor `--admin`. GitHub still holds an admin merge to every other ruleset. Each condition of the admin route and each queue `cause=`: `pr-merge --help` § Merge route. The merge method is the one the base branch allows, read from GitHub; the admin route merges past the queue, so it takes a method a direct merge allows, and takes the queue where there is none. `--delete-branch` deletes the head only where the repository's `delete_branch_on_merge` is off and the head is not a fork's: `pr-merge --help` § Merge method and § Branch deletion.
+Full contract: `pr-merge --help`. Exit `75` is volatile: the caller arms one exact head and waits on that head with the orch skill's `queue-wait`, whose `--help` § Verdicts maps each verdict to a route; an unrecognized verdict is never re-armed. If `can_merge` is false with no `issues`, read `state`. `pr-merge` resolves no review thread. The readiness check each call runs (`--check`, the merge and the `--auto` arm) runs the reply check below, which holds at that moment and no later: `--auto` arms nothing while the check fails, and `pr-merge` does not read again a PR armed before its replies existed while it stays armed or queued. `--auto` refuses with `arm: no-merge-gate=required_approval`, `required_thread_resolution` or `dismiss_stale_reviews` where the base's rulesets do not require an approval, thread resolution and stale-approval dismissal, because GitHub would merge that armed PR before any review, past an open thread, or on an approval of an earlier head; the rule is `pr-merge --help` § Approvals and review threads. On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`, except on an admin route without `--queue`: where the route below reads admin, it arms nothing and exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line. The immediate merge first reads its route under the merge's own token and names it on a `merge-route:` line: where the merge queue is all `--admin` would skip and the harness-ci skill's `change-class` reads the PR not queue-only, it merges with `--admin` bound to the verified head and exits `0`; any other answer passes `--auto`, which enrolls the PR, and exits `75`, since GitHub refuses a merge on a queue base that passes neither `--auto` nor `--admin`. GitHub still holds an admin merge to every other ruleset. Each condition of the admin route and each queue `cause=`: `pr-merge --help` § Merge route. The merge method is the one the base branch allows, read from GitHub; the admin route merges past the queue, so it takes a method a direct merge allows, and takes the queue where there is none. `--delete-branch` deletes the head only where the repository's `delete_branch_on_merge` is off and the head is not a fork's: `pr-merge --help` § Merge method and § Branch deletion.
 
 ### Review reply check
 
@@ -91,7 +91,15 @@ github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 
 Read a pull request's merge time from `mergedAt`. An approval or a "merging" notice does not establish that time. Read its queue entry through a GraphQL query for `pullRequest { mergeQueueEntry { position } }`; `gh pr view --json` exposes no `mergeQueueEntry` field.
 
-**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge: read `state`, which `pr-merge --check` carries. For a PR whose merge state GitHub is still computing, follow the orch skill's `merge-pr.md` § 5 step 1 explicit arm path. The route contract is `pr-merge --help` § Merge route. To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions. Use the review-gate skill's reducer when installed (`.agents/skills/review-gate/scripts/pr-watch.sh`).
+**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge: read `state`, which `pr-merge --check` carries. For a PR whose merge state GitHub is still computing, follow the orch skill's `merge-pr.md` § 5 step 1 explicit arm path. The route contract is `pr-merge --help` § Merge route. To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions: see *Watching pull requests*.
+
+### Watching pull requests
+
+```bash
+GH_REPO=OWNER/REPO .agents/skills/github/scripts/pr-watch.sh [PR# ...]
+```
+
+Run it through the harness's wake-up mechanism. It reduces every open pull request, or the named ones, to attention lines read from GitHub's review state, and prints nothing for a healthy one. Read its attention lines rather than watching review-state transitions. Attention kinds, output format, exit codes and settings: `pr-watch.sh --help`. Which pull requests draw an automatic review, and what to do when none arrives: [references/automatic-review.md](references/automatic-review.md).
 
 ## Output Formats
 

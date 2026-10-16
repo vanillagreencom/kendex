@@ -44,8 +44,3 @@ REVIEW_GATE_STANDARD_QUEUE_BYPASS = ""
 # The same, for a ruleset that holds the required status checks rule alone.
 # Every other ruleset admits no bypass actor.
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
-
-# Seconds to wait for a review before the waiting step gives up. Whole
-# seconds only, at most nine digits; anything else fails loudly. The
-# orchestration package reads the same number.
-PR_REVIEW_WAIT_SECS = "900"

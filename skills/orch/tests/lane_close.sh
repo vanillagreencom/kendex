@@ -89,7 +89,10 @@ pane_write() {
   printf '%s\n' "$5" >"$LANE_CLOSE_COPILOT_INPUT"
 }
 EOF
-ln -s "$TEST_DIR/../../github" "$FIXTURE/skills/github"
+# A directory, not a link to the github skill: the reducer stub below takes
+# the watcher's place in it. The libraries are the real ones.
+mkdir -p "$FIXTURE/skills/github/scripts"
+ln -s "$TEST_DIR/../../github/scripts/lib" "$FIXTURE/skills/github/scripts/lib"
 cp "$TEST_DIR/../scripts/lib/gh-repo.sh" "$SCRIPTS/lib/"
 cp "$TEST_DIR/../scripts/lib/kendex-env.sh" "$SCRIPTS/lib/"
 cp "$TEST_DIR/../scripts/orch-env" "$SCRIPTS/orch-env"
@@ -332,12 +335,11 @@ printf 'state=stopped units=0 groups=0\n'
 EOF
 chmod +x "$SCRIPTS/dev-validate-run"
 
-# The review-gate reducer the park judge asks: LANE_CLOSE_PRWATCH_RC is its
+# The github skill's reducer the park judge asks: LANE_CLOSE_PRWATCH_RC is its
 # exit status and LANE_CLOSE_PRWATCH_OUT a file holding its attention lines;
 # every call's argv and GH_REPO land in the call log.
 export LANE_CLOSE_PRWATCH_CALLS="$TMP_ROOT/prwatch-calls"
-mkdir -p "$FIXTURE/skills/review-gate/scripts"
-PR_WATCH_STUB="$FIXTURE/skills/review-gate/scripts/pr-watch.sh"
+PR_WATCH_STUB="$FIXTURE/skills/github/scripts/pr-watch.sh"
 cat >"$PR_WATCH_STUB" <<'EOF'
 #!/usr/bin/env bash
 printf '%s repo=%s\n' "$*" "${GH_REPO-unset}" >>"$LANE_CLOSE_PRWATCH_CALLS"
@@ -2197,7 +2199,7 @@ write_state running codex /host linear owner/repo; write_panes python; working_s
 run_close "$SCRIPT" --park --pr 7
 mv -- "$PR_WATCH_STUB.away" "$PR_WATCH_STUB"
 assert_eq "rc=$RC refused=$(grep -c "^lane-close: park-refused item=KEN-1 reason=reducer-missing path=" <<<"$ERR" || true) stop=$(stop_count KEN-1 codex) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 refused=1 stop=0 status=running' 'a fleet without the review-gate reducer parks nothing'
+  'rc=1 refused=1 stop=0 status=running' 'a fleet without the github reducer parks nothing'
 # The judge runs before the stop, so a refused park is the provider's check,
 # one gh view, one queue read, no reducer call and no stop at all.
 write_state running codex /host linear owner/repo; write_panes python; working_screen

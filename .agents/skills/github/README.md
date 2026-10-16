@@ -1,4 +1,4 @@
-# GitHub Queries
+# GitHub pull requests
 
 A CLI for GitHub pull requests, reviews and CI results. Coding agents can read PR state, reply to findings and submit permitted changes from the shell.
 
@@ -10,6 +10,7 @@ A CLI for GitHub pull requests, reviews and CI results. Coding agents can read P
 - Check merge requirements and merge eligible PRs.
 - Check, live before a merge, that review replies name an issue or a reason.
 - Compare PR branches for conflicts and dependencies.
+- Report open pull requests that need attention.
 - Run Git over HTTPS with the caller's GitHub authentication.
 
 ## Install
@@ -21,6 +22,8 @@ kendex add vanillagreencom/kendex --skill github
 ## How it works
 
 You run a command through `scripts/github.sh`. The CLI reads your project settings and selects the configured GitHub credentials. It calls GitHub and returns the requested result. Write commands report the outcome of the requested action.
+
+The pull-request watcher, `scripts/pr-watch.sh`, reads GitHub's review state. It reports open threads, objections, approved pull requests that nothing will merge, and approvals that do not arrive within the wait period. It also reports an unapproved lanes-app refresh as soon as that head's CI aggregate passes.
 
 ## Setup
 
@@ -38,6 +41,7 @@ Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in 
 | `KENDEX_GITHUB_OP_TIMEOUT` | Seconds allowed for `op read` | `10` |
 | `KENDEX_GITHUB_AUTH_TIMEOUT` | Seconds allowed for the `pr-view` auth preflight | `10` |
 | `KENDEX_GITHUB_PR_VIEW_TIMEOUT` | Seconds allowed for `gh pr view` | `30` |
+| `PR_REVIEW_WAIT_SECS` | Watcher quiet period before an absent approval needs attention | `900` |
 | `KENDEX_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never` or `always` for `git-https-auth` | `auto` |
 
 The three timeouts are read to one decimal place; `0` means no bound, and a finer figure is refused rather than rounded.

@@ -12,9 +12,13 @@ Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags
 
 Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound. Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with the orch waiters. Check-rollup run scoping is `scripts/lib/ci-run-correlation.sh`, shared with orch `ci-wait`. The process-group leader prefix every bounded child forks through is `scripts/lib/group-leader.sh`, shared with the second-opinion runtime, reviewer's `mutation-stability`, orch's `scripts/lib/job-unit.sh attach`, and orch's `tests/waiter_launch.sh`, which takes it for the signal restore rather than for group leadership; all three skills declare `github` required for it.
 
+## Pull-request watcher
+
+`scripts/pr-watch.sh` stands outside the router: orch's `oversee-watch` and `lane-close` run it by path, and their `OVERSEE_WATCH_PR_WATCH` names a replacement. It reads `PR_REVIEW_WAIT_SECS` through `scripts/lib/kendex-env.sh` in a subshell, so the project files set nothing else in the watcher. Its stdout lines are the protocol those callers parse; `pr-watch.sh --help` states it.
+
 ## Tests
 
-`tests/` holds one self-contained suite per file; CI runs each as `bash <file>`. `tests/corpus/` is the contract for the decline grammar in `scripts/commands/check-review-replies.sh`: a new label goes into a corpus file first, and the word list widens until `tests/check-review-replies-threads.test.sh` passes.
+`tests/` holds one self-contained suite per file; CI runs each as `bash <file>`. The watcher suites share `tests/lib/pr-watch-fixture.sh`, and `tests/pr-watch-process.test.sh` also sources orch's `tests/lib/process-count.sh`. `tests/corpus/` is the contract for the decline grammar in `scripts/commands/check-review-replies.sh`: a new label goes into a corpus file first, and the word list widens until `tests/check-review-replies-threads.test.sh` passes.
 
 ## Declaration-site test scoping (`git-diff-summary`)
 

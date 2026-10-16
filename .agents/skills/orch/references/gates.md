@@ -46,7 +46,7 @@ A wait is a running waiter, never a session sitting at its prompt.
 
 ## Stacked pull requests
 
-`approval-wait` returns `unreviewable` (exit 1) when the deadline passes with no reviewer evidence and the PR's base sits outside the target set of the repo's automatic-review rulesets. Nothing was going to arrive on its own. Which bases draw an automatic review is per-repo configuration, read from the repo's rulesets: the review-gate skill's `.agents/skills/review-gate/references/automatic-review.md`.
+`approval-wait` returns `unreviewable` (exit 1) when the deadline passes with no reviewer evidence and the PR's base sits outside the target set of the repo's automatic-review rulesets. Nothing was going to arrive on its own. Which bases draw an automatic review is per-repo configuration, read from the repo's rulesets: the github skill's `.agents/skills/github/references/automatic-review.md`.
 
 Work the chain in this order:
 
@@ -67,4 +67,4 @@ All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's he
 
 ## Multi-PR watching
 
-The waiters above are single-PR blocking waits. For many PRs across a long horizon, the review-gate skill (optional dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract in `pr-watch.sh --help`. Orch consumes it through `oversee-watch` when the script is installed. Each pass reads GitHub's review state for every open PR, its unresolved threads, `reviewDecision`, auto-merge arm and merge-queue entry, and writes nothing. The fallback without it is per-PR `approval-wait`/`queue-wait`. `queue-wait` watches only the one PR it is given and only while it runs, so the fallback gives no standing view across PRs and no `awaiting-stale` report. A PR that no waiter watches warrants a manual read of `gh pr view [N] --json reviewDecision,autoMergeRequest` and its queue entry.
+The waiters above are single-PR blocking waits. For many PRs across a long horizon, the github skill ships `scripts/pr-watch.sh`, a needs-attention reducer — contract in `pr-watch.sh --help`. Orch consumes it through `oversee-watch` when the script is installed. Each pass reads GitHub's review state for every open PR, its unresolved threads, `reviewDecision`, auto-merge arm and merge-queue entry, and writes nothing. The fallback without it is per-PR `approval-wait`/`queue-wait`. `queue-wait` watches only the one PR it is given and only while it runs, so the fallback gives no standing view across PRs and no `awaiting-stale` report. A PR that no waiter watches warrants a manual read of `gh pr view [N] --json reviewDecision,autoMergeRequest` and its queue entry.

@@ -114,7 +114,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 
 Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path. Waiter and gate semantics, including the `3` exit on hard auth failure and reading the effective gate mode (`approval`, `off`) only through `approval-wait --resolve-mode`: [references/gates.md](references/gates.md). Artifact checks: [references/artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) (review/QA findings).
 
-**Multi-PR watching.** Never hand-roll a monitor. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it (oversee: through `oversee-watch`); otherwise per-PR `approval-wait`/`queue-wait`.
+**Multi-PR watching.** Never hand-roll a monitor. When `.agents/skills/github/scripts/pr-watch.sh` exists, run it (oversee: through `oversee-watch`); otherwise per-PR `approval-wait`/`queue-wait`.
 
 **`workflow-state`.** Run it with no arguments for the action reference, and read `workflow-state --help` § Keys for the state-key forms.
 

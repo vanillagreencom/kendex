@@ -211,7 +211,7 @@ The long pass's events, checked and reported in this order:
                              nothing; a session with no Stop row after the
                              record gets no such judgement. Emitted every long
                              pass it stands
-  EVENT pr-watch rc=N        new review-gate attention; only rising-key lines follow
+  EVENT pr-watch rc=N        new pr-watch attention; only rising-key lines follow
                              refresh-ready wakes on the opening pass and
                              once per new head, including without a lane
   EVENT merged <PR> <branch> <repo>

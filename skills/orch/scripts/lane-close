@@ -122,7 +122,7 @@ message() { # REASON FIELD=VALUE...
         '  queue-read-failed the merge queue could not be asked whether it holds the pull request; gh api graphql'"'"'s own words are on the lines above this one.' \
         '  not-armed         the pull request is neither in the merge queue nor auto-merge armed, so nothing will merge it while the lane is away.' \
         '  merge-state       the pull request is armed and not queued, and GitHub reports the state named: only CLEAN, every required check green on the head and nothing else blocking, admits a park there. A push after the arm, a running check or a red one all read otherwise. A queued pull request is admitted on the queue'"'"'s own judgement and this state is not read for it.' \
-        '  reducer-missing   the review-gate reducer pr-watch.sh is not installed beside this skill, and the review and thread reading is its alone.' \
+        '  reducer-missing   the github skill'"'"'s reducer pr-watch.sh is not installed beside this skill, and the review and thread reading is its alone.' \
         '  attention         the reducer prints attention for this pull request, kinds= naming what: an open thread, a standing objection, an approval that has not come. The lane is still needed.' \
         '  reducer-failed    the reducer could not evaluate the pull request; its own words are on the lines above this one.' ;;
     park-failed)
@@ -279,7 +279,7 @@ lane's checked-out branch and head; the merge queue holds it, read through gh ap
 isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
 armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
 every required check green on the current head and nothing else blocking; and
-it gets no attention line from the review-gate reducer pr-watch.sh, whose
+it gets no attention line from the github skill's reducer pr-watch.sh, whose
 silence means no open thread, no objection and no disarmed or stale-review
 line; pr-watch.sh --help holds the exact condition. The silence is no proof of
 approval, since an unapproved PR inside its quiet period is silent too: the
@@ -292,7 +292,7 @@ entry by then, so autoMergeRequest is null for the whole wait; the merge state i
 alone. A lane still inside a CI or gate wait after a push is neither queued
 nor CLEAN, or gets an attention line, and is never parked. The reducer is the
 one OVERSEE_WATCH_PR_WATCH names, as it is for oversee-watch, and the
-review-gate skill beside this one otherwise. Admitted, the park ends the
+github skill's watcher beside this one otherwise. Admitted, the park ends the
 harness by signal as a close does,
 whatever the lane is doing, waits for its pane to read exited, closes the
 window, then stops the sandbox through lane-host stop-sandbox and requires its
@@ -810,14 +810,14 @@ fi
 # away, the queue's own membership standing for every required check green
 # since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
 # same for an armed pull request outside the queue, and both standing for the
-# approval the base requires; and the review-gate reducer, whose silence means no open thread, no
+# approval the base requires; and the github skill's reducer, whose silence means no open thread, no
 # objection and no disarmed or stale-review line (pr-watch.sh --help holds the
 # exact condition), never an approval. Nothing here counts a check or a thread
 # itself. Each refusal names the
 # condition it stopped on and changes nothing.
 # Dependency parks use only the provider, OPEN dependency and lane evidence.
 # PARK_HEAD and PARK_REPO carry what the record will hold.
-PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"
+PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../github/scripts/pr-watch.sh}"
 PARK_QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }'
 # The queue answer as a word: a payload without the boolean is unparsed.
 PARK_QUEUE_JQ='.data.repository.pullRequest | if (.isInMergeQueue | type) != "boolean" then error("queue-field field=isInMergeQueue") elif .isInMergeQueue or .mergeQueueEntry != null then "yes" else "no" end'

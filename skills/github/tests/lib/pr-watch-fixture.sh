@@ -2,6 +2,11 @@
 # Neutral offline watcher world shared by the reduction and input suites.
 set -euo pipefail
 
+# The watcher reads settings at the git root of its working directory. A
+# suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which would answer the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 SKILL_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d)" || { echo 'pr-watch: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pr-watch: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -21,12 +26,11 @@ assert_eq() {
 }
 
 # Sandbox: the real pr-watch and its libraries, beside nothing else: the
-# reducer reads GitHub alone, so a call to any other review-gate script fails
+# reducer reads GitHub alone, so a call to any other github script fails
 # here for want of the file.
 mkdir -p "$TMP_ROOT/scripts/lib" "$TMP_ROOT/bin" "$TMP_ROOT/cwd"
 cp "$SKILL_ROOT/scripts/pr-watch.sh" "$TMP_ROOT/scripts/"
-cp "$SKILL_ROOT/scripts/lib/settings.sh" "$SKILL_ROOT/scripts/lib/diagnostics.sh" \
-  "$SKILL_ROOT/scripts/lib/refresh-identity.sh" "$TMP_ROOT/scripts/lib/"
+cp "$SKILL_ROOT/scripts/lib/kendex-env.sh" "$SKILL_ROOT/scripts/lib/refresh-identity.sh" "$TMP_ROOT/scripts/lib/"
 chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 
 # Parametrized gh stub. It answers the watcher's three GraphQL reads (the
@@ -255,18 +259,20 @@ P7="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"
 
 # --- harness -----------------------------------------------------------------
 
-# run_watch ENV FLAGS... — runs the sandboxed pr-watch with the stub PATH and
-# GH_REPO set; ENV is a semicolon-separated list of `env` arguments (JSON
-# values carry commas). OUT is stdout and stderr together, the way the
-# scheduler sees it; RC the exit status.
+# run_watch ENV FLAGS... — runs the sandboxed pr-watch from WATCH_CWD with
+# the stub PATH and GH_REPO set; ENV is a semicolon-separated list of `env`
+# arguments (JSON values carry commas). OUT is stdout and stderr together, the
+# way the scheduler sees it; RC the exit status. The default WATCH_CWD is in
+# no git repository, so no project settings reach the watcher.
 WATCH_BIN="$TMP_ROOT/scripts/pr-watch.sh"   # a mutant row swaps this
 LIVE_WATCH="$WATCH_BIN"
+WATCH_CWD="$TMP_ROOT/cwd"
 run_watch() {
   local env_list="$1" env_args=()
   shift
   [[ -z "$env_list" ]] || IFS=';' read -ra env_args <<<"$env_list"
   set +e
-  OUT=$(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+  OUT=$(cd "$WATCH_CWD" && PATH="$TMP_ROOT/bin:$PATH" \
     env GH_REPO=acme/widgets ${env_args[@]+"${env_args[@]}"} "$WATCH_BIN" "$@" 2>&1)
   RC=$?
   set -e
@@ -301,7 +307,7 @@ observe() {
         value="${value//$'\n'/;}"
         value="${value// /+}" ;;
       diagnostic)
-        value="$(sed -n '/^review-gate-/p' <<<"$OUT")"
+        value="$(sed -n '/^pr-watch: /p' <<<"$OUT")"
         value="${value// /+}" ;;
       error_payload)
         value="$(awk -F'\t' '$3 == "error" {print}' <<<"$OUT")"

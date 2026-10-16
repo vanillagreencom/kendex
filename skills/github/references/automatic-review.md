@@ -1,0 +1,37 @@
+# Automatic review and the base branch
+
+Which pull requests draw GitHub's automatic Copilot review, and what to do when one does not. The watcher reports review state and never requests a review.
+
+## What arms the reviewer
+
+A repository's automatic reviewer is configuration in its branch rulesets, not GitHub behaviour. Read a repo's own set with `gh api --paginate 'repos/<owner>/<repo>/rulesets?includes_parents=true'`, then the detail of each `target: "branch"`, `enforcement: "active"` entry through `gh api repos/<owner>/<repo>/rulesets/<id>`. An organization ruleset reaches that list only through `includes_parents=true`, and its entry reads `source_type: "Organization"`.
+
+Two rule types arm a reviewer:
+
+- A `copilot_code_review` rule is GitHub's native automatic review, described in the table below.
+- A `workflows` rule requires a workflow that requests the reviewer itself. Its parameters name the workflow's repository, path, ref and commit. Read that workflow to learn which pull requests it requests a review on. The review-gate skill's `references/adoption.md` § Central Copilot request workflow describes one such workflow.
+
+| Fact | Value |
+|---|---|
+| Arming mechanism | an active branch ruleset carrying a rule of type `copilot_code_review` |
+| Set of bases that draw a review | the union over every such ruleset: a base draws one when a ruleset's `conditions.ref_name.include` covers it and the same ruleset's `exclude` does not |
+| Pattern forms | `~ALL` (every branch), `~DEFAULT_BRANCH` (the repo default), any other pattern matched against `refs/heads/<base>` by `File.fnmatch` with `File::FNM_PATHNAME`, so `*` does not match `/` |
+| Re-review on a new head | the rule's `review_on_push` parameter |
+| Draft pull requests | the rule's `review_draft_pull_requests` parameter |
+
+The target set is per-repo configuration. A ruleset whose `conditions.ref_name.include` is `["~DEFAULT_BRANCH"]` reviews only pull requests based on the default branch, so a stacked pull request draws no automatic review. A repo whose ruleset targets more branches reviews stacked pull requests.
+
+## When no review arrives
+
+| Situation | Action |
+|---|---|
+| The base is outside the target set | when orch is present, request the reviewer through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
+| The request, after an `approval` answer or made directly, draws nothing | close the pull request and open a fresh one against the default branch |
+| The reviewer already reviewed this pull request once and a new review is needed | reopen it, which re-arms the reviewer |
+| The reviewer never reviewed this pull request | reopening does nothing. Only the manual request, or a new pull request against a targeted base, draws one |
+
+Evidence for the manual route: probe pull request `vanillagreencom/kendex#2527`, based on `ken-1329-probe-base`, which the ruleset does not target. `gh pr edit 2527 --add-reviewer @copilot` was accepted, and `copilot_work_started` followed 36 seconds later.
+
+## What the waiter reports
+
+Orch's `approval-wait` resolves the native target set once per wait and matches the pull request's `baseRefName` against it. It reads `copilot_code_review` rules only; on a base whose reviewer a `workflows` rule arms, its manual request route handles the base. It compares `~ALL`, `~DEFAULT_BRANCH` and literal refs only. A set holding any glob pattern (`*`, `?`, `[` or `\`) is `unresolved`, and so is a set behind a failed ruleset read other than a permission denial. Reviewer silence on a base outside the set is reported as status `unreviewable` (exit 1), and on an `unresolved` set as `timeout`; neither is the fail-open `proceeded`. Its JSON carries `base_ref`, `auto_review_targeted`, `auto_review_target_source` and `auto_review_targets`. Full contract: `approval-wait --help`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.

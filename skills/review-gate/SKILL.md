@@ -1,7 +1,7 @@
 ---
 name: review-gate
-description: "Load to watch pull requests, report the organization standard, or adopt consumer refresh."
-summary: "GitHub review-state reducer, organization-standard report, environment provisioning and consumer refresh."
+description: "Load to report the organization standard or adopt consumer refresh."
+summary: "Organization-standard report, environment provisioning and consumer refresh."
 license: MIT
 user-invocable: true
 dependencies:
@@ -17,11 +17,7 @@ tags: [review]
 
 # Review operations
 
-GitHub rulesets enforce approvals, stale-approval dismissal and review-thread resolution. This package watches pull requests, reports repository configuration and refreshes consumer installs. It posts no review status.
-
-## Watching pull requests
-
-Run `scripts/pr-watch.sh` through the harness's wake-up mechanism. Read its attention lines rather than watching review-state transitions. Output and exit codes: `pr-watch.sh --help`.
+GitHub rulesets enforce approvals, stale-approval dismissal and review-thread resolution. This package reports repository configuration and refreshes consumer installs. It posts no review status. The pull-request watcher is the github skill's `scripts/pr-watch.sh`.
 
 ## Organization standard
 
@@ -35,7 +31,7 @@ Consumers refresh on a schedule or a manual run. An organization managed by flee
 
 ## 4. Operations
 
-A pull request with no automatic review needs a Copilot request. When orch is present, request through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures: [references/automatic-review.md](references/automatic-review.md).
+A pull request with no automatic review needs a Copilot request. When orch is present, request through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures: the github skill's `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
 
 The overseer's fallback approval and emergency merge follow the managing repository's merge workflow. This package grants no bypass and changes no ruleset.
 
@@ -43,7 +39,6 @@ The overseer's fallback approval and emergency merge follow the managing reposit
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/pr-watch.sh` | Reduce open pull requests to attention lines from GitHub's review state. |
 | `scripts/validate-standard.sh` | Report rulesets, required checks, app installation and secret placement. |
 | `scripts/provision-environment.sh` | Provision the organization's declared app-secret environment. |
 | `refresh/adopt-refresh.sh` in the release checkout | Adopt the refresh workflow. `--retire-writer` opts into trusted retirement. |
