@@ -133,7 +133,7 @@ for row in \
   "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'sonnet' '/orch start CC-8 $UNATTENDED_TEXT'|a native claude alias uses its family budget" \
   "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=sonnet' '/orch start CC-10 $UNATTENDED_TEXT'|the attached form keeps the native claude alias" \
   "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7 $UNATTENDED_TEXT'|an older Sonnet uses the Sonnet family budget" \
-  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2. $UNATTENDED_TEXT'|codex disables the request_user_input feature after its update and compaction settings" \
+  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '-c' 'notice.hide_rate_limit_model_nudge=true' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2. $UNATTENDED_TEXT'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
   "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
   "opencode|-|CC-4|opencode --prompt '/orch start CC-4 $UNATTENDED_TEXT'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
@@ -232,7 +232,7 @@ QUESTION="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
 # The same command assertion above must reject each missing Codex setting and
 # a Codex-only hook flag in another harness. Mutations keep the row intact.
 CODEX_ROW="$(sed -n "/^  'codex|/p" "$SCRIPTS_DIR/lib/lane-launch.sh")"
-for word in '-c features.daemon_auto_start=false;' ';--dangerously-bypass-hook-trust'; do
+for word in '-c features.daemon_auto_start=false;' '-c notice.hide_rate_limit_model_nudge=true;' ';--dangerously-bypass-hook-trust'; do
   lead_control "$CODEX_ROW" "${CODEX_ROW/"$word"/}"
   launch CC-2 --harness codex
   assert_eq "$RC" 0 "control: the Codex launch reaches command construction"

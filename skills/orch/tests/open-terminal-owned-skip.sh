@@ -384,7 +384,7 @@ CMD_ARGS=()
 # Every codex command open-terminal builds leads with the launch-only setting
 # that keeps Codex off its startup update prompt, quoted per token as start_cmd
 # quotes each flag.
-CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust'"
+CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '-c' 'notice.hide_rate_limit_model_nudge=true' '--dangerously-bypass-hook-trust'"
 # And the words that turn codex's own compaction off, so a lane hands off at its
 # own mark first. Claude also disables compaction for the native default.
 CODEX_COMPACTION="'-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0'"
@@ -512,7 +512,7 @@ OT_CAPTURE="$TMP_ROOT/launch-codex.cmd" LANES_HOME="$SESSION_HOME" run_case laun
 await_file "$TMP_ROOT/launch-codex.cmd"
 # Launch flags that already name the setting do not add a second copy.
 OT_CAPTURE="$TMP_ROOT/launch-codex-flagged.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-flagged -- \
-  --harness codex --launch-flags "-c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust" CC-10
+  --harness codex --launch-flags "-c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust" CC-10
 await_file "$TMP_ROOT/launch-codex-flagged.cmd"
 for capture in launch-codex launch-codex-flagged resume-codex fresh; do
   assert_eq "$(occurrences "$(cat "$TMP_ROOT/$capture.cmd")" "$CODEX_SETTINGS")" "1" \
@@ -640,7 +640,7 @@ exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/mailbox/scripts/lane-mail inbox --item CC-1 and act on every envelope it prints, answers and directives alike, as its text directs."
-for row in "claude|claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" "codex|codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $UNATTENDED_TEXT"; do
+for row in "claude|claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" "codex|codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
@@ -841,7 +841,7 @@ WT_CC1="$TMP_ROOT/wt/CC-1"; mkdir -p "$WT_CC1"
 # the row.
 WAKE_HOME="$TMP_ROOT/wake-home"; mkdir -p "$WAKE_HOME/.claude/sessions"
 LIVE_RESUME_claude="claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT"
-LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT"
+LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT"
 
 # table_wake HARNESS [SCRIPT] — a HARNESS wake on CC-1 through SCRIPT, over the
 # table the caller staged. Nothing is started and nothing is waited for, so the

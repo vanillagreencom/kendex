@@ -55,6 +55,9 @@ WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jum
 # A dialog waiting on an answer: the selected numbered row, drawn with each
 # harness's marker, and Claude Code's question and key hints.
 LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
+# Codex's optional model-switch reminder blocks input without asking about
+# the work. Its account/config APIs cannot report a running terminal's dialog.
+RATE_LIMIT_SWITCH_RE='^[[:space:]]*Switch to .+ for lower credit usage[?][[:space:]]*$'
 # The account is spent. Claude Code opens the banner with "You've hit your
 # <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
@@ -1000,6 +1003,7 @@ lane_pane_capture() { # OUT_VAR MODE HOST ITEM PANE [history]
 #             shells
 #   walled    the current turn reports a failed login, or a usage wall
 #             that no ACCOUNT reading says has lifted
+#   rate-limit-switch  Codex's optional lower-credit model reminder is up
 #   asking    a dialog is up and waiting on an answer
 #   idle      the harness is at its input prompt with nothing in flight
 #   working   a turn is in flight
@@ -1148,6 +1152,9 @@ lane_state() {
       room) ;;
       *) printf -v "$_ls_out" unjudged; return 0 ;;
     esac
+  fi
+  if grep -Eq -- "$RATE_LIMIT_SWITCH_RE" <<<"$_ls_slice" && grep -Eq -- "$DIALOG_ROW_RE" <<<"$_ls_slice"; then
+    printf -v "$_ls_out" rate-limit-switch; return 0
   fi
   if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
   if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi

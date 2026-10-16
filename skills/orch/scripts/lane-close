@@ -155,6 +155,7 @@ request's merge and whose worktree, the record's mail_root, is gone, in a full
 close a record whose window no pane carries on a terminal item, or a record
 whose host kind declares stop=none, in any state, which the close ends on this
 machine alone (the stop=none paragraph below).
+Codex's rate-limit-switch reminder takes the same completion checks as idle.
 The lane's own close-out removes its worktree, so its idle lane closes
 as finished work. If a later failed check reopens the item, its files stay,
 and the host close passes no --merged, as for any item the tracker holds open.
@@ -1344,9 +1345,9 @@ fi
 
 case "$state" in
   exited | windowless) ;;
-  idle | unjudged)
+  idle | rate-limit-switch | unjudged)
     tracker_rc=1
-    if [[ "$state" == idle ]]; then
+    if [[ "$state" != unjudged ]]; then
       tracker_rc=0
       tracker_terminal || tracker_rc=$?
     elif [[ "$harness" != pi ]]; then

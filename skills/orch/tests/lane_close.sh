@@ -876,6 +876,25 @@ for row in 'claude|' 'codex|' 'pi|' 'claude|finish this later'; do
     'rc=0 stop=1 typed=0 kill=1 close=1 status=done' "a hosted $harness lane${draft:+ whose composer holds a draft} is stopped by its provider, then closed"
 done
 
+# A Codex model reminder permits the same completion proof as an idle lane.
+switch_close_row() { # SCRIPT TRACKER_TYPE
+  write_state running codex /host
+  write_panes codex
+  cp "$PANE_FIXTURES/codex-rate-limit-switch.txt" "$SCREEN"
+  LANE_CLOSE_TRACKER_STATE_TYPE="$2" run_close "$1"
+  SWITCH_CLOSE="rc=$RC stop=$(stop_count KEN-1 codex) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+for row in \
+  'completed|rc=0 stop=1 close=1 status=done' \
+  'started|rc=1 stop=0 close=0 status=running'; do
+  IFS='|' read -r tracker_type want <<<"$row"
+  switch_close_row "$SCRIPT" "$tracker_type"
+  assert_eq "$SWITCH_CLOSE" "$want" "a model reminder closes only with completion proof: $tracker_type"
+done
+SWITCH_CLOSE_MUTANT="$(mutant lane-close-switch '  idle | rate-limit-switch | unjudged)' '  idle | unjudged)')"
+switch_close_row "$SWITCH_CLOSE_MUTANT" completed
+assert_eq "$SWITCH_CLOSE" 'rc=1 stop=0 close=0 status=running' 'control: without reminder admission the completed lane stays open'
+
 # A local lane: the same stop, run here against the launch identity its record
 # names, ends the harness process itself.
 if proc_table_readable; then

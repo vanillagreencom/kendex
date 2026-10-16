@@ -6,6 +6,7 @@
 * -text
 skills/orch/tests/fixtures/oversee-watch/pi-current.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/orch/tests/fixtures/oversee-watch/pi-qol-idle.txt text eol=lf
+skills/orch/tests/fixtures/oversee-watch/codex-rate-limit-switch.txt text eol=lf
 skills/orch/tests/fixtures/oversee-watch/pi-import-confirm.txt text eol=lf whitespace=-blank-at-eol
 skills/orch/tests/fixtures/oversee-watch/pi-tree-confirm.txt text eol=lf whitespace=-blank-at-eol
 skills/orch/scripts/open-terminal text eol=lf

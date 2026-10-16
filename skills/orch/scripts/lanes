@@ -338,8 +338,10 @@
 #         fleet, and that row alone carries `caller: true` — the report says
 #         which row is the reader's session so no reader has to work it out.
 #   state  Print what the lane for <item> is doing, as the one word
-#          lib/lane-state.sh judges it to be: working, idle, asking, walled,
-#          exited or unjudged. <item> is the lane's tmux window name, which is
+#          lib/lane-state.sh judges it to be: working, idle, rate-limit-switch,
+#          asking, walled, exited or unjudged. rate-limit-switch adds a fix line
+#          on stderr to dismiss the reminder and keep the current model.
+#          <item> is the lane's tmux window name, which is
 #          the tracker id (TEAM-N) or gh-N; the SESSION:WINDOW form a lane
 #          record's `window` carries is accepted too, and names that window
 #          under exactly that session. Pass the record's `window` as it stands:
@@ -4538,6 +4540,9 @@ case "$SUB" in
 		ORCH_LANE_HOST="$state_host" lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" "$state_item" "$state_harness" "$state_source" \
 			|| lane_state_rc=$?
 		[[ "$lane_state_rc" -ne 2 ]] || die lane-scan-failed "$LANE_ARG"
+		if [[ "$LANE_STATE_ANSWER" == rate-limit-switch ]]; then
+			printf 'fix=item=%s state=rate-limit-switch; dismiss the Codex model-switch reminder and keep the current model; close the lane if its work is finished\n' "$LANE_ARG" >&2
+		fi
 		# A hosted lane's harness is on another machine, so `unjudged` here is
 		# "no pane on this server carries the name", never "the lane is dead".
 		# The provider is asked whether the host itself answers, and its answer

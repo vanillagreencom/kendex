@@ -90,6 +90,12 @@ screen_for() {
     capacity) cat "$CODEX_PANES/codex-model-capacity.txt" ;;
     codex_idle) cat "$CODEX_PANES/codex-idle-after-turn.txt" ;;
     codex_working) cat "$CODEX_PANES/codex-working.txt" ;;
+    # OpenAI Codex snapshot: codex-rs/tui/src/chatwidget/snapshots/
+    # codex_tui__chatwidget__tests__rate_limit_switch_prompt_popup.snap.
+    # Copied from upstream, not a capture of this sandbox's terminal.
+    rate_limit_switch) cat "$CODEX_PANES/codex-rate-limit-switch.txt" ;;
+    rate_limit_switch_history) screen_for rate_limit_switch; printf '\n› Continue the task\n'; screen_for codex_idle ;;
+    rate_limit_switch_quote) printf '%s\n' 'The report says: Switch to gpt-6-luna for lower credit usage?' '› 1. Review the report' ;;
     claude_dialog) cat "$CODEX_PANES/claude-dialog-permission.txt" ;;
     copilot_idle) sed -n '/^─/,$p' "$CODEX_PANES/copilot-idle.txt" ;;
     copilot_draft) sed -n '/^─/,$p' "$CODEX_PANES/copilot-composer-draft.txt" ;;
@@ -187,6 +193,10 @@ an account reading the judge has no word for is unjudged, never a lifted wall|li
 a room reading lifts nothing on a screen with no banner|listed|claude|100|working||room|working
 a dialog waiting on an answer is asking|listed|claude|100|asking|||asking
 a permission dialog is the same question|listed|claude|100|claude_dialog|||asking
+a Codex rate-limit switch reminder has its own state|listed|codex|100|rate_limit_switch|||rate-limit-switch
+the reminder blocks a busy session too|listed|codex|100|rate_limit_switch|busy||rate-limit-switch
+a previous turn reminder cannot block a finished turn|listed|codex|100|rate_limit_switch_history|||idle
+a report that quotes the reminder remains a work question|listed|codex|100|rate_limit_switch_quote|||asking
 a streaming token counter is a turn in flight|listed|claude|100|working|||working
 a codex turn in flight is the same answer|listed|codex|100|codex_working|||working
 a composer under a finished turn is idle|listed|claude|100|idle|||idle
@@ -211,6 +221,13 @@ a Pi pane without rows remains unjudged|listed|pi|100|pi_current_idle|||unjudged
 a pi-qol pane without rows remains unjudged|listed|pi|100|pi_qol_idle|||unjudged
 a Pi settings selector retains the shared asking answer|listed|pi|100|pi_settings|||asking
 ROWS
+
+# Keep the reminder text while disabling its classification. The fixture's
+# selected row must then reach the ordinary asking result.
+SWITCH_MUTANT="$(mutant_scripts rate-limit-switch lib/lane-state.sh)" || exit 1
+mutate_file "$SWITCH_MUTANT/lib/lane-state.sh" 'RATE_LIMIT_SWITCH_RE=' "RATE_LIMIT_SWITCH_RE='a^' RATE_LIMIT_SWITCH_RE_DISABLED="
+switch_control="$(source "$SWITCH_MUTANT/lib/lane-state.sh" && lane_state row_state listed codex 100 "$(screen_for rate_limit_switch)" && printf '%s' "$row_state")" || exit 1
+assert_eq "$switch_control" asking 'control: disabling reminder classification reaches asking'
 
 # A disabled classifier leaves the signed-out capture at the composer rung.
 # Both inputs came from the no-login KEN-1985 host, not a signed-in session.
@@ -1053,6 +1070,7 @@ CC-1|idle|local|0|idle rc=0 note=none
 CC-1|working|local|0|working rc=0 note=none
 CC-1|walled|local|0|walled rc=0 note=none
 CC-1|asking|local|0|asking rc=0 note=none
+CC-1|rate_limit_switch|local|0|rate-limit-switch rc=0 note=none
 CC-404|none|local|0|unjudged rc=0 note=none
 CC-404|none|local|1|unjudged rc=0 note=none
 CC-404|none|ssh|0|unjudged rc=0 note=none
@@ -1064,6 +1082,10 @@ kendex:CC-1|idle|local|0|idle rc=0 note=none
 fleet:CC-1|idle|local|0|unjudged rc=0 note=none
 kendex:CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 ROWS
+
+# The fix line is an operator remedy on stderr; state stdout stays machine-readable.
+assert_eq "$(verb_state CC-1 rate_limit_switch local 0)" 'rate-limit-switch rc=0 note=none' 'the reminder state reaches the command output'
+assert_eq "$(grep -c '^fix=item=CC-1 state=rate-limit-switch;' "$VERB_ERR" || true)" 1 'the reminder command emits a keyed fix line on stderr'
 
 # A window a running fleet record names as a Pi lane's answers from the rows
 # its hook wrote in its mailbox, never from its pane: each row stages a screen
