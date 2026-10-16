@@ -2905,7 +2905,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
 # substitution here is checked explicitly.
 launch_finish() {
   local context_session brief_prompt_file="" brief_prompt_dir brief_command_file rc=0
-  local gui_session="" gui_identity="" gui_flags="$LAUNCH_FLAGS" gui_waited=0
+  local gui_session="" gui_dir="" gui_owner="" gui_binding=false gui_flags="$LAUNCH_FLAGS" gui_waited=0
   LANE_MARKER_REASON=marker-failed
   if [[ "$host_pending_step" == selection ]]; then
     record_session="" LAUNCH_ALLOW_ALL=null
@@ -2948,12 +2948,13 @@ launch_finish() {
   # Claude's documented --session-id takes a UUID; transcript discovery cannot
   # distinguish this launch from another fresh session in the same worktree.
   if [[ "$FLEET" == true && "$LANE_HOST" == local && "$TERMINAL_MODE" != tmux && "$WAKE" != true && "$HARNESS" == claude && -z "$CMD_TEMPLATE" ]]; then
+    gui_binding=true
     if [[ -z "$record_session" ]]; then
-      gui_session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || return 1
+      command -v python3 >/dev/null 2>&1 || { ot_message launch-session-failed "item=$item" "step=uuid" "dependency=python3" "cause=missing" >&2; return 1; }
+      gui_session="$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+        || { ot_message launch-session-failed "item=$item" "step=uuid" "dependency=python3" "cause=failed" >&2; return 1; }
       gui_flags+=" --session-id $gui_session"
     fi
-    brief_prompt_dir="$(git -C "$wt" rev-parse --absolute-git-dir)" \
-      && gui_identity="$(mktemp "$brief_prompt_dir/gui-identity.XXXXXX")" || return 1
   fi
   if [[ "$WAKE" != true && -d "$wt" ]]; then
     context_session="${gui_session:-$record_session}"
@@ -3117,24 +3118,60 @@ launch_finish() {
   elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
     open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || { UNTAKEN_PANE="$LAUNCH_PANE"; return 1; }
   else
-    if [[ -n "$gui_identity" ]]; then
-      cmd="bash -c $(lane_single_quote '. "$1" && lane_identity_record "$2" && eval "$3"') gui $(lane_single_quote "$SCRIPT_DIR/lib/lane-state.sh") $(lane_single_quote "$gui_identity") $(lane_single_quote "$cmd")"
+    if [[ "$gui_binding" == true ]]; then
+      brief_prompt_dir="$(git -C "$wt" rev-parse --absolute-git-dir)" \
+        || { ot_message launch-identity-unread "item=$item" "step=gui" "cause=git-dir" >&2; return 1; }
+      gui_owner="$(lane_process_start "$$")" \
+        || { ot_message launch-identity-unread "item=$item" "step=gui" "cause=controller" >&2; return 1; }
+      gui_dir="$(mktemp -d "$brief_prompt_dir/gui-launch.XXXXXX")" \
+        || { ot_message launch-identity-unread "item=$item" "step=gui" "cause=scratch" >&2; return 1; }
+      # The starting shell waits for its recorded identity before the harness
+      # can emit callbacks. Removing this private directory cancels a late
+      # terminal; the verified controller lifetime bounds the shell's wait.
+      cmd="bash -c $(lane_single_quote '
+        . "$1" || exit 1
+        gui_dir=$2
+        [[ -d "$gui_dir" ]] || exit 1
+        trap '\''rm -rf -- "$gui_dir"'\'' EXIT
+        lane_identity_record "$gui_dir/identity" || exit 1
+        while [[ -d "$gui_dir" && ! -e "$gui_dir/ready" ]]; do
+          lane_identity_status "$4" "$5" || [[ -e "$gui_dir/ready" ]] || exit 1
+          sleep 0.05
+        done
+        [[ -e "$gui_dir/ready" ]] || exit 1
+        rm -rf -- "$gui_dir" || exit 1
+        trap - EXIT
+        eval "$3"
+      ') gui $(lane_single_quote "$SCRIPT_DIR/lib/lane-state.sh") $(lane_single_quote "$gui_dir") $(lane_single_quote "$cmd") $$ $(lane_single_quote "$gui_owner")"
     fi
-    open_gui "$wt" "$title" "$cmd" || return 1
-    if [[ -n "$gui_identity" ]]; then
+    if ! open_gui "$wt" "$title" "$cmd"; then
+      [[ -z "$gui_dir" ]] || rm -rf -- "$gui_dir"
+      return 1
+    fi
+    if [[ -n "$gui_dir" ]]; then
       # The terminal may start asynchronously. Read only the identity this
       # launch owns, never another GUI process found by directory or name.
-      while [[ ! -s "$gui_identity" && "$gui_waited" -lt 10 ]]; do sleep 0.5; gui_waited=$((gui_waited + 1)); done
-      if lane_identity_read "$gui_identity" && lane_identity_status "$LANE_IDENTITY_PID" "$LANE_IDENTITY_START"; then
+      while [[ ! -s "$gui_dir/identity" && "$gui_waited" -lt 10 ]]; do sleep 0.5; gui_waited=$((gui_waited + 1)); done
+      if lane_identity_read "$gui_dir/identity" && lane_identity_status "$LANE_IDENTITY_PID" "$LANE_IDENTITY_START"; then
         LAUNCH_HARNESS_ID="$LANE_IDENTITY_PID $LANE_IDENTITY_START"
       else
-        ot_message launch-identity-unread "item=$item" "step=gui" >&2
+        ot_message launch-identity-unread "item=$item" "step=gui" "cause=startup" >&2
+        rm -rf -- "$gui_dir"
+        return 1
       fi
-      rm -f -- "$gui_identity" || return 1
     fi
   fi
   [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
-  launch_record_finish
+  if ! launch_record_finish; then
+    [[ -z "$gui_dir" ]] || rm -rf -- "$gui_dir"
+    return 1
+  fi
+  if [[ -n "$gui_dir" ]] && ! : > "$gui_dir/ready"; then
+    ot_message launch-identity-unread "item=$item" "step=gui" "cause=release" >&2
+    rm -rf -- "$gui_dir"
+    return 1
+  fi
+  return 0
 }
 
 # Selection can be refused after the harness starts. Its continuation finishes
