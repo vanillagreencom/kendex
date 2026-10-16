@@ -13,11 +13,11 @@ control_replace scripts/lib/common.sh 1 \
     '    429) ;;' \
     '    429|400) ;;'
 
-# Drop the header read, so a rate limit names no time the quota refills.
+# Drop the raw request reset without changing the selected scheduling reset.
 control_expect "a rate limit names the Requests-Reset time"
 control_replace scripts/lib/common.sh 1 \
-    "        reset=\$(jq -rn --arg ms \"\$value\" '\$ms | tonumber / 1000 | floor | todate') || return 1" \
-    '        reset=unavailable'
+    '        (if $requests | test("^[0-9]{1,15}$") then ($requests | tonumber / 1000 | floor | todateiso8601) else "unavailable" end) as $raw_reset |' \
+    '        "unavailable" as $raw_reset |'
 
 # A request that reached no server fails on its first try.
 control_expect "an unanswered request is retried"

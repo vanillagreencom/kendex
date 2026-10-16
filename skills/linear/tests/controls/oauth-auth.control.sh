@@ -97,33 +97,33 @@ control_replace scripts/lib/auth.sh 1 \
 # The token has one store, the user's cache directory.
 control_expect 'unwritable cache dir: one mint serves both requests'
 control_replace scripts/lib/auth.sh 1 \
-    '    candidates+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")' \
+    '    _LINEAR_PRIVATE_PATHS+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")' \
     '    :'
 
-# With no HOME and no XDG_CACHE_HOME the pair refuses before the TMPDIR
-# directory is tried.
-control_expect 'no HOME: requests succeed'
+# With no HOME and no XDG_CACHE_HOME the shared path helper returns before
+# TMPDIR is tried, so requests mint without reusing a stored token.
+control_expect 'no HOME: one mint serves both requests'
 control_replace scripts/lib/auth.sh 1 \
-    '    [[ -z "$base" ]] || candidates+=("$base/kendex/linear-oauth")' \
-    '    [[ -n "$base" ]] || return 1; candidates+=("$base/kendex/linear-oauth")'
+    '    [[ -z "$base" ]] || _LINEAR_PRIVATE_PATHS+=("$base/kendex/linear-oauth")' \
+    '    [[ -n "$base" ]] || return 1; _LINEAR_PRIVATE_PATHS+=("$base/kendex/linear-oauth")'
 
 # A directory this session cannot write is still taken, so a revoked token
 # there is read ahead of the renewal it cannot hold.
 control_expect 'read-only cache dir: one mint across two invocations'
 control_replace scripts/lib/auth.sh 1 \
-    '        elif ! staged=$(mktemp "$candidate/.token.XXXXXX" 2>/dev/null); then' \
-    '        elif ! staged=$(mktemp "$candidate/.token.XXXXXX" 2>/dev/null) && false; then'
+    '        elif ! _LINEAR_PRIVATE_STAGE=$(mktemp "$candidate/.$prefix.XXXXXX" 2>/dev/null); then cause=not-writable' \
+    '        elif ! _LINEAR_PRIVATE_STAGE=$(mktemp "$candidate/.$prefix.XXXXXX" 2>/dev/null) && false; then cause=not-writable'
 
 # Any directory entry under TMPDIR is taken, a symlink included.
 control_expect 'symlink: each request carries its minted token'
 control_replace scripts/lib/auth.sh 1 \
-    '        elif [[ -L "$candidate" ]]; then' \
-    '        elif false; then'
+    '    if [[ -L "$1" ]]; then _LINEAR_PRIVATE_CAUSE=symlink' \
+    '    if false; then _LINEAR_PRIVATE_CAUSE=symlink'
 
 # The store-failure line drops each directory and its cause.
 control_expect 'symlink: stderr names each directory and its cause'
 control_replace scripts/lib/auth.sh 1 \
-    '        failed+=" dir=[$candidate] cause=$cause"' \
+    '        _LINEAR_PRIVATE_FAILURES+=" dir=[$candidate] cause=$cause"' \
     '        :'
 
 control_expect 'write-failed: stderr names each directory and its cause'
