@@ -1011,16 +1011,21 @@ repair_worktree_links() {
 # down, and the tracked content it hid is recreated from the index verbatim.
 # Callers re-apply setup afterwards, which re-links and re-marks the paths.
 #
-# No-op unless a configured entry actually shadows tracked files, so the
+# No-op unless a selected entry actually shadows tracked files, so the
 # ordinary runtime-only symlink case is left completely alone.
 unshadow_tracked_symlink_paths() {
   local wt="$1" path="" f="" checkout_err="" clear_rc=0
   local -a shadowed=() tracked=()
+  shift
   [[ -n "$wt" && -d "$wt" ]] || return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
-  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
-  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+  # Dropped entries name their paths explicitly so they share this restore.
+  if [[ "$#" -eq 0 ]]; then
+    split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+    set -- ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}
+  fi
+  for path in "$@"; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
     # NUL-delimited: a line-oriented list piped through xargs breaks on
     # filenames with spaces, tabs, or quotes, silently leaving their
@@ -1108,7 +1113,7 @@ setup_worktree_links() {
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
   if [[ -f "$exclude" ]]; then
     while IFS= read -r path || [[ -n "$path" ]]; do
-      [[ "$path" == /* ]] || continue
+      # Earlier releases wrote bare paths instead of root-anchored records.
       path="${path#/}"
       path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
       keep=false
@@ -1122,6 +1127,8 @@ setup_worktree_links() {
       [[ "$target" == "$PROJECT_ROOT/$path" ]] || continue
       ensure_worktree_path_safe "$wt" "$path" false || return 1
       rm -- "$wt/$path" || return 1
+      # Validation in the restore uses the shared config-word scratch array.
+      (unshadow_tracked_symlink_paths "$wt" "$path") || return 1
     done <"$exclude"
   fi
 

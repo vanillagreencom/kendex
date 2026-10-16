@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: create --reuse after WORKTREE_SYMLINKS drops a dependency path.
+# Surface: create --reuse after WORKTREE_SYMLINKS drops a path.
 # Inputs: worktree/scripts/worktree, its lib/, github/scripts/lib/.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -27,7 +27,8 @@ assert_eq() {
 
 reuse_row() {
   local kind="$1" path="$2" root="$3" main="$3/main" wt="$3/trees/reuse" rc=0 kept="" state=""
-  mkdir -p "$main/${path%node_modules}node_modules" "$root/foreign"
+  local record="${4:-anchored}" exclude=""
+  mkdir -p "$main" "$root/foreign"
   git -C "$main" init -q -b main
   git -C "$main" config user.email test@example.com
   git -C "$main" config user.name Test
@@ -35,7 +36,17 @@ reuse_row() {
   git -C "$main" config gc.auto 0
   git -C "$main" config maintenance.auto false
   printf '.env.local\nnode_modules\nui/node_modules\n' >"$main/.gitignore"
-  printf 'main\n' >"$main/$path/original"
+  case "$kind" in
+    tracked-file|tracked-link)
+      mkdir -p "$main/${path%/*}"
+      printf 'main\n' >"$main/target"
+      if [[ "$kind" == tracked-link ]]; then ln -s ../target "$main/$path"
+      else printf 'main\n' >"$main/$path"; fi
+      git -C "$main" add "$path" target
+      ;;
+    *) mkdir -p "$main/$path"; printf 'main\n' >"$main/$path/original" ;;
+  esac
+  if [[ "$kind" == tracked-dir ]]; then git -C "$main" add "$path/original"; fi
   git -C "$main" add .gitignore
   git -C "$main" commit -qm base
   git init -q --bare "$root/origin.git"
@@ -45,14 +56,36 @@ reuse_row() {
   git -C "$main" push -qu origin main
   printf 'WORKTREE_BASE_DIR="../trees"\nWORKTREE_SYMLINKS="%s"\n' "$path" >"$main/.env.local"
   (cd -- "$main" && "$WORKTREE_SCRIPT" create reuse >"$root/create.out" 2>"$root/create.err")
+  if [[ "$kind" == tracked-file ]]; then
+    rm -- "$wt/$path"
+    git -C "$wt" update-index --no-assume-unchanged -- "$path"
+    printf 'branch\n' >"$wt/$path"
+    git -C "$wt" add "$path"
+    git -C "$wt" commit -qm branch
+    (cd -- "$main" && "$WORKTREE_SCRIPT" fix-links "$wt" >"$root/fix.out" 2>"$root/fix.err")
+  elif [[ "$kind" == tracked-dir ]]; then
+    # Earlier releases linked whole directories over tracked descendants.
+    rm -- "$wt/$path/original"
+    rmdir -- "$wt/$path"
+    ln -s "$main/$path" "$wt/$path"
+    git -C "$wt" update-index --assume-unchanged -- "$path/original"
+  fi
   [[ -L "$wt/$path" ]] || { echo 'fixture: creation did not create a link' >&2; exit 2; }
+  if [[ "$record" == bare ]]; then
+    # Earlier exclude_from_worktree_index wrote this unanchored record.
+    exclude="$(git -C "$wt" rev-parse --git-path info/exclude)"
+    printf '%s\n' "$path" >"$exclude"
+  fi
   case "$kind" in
     real) rm -- "$wt/$path"; mkdir -p "$wt/$path"; printf 'private\n' >"$wt/$path/original" ;;
     foreign) rm -- "$wt/$path"; ln -s "$root/foreign" "$wt/$path" ;;
     configured) kept="$path" ;;
   esac
   printf 'WORKTREE_BASE_DIR="../trees"\nWORKTREE_SYMLINKS="%s"\n' "$kept" >"$main/.env.local"
-  printf "WORKTREE_SETUP_CMD='test ! -L %s && mkdir -p %s && printf setup > %s/setup'\n" "$path" "$path" "$path" >>"$main/.env.local"
+  case "$kind" in
+    tracked-file|tracked-dir|tracked-link) printf "WORKTREE_SETUP_CMD='test -e %s'\n" "$path" >>"$main/.env.local" ;;
+    *) printf "WORKTREE_SETUP_CMD='test ! -L %s && mkdir -p %s && printf setup > %s/setup'\n" "$path" "$path" "$path" >>"$main/.env.local" ;;
+  esac
   (cd -- "$main" && "$WORKTREE_SCRIPT" create reuse --reuse >"$root/out" 2>"$root/err") || rc=$?
   if [[ -L "$wt/$path" ]]; then state="link:$(readlink "$wt/$path")"
   elif [[ -d "$wt/$path" && -f "$wt/$path/setup" ]]; then state="private:$(cat "$wt/$path/setup")"
@@ -69,16 +102,36 @@ reuse_row() {
       assert_eq "$rc" 1 "$kind $path: setup refuses the link"
       assert_eq "$state" "link:$want" "$kind $path: link stays in place"
       ;;
+    tracked-file|tracked-dir|tracked-link)
+      local tracked="$path" want=branch
+      if [[ "$kind" == tracked-dir ]]; then tracked="$path/original"; want=main; fi
+      if [[ "$kind" == tracked-link ]]; then want=../target; fi
+      assert_eq "$rc" 0 "$kind $path: reuse restores committed content"
+      assert_eq "$(git -C "$wt" ls-files -v -- "$tracked")" "H $tracked" "$kind $path: assume-unchanged is cleared"
+      if [[ "$kind" == tracked-link ]]; then
+        assert_eq "$(readlink "$wt/$path")" "$want" "$kind $path: index symlink target stays"
+      else
+        assert_eq "$([[ ! -L "$wt/$path" ]] && cat "$wt/$tracked")" "$want" "$kind $path: index content is real"
+      fi
+      ;;
   esac
   [[ "$kind" != real ]] || assert_eq "$(cat "$wt/$path/original")" private "real $path: private data stays"
-  assert_eq "$(cat "$main/$path/original")" main "$kind $path: main data stays"
+  case "$kind" in
+    tracked-file|tracked-link) assert_eq "$(cat "$main/$path")" main "$kind $path: main data stays" ;;
+    *) assert_eq "$(cat "$main/$path/original")" main "$kind $path: main data stays" ;;
+  esac
   assert_eq "$(find "$root/foreign" -type f -print)" '' "$kind $path: foreign target stays empty"
 }
 
 # A consumer moves root or nested dependencies to its setup command.
-for path in node_modules ui/node_modules; do
-  for kind in stale real foreign configured; do
-    reuse_row "$kind" "$path" "$TMP_ROOT/${kind}-${path//\//-}"
+for record in anchored bare; do
+  for path in node_modules ui/node_modules; do
+    for kind in stale real foreign configured; do
+      reuse_row "$kind" "$path" "$TMP_ROOT/${record}-${kind}-${path//\//-}" "$record"
+    done
+  done
+  for kind in tracked-file tracked-link tracked-dir; do
+    reuse_row "$kind" "config/$kind" "$TMP_ROOT/${record}-${kind}" "$record"
   done
 done
 
