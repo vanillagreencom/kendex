@@ -10,7 +10,7 @@
 class KendexCli < Formula
   desc "Package manager for agents, skills, and hooks across AI coding tools"
   homepage "https://kendex.ai"
-  version "1.19.1"
+  version "1.19.2"
   # 1.0.0 follows 5.0.1, so the version number restarts. brew compares
   # this scheme before the number: an installed 5.x sits on scheme 0 and
   # reads as outdated, so `brew upgrade` reaches it. The Arch recipes
@@ -27,11 +27,11 @@ class KendexCli < Formula
   on_macos do
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-apple-darwin"
-      sha256 "fe3859394b5258b06a15c2b7fee6e1245b37adc3908175ade3ecd8b0031b0632"
+      sha256 "bf720d1c1fe581cc76da33e0477e1e5c38a90f5cfc534957b08dc6f30ceae19c"
     end
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-apple-darwin"
-      sha256 "8dfbfefa14164ea8b71048e2da3c43858198cf58cb7bd341cfffe4cd218e26fc"
+      sha256 "2801e4858b988badcebf04bb4fbeee7948dd940c92d26b683f0b9b0f0d26351a"
     end
   end
 
@@ -41,11 +41,11 @@ class KendexCli < Formula
 
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-unknown-linux-gnu"
-      sha256 "90944cb01c21b2fe3ccc4056272232858e58e9b4ba0448f99db6051924b5b41b"
+      sha256 "a7c49c9abfcbec60ce8afa5488dfa54d38a1f5370a1e4db4bbcdd51a7d494528"
     end
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-unknown-linux-gnu"
-      sha256 "790202223dfb53be9d63e03d22a29059bdfb8c16e8620fcea2d942942010d3a2"
+      sha256 "008451fc1451f1f536281af84d8aa5abab1fa7e11bd8a6f5f2f573f9ba3e02a9"
     end
   end
 
