@@ -631,6 +631,31 @@ lm send --item overseer --re "$ASK" --file "$(text a approve)"
 lm pending --item overseer --to owner
 assert_eq "$RC=$(jq -r '.id' <<<"$OUT")" "0=$ASK" "an owner answer leaves the draft ask pending"
 
+# Rewrite the caller's draft after jq emits the bytes used for the hash.
+# The recorded text must still be the text that was checked and hashed.
+draft_rewrite() {
+  local jq_bin
+  jq_bin="$(command -v jq)" || exit 1
+  mkdir -p "$TMP_ROOT/draft-bin"
+  cat > "$TMP_ROOT/draft-bin/jq" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+"$REAL_JQ" "$@"
+if [[ "${1:-}" == -j ]]; then
+  printf '%s' '{"recipient":"r","medium":"email","text":"Changed."}' > "$REWRITE_DRAFT"
+fi
+SHIM
+  chmod +x "$TMP_ROOT/draft-bin/jq"
+  local draft
+  draft="$(draft_file rewrite "$DRAFT_JSON")" || exit 1
+  PATH="$TMP_ROOT/draft-bin:$PATH" REAL_JQ="$jq_bin" REWRITE_DRAFT="$draft" draft_ask "$draft"
+  assert_eq "$RC=${OUT%%=*}" "0=id" "a draft rewritten during hashing still lands"
+  assert_eq "$(field "$draft" '.text')" "Changed." "the jq shim rewrote the caller's draft"
+  assert_draft_text "$DRAFT_BYTES"
+}
+new_repo draft_rewrite
+draft_rewrite
+
 new_repo draft_media
 for medium in slack-thread email; do
   draft_ask "$(draft_file "$medium" '{"recipient":"r","medium":"'"$medium"'","text":"Ship it."}')"
@@ -1250,8 +1275,18 @@ mutant draft-argv '--slurpfile draft "$DRAFT_RECORD"' '--argjson draft "[$(cat -
 draft_ask "$TMP_ROOT/large.json"
 assert_eq "$RC=${ERR%%=*}" "2=lane-mail: write-failed" "control: a draft record carried on jq's argv refuses the large draft"
 
+new_repo control_draft_rewrite
+mutant draft-record-reread "'{recipient, medium, text, text_hash: \$hash}' -- \"\$draft_copy\"" "'{recipient, medium, text, text_hash: \$hash}' -- \"\$DRAFT\""
+CONTROL_RC=0
+(
+  FAIL=0
+  draft_rewrite
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/draft-rewrite-assertion" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" "1" "control: reading the caller's draft again fails the rewrite row" "$TMP_ROOT/draft-rewrite-assertion"
+
 new_repo control_draft_hash
-mutant draft-hash-trimmed 'jq -j .text -- "$DRAFT"' 'jq -j '"'"'.text | sub("\n$"; "")'"'"' -- "$DRAFT"'
+mutant draft-hash-trimmed 'jq -j .text -- "$draft_copy"' 'jq -j '"'"'.text | sub("\n$"; "")'"'"' -- "$draft_copy"'
 draft_ask "$(draft_file d "$DRAFT_JSON")"
 CONTROL_RC=0
 CONTROL_OUT="$(

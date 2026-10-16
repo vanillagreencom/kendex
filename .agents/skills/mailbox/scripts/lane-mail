@@ -1854,8 +1854,9 @@ lm_wait_minutes() {
 # binds those exact bytes. The record reaches the envelope through
 # WORK_DIR/draft.json, never argv.
 lm_draft() {
-  local verdict key value hasher hash
+  local verdict key value hasher hash draft_copy="$WORK_DIR/draft.input.json"
   { [ -f "$DRAFT" ] && [ -r "$DRAFT" ]; } || refuse file-unreadable "$DRAFT"
+  cat -- "$DRAFT" >"$draft_copy" || refuse file-unreadable "$DRAFT"
   verdict="$(jq -rs '
     if length != 1 or (.[0] | type) != "object" then error("a draft is one JSON object") else .[0] end
     | ((["recipient", "medium", "text"] - keys) + (keys - ["recipient", "medium", "text"])
@@ -1863,7 +1864,7 @@ lm_draft() {
     | if $bad != [] then ["draft-field", $bad[0]]
       elif (.medium | IN("slack-channel", "slack-thread", "email")) then ["ok", ""]
       else ["draft-medium", .medium] end
-    | @tsv' -- "$DRAFT" 2>"$WORK_DIR/jq.err")" ||
+    | @tsv' -- "$draft_copy" 2>"$WORK_DIR/jq.err")" ||
     refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
   IFS=$'\t' read -r key value <<<"$verdict"
   [ "$key" = ok ] || refuse "$key" "$value"
@@ -1874,13 +1875,13 @@ lm_draft() {
   else
     refuse command-missing sha256sum,shasum
   fi
-  jq -j .text -- "$DRAFT" >"$WORK_DIR/draft.text" 2>"$WORK_DIR/jq.err" ||
+  jq -j .text -- "$draft_copy" >"$WORK_DIR/draft.text" 2>"$WORK_DIR/jq.err" ||
     refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
   # shellcheck disable=SC2086  # hasher is a command and its own arguments.
   hash="$($hasher <"$WORK_DIR/draft.text" 2>"$WORK_DIR/hash.err")" ||
     refuse file-unreadable "$WORK_DIR/draft.text" "$(cat -- "$WORK_DIR/hash.err")"
   DRAFT_RECORD="$WORK_DIR/draft.json"
-  jq -c --arg hash "${hash%% *}" '{recipient, medium, text, text_hash: $hash}' -- "$DRAFT" \
+  jq -c --arg hash "${hash%% *}" '{recipient, medium, text, text_hash: $hash}' -- "$draft_copy" \
     >"$DRAFT_RECORD" 2>"$WORK_DIR/jq.err" || refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
 }
 
