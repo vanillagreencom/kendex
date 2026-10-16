@@ -1012,6 +1012,16 @@ fi
 # reads the successor's account off its pane, so a provider path is refused
 # here, before this run reads the caller's session through it or prints or
 # records anything, never opened through and recorded as tmux.
+if [[ "$MODE" == check ]]; then
+  # The settings load above succeeded. Keep runtime selection in its owner.
+  if ! { source "$SCRIPT_DIR/overseer-host" && overseer_host_resolve_loaded CHECK_HOST; } 2>"$DEP_ERR"; then
+    die launch-failed step=host-resolve
+  fi
+  # Match the trailing-newline removal of the executable resolver's capture.
+  OL_RUNTIME="$CHECK_HOST"
+  while [[ "$OL_RUNTIME" == *$'\n' ]]; do OL_RUNTIME="${OL_RUNTIME%$'\n'}"; done
+  [[ -n "$OL_RUNTIME" ]] || die launch-failed step=host-resolve
+fi
 if ! ol_runtime_supported; then
   [[ "$OL_REASON" != runtime-unsupported ]] || die runtime-unsupported "host=$OL_RUNTIME"
   die launch-failed step=host-resolve
@@ -1022,7 +1032,21 @@ CALLER_PANE="${DEAD_PANE:-${WALLED_PANE:-${TMUX_PANE:-}}}"
 # (lib/overseer-launch.sh § ol_session_inspect), the read the launch and the
 # watch take of an overseer too; a session the runtime no longer lists has
 # no slot for a successor to take.
-ol_session_inspect "$CALLER_PANE" || die pane-unreadable "pane=$CALLER_PANE"
+# The dispatcher's tmux word is exact; other spellings keep its refusal.
+if [[ "$MODE" == check && "$CHECK_HOST" == tmux ]]; then
+  source "$SCRIPT_DIR/lib/overseer-pane.sh" 2>"$DEP_ERR" || die pane-unreadable "pane=$CALLER_PANE"
+  if ! otp_observe "$CALLER_PANE" "$DEP_ERR" 0; then
+    printf '%s' "$OTP_ERROR" > "$DEP_ERR"
+    die pane-unreadable "pane=$CALLER_PANE"
+  fi
+  if [[ "$OTP_STATE" != gone ]] && ! otp_settled; then
+    printf '%s' "$OTP_ERROR" > "$DEP_ERR"
+    die pane-unreadable "pane=$CALLER_PANE"
+  fi
+  OL_INSPECT_STATE="$OTP_STATE" OL_INSPECT_WINDOW="$OTP_WINDOW" OL_INSPECT_SERVER="$OTP_SERVER"
+else
+  ol_session_inspect "$CALLER_PANE" || die pane-unreadable "pane=$CALLER_PANE"
+fi
 [[ "$OL_INSPECT_STATE" != gone ]] || die pane-unreadable "pane=$CALLER_PANE" state=gone
 CALLER_WINDOW="$OL_INSPECT_WINDOW" CALLER_SERVER="$OL_INSPECT_SERVER"
 # The directory is the named fallback for a session its record names none

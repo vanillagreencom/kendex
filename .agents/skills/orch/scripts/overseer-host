@@ -6,6 +6,12 @@
 # executable script path speaking the protocol in ../schemas/overseer-host.md.
 # Every verb passes its arguments, stdin, stdout, stderr and exit status
 # through unchanged, so a caller reads the provider's own words.
+# A caller that already loaded project settings can resolve without startup.
+overseer_host_resolve_loaded() { # OUTPUT_VARIABLE
+  printf -v "$1" '%s' "${ORCH_OVERSEER_HOST:-tmux}"
+}
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 set -euo pipefail
 
 case "${1:-}" in
@@ -25,7 +31,7 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
-host="${ORCH_OVERSEER_HOST:-tmux}"
+overseer_host_resolve_loaded host
 verb="${1:-}"
 case "$verb" in
   resolve) printf '%s\n' "$host"; exit 0 ;;

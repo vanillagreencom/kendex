@@ -16,6 +16,8 @@ if [[ -z "${BASHPID:-}" ]]; then
 fi
 python3 - "$TEST_DIR" "$TMP_ROOT" "$BASH" "${1:-}" <<'PY' > "$TMP_ROOT/results"
 import importlib.util
+import io
+import tarfile
 import json
 import os
 from pathlib import Path
@@ -33,6 +35,7 @@ spec.loader.exec_module(counter)
 # The recorded-harness observation adds the measured complete-workload cost.
 # Keep the earlier margin and reject the redundant initialization control.
 BOUND = 76 + (87 - 71)
+PANE_BOUND = 12
 PATH_BOUND = 8
 RECORD_BOUND = 20
 
@@ -54,6 +57,24 @@ def caller_cost(trace, external, parent):
         commands = [line for line in external if line.split()[1] in pids or line.split()[2] in pids]
         return counter.total(lines, commands, {parent})
     return count(trace[start:end]), count(trace[start:path_end])
+
+# KEN-3907 merged through #4918. Keep the shipped baseline independent of
+# candidate behavior, including the old executable provider and resolver.
+def archived_scripts(revision, directory):
+    archive = subprocess.run(['git', '-C', str(tests.parents[2]), 'archive',
+        revision,
+        'skills/orch/scripts', 'skills/mailbox/scripts', 'skills/github/scripts'],
+        check=True, capture_output=True).stdout
+    baseline_root = root / directory
+    with tarfile.open(fileobj=io.BytesIO(archive)) as files:
+        files.extractall(baseline_root)
+    return baseline_root / 'skills/orch/scripts'
+
+if not baseline:
+    baseline = archived_scripts('23567823c91219d18761db05b7973f562dac0642', 'baseline-source')
+# Public provider output gained recorded-harness fields after KEN-3907.
+# Its current protocol must remain byte-identical to the implementation base.
+provider_base = archived_scripts('9bc26c4bd60fd8cba49307db6ff89dc06ca2a78b', 'provider-source')
 
 for skill in ('orch', 'mailbox', 'github'):
     shutil.copytree(source.parent.parent / skill / 'scripts', root / 'candidate' / skill / 'scripts')
@@ -79,17 +100,30 @@ for args in (['init', '-q'], ['config', 'gc.auto', '0'], ['config', 'maintenance
 (root / 'bin').mkdir()
 (root / 'bin/tmux').write_text('#!' + bash + '''
 set -euo pipefail
+if [[ "$1" == list-panes ]]; then
+  n=0; [[ ! -f "$FIXTURE_LIST_COUNT" ]] || read -r n < "$FIXTURE_LIST_COUNT"
+  n=$((n + 1)); printf '%s\\n' "$n" > "$FIXTURE_LIST_COUNT"
+  [[ "${FAIL_LIST_AT:-}" != "$n" ]] || { printf 'fixture-list-failed\\n' >&2; exit 1; }
+  [[ "${GONE_LIST_AT:-}" != "$n" ]] || exit 0
+fi
+if [[ "${EMPTY_READ:-}" == "${*: -1}" ]]; then exit 0; fi
+if [[ "${INVALID_READ:-}" == "${*: -1}" ]]; then printf 'invalid\\n'; exit 0; fi
 if [[ "${FAIL_READ:-}" == "$1" || "${FAIL_READ:-}" == "${*: -1}" ]]; then
   printf 'fixture-read-failed\\n' >&2; exit 1
 fi
 case "$1" in
- list-panes) [[ "${PANE_GONE:-}" == yes ]] || printf '%%1\\n' ;;
+ list-panes)
+  [[ "${PANE_GONE:-}" != yes ]] || exit 0
+  if [[ "${*: -1}" == '#{pid} #{start_time} #{pane_id}' ]]; then
+    printf '%s 456 %%1\\n' "$ROUTED_SERVER"
+  else printf '%%1\\n'; fi ;;
  capture-pane) printf '> ready\\n' ;;
  display-message)
   case "${*: -1}" in
    '#{window_id}') printf '@1\\n' ;;
    '#{pid}') printf '123\\n' ;;
    '#{pid} #{start_time}') printf '123 456\\n' ;;
+   '#{start_time}') printf '456\\n' ;;
    '#{pane_current_path}') printf '%s\\n' "$FIXTURE_WORK" ;;
    '#{pane_pid} #{pane_current_command}') printf '789 claude\\n' ;;
    *) exit 2 ;;
@@ -98,6 +132,15 @@ case "$1" in
 esac
 ''')
 (root / 'bin/tmux').chmod(0o755)
+(root / 'bin/ps').write_text('#!' + bash + '\n'
+    '[[ "${FAIL_READ:-}" != process-table ]] || { printf "fixture-process-failed\\n" >&2; exit 1; }\n'
+    'if [[ -n "${ROUTED_SERVER:-}" ]]; then printf "%s tmux\\n" "$ROUTED_SERVER"; exit 0; fi\n'
+    'exec ' + shutil.which('ps') + ' "$@"\n')
+(root / 'bin/ps').chmod(0o755)
+(root / 'bin/mktemp').write_text('#!' + bash + '\n'
+    '[[ "${FAIL_SCRATCH:-}" != yes ]] || exit 1\n'
+    'exec ' + shutil.which('mktemp') + ' "$@"\n')
+(root / 'bin/mktemp').chmod(0o755)
 count_dir = root / 'counter'
 counter.install(count_dir, str(root / 'bin') + os.pathsep + os.environ['PATH'], bash)
 record_file = root / 'work/tmp/workflow-state-oversee.json'
@@ -110,12 +153,13 @@ pick = json.dumps({'wall': 10, 'alias': 'caller', 'usage_rate_state': 'one-sampl
 env = {'PATH': str(count_dir / 'bin'), 'HOME': str(root / 'home'), 'TMUX': '/fixture,123,0', 'TMUX_PANE': '%1',
        'FIXTURE_WORK': str(root / 'work'), 'FIXTURE_ACCOUNT': account, 'FIXTURE_RECORD': pick,
        'ORCH_OVERSEER_SUCCESSOR_ACCOUNTS': '0', 'CLAUDE_CONFIG_DIR': account,
-       'BASH_ENV': str(count_dir / 'bash-env'), 'TMPDIR': str(root), 'GIT_CEILING_DIRECTORIES': str(root)}
+       'BASH_ENV': str(count_dir / 'bash-env'), 'TMPDIR': str(root), 'GIT_CEILING_DIRECTORIES': str(root), 'FIXTURE_LIST_COUNT': str(root / 'list-count')}
 
-def run(script, name, extra=None, args=()):
+def run(script, name, extra=None, args=(), check=True):
     counter.reset(count_dir)
+    (root / 'list-count').unlink(missing_ok=True)
     with (root / (name + '.out')).open('wb') as out, (root / (name + '.err')).open('wb') as err:
-        proc = subprocess.Popen([bash, str(script), '--check-marks', *args], cwd=root / 'work',
+        proc = subprocess.Popen([bash, str(script), *(['--check-marks'] if check else []), *args], cwd=root / 'work',
                                 env={**env, **(extra or {})}, stdout=out, stderr=err)
         try:
             status = proc.wait(timeout=30)
@@ -131,7 +175,18 @@ def run(script, name, extra=None, args=()):
             external.setdefault(pid, line)
     trace = (count_dir / 'trace').read_text(errors='surrogateescape').splitlines()
     count = counter.total(trace, list(external.values()), {str(proc.pid)})
-    return status, (root / (name + '.out')).read_bytes(), (root / (name + '.err')).read_bytes(), count, caller_cost(trace, list(external.values()), str(proc.pid))
+    start = next((i for i, line in enumerate(trace)
+                  if ': source ' in line and line.endswith('/overseer-host')
+                  or ': ol_runtime_supported' in line), None)
+    end = next((i for i in range(start or 0, len(trace)) if ': CALLER_WINDOW=' in trace[i]), None)
+    pane_cost = None
+    if start is not None and end is not None:
+        part = trace[start:end]
+        pids = {re.search(r'count:(\d+):', line).group(1) for line in part
+                if re.match(r'^\++count:\d+:', line)} - {str(proc.pid)}
+        commands = [line for line in external.values() if line.split()[1] in pids or line.split()[2] in pids]
+        pane_cost = counter.total(part, commands, {str(proc.pid)})
+    return status, (root / (name + '.out')).read_bytes(), (root / (name + '.err')).read_bytes(), count, caller_cost(trace, list(external.values()), str(proc.pid)), pane_cost
 
 rows = [
     ('complete', identity, {}, (), 0, b'mark-unmeasured'),
@@ -144,15 +199,39 @@ rows = [
     ('window-error', identity, {'FAIL_READ': '#{window_id}'}, (), 1, None),
     ('path-error', identity, {'FAIL_READ': '#{pane_current_path}'}, (), 1, None),
     ('shape-error', identity, {'FAIL_READ': '#{pane_pid} #{pane_current_command}'}, (), 1, None),
+    ('server-error', identity, {'FAIL_READ': '#{pid}'}, (), 1, None),
+    ('initial-list-error', identity, {'FAIL_LIST_AT': '1'}, (), 1, None),
+    ('relist-error', identity, {'FAIL_READ': 'capture-pane', 'FAIL_LIST_AT': '2'}, (), 1, None),
+    ('final-list-error', identity, {'FAIL_LIST_AT': '2'}, (), 1, None),
+    ('capture-closed', identity, {'FAIL_READ': 'capture-pane', 'GONE_LIST_AT': '2'}, (), 1, None),
+    ('field-closed', identity, {'EMPTY_READ': '#{pane_pid} #{pane_current_command}', 'GONE_LIST_AT': '2'}, (), 1, None),
+    ('final-closed', identity, {'GONE_LIST_AT': '2'}, (), 1, None),
+    ('empty-window', identity, {'EMPTY_READ': '#{window_id}'}, (), 1, None),
+    ('invalid-window', identity, {'INVALID_READ': '#{window_id}'}, (), 1, None),
+    ('empty-server', identity, {'EMPTY_READ': '#{pid}'}, (), 1, None),
+    ('invalid-server', identity, {'INVALID_READ': '#{pid}'}, (), 1, None),
+    ('empty-process', identity, {'EMPTY_READ': '#{pane_pid} #{pane_current_command}'}, (), 1, None),
+    ('invalid-process', identity, {'INVALID_READ': '#{pane_pid} #{pane_current_command}'}, (), 1, None),
+    ('unsupported-runtime', identity, {'ORCH_OVERSEER_HOST': '/custom/provider'}, (), 1, None),
+    ('runtime-trailing-newline', identity, {'ORCH_OVERSEER_HOST': 'tmux\n'}, (), 1, None),
+    ('empty-runtime-answer', identity, {'ORCH_OVERSEER_HOST': '\n'}, (), 1, None),
+    ('invalid-pane', identity, {'TMUX_PANE': '%invalid'}, (), 1, None),
     ('gone', identity, {'PANE_GONE': 'yes'}, (), 1, None),
     ('context-due', identity, {}, ('--context', '950:1000'), 0, b'mark-reached'),
+    ('context-due-before-runtime', identity, {'TMUX': '', 'ORCH_OVERSEER_HOST': '/custom/provider'},
+     ('--context', '950:1000'), 0, b'mark-reached'),
     ('numeric-fallback', identity, {'ORCH_HANDOFF_CONTEXT_PCT': 'invalid'}, (), 0, b'mark-unmeasured'),
     ('retired-setting', identity, {'ORCH_CONSUMER_REPOS': ''}, (), 1, None),
+    ('settings-error', identity, {}, (), 1, None),
 ]
 for name, record, extra, args, status, key in rows:
     record_file.unlink(missing_ok=True)
     context_file.unlink(missing_ok=True)
     row_file.unlink(missing_ok=True)
+    settings_file = root / 'work/.env.local'
+    settings_file.unlink(missing_ok=True)
+    if name == 'settings-error':
+        settings_file.write_text('return 1\n')
     if record == 'invalid':
         record_file.write_text('{ invalid\n')
     elif record is not None:
@@ -169,6 +248,8 @@ for name, record, extra, args, status, key in rows:
         result(name + ': keyed result', b' '.join(actual[1].split()[1:1 + len(key.split())]).decode(), key.decode())
     if name in ('complete', 'complete-absolute'):
         print('metric', 'candidate-own-processes', actual[3], sep='\t')
+        print('metric', name + '-pane-and-runtime-processes', actual[5], sep='\t')
+        result(name + ': pane and runtime process bound', int(actual[5] is not None and actual[5] < PANE_BOUND), 1)
         assert actual[4] is not None, 'complete caller-record workload was not reached'
         print('metric', name + '-caller-record-processes', actual[4][0], sep='\t')
         print('metric', name + '-state-path-processes', actual[4][1], sep='\t')
@@ -184,9 +265,39 @@ for name, record, extra, args, status, key in rows:
             result(name + ': base ' + field, int(actual[i] == before[i]), 1)
         if name in ('complete', 'complete-absolute'):
             print('metric', 'base-own-processes', before[3], sep='\t')
+            print('metric', name + '-baseline-pane-and-runtime-processes', before[5], sep='\t')
+            result(name + ': KEN-3907 rejects pane and runtime bound', int(before[5] is not None and before[5] >= PANE_BOUND), 1)
             assert before[4] is not None, 'baseline caller-record workload was not reached'
             if name == 'complete':
                 result(name + ': baseline rejects state-path bound', int(before[4][1] >= PATH_BOUND), 1)
+        # The public provider retains classification and its complete protocol.
+        # These fixtures drive the same mandatory read barriers on both trees.
+        if name not in ('partial', 'path-error', 'unsupported-runtime', 'retired-setting', 'settings-error'):
+            pane = extra.get('TMUX_PANE', '%1')
+            provider_args = ('inspect', '--session', pane)
+            provider = run(scripts / 'overseer-host-tmux', name + '-provider', extra, provider_args, False)
+            prior = run(provider_base / 'overseer-host-tmux', name + '-provider-base', extra, provider_args, False)
+            for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
+                result(name + ': provider base ' + field, int(provider[i] == prior[i]), 1)
+
+settings_file.unlink(missing_ok=True)
+
+# Saved routes stay on the executable provider. The process-table fixture
+# tests identity parsing, with this suite's held Python process as its id.
+for name, extra in [
+    ('routed-start-error', {'FAIL_READ': '#{start_time}'}),
+    ('routed-start-empty', {'EMPTY_READ': '#{start_time}'}),
+    ('routed-start-invalid', {'INVALID_READ': '#{start_time}'}),
+    ('routed-start-closed', {'FAIL_READ': '#{start_time}', 'GONE_LIST_AT': '2'}),
+    ('routed-process-error', {'FAIL_READ': 'process-table'}),
+    ('provider-scratch-error', {'FAIL_SCRATCH': 'yes'}),
+]:
+    route = {**extra, 'ROUTED_SERVER': str(os.getpid())}
+    args = ('inspect', '--session', '%1', '--server', str(os.getpid()), '--server-start', '456')
+    actual = run(scripts / 'overseer-host-tmux', name, route, args, False)
+    before = run(provider_base / 'overseer-host-tmux', name + '-base', route, args, False)
+    for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
+        result(name + ': provider base ' + field, int(actual[i] == before[i]), 1)
 
 # Loading definitions must leave the reader's globals, argv and shell state.
 loaded = subprocess.run([bash, '-c', '''
@@ -324,8 +435,7 @@ print('metric', 'control-own-processes', control[3], sep='\t')
 result('cost control: same workload exit', control[0], complete[0])
 result('cost control: same stdout bytes', int(control[1] == complete[1]), 1)
 result('cost control: same stderr bytes', int(control[2] == complete[2]), 1)
-if BOUND is not None:
-    result('cost control: rejects redundant initialization', int(control[3] >= BOUND), 1)
+result('cost control: detects redundant initialization', int(control[3] > complete[3]), 1)
 PY
 while IFS=$'\t' read -r kind got want name; do
   case "$kind" in

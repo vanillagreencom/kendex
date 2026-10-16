@@ -74,6 +74,8 @@ source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # shellcheck source=lib/pane-write.sh
 source "$SCRIPT_DIR/lib/pane-write.sh"
+# shellcheck source=lib/overseer-pane.sh
+source "$SCRIPT_DIR/lib/overseer-pane.sh"
 
 usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -160,42 +162,20 @@ pane_field() { # PANE FORMAT
 # a server that could not be asked is `session-unreadable`, never a session
 # that ended.
 pane_listed() { # PANE
-  local panes
-  panes="$(tmux list-panes -a -F '#{pane_id}' 2>"$DEP_ERR")" || die session-unreadable "session=$1"
-  grep -qxF -- "$1" <<<"$panes"
+  local OTP_SESSION="$1" OTP_ERR="$DEP_ERR" OTP_ERROR="" rc=0
+  otp_listed "$1" || rc=$?
+  [[ "$rc" -ne 1 ]] || { printf '%s' "$OTP_ERROR" >&2; exit 1; }
+  [[ "$rc" -eq 0 ]]
 }
 
-# inspect's answer for a session the server does not list: the keyed line
-# alone, at exit 0.
 inspect_gone() {
   printf 'session=%s window=none server=none state=gone harness_state=unknown harness_cause=pane-gone\n' "$SESSION"
   exit 0
 }
-# inspect holds every read after its first listing to one rule: a pane the
-# server no longer lists answers gone at exit 0, whatever that read answered.
-# A read that failed, or answered outside its shape, lists the panes again: a
-# pane gone since the first listing closed mid-read and is gone, and one still
-# listed is the read itself failing, refused with its own words. A read that
-# answered is held to the same rule once the judgement is made
-# (inspect_settled), since a pane that closes mid-read can still answer.
-inspect_unread() { # FIELD=VALUE...
-  local detail
-  detail="$(cat -- "$DEP_ERR")" || detail=""
-  pane_listed "$SESSION" || inspect_gone
-  printf '%s\n' "$detail" > "$DEP_ERR"
-  die session-unreadable "session=$SESSION" "$@"
+inspect_read() { # OPERATION ARGUMENT...
+  "$@" || { printf '%s' "$OTP_ERROR" >&2; exit 1; }
+  [[ "$OTP_STATE" != gone ]] || inspect_gone
 }
-# inspect_field VAR FIELD SHAPE FORMAT — one display-message read of the
-# session into VAR, held to the regex SHAPE.
-inspect_field() { # VAR FIELD SHAPE FORMAT
-  local out
-  if ! out="$(pane_field "$SESSION" "$4")" || ! matches "$out" "$3"; then
-    inspect_unread "field=$2" "value=${out:-none}"
-  fi
-  printf -v "$1" '%s' "$out"
-}
-# The last read of the rule: the pane still listed once every read is made.
-inspect_settled() { pane_listed "$SESSION" || inspect_gone; }
 
 # Pane observation can disprove a completed run's attribution after a manual
 # resume. Only the saved process identity can establish a running harness.
@@ -232,8 +212,7 @@ inspect_harness() { # SERVER PANE_STATE
 }
 
 require_session() { # VALUE
-  [[ -n "$1" ]] || die_status 2 option-missing option=--session "verb=$VERB"
-  matches "$1" '^%[0-9]+$' || die_status 2 invalid-session "value=$1"
+  otp_session "$1" "$VERB" || { printf '%s' "$OTP_ERROR" >&2; exit 2; }
 }
 
 # Undo new-window -b's contiguous shift by passing the inserted window along
@@ -308,6 +287,7 @@ case "$VERB" in
   inspect)
     require_session "$SESSION"
     start=""
+    OTP_SESSION="$SESSION" OTP_ERR="$DEP_ERR" OTP_STATE=live
     if [[ -n "$RECORDED_SERVER" || -n "$SERVER_SOCKET" ]]; then
       matches "$RECORDED_SERVER" '^[0-9]+$' || die_status 2 option-missing option=--server verb=inspect
       [[ -z "$RECORDED_START" ]] || matches "$RECORDED_START" '^[0-9]+$' \
@@ -320,12 +300,10 @@ case "$VERB" in
       [[ "$probe" -ne 1 ]] || inspect_gone
       printf '%s' "$TMUX_PANE_DETAIL" > "$DEP_ERR"
       [[ "$probe" -eq 0 ]] || die session-unreadable "session=$SESSION" "server=$RECORDED_SERVER"
-      inspect_field start start_time '^[0-9]+$' '#{start_time}'
+      inspect_read otp_field start start_time '^[0-9]+$' '#{start_time}'
     fi
-    pane_listed "$SESSION" || inspect_gone
-    inspect_field window window_id '^@[0-9]+$' '#{window_id}'
-    inspect_field server pid '^[0-9]+$' '#{pid}'
-    screen="$(tmux capture-pane -pJ -t "$SESSION" 2>"$DEP_ERR")" || inspect_unread field=capture
+    inspect_read otp_observe "$SESSION" "$DEP_ERR" "$LAUNCH"
+    window="$OTP_WINDOW" server="$OTP_SERVER" screen="$OTP_SCREEN"
     if [[ "$LAUNCH" -eq 1 ]]; then
       # The whole capture, never a turn slice: a pane opened seconds ago has
       # no earlier turn to slice from. The trust dialog is named by its own
@@ -340,11 +318,11 @@ case "$VERB" in
         state=idle
       fi
       inspect_harness "$server" "$state"
-      inspect_settled
+      inspect_read otp_settled
       printf 'session=%s window=%s server=%s state=%s%s harness_state=%s%s\n' "$SESSION" "$window" "$server" "$state" \
         "${start:+ server_start=$start}" "$HARNESS_STATE" "${HARNESS_CAUSE:+ harness_cause=$HARNESS_CAUSE}"
     else
-      inspect_field obs pane_pid '^[0-9]+[[:blank:]]+[^[:space:]]' '#{pane_pid} #{pane_current_command}'
+      obs="$OTP_PROCESS"
       pid="${obs%%[[:blank:]]*}"
       cmd="${obs#*[[:blank:]]}"
       cause=""
@@ -355,7 +333,7 @@ case "$VERB" in
       lane_state state listed "$cmd" "$pid" "$screen" || cause=",limit-scan"
       [[ "$LANE_PROBE_RC" -le 1 ]] || cause="$cause,process-probe probe=$LANE_PROBE_RC"
       inspect_harness "$server" "$state"
-      inspect_settled
+      inspect_read otp_settled
       printf 'session=%s window=%s server=%s state=%s%s%s%s harness_state=%s%s\n' "$SESSION" "$window" "$server" "$state" \
         "${LANE_WALL_KIND:+ wall_kind=$LANE_WALL_KIND}" "${cause:+ cause=${cause#,}}" "${start:+ server_start=$start}" \
         "$HARNESS_STATE" "${HARNESS_CAUSE:+ harness_cause=$HARNESS_CAUSE}"

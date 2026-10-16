@@ -688,6 +688,7 @@
   ".agents/skills/orch/scripts/lib/outside-contribution.sh",
   ".agents/skills/orch/scripts/lib/oversee-watch-text.sh",
   ".agents/skills/orch/scripts/lib/overseer-launch.sh",
+  ".agents/skills/orch/scripts/lib/overseer-pane.sh",
   ".agents/skills/orch/scripts/lib/pane-write.sh",
   ".agents/skills/orch/scripts/lib/pr-watch-pass.sh",
   ".agents/skills/orch/scripts/lib/rebase-map.sh",

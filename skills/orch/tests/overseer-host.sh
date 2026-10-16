@@ -262,23 +262,22 @@ for read in before empty after; do
     "inspect on a session that closes at its read ($read) answers gone"
 done
 # Its control: a provider that refuses every failed read as unreadable.
-RACECTL="$(mutant_scripts racectl overseer-host-tmux)" || exit 1
-mutate_file "$RACECTL/overseer-host-tmux" 'inspect_unread() { # FIELD=VALUE...
-  local detail
-  detail="$(cat -- "$DEP_ERR")" || detail=""' \
-  'inspect_unread() { # FIELD=VALUE...
-  local detail
-  detail="$(cat -- "$DEP_ERR")" || detail=""
-  die session-unreadable "session=$SESSION" "$@"'
+RACECTL="$(mutant_scripts racectl lib/overseer-pane.sh)" || exit 1
+mutate_file "$RACECTL/lib/overseer-pane.sh" '  otp_settled || return 1
+  [[ "$OTP_STATE" != gone ]] || return 0
+  printf' '  otp_error "$@"; return 1
+  otp_settled || return 1
+  [[ "$OTP_STATE" != gone ]] || return 0
+  printf'
 race_pane 12 before
 PROVIDER_BIN="$RACECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|overseer-host-tmux: session-unreadable session=$RACE field=capture" \
   "control: without the second listing a pane closed during the read is unreadable"
 # The empty answer's control: a read held to its shape with no second listing.
-SHAPECTL="$(mutant_scripts shapectl overseer-host-tmux)" || exit 1
-mutate_file "$SHAPECTL/overseer-host-tmux" '    inspect_unread "field=$2" "value=${out:-none}"' \
-  '    die session-unreadable "session=$SESSION" "field=$2" "value=${out:-none}"'
+SHAPECTL="$(mutant_scripts shapectl lib/overseer-pane.sh)" || exit 1
+mutate_file "$SHAPECTL/lib/overseer-pane.sh" '    otp_unread "field=$2" "value=${out:-none}"' \
+  '    otp_error "field=$2" "value=${out:-none}"'
 race_pane 13 empty
 PROVIDER_BIN="$SHAPECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
@@ -286,8 +285,10 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "control: an empty answer with no second listing is unreadable"
 # The answered read's control: no listing once the judgement is made.
 SETTLECTL="$(mutant_scripts settlectl overseer-host-tmux)" || exit 1
-mutate_file "$SETTLECTL/overseer-host-tmux" 'inspect_settled() { pane_listed "$SESSION" || inspect_gone; }' \
-  'inspect_settled() { :; }'
+mutate_file "$SETTLECTL/overseer-host-tmux" '      inspect_read otp_settled
+      printf '"'"'session=%s window=%s server=%s state=%s%s harness_state=' \
+  '      : # inspect_read otp_settled
+      printf '"'"'session=%s window=%s server=%s state=%s%s harness_state='
 race_pane 14 after
 PROVIDER_BIN="$SETTLECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --launch --session "$RACE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | grep -c ' server=none state=gone$' || true)" "0|0" \
