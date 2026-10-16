@@ -2342,6 +2342,9 @@ jq -n '{
             scope: {model: {display_name: "Opus"}}}]
 }' > "$FIXTURE_DIR/.claude.json"
 MODELPICK='pick --harness claude --max-pct 90'
+# Recovery passes the selector saved in the launch record without dropping capacity.
+MODEL_RECORD='{"model":"fable[1m]"}'
+RECORDED_MODEL="$(jq -er '.model' <<<"$MODEL_RECORD")" || exit 1
 table \
   "every scoped window is kept, and the MODEL column still reports the most-consumed one||$LIST|first.model_pct=95 first.model_label=Fable_5.1 first.buckets=Fable_5.1:95,Opus:10" \
   "the window scoped to the model being passed walls the lane, and nothing qualifies||$MODELPICK --model fable|rc=3" \
@@ -2349,9 +2352,23 @@ table \
   "and under the binding floor that same lane is refused, its own bucket spent on a model this launch never passes||$MODELPICK --model claude-opus-5 --binding-floor|rc=3" \
   "the floor holds the binding bucket to the same number, so a lane clearing both is still picked||pick --harness claude --max-pct 96 --model claude-opus-5 --binding-floor|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
+  "a native selector with capacity still reaches its family wall||$MODELPICK --model fable[1m] --json|rc=3" \
+  "capacity matching ignores case||$MODELPICK --model FABLE[1M]|rc=3" \
+  "a recorded native selector walls a named recovery account||$MODELPICK --lane $H/.claude --model $RECORDED_MODEL --json|rc=3 wall=95 binding_bucket=model" \
+  "an explicit selector with capacity keeps its model wall||$MODELPICK --model claude-fable-5-1[1m]|rc=3" \
+  "capacity on another family does not add the Fable wall||$MODELPICK --model opus[1m]|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
   "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2099-08-01T06:00:00Z haswall=false"
+
+capacity_scripts="$(mutant_scripts model-capacity lib/lane-model.sh)" || exit 1
+mutate_file "$capacity_scripts/lib/lane-model.sh" \
+  '($model | sub("\\[1[mM]\\]$"; "") | lane_norm) as $m' '($model | lane_norm) as $m'
+LANES="$capacity_scripts/lanes" run_lanes "" pick --lane "$H/.claude" --harness claude --model "$RECORDED_MODEL" --json
+control_rc=0
+( FAIL=0; assert_eq "$(observe 'rc=3 wall=95 binding_bucket=model')" 'rc=3 wall=95 binding_bucket=model' 'recorded capacity wall'; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/model-capacity-control.log" || control_rc=$?
+assert_eq "$RC:$control_rc" '0:1' 'the recorded-selector assertion rejects capacity hiding its family wall'
 
 model_usage() { # FABLE OPUS
   jq -nc --argjson f "$1" --argjson o "$2" '{
@@ -2910,6 +2927,11 @@ printf 'account=%s/\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.tc
 # An account the provider measures and discovery never reaches on this machine.
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$H/.hostonly" > "$TMP_ROOT/pick-hostonly.tsv"
 PICK='pick --harness claude --json'
+printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\tmodel-pct=95\tmodel-label=Fable 5.1\n' \
+  "$H/.tclaude" > "$TMP_ROOT/pick-capacity.tsv"
+table \
+  "a hosted fleet refuses the family wall for a recorded capacity selector|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-capacity.tsv|$PICK --model $RECORDED_MODEL|rc=3" \
+  "a named hosted account keeps its family reading with capacity|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-capacity.tsv|$PICK --lane $H/.tclaude --model $RECORDED_MODEL|rc=3 wall=95 binding_bucket=model measured_through=host"
 table \
   "a token-only folder the provider measures with room is picked through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 config_dir=$H/.tclaude measured_through=host hasid=false" \
   "the same folder's host row read unreachable is dropped, not free, and the refusal's table names it through the host|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-unreachable.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=host considered.oclaude=local" \
@@ -3005,6 +3027,11 @@ LOCAL_WINDOWLESS="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-windowless-
 LOCAL_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-fresh-dark.tsv"
 LOCAL_BOTH_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-both-dark.tsv"
 LOCAL_READING="key=pick-local-reading,lane=$H/.fclaude,host=$HOST_FIXTURE,age-s=0"
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.fclaude.json"
+table \
+  "an unreachable host keeps the local family wall for a recorded capacity selector|$LOCAL_DARK|$PICK --model $RECORDED_MODEL|rc=3" \
+  "a named fallback account keeps the same capacity family wall|$LOCAL_DARK|$PICK_LANE $H/.fclaude --model $RECORDED_MODEL|rc=3 wall=95 binding_bucket=model measured_through=local"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.fclaude.json"
 table \
   "the chooser picks the account on this machine's fresh reading and says so|$LOCAL_DARK|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local hasid=false $LOCAL_READING" \
   "the named form judges it on that same reading|$LOCAL_DARK|$PICK_LANE $H/.fclaude|rc=0 config_dir=$H/.fclaude measured_through=local $LOCAL_READING" \

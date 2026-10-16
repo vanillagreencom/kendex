@@ -41,6 +41,8 @@
 # dropped and the account is judged on the session and weekly windows alone —
 # the launch then opens on the very usage banner this file exists to prevent.
 # Normalized, `fable51` sits inside `claudefable51`.
+# A trailing [1m] capacity annotation changes no allowance family. Remove it
+# from the match input before separators disappear, keeping launch selectors intact.
 #
 # Dropping them can also match one generation onto another (`Opus 5` inside
 # `claude-opus-5-1`). That direction only ever adds a window to the judgement,
@@ -99,7 +101,7 @@ def shared_bindings:
     resets_at: (.resets.monthly // null)}];
 
 def model_bindings($model):
-  ($model | lane_norm) as $m
+  ($model | sub("\\[1[mM]\\]$"; "") | lane_norm) as $m
   | [ (.model_buckets // [])[]
          | ((.label // "") | lane_norm) as $l
          | select(.label == null

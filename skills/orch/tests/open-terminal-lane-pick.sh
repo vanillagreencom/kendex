@@ -414,6 +414,18 @@ table \
   "--lane auto takes the account with the most room for the model being passed|$CHOICE_CMD|--harness claude --lane auto KEN-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto KEN-65|rc=0 cmd_lane=eclaude walled=none"
 
+table \
+  "raw attached capacity flags refuse a named account at its family wall|cmd=true --model=fable[1m] --effort=high|--harness claude --lane $H/.claude KEN-60|rc=1 launched=nolog walled=lane=$H/.claude,model=fable[1m],pct=95,bucket=model,projected-headroom=5" \
+  "raw space capacity flags refuse a relaunch at the same wall|cmd=true --model fable[1m] --effort high|--harness claude --relaunch --lane $H/.claude KEN-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable[1m],pct=95,bucket=model,projected-headroom=5" \
+  "a capacity launch picks another account and keeps its executable selector|cmd=true --model=fable[1m] --effort=high|--harness claude --lane auto KEN-65|rc=0 cmd_lane=eclaude cmd_model=fable[1m] walled=none"
+pi_control ctl-model-capacity lib/lane-model.sh \
+  '($model | sub("\\[1[mM]\\]$"; "") | lane_norm) as $m' '($model | lane_norm) as $m' \
+  'cmd=true --model=fable[1m] --effort=high' --harness claude --lane auto KEN-65
+control_rc=0
+( FAIL=0; assert_eq "$(observe 'rc=0 cmd_lane=eclaude cmd_model=fable[1m]')" 'rc=0 cmd_lane=eclaude cmd_model=fable[1m]' 'capacity account selection'; [[ "$FAIL" == 0 ]] ) \
+  > "$TMP_ROOT/model-capacity-control.log" || control_rc=$?
+assert_eq "$RC:$control_rc" '0:1' 'the raw-flag assertion rejects selecting the account at its family wall'
+
 # The named lane is judged on the projection `lanes pick` drops a lane on: its
 # 5-hour window at 60 with room, but the one lane already live on it charged
 # 50 an hour, which projects 110. The second row is the inverse, the same lane
