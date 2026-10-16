@@ -63,7 +63,8 @@
 # in the state directory the lane resolves from its own worktree's settings,
 # never this caller's ORCH_STATE_DIR. After live state removal it reads
 # clone/tmp/cycle-state/workflow-state-ITEM.json, saved by merge-pr § 5.
-# The watch's retained clone-root rows address a gone worktree's clone.
+# The owning fleet repository's watch rows address a gone worktree's clone,
+# even when this command runs from a connected repository checkout.
 # A gone hosted lane can also read the archive the fleet log's last
 # `kept=PATH` row for the item since its session began names. An absent or
 # failed state read records rounds as null, never as zero, and prints
@@ -317,19 +318,35 @@ read_lane_state() {
   for phase in live retained; do
     if [[ "$phase" == retained ]]; then
       [[ "$LANE_ITEM_STATE_REASON" != files-none ]] || break
-      # A live root and a kept archive already bind their own PR-key reads.
-      { [[ -n "$LANE_HOST_SPEC" && "$LANE_HOSTED_GONE" == 1 ]] ||
-        [[ -z "$LANE_HOST_SPEC" && -n "$LANE_ROOT" && ! -d "$LANE_ROOT" ]]; } || break
-      root="$(git rev-parse --show-toplevel 2>"$WORK/state.err")" || return 1
-      watch_dir="${OVERSEE_WATCH_STATE_DIR:-$root/tmp/oversee-watch}"
-      lane_retained_clone "$ITEM" "$watch_dir" 2>"$WORK/state.err" || return $?
-      clone="$LANE_RETAINED_CLONE"
+      # Try both live and kept keys before any saved cycle copy.
+      if [[ -n "$LANE_HOST_SPEC" && "$LANE_HOSTED_GONE" != 1 ]]; then
+        clone="$LANE_HOSTED_CLONE"
+      elif [[ -z "$LANE_HOST_SPEC" && ( -z "$LANE_ROOT" || -d "$LANE_ROOT" ) ]]; then
+        clone="$("$SCRIPT_DIR/git-context" common-root "${LANE_ROOT:-.}" 2>"$WORK/state.err")" || return 1
+      else
+        watch_dir="${OVERSEE_WATCH_STATE_DIR:-}"
+        if [[ -z "$watch_dir" ]]; then
+          # The fleet records its owner in overseer.cwd. Older state lives in
+          # that repository's state directory, as overseer_bind resolves it.
+          root="$(jq -r '.overseer.cwd // empty' "$STATE_FILE" 2>"$WORK/state.err")" || return 1
+          root="${root:-${STATE_FILE%/*}}"
+          root="$("$SCRIPT_DIR/git-context" common-root "$root" 2>"$WORK/state.err")" || return 1
+          watch_dir="$root/tmp/oversee-watch"
+        fi
+        lane_retained_clone "$ITEM" "$watch_dir" 2>"$WORK/state.err" || return $?
+        clone="$LANE_RETAINED_CLONE"
+        # A local gone-root read already uses the caller's checkout for its
+        # live path. Keep that clone when the watch recorded no address.
+        if [[ -z "$clone" && -z "$LANE_HOST_SPEC" ]]; then
+          clone="$("$SCRIPT_DIR/git-context" common-root . 2>"$WORK/state.err")" || return 1
+        fi
+      fi
       [[ -n "$clone" ]] || break
     fi
     for key in "${keys[@]}"; do
       rc=0
       read_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-        "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "$key" false "$clone" || rc=$?
+        "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "$key" false "$clone" true || rc=$?
       tried+=(${LANE_ITEM_STATE_TRIED[@]+"${LANE_ITEM_STATE_TRIED[@]}"})
       LANE_ITEM_STATE_TRIED=(${tried[@]+"${tried[@]}"})
       [[ "$rc" -eq 0 ]] || return "$rc"

@@ -85,9 +85,37 @@ missing_provider() {
 }
 rc=0
 lane_item_state '' missing_provider unused KEN-1 box /gone "$TMP_ROOT" || rc=$?
-assert_eq "$rc" 2 'a gone hosted worktree with no saved state or archive refuses'
+assert_eq "$rc:$LANE_ITEM_STATE_REASON:$LANE_ITEM_STATE" '0:state-absent:' 'a gone hosted worktree stays absent for advisory callers'
+rc=0
+lane_item_state '' missing_provider unused KEN-1 box /gone "$TMP_ROOT" '' KEN-1 false '' true || rc=$?
+assert_eq "$rc" 2 'a required cycle read with no saved state or archive refuses'
 assert_file_contains "$TMP_ROOT/state.err" 'lane-gitfile: state-unread item=KEN-1 cause=no-state' 'the direct library refusal names its item'
 assert_file_contains "$TMP_ROOT/state.err" 'lane-gitfile: state-tried item=KEN-1 path=/gone/.git' 'the direct library refusal names the gone worktree path'
+
+mkdir -p "$TMP_ROOT/clone/tmp/cycle-state" "$TMP_ROOT/live"
+printf '{"cycles":9,"post_pr_stop":{"reason":"old gate"}}' > "$TMP_ROOT/clone/tmp/cycle-state/workflow-state-KEN-1.json"
+state_path() { printf '%s/live/workflow-state-KEN-1.json\n' "$TMP_ROOT"; }
+saved_provider() {
+  case "$1" in
+    capabilities) printf 'kind=ssh\tfiles=verb\n' ;;
+    cat)
+      case "$4" in
+        /live/.git) printf 'gitdir: %s/clone/.git/worktrees/KEN-1\n' "$TMP_ROOT" ;;
+        "$TMP_ROOT/clone/tmp/cycle-state/workflow-state-KEN-1.json") cat -- "$4" ;;
+        *) return 2 ;;
+      esac ;;
+    touch) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+for form in local hosted; do
+  host='' root="$TMP_ROOT/live"
+  [[ "$form" != hosted ]] || { host=box; root=/live; }
+  lane_item_state state_path saved_provider unused KEN-1 "$host" "$root" "$TMP_ROOT" '' KEN-1 false "$TMP_ROOT/clone"
+  assert_eq "$LANE_ITEM_STATE_REASON:$LANE_ITEM_STATE" 'state-absent:' "$form advisory reads ignore a previous cycle snapshot"
+  lane_item_state state_path saved_provider unused KEN-1 "$host" "$root" "$TMP_ROOT" '' KEN-1 false "$TMP_ROOT/clone" true
+  assert_eq "$(jq -r .cycles <<<"$LANE_ITEM_STATE")" 9 "$form recorder reads the explicitly addressed snapshot"
+done
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

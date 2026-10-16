@@ -191,8 +191,9 @@ lane_hosted_state_dir() {
 # workflow state in ARCHIVE, the `kept=` archive lane-host close wrote
 # of the clone's and the worktree's tmp, empty where it holds none. Its
 # `lane-host-state` member names the state file's member, the one the lane
-# resolved, or is an empty line where the lane wrote none, so no other copy of
-# the same name is read. An archive with no such member, written before close
+# resolved, or is an empty line after merge-pr removed live state. An empty
+# marker reads only the requested saved cycle copy, never another live file.
+# An archive with no such member, written before close
 # recorded it, holds the two tmp trees alone, and its copy outside the
 # worktree at ROOT, the clone's, is read before the worktree's, the first in
 # name order where several are. LANE_ARCHIVE_READER reads the archive as a
@@ -213,12 +214,20 @@ try:
         if "lane-host-state" in members:
             raw = tar.extractfile(members["lane-host-state"]).read().split(b"\n", 1)[0]
             if not raw:
-                sys.exit(0)
-            name = raw.decode(tar.encoding, "surrogateescape")
-            found = members.get(name)
-            if found is None or not readable(found):
-                print(f"archive-member-missing path={path} member={name}", file=sys.stderr)
-                sys.exit(2)
+                suffix = f"/tmp/cycle-state/workflow-state-{item}.json"
+                saved = [m for m in members.values() if readable(m) and m.name.endswith(suffix)]
+                if not saved:
+                    sys.exit(0)
+                if len(saved) != 1:
+                    print(f"archive-saved-ambiguous path={path} item={item}", file=sys.stderr)
+                    sys.exit(2)
+                found = saved[0]
+            else:
+                name = raw.decode(tar.encoding, "surrogateescape")
+                found = members.get(name)
+                if found is None or not readable(found):
+                    print(f"archive-member-missing path={path} member={name}", file=sys.stderr)
+                    sys.exit(2)
         else:
             files = sorted((m for m in members.values()
                             if readable(m) and os.path.basename(m.name) == f"workflow-state-{item}.json"),
@@ -269,7 +278,7 @@ lane_state_rounds() { # STATE_JSON [ERRF]
   IFS=$'\t' read -r LANE_REVIEW_ROUNDS LANE_FIX_RECEIPTS LANE_VALIDATION_RUNS LANE_RESTACKS LANE_REPEATED_CLASS_ROUNDS <<<"$counts"
 }
 
-# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT] [CLONE]
+# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT] [CLONE] [CYCLE]
 # ITEM identifies the launched lane for every host request. STATE_KEY defaults
 # to ITEM and selects only the workflow-state file, including older archives
 # without a recorded member. A PR-key fallback keeps the host's item identity.
@@ -284,9 +293,10 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # hosted lane's close: where the host answers that the lane's worktree is
 # gone, the state is read there instead. A read that fails keeps its
 # status, never answered from an archive an earlier run of the item may have
-# left. CLONE, where given, is the retained clone address for a gone root.
-# Missing live state also reads the copy merge-pr saves in
-# CLONE/tmp/cycle-state/workflow-state-STATE_KEY.json. A lane whose
+# left. CLONE, where given, is the resolved clone address for cycle recovery.
+# CYCLE=true also reads the copy merge-pr saves in
+# CLONE/tmp/cycle-state/workflow-state-STATE_KEY.json and refuses missing state.
+# Advisory reads leave that earlier cycle copy unread. A lane whose
 # host kind declares files=none, a Claude cloud session, which keeps none this
 # machine can read. 0 read, the state possibly
 # empty; 2 the read failed, SCRATCH/state.err saying why; 4 lane-host refused
@@ -295,7 +305,8 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # fallback. LANE_ITEM_STATE_REASON then identifies absent or unbound local roots
 # and hosts with files=none for the public lanes facts result. Absent state
 # leaves keyed diagnostics and all paths tried in SCRATCH/state.err, while
-# remaining an empty read so callers can try their PR key.
+# remaining an empty read for advisory callers. Cycle callers may try their PR
+# key after a state-absent refusal.
 LANE_ITEM_STATE=""
 # merge-pr saves this copy before workflow-state remove and worktree disposal.
 # The recorder removes a local copy only after its cycle has been written.
@@ -329,7 +340,7 @@ lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH STATE_KEY
 }
 
 lane_item_state() {
-  local path files clone="${11:-}" rc=0 state_key="${9:-$4}"
+  local path files clone="${11:-}" cycle="${12:-false}" rc=0 state_key="${9:-$4}"
   LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON="" LANE_ITEM_SAVED_PATH=""
   LANE_ITEM_STATE_TRIED=()
   if [[ "${10:-false}" == true && -z "$6" ]]; then
@@ -363,15 +374,11 @@ lane_item_state() {
       LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
       return 0
     fi
-    if [[ -z "$clone" ]]; then
-      local root=.
-      [[ -z "$6" || ! -d "$6" ]] || root="$6"
-      clone="$("$LANE_GITFILE_LIB/../git-context" common-root "$root" 2>"$7/state.err")" || clone=""
-    fi
-    if [[ -n "$clone" ]]; then
+    if [[ "$cycle" == true && -n "$clone" ]]; then
       lane_item_saved_state "" "$4" "$clone" "$7" "$state_key" || return $?
     fi
     [[ -n "$LANE_ITEM_STATE" ]] || lane_item_state_absent "$4" "$7"
+    [[ "$cycle" != true || -n "$LANE_ITEM_STATE" ]] || return 2
     return 0
   fi
   lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2
@@ -380,15 +387,18 @@ lane_item_state() {
     LANE_ITEM_STATE_REASON=files-none
     return 0
   fi
-  ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" "$clone" || rc=$?
+  ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" || rc=$?
   [[ "$rc" -eq 0 ]] || return "$rc"
+  if [[ "$cycle" == true && -z "$LANE_ITEM_STATE" && -n "$clone" ]]; then
+    ORCH_LANE_HOST="$5" lane_item_saved_state "$2" "$4" "$clone" "$7" "$state_key" || return $?
+  fi
   if [[ -z "$LANE_ITEM_STATE" && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]]; then
     LANE_ITEM_STATE_TRIED+=("$8")
     lane_archived_state "$state_key" "$8" "$7" "$6" || return $?
   fi
   if [[ -z "$LANE_ITEM_STATE" ]]; then
     lane_item_state_absent "$4" "$7"
-    [[ "$LANE_HOSTED_GONE" != 1 ]] || return 2
+    [[ "$cycle" != true ]] || return 2
   fi
 }
 
@@ -398,7 +408,7 @@ lane_item_state() {
 # is gone.
 LANE_HOSTED_GONE=0
 lane_hosted_item_state() {
-  local rc=0 state_key="${5:-$2}" clone="${6:-}"
+  local rc=0 state_key="${5:-$2}"
   LANE_HOSTED_GONE=0
   LANE_ITEM_STATE_TRIED+=("$3/.git")
   lane_hosted_clone "$1" "$2" "$3" "$4/gitfile" "$4/state.err" || rc=$?
@@ -406,9 +416,7 @@ lane_hosted_item_state() {
     0) ;;
     1)
       LANE_HOSTED_GONE=1
-      [[ -n "$clone" ]] || return 0
-      lane_item_saved_state "$1" "$2" "$clone" "$4" "$state_key"
-      return $? ;;
+      return 0 ;;
     3) printf '%s\n' "$3/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$4/state.err"; return 2 ;;
     *) return "$rc" ;;
   esac
@@ -431,5 +439,4 @@ lane_hosted_item_state() {
     1) ;;
     *) return "$rc" ;;
   esac
-  [[ -n "$LANE_ITEM_STATE" ]] || lane_item_saved_state "$1" "$2" "$LANE_HOSTED_CLONE" "$4" "$state_key"
 }
