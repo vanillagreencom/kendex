@@ -831,7 +831,7 @@ assert_eq "$rc|$out|$(grep -c '^oversee-watch: merged-search-truncated repo=owne
   "a key search that fills its page exits 2 naming the repository, the item and the limit" "$err"
 FULL_MUTANT="$(mutant_scripts cloud-full/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/cloud-full/github"
-mutate_file "$FULL_MUTANT" '[[ -n "${6:-}" || "$rows" -lt "$MERGED_SEARCH_PAGE" ]] ||' 'true ||'
+mutate_file "$FULL_MUTANT" 'if (.[1] | length) >= $cap then' 'if false then'
 out="$(WATCH_BIN="$FULL_MUTANT" run_watch -- --since 2026-08-15T09:00:00Z --item KEN-50 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc|$(grep -c '^EVENT merged' <<<"$out" || true)" "0|0" "control: with the page check removed a full page is judged as whole and the pass exits 0" "$err"
 
