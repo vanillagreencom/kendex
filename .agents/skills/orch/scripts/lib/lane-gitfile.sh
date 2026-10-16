@@ -269,7 +269,7 @@ lane_state_rounds() { # STATE_JSON [ERRF]
   IFS=$'\t' read -r LANE_REVIEW_ROUNDS LANE_FIX_RECEIPTS LANE_VALIDATION_RUNS LANE_RESTACKS LANE_REPEATED_CLASS_ROUNDS <<<"$counts"
 }
 
-# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT]
+# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT] [CLONE]
 # ITEM identifies the launched lane for every host request. STATE_KEY defaults
 # to ITEM and selects only the workflow-state file, including older archives
 # without a recorded member. A PR-key fallback keeps the host's item identity.
@@ -284,20 +284,54 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # hosted lane's close: where the host answers that the lane's worktree is
 # gone, the state is read there instead. A read that fails keeps its
 # status, never answered from an archive an earlier run of the item may have
-# left. A hosted worktree
-# already gone, which ../../workflows/merge-pr.md § 5 leaves behind a merged
-# lane until lane-close runs, has no state either, and nor has a lane whose
+# left. CLONE, where given, is the retained clone address for a gone root.
+# Missing live state also reads the copy merge-pr saves in
+# CLONE/tmp/cycle-state/workflow-state-STATE_KEY.json. A lane whose
 # host kind declares files=none, a Claude cloud session, which keeps none this
 # machine can read. 0 read, the state possibly
 # empty; 2 the read failed, SCRATCH/state.err saying why; 4 lane-host refused
 # the provider call at its per-home cap (lane-host-busy), SCRATCH/state.err
 # carrying its line. STRICT=true binds the read to ROOT, with no caller-checkout
 # fallback. LANE_ITEM_STATE_REASON then identifies absent or unbound local roots
-# and hosts with files=none for the public lanes facts result.
+# and hosts with files=none for the public lanes facts result. Absent state
+# leaves keyed diagnostics and all paths tried in SCRATCH/state.err, while
+# remaining an empty read so callers can try their PR key.
 LANE_ITEM_STATE=""
+# merge-pr saves this copy before workflow-state remove and worktree disposal.
+# The recorder removes a local copy only after its cycle has been written.
+# Its parent directory survives remove's item-named top-level entry scan.
+LANE_ITEM_SAVED_PATH=""
+LANE_ITEM_STATE_TRIED=()
+lane_item_state_absent() { # ITEM SCRATCH
+  LANE_ITEM_STATE_REASON=state-absent
+  printf 'lane-gitfile: state-unread item=%s cause=no-state\n' "$1" >"$2/state.err"
+  lane_item_state_paths "$1" "$2"
+}
+
+lane_item_state_paths() { # ITEM SCRATCH
+  local path
+  for path in ${LANE_ITEM_STATE_TRIED[@]+"${LANE_ITEM_STATE_TRIED[@]}"}; do
+    printf 'lane-gitfile: state-tried item=%s path=%s\n' "$1" "$path" >>"$2/state.err"
+  done
+}
+
+lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH STATE_KEY
+  local path="$3/tmp/cycle-state/workflow-state-$5.json" rc=0
+  LANE_ITEM_STATE_TRIED+=("$path")
+  lane_host_fetch "$1" "$2" "$path" "$4/saved-state.json" "$4/state.err" || rc=$?
+  case "$rc" in
+    0)
+      LANE_ITEM_STATE="$(jq -ce 'if type == "object" then . else error("state-object-required") end' -- "$4/saved-state.json" 2>"$4/state.err")" || return 2
+      [[ -z "$LANE_ITEM_STATE" ]] || LANE_ITEM_SAVED_PATH="$path" ;;
+    1) ;;
+    *) return "$rc" ;;
+  esac
+}
+
 lane_item_state() {
-  local path files rc=0 state_key="${9:-$4}"
-  LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON=""
+  local path files clone="${11:-}" rc=0 state_key="${9:-$4}"
+  LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON="" LANE_ITEM_SAVED_PATH=""
+  LANE_ITEM_STATE_TRIED=()
   if [[ "${10:-false}" == true && -z "$6" ]]; then
     LANE_ITEM_STATE_REASON=root-unbound
     return 2
@@ -318,10 +352,26 @@ lane_item_state() {
       LANE_ITEM_STATE_REASON=root-gone
       return 0
     else
-      path="$("$1" path "$state_key" 2>"$7/state.err")" || return 2
+      if [[ -n "$clone" ]]; then
+        path="$(cd -- "$clone" && "$1" path "$state_key" 2>"$7/state.err")" || return 2
+      else
+        path="$("$1" path "$state_key" 2>"$7/state.err")" || return 2
+      fi
     fi
-    [[ -f "$path" ]] || return 0
-    LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
+    LANE_ITEM_STATE_TRIED+=("$path")
+    if [[ -f "$path" ]]; then
+      LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
+      return 0
+    fi
+    if [[ -z "$clone" ]]; then
+      local root=.
+      [[ -z "$6" || ! -d "$6" ]] || root="$6"
+      clone="$("$LANE_GITFILE_LIB/../git-context" common-root "$root" 2>"$7/state.err")" || clone=""
+    fi
+    if [[ -n "$clone" ]]; then
+      lane_item_saved_state "" "$4" "$clone" "$7" "$state_key" || return $?
+    fi
+    [[ -n "$LANE_ITEM_STATE" ]] || lane_item_state_absent "$4" "$7"
     return 0
   fi
   lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2
@@ -330,9 +380,16 @@ lane_item_state() {
     LANE_ITEM_STATE_REASON=files-none
     return 0
   fi
-  ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" || rc=$?
-  [[ "$rc" -eq 0 && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]] || return "$rc"
-  lane_archived_state "$state_key" "$8" "$7" "$6"
+  ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" "$clone" || rc=$?
+  [[ "$rc" -eq 0 ]] || return "$rc"
+  if [[ -z "$LANE_ITEM_STATE" && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]]; then
+    LANE_ITEM_STATE_TRIED+=("$8")
+    lane_archived_state "$state_key" "$8" "$7" "$6" || return $?
+  fi
+  if [[ -z "$LANE_ITEM_STATE" ]]; then
+    lane_item_state_absent "$4" "$7"
+    [[ "$LANE_HOSTED_GONE" != 1 ]] || return 2
+  fi
 }
 
 # lane_hosted_item_state LANE_HOST_CLI ITEM ROOT SCRATCH [STATE_KEY]: lane_item_state's
@@ -341,16 +398,22 @@ lane_item_state() {
 # is gone.
 LANE_HOSTED_GONE=0
 lane_hosted_item_state() {
-  local rc=0 state_key="${5:-$2}"
+  local rc=0 state_key="${5:-$2}" clone="${6:-}"
   LANE_HOSTED_GONE=0
+  LANE_ITEM_STATE_TRIED+=("$3/.git")
   lane_hosted_clone "$1" "$2" "$3" "$4/gitfile" "$4/state.err" || rc=$?
   case "$rc" in
     0) ;;
-    1) LANE_HOSTED_GONE=1; return 0 ;;
+    1)
+      LANE_HOSTED_GONE=1
+      [[ -n "$clone" ]] || return 0
+      lane_item_saved_state "$1" "$2" "$clone" "$4" "$state_key"
+      return $? ;;
     3) printf '%s\n' "$3/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$4/state.err"; return 2 ;;
     *) return "$rc" ;;
   esac
   lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$state_key"
+  LANE_ITEM_STATE_TRIED+=("$LANE_HOSTED_STATE_PATH")
   rc=0
   lane_host_fetch "$1" "$2" "$LANE_HOSTED_STATE_PATH" "$4/item-state.json" "$4/state.err" || rc=$?
   case "$rc" in
@@ -361,10 +424,12 @@ lane_hosted_item_state() {
   rc=0
   lane_hosted_state_dir "$1" "$2" "$3" "$4" || return $?
   lane_hosted_state_path "$LANE_HOSTED_CLONE" "$LANE_HOSTED_STATE_DIR" "$state_key"
+  LANE_ITEM_STATE_TRIED+=("$LANE_HOSTED_STATE_PATH")
   lane_host_fetch "$1" "$2" "$LANE_HOSTED_STATE_PATH" "$4/item-state.json" "$4/state.err" || rc=$?
   case "$rc" in
     0) LANE_ITEM_STATE="$(jq -c . -- "$4/item-state.json" 2>"$4/state.err")" || return 2 ;;
     1) ;;
     *) return "$rc" ;;
   esac
+  [[ -n "$LANE_ITEM_STATE" ]] || lane_item_saved_state "$1" "$2" "$LANE_HOSTED_CLONE" "$4" "$state_key"
 }

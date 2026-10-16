@@ -61,13 +61,14 @@
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state. A hosted lane's is read on its host
 # in the state directory the lane resolves from its own worktree's settings,
-# never this caller's ORCH_STATE_DIR; once the host answers that its
-# worktree is gone, from the archive the fleet log's last `kept=PATH` row for
-# the item since its session began names. A lane
-# whose state is gone, which
-# ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
-# read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
-# the reason on stderr. A lane whose host kind declares files=none, a Claude
+# never this caller's ORCH_STATE_DIR. After live state removal it reads
+# clone/tmp/cycle-state/workflow-state-ITEM.json, saved by merge-pr § 5.
+# The watch's retained clone-root rows address a gone worktree's clone.
+# A gone hosted lane can also read the archive the fleet log's last
+# `kept=PATH` row for the item since its session began names. An absent or
+# failed state read records rounds as null, never as zero, and prints
+# `oversee-cycle: rounds-unread item=ITEM` and the paths tried on stderr.
+# A lane whose host kind declares files=none, a Claude
 # cloud session, has no state that read reaches: its rounds are null and
 # nothing is printed.
 #
@@ -235,6 +236,8 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 source "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/lane-gitfile.sh
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# shellcheck source=lib/watch-host-kinds.sh
+source "$SCRIPT_DIR/lib/watch-host-kinds.sh"
 # shellcheck source=../../github/scripts/lib/gh-repo.sh
 source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 
@@ -293,21 +296,47 @@ fi
 
 # record and stages resolve the same live or archived state. A failed read
 # never falls back: another key cannot answer for an unreadable record.
+read_item_state() {
+  local rc=0
+  lane_item_state "$@" || rc=$?
+  # An absent key can still have a retained clone address or a PR-key copy.
+  [[ "$rc" != 2 || "$LANE_ITEM_STATE_REASON" != state-absent ]] || return 0
+  return "$rc"
+}
+
 read_lane_state() {
-  local pr_key
+  local pr_key key phase clone="" watch_dir root rc tried=() keys=("$ITEM")
   LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_SINCE="$(jq -r '.session_since // .launched_at // ""' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_KEPT="$(jq -r --arg item "$ITEM" --arg since "$LANE_SINCE" '
     [.fleet_log[]? | select(.item == $item and ((.at // "") >= $since)) | .text | strings
      | capture("(^|\\s)kept=(?<p>/.*[^\\s])\\s*$") | .p] | last // empty' "$STATE_FILE" 2>"$WORK/state.err")" || return 1
-  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" ${LANE_KEPT:+"$LANE_KEPT"} || return $?
-  [[ -z "$LANE_ITEM_STATE" ]] || return 0
   pr_key="$(jq -r '.pending_pr.pr // .parked.pr // .cycle.pr // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
-  [[ "$pr_key" =~ ^[1-9][0-9]*$ ]] || return 0
-  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-    "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "pr-$pr_key"
+  [[ ! "$pr_key" =~ ^[1-9][0-9]*$ ]] || keys+=("pr-$pr_key")
+  for phase in live retained; do
+    if [[ "$phase" == retained ]]; then
+      [[ "$LANE_ITEM_STATE_REASON" != files-none ]] || break
+      # A live root and a kept archive already bind their own PR-key reads.
+      { [[ -n "$LANE_HOST_SPEC" && "$LANE_HOSTED_GONE" == 1 ]] ||
+        [[ -z "$LANE_HOST_SPEC" && -n "$LANE_ROOT" && ! -d "$LANE_ROOT" ]]; } || break
+      root="$(git rev-parse --show-toplevel 2>"$WORK/state.err")" || return 1
+      watch_dir="${OVERSEE_WATCH_STATE_DIR:-$root/tmp/oversee-watch}"
+      lane_retained_clone "$ITEM" "$watch_dir" 2>"$WORK/state.err" || return $?
+      clone="$LANE_RETAINED_CLONE"
+      [[ -n "$clone" ]] || break
+    fi
+    for key in "${keys[@]}"; do
+      rc=0
+      read_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
+        "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "$key" false "$clone" || rc=$?
+      tried+=(${LANE_ITEM_STATE_TRIED[@]+"${LANE_ITEM_STATE_TRIED[@]}"})
+      LANE_ITEM_STATE_TRIED=(${tried[@]+"${tried[@]}"})
+      [[ "$rc" -eq 0 ]] || return "$rc"
+      [[ -z "$LANE_ITEM_STATE" ]] || return 0
+    done
+  done
+  LANE_ITEM_STATE_TRIED=(${tried[@]+"${tried[@]}"})
 }
 
 print_stages() {
@@ -438,6 +467,7 @@ case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 # provider prints it unescaped as the line's last field.
 rounds=null stages=null rounds_unread=""
 if ! read_lane_state; then
+  lane_item_state_paths "$ITEM" "$WORK"
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
   stages="$(jq -c '.stages // null' <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" \
@@ -447,6 +477,9 @@ elif [[ -n "$LANE_ITEM_STATE" ]]; then
      bot: (.pr_comment_review.iterations // 0),
      full_validations: ([.validate_rounds[]? | select(.mode == "full")] | length)}' \
     <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" || { rounds=null; rounds_unread="$WORK/state.err"; }
+elif [[ "$LANE_ITEM_STATE_REASON" != files-none ]]; then
+  lane_item_state_absent "$ITEM" "$WORK"
+  rounds_unread="$WORK/state.err"
 fi
 
 if [[ -n "$PR" ]]; then
@@ -723,4 +756,8 @@ repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // nul
 if [[ -n "$repeat" ]]; then
   log_row "$ITEM" "$repeat"
   printf '%s\n' "$repeat"
+fi
+
+if [[ -z "$LANE_HOST_SPEC" && -n "$LANE_ITEM_SAVED_PATH" ]]; then
+  rm -f -- "$LANE_ITEM_SAVED_PATH" || refuse saved-state-remove-failed "$LANE_ITEM_SAVED_PATH"
 fi

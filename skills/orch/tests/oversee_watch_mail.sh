@@ -54,6 +54,7 @@ if [[ "$PART" == all || "$PART" == delivery ]]; then
 sed -n '/^LANE_ROW=""$/,/^# The same two-phase flush/{ /^# The same two-phase flush/d; p; }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" >"$TMP_ROOT/mail-row-owner"
 mail_row_contract() (
+  source "$REPO_ROOT/skills/orch/scripts/lib/watch-host-kinds.sh"
   source "$TMP_ROOT/mail-row-owner"
   ITEMS=(KEN-7 KEN-8)
   local label kind identity operation value before after expected actual
@@ -129,12 +130,15 @@ assert_eq "$ROW_CONTRACT_RC" 0 'loaded and blob rows share literal, duplicate, m
 # Instrument a private watch copy. The production read and commit paths run;
 # restoring full-history gets must fail the same work assertion.
 ROW_WORK_WATCH="$(mutant_scripts row-work/orch oversee-watch)/oversee-watch" || exit 1
+ROW_WORK_LIB="${ROW_WORK_WATCH%/*}/lib/watch-host-kinds.sh"
+rm -- "$ROW_WORK_LIB"
+cp -p "$REPO_ROOT/skills/orch/scripts/lib/watch-host-kinds.sh" "$ROW_WORK_LIB"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/row-work/github"
 mutate_file "$ROW_WORK_WATCH" 'mail_rows_load() {' \
   'mail_rows_load() { printf "parse\n" >>"$STUB_DIR/row-work"'
 mutate_file "$ROW_WORK_WATCH" 'mail_turn() { # [overseer]' \
   'mail_turn() { printf "turn\n" >>"$STUB_DIR/row-work" # [overseer]'
-mutate_file "$ROW_WORK_WATCH" 'lane_row_get() {' \
+mutate_file "$ROW_WORK_LIB" 'lane_row_get() {' \
   'lane_row_get() { [[ "$MAIL_ROW_MODE" -ne 1 ]] || printf "get %s\n" "${FUNCNAME[1]}" >>"$STUB_DIR/row-work"'
 ROW_WORK_TRACE="$(cat <<'TRACE'
 MAIL_ROW_MODE=0
@@ -142,11 +146,10 @@ set -T
 trap 'if [[ "$MAIL_ROW_MODE" -eq 1 && "$BASH_COMMAND" == "IFS= read -r row" && "${row:-}" == *KEN-HISTORY* ]]; then
   case "${FUNCNAME[0]:-}" in lane_row_set|lane_row_clear) printf "rescan\n" >>"$STUB_DIR/row-work" ;; esac
 fi' DEBUG
-lane_row_value()
 TRACE
 )" || exit 1
-mutate_file "$ROW_WORK_WATCH" $'MAIL_ROW_MODE=0\nlane_row_value()' "$ROW_WORK_TRACE"
-mutate_file "$ROW_WORK_WATCH" '    [[ "$row" == "$prefix"* ]] || continue' \
+mutate_file "$ROW_WORK_WATCH" $'MAIL_ROW_MODE=0\nlane_row_clear()' "$ROW_WORK_TRACE"$'\nlane_row_clear()'
+mutate_file "$ROW_WORK_LIB" '    [[ "$row" == "$prefix"* ]] || continue' \
   '    if [[ "$MAIL_ROW_MODE" -eq 1 && "$row" == *KEN-HISTORY* ]]; then printf "rescan\n" >>"$STUB_DIR/row-work"; fi
     [[ "$row" == "$prefix"* ]] || continue'
 row_work_pass() { # WATCH CASE
@@ -182,7 +185,7 @@ row_work_pass() { # WATCH CASE
 }
 row_work_pass "$ROW_WORK_WATCH" mail_rows_one_parse
 assert_eq "$ROW_WORK_OK" 1 'each production mail turn parses once and no row helper rescans inactive history'
-mutate_file "$ROW_WORK_WATCH" '    mail_row_find "$prefix"
+mutate_file "$ROW_WORK_LIB" '    mail_row_find "$prefix"
     LANE_ROW=""
     [[ "$MAIL_ROW_INDEX" -lt 0 ]] || LANE_ROW="${MAIL_ROW_VALUES[$MAIL_ROW_INDEX]}"
     [[ -z "$LANE_ROW" ]] || printf '\''%s\n'\'' "$LANE_ROW"
