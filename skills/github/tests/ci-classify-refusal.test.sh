@@ -49,6 +49,9 @@ checks_of() {
   case "$1" in
     ci-required) printf '[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]' ;;
     workflow-membership) printf '[{"name":"request","state":"FAILURE","bucket":"fail","link":"%s/500/job/501","workflow":"Required"},{"name":"request","state":"FAILURE","bucket":"fail","link":"%s/600/job/601","workflow":"Optional"}]' "$R" "$R" ;;
+    # the required workflow run twice: the bound, higher id ran first; beside a
+    # red classic context
+    bound-ranked-below) printf '[{"name":"request","state":"SUCCESS","bucket":"pass","link":"%s/200/job/2","workflow":"Required","startedAt":"2026-07-10T10:00:00Z"},{"name":"request","state":"SUCCESS","bucket":"pass","link":"%s/100/job/1","workflow":"Required","startedAt":"2026-07-10T10:05:00Z"},{"name":"Lint","state":"FAILURE","bucket":"fail"}]' "$R" "$R" ;;
     # a check with no run link at all
     lint-fail) printf '[{"name":"Lint","state":"FAILURE","bucket":"fail"}]' ;;
     # the same red check beside a green one, so a base requiring CodeQL has
@@ -100,6 +103,11 @@ word() {
       W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
         'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"id":500,"workflow_id":500,"path":".github/workflows/required.yml","head_sha":"test-head","repository":{"id":123},"check_suite_id":500,"check_suite_node_id":"suite-500","status":"completed","conclusion":"success"}]}]'
         'STUB_WORKFLOW_CHECKS={"500":[{"total_count":1,"check_runs":[{"name":"request","html_url":"https://github.com/owner/repo/actions/runs/500/job/501"}]}]}')
+      ;;
+    workflow-bound)
+      W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
+        'STUB_WORKFLOW_RUNS=[{"total_count":1,"workflow_runs":[{"id":200,"workflow_id":500,"path":".github/workflows/required.yml","head_sha":"test-head","repository":{"id":123},"check_suite_id":200,"check_suite_node_id":"suite-200","status":"completed","conclusion":"success"}]}]'
+        'STUB_WORKFLOW_CHECKS={"200":[{"total_count":1,"check_runs":[{"name":"request","html_url":"https://github.com/owner/repo/actions/runs/200/job/2"}]}]}')
       ;;
     workflow-failed)
       W_ENV+=("STUB_WORKFLOW_SOURCE_REPO=org/source" 'STUB_GATE_RULES=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CodeQL"}]}},{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":999}]}}]'
@@ -184,6 +192,7 @@ a failure with no run link has head-run none and run none|checks:lint-fail check
 a red check the base does not require is named although nothing blocks|checks:lint-fail-codeql-pass checks-exit:8 required:CodeQL|123|0|cause=none;ci_optional_failed: Lint (FAILURE);retry=same-head;note|1
 a failed required workflow uses its issue while a visible optional job is red|checks:lint-fail-codeql-pass workflow-failed|123|0|cause=ci_failed;issue=ci_failed: Required workflow;head-run=none|1
 same-name workflow failures list only the required member on fail|checks:workflow-membership workflow-membership|123|0|cause=ci_failed;issue=ci_failed: request (FAILURE);ci_optional_failed: request (FAILURE);head-run=500,600;fail=request state=FAILURE workflow=Required run=500|1
+a required workflow's bound run ranked below a later run of it is counted, never superseded|checks:bound-ranked-below workflow-bound|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=100,200;fail=Lint state=FAILURE workflow=- run=none|1
 a red optional check beside a red required one is named optional and never on fail|checks:two-fails checks-exit:8 required:Lint|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);ci_optional_failed: CodeQL (FAILURE);head-run=29099680623;fail=Lint state=FAILURE workflow=CI run=29099680623|1
 a rerun on its original, lower id is the head run by start time|checks:rerun-lower-id checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=29098545030;fail=Lint state=FAILURE workflow=CI run=29098545030;superseded=workflow=CI run=29099680623|1
 a failing status-only check names its run, not none|checks:status-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: CI Required (FAILURE);head-run=29099700000;fail=CI Required state=FAILURE workflow=- run=29099700000|1

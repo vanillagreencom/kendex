@@ -528,7 +528,7 @@ run_checks() {
         esac
         if [ "$required_state" != ready ]; then
             checks_json="$ci_json"
-            head_runs_json=$(scope_current_run <<<"$ci_json" | jq -c "$CI_RUN_JQ_DEFS"'head_runs')
+            head_runs_json=$(scope_current_run "$required_json" <<<"$ci_json" | jq -c "$CI_RUN_JQ_DEFS"'head_runs')
         else
             rollup=$(echo "$ci_json" | classify_checks_rollup "$required_json")
             checks_json=$(jq -c '.checks' <<<"$rollup")

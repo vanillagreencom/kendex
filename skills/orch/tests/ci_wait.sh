@@ -772,6 +772,9 @@ jq '. + [{name:"request",state:"FAILURE",bucket:"fail",workflow:"Optional",link:
 jq '.[2] += {state:"IN_PROGRESS",bucket:"pending"}' "$TMP_ROOT/required-workflow-same-failed.json" > "$TMP_ROOT/required-workflow-same-pending.json"
 jq '.[2].state = "QUEUED"' "$TMP_ROOT/required-workflow-same-pending.json" > "$TMP_ROOT/required-workflow-same-queued.json"
 jq '[.[2], (.[1] + {state:"FAILURE",bucket:"fail"}), .[0]]' "$TMP_ROOT/required-workflow-same-failed.json" > "$TMP_ROOT/required-workflow-same-retry.json"
+# Required run twice: the bound run 500 ran before a lower-id run 400.
+jq '.[1].startedAt = "2026-10-08T14:30:00Z" | . + [.[1] + {startedAt:"2026-10-08T14:35:00Z",link:"https://github.com/owner/repo/actions/runs/400/job/401"}]' "$TMP_ROOT/required-workflow-green.json" > "$TMP_ROOT/required-workflow-two-runs.json"
+jq '.[1] += {state:"FAILURE",bucket:"fail"}' "$TMP_ROOT/required-workflow-two-runs.json" > "$TMP_ROOT/required-workflow-two-runs-bound-failed.json"
 WORKFLOW_MEMBER_RETRY="$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-same-retry.json,STUB_RUN_LOG_FILE=$TMP_ROOT/required-workflow-runner.log"
 WORKFLOW_PASS='rc=0 status=complete verdict=pass check.build=SUCCESS check.request=SUCCESS check.CodeQL=absent pending=0 elapsed_seconds=90'
 WORKFLOW_HOLD='rc=1 status=timeout verdict=pending check.required+workflow=EXPECTED passed=0'
@@ -797,6 +800,8 @@ table "$JSON --required-only" \
   "an unreadable required conclusion cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-unreadable.json|$WORKFLOW_HOLD" \
   "a failed required run cannot pass visible green jobs|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-failed.json|rc=1 status=complete verdict=fail check.required+workflow=FAILURE" \
   "a required runner timeout retries run 500 and refuses its unrecovered failure|||$WORKFLOW_RETRY|rc=1 status=complete verdict=fail check.required+workflow=FAILURE reruns=500" \
+  "a bound run keeps its required job though a lower-id run of it ran later|||$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-two-runs.json|rc=0 status=complete verdict=pass check.request=SUCCESS pending=0" \
+  "a bound run's red job is the retry target though a lower-id run of it ran later and passed|||$WORKFLOW,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-completed.json,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-workflow-two-runs-bound-failed.json,STUB_PR_CHECKS_EXIT=1,STUB_RUN_LOG_FILE=$TMP_ROOT/required-workflow-runner.log|rc=1 status=complete verdict=fail failed=1 reruns=500" \
   "an older failed run finishing later cannot replace successful required work|||$WORKFLOW_GREEN,STUB_ACTIONS_RUNS_FIXTURE=$TMP_ROOT/runs-required-older-finished.json|rc=0 status=complete verdict=pass failed=0"
 
 echo "=== the latest Actions workflow outcome decides a green rollup ==="

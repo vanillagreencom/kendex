@@ -4,8 +4,9 @@
 # each workflow ranked by when it last executed, tiebroken by run id, falling
 # back to run id alone while a run is pending or undated; run-less checks
 # deduped by name on startedAt; an aggregate status pointing at a superseded
-# run held EXPECTED, a required workflow's bound run kept whatever its rank)
-# and which run ids head_runs then names. That no caller
+# run held EXPECTED, a required workflow's bound run kept beside the ranked
+# pick) and which run ids head_runs then names; then what classify_checks_rollup
+# reports over that scope for the bound runs. That no caller
 # carries its own copy of the function or of the jq taxonomy is tools/guard's
 # lane, not a row here.
 #
@@ -76,18 +77,24 @@ checks_of() {
     # one required workflow run twice on the head: the higher id, which the
     # requirement binds, executed before the lower one
     two-runs) printf '[{"name":"request","state":"SUCCESS","bucket":"pass","workflow":"Request","startedAt":"2026-07-26T10:00:00Z","link":"%s/200/job/2"},{"name":"request","state":"SUCCESS","bucket":"pass","workflow":"Request","startedAt":"2026-07-26T10:05:00Z","link":"%s/100/job/1"}]' "$R" "$R" ;;
+    # the same two runs, the later unbound one having failed
+    two-runs-later-failed) printf '[{"name":"request","state":"SUCCESS","bucket":"pass","workflow":"Request","startedAt":"2026-07-26T10:00:00Z","link":"%s/200/job/2"},{"name":"request","state":"FAILURE","bucket":"fail","workflow":"Request","startedAt":"2026-07-26T10:05:00Z","link":"%s/100/job/1"}]' "$R" "$R" ;;
+    # the two runs beside an aggregate status linking the bound run
+    two-runs-bound-status) printf '[{"name":"request","state":"SUCCESS","bucket":"pass","workflow":"Request","startedAt":"2026-07-26T10:00:00Z","link":"%s/200/job/2"},{"name":"request","state":"SUCCESS","bucket":"pass","workflow":"Request","startedAt":"2026-07-26T10:05:00Z","link":"%s/100/job/1"},{"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","link":"%s/200"}]' "$R" "$R" "$R" ;;
     # the same two runs, the bound one having failed
     two-runs-bound-failed) printf '[{"name":"request","state":"FAILURE","bucket":"fail","workflow":"Request","startedAt":"2026-07-26T10:00:00Z","link":"%s/200/job/2"},{"name":"request","state":"SUCCESS","bucket":"pass","workflow":"Request","startedAt":"2026-07-26T10:05:00Z","link":"%s/100/job/1"}]' "$R" "$R" ;;
     *) echo "UNKNOWN-CHECKS: $1" >&2; exit 2 ;;
   esac
 }
 
-# required_contexts' evidence shapes: ready binds runs with their check links,
+# required_contexts' evidence shapes: ready binds runs with their check links
+# (ready-200-all under the all_checks fallback, where every check blocks),
 # failed names failed_runs, unreadable binds nothing.
 req_of() {
   case "$1" in
     none) printf '[]' ;;
     ready-200) printf '{"state":"ready","contexts":[],"workflows":[{"definition":{"repository_id":1,"path":".github/workflows/request.yml"},"consumer":{"repository_id":1,"head":"h"},"runs":[{"id":200,"suite_id":2,"checks":[{"name":"request","link":"%s/200/job/2"}]}]}],"all_checks":false}' "$R" ;;
+    ready-200-all) req_of ready-200 | jq -c '.all_checks = true' ;;
     failed-200) printf '{"state":"failed","contexts":[],"failed_runs":[200]}' ;;
     unreadable) printf '{"state":"unreadable","contexts":[]}' ;;
     *) echo "UNKNOWN-REQ: $1" >&2; exit 2 ;;
@@ -137,10 +144,24 @@ a status linking a run of its own names it beside the workflow's|status-run|buil
 the only run of a workflow being an all-skipped no-op still scopes to it|all-skipped|build:SKIPPED:100|100
 a status linking a job of a superseded run is not an aggregate and is never held|status-job-link|build:SUCCESS:200,CI Required:SUCCESS:100|100,200
 a run-less check is kept after the run's own, never ahead of it|runless-beside-job|build:SUCCESS:100,external:SUCCESS:-|100
-a required workflow's green bound run keeps its job though another run of it executed later|two-runs|request:SUCCESS:200|200|ready-200
-a required workflow's failed bound run stays in scope and holds the wait|two-runs-bound-failed|request:FAILURE:200|200|failed-200
+a required workflow's green bound run keeps its job though another run of it executed later|two-runs|request:SUCCESS:200,request:SUCCESS:100|100,200|ready-200
+a required workflow's failed bound run stays in scope and holds the wait|two-runs-bound-failed|request:FAILURE:200,request:SUCCESS:100|100,200|failed-200
+a later unbound run's red check stays in scope beside the bound run|two-runs-later-failed|request:SUCCESS:200,request:FAILURE:100|100,200|ready-200-all
+an aggregate linking the bound run is current, never held behind the later pick|two-runs-bound-status|request:SUCCESS:200,request:SUCCESS:100,CI Required:SUCCESS:200|100,200|ready-200
 unreadable evidence binds no run: the workflow ranks by execution time|two-runs|request:SUCCESS:100|100|unreadable
 "
+
+# classify_checks_rollup passes its evidence to the scoping: the bound job is
+# found by link, and a later run's red check blocks under all_checks.
+classify() { # CHECKS REQ
+  checks_of "$1" | classify_checks_rollup "$(req_of "$2")" \
+    | jq -r '"pending=\(.pending) failed=\(.failed) optional=\(.optional_failed) request_runs=\([.checks[] | select(.name == "request") | .link | capture("/runs/(?<r>[0-9]+)").r] | join(","))"'
+}
+echo "=== the rollup classification ==="
+assert_eq "$(classify two-runs ready-200)" "pending= failed= optional= request_runs=200,100" \
+  "the bound job satisfies its requirement though another run of it executed later"
+assert_eq "$(classify two-runs-later-failed ready-200-all)" "pending= failed=request (FAILURE) optional= request_runs=200,100" \
+  "under the all_checks fallback a later unbound run's red check blocks"
 
 echo "=== must-fail control ==="
 TMP_ROOT="$(mktemp -d)" || { echo "ci-run-correlation.test: scratch=mktemp-failed" >&2; exit 1; }

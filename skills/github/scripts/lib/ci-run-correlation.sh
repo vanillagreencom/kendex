@@ -25,13 +25,16 @@
 # That keeps the in-flight case — a queued newer run with no timestamps yet, which
 # must not lose to a completed older one — on the fail-closed path.
 #
-# A required workflow's bound run is kept whatever its rank. Arg 1 is
-# required_contexts' evidence: the runs it bound (`workflows[].runs[].id`, or
-# `failed_runs`) were chosen by `latest_workflow_attempt`, the ordering the
-# merge gate relies on, and the requirement matches that run's checks by link.
-# Ranking that workflow again here would drop the bound job whenever another
-# run of it executed later and report it missing. Without bound runs (the
-# default [], or pending or unreadable evidence) a workflow ranks as above.
+# A required workflow's bound run is kept whatever its rank, beside the run
+# the ranking picks. Arg 1 is required_contexts' evidence: the runs it bound
+# (`workflows[].runs[].id`, or `failed_runs`) were chosen by
+# `latest_workflow_attempt`, the ordering the merge gate relies on, and the
+# requirement matches that run's checks by link. Dropping the bound run when
+# another run of its workflow executed later would report the bound job
+# missing; dropping the ranked pick would hide that later run's red checks,
+# which still block under `all_checks` and warn as optional otherwise. Without
+# bound runs (the default [], or pending or unreadable evidence) a workflow
+# keeps its ranked pick alone.
 #
 # Custom commit statuses (for example `CI Required`) link to an Actions run but
 # have an empty `workflow`. When such a status points at a run ranking BEFORE the
@@ -160,13 +163,9 @@ scope_current_run() {
         | map(
             (map(select(.runid | IN($bound[])))) as $bound_runs
             | (map(select(.substantive))) as $substantive
-            | if ($bound_runs | length) > 0 then
-                $bound_runs
-              elif ($substantive | length) > 0 then
-                [$substantive | max_by(.rank)]
-              else
-                [max_by(.rank)]
-              end
+            | (if ($substantive | length) > 0 then $substantive else . end
+               | max_by(.rank)) as $pick
+            | $bound_runs + [$pick | select(.runid | IN($bound[]) | not)]
           )
         | add // []) as $selected_runs
     | ($ranked_groups | add // []) as $all_runs
@@ -185,9 +184,11 @@ scope_current_run() {
             | ([$all_runs[]
                 | select(.workflow == $source_workflow and .runid == $status._runid)]
                 | .[0]) as $status_run
+            # A selected run is current, so a status linking one is never stale.
             | ([$selected_runs[]
                 | select(.workflow == $source_workflow
                          and $status_run != null
+                         and ($status._runid | IN($selected_runs[].runid) | not)
                          and .rank > $status_run.rank)]
                 | .[0]) as $newer_run
             | if ($status._status_target
@@ -230,7 +231,8 @@ fetch_checks_rollup() {
 # line-oriented output built from these strings.
 #
 # Arg 1 is required_contexts' complete evidence object; the scoping keeps the
-# workflow runs it bound. Classic names and workflow check links remain separate. Red optional checks block nothing.
+# workflow runs it bound. Classic names and workflow check links remain
+# separate. Red optional checks block nothing.
 # The legacy array argument names classic contexts; [] counts every check.
 #
 # A required context the scoped rollup carries no check for is `pending` as

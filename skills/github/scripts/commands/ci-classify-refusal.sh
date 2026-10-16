@@ -219,14 +219,15 @@ if jq -e 'any(.issues[]?; . == "ci_failed: Required workflow")' >/dev/null <<<"$
     exit 0
 fi
 
-ci_json=$(jq -c '.checks // []' <<<"$check_json")
-scoped_json=$(echo "$ci_json" | scope_current_run)
-
 # The required set rides in the same JSON, so `fail:` names exactly the checks
 # the `ci_failed:` issue counted. Re-deriving "this check blocks" here would
 # print a red optional check on `fail:` and on `ci_optional_failed:` with
-# opposite meanings, and orch routes on `fail:`.
+# opposite meanings, and orch routes on `fail:`. The scoping takes the same
+# evidence, so it keeps the runs pr-merge's classification bound.
 required_json=$(jq -c '.requirements // .required_contexts // []' <<<"$check_json")
+
+ci_json=$(jq -c '.checks // []' <<<"$check_json")
+scoped_json=$(echo "$ci_json" | scope_current_run "$required_json")
 
 jq -r --argjson scoped "$scoped_json" --argjson required "$required_json" "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
     $scoped[]
