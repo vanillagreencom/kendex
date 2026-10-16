@@ -15,6 +15,34 @@ set -euo pipefail
 # shellcheck source=lib/pr-merge-world.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pr-merge-world.sh"
 
+# Inject GitHub's queue visibility delay at the API boundary. The shared
+# stub still supplies and records every response. Inject the retry clock so
+# these rows prove state handling without waiting on real time.
+mv "$TMPDIR/bin/gh" "$TMPDIR/bin/gh-response"
+cat >"$TMPDIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    "api graphql"*mergeQueueEntry*)
+        if [[ -n "${STUB_QUEUE_VISIBLE_AFTER:-}" ]]; then
+            reads=$(awk '/mergeQueueEntry/ { n++ } END { print n+0 }' "$STUB_CALL_LOG")
+            if [[ "$reads" -lt "$STUB_QUEUE_VISIBLE_AFTER" ]]; then
+                export STUB_POST_IN_QUEUE=false STUB_POST_QUEUE_ENTRY_JSON=null
+            fi
+        fi
+        ;;
+esac
+exec "${0%/*}/gh-response" "$@"
+EOF
+command -v sleep >"$TMPDIR/bin/real-sleep"
+cat >"$TMPDIR/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" != 1 ]] || exit 0
+exec "$(cat "${0%/*}/real-sleep")" "$@"
+EOF
+chmod +x "$TMPDIR/bin/gh" "$TMPDIR/bin/sleep"
+
 # The old-call control waits for a later jq call to prove gh closed the
 # request reader. Its marker keeps stderr inside the assertion's lifetime.
 native_merge_contract() {
@@ -210,6 +238,30 @@ an unchanged workflow decision survives a clean control fixture|checks:workflow-
 "
 native_merge_contract
 
+# orch merge-pr consumes the outcome and exit code to keep the arm active.
+# The blocked row also keeps gh's raw response for diagnosis.
+echo '=== post-call queue visibility ==='
+while IFS='|' read -r label world expected_rc expected_outcome raw; do
+  # shellcheck disable=SC2086
+  build $world
+  result="$(run auto)"
+  outcome="$(sed -n '/^QUEUED IN MERGE QUEUE /p; /^BLOCKED /p' "$TMPDIR/stderr")"
+  assert_eq "${result%% out=*} $outcome" "rc=$expected_rc $expected_outcome" "$label"
+  [[ "$raw" == - ]] || assert_contains "$(cat "$TMPDIR/stderr")" "$raw" "$label keeps the raw gh response"
+done <<'EOF'
+a delayed queue entry keeps the arm|checks:ci-required post-entry env:STUB_QUEUE_VISIBLE_AFTER=1|75|QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED|-
+absent enrollment stays blocked|checks:ci-required|1|BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false|merge command accepted
+an entry visible on the first read keeps the arm|checks:ci-required post-entry|75|QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED|-
+EOF
+
+# Keep the loop's text while restoring the original single-snapshot behavior
+# in a disposable scripts copy. The delayed row must reject that behavior.
+mutant_copy no-enrollment-retry '    for post_attempt in 1 2; do' '    for post_attempt in 1 2; do break' >/dev/null
+build checks:ci-required post-entry env:STUB_QUEUE_VISIBLE_AFTER=1
+result="$(run auto-mutant:no-enrollment-retry)"
+outcome="$(sed -n '/^QUEUED IN MERGE QUEUE /p; /^BLOCKED /p' "$TMPDIR/stderr")"
+assert_mutant_fails "${result%% out=*} $outcome" 'rc=75 QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED' 'a delayed queue entry keeps the arm'
+
 WORKFLOW_HEAD=737bce791577e140436490e0fed5751bb5144a61
 run_table "required workflows at the exact merge head" "\
 optional pending CodeQL permits the exact-head merge|head:$WORKFLOW_HEAD checks:workflow-optional-pending checks-exit:8 workflow:cross-repository post:MERGED merge-commit:merged-oid|with:--expected-head+$WORKFLOW_HEAD+--keep-branch|0|-|{no-token};MERGED PR #123|calls=$WORKFLOW_CHECK,view:head,merge:squash,graphql:queue auth=<unset>
@@ -236,12 +288,12 @@ the refusal is the first stderr line, ahead of the checks' warnings|checks:none 
 a base branch with slashes is URL-encoded in the gate reads and arms|checks:ci-required post-auto base:release/foo/bar|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 classic auto-merge is success-pending, exit 75, volatile|checks:ci-required post-auto|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 an immediate merge whose snapshot is MERGED exits 0|checks:ci-required post:MERGED merge-commit:merged-oid|auto|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
-OPEN, unqueued and unarmed after a zero exit is blocked, naming the absent proof|checks:ci-required|auto|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
+OPEN, unqueued and unarmed after a zero exit is blocked, naming the absent proof|checks:ci-required|auto|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge:squash:auto,graphql:queue,graphql:queue,graphql:queue auth=<unset>
 a snapshot on a newer head fails closed|checks:ci-required head:guarded-head post-head:newer-unreviewed-head post-queue|auto|1|-|{no-token};BLOCKED PR #123 — head changed during merge attempt (expected=guarded-head, actual=newer-unreviewed-head)|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
-a merge whose both post-merge reads fail is blocked, never a success|checks:ci-required merge-commit:merged-oid graphql:fail post-view-fail|immediate|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=UNKNOWN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge:squash,graphql:queue,view:post auth=<unset>
+a merge whose both post-merge reads fail is blocked, never a success|checks:ci-required merge-commit:merged-oid graphql:fail post-view-fail|immediate|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=UNKNOWN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge:squash,graphql:queue,view:post,graphql:queue,view:post,graphql:queue,view:post auth=<unset>
 the REST fallback keeps classic auto-merge when the queue query fails|checks:ci-required graphql:fail post-auto|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue,view:post auth=<unset>
 a second --auto on a queued PR: gh's already-queued failure, the snapshot's entry wins|checks:ci-required head:already-queued-head merge-fail:already-queued post-queue|auto|75|-|{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
-a genuine merge failure with no proof stays blocked with gh's output|checks:ci-required merge-fail:policy|auto|1|-|{no-token};{merge-failed};failed to run merge: Pull request is not mergeable: the base branch policy prohibits the merge|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
+a genuine merge failure with no proof stays blocked with gh's output|checks:ci-required merge-fail:policy|auto|1|-|{no-token};{merge-failed};failed to run merge: Pull request is not mergeable: the base branch policy prohibits the merge|calls=$PRE,merge:squash:auto,graphql:queue,graphql:queue,graphql:queue auth=<unset>
 a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci-required merge-fail:transport post:MERGED merge-commit:merged-oid|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
 
@@ -481,7 +533,7 @@ a direct merge allowing none of the accepted methods takes the queue with the qu
 direct-merge methods that cannot be read take the queue, naming the read|checks:ci-required queue-rule:always repo:pushless route:false post-queue|immediate-classified|75|-|merge-route: queue cause=direct-method-unreadable read=settings;{route-queue:direct-unread};{no-token};$QUEUED|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 --auto refuses an admin route without arming or merging|checks:ci-required queue-rule:always route:false post-entry|auto-classified|1|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;$QUEUE_FALSE;{arm-admin}|calls=$ROUTE_PRE auth=<unset>
 --auto --queue explicitly queues an admin-eligible PR, never passing --admin|checks:ci-required queue-rule:always route:false post-entry|classified-with:--auto+--queue|75|-|merge-route: queue cause=explicit-queue ruleset=20569265 bypass=always;{route-queue:explicit};$QUEUE_FALSE;{no-token};$QUEUED|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
-must-fail: with the queue route's --auto cut, GitHub refuses the merge and nothing is queued|checks:ci-required queue-rule:never route:false post-queue|route-mutant:route-queue-auto|1|-|merge-route: queue cause=no-bypass ruleset=20569265 bypass=never;{route-queue:no-bypass};{no-token};BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false;! The merge strategy for main is set by the merge queue|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+must-fail: with the queue route's --auto cut, GitHub refuses the merge and nothing is queued|checks:ci-required queue-rule:never route:false post-queue|route-mutant:route-queue-auto|1|-|merge-route: queue cause=no-bypass ruleset=20569265 bypass=never;{route-queue:no-bypass};{no-token};BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false;! The merge strategy for main is set by the merge queue|calls=$PRE,merge:squash,graphql:queue,graphql:queue,graphql:queue auth=<unset>
 --queue without --auto is refused before any call|-|with:--queue|1|-|Error: --queue gates the --auto arm and needs --auto|calls=- auth=-
 must-fail: with the needs-auto check cut, --queue alone runs the immediate merge|checks:ci-required post:MERGED merge-commit:merged-oid|mutant:route-autoless:--queue+--keep-branch|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "

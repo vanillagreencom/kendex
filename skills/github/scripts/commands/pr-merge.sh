@@ -1261,6 +1261,17 @@ main() {
     # and its already-queued stderr is version-dependent.
     local post_snapshot post_state post_auto post_head post_in_queue post_queue_entry post_queue_state
     post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
+    # GitHub can accept the arm before its queue entry is visible. Bound the
+    # wait, and leave a changed head for the refusal below.
+    local post_attempt
+    for post_attempt in 1 2; do
+        if ! jq -e --arg expected "$expected_head" '
+            .state != "MERGED" and (.in_merge_queue or .merge_queue_entry or .auto_merge | not)
+            and (.head == "" or .head == $expected)
+        ' >/dev/null <<<"$post_snapshot"; then break; fi
+        sleep 1
+        post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
+    done
     post_state=$(jq -r '.state' <<<"$post_snapshot")
     post_auto=$(jq -r '.auto_merge' <<<"$post_snapshot")
     post_head=$(jq -r '.head' <<<"$post_snapshot")
