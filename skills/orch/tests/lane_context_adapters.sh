@@ -119,8 +119,8 @@ ROWS
 echo "=== Claude families and native aliases need no version pins ==="
 echo "=== resolved Claude launch identity ==="
 while IFS='|' read -r model pin want mode recorded; do
-  got="$(env -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_FABLE_MODEL \
-    ANTHROPIC_DEFAULT_SONNET_MODEL="$pin" "$BASH" -euo pipefail -c \
+  got="$(env ANTHROPIC_DEFAULT_OPUS_MODEL="$pin" ANTHROPIC_DEFAULT_FABLE_MODEL="$pin" \
+    ANTHROPIC_DEFAULT_SONNET_MODEL="$pin" ANTHROPIC_DEFAULT_HAIKU_MODEL="$pin" "$BASH" -euo pipefail -c \
     '. "$1"; lane_adapter_claude_model_id "$2" "$3" "$4"' _ "$LIB" "$model" "${mode:-resolved}" "$recorded")"
   assert_eq "$got" "$want" "${mode:-resolved} identity $model pin=$pin"
 done <<'ROWS'
@@ -129,13 +129,18 @@ claude-fable-5-1||claude-fable-5-1
 claude-fable-5-1[1m]||claude-fable-5-1
 claude-opus-4-8-20261001||claude-opus-4-8-20261001
 sonnet||
-sonnet|claude-sonnet-4-6|claude-sonnet-4-6
-sonnet[1m]|claude-sonnet-4-6|claude-sonnet-4-6
+sonnet|claude-sonnet-4-6|
+sonnet[1m]|claude-sonnet-4-6|
 fable||
 best||
 default||
 opus||
 sonnet|claude-sonnet-4-6|sonnet|recorded
+sonnet|claude-sonnet-4-6|sonnet|launch
+sonnet[1m]|claude-sonnet-4-6|sonnet[1m]|launch
+opus|claude-opus-5-5|opus|launch
+fable|claude-fable-5-5|fable|launch
+haiku|claude-haiku-5-5|haiku|launch
 fable||fable|recorded
 opus[1m]||opus|recorded
 haiku||haiku|recorded
@@ -151,24 +156,9 @@ opusplan||opusplan|launch
 MyProviderModel||MyProviderModel|launch
 fable-5-1[1m]||claude-fable-5-1|launch
 ROWS
-while IFS='|' read -r selector value model pin want; do
-  got="$(env "$selector=$value" ANTHROPIC_DEFAULT_FABLE_MODEL="$pin" "$BASH" -euo pipefail -c \
-    '. "$1"; lane_adapter_claude_model_id "$2" resolved' _ "$LIB" "$model")"
-  assert_eq "$got" "$want" "provider identity $selector=$value model=$model"
-done <<'ROWS'
-CLAUDE_CODE_USE_BEDROCK|1|fable||
-CLAUDE_CODE_USE_VERTEX|true|fable||
-CLAUDE_CODE_USE_FOUNDRY|on|fable||
-CLAUDE_CODE_USE_MANTLE|yes|fable||
-CLAUDE_CODE_USE_ANTHROPIC_AWS|1|fable||
-CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|1|fable||
-ANTHROPIC_BASE_URL|https://gateway.example|fable||
-CLAUDE_CODE_USE_BEDROCK|false|fable||
-CLAUDE_CODE_USE_BEDROCK|1|fable|claude-fable-5|claude-fable-5
-ROWS
 # `model|window|id`: a model, its window, and the id a launch writes for it.
-# Version fields do not change a family's handoff budget. Launch aliases stay
-# native unless the caller supplied a family override.
+# Version fields do not change a family's handoff budget. Claude receives
+# native aliases and applies its own family overrides.
 while IFS='|' read -r model want id; do
   assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"; lane_adapter_claude_model_id "$2"' _ "$LIB" "$model" | tr '\n' '|')" \
     "${want:+$want|}${id:-$model}|" "claude window of $model: ${want:-none}, written as ${id:-$model}"
@@ -559,9 +549,9 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   }
   control copilot-share lane-context.sh 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=80' 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=100' \
     'copilot {"session_id":"s1","cwd":"/w","current_tokens":150000'
-  control model-override adapters/claude.sh 'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}' 'model=sonnet' \
-    'resolved identity sonnet pin=claude-sonnet-4-6'
-  control version-identity adapters/claude.sh '  printf '\''%s\n'\'' "$model"' '  printf '\''%s\n'\'' "${model%-20261001}"' \
+  control native-alias adapters/claude.sh '[[ "${2:-}" != launch ]] || model=${1:-}' 'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}' \
+    'launch identity sonnet pin=claude-sonnet-4-6'
+  control version-identity adapters/claude.sh '  printf '\''%s\n'\'' "${model}"' '  printf '\''%s\n'\'' "${model%-20261001}"' \
     'resolved identity claude-opus-4-8-20261001 pin='
   control unresolved-model adapters/claude.sh '      *) model="" ;;' '      *) : ;;' \
     'resolved identity best pin='
@@ -569,7 +559,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'resolved identity fable-5-1 pin='
   control capacity-spelling adapters/claude.sh 'case "${2:-}" in launch | resolved | recorded) model=${model%\[1m\]} ;; esac' ':' \
     'resolved identity claude-fable-5-1[1m] pin='
-  control recorded-alias adapters/claude.sh 'if [[ "${2:-}" == recorded ]]; then' 'if false; then' \
+  control recorded-alias adapters/claude.sh 'if [[ "${2:-}" != resolved ]]; then' 'if false; then' \
     'recorded identity sonnet pin=claude-sonnet-4-6'
   control copilot-floor lane-context.sh '(.token_limit * $pct / 100 | floor | tostring)' '(.token_limit * $pct / 100 | ceil | tostring)' \
     'copilot {"session_id":"s1","cwd":"/w","current_tokens":0'

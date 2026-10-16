@@ -241,7 +241,9 @@ assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 assert_eq "$(stamped "$(running_at CC-1)")" "iso" "a launch recording the lane running stamps running_at, the watch's start-stall anchor"
 while IFS='|' read -r item model expected; do
-  run_ot --ghostty --harness claude --cmd "true --model $model --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$item"
+  ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-5-5 ANTHROPIC_DEFAULT_FABLE_MODEL=claude-fable-5-5 \
+    ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-5-5 ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-5-5 \
+    run_ot --ghostty --harness claude --cmd "true --model $model --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$item"
   assert_eq "$RC|$(field "$(record "$item")" model)" "0|$expected" \
     "the production lane writer retains launch evidence for $model"
 done <<'ROWS'
@@ -249,6 +251,7 @@ CC-39161|opusplan|opusplan
 CC-39165|sonnet|sonnet
 CC-39166|fable|fable
 CC-39167|haiku|haiku
+CC-39168|opus|opus
 CC-39163|fable-5-1[1m]|claude-fable-5-1
 ROWS
 MODEL_RECORD_CTL="$(mutant_scripts model-recordctl open-terminal)" || exit 1

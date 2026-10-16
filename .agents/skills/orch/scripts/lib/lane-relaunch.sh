@@ -49,7 +49,7 @@ lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]
     [[ -n "$effort" ]] || effort="$(launch_choice_effort "$harness" "$flags")" || return 1
     read -r -a words <<<"$flags"
     launch_choice_strip "$harness" ${words[@]+"${words[@]}"} || return 1
-    choice="$(launch_choice_write "$harness" "$model" "$effort" recorded)" || return 1
+    choice="$(launch_choice_write "$harness" "$model" "$effort")" || return 1
     # The writer emits shell words; --launch-flags takes plain tokens instead.
     eval "choice_words=($choice)" || return 1
     flags="${LAUNCH_CHOICE_KEPT[*]+${LAUNCH_CHOICE_KEPT[*]}}${LAUNCH_CHOICE_KEPT[*]:+ }${choice_words[*]+${choice_words[*]}}"

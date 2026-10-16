@@ -18,7 +18,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|native-sonnet|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account) ;;
+    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -511,7 +511,6 @@ old, new = {
     "binding": ('[[ "$claim" == true ]] || return 0', ':'),
     "selector": ('model="${model}[1m]"', 'model="$model"'),
     "selector-id": ('&& "$launch_id" == "$selector_id"', '&& true'),
-    "native": ('choice="$(launch_choice_write "$harness" "$model" "$effort" recorded)"', 'choice="$(launch_choice_write "$harness" "$model" "$effort")"'),
     "words": ('eval "choice_words=($choice)" || return 1', 'choice_words=("$choice")'),
     "account": ('[[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")', 'LANE_RECOVERY_ARGS+=(--lane "$2")'),
 }[rule]
@@ -535,7 +534,6 @@ pin|fresh-shell
 binding|stale-launch
 selector|extended
 selector-id|conflicting-selector
-native|native-sonnet
 words|extended
 account|optional-account
 CONTROLS

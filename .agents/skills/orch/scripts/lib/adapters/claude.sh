@@ -33,22 +33,21 @@ lane_adapter_claude_window() { # MODEL [notice]
   printf '%s\n' "$LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"
 }
 
-# Aliases use their launch-time family override. Recorded aliases stay native
-# recovery selectors. A concrete observation matches an alias only in its own
-# family; explicit recorded IDs retain every version field.
+# Claude owns family overrides and provider selection. Aliases remain launch
+# intent in arguments and records. A concrete observation matches an alias
+# only in its own family; explicit IDs retain every version field.
 lane_adapter_claude_model_id() { # MODEL [launch|resolved|recorded] [RECORDED_SELECTOR]
   local model recorded
   model="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" || return 1
   case "${2:-}" in launch | resolved | recorded) model=${model%\[1m\]} ;; esac
-  # A later environment cannot redefine the selector saved by a launch.
-  if [[ "${2:-}" == recorded ]]; then
-    case "$model" in sonnet | haiku | opus | fable) printf '%s\n' "$model"; return 0 ;; esac
+  if [[ "${2:-}" != resolved ]]; then
+    case "$model" in
+      sonnet | haiku | opus | fable)
+        [[ "${2:-}" != launch ]] || model=${1:-}
+        printf '%s\n' "$model"; return 0 ;;
+    esac
   fi
   case "$model" in
-    sonnet) model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model} ;;
-    haiku) model=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$model} ;;
-    opus) model=${ANTHROPIC_DEFAULT_OPUS_MODEL:-$model} ;;
-    fable) model=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$model} ;;
     fable-[0-9]* | opus-[0-9]* | sonnet-[0-9]* | haiku-[0-9]*) model="claude-$model" ;;
   esac
   # PostModelSwitch.to_model is the event target model ID. These strict forms
@@ -75,7 +74,7 @@ lane_adapter_claude_model_id() { # MODEL [launch|resolved|recorded] [RECORDED_SE
         case "$model" in claude-"$recorded"-[0-9]*) model=$recorded ;; esac ;;
     esac
   fi
-  printf '%s\n' "$model"
+  printf '%s\n' "${model}"
 }
 
 # One reading from a Claude Code transcript on stdin: `<tokens>\t<window>\t<model>`

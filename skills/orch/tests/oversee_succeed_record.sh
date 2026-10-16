@@ -222,7 +222,7 @@ while [[ \$# -gt 0 ]]; do
   if [[ \$1 == --model ]]; then model=\$2; break; fi
   shift
 done
-case \$model in 'claude-opus-4-6[1m]' | 'opus[1m]') ;; *) exit 1 ;; esac
+case \$model in 'claude-opus-4-6[1m]' | claude-opus-4-6 | opus) ;; *) exit 1 ;; esac
 printf '%s\\n' "\$model" > '$TMP_ROOT/model.argv'
 printf '%s\\n' 'esc to interrupt'
 exec sleep 100000
@@ -287,7 +287,8 @@ BARRIER
   while IFS='|' read -r scenario handoff_path relative_dir; do
     [[ -z "$control_scenario" || "$scenario" == "$control_scenario" ]] || continue
     executable='claude-opus-4-6[1m]' recorded=claude-opus-4-6 override='claude-opus-4-6[1m]'
-    case "$scenario" in native-*) executable='opus[1m]' recorded='opus[1m]' override="" ;; esac
+    case "$scenario" in native-*) executable=opus recorded=opus ;; esac
+    [[ "$relative_dir" == . ]] || executable=${executable%\[1m\]}
     new_caller claude
     rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/capture-handoff" "${TMP_ROOT:?}/model.snapshot" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
     [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
@@ -297,7 +298,7 @@ BARRIER
     [[ "$handoff_path" != absolute ]] || handoff_path="$TMP_ROOT/work/shared/owner-state.md"
     if [[ "$relative_dir" == . ]]; then
       line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --handoff "$handoff_path" -- \
-        --model opus --effort high "$BYPASS")
+        --model "$executable" --effort high "$BYPASS")
       state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
         "$(jq -nc --arg line "$line" --arg cwd "$launch_dir" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
     else
@@ -338,7 +339,7 @@ BARRIER
       handoff-unread)
         printf 'Continue the owner task.\n' > "$TMP_ROOT/model-brief"
         line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --brief-file "$TMP_ROOT/model-brief" -- \
-          --model opus --effort high "$BYPASS")
+          --model "$executable" --effort high "$BYPASS")
         "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.launch_line=$line' --arg line "$line" >/dev/null ;;
     esac
     if [[ "$handoff_path" == /* ]]; then handoff="$handoff_path"; else handoff="$launch_dir/$handoff_path"; fi

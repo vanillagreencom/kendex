@@ -314,12 +314,33 @@ assert_eq "rc=$RC unrecorded=$(said '^open-terminal: record-write-failed item=KE
   "a relaunch that took and could not be recorded keeps its window and its record"
 
 echo "=== a relaunch across a harness switch renders the start brief alone ==="
-run_ot claude "$HARNESS_SCREEN" claude '--model fable --effort high'
-assert_eq "$(replay 1)" 'continue,fresh' 'a recorded-model resume retains its fresh fallback'
-assert_eq "$(grep -c -- '--model fable' "$RUN/claude.log")" 2 \
-  'native resume and fresh fallback both receive the explicit launched model'
-assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].model')" \
-  fable 'the lane launch retains the native alias when no family override resolves it'
+# This is the final builder and lane writer, beyond model recovery's captured
+# intermediate argv. The replay executes the command delivered to the host.
+NATIVE_SHIPPED="$OPEN_TERMINAL"
+NATIVE_CTL="$(mutant_scripts native-intent/orch lib/adapters/claude.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/native-intent/orch"
+mutate_file "$NATIVE_CTL/lib/adapters/claude.sh" '[[ "${2:-}" != launch ]] || model=${1:-}' \
+  'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}'
+while IFS='|' read -r label model pin expected planted; do
+  OPEN_TERMINAL="$NATIVE_SHIPPED"
+  [[ "$planted" == 0 ]] || OPEN_TERMINAL="$NATIVE_CTL/open-terminal"
+  RUN_ENV=("ANTHROPIC_DEFAULT_SONNET_MODEL=$pin" "ANTHROPIC_DEFAULT_OPUS_MODEL=$pin"
+    "ANTHROPIC_DEFAULT_FABLE_MODEL=$pin" "ANTHROPIC_DEFAULT_HAIKU_MODEL=$pin")
+  run_ot claude "$HARNESS_SCREEN" claude "--model $model --effort high"
+  runs="$(replay 1)"
+  native_observed="rc=$RC runs=$runs selectors=$(grep -cF -- "--model $model " "$RUN/claude.log" || true) record=$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].model')"
+  native_red="$(FAIL=0; assert_eq "$native_observed" "rc=0 runs=continue,fresh selectors=2 record=$expected" "$label" >/dev/null; printf '%s' "$FAIL")"
+  assert_eq "$native_red" "$planted" "$label final harness arguments and lane record retain launch intent" "$RUN/launcher.out"
+done <<'NATIVE'
+sonnet|sonnet|claude-sonnet-5-5|sonnet|0
+extended-sonnet|sonnet[1m]|claude-sonnet-5-5|sonnet[1m]|0
+opus|opus|claude-opus-5-5|opus|0
+fable|fable|claude-fable-5-5|fable|0
+haiku|haiku|claude-haiku-5-5|haiku|0
+explicit|claude-opus-4-6[1m]|claude-opus-5-5|claude-opus-4-6|0
+control|sonnet|claude-sonnet-5-5|sonnet|1
+NATIVE
+OPEN_TERMINAL="$NATIVE_SHIPPED" RUN_ENV=()
 run_ot codex "$HARNESS_SCREEN" claude
 assert_eq "rc=$RC switched=$(said '^open-terminal: harness-switched item=KEN-1 harness=claude recorded=codex') continue=$(remote | grep -c -- '--continue') fresh=$(remote | grep -c "exec claude -n KEN-1 .*/orch start KEN-1")" \
   "rc=0 switched=1 continue=0 fresh=1" \
@@ -539,10 +560,6 @@ run_ot claude "$HARNESS_SCREEN" claude '--model claude-fable-5-1 --effort high'
 replay 1 >/dev/null
 assert_eq "$(grep -c -- '--model claude-fable-5-1' "$RUN/claude.log")" 1 \
   'control: removing resume flags rejects the required two launched-model invocations'
-control record-model '--arg model "$record_model"' '--arg model "$LAUNCH_MODEL"'
-run_ot claude "$HARNESS_SCREEN" claude '--model fable --effort high'
-assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].model')" fable \
-  'control: retaining an alias rejects the canonical launch identity requirement'
 control fallback "|| [ \$? -ne 1 ] || exec %s\\n' \"\$flags\" \"\$line\" \"\$fresh\"" "\\n' \"\$flags\" \"\$line\""
 run_ot claude "$HARNESS_SCREEN" claude
 assert_eq "$(replay 1)" "continue" "control: without the fallback a --continue that finds no session runs nothing after it"

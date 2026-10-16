@@ -957,7 +957,7 @@ roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joi
 assert_eq "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)|$(roundtrip copilot claude-fable-5.1 high)" \
   "fable;high|gpt-6-astra;high|grok-5;|sonnet;high|claude-fable-5.1;high" \
   "every row's written words read back as the model and effort they were written from"
-# Family aliases remain native unless a launch-time family override resolves them.
+# Claude applies family overrides after receiving the native alias.
 assert_eq "$(roundtrip claude sonnet high)|$(roundtrip claude haiku high)|$(roundtrip pi sonnet high)" \
   "sonnet;high|haiku;high|sonnet;high" "a claude alias stays native"
 
