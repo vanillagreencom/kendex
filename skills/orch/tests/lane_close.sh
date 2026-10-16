@@ -69,6 +69,24 @@ cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladde
   "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" \
   "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
+cat >"$SCRIPTS/lib/pane-write.sh" <<'EOF'
+pane_write() {
+  [[ -n "${LANE_CLOSE_COPILOT_INPUT:-}" ]] || return 1
+  if [[ "$LANE_CLOSE_COPILOT_INPUT" == hosted ]]; then
+    case "$1:$2:$3:$4:$5" in
+      host:KEN-1:copilot:key:C-c|host:KEN-1:copilot:text:/exit|pane:%7:ssh:key:C-c|pane:%7:ssh:text:/exit) ;;
+      *) return 1 ;;
+    esac
+    if [[ "$4:$5" == text:/exit && "$LANE_CLOSE_COPILOT_MODE" == exits ]]; then
+      printf 'exited\n' >"$LANE_CLOSE_PHASE"
+    fi
+    return 0
+  fi
+  [[ "$1:$2:$3" == pane:%7:copilot && "$4:$5" == key:C-c ]] && return 0
+  [[ "$1:$2:$3:$4:$5" == pane:%7:copilot:text:/exit ]] || return 1
+  printf '%s\n' "$5" >"$LANE_CLOSE_COPILOT_INPUT"
+}
+EOF
 ln -s "$TEST_DIR/../../github" "$FIXTURE/skills/github"
 cp "$TEST_DIR/../scripts/lib/gh-repo.sh" "$SCRIPTS/lib/"
 cp "$TEST_DIR/../scripts/lib/kendex-env.sh" "$SCRIPTS/lib/"
@@ -510,10 +528,10 @@ LANE_PID=""
 # `exit 0` where none is given and empty for one that ignores the signal. The
 # record write_state left gains the launch identity open-terminal records for
 # it, read by the library's own start reader as the launch reads it.
-start_local_harness() { # HARNESS [NAME] [ON_TERM]
+start_local_harness() { # HARNESS [NAME] [ON_TERM] [BODY]
   local name="${2:-$1}" start
   [[ -x "$HARNESS_BIN/$name" ]] || cp -- "$(command -v bash)" "$HARNESS_BIN/$name"
-  LANE_PID="$( (cd -- "$LANE_ROOT" && exec "$HARNESS_BIN/$name" -c "trap '${3-exit 0}' TERM; while :; do sleep 0.1; done" \
+  LANE_PID="$( (cd -- "$LANE_ROOT" && exec "$HARNESS_BIN/$name" -c "trap '${3-exit 0}' TERM; ${4-while :; do sleep 0.1; done}" \
     </dev/null >/dev/null 2>&1 & printf '%s' "$!") )"
   LANE_PIDS+=" $LANE_PID"
   proc_table_write "$PROC_TABLE" "$LANE_PID 1 $name"
@@ -580,6 +598,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   ln -s "$SCRIPTS/lib/lane-capabilities.sh" "$dir/skills/orch/scripts/lib/lane-capabilities.sh"
   ln -s "$SCRIPTS/lib/tmux-server.sh" "$dir/skills/orch/scripts/lib/tmux-server.sh"
   ln -s "$SCRIPTS/lib/lane-gitfile.sh" "$dir/skills/orch/scripts/lib/lane-gitfile.sh"
+  ln -s "$SCRIPTS/lib/pane-write.sh" "$dir/skills/orch/scripts/lib/pane-write.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -870,6 +889,38 @@ if proc_table_readable; then
     PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
     assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
       'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its recorded process"
+  done
+
+  copilot_shutdown_row() { # SCRIPT MODE
+    MAIL_ROOT="$LANE_ROOT" write_state running copilot ""; write_panes node; copilot_screen
+    export LANE_CLOSE_COPILOT_INPUT="$TMP_ROOT/copilot-input" LANE_CLOSE_COPILOT_EVENTS="$TMP_ROOT/copilot-events"
+    export LANE_CLOSE_COPILOT_MODE="$2"
+    rm -f -- "$LANE_CLOSE_COPILOT_INPUT" "$LANE_CLOSE_COPILOT_INPUT.ready"
+    mkfifo "$LANE_CLOSE_COPILOT_INPUT" "$LANE_CLOSE_COPILOT_INPUT.ready"
+    : >"$LANE_CLOSE_COPILOT_EVENTS"
+    start_local_harness copilot MainThread 'printf "{\"type\":\"TERM\"}\n" >>"$LANE_CLOSE_COPILOT_EVENTS"' \
+      'exec 3<>"$LANE_CLOSE_COPILOT_INPUT"; printf "ready\n" >"$LANE_CLOSE_COPILOT_INPUT.ready"; while :; do if read -r command <&3 && [[ "$command" == /exit ]]; then if [[ "$LANE_CLOSE_COPILOT_MODE" == exits ]]; then printf "{\"type\":\"session.shutdown\"}\n" >>"$LANE_CLOSE_COPILOT_EVENTS"; exit 0; fi; fi; done'
+    read -r ready <"$LANE_CLOSE_COPILOT_INPUT.ready"
+    assert_eq "$ready" ready 'the Copilot stub has installed its TERM trap before close'
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+    COPILOT_RESULT="rc=$RC lane=$(proc_state_after "$LANE_PID") events=$(jq -r '.type' "$LANE_CLOSE_COPILOT_EVENTS" | tr '\n' ,) status=$(jq -r '.lanes[0].status' "$STATE")"
+    unset LANE_CLOSE_COPILOT_INPUT LANE_CLOSE_COPILOT_EVENTS LANE_CLOSE_COPILOT_MODE
+  }
+  COPILOT_SKIP="$(mutant copilot-skip '  if [[ "$harness" == copilot && -n "$pane_id" ]]; then' '  if false && [[ "$harness" == copilot && -n "$pane_id" ]]; then')"
+  for row in "$SCRIPT|exits|session.shutdown," "$SCRIPT|ignores|TERM," "$COPILOT_SKIP|exits|TERM,"; do
+    IFS='|' read -r script mode events <<<"$row"
+    copilot_shutdown_row "$script" "$mode"
+    assert_eq "$COPILOT_RESULT" "rc=0 lane=gone events=$events status=done" \
+      "Copilot shutdown mode=$mode script=${script##*/} writes its event or falls back through TERM and KILL"
+  done
+
+  for row in 'local|exits|0' 'verb|exits|0' 'local|ignores|1' 'verb|ignores|1'; do
+    IFS='|' read -r mode behavior stops <<<"$row"
+    write_state running copilot /host; write_panes ssh; copilot_screen
+    LANE_CLOSE_HOST_PANE="$mode" LANE_CLOSE_COPILOT_INPUT=hosted LANE_CLOSE_COPILOT_MODE="$behavior" \
+      LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" run_close "$SCRIPT"
+    assert_eq "rc=$RC stops=$(stop_count KEN-1 copilot) status=$(jq -r '.lanes[0].status' "$STATE")" \
+      "rc=0 stops=$stops status=done" "hosted Copilot pane=$mode shutdown=$behavior uses exit before its provider stop"
   done
 
   # The lane's own close-out (../workflows/merge-pr.md § 5 step 6) removed its

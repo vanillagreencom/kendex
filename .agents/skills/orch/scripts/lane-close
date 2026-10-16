@@ -173,7 +173,9 @@ the model the record names or over the whole account where it names none, and
 the banner names no dated reset still ahead and no reset this host cannot
 resolve; the lane is then judged by the rest of its screen. Every other
 reading keeps the lane walled.
-An idle lane's harness is ended by SIGTERM, never by typing into its pane:
+Copilot first receives /exit, after C-c clears or cancels its current input.
+It shares the pane-exit grace below; failed input or a timeout takes SIGTERM.
+Other harnesses start with SIGTERM:
 through lane-host stop for a record carrying host, and for a local lane by the
 same stop against the launch identity the record's launch names, the harness
 pid and its start time open-terminal read once the launch was confirmed. A
@@ -1396,8 +1398,8 @@ pane_now_exited() {
   [[ "$current_state" == exited ]]
 }
 
-# The harness is ended by signal to its own process, never by keystrokes into
-# its pane. A hosted lane is signalled by its provider, which alone reaches the
+# Copilot's /exit writes its session totals before the signal fallback.
+# A hosted lane is signalled by its provider, which alone reaches the
 # host's process table; a local lane by the same library stop against the
 # launch identity its record names, or one read off its pane where it names
 # none or a stale one, then the turn its record's wake names (lib/lane-state.sh
@@ -1418,6 +1420,26 @@ stop_answered_worktree_removed() { # STDERR_FILE
 }
 stop_harness() {
   local out err rc=0 removed=false wake_pid wake_start fields=("item=$ITEM" "harness=$harness")
+  if [[ "$harness" == copilot && -n "$pane_id" ]]; then
+    source "$SCRIPT_DIR/lib/pane-write.sh"
+    local kind=pane target="$pane_id" expect=copilot
+    if [[ "$host_pane" == verb ]]; then kind=host target="$ITEM"
+    elif [[ -n "$host" ]]; then expect=ssh; fi
+    if ORCH_LANE_HOST="${host:-local}" pane_write "$kind" "$target" "$expect" key C-c; then
+      ORCH_LANE_HOST="${host:-local}" pane_write "$kind" "$target" "$expect" text /exit || :
+      while [[ "$passes" -gt 0 ]]; do
+        rc=0; pane_now_exited || rc=$?
+        case "$rc" in
+          0) STOPPED_COUNT=0; return 0 ;;
+          1) ;;
+          *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+        esac
+        passes=$((passes - 1))
+        sleep 0.2
+      done
+    fi
+  fi
+  rc=0
   if [[ -n "$host" ]]; then
     [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
     err="$(mktemp)" || { message stop-failed "${fields[@]}" "cause=stderr-unsaved" >&2; exit 1; }
@@ -1463,9 +1485,9 @@ stop_harness() {
   fi
 }
 
-# End the harness by signal and wait for its pane to read exited, for an idle
-# lane's close and for a park alike; a park's lane is working, and the
-# signal is the same. A skipped stop, or no pane to wait on, ends the close-out.
+# End the harness and wait for its pane to read exited, for an idle
+# lane's close and for a park alike. A skipped stop, or no pane to wait on,
+# ends the close-out.
 stop_and_await_exit() {
   case "$harness" in
     claude|codex|pi|copilot) ;;
@@ -1475,9 +1497,9 @@ stop_and_await_exit() {
   close_secs="${ORCH_LANE_CLOSE_SECS:-15}"
   [[ "$close_secs" =~ ^[1-9][0-9]*$ ]] \
     || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
+  passes=$((close_secs * 5))
   stop_harness
   [[ "$STOP_SKIPPED" == false && -n "$pane_id" ]] || finish_close
-  passes=$((close_secs * 5))
   while :; do
     rc=0
     pane_now_exited || rc=$?
