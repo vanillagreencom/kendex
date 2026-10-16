@@ -8,7 +8,9 @@ TMP="$(mktemp -d)" || { echo 'adopt-refresh: scratch=mktemp-failed' >&2; exit 1;
 [[ -d $TMP && ! -L $TMP ]] || { echo "adopt-refresh: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'adopt-refresh: scratch=resolve-failed' >&2; exit 1; }
 # A loop that sets ROW names that row, with its last adopter RC and output,
-# when the suite exits inside it: an explicit exit or a set -e stop.
+# when the suite exits inside it: an explicit exit or a set -e stop. The loop
+# unsets RC and OUT with each ROW, so a stop before the row's first adopter
+# call prints rc=unset rather than the previous row's result.
 ROW=''
 exit_report() {
   local status=$?
@@ -833,6 +835,7 @@ MAPPING_ROWS
 # complete. Exercise the placement owner, not a second token selector.
 while IFS='|' read -r scope held outside mutation; do
   ROW="placement scope=$scope held=[$held] outside=[$outside] mutation=$mutation"
+  unset RC OUT
   sandbox
   cp "$CALLER" "$DIR/$TEMPLATE"
   cp "$TMP/default-environments" "$FIXTURES/environments.json"
