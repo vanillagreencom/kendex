@@ -2586,6 +2586,9 @@ if [[ -n "${BASHPID:-}" ]]; then
 long_cost() { # NAME LANES WATCH
   local name="$1" lanes="$2" watch="$3" i counter rc=0
   new_case "$name"
+  # Delivery cases leave owner asks and read cursors in this shared checkout.
+  # Each measurement needs the same initial mailbox contents.
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
   : >"$STUB_DIR/windows.txt"
   for ((i=1; i<=lanes; i++)); do
     printf 'KEN-%s\n' "$i" >>"$STUB_DIR/windows.txt"
@@ -2647,12 +2650,18 @@ for lanes in 8 16; do
   bound=$((lanes * 3 + 8))
   assert_le "$candidate_cost" "$bound" "$lanes lanes meet the long-pass jq ceiling"
   long_cost "long-control-$lanes" "$lanes" "$LONG_CONTROL"
-  output_rc=0; cmp -s "$LONG_OUTPUT" "$candidate_output" || output_rc=$?
+  output_rc=0; cmp -s "$LONG_OUTPUT" "$candidate_output" || {
+    output_rc=$?
+    diff -u "$candidate_output" "$LONG_OUTPUT" || :
+  }
   assert_eq "$output_rc" 0 "$lanes lanes keep control output byte-equal"
   assert_eq "$((LONG_COST > bound))" 1 'control: repeated fleet reads exceed the jq ceiling'
   if [[ -n "$LONG_BASE" ]]; then
     long_cost "long-base-$lanes" "$lanes" "$LONG_BASE"
-    output_rc=0; cmp -s "$LONG_OUTPUT" "$candidate_output" || output_rc=$?
+    output_rc=0; cmp -s "$LONG_OUTPUT" "$candidate_output" || {
+      output_rc=$?
+      diff -u "$candidate_output" "$LONG_OUTPUT" || :
+    }
     assert_eq "$output_rc" 0 "$lanes lanes keep base output byte-equal"
     assert_le "$((candidate_cost * 2))" "$LONG_COST" "$lanes lanes halve the base jq starts"
     assert_eq "$((LONG_COST > bound))" 1 'control: the full base exceeds the jq ceiling'
