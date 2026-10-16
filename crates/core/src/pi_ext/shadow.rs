@@ -481,6 +481,15 @@ mod tests {
                 true,
             ),
             declaring(
+                "declaring the managed copy's entry files under another name",
+                BRIDGE,
+                "bridge",
+                "@example/bridge",
+                "1.1.1",
+                &["extensions/session-bridge.ts"],
+                true,
+            ),
+            declaring(
                 "another package whose only entry is a directory default",
                 BRIDGE,
                 "my-tool",
