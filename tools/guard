@@ -1524,8 +1524,15 @@ scan_load() { # DIR
 # resolve shell scope or control flow.
 # A comment, printed brief or API path reads nothing, nor does a find from
 # any other start or a walk in another language.
+# A ../ repository input uses whole repository paths. Relative directory
+# and skill-root walks apply only inside their own tree; a /skills walk
+# also reaches documents in another source skill.
 doc_readers() { # REL
-  local rel="$1" i code dir token pattern flag status
+  local rel="$1" i code dir token pattern flag status external=0 source_rel source_tree
+  local skill_root catalog_root walk_root walk
+  skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
+  catalog_root='[^[:space:]"]*/skills'
+  case "$rel" in ../*) external=1; rel=${rel#../} ;; esac
   token=$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel") || return 2
   token="(^|[^[:alnum:]._/-])$token([^[:alnum:]_/-]|\$)"
   case "$rel" in
@@ -1534,11 +1541,26 @@ doc_readers() { # REL
       ;;
     *) dir='\$\{?[A-Z_]*SKILL[A-Z_]*\}?"?/[^[:alnum:]._-]' ;;
   esac
+  walk_root="$skill_root|$catalog_root"
+  if [ "$external" -eq 1 ]; then
+    dir='a^'
+    walk_root='a^'
+    case "$rel" in
+      skills/*/*)
+        source_rel=${rel#skills/}
+        source_tree=skills/${source_rel%%/*}
+        source_rel=${source_rel#*/}
+        if [ "$(path_role "$source_tree" "$source_rel")" = doc ]; then
+          walk_root=$catalog_root
+        fi
+        ;;
+    esac
+  fi
+  walk='(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?('"$walk_root"')"?([[:space:]]|\)|$)'
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     code=${SCAN_READ_CODE[i]}
     flag=-qF
-    for pattern in "/$rel" "$token" "$dir" \
-      '(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?(\$\{?[A-Z_]*SKILL[A-Z_]*\}?|[^[:space:]"]*/skills)"?([[:space:]]|\)|$)'; do
+    for pattern in "/$rel" "$token" "$dir" "$walk"; do
       status=0
       grep "$flag" -e "$pattern" <<<"$code" || status=$?
       case "$status" in
@@ -1624,11 +1646,7 @@ mapped_suites() { # DIR REL
     done <<<"${SCAN_INPUTS[i]}"
   done
   if [ "$role" = doc ]; then
-    if [[ $rel == ../* ]]; then
-      readers=$(doc_readers "${rel#../}") || return 2
-    else
-      readers=$(doc_readers "$rel") || return 2
-    fi
+    readers=$(doc_readers "$rel") || return 2
     readers="$noted$readers"
     [ -n "$readers" ] || return 0
     while IFS= read -r i; do

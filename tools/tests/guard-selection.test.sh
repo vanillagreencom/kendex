@@ -133,7 +133,20 @@ fi
 
 # Shared skill libraries have consumers in other trees, directly or through
 # a test helper. An unrelated library must keep those consumers excluded.
-mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/orch/tests" "$R/hooks/tests/lib" "$R/refresh/tests"
+mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/orch/tests" "$R/hooks/tests/lib" "$R/refresh/tests" "$R/skills/walkers/tests"
+printf '# Orch\n' > "$R/skills/orch/README.md"
+printf '# Hooks\n' > "$R/hooks/README.md"
+cat > "$R/skills/walkers/tests/walker.test.sh" <<'SH'
+#!/usr/bin/env bash
+SKILL_DIR="$PWD/skills/walkers"
+find "$SKILL_DIR" -name '*.md' >/dev/null
+printf 'walker\n' >> "$SUITE_LOG"
+SH
+cat > "$R/skills/walkers/tests/catalog.test.sh" <<'SH'
+#!/usr/bin/env bash
+find "$PWD/skills" -name '*.md' >/dev/null
+printf 'catalog\n' >> "$SUITE_LOG"
+SH
 printf ':\n' > "$R/skills/orch/scripts/lib/shared.sh"
 printf ':\n' > "$R/skills/orch/scripts/lib/private.sh"
 printf 'source "$PWD/skills/orch/scripts/lib/shared.sh"\n' > "$R/hooks/tests/lib/shared-world.sh"
@@ -158,16 +171,20 @@ git -C "$R" add -A
 git -C "$R" commit -q -m libraries
 BASE="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main "$BASE"
-for row in 'shared|hooks orch refresh' 'private|orch'; do
-  IFS='|' read -r library expected <<<"$row"
+for row in \
+  'skills/orch/scripts/lib/shared.sh|hooks orch refresh' \
+  'skills/orch/scripts/lib/private.sh|orch' \
+  'skills/orch/README.md|catalog' \
+  'hooks/README.md|'; do
+  IFS='|' read -r input expected <<<"$row"
   for mode in full range; do
     git -C "$R" reset -q --hard "$BASE"
-    printf '# changed\n' >> "$R/skills/orch/scripts/lib/$library.sh"
+    printf '# changed\n' >> "$R/$input"
     preview "$mode" true
     selected="$(sort "$SUITE_LOG" | tr '\n' ' ' | sed 's/ $//')"
     [ "$RC" -eq 0 ] && [ "$selected" = "$expected" ] \
-      && ok "$mode library $library selects its same-tree and external consumers only" \
-      || bad "$mode library $library selects its same-tree and external consumers only" "selected=$selected rc=$RC out=$OUT"
+      && ok "$mode input $input selects its same-tree and external consumers only" \
+      || bad "$mode input $input selects its same-tree and external consumers only" "selected=$selected rc=$RC out=$OUT"
   done
 done
 if [ "$(grep -c '^    for consumer in .*consumer_trees.*; do$' "$GUARD")" -eq 1 ] \
@@ -180,6 +197,18 @@ if [ "$(grep -c '^    for consumer in .*consumer_trees.*; do$' "$GUARD")" -eq 1 
     || bad 'control: omitting cross-tree inputs loses both hooks and refresh consumers' "rc=$RC out=$OUT"
 else
   bad 'cross-tree control changes the guard'
+fi
+if [ "$(grep -c '^    walk_root=' "$GUARD")" -eq 1 ] \
+  && mutant_guard '/^    walk_root=/s/.*/    walk_root="$skill_root|$catalog_root"/'; then
+  git -C "$R" reset -q --hard "$BASE"
+  printf '# changed\n' >> "$R/skills/orch/scripts/lib/private.sh"
+  preview range true "$MUTANT_TOOLS/guard"
+  selected="$(sort "$SUITE_LOG" | tr '\n' ' ' | sed 's/ $//')"
+  [ "$RC" -eq 0 ] && [ "$selected" = 'catalog orch walker' ] \
+    && ok 'control: ignoring external walk roots selects unrelated document walkers' \
+    || bad 'control: ignoring external walk roots selects unrelated document walkers' "selected=$selected rc=$RC out=$OUT"
+else
+  bad 'external walk-root control changes the guard'
 fi
 
 # Reader comparisons can fail while the files remain readable. Normal runs

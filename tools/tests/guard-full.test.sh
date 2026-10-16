@@ -629,7 +629,7 @@ git -C "$R" commit -q -m "chore: a skill whose suite fails"
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_guard
-[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"skills/quiet"* ]] \
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"=== skills/quiet/tests/quiet.test.sh"* ]] \
   && ok "a touched skill's suite runs in full validation and an untouched skill's does not" \
   || bad "a touched skill's suite runs in full validation and an untouched skill's does not" "rc=$RC out=$OUT"
 printf 'echo touched\n' >>"$R/skills/quiet/tests/quiet.test.sh"
@@ -751,7 +751,7 @@ narrow_row_holds \
 # cause it plants: its exit and the lines, joined by `~`, only that cause
 # prints. A sed expression holds `|`, so `#` separates the fields.
 narrow_controls=(
-  'whole sets under --full#s/case "\$d" in skills\/\* | hooks | tools) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks | range:tools) run="" ;; esac/#1#guard: suite=skills/narrow/tests/beta.test.sh~guard: suite=hooks/tests/unreached.test.sh'
+  'whole sets under --full#s/case "\$d" in skills\/\* | hooks | refresh | tools) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks | range:refresh | range:tools) run="" ;; esac/#1#guard: suite=skills/narrow/tests/beta.test.sh~guard: suite=hooks/tests/unreached.test.sh'
   'the mapped selection dropped#s/run="\$run\$sel$/run="$run/#0#guard-note: suites=0/2 reason=mapped tree=skills/narrow~guard-note: suites=0/3 reason=mapped tree=hooks'
 )
 for row in "${narrow_controls[@]}"; do
@@ -1597,7 +1597,7 @@ CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/cor
 # A skill and a tool, the diff no build input and no ui/ path is in.
 SKILL_TOOL="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh tools/demo-tool.sh"
 ALL="suites parse lint apple windows test ui"
-# class|docs verdict|changed paths|the lanes that run
+# class|docs verdict|changed paths|the lanes that run|selection (default all)
 LANE_ROWS=(
   "||$CODE|$ALL"
   "standard|false|$CODE ui/app.ts|$ALL"
@@ -1609,14 +1609,15 @@ LANE_ROWS=(
   "micro|false|$CODE|suites parse lint apple windows test"
   "small|false|$CODE ui/app.ts|$ALL"
   "micro|false|docs/guide.md|test"
-  "||crates/core/src/lib.rs ui/app.ts|parse lint apple windows test ui"
+  "||crates/core/src/lib.rs ui/app.ts|parse lint apple windows test ui|subset"
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
-  IFS='|' read -r class docs paths want <<<"$row"
+  IFS='|' read -r class docs paths want selection <<<"$row"
+  selection=${selection:-all}
   run_lanes "$class" "$docs" $paths
   got="$(lanes_ran)"
-  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = "validate: lanes=guard-scans selection=$selection" ] \
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
 done
