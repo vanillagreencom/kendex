@@ -15,8 +15,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "workflow-state-append-file: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "workflow-state-append-file: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "workflow-state-append-file: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
@@ -330,6 +332,46 @@ key="$(head -n 1 "$TMP_ROOT/fl-clock.err")"
 got="$("$WS" --state-dir "$dead_sd" get oversee 'tojson')"
 [[ "$got" == "$dead_before" ]] && pass "the clock refusal leaves the state untouched" \
   || fail "the clock refusal leaves the state untouched" "got=$got"
+
+# The overseer's verdict writer emitted both a string and an `item` key.
+# Both verbs must reject these before changing even the state's bytes.
+NO_TRIAGE="$(mutant_scripts no-triage workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_TRIAGE" "if ! jq -se 'length == 1 and" "if false && ! jq -se 'length == 1 and"
+for verb in append append-file; do
+  triage_sd="$TMP_ROOT/triage-$verb"
+  "$WS" --state-dir "$triage_sd" init oversee >/dev/null
+  for row in '"KEN-4138"' '{"item":"KEN-4138","verdict":"kept","reason":"checked"}' \
+    '{"issue":"KEN-4138","verdict":"pending","reason":"checked"}' \
+    '{"issue":"KEN-4138","verdict":"kept"}' \
+    '{"issue":42,"verdict":"kept","reason":"checked"}' \
+    '{"issue":"KEN-4138","verdict":"kept","reason":null}' '[]'; do
+    printf '%s\n' "$row" > "$TMP_ROOT/triage-row.json"
+    cp "$triage_sd/workflow-state-oversee.json" "$TMP_ROOT/triage-before.json"
+    arg="$row"; [[ "$verb" != append-file ]] || arg="$TMP_ROOT/triage-row.json"
+    rc=0; "$WS" --state-dir "$triage_sd" "$verb" oversee triaged "$arg" >/dev/null 2>&1 || rc=$?
+    [[ "$rc" -ne 0 ]] && cmp -s "$TMP_ROOT/triage-before.json" "$triage_sd/workflow-state-oversee.json" \
+      && pass "$verb refuses malformed triaged row $row without a write" \
+      || fail "$verb refuses malformed triaged row $row without a write" "rc=$rc"
+    # Must-fail control: bypassing the new guard restores main's acceptance
+    # of the two incident shapes, so the refusal assertion above would fail.
+    case "$row" in
+      '"KEN-4138"' | '{"item":'*)
+        "$NO_TRIAGE" --state-dir "$triage_sd" "$verb" oversee triaged "$arg" >/dev/null
+        got="$("$WS" --state-dir "$triage_sd" get oversee '.triaged[-1] | type == "string" or .item == "KEN-4138"')"
+        [[ "$got" == true ]] && pass "control: $verb accepts the incident row without validation" \
+          || fail "control: $verb accepts the incident row without validation" ;;
+    esac
+  done
+  for verdict in kept canceled; do
+    row="{\"issue\":\"KEN-4138\",\"verdict\":\"$verdict\",\"reason\":\"checked\"}"
+    printf '%s\n' "$row" > "$TMP_ROOT/triage-row.json"
+    arg="  $row"; [[ "$verb" != append-file ]] || arg="$TMP_ROOT/triage-row.json"
+    "$WS" --state-dir "$triage_sd" "$verb" oversee triaged "$arg" >/dev/null
+    got="$("$WS" --state-dir "$triage_sd" get oversee '.triaged[-1] | [.issue,.verdict,.reason] | join(":")')"
+    [[ "$got" == "KEN-4138:$verdict:checked" ]] && pass "$verb appends and reads a valid $verdict verdict" \
+      || fail "$verb appends and reads a valid $verdict verdict" "got=$got"
+  done
+done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

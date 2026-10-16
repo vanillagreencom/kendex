@@ -179,7 +179,7 @@ for row in \
   "a tracker list failure keeps its real cause||tracker.rc=2;tracker.err=E_TRACKER_UNAVAILABLE||rc=2 stdout=empty stderr~oversee-watch:+tracker-list-failed+team%ekendex+exit%e2=true stderr~E_TRACKER_UNAVAILABLE=true" \
   "malformed tracker output is named||tracker.out={}||rc=2 stdout=empty stderr~tracker-type+expected%earray+actual%eobject=true" \
   "an unwritable triage baseline names the shared state file|OVERSEE_WATCH_PR_WATCH=%B/absent-pr-watch|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}];oversee-state.json={\"triaged\":[{\"issue\":\"KEN-1200\",\"verdict\":\"kept\"}]};dir=$STATE_FILE_NAME||rc=2 stdout=empty stderr~oversee-watch:+state-target-invalid=true" \
-  "an unreadable verdict log keeps its original cause||workflow-state.rc=2;workflow-state.err=E_STATE_UNREADABLE||rc=2 stdout=empty stderr~oversee-watch:+triage-state-failed+exit%e2=true stderr~E_STATE_UNREADABLE=true" \
+  "an unreadable verdict log keeps its original cause||workflow-state.rc=2;workflow-state.err=E_STATE_UNREADABLE||rc=2 first=EVENT+watch-step-failed+step=triage+count=1 stderr~oversee-watch:+triage-state-failed+exit%e2=true stderr~E_STATE_UNREADABLE=true" \
   "an invalid verdict issue id is named||oversee-state.json={\"triaged\":[{\"issue\":\"bad id\",\"verdict\":\"kept\"}]}||rc=2 stdout=empty stderr~oversee-watch:+triage-item-invalid+item%ebad+id=true" \
   "a date-only --since is refused, naming the documented form|||--since 2026-08-15|rc=2 stdout=empty stderr~oversee-watch:+since-invalid+value%e2026-08-15=true" \
   "an offset --since is refused, naming the documented form|||--since 2026-08-15T09:00:00+00:00|rc=2 stdout=empty stderr~oversee-watch:+since-invalid+value%e2026-08-15T09:00:00%p00:00=true"; do
@@ -197,6 +197,35 @@ for row in \
   if [[ -n "$env" ]]; then run "$env" -- $args; else run -- $args; fi
   check "$label" "$expect"
 done
+
+# Directly written incident data bypasses the writer. It must reach the
+# overseer's stdout event stream on the first failure and the named cadence.
+new_case triage_read_failure
+tracker_items '[]'
+verdicts '["KEN-4138"]'
+for count in 1 2 3; do
+  run ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+  if [[ "$count" == 2 ]]; then expect="stdout=empty"; else expect="first=EVENT+watch-step-failed+step=triage+count=$count"; fi
+  check "a failed triage read reports at its cadence, pass $count" \
+    "rc=2 $expect stderr~oversee-watch:+triage-state-failed+exit%e5=true"
+done
+verdicts '[]'
+run -- --max-loops 1
+check "a successful read clears the standing failure count" "first=$HEARTBEAT1"
+verdicts '["KEN-4138"]'
+run -- --max-loops 1
+check "a new read failure starts at one after recovery" "first=EVENT+watch-step-failed+step=triage+count=1"
+
+# Must-fail control: suppress only the new stdout event. The same direct
+# malformed row still reaches main's stderr failure with no stdout report.
+TRIAGE_MUTANT="$(mutant_scripts triage-event-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/triage-event-mutant/github"
+mutate_file "$TRIAGE_MUTANT" 'if (( count == 1 || count % MARK_REPEAT == 0 )); then' 'if false && (( count == 1 || count % MARK_REPEAT == 0 )); then'
+new_case triage_event_mutant
+verdicts '["KEN-4138"]'
+WATCH_BIN="$TRIAGE_MUTANT" run -- --max-loops 1
+check "control: without the report the malformed row fails on stderr only" \
+  "rc=2 stdout=empty stderr~oversee-watch:+triage-state-failed+exit%e5=true"
 
 # Triage keys and reducer keys coexist in the one first-repository baseline. A
 # triage rewrite that started from empty lost the standing reducer edge, and

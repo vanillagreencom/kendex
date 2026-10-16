@@ -119,6 +119,9 @@ state_message() {
       printf 'workflow-state: append-value file=%s\n' "$file"
       printf '%s\n' "Error: append-file: $file is not exactly one JSON value"
       ;;
+    triaged-record-invalid)
+      printf 'workflow-state: triaged-record-invalid field=triaged\n'
+      ;;
     clock-unreadable)
       printf 'workflow-state: clock-unreadable field=%s\n' "$field"
       printf '%s\n' "Error: date could not be read, so $field carries no time this command can stamp or judge; nothing was written"
@@ -575,11 +578,26 @@ cmd_head_budget() {
     esac
 }
 
+# The overseer's triage writer once supplied a string or an `item` key;
+# neither can rebuild the watch's acknowledged issue keys.
+triaged_record_valid() {
+    if ! jq -se 'length == 1 and (.[0] | if type != "object" then false else
+      keys == ["issue", "reason", "verdict"] and
+      (.issue | type == "string") and (.reason | type == "string") and
+      (.verdict == "kept" or .verdict == "canceled") end)' >/dev/null 2>&1; then
+        state_message triaged-record-invalid >&2; return 1
+    fi
+}
+
 cmd_append() {
     local issue_id="$1"
     local field="$2"
     local value="$3"
 
+    if [[ "$field" == triaged ]]; then
+        triaged_record_valid <<<"$value" || return 1
+        value=$(jq -c . <<<"$value") || return 1
+    fi
     if [[ "$field" == fleet_log ]]; then
         state_message fleet-log-append >&2; return 1
     fi
@@ -675,6 +693,9 @@ cmd_append_file() {
     [[ -f "$file" ]] || { state_message append-missing "$@" >&2; return 1; }
     if ! jq -s -e 'length == 1' >/dev/null 2>&1 < "$file"; then
         state_message append-value "$@" >&2; return 1
+    fi
+    if [[ "$field" == triaged ]]; then
+        triaged_record_valid < "$file" || return 1
     fi
 
     local entry_expr='$entry[0]'
