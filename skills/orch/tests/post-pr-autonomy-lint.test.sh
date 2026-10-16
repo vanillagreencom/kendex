@@ -13,8 +13,8 @@ echo "=== orch post-PR autonomy lint ==="
 rule "decision mode defaults to automatic continuation" "$SETTINGS" "" 'ORCH_DECISION_MODE = "auto-recommended"'
 rule "merge consent defaults to automatic after gates" "$SETTINGS" "" 'ORCH_MERGE_AUTONOMY = "auto"'
 rule "reviewer silence defaults to proceed" "$SETTINGS" "" 'PR_REVIEW_ON_TIMEOUT = "proceed"'
-rule 'overseer handoff default' "$SKILL_DIR/workflows/oversee.md" \
-  '## 1. Resolve The Launch Surface' 'tmp/handoffs/OVERSEER-HANDOFF.md'
+rule 'overseer handoff default' "$SKILL_DIR/workflows/oversee-takeover.md" \
+  '## 1. Read the mailbox and handoff' 'tmp/handoffs/OVERSEER-HANDOFF.md'
 rule_fenced "comment triage reads the decision mode" "$COMMENTS" "" 'orch-env ORCH_DECISION_MODE auto-recommended'
 rule_fenced "submission reads the decision mode" "$SUBMIT" "" 'orch-env ORCH_DECISION_MODE auto-recommended'
 rule_fenced "submission spends the review-wait budget" "$SUBMIT" "## 4. Review Gate" 'head-budget take' 'review-wait'

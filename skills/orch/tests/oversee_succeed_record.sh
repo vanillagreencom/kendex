@@ -197,6 +197,8 @@ model_switch_rows() (
   local scripts="$TMP_ROOT/work/.agents/skills/orch/scripts" hook="$TMP_ROOT/work/.claude/hooks/lane-mail-check.sh"
   local scenario handoff_path relative_dir launch_dir line before after deadline old_pane model status delivery transcript handoff captured competitor other_pane other_window cause prompt word watch_handoff default_before root_before root_handoff prior_pane executable recorded override
   local producer_handoff=() control_scenario=""
+  local current_prefix="${BRIEF%tmp/handoffs/OVERSEER-HANDOFF.md}"
+  local retained_prefix='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at '
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
@@ -296,6 +298,11 @@ BARRIER
     if [[ "$relative_dir" != . ]]; then launch_dir+="/$relative_dir"; fi
     mkdir -p "$launch_dir"
     [[ "$handoff_path" != absolute ]] || handoff_path="$TMP_ROOT/work/shared/owner-state.md"
+    if [[ "$scenario" == absolute ]]; then
+      # A retained install produced both the predecessor argv and its record.
+      mutate_file "$scripts/lib/overseer-launch.sh" \
+        "OL_HANDOFF_PROMPT='$current_prefix'" "OL_HANDOFF_PROMPT='$retained_prefix'"
+    fi
     if [[ "$relative_dir" == . ]]; then
       line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude --handoff "$handoff_path" -- \
         --model "$executable" --effort high "$BYPASS")
@@ -334,9 +341,9 @@ BARRIER
     assert_eq "$(jq -r .overseer.model "$FLEET_STATE")" "$recorded" "$scenario comparison model omits the selector"
     case "$scenario" in
       absolute)
-        # A retained record from the earlier brief still names its custom handoff.
-        line="${line/Read .agents\/skills\/orch\/SKILL.md and follow .agents\/skills\/orch\/workflows\/oversee-takeover.md with the overseer handoff at /Read .agents\/skills\/orch\/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at }"
-        "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.launch_line=$line' --arg line "$line" >/dev/null ;;
+        # Recovery uses the current producer and its compatibility read.
+        mutate_file "$scripts/lib/overseer-launch.sh" \
+          "OL_HANDOFF_PROMPT='$retained_prefix'" "OL_HANDOFF_PROMPT='$current_prefix'" ;;
       launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
       launch-command-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.launch_line)' >/dev/null ;;
       cwd-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.cwd)' >/dev/null ;;
