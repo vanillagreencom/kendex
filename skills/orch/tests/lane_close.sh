@@ -67,7 +67,7 @@ cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
   "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
   "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" \
-  "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$SCRIPTS/lib/"
+  "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$TEST_DIR/../scripts/lib/cloud-close-log.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 cat >"$SCRIPTS/lib/pane-write.sh" <<'EOF'
 pane_write() {
@@ -581,27 +581,25 @@ PY
 
 SCRIPT="$SCRIPTS/lane-close"
 
-# What lives in lib/lane-state.sh takes a fixture tree of its own: links to
-# the same lane-close and stubs over one changed library copy. OLD is replaced
+# A library control takes a fixture tree of its own: links to the same
+# lane-close and stubs over one changed library copy. OLD is replaced
 # by NEW where OLD is given, and APPEND, where given, is added at the end,
 # where it redefines a function the library defined above it.
-lib_mutant() { # NAME OLD NEW [APPEND]
-  local name="$1" old="$2" new="$3" dir sibling
+lib_mutant() { # NAME OLD NEW [APPEND] [LIBRARY]
+  local name="$1" old="$2" new="$3" dir sibling library="${5:-lane-state.sh}"
   dir="$TMP_ROOT/libmut-$name"
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
   ln -s "$FIXTURE/skills/mailbox" "$dir/skills/mailbox"
-  for sibling in lane-close workflow-state lane-host dev-validate-run lanes lib/date-ladder.sh lib/usage-reset.sh; do
+  for sibling in lane-close workflow-state lane-host dev-validate-run lanes; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
   ln -s "$FIXTURE/skills/linear/scripts/lib" "$dir/skills/linear/scripts/lib"
   ln -s "$FIXTURE/skills/worktree" "$dir/skills/worktree"
-  ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
-  ln -s "$SCRIPTS/lib/lane-capabilities.sh" "$dir/skills/orch/scripts/lib/lane-capabilities.sh"
-  ln -s "$SCRIPTS/lib/tmux-server.sh" "$dir/skills/orch/scripts/lib/tmux-server.sh"
-  ln -s "$SCRIPTS/lib/lane-gitfile.sh" "$dir/skills/orch/scripts/lib/lane-gitfile.sh"
-  ln -s "$SCRIPTS/lib/pane-write.sh" "$dir/skills/orch/scripts/lib/pane-write.sh"
-  python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
+  for sibling in "$SCRIPTS"/lib/*; do
+    [[ "${sibling##*/}" == "$library" ]] || ln -s "$sibling" "$dir/skills/orch/scripts/lib/${sibling##*/}"
+  done
+  python3 - "$SCRIPTS/lib/$library" "$dir/skills/orch/scripts/lib/$library" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
 text = pathlib.Path(source).read_text()
@@ -2448,7 +2446,7 @@ cloud_send_logged() {
     "$(jq -c '[.fleet_log[]? | [.kind, .item, (.text | [scan("(?:session|account|send|credit|locked|cli)=[^ ]*")] | join(" "))]]' "$STATE")"
 }
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-CLOUD_ACCOUNT_CONTROL="$(mutant cloud-account ' account=\(.account // "none")' '')"
+CLOUD_ACCOUNT_CONTROL="$(lib_mutant cloud-account ' account=\(.account // "none")' '' '' cloud-close-log.sh)"
 # LABEL|directive_send|logged send readings
 for row in \
   'a credit read|{"at":1,"result":"failed","text":"exit=1 Session\n  not found","credit":{"remaining_dollars":4.5,"locked_reason":null}}|send=failed credit=4.5 locked=none cli=exit=1' \
@@ -2463,19 +2461,20 @@ for row in \
   cloud_send_close "$CLOUD_ACCOUNT_CONTROL" "$send"
   assert_not_contains "$(cloud_send_logged)" 'account=' "control: $label without the account fails the archive reading"
 done
-MUTANT="$(mutant cloud-directive-gate '    {kind: "close", item: $item, text:' '    select(.directive_send | objects) | {kind: "close", item: $item, text:')"
+MUTANT="$(lib_mutant cloud-directive-gate '    {kind: "close", item: .item, text:' '    select(.directive_send | objects) | {kind: "close", item: .item, text:' '' cloud-close-log.sh)"
 cloud_send_close "$MUTANT" null
 assert_eq "$(cloud_send_logged)" 'rc=0 status=done rows=[]' 'control: the old directive gate fails the no directive row'
 LANE_CLOSE_APPEND_FAIL=1 cloud_send_close "$SCRIPT" '{"at":1,"result":"sent","text":"","credit":"unread"}'
 assert_eq "rc=$RC refused=$(grep -c '^lane-close: fleet-log-failed item=KEN-1 cause=append$' "$TMP_ROOT/err" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 refused=1 status=done' 'a fleet-log row that cannot be written refuses with the record done'
-MUTANT="$(mutant cloud-send-log '    log_send_cause
-' '')"
+MUTANT="$(mutant cloud-send-log '    if ! CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$record" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})"; then' '    if false; then')"
 cloud_send_close "$MUTANT" '{"at":1,"result":"failed","text":"x","credit":"unread"}'
 assert_eq "$(cloud_send_logged)" 'rc=0 status=done rows=[]' \
   'control: a stop=none close that skips the send cause fails the logged row'
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-MUTANT="$(mutant cloud-send-refuse '|| { rm -f -- "$file"; message fleet-log-failed "item=$ITEM" "cause=append" >&2; exit 1; }' '|| true')"
+MUTANT="$(lib_mutant cloud-send-refuse "    printf '%s\\n' append
+    return 1" "    printf '%s\\n' append
+    return 0" '' cloud-close-log.sh)"
 LANE_CLOSE_APPEND_FAIL=1 cloud_send_close "$MUTANT" '{"at":1,"result":"sent","text":"","credit":"unread"}'
 assert_eq "rc=$RC" 'rc=0' 'control: an append that fails read as written fails the refusal row'
 

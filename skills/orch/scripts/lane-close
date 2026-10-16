@@ -19,6 +19,7 @@ source "$SCRIPT_DIR/lib/usage-reset.sh"
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
+source "$SCRIPT_DIR/lib/cloud-close-log.sh"
 
 message() { # REASON FIELD=VALUE...
   local reason="$1" field branch_source_named=false
@@ -1131,25 +1132,6 @@ refuse_listed_launch_pane() {
   esac
 }
 
-# The close row keeps the session and account after a later launch rewrites
-# the lane record. A last directive's readings stay in that same row.
-# The record already reads done and keeps directive_send, so a row that cannot
-# be written refuses as fleet-log-failed with nothing else to undo.
-log_send_cause() {
-  local row file
-  row="$(jq -c --arg item "$ITEM" '
-    {kind: "close", item: $item, text: ("cloud lane closed; session=\(.session_id // "none") account=\(.account // "none")"
-      + (.directive_send | if type == "object" then " send=\(.result) "
-        + (.credit | if type == "object" then "credit=\(.remaining_dollars // "none") locked=\(.locked_reason // "none")" else "credit=unread" end)
-        + " cli=\(.text | gsub("\\s+"; " ") | .[0:300])" else "" end))}' <<<"$record")" \
-    || { message record-invalid "item=$ITEM" "field=directive_send" >&2; exit 1; }
-  file="$(mktemp)" || { message fleet-log-failed "item=$ITEM" "cause=scratch-unmade" >&2; exit 1; }
-  printf '%s\n' "$row" > "$file"
-  "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} append-file oversee fleet_log "$file" >/dev/null \
-    || { rm -f -- "$file"; message fleet-log-failed "item=$ITEM" "cause=append" >&2; exit 1; }
-  rm -f -- "$file"
-}
-
 # The record's host kind declares whether this machine can stop its lane. A
 # stop=none kind, a Claude cloud session, has no harness or sandbox to reach
 # and no mailbox to ask: the close removes the item's files, then closes the
@@ -1178,7 +1160,14 @@ case "$host_stop" in
     [[ -x "$WORKTREE" ]] || { message helper-missing "item=$ITEM" "path=$WORKTREE" >&2; exit 1; }
     "$WORKTREE" remove "$mail_root" >&2 || { message worktree-remove-failed "item=$ITEM" "path=$mail_root" >&2; exit 1; }
     update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }
-    log_send_cause
+    if ! CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$record" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})"; then
+      if [[ "$CLOUD_CLOSE_LOG_CAUSE" == record-invalid ]]; then
+        message record-invalid "item=$ITEM" "field=directive_send" >&2
+      else
+        message fleet-log-failed "item=$ITEM" "cause=$CLOUD_CLOSE_LOG_CAUSE" >&2
+      fi
+      exit 1
+    fi
     lane_capability host_kind kind
     message host-kept "kind=$host_kind" "session=$(record_field session_id)"
     exit 0 ;;

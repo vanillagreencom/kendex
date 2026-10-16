@@ -150,6 +150,8 @@ source "$SCRIPT_DIR/lib/lane-relaunch.sh"
 source "$SCRIPT_DIR/lib/lane-cap.sh"
 # shellcheck source=lib/lane-capabilities.sh
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
+# shellcheck source=lib/cloud-close-log.sh
+source "$SCRIPT_DIR/lib/cloud-close-log.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 # `worktree create --reuse --keep-on-conflict` handed back a tree whose rebase
 # conflicted, unrebased (`worktree create --help`).
@@ -1440,7 +1442,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
   local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" status="${7:-running}" rec host="" account="" surface=gui report record_repo
-  local running_at="" record_model
+  local running_at="" record_model previous
   record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" launch)" || return 1
   [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
@@ -1481,6 +1483,16 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
          | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}
        + (if $wake == null then {} else {wake: $wake} end)
        + (if $cloud_repo_access == null then {} else {cloud_repo_access: $cloud_repo_access} end)')" || return 1
+  # The archive reads close rows, so save a cloud predecessor before any
+  # launch or preparation replaces its session and account. A wake keeps it.
+  if [[ "$mode" != wake ]]; then
+    previous="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
+      '.lanes // []' | jq -c --arg item "$item" '.[] | select(.item == $item and .kind == "claude-cloud")')" || return 1
+    if [[ -n "$previous" ]]; then
+      CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$previous" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"})" \
+        || { ot_message cloud-close-log-failed "item=$item" "cause=$CLOUD_CLOSE_LOG_CAUSE" >&2; return 1; }
+    fi
+  fi
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \

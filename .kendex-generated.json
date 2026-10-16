@@ -658,6 +658,7 @@
   ".agents/skills/orch/scripts/lib/branch-growth.sh",
   ".agents/skills/orch/scripts/lib/cause-keys.jq",
   ".agents/skills/orch/scripts/lib/change-class.sh",
+  ".agents/skills/orch/scripts/lib/cloud-close-log.sh",
   ".agents/skills/orch/scripts/lib/copilot-check-runs.sh",
   ".agents/skills/orch/scripts/lib/copilot-credits.sh",
   ".agents/skills/orch/scripts/lib/copilot-session.sh",

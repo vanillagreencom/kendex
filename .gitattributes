@@ -13,6 +13,7 @@ skills/orch/scripts/lane-close text eol=lf
 skills/orch/scripts/pane-write text eol=lf
 skills/orch/scripts/lib/lane-state.sh text eol=lf
 skills/orch/scripts/lib/lane-capabilities.sh text eol=lf
+skills/orch/scripts/lib/cloud-close-log.sh text eol=lf
 skills/orch/scripts/lib/lane-host-slots.sh text eol=lf
 skills/orch/scripts/lib/lane-claims.sh text eol=lf
 skills/orch/scripts/lib/pane-write.sh text eol=lf
