@@ -6,6 +6,16 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-10-16
+
+### Changed
+
+- Pi shadow tests and CLI presentation fixtures no longer name an unrelated package source.
+
+### Fixed
+
+- Pi extension updates keep the installed version and its commands when npm fails. Missing declared command files are reported as files the package publisher must ship, while the package and its other commands install.
+
 ## [1.19.1] - 2026-10-15
 
 ### Fixed
@@ -2937,7 +2947,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.1..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.2..HEAD
+[1.19.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.2
 [1.19.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.1
 [1.19.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.0
 [1.18.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.18.0
