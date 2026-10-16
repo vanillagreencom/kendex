@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import select
 import shutil
 import subprocess
@@ -26,9 +27,12 @@ STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
-    "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing"},
+    "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
+                "trust-required"},
     "failed": {"launch-failed", "handover-failed"},
 }
+# A dialog row as a harness draws it: inside a box border, padded to the pane.
+DIALOG_FRAME = re.compile(r"^[\s─-╿]+|[\s─-╿]+$")
 
 
 class Refusal(Exception):
@@ -38,6 +42,11 @@ class Refusal(Exception):
 
 def clean(value):
     return isinstance(value, str) and all(c.isprintable() for c in value)
+
+
+def dialog_question(line):
+    # The record holds a detail of at most 200 printable characters.
+    return "".join(c for c in DIALOG_FRAME.sub("", line) if c.isprintable())[:200]
 
 
 def environment():
@@ -458,24 +467,43 @@ class Session:
                 process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                 record["process"] = json.loads(self.backend("process", process).stdout)
                 self.write(record)
-            # One bound covers native identity and the first working turn.
+            # One bound covers native identity and the taking of the Start brief.
             # Backend operations share it; inspection never renews the launch.
+            # The pane is read outside the record lock, which holds only each
+            # read, decision and write, the brief's paste among them: a native
+            # hook's brief-taken stamp waits on that lock for SESSION_ROWS_WAIT
+            # (orch session-rows.sh), 2 s, far above that hold.
             while True:
                 if time.monotonic() >= self.deadline:
                     raise Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
+                record = self.read()
+                if not self._current_request(record, generation, "start"):
+                    return
+                if not self.terminal(record):
+                    raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
+                identity = record.get("pending") or {}
+                # The native hook's stamp at the first tool call or turn end
+                # after the brief, the session's own word that it took it.
+                taken = record.get("brief_delivered") and identity.get("brief_taken")
+                observed = "" if taken else self.backend(
+                    "inspect", socket, pane, record["harness"], prepared["var"], record["account"],
+                    "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", ""),
+                    "delivered" if record.get("brief_delivered") else "undelivered").stdout
+                observed, _, dialog = observed.partition("\n")
+                if observed == "auth":
+                    raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
+                if observed == "wrong-account":
+                    raise Refusal("selection-conflict")
+                if observed == "trust":
+                    raise Refusal("trust-required", dialog_question(dialog))
                 with self.locked():
+                    inspected = record
                     record = self.read()
                     if not self._current_request(record, generation, "start"):
                         return
-                    if not self.terminal(record):
-                        raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
-                    identity = record.get("pending") or {}
-                    observed = self.backend("inspect", socket, pane, record["harness"], prepared["var"], record["account"],
-                                            "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", "")).stdout.strip()
-                    if observed == "auth":
-                        raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
-                    if observed == "wrong-account":
-                        raise Refusal("selection-conflict")
+                    # The pane answered for the record it was read against.
+                    if any(record.get(key) != inspected.get(key) for key in ("pending", "brief_delivered")):
+                        continue
                     if identity.get("native_session_id") and identity.get("started_at") and observed in ("idle", "working"):
                         record["identity_verified"] = True
                         record["history"] = self.confirmed_history(record)
@@ -491,7 +519,7 @@ class Session:
                             prompt.unlink()
                         record["brief_delivered"] = True
                         self.write(record)
-                    elif record.get("brief_delivered") and observed == "working":
+                    elif record.get("brief_delivered") and (taken or observed == "working"):
                         record.update(state="running", reason=launch["reason"], detail="")
                         record.pop("predecessor", None)
                         record.pop("launch", None)

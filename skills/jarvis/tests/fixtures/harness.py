@@ -17,6 +17,20 @@ AUTH_MESSAGES = {
     "copilot": " ✗ You must be logged in to send messages. Please run /login",
 }
 
+# Pi's current editor: its title, footer and empty π prompt
+# (orch/tests/fixtures/oversee-watch/pi-current.txt).
+PI_IDLE = ("── π - jarvis - home " + "─" * 40 + "\n\n"
+           + "● home Anthropic / Opus 5.5 / high 1M " + "─" * 20 + " 4%\nπ")
+# The spinner a Claude Code 2.1.x Start turn drew (KEN-3862's owner run).
+CLAUDE_SPINNER = "✻ Contemplating… (1s · thinking with high effort)"
+
+
+def brief_taken(fixture, harness, identity, event):
+    # The native hook's stamp, written by its real library at the default wait.
+    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_taken "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2" "$3"'
+    subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness, event],
+                   input=json.dumps({"session_id": identity}), text=True, check=True)
+
 
 @contextmanager
 def native_launcher():
@@ -95,6 +109,11 @@ def main():
         file.parent.mkdir(parents=True, exist_ok=True)
         if not file.exists():
             file.write_text(json.dumps(header) + "\n")
+    if fixture.get("trust"):
+        # A native folder-trust question holds the harness before its start.
+        print(Path(fixture["trust"]).read_text(), end="", flush=True)
+        sys.stdin.read()
+        return
     payload = {"session_id": identity}
     if harness != "copilot":
         payload["transcript_path"] = str(file)
@@ -109,6 +128,8 @@ def main():
     auth_mode = fixture.get("auth_mode")
     if auth_mode == "stale":
         print(AUTH_MESSAGES[harness] + "\n❯ continue\n❯\u00a0", flush=True)
+    elif harness == "pi":
+        print(PI_IDLE, flush=True)
     else:
         print("❯\u00a0", flush=True)
     prompt = sys.stdin.readline()
@@ -124,6 +145,14 @@ def main():
         print(AUTH_MESSAGES[harness], flush=True)
     elif auth_mode == "stale":
         print(AUTH_MESSAGES[harness] + "\nesc to interrupt", flush=True)
+    elif harness == "pi":
+        # Pi draws no working rung; its first tool call says it took the brief.
+        brief_taken(fixture, harness, identity, "PreToolUse")
+    elif fixture.get("turn") == "spinner":
+        # Claude Code 2.1.x draws a spinner no pane pattern names, then its
+        # composer once the turn ends.
+        print(CLAUDE_SPINNER + "\n❯\u00a0", flush=True)
+        brief_taken(fixture, harness, identity, "Stop")
     else:
         print("Working to interrupt", flush=True)
     sys.stdin.read()

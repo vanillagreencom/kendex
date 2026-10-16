@@ -1032,7 +1032,11 @@ lane_state_is() { # STATE live|dialog
 #            the wall its banner reports lifted, `walled` where it found the
 #            wall standing, and "" where it measured nothing
 #   ROWS     for a Pi lane, lib/session-rows.sh § session_rows_lane_verdict's
-#            word, `unreadable` where that read failed; "" for any other lane
+#            word, `unreadable` where that read failed; for a Pi session the
+#            Jarvis launch worker started, `idle` while its runtime record
+#            holds the native start and no delivered brief, a session that has
+#            run no turn (the jarvis skill's session-backend.sh); "" for any
+#            other lane
 #   HOSTED_ITEM and HARNESS name the remote process read through lane-host.
 #            One call per invocation; a failure returns unjudged without
 #            falling back to the local ssh child or the screen.
@@ -1199,8 +1203,9 @@ lane_state() {
 # when HOSTED_ITEM is empty. OUT_VAR retains the state for provider diagnostics.
 # Exit 0 permits input, 1 refuses, and lane_state's scan errors retain status 2.
 # Pi's pulse and hidden indicators cannot establish activity from a capture.
-# Its provider must supply session_rows_lane_verdict's idle ROWS verdict;
-# lane_state alone can also reach idle through SESSION or a lifted wall.
+# Its provider must supply an idle ROWS verdict, session_rows_lane_verdict's
+# or the Jarvis runtime record's; lane_state alone can also reach idle through
+# SESSION or a lifted wall.
 # Native selectors can open without an activity row. The capture lane_state
 # actually read must also show the base editor's final empty prompt.
 lane_input_ready() {

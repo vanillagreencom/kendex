@@ -25,7 +25,11 @@ CONTROLS = [
     ("local acquisition ownership", "jarvis/scripts/lib/session.py", 'acquired = record', 'acquired = None', "test_start_acquisition_failure_releases_ownership"),
     ("brief acquisition cleanup", "jarvis/scripts/lib/session.py", 'prompt.unlink()', 'if False:\n                                prompt.unlink()', "test_start_acquisition_failure_releases_ownership"),
     ("worker acquisition cleanup", "jarvis/scripts/lib/session.py", '            child.terminate()\n            try:\n                child.wait(timeout=2)\n            except subprocess.TimeoutExpired:\n                child.kill()\n                child.wait(timeout=2)', '            if False:\n                child.terminate()\n                try:\n                    child.wait(timeout=2)\n                except subprocess.TimeoutExpired:\n                    child.kill()\n                    child.wait(timeout=2)', "test_start_acquisition_failure_releases_ownership"),
-    ("working turn", "jarvis/scripts/lib/session.py", 'elif record.get("brief_delivered") and observed == "working":', 'elif record.get("brief_delivered"):', "test_idle_prompt_is_not_running"),
+    ("working turn", "jarvis/scripts/lib/session.py", 'elif record.get("brief_delivered") and (taken or observed == "working"):', 'elif record.get("brief_delivered"):', "test_idle_prompt_is_not_running"),
+    ("brief taken", "jarvis/scripts/lib/session.py", '(taken or observed == "working")', '(observed == "working")', "test_turn_end_takes_the_brief"),
+    ("Pi tool call takes the brief", "jarvis/scripts/lib/session.py", '(taken or observed == "working")', '(observed == "working")', "test_pi_contract"),
+    ("Pi idle before the brief", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$harness" == pi && "$6" == confirmed && "$brief" == undelivered ]]; then', 'if false; then', "test_pi_contract"),
+    ("trust refusal", "jarvis/scripts/lib/session-backend.sh", "0) printf 'trust\\n%s\\n' \"$dialog\"; exit ;;", '0) ;;', "test_trust_dialog_is_refused"),
     ("current-turn authentication", "jarvis/scripts/lib/session-backend.sh", 'lane_state state listed "$cmd" "$pid" "$screen" || exit 1', 'if lane_auth_failure "$screen"; then printf \'auth\\n\'; exit; fi\n    lane_state state listed "$cmd" "$pid" "$screen" || exit 1', "test_sign_in_failure"),
     ("authentication wall", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$LANE_WALL_KIND" == auth ]]; then', 'if false; then', "test_sign_in_failure"),
     ("name ownership", "jarvis/scripts/lib/session.py", 'if existing.returncode == 0:', 'if False:', "test_unrelated_session_conflicts"),
@@ -66,6 +70,8 @@ def main():
         skills = scratch / "skills"
         for package in ("jarvis", "orch", "mailbox"):
             shutil.copytree(ROOT / "skills" / package / "scripts", skills / package / "scripts")
+        # The trust row replays a measured native capture.
+        shutil.copytree(ROOT / "skills/orch/tests/fixtures/oversee-watch", skills / "orch/tests/fixtures/oversee-watch")
         # Test-owned applicability is mutated beside the existing contract case.
         shutil.copytree(ROOT / "skills/jarvis/tests", skills / "jarvis/tests",
                         ignore=shutil.ignore_patterns("__pycache__"))

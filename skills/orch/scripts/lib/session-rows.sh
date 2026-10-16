@@ -24,6 +24,7 @@
 # StopFailure row and dates the turn end oversee-watch holds the overseer's
 # context record against. The readers are oversee-watch's
 # overseer judgement, `oversee register` and oversee-succeed's caller identity.
+# The same hook writes the Jarvis runtime record below, never this file.
 #
 # A last row session_rows_verdict cannot judge reads `unsupported`, and its
 # reader takes the pane, the named fallback, reported as fallback.
@@ -46,11 +47,15 @@
 #
 # A session the Jarvis runtime launched writes no file here of its own: its
 # SessionStart fills the launch's pending row in the runtime record its
-# environment names, with no fleet and no mailbox (session_rows_jarvis_write).
+# environment names, with no fleet and no mailbox (session_rows_jarvis_write),
+# and the lane-mail-check hook's own run at its first tool call or turn end
+# after the Start brief stamps that row once as the brief taken
+# (session_rows_jarvis_taken), the fact the Jarvis launch worker reads.
 #
 # The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
-# lib/lane-context.sh and lib/lane-state.sh sourced by its caller, and the lane
-# writer the first two; the overseer readers need jq and tail alone, and the
+# lib/lane-context.sh and lib/lane-state.sh sourced by its caller, the lane
+# writer the first two, and the Jarvis stamp lib/file-lock.sh and
+# lib/lane-context.sh; the overseer readers need jq and tail alone, and the
 # overseer and lane verdicts lib/lane-state.sh besides. Sourced, never run. Bash 3.2-safe,
 # like its callers.
 
@@ -348,6 +353,16 @@ session_rows_write() { # DIR HARNESS [EVENT]
   return "$jarvis_rc"
 }
 
+# Whether a record's pending row is the launch of the session a hook runs in:
+# the record's harness, and the row's generation, tmux server pid and lead
+# pane, against the hook's install, JARVIS_GENERATION and its own key. One
+# def, which the identity write and the brief stamp both read.
+SESSION_ROWS_JARVIS_BOUND='def bound($generation; $server; $pane; $harness):
+  .harness == $harness and (.pending | type) == "object" and $generation != ""
+  and (.pending.generation | tostring) == $generation
+  and (.pending.server | tostring) == $server
+  and .pending.pane == $pane;'
+
 # session_rows_jarvis_write RECORD GENERATION KEY HARNESS: the SessionStart payload on
 # stdin written as its session's native identity into the `pending` row of the
 # Jarvis runtime record RECORD: the harness's own session id as
@@ -377,10 +392,9 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
     exec 200>>"$1.lock" || exit 2
     orch_take_lock 200 "$1.lock" "$SESSION_ROWS_WAIT" || exit 3
     verdict="$(jq -r --arg generation "$2" --arg server "${3%% *}" --arg pane "${3#* }" \
-      --argjson identity "$identity" --arg harness "$4" '
+      --argjson identity "$identity" --arg harness "$4" "$SESSION_ROWS_JARVIS_BOUND"'
       .pending as $p
-      | if .harness != $harness or ($p | type) != "object" or $generation == "" or ($p.generation | tostring) != $generation
-          or ($p.server | tostring) != $server or $p.pane != $pane or $p.started_at != null then "other"
+      | if (bound($generation; $server; $pane; $harness) | not) or $p.started_at != null then "other"
         elif ($p.native_session_id // $identity.native_session_id) != $identity.native_session_id then "mismatch"
         elif ($identity | length) == 0 then "unnamed"
         else "own" end' -- "$1")" || exit 1
@@ -395,6 +409,46 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
     esac
     jq -c --argjson identity "$identity" --arg account "$account" --argjson at "$(date +%s)" \
       '.pending += $identity + {started_at: $at, observed_account: $account}' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
+    mv -f -- "$1.$$" "$1" || { rm -f -- "$1.$$"; exit 2; }
+  )
+}
+
+# session_rows_jarvis_taken RECORD GENERATION KEY HARNESS EVENT: the hook payload
+# on stdin, of the session's tool call (EVENT PreToolUse) or turn end (Stop),
+# stamped once as `brief_taken` into the pending row of the Jarvis runtime
+# record RECORD, which the Jarvis launch worker reads as its Start brief taken.
+# The stamp lands only where that row is this session's launch (the bound def
+# above), its identity started under the payload's own session id, the record
+# says the brief was delivered and the launch is still `starting`, and no stamp
+# stands. The worker writes `brief_delivered` under the same lock in the hold
+# that pastes the brief, so a stamp is ordered after the delivery with no
+# clock; a hook that met the lock held retries at the session's next tool call
+# or turn end. Every other record is left as it stands, with exit 0: a running
+# session's later calls write nothing.
+#
+# A Pi Stop is no stamp: Pi's carrier dispatches Stop on a run that ended on
+# an error as well as on a completed one, ahead of the StopFailure that tells
+# them apart, so only its tool call says it took the brief. Claude Code fires
+# StopFailure in place of Stop.
+#
+# Exit 1 where the payload or RECORD could not be read, 2 where RECORD could
+# not be written, 3 where its lock was not taken. The cause is on stderr.
+session_rows_jarvis_taken() { # RECORD GENERATION KEY HARNESS EVENT
+  local session
+  [ "$4:$5" != pi:Stop ] || return 0
+  session="$(jq -r '(.session_id // .sessionId) | strings')" || return 1
+  [ -n "$session" ] || return 0
+  (
+    exec 200>>"$1.lock" || exit 2
+    orch_take_lock 200 "$1.lock" "$SESSION_ROWS_WAIT" || exit 3
+    verdict="$(jq -r --arg generation "$2" --arg server "${3%% *}" --arg pane "${3#* }" \
+      --arg harness "$4" --arg session "$session" "$SESSION_ROWS_JARVIS_BOUND"'
+      if bound($generation; $server; $pane; $harness) and .pending.started_at != null
+        and .pending.native_session_id == $session and .brief_delivered == true
+        and .state == "starting" and .pending.brief_taken == null
+      then "own" else "other" end' -- "$1")" || exit 1
+    [ "$verdict" = own ] || exit 0
+    jq -c '.pending.brief_taken = true' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
     mv -f -- "$1.$$" "$1" || { rm -f -- "$1.$$"; exit 2; }
   )
 }

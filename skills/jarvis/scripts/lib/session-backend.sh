@@ -62,13 +62,34 @@ case "$verb" in
     jq -cn --arg line "$line" --arg var "$var" --arg home "$LANE_TRUST_HOME" \
       '{line:$line, var:$var, effective_home:$home}' ;;
   inspect)
-    socket="$1" pane="$2" harness="$3" var="$4" account="$5"
+    socket="$1" pane="$2" harness="$3" var="$4" account="$5" brief="$8"
     export TMUX="$socket,0,0"
     screen="$(tmux -S "$socket" capture-pane -p -t "$pane")" || exit 1
     pid="$(tmux -S "$socket" display-message -p -t "$pane" '#{pane_pid}')" || exit 1
     cmd="$(tmux -S "$socket" display-message -p -t "$pane" '#{pane_current_command}')" || exit 1
-    lane_state state listed "$cmd" "$pid" "$screen" || exit 1
+    if [[ "$harness" == pi && "$6" == confirmed && "$brief" == undelivered ]]; then
+      # A Pi session whose start is recorded and that has had no brief has run
+      # no turn: the record is the idle rows verdict lane_input_ready demands,
+      # beside Pi's live-editor proof. Pi alone, since that verdict passes
+      # over every pane rung; its refusal is an answer, not a failure.
+      rc=0
+      lane_input_ready state listed "$cmd" "$pid" "$screen" "" "" idle "" pi || rc=$?
+      [[ "$rc" -le 1 ]] || exit 1
+    else
+      lane_state state listed "$cmd" "$pid" "$screen" || exit 1
+    fi
     if [[ "$LANE_WALL_KIND" == auth ]]; then printf 'auth\n'; exit; fi
+    if [[ "$brief" == undelivered ]]; then
+      # A folder-trust question holds the harness until its owner answers it
+      # natively; Jarvis never answers a native security request.
+      rc=0
+      dialog="$(pane_trust_dialog "$screen")" || rc=$?
+      case "$rc" in
+        0) printf 'trust\n%s\n' "$dialog"; exit ;;
+        1) ;;
+        *) exit 1 ;;
+      esac
+    fi
     if [[ "$state" == working || "$6" == confirmed ]]; then
       lane_account_equivalent "${7:-}" "$account" || { printf 'wrong-account\n'; exit; }
       lane_account_check "$pane" "$var" "$account" prefix 2 || { printf 'wrong-account\n'; exit; }
