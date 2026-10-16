@@ -1,7 +1,8 @@
 [env]
-# Apple proof uses the workflow on the base branch and these space-separated
-# issue labels. The path and labels default to the existing mac-run consumer.
+# The Apple proof workflow must exist on the base branch to activate the gate.
 ORCH_APPLE_WORKFLOW = ".github/workflows/mac-run.yml"
+
+# Space-separated issue labels that require Apple proof when the gate is active.
 ORCH_APPLE_LABELS = "ios macos"
 
 # Publication order, resolved by pr-order: review-first, open-first or push-first.
