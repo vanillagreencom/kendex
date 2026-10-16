@@ -102,10 +102,20 @@ assert "update uses live issue-team and workspace label IDs" \
 assert_file_lacks "update never sends the cached fleet label ID" \
   "$TMP_ROOT/live.jsonl" "e79890c4-77ea-414a-9c92-b41ca6de4501"
 
+# A missing team name must reach label resolution after the guard reads the
+# current team key. Keep this incomplete issue private to that case.
+MISSING_TEAM_NAME="$TMP_ROOT/missing-team-name"
+mkdir -p "$MISSING_TEAM_NAME"
+cp -- "$SKILL_DIR/tests/lib/fixtures/issue-team-labels.json" "$MISSING_TEAM_NAME/"
+jq 'del(.issue.team.name)' "$SKILL_DIR/tests/lib/fixtures/label-team-issue.json" \
+  >"$MISSING_TEAM_NAME/label-team-issue.json"
+
 # Linear can return no label, fail a lookup, or fail the issue read. Each
 # refusal must leave both the issue and attachment storage unchanged.
 while IFS='|' read -r name fail labels needle; do
-  run_status rc run_label_team_request "$PROJECT" "$name" "$fail" \
+  fixture_dir="$SKILL_DIR/tests/lib/fixtures"
+  [[ "$name" != team-missing ]] || fixture_dir="$MISSING_TEAM_NAME"
+  run_status rc run_label_team_request "$PROJECT" "$name" "$fail" "FIXTURE_DIR=$fixture_dir" \
     update KEN-2413 --labels "$labels" --attach "$TMP_ROOT/asset.bin"
   assert_ne "$name: update refuses" "$rc" 0
   assert_file_contains "$name: refusal names its cause" "$TMP_ROOT/$name.err" "$needle"
@@ -116,7 +126,7 @@ foreign||harness,secrets|secrets
 unknown||harness,ghost-label|ghost-label
 lookup-failed|labels|harness|label service unavailable
 issue-failed|issue|harness|issue service unavailable
-team-missing|team|harness|KEN-2413
+team-missing||harness|KEN-2413
 ROWS
 assert_jq "a foreign-only label refusal names the actual issue team" \
   "$(cat "$TMP_ROOT/foreign.err")" '.error | contains("kendex") and contains("secrets")'

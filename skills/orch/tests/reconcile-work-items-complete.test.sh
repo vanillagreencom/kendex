@@ -56,8 +56,8 @@ for id in T-1 T-2 T-3 T-4 T-5 T-6; do
     >"$TMP_ROOT/state/$id.json"
 done
 
-# The team read answers the cross-team guard's read of LINEAR_TEAM. The issue
-# read answers with the issue's description file; the update
+# The guard reads LINEAR_TEAM and each issue's current team key. The issue
+# read also supplies the issue's description; the update
 # answers Done with the description it was sent, or that file's when it was
 # sent none, as Linear keeps a description an update leaves out, and records
 # the issue so the list read answers it as the update left it.
@@ -83,7 +83,7 @@ case "$query" in
   jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-verifying" then "started" else "unstarted" end)}]}}}'
   ;;
 *"issue(id:"*)
-  jq -cjn --argjson d "$(jq -r ' .description | tojson' "$STATE/$id.json")" --arg id "$id" '{data:{issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:$d,state:{name:"In Review",type:"started"},team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},project:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}'
+  jq -cjn --argjson d "$(jq -r ' .description | tojson' "$STATE/$id.json")" --arg id "$id" '{data:{issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:$d,state:{name:"In Review",type:"started"},team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",key:"T",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},project:null,parent:null,children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}'
   ;;
 *"issueUpdate(id:"*)
   response="$(jq -c --argjson prior_state "$(jq .state "$STATE/$id.json")" --rawfile d "$DESCRIPTIONS/$id" --arg id "$id" '{data:{issueUpdate:{success:true,issue:{id:("uuid-" + $id),identifier:$id,title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} elif .variables.input.stateId == "state-done" then {name:"Done",type:"completed"} elif .variables.input.stateId == "state-todo" then {name:"Todo",type:"unstarted"} elif .variables.input.stateId == null then $prior_state else error("unsupported state id") end),parent:null,team:{name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},updatedAt:"2026-07-14T00:00:01Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload")"

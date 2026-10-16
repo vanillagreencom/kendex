@@ -26,8 +26,9 @@ git -C "$TMP_ROOT" config gc.auto 0
 git -C "$TMP_ROOT" config maintenance.auto false
 
 # FAKE_ASSIGNEE is the issue's current assignee as JSON (null for nobody).
-# FAKE_FAIL names the one call that fails: `users` and `issue` answer a
-# GraphQL error, `update` an issueUpdate with success false.
+# FAKE_FAIL names the one call that fails: `users` and the activation
+# issue read answer a GraphQL error, `update` an issueUpdate with success
+# false. The guard reads the team successfully before those calls.
 #
 # The one user answers only a lookup filtered on the address itself, as
 # Linear's eqIgnoreCase (case folded) or eq (exact) compares it: a listing
@@ -71,6 +72,9 @@ case "$query" in
   ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
+  ;;
+*"query IssueTeam("*)
+  printf '%s' '{"data":{"issue":{"team":{"key":"CC"}}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
   if [[ "${FAKE_FAIL:-}" == issue ]]; then
@@ -178,7 +182,8 @@ lookup-failed|users|0|users lookup unavailable
 issue-read-failed|issue|0|issue read unavailable
 update-failed|update|1|-
 ROWS
-# The guard's issue-team read fails before it resolves LINEAR_TEAM or
-# requests the issue for activation.
-assert_eq "issue-read-failed: nothing is requested after the failed issue read" \
-  "$(jq -s '[.[] | select(.query | contains("teams(filter:") | not)] | length' "$TMP_ROOT/issue-read-failed.jsonl")" 1
+# The guard completes before the activation's issue read fails. No lookup
+# or update may follow that failure.
+assert "issue-read-failed: nothing is requested after the failed issue read" \
+  jq -s -e 'map(.query | capture("^[[:space:]]*(query|mutation) (?<operation>[A-Za-z]+)").operation)
+    == ["IssueTeam", "GetTeam", "GetIssue"]' "$TMP_ROOT/issue-read-failed.jsonl"
