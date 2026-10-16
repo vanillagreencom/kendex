@@ -556,9 +556,22 @@ lane_session_windows() {
 
 # The one presence answer, for a pass and for repeat mode's lane records.
 lane_window_listed() { # LANE
-  local existing
-  existing="$(lane_session_windows "$1")" || die window-list-failed "$existing" "lane=$1"
-  grep -qxF -- "${1#*:}" <<<"$existing"
+  local existing session="$WATCH_SESSION" i found=0 window
+  [[ "$1" != *:* ]] || session="${1%%:*}"
+  if [[ "${LANE_WINDOW_CACHE:-0}" == 1 ]]; then
+    for i in ${LANE_WINDOW_SESSIONS[@]+"${!LANE_WINDOW_SESSIONS[@]}"}; do
+      [[ "${LANE_WINDOW_SESSIONS[$i]}" == "$session" ]] || continue
+      existing="${LANE_WINDOW_LISTINGS[$i]}"; found=1; break
+    done
+  fi
+  if [[ "$found" == 0 ]]; then
+    existing="$(lane_session_windows "$1")" || die window-list-failed "$existing" "lane=$1"
+    if [[ "${LANE_WINDOW_CACHE:-0}" == 1 ]]; then
+      LANE_WINDOW_SESSIONS+=("$session"); LANE_WINDOW_LISTINGS+=("$existing")
+    fi
+  fi
+  while IFS= read -r window; do [[ "$window" != "${1#*:}" ]] || return 0; done <<<"$existing"
+  return 1
 }
 
 parse_argv "$@"
@@ -2995,8 +3008,6 @@ wall_pause() { # LANE SEEN_AT
     >/dev/null 2>"$errf" || { ow_message wall-unrecorded "lane=$1" >&2; cat -- "$errf" >&2; }
 }
 
-lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
-lane_obs_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 # A Pi lane's rows (lib/session-rows.sh § session_rows_lane_verdict), read
@@ -3058,6 +3069,8 @@ observe_lanes() {
   # still end their walls and are pruned below.
   local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local pane_mode capture_rc pane_host pane_item
+  # One window listing per session answers membership for the whole snapshot.
+  local LANE_WINDOW_CACHE=1 LANE_WINDOW_SESSIONS=() LANE_WINDOW_LISTINGS=()
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
   for lane in ${LANES[@]+"${LANES[@]}"}; do
     i=$((i + 1))
@@ -3065,15 +3078,16 @@ observe_lanes() {
     rm -f "$capture" "$capture.$$.tmp"
     if ! lane_window_listed "$lane"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
-      state="$(lane_row_clear lane-asking "$state" "$lane")"
-      if ! prior="$(lane_row_get usage-limit "$state" "$lane")"; then
+      lane_row_clear lane-asking "$state" "$lane" >/dev/null; state="$LANE_ROW"
+      if ! lane_row_get usage-limit "$state" "$lane" >/dev/null; then
         die state-read-failed "" "lane=$lane" "row=usage-limit"
       fi
+      prior="$LANE_ROW"
       [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
-      state="$(lane_row_clear usage-limit "$state" "$lane")"
-      state="$(lane_row_clear model-capacity "$state" "$lane")"
-      state="$(lane_row_clear lane-exited "$state" "$lane")"
-      state="$(lane_row_clear lane-idle "$state" "$lane")"
+      lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
+      lane_row_clear model-capacity "$state" "$lane" >/dev/null; state="$LANE_ROW"
+      lane_row_clear lane-exited "$state" "$lane" >/dev/null; state="$LANE_ROW"
+      lane_row_clear lane-idle "$state" "$lane" >/dev/null; state="$LANE_ROW"
       continue
     fi
     errf="$WORK_DIR/lane-probe.$i.err"
@@ -3118,12 +3132,12 @@ observe_lanes() {
     lane_rows_read "$i" "$lane"
     pane="$(cat -- "$capture")"
     below="$(pane_below_last_turn "$pane")"
-    prior="$(lane_row_get lane-asking "$state" "$lane")"
+    lane_row_get lane-asking "$state" "$lane" >/dev/null; prior="$LANE_ROW"
     prefix="${key}|$(pane_turn_identity "$pane")|"
     LANE_TURNS[$i]="${prefix}model-capacity"
     if ! grep -Eq -- "$LANE_ASKING_RE" <<<"$below" \
        || [[ -n "$prior" && "$prior" != "$prefix"* ]]; then
-      state="$(lane_row_clear lane-asking "$state" "$lane")"
+      lane_row_clear lane-asking "$state" "$lane" >/dev/null; state="$LANE_ROW"
     fi
     # When this pass first sees a wall, stamp it: the row is what later lets a
     # dayless clause name a day. Stamped HERE, on every lane, rather than
@@ -3138,22 +3152,23 @@ observe_lanes() {
     # too, with an empty reset key: the row is also where check_lanes records
     # that the wall was reported, and a wall with no row is one reported on
     # every run.
-    lane_banner_text "$i" "$lane" "$pane"
+    if [[ -n "${LANE_ROWS[$i]:-}" ]]; then lane_banner_text "$i" "$lane" "$pane"
+    else LANE_BANNER_TEXT="$below"; fi
     banner_rc=0
     banner="$(lane_limit_banner "$LANE_BANNER_TEXT")" || banner_rc=$?
     [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "lane=$lane"
     reset_key="$(usage_reset_key "$banner")"
-    prior="$(lane_row_get usage-limit "$state" "$lane")"
+    lane_row_get usage-limit "$state" "$lane" >/dev/null; prior="$LANE_ROW"
     if [[ -n "$banner" ]]; then
       seen_at=""; seen_pane=""; seen_key=""
       [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$prior"
       if [[ "$seen_pane" != "$key" || "$seen_key" != "$reset_key" ]]; then
         [[ -z "$prior" ]] || wall_pause "$lane" "$seen_at"
-        state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
+        lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key" >/dev/null; state="$LANE_ROW"
       fi
     else
       [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
-      state="$(lane_row_clear usage-limit "$state" "$lane")"
+      lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
     fi
   done
   # A wall on a window that left the fleet ends with it.
@@ -4226,11 +4241,17 @@ wall_route() { # LANE OBS_STATE SPENT PANE_KEY
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
-  local lane pane below cmd pid state window i states="" claims="" claimed pane_key
+  local lane pane below cmd pid state window i claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event reported_event quiet
   local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
   local pending_closes="${PW_SEEN[0]}" pending_close pending_row pending_key
   local banner banner_rc turn hosted_item hosted_harness wall_kind
+  local obs_kind=() obs_pid=() obs_cmd=() obs_key=() states=() exit_sources=() wall_kinds=()
+  # Read each snapshot row once. Every event loop consumes these same values.
+  while IFS=$'\t' read -r i window pid cmd pane_key; do
+    [[ -n "$i" ]] || continue
+    obs_kind[$i]="$window"; obs_pid[$i]="$pid"; obs_cmd[$i]="$cmd"; obs_key[$i]="$pane_key"
+  done <<<"$LANE_OBS"
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
@@ -4245,11 +4266,11 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     window=gone; pid=""; cmd=""; pane=""
-    if [[ "$(lane_obs_state "$LANE_OBS" "$i")" == unreadable ]]; then window=listed; fi
-    if [[ "$(lane_obs_state "$LANE_OBS" "$i")" == ready ]]; then
+    if [[ "${obs_kind[$i]}" == unreadable ]]; then window=listed; fi
+    if [[ "${obs_kind[$i]}" == ready ]]; then
       window=listed
-      pid="$(lane_field "$LANE_OBS" "$i" 3)"
-      cmd="$(lane_field "$LANE_OBS" "$i" 4)"
+      pid="${obs_pid[$i]}"
+      cmd="${obs_cmd[$i]}"
       pane="$(cat -- "$(lane_pane_file "$i")")"
     fi
     # The judge exits 2 on exactly one condition, a banner scan that failed,
@@ -4270,7 +4291,7 @@ check_lanes() {
       || die limit-scan-failed "" "lane=$lane"
     # Provider failures stay unjudged; local probe failures still permit pane judgment.
     [[ -n "$hosted_item" || "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
-    states+="$i"$'\t'"$state"$'\t'"$LANE_EXIT_SOURCE"$'\t'"$LANE_WALL_KIND"$'\n'
+    states[$i]="$state"; exit_sources[$i]="$LANE_EXIT_SOURCE"; wall_kinds[$i]="$LANE_WALL_KIND"
     if [[ "$state" == gone ]] && ! wall_relaunch_pending "$lane"; then
       echo "EVENT window-gone $lane"
       PASS_EVENT=1
@@ -4292,19 +4313,18 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_obs_state "$states" "$i")" != exited ]]; then
-      asking_state="$(lane_row_clear lane-exited "$asking_state" "$lane")"
+    if [[ "${states[$i]}" != exited ]]; then
+      lane_row_clear lane-exited "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
       continue
     fi
-    if ! pane_key="$(lane_field "$LANE_OBS" "$i" 5)"; then
-      die state-read-failed "" "lane=$lane" "field=pane-key"
-    fi
-    if ! prior="$(lane_row_get lane-exited "$asking_state" "$lane")"; then
+    pane_key="${obs_key[$i]}"
+    if ! lane_row_get lane-exited "$asking_state" "$lane" >/dev/null; then
       die state-read-failed "" "lane=$lane" "row=lane-exited"
     fi
+    prior="$LANE_ROW"
     if [[ "$prior" == "$pane_key|reported" ]]; then continue; fi
-    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then
-      asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key|reported")"
+    if [[ "$prior" == "$pane_key" || "${exit_sources[$i]}" == provider ]]; then
+      lane_row_set lane-exited "$asking_state" "$lane" "$pane_key|reported" >/dev/null; asking_state="$LANE_ROW"
       echo "EVENT lane-exited $lane"
       pane="$(cat -- "$(lane_pane_file "$i")")"
       # What the lane said before it stopped, which is the whole handling of
@@ -4316,10 +4336,10 @@ check_lanes() {
       below="$(pane_below_last_turn "$pane")"
       report_tail "$below"
       PASS_EVENT=1
-      asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
+      lane_row_clear lane-asking "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
       close_finished_hosted_lane "$lane" lane-exited "$pane_key"
     else
-      asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
+      lane_row_set lane-exited "$asking_state" "$lane" "$pane_key" >/dev/null; asking_state="$LANE_ROW"
     fi
   done
   lane_row_commit "$asking_state"
@@ -4338,9 +4358,9 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_obs_state "$states" "$i")" != walled ]]; then continue; fi
+    if [[ "${states[$i]}" != walled ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
-    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    pane_key="${obs_key[$i]}"
     # The banner states when the wall lifts, and that decides which event
     # this is. A reset already behind us means the lane is parked against a
     # window that has since reopened — the harness will not notice on its
@@ -4349,12 +4369,13 @@ check_lanes() {
     # a reset `date` would not resolve, the plain event goes out with no
     # time on it and the lane is parked. `resets=` is keyed rather than
     # positional because the config dir before it is optional.
-    if ! seen="$(lane_row_get usage-limit "$asking_state" "$lane")"; then
+    if ! lane_row_get usage-limit "$asking_state" "$lane" >/dev/null; then
       die state-read-failed "" "lane=$lane" "row=usage-limit"
     fi
+    seen="$LANE_ROW"
     seen_at=""; seen_pane=""; seen_reported=""; seen_key=""
     [[ -z "$seen" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$seen"
-    wall_kind="$(lane_field "$states" "$i" 4)" || die state-read-failed "" "lane=$lane" "field=wall-kind"
+    wall_kind="${wall_kinds[$i]}"
     reset_at=""
     [[ -z "$seen_key" ]] || reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
     [[ "$wall_kind" != auth ]] || reset_at=""
@@ -4413,9 +4434,9 @@ check_lanes() {
     account_wall_record "$PROJECT_ROOT" "$claimed" "$reset_at" "$PASS_NOW" "$banner" "${LANE_ROWS[$i]:+row}" || true
     [[ -z "$quiet" ]] || continue
     WALL_PICK=""
-    if [[ "$event" == usage-limit ]] && wall_route "$lane" "$(lane_obs_state "$states" "$i")" "$claimed" "$pane_key"; then
+    if [[ "$event" == usage-limit ]] && wall_route "$lane" "${states[$i]}" "$claimed" "$pane_key"; then
       PASS_EVENT=1
-      asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|lane-relaunched|$seen_key")"
+      lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|lane-relaunched|$seen_key" >/dev/null; asking_state="$LANE_ROW"
       continue
     fi
     [[ "$wall_kind" == auth ]] || wall_kind=""
@@ -4423,7 +4444,7 @@ check_lanes() {
     [[ -z "$WALL_PICK" ]] || printf '%s\n' "$WALL_PICK"
     banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
     PASS_EVENT=1
-    asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$reported_event|$seen_key")"
+    lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$reported_event|$seen_key" >/dev/null; asking_state="$LANE_ROW"
   done
   # A pane keeps its last screen, so neither a stale prompt under a bare shell
   # nor a dialog answered passes ago is a live question. A current prompt is
@@ -4437,25 +4458,26 @@ check_lanes() {
     # exited or unjudged keeps it. A wall can sit above a standing question,
     # and the row is what stops the question being re-reported once the wall
     # lifts; gone and exited clear it on their own paths.
-    case "$(lane_obs_state "$states" "$i")" in
+    case "${states[$i]}" in
       asking) ;;
       working|idle)
-        asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
+        lane_row_clear lane-asking "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
         continue ;;
       *) continue ;;
     esac
     pane="$(cat -- "$(lane_pane_file "$i")")"
     below="$(pane_below_last_turn "$pane")"
-    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    pane_key="${obs_key[$i]}"
     turn_identity="$(pane_turn_identity "$pane")"
     # The note is keyed: a Copilot record that turns to a stop cause under an
     # unchanged prompt is news.
     lane_note "$lane"
     fingerprint="${pane_key}|${turn_identity}|${COPILOT_SESSION_NOTE}|$(printf '%s' "$below" | cksum)"
-    if ! prior="$(lane_row_get lane-asking "$asking_state" "$lane")"; then
+    if ! lane_row_get lane-asking "$asking_state" "$lane" >/dev/null; then
       die state-read-failed "" "lane=$lane" "row=lane-asking"
     fi
-    asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
+    prior="$LANE_ROW"
+    lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint" >/dev/null; asking_state="$LANE_ROW"
     if [[ "$fingerprint" == "$prior" ]]; then continue; fi
     echo "EVENT lane-asking $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
     # The dialog to answer, the bottom of the slice the question was found
@@ -4476,7 +4498,7 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     capacity=0
-    if [[ "$(lane_obs_state "$states" "$i")" == idle ]]; then
+    if [[ "${states[$i]}" == idle ]]; then
       pane="$(cat -- "$(lane_pane_file "$i")")"
       below="$(pane_below_last_turn "$pane")"
       # Which idle this is, not whether it is idle: the judge already settled
@@ -4492,35 +4514,37 @@ check_lanes() {
     else
       # Removed Pi rows cannot judge idle. Hold the merged-and-gone evidence
       # for two long passes so close-out can send its final clone notice.
-      if [[ "${LANE_ROWS[$i]:-}" == none && "$(lane_obs_state "$states" "$i")" == unjudged ]] \
+      if [[ "${LANE_ROWS[$i]:-}" == none && "${states[$i]}" == unjudged ]] \
          && finished_hosted_lane_eligible "$lane"; then
-        if ! prior="$(lane_row_get lane-idle "$asking_state" "$lane")"; then
+        if ! lane_row_get lane-idle "$asking_state" "$lane" >/dev/null; then
           die state-read-failed "" "lane=$lane" "row=lane-idle"
         fi
+        prior="$LANE_ROW"
         [[ "$prior" != pi-merged-gone'|reported' ]] || continue
         if [[ "$prior" == pi-merged-gone ]]; then
-          asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" 'pi-merged-gone|reported')"
+          lane_row_set lane-idle "$asking_state" "$lane" 'pi-merged-gone|reported' >/dev/null; asking_state="$LANE_ROW"
           close_finished_hosted_lane "$lane" lane-idle pi-merged-gone
         else
-          asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" pi-merged-gone)"
+          lane_row_set lane-idle "$asking_state" "$lane" pi-merged-gone >/dev/null; asking_state="$LANE_ROW"
         fi
         continue
       fi
-      asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
-      asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
+      lane_row_clear lane-idle "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
+      lane_row_clear model-capacity "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
       continue
     fi
-    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    pane_key="${obs_key[$i]}"
     if [[ "$capacity" -eq 1 ]]; then
       # Capacity uses a turn-bound row. An earlier idle report cannot consume
       # the first stop after a continuation.
       capacity_key="${LANE_TURNS[$i]}"
-      if ! prior="$(lane_row_get model-capacity "$asking_state" "$lane")"; then
+      if ! lane_row_get model-capacity "$asking_state" "$lane" >/dev/null; then
         die state-read-failed "" "lane=$lane" "row=model-capacity"
       fi
-      asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
+      prior="$LANE_ROW"
+      lane_row_clear lane-idle "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
       if [[ "$prior" == "$capacity_key" ]]; then continue; fi
-      asking_state="$(lane_row_set model-capacity "$asking_state" "$lane" "$capacity_key")"
+      lane_row_set model-capacity "$asking_state" "$lane" "$capacity_key" >/dev/null; asking_state="$LANE_ROW"
       # No payload: the handling is one continuation line pasted back into the
       # pane, and the key says everything it needs. The refusal line itself is
       # what the judge already matched.
@@ -4528,7 +4552,7 @@ check_lanes() {
       PASS_EVENT=1
       continue
     fi
-    asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
+    lane_row_clear model-capacity "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
     # The whole slice below the last turn is the key: any change to what the
     # lane shows is a different idle screen and news again. A repaint of an
     # older frame does not reach here, since a scrolled view carries `Jump to
@@ -4536,13 +4560,14 @@ check_lanes() {
     # its last row, so each turn end it writes is news once.
     lane_note "$lane"
     screen_key="${pane_key}|${COPILOT_SESSION_NOTE}|$(printf '%s' "$turn" | cksum)"
-    if ! prior="$(lane_row_get lane-idle "$asking_state" "$lane")"; then
+    if ! lane_row_get lane-idle "$asking_state" "$lane" >/dev/null; then
       die state-read-failed "" "lane=$lane" "row=lane-idle"
     fi
+    prior="$LANE_ROW"
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
     hosted_lane_item "$lane"
     if [[ "$prior" == "$screen_key" ]] || { [[ -z "$HOSTED_ROOT" ]] && grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && [[ -n "$(pane_turn_slice "$pane" before)" ]]; }; then
-      asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
+      lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported" >/dev/null; asking_state="$LANE_ROW"
       # The lane's closing report, which decides whether it is free for
       # another launch. Below the last turn is the round that just ended,
       # and the cap keeps its last lines. Unfiltered: the dead-worktree
@@ -4553,22 +4578,23 @@ check_lanes() {
       PASS_EVENT=1
       close_finished_hosted_lane "$lane" lane-idle "$screen_key"
     else
-      asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key")"
+      lane_row_set lane-idle "$asking_state" "$lane" "$screen_key" >/dev/null; asking_state="$LANE_ROW"
     fi
   done
   # Retry only closes already pending at entry. Notification rows stay latched,
   # and a new pane or state invalidates the old pending close.
   for lane in "${LANES[@]}"; do
-    if ! pending_close="$(lane_row_get close-pending "$pending_closes" "$lane")"; then
+    if ! lane_row_get close-pending "$pending_closes" "$lane" >/dev/null; then
       die state-read-failed "" "lane=$lane" "row=close-pending"
     fi
+    pending_close="$LANE_ROW"
     [[ -n "$pending_close" ]] || continue
     [[ "$(lane_row_get close-pending "$asking_state" "$lane")" == "$pending_close" ]] || continue
     pending_row="${pending_close%%|*}" pending_key="${pending_close#*|}"
     if [[ "$(lane_row_get "$pending_row" "$asking_state" "$lane")" == "$pending_key|reported" ]]; then
       close_finished_hosted_lane "$lane" "$pending_row" "$pending_key"
     else
-      asking_state="$(lane_row_clear close-pending "$asking_state" "$lane")"
+      lane_row_clear close-pending "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
     fi
   done
   # Committed after every asking and idle line is out: a row written ahead of

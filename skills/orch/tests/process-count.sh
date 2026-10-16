@@ -7,9 +7,11 @@ TMP_ROOT="$(mktemp -d)" || { echo 'process-count: scratch=mktemp-failed' >&2; ex
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "process-count: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'process-count: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-python3 - "$TEST_DIR/lib/process-count.py" "$TMP_ROOT" <<'PY'
+python3 - "$TEST_DIR/lib/process-count.py" "$TMP_ROOT" "$BASH" "${BASHPID:-}" <<'PY'
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import sys
 
 
@@ -42,6 +44,61 @@ def failures(module):
 
 
 assert not failures(counter), failures(counter)
+pass_trace = [
+    "+count:100:mail_turn.check_mail: call",
+    "++count:101:mail_turn.check_mail: substitution",
+    "++count:102:long_pass.observe_lanes: exec tmux",
+    "++count:104:outside: setup",
+]
+pass_external = [
+    "102 100 100 long_pass.observe_lanes",
+    "201 102 0 long_pass.observe_lanes",
+    "103 105 100 long_pass.check_lanes",
+]
+want_passes = {"mail_turn.check_mail": 1, "long_pass.observe_lanes": 1, "long_pass.check_lanes": 2}
+assert counter.pass_counts(pass_trace, pass_external, {"100"}) == want_passes
+text = source.read_text()
+old = 'if owner in existing and step.startswith('
+assert text.count(old) == 1
+mutated = text.replace(old, 'if step.startswith(')
+assert mutated != text
+path = Path(sys.argv[2]) / "pass-mutant.py"
+path.write_text(mutated)
+assert load(path).pass_counts(pass_trace, pass_external, {"100"}) != want_passes, "must-fail: dependency births counted as watch starts"
+
+# A real absolute helper starts once. Its own Bash child belongs to the
+# dependency, and the watch must not claim it.
+scratch = Path(sys.argv[2])
+target = scratch / "oversee-watch"
+helper = scratch / "helper.sh"
+target.write_text('mail_turn() { "$BASH" "$1"; }; mail_turn "$1"\n')
+helper.write_text('"$BASH" -c ":"\n')
+
+
+def absolute_helper_count(module, name):
+    root = scratch / name
+    module.install(root, os.environ["PATH"], sys.argv[3], str(target), "passes")
+    subprocess.run([sys.argv[3], str(target), str(helper)], check=True,
+                   env={"PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
+                        "BASH_ENV": str(root / "bash-env")})
+    return sum(module.pass_counts(
+        (root / "trace").read_text().splitlines(),
+        (root / "steps").read_text().splitlines(),
+        set((root / "existing").read_text().splitlines()),
+    ).values())
+
+
+absolute_checks = 0
+if sys.argv[4]:
+    assert absolute_helper_count(counter, "absolute") == 1
+    old = 'if [[ ${_KENDEX_PROCESS_COUNT_OWNER:-0} != 0 ]]; then'
+    assert text.count(old) == 1
+    mutated = text.replace(old, 'if false; then')
+    assert mutated != text
+    path = scratch / "absolute-mutant.py"
+    path.write_text(mutated)
+    assert absolute_helper_count(load(path), "absolute-control") != 1, "must-fail: absolute helper entry was not counted"
+    absolute_checks = 2
 for old, new in [
     ("owner in existing and pid not in existing", "pid not in existing"),
     ("elif command == name:", "else:"),
@@ -53,5 +110,5 @@ for old, new in [
     path = Path(sys.argv[2]) / "mutant.py"
     path.write_text(mutated)
     assert failures(load(path)), "must-fail: the planted counter defect passed"
-print(f"pass: {len(rows) + 2}   fail: 0")
+print(f"pass: {len(rows) + 4 + absolute_checks}   fail: 0")
 PY

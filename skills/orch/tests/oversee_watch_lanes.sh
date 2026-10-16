@@ -290,7 +290,7 @@ echo "=== hosted lane exits: the provider reads past a live ssh child ==="
 # host, the prefix control, asks lane-host's local answer and judges nothing.
 REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
-mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
+mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "${exit_sources[$i]}" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
 PREFIX_WATCH="$(mutant_scripts prefix-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/prefix-watch/github"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
