@@ -287,15 +287,27 @@ tar -C "$REPO" --null -T "$TMP/aggregate-files" -cf "$TMP/aggregate-tree.tar"
 tar -xf "$TMP/aggregate-tree.tar" -C "$actual"
 # Keep reader text and the shared runner for selection. Only the aggregate
 # assertion executes its real contract in this checkout.
+stub_replay_suite() { # REPOSITORY-RELATIVE-SUITE
+  local suite="$1" stop header
+  case "$suite" in
+    *.mjs) stop='process.exit(0);'; header='^[[:space:]]*(//|#!|$)' ;;
+    *) stop='exit 0'; header='^[[:space:]]*(#|$)' ;;
+  esac
+  # Header metadata must stay before the first command for the runtime lint.
+  # Keep the body text so dependency selection still reads the real inputs.
+  awk -v stop="$stop" -v header="$header" '
+    !stopped && $0 !~ header { print stop; stopped = 1 }
+    { print }
+    END { if (!stopped) print stop }
+  ' "$actual/$suite" > "$TMP/replay-suite"
+  mv "$TMP/replay-suite" "$actual/$suite"
+}
 git -C "$REPO" ls-files '*/tests/*.sh' '*/tests/*.mjs' > "$TMP/replay-suites"
 while IFS= read -r suite; do
   case "$suite" in
     tools/* | */tests/run-all.sh | */tests/*/*) continue ;;
-    *.mjs) printf 'process.exit(0);\n' > "$TMP/replay-suite" ;;
-    *) printf 'exit 0\n' > "$TMP/replay-suite" ;;
   esac
-  cat "$actual/$suite" >> "$TMP/replay-suite"
-  mv "$TMP/replay-suite" "$actual/$suite"
+  stub_replay_suite "$suite"
 done < "$TMP/replay-suites"
 for suite in "$actual"/tools/tests/*.sh; do
   case "${suite##*/}" in ci-aggregate.test.sh | vendored-settings-libs.test.sh | run-all.sh) ;; *) rm -- "$suite" ;; esac
@@ -323,9 +335,7 @@ OUT="$(cd "$actual" && "$GUARD" --range "$actual_base" 2>&1)" || RC=$?
 # before execution: this row proves selection, not those suites' contracts.
 git -C "$actual" reset -q --hard "$actual_base"
 for suite in ci-aggregate.test.sh vendored-settings-libs.test.sh; do
-  printf 'exit 0\n' > "$TMP/replay-suite"
-  cat "$actual/tools/tests/$suite" >> "$TMP/replay-suite"
-  mv "$TMP/replay-suite" "$actual/tools/tests/$suite"
+  stub_replay_suite "tools/tests/$suite"
 done
 git -C "$actual" add tools/tests/ci-aggregate.test.sh tools/tests/vendored-settings-libs.test.sh
 git -C "$actual" commit -q -m replay
