@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # The verdict contract of tests/must-fail-controls.sh, driven against a
 # synthetic one-suite skill rather than this one.
 #

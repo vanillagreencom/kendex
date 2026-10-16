@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues list --search` must filter, and must fail
 # closed. The old parser dropped the bare `--search` flag in its first pass, so
 # the pattern never reached any filter and every search returned the full

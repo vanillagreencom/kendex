@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # --assignee on issues create and issues update takes an email address: a
 # value containing `@` is matched against a user's whole address,
 # case-insensitively, and a miss refuses before any mutation. A user id is

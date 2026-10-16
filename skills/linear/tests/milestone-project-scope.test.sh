@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # resolve_milestone_id scopes a milestone name to one project and refuses
 # ambiguous names, failed lookups, and missing matches before any write.
 # The fixture returns the foreign milestone first for an unscoped query.

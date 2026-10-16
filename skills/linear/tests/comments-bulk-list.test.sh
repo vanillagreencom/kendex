@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `comments bulk-list` reads the comments of several issues in one request
 # and prints one object keyed by identifier, the identifier as named: a moved
 # issue's earlier identifier keys the comments of the issue it now names. An

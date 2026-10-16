@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # bulk-update must emit an aggregate diagnostic even when an
 # individual issue update exits nonzero under set -e.
 

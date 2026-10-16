@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # projects list must not forward --limit > 50 straight to the
 # API (Linear's projects connection 400s on large `first`). Instead it caps the
 # per-request page size at 50 and paginates with the endCursor to satisfy

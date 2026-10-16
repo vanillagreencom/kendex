@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # One owner bounds every list verb (lib/pages.sh linear_list_*): 75 rows by
 # default, --limit N for a positive whole N, --max for every row, --first for
 # one row, and a `linear-list: truncated` notice on stderr exactly when a

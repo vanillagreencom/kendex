@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Surface: issue project-name selection, including canceled twins and team scope.
 # Inputs: scripts/linear.sh, scripts/commands/issues.sh, scripts/lib/*.sh.
 # Linear permits reused project names in different teams and within one team.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # issues create --parent must link the created issue.
 
 set -euo pipefail

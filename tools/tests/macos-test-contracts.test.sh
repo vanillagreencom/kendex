@@ -56,6 +56,21 @@ class NativeContracts(unittest.TestCase):
         self.save()
         self.assertNotEqual(self.call("--filter", self.contracts).stdout.splitlines(), expected)
 
+    def test_suite_runtime_declarations(self):
+        for runtime, retained in (("4", False), ("3.2", True)):
+            with self.subTest(runtime=runtime):
+                path = f"skills/demo/tests/runtime-{runtime}.sh"
+                (self.root / path).write_text(f"#!/usr/bin/env bash\n# bash-runtime: {runtime}\nexit 0\n")
+                answer = self.call("--filter", [path])
+                self.assertEqual((answer.returncode, answer.stdout.splitlines()),
+                                 (0, [path] if retained else []))
+                self.contracts[path] = "native"
+                self.save()
+                answer = self.call("--filter", [path])
+                self.assertEqual((answer.returncode, answer.stdout), (2, ""))
+                self.assertEqual(answer.stderr.splitlines(),
+                                 ["macos-test-contracts: runtime-conflict=" + path])
+
     def test_unknown_suites_remain_selected_without_universe_equality(self):
         future = "skills/demo/tests/future.sh"
         (self.root / future).touch()

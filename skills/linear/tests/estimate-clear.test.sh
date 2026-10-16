@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Coverage for clearing issue estimates:
 #   - `--clear-estimate` builds an `estimate: null` mutation input
 #   - `--estimate 0` is a compatibility alias for clearing (maps 0 -> null)

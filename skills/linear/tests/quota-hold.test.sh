@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Surface: the shared quota receipt and persistent transport hold. Real command
 # processes use one private home and an injected date command. curl is the only
 # network fixture. The received-response arm also models an in-flight reply

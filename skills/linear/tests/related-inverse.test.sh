@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # A related relation is one record Linear shows on both issues; every read of
 # the issue on the target side lists it, from inverseRelations.
 set -euo pipefail

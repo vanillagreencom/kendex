@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # session-status counts the issues its own reads select. The research read
 # asks for the research label, completed state and an updatedAt at or after
 # the --research-days cut, and every issue it returns is counted. No read asks

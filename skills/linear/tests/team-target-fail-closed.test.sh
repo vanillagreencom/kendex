@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # The Linear CLI never substitutes a guessed team.
 #
 # A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so a

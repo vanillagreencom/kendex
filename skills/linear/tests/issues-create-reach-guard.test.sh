@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Tests for the create-time reach guard. Filing is the cheap
 # disposition — `Declined:` needs a disproof a gate checks, `Tracked: <ID>` needs
 # only an issue to exist — so creation is the one chokepoint that can hold the

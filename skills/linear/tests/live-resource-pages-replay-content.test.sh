@@ -1,4 +1,5 @@
 #!/bin/bash
+# bash-runtime: 4
 # Read verbs through linear.sh against Linear's own replies, recorded read-only
 # and redacted (tests/lib/fixtures/recorded/README.md): recorded_read_case in
 # lib/assert.sh drives each one. A complete cursor chain returns every recorded

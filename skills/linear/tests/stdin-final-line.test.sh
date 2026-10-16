@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Every `--stdin` identifier reader keeps a last line that has no newline.
 # `read` returns false on that line while still filling the variable, so a
 # plain `while read` loop drops it with no error: a list written with

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # The library's verdict, exercised from outside it.
 #
 # assert.sh decides a suite's exit status in __assert_on_exit, and every other

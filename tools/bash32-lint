@@ -15,8 +15,8 @@
 #                 nothing; this is where tools/bash32-parse reads the set it
 #                 hands to a real Bash 3.2, so one walk answers for both
 #   --pattern     print the pattern set this scan runs
-# Exit: 0 clean, 1 a construct was found, 2 the scan could not run — and a
-# scan that did not run is never read as a clean tree.
+# Exit: 0 clean, 1 a construct or missing runtime declaration, 2 the scan
+# could not run. A scan that did not run is never read as a clean tree.
 #
 # tools/tests/bash32-lint.test.sh proves the set's teeth against
 # tools/tests/data/*.txt and plants a construct in every roster directory.
@@ -48,9 +48,9 @@ set -uo pipefail
 #
 # NO_SCAN — the skill demands the runtime this set forbids. That demand is
 # what skills/linear/tests/bash4-runtime-contract.test.sh asserts, so the
-# reason expiring reds there rather than here. The skill's tests/ is scanned:
-# the suites themselves must start on a 3.2 host to print the runtime
-# diagnostic that contract promises.
+# reason expiring reds there rather than here. Each shell suite under that
+# skill's tests/ declares its runtime, since syntax alone missed KEN-4113's
+# quota-hold suite calling the Bash 4 runtime. The syntax scan still applies.
 NO_SCAN="skills/linear/scripts"
 # NO_SHELL — a roster directory that legitimately holds no shell file at all.
 NO_SHELL="skills/deep-research/scripts skills/deep-research/tests"
@@ -168,8 +168,8 @@ PATTERN="$PATTERN|$BRACE_DEFAULT"
 #   - whether a script RUNS under Bash 3.2. Nothing here does, and parsing is
 #     not running. A clean scan says the source carries no construct named
 #     above, and says nothing further. The macOS leg of the skill suites
-#     shard in .github/workflows/skill-tests.yml runs every shell suite but
-#     linear's on /bin/bash 3.2.57, asserting the version it got, and is what
+#     shard in .github/workflows/skill-tests.yml runs the native-eligible
+#     suites on /bin/bash 3.2.57, asserting the version it got, and is what
 #     reaches the misses above.
 
 # Every line this lint says for itself opens with `bash32-lint: <key>=<value>`
@@ -205,6 +205,8 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
       echo "no directory was scanned, so nothing was read." ;;
     scan)
       echo "the scan over that file could not run." ;;
+    bash-runtime-required)
+      echo "a suite of a Bash 4 runtime skill needs one header line: # bash-runtime: 4 or # bash-runtime: 3.2." ;;
     unclassified)
       echo "that file could not be read, so it was never classified as shell or not." ;;
     constructs)
@@ -384,6 +386,21 @@ violation_count=0
 count=0
 for f in $files; do
   count=$((count + 1))
+  # NO_SCAN owns which skills demand Bash 4; do not keep another family list.
+  for runtime_scripts in $NO_SCAN; do
+    case "$f" in *.test.sh) ;; *) continue ;; esac
+    runtime_tests="$(at_root "${runtime_scripts%/scripts}/tests")"
+    # Suites live directly in tests/; control runners and lib/ are not suites.
+    runtime_parent="$(cd -- "${f%/*}" && pwd -P)" || die scan "$f"
+    if [ "$runtime_parent" = "$runtime_tests" ]; then
+      runtime_header="$(sed '/^[^#[:space:]]/q' "$f")" || die scan "$f"
+      runtime="$(printf '%s\n' "$runtime_header" | sed -n '/^# bash-runtime:/p')" || die scan "$f"
+      case "$runtime" in
+      '# bash-runtime: 4' | '# bash-runtime: 3.2') ;;
+      *) say bash-runtime-required "$f"; exit 1 ;;
+      esac
+    fi
+  done
   # `--` before the operand: a path beginning with `-` parses as options
   # otherwise. grep's status is part of the answer: 0 found, 1 none, anything
   # else a scan that did not run.

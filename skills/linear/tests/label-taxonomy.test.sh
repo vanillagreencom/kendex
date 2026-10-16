@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # The label-taxonomy refusals ../SKILL.md § Issue Creation Routing states,
 # driven against recorded Linear replies; that section is the one list of the
 # commands that refuse. The rows also pin which project-management renders the

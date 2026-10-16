@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # issues complete must parse --summary/--summary-file
 # (post the completion comment BEFORE transitioning to Done) and reject unknown
 # or trailing arguments before any mutation.

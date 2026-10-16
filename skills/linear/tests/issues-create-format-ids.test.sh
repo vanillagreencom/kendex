@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues create --format=ids` must be accepted by the parser and
 # print ONLY the created issue identifier (one line, nothing else). The merge /
 # Creation workflows capture that identifier deterministically, so a

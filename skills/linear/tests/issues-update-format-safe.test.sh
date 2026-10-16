@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues update <ID>... --format=safe` must be
 # accepted by the parser and emit the documented safe output for the updated
 # issue. The README documents `safe` as the default/global output format, yet

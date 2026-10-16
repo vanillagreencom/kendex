@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # The add-relation blocking-level guard reads complete ancestry and leaf
 # status in one query. Input: scripts/commands/issues.sh and
 # scripts/lib/issue-validation.sh through the shipped linear.sh command.

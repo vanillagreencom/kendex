@@ -1,4 +1,5 @@
 #!/bin/bash
+# bash-runtime: 3.2
 # The real page owner consumes sanitized Relay replies. Dependencies alone are
 # fixtures. The matching control restores each broken rule.
 set -euo pipefail

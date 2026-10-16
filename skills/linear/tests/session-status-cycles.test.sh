@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # session-status picks its cycles by date, in UTC: `cycle` is the started
 # cycle whose end has not passed, whatever its progress, `prev_cycle` the
 # latest one before it and `next_cycle` the earliest after it; with none

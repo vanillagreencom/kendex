@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # issues activate assigns an issue nobody is assigned to the person
 # KENDEX_USER_EMAIL names, in the same issueUpdate as the state change. Every
 # outcome but a failed read or update still lands the state change, and each

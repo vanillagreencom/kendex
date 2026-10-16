@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # graphql_query hands its variables to jq on stdin, never as one argv string,
 # so a variables payload past the kernel's per-argument cap (MAX_ARG_STRLEN,
 # 128 KiB) reaches the API whole. Producers: an issue description or comment

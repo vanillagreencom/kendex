@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `teams keys` supplies the workspace and every team key to Slack with one
 # read. The existing list still returns an array. Controls live in controls/.
 set -euo pipefail

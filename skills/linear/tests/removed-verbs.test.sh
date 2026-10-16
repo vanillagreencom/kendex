@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # The sync and cache verbs are gone with the local store. Each spelling exits
 # nonzero before any request, prints nothing on stdout, and names on one
 # stderr line, `linear: removed=VERB replacement=...`, the live command that

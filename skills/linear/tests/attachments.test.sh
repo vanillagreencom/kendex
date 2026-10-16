@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `attachments list` reads, live, every uploads.linear.app file an issue
 # references: its attachment records first, then links in its description and
 # comments that no record already names, a bare link without the prose

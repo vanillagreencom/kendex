@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Surface: issues update / bulk-update completed-state checklist guard.
 # Inputs: scripts/commands/issues.sh, scripts/lib/common.sh,
 # scripts/lib/issue-validation.sh and the installed linear CLI.

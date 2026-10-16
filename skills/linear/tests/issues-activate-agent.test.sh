@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # issues activate --agent must apply the exclusive
 # agent:<name> label (same issueUpdate as the state change) or fail loudly
 # before any state change when the label does not exist.

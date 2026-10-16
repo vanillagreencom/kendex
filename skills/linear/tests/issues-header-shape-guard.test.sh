@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Tests for the header-shape guard. Under the reach guard's key, `issues
 # create`, `issues update --description` / `--description-file`, and `issues
 # bulk-update --description` refuse,

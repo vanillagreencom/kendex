@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Tests for comments --body-file parsing without invoking the real API.
 
 set -euo pipefail

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # the Linear CLI has an explicit Bash 4+ contract.
 # Under Bash 3 this delegates to the full hierarchy failure, which proves
 # the clear preflight diagnostic and that no API request is attempted.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Tests for issues create/update --description-file parsing without the real API.
 
 set -euo pipefail

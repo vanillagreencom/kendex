@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Names and descriptions containing spaces must reach the GraphQL payload intact.
 #
 # The JSON-escaping helpers wrote `printf '%s' \"$var\"`: the backslash-escaped

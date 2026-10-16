@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # lib/common.sh resolves the project root from the current directory, and
 # every subcommand sources it. Outside a repository `git rev-parse` exits 128,
 # and a bare assignment carried that status out under `set -e` before the

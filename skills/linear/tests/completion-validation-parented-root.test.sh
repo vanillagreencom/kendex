@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # Tests for completion validation of parented session roots.
 #
 # completion_expected_state() must not return "Done" for every issue with a parent,

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues create --labels` resolves the create's team once, then resolves each
 # label name against that team's id and the workspace labels. Two teams can own
 # a label of one name, and an unscoped lookup sends whichever the API lists

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # A suite that ends with work still running has not finished being a suite.
 #
 # The ledger closes the hole where a subshell COPIES the counter. This is the

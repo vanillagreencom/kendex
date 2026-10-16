@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # An assertion the suite cannot see is refused, not counted.
 #
 # A subshell — a command substitution, a pipeline element, a backgrounded or

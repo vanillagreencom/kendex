@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Tests for completion validation of bundle children.
 #
 # validate_completion() must expand --include-children-of with the filter

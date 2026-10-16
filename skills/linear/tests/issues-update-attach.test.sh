@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues update <ID> --attach <PATH>`. Image embeds append to the
 # description being written — and, when the update carries no
 # --description/--description-file, to the issue's EXISTING description

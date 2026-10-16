@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues update --labels` replaces the whole label set, so a requested name
 # that resolves to nothing must refuse the update: silently dropping it ships
 # a partial set — the same wipe class as a lookup failure.

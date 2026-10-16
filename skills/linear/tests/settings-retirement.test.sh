@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # LINEAR_CACHE_ROOT named the local store's root. With the store gone, the
 # setting is refused wherever it is set, even empty: every command exits 1
 # before any request, its first stderr line `linear-setting:

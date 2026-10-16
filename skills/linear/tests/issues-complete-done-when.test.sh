@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # issues complete --done-when-met ticks the named `## Done when` boxes in the
 # issueUpdate that sets Done, leaves every other box as it was, and refuses a
 # box number the section does not hold before any write.

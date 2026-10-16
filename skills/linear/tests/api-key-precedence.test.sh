@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # the project's own key must win over an inherited one.
 #
 # Per-repo Linear workspaces make a box-global LINEAR_API_KEY export actively

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # documented legacy action aliases should route to the
 # canonical relation/dependency list commands.
 

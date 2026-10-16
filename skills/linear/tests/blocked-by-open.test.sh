@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Every issue read keeps completed blocking relations as history while
 # identifying only blockers that still prevent dispatch.
 set -euo pipefail

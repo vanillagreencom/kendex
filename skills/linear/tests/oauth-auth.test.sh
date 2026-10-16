@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Credential selection and the OAuth lifecycle through requests, auth-check and
 # attachment downloads. A pair's token is minted on the first request that
 # needs one, kept in one private per-user file under XDG_CACHE_HOME or HOME's

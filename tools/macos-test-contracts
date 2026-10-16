@@ -46,7 +46,23 @@ def main():
             relative = str((root / path).resolve().relative_to(root))
         except ValueError:
             refuse("suite-outside-root", word)
-        if contracts.get(relative, "unresolved") in {"native", "mixed", "unresolved"}:
+        try:
+            header = []
+            for line in (root / path).read_text().splitlines():
+                if line and not line.startswith("#") and not line.isspace():
+                    break
+                if line.startswith("# bash-runtime:"):
+                    header.append(line)
+        except (OSError, UnicodeError):
+            refuse("suite-unreadable", relative)
+        classification = contracts.get(relative, "unresolved")
+        if header:
+            if relative in contracts:
+                refuse("runtime-conflict", relative)
+            if header not in (["# bash-runtime: 4"], ["# bash-runtime: 3.2"]):
+                refuse("runtime-invalid", relative)
+            classification = "linux-only" if header == ["# bash-runtime: 4"] else "native"
+        if classification in {"native", "mixed", "unresolved"}:
             replacement = declared["native_replacements"].get(relative)
             if replacement:
                 if (contracts.get(replacement) != "native" or not (root / replacement).is_file()

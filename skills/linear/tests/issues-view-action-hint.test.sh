@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Tests for the unsupported `view` action hint.
 #
 # A focused Linear issue audit's read-only post-mutation verification produced

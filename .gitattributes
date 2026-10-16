@@ -105,3 +105,4 @@ skills/slack/tests/fixtures/mailbox-pre-read-events/** text eol=lf
 skills/jarvis/scripts/lib/watch.py text eol=lf
 .agents/skills/jarvis/scripts/lib/watch.py text eol=lf
 tools/lib/skill-requirements.awk text eol=lf
+tools/tests/data/quota-hold-758c4c32a8.txt text eol=lf

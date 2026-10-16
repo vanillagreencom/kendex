@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Surface: installed journal controls and the HTTP attempts they observe.
 # Inputs: linear.sh, lib/common.sh, lib/auth.sh, lib/attachments.sh,
 # commands/auth-check.sh, commands/attachments.sh, commands/comments.sh,

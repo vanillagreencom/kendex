@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # The cross-team guard: an issue create and a field change to an existing
 # issue land only in the checkout's own team, LINEAR_TEAM. Every lane writes
 # with one app token that Linear lets write in every team, so the guard in

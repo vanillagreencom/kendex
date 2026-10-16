@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `comments create <ID> --attach <PATH>`. Files upload through
 # Linear's fileUpload flow and are referenced from the comment body: images
 # embed as ![name](assetUrl), other files append a [name](assetUrl) markdown

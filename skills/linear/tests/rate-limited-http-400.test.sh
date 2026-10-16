@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Linear emits rate-limit rejections with an OUTER
 # HTTP 400 whose body carries extensions.code RATELIMITED. These must route
 # to the rate-limit path, one JSON line carrying "code":"RATELIMITED" and

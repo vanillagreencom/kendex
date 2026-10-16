@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # The live `issues get` names the GitHub issues Linear's GitHub sync links an
 # issue to, as github_sync; the bundle read, which asks for no sync, names none.
 # Consumer: skills/orch/workflows/oversee.md § Outside contributions matches

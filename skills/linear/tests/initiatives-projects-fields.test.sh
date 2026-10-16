@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # Surface: initiatives/projects create, update, get and list.
 # Inputs: scripts/commands/{initiatives,projects}.sh, scripts/lib/{common,formatters,pages}.sh.
 # curl models Linear's user filter and entity links; the CLI owns every write.

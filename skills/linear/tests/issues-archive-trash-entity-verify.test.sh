@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues archive` / `issues trash` returned
 # {"success": true, "identifier": null, "url": null} while the issue stayed
 # active. The mutations requested only IssueArchivePayload.success — Linear's

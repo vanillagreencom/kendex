@@ -24,13 +24,14 @@ ROOT="$(git rev-parse --show-toplevel)" || exit 2
 cd "$ROOT" || exit 2
 
 LINT="$ROOT/tools/bash32-lint"
+mkdir -p "$ROOT/tmp"
 
 # A physical path, and a ceiling on it: § 4 needs a directory that is in no
 # git repository, and TMPDIR can sit inside a checkout — this repository's own
 # guidance puts scratch under tmp/. The ceiling stops git's upward search at
 # $TMP, so a fixture BELOW $TMP is outside every repository; § 4 asserts that
 # it worked rather than assuming it.
-TMP="$(mktemp -d)" || { echo "bash32-lint.test: scratch=mktemp-failed" >&2; exit 1; }
+TMP="$(mktemp -d "$ROOT/tmp/bash32-lint.XXXXXX")" || { echo "bash32-lint.test: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "bash32-lint.test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "bash32-lint.test: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -129,6 +130,55 @@ if [ "$status" -eq 0 ]; then
 else
   bad "the shipped tree does not scan clean (exit $status)" "$out"
 fi
+
+# KEN-4113's published suite calls Bash 4 code without Bash 4 syntax itself.
+# Preserve that input byte for byte; only the declared control adds a header.
+runtime_world="$TMP/runtime"
+mkdir -p "$runtime_world/skills/linear/scripts" \
+  "$runtime_world/skills/linear/tests" "$runtime_world/skills/demo/tests" \
+  "$runtime_world/skills/deep-research/scripts" "$runtime_world/skills/deep-research/tests"
+git -C "$runtime_world" init -q
+git -C "$runtime_world" config gc.auto 0
+git -C "$runtime_world" config maintenance.auto false
+plant="skills/linear/tests/quota-hold.test.sh"
+cp "$ROOT/tools/tests/data/quota-hold-758c4c32a8.txt" "$runtime_world/$plant"
+cp "$LINT" "$runtime_world/lint"
+# Remove only the refusal, leaving the declaration reader and fixture intact.
+python3 - "$runtime_world/lint" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '*) say bash-runtime-required "$f"; exit 1 ;;'
+assert source.count(needle) == 1
+changed = source.replace(needle, '*) : ;;')
+assert changed != source
+path.write_text(changed)
+PY
+while IFS='|' read -r name declaration owner directory expected; do
+  cp "$ROOT/tools/tests/data/quota-hold-758c4c32a8.txt" "$runtime_world/$plant"
+  if [ "$declaration" != none ]; then
+    sed "1a\\
+# bash-runtime: $declaration
+" "$runtime_world/$plant" >"$runtime_world/declared"
+    mv "$runtime_world/declared" "$runtime_world/$plant"
+  fi
+  cp "$ROOT/tools/tests/data/quota-hold-758c4c32a8.txt" "$runtime_world/skills/demo/tests/quota-hold.test.sh"
+  status=0
+  out="$(cd "$runtime_world" && "$owner" "$directory" 2>&1)" || status=$?
+  if [ "$status" -eq "$expected" ] && { [ "$expected" -eq 0 ] ||
+      grep -Fqx "bash32-lint: bash-runtime-required=$plant" <<<"$out"; }; then
+    ok "$name"
+  else
+    bad "$name (exit $status)" "$out"
+  fi
+done <<ROWS
+published KEN-4113 suite refuses|none|$LINT|skills/linear/tests|1
+declared Bash 4 suite passes|4|$LINT|skills/linear/tests|0
+declared Bash 3.2 suite passes|3.2|$LINT|skills/linear/tests|0
+control: removing only the declaration refusal permits the published suite|none|$runtime_world/lint|skills/linear/tests|0
+another skill needs no declaration|none|$LINT|skills/demo/tests|0
+ROWS
 
 # --- 3. teeth: a planted construct reds EVERY roster directory ----------
 # Copied rather than mutated in place: the assertion is about the directory

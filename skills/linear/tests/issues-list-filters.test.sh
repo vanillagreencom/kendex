@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # The `issues list` filter options an audit reads the whole backlog with:
 # --all-projects sends no project filter, --no-project asks for issues with no
 # project, every --label and --labels name must be on the issue, and two

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # `issues bulk-get` reads every issue it names: an identifier in any case or a
 # UUID, in the order given, archived issues included, in one request when the
 # batch read answers every reference, each issue once. A reference the batch

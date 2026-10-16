@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 3.2
 # What a TERM to tests/must-fail-controls.sh stops, driven against a synthetic
 # one-suite skill rather than this one.
 #

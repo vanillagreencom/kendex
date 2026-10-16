@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bash-runtime: 4
 # issues remove-relation keeps a blocking relation whose blocker is Done or
 # Canceled: that relation is satisfied history, ../SKILL.md § Blocked Label vs Issue Relations
 # says, refused before any write with one keyed line. The one
