@@ -303,6 +303,25 @@ a stale review on an older head sorts by its round's start@$STALE_REVIEW@$STALE_
 a PR nobody reviewed has no round@.data.repository.pullRequest.reviews.nodes = []@[]
 ROWS
 
+# GitHub repointed HT-2164's approval to a head whose first suite arrived
+# 2929 seconds after submission. The force-push event retains the old head.
+RESTACK='.data.repository.pullRequest |= (.reviews.nodes = [(.reviews.nodes[1] | .state = "APPROVED" | .submittedAt = "2026-09-20T09:31:11Z" | .commit = pushed("h2"; "10:20"))])'
+RESTACK_REVIEW="$RESTACK | .data.repository.pullRequest.reviews.nodes += [{state: \"APPROVED\", submittedAt: t(\"10:30\"), author: {__typename: \"Bot\", login: \"reviewer\"}, commit: pushed(\"h2\"; \"10:20\")}]"
+restack_rows() {
+  local label edit want
+  while IFS='@' read -r label edit want; do
+    [[ -n "$label" ]] || continue
+    run "$edit" >/dev/null
+    assert_eq "$(jq -c '[.rounds[] | [.kind, .head, .start, .end, .secs]]' "$TMP_ROOT/stdout")" "$want" "$label"
+  done <<ROWS
+a repointed approval stays on the head pushed before submission@$RESTACK@[["review","b1","2026-09-20T09:20:00Z","2026-09-20T09:31:11Z",671],["fix","b1","2026-09-20T09:31:11Z","2026-09-20T10:20:00Z",2929]]
+a genuine restack review closes the new head after its push@$RESTACK_REVIEW@[["review","b1","2026-09-20T09:20:00Z","2026-09-20T09:31:11Z",671],["fix","b1","2026-09-20T09:31:11Z","2026-09-20T10:20:00Z",2929],["review","h2","2026-09-20T10:20:00Z","2026-09-20T10:30:00Z",600]]
+a repointed dismissal stays on the head pushed before submission@$RESTACK | .data.repository.pullRequest.reviews.nodes[0].state = "DISMISSED"@[["review","b1","2026-09-20T09:20:00Z","2026-09-20T09:31:11Z",671],["fix","b1","2026-09-20T09:31:11Z","2026-09-20T10:20:00Z",2929]]
+missing earlier push evidence leaves the reported head untimed@$RESTACK | .data.repository.pullRequest.timelineItems.nodes[0].beforeCommit.firstSuite.nodes = []@[["review","h2",null,"2026-09-20T09:31:11Z",null],["fix","h2","2026-09-20T09:31:11Z","2026-09-20T10:20:00Z",2929]]
+ROWS
+}
+restack_rows
+
 echo "=== the final head's gate is its first approval, else its historical status ==="
 while IFS='@' read -r label edit want; do
   [[ -n "$label" ]] || continue
@@ -832,6 +851,20 @@ mutate 'select($p.author == null or .author.login != $p.author.login)' 'select(t
 run "$REPLY" >/dev/null
 assert_eq "$(jq -c '.rounds[-1].end' "$TMP_ROOT/stdout")" '"2026-09-20T10:22:00Z"' \
   "control: without the author filter the author's reply ends the review round"
+
+# Disabling head recovery restores main's commit grouping and push start.
+mutate 'if $push != null and $push > .submittedAt then' 'if false then'
+run "$RESTACK_REVIEW" >/dev/null
+assert_eq "$(jq -c '[.rounds[] | select(.kind == "review") | [.head, .end, .secs]][0]' "$TMP_ROOT/stdout")" \
+  '["h2","2026-09-20T09:31:11Z",-2929]' 'control: main times the restack head to the repointed approval'
+if (FAIL=0; restack_rows; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/restack-control.out"; then
+  assert_eq 'accepted' 'refused' 'control: main must fail the restack regressions'
+else
+  assert_eq "$(grep -c '^  FAIL  a repointed approval stays' "$TMP_ROOT/restack-control.out")" '1' \
+    'control: main fails the approval binding row'
+  assert_eq "$(grep -c '^  FAIL  a genuine restack review closes' "$TMP_ROOT/restack-control.out")" '1' \
+    'control: main fails the genuine restack review row'
+fi
 
 # The fix round ending at the last push after its review, not the first.
 mutate 'select(. > $r.submittedAt)] | min)' 'select(. > $r.submittedAt)] | max)'

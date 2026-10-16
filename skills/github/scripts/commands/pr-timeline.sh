@@ -282,8 +282,15 @@ def pushed($c): $c.firstSuite.nodes[0].createdAt // null;
 # submitted after the review of a newer head.
 def rounds($reviews; $pushed):
   ([$pushed[] | select(. != null)] | unique) as $push_times
-  | [$reviews | group_by(.commit.oid) | map(min_by(.submittedAt)) | .[]
-     | . as $r | $pushed[$r.commit.oid] as $start
+  # GitHub can repoint a review to a restack head pushed after submission.
+  # Keep late reviews on older heads; only a future push disproves the oid.
+  | [$reviews | map(. as $r | $pushed[.commit.oid] as $push
+      | if $push != null and $push > .submittedAt then
+          ([$pushed | to_entries[] | select(.value != null and .value <= $r.submittedAt)] | max_by(.value)) as $prior
+          | .commit.oid = ($prior.key // .commit.oid) | .round_start = $prior.value
+        else .round_start = $push end)
+     | group_by(.commit.oid) | map(min_by(.submittedAt)) | .[]
+     | . as $r | $r.round_start as $start
      | {kind: "review", head: $r.commit.oid, start: $start, end: $r.submittedAt, secs: secs($start; $r.submittedAt)},
        (([$push_times[] | select(. > $r.submittedAt)] | min) as $next
         | if $next == null then empty
