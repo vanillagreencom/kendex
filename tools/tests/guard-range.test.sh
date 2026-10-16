@@ -926,8 +926,11 @@ for row in "${READ_ROWS[@]}"; do
       ;;
   esac
 done
-# Breaking the tree reset must redden the cross-tree reader assertion.
-if mutant_guard '/^  SCAN_RELS=()$/d; /^  SCAN_READERS=()$/d'; then
+# Initialize once so the first load works and later trees reuse stale answers.
+if mutant_guard '/^scan_load() { # DIR$/i\
+SCAN_RELS=()\
+SCAN_READERS=()
+/^  SCAN_RELS=()$/d; /^  SCAN_READERS=()$/d'; then
   map_row append "hooks/README.md $SCHEMA_PATH" none "$MUTANT_TOOLS/guard"
   [ "$RC" -eq 0 ] && [ "$(started)" != 'assigned-lib assigned-script beta.test.sh catalogscan quoted-find' ] \
     && ok "control: retained read metadata fails the next tree's reader assertion" \
