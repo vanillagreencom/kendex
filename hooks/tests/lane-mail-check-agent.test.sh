@@ -110,9 +110,11 @@ done <<'ROWS'
 codex|spawn_agent|119199|258400|0|-
 codex|spawn_agent|119200|258400|2|lane-mail-check: agent-launch=spawn_agent tokens=119200 reserve=10000
 codex|multi_agent_v2.spawn_agent|119200|258400|2|lane-mail-check: agent-launch=multi_agent_v2.spawn_agent tokens=119200 reserve=10000
+codex|collaborationspawn_agent|119200|258400|2|lane-mail-check: agent-launch=collaborationspawn_agent tokens=119200 reserve=10000
 codex|followup_task|119199|258400|0|-
 codex|followup_task|119200|258400|2|lane-mail-check: agent-launch=followup_task tokens=119200 reserve=10000
 codex|collaborationfollowup_task|119200|258400|2|lane-mail-check: agent-launch=collaborationfollowup_task tokens=119200 reserve=10000
+codex|multi_agent_v2.followup_task|119200|258400|2|lane-mail-check: agent-launch=multi_agent_v2.followup_task tokens=119200 reserve=10000
 codex|send_message|119200|258400|0|-
 pi|subagent|89999|200000|0|-
 pi|subagent|90000|200000|2|lane-mail-check: agent-launch=subagent tokens=90000 reserve=10000

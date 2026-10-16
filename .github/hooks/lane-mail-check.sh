@@ -2002,9 +2002,11 @@ claude_attached_agents() { # [emergency STATE_FILE]
 
 # Pi delegate_subagent is a recognized name, but its useful calls carry
 # child identity and do not reach the lead-only check below.
+# Codex writes tool_name as the canonical name or a configured namespace
+# concatenated with it, so its launch names match by suffix.
 attached_launch() {
   case "$HARNESS:$TOOL" in
-    claude:Agent | codex:spawn_agent | codex:multi_agent.spawn_agent | codex:multi_agent_v1.spawn_agent | codex:multi_agent_v2.spawn_agent | codex:followup_task | codex:collaborationfollowup_task | pi:subagent | pi:delegate_subagent | copilot:task | copilot:Agent | copilot:Task) return 0 ;;
+    claude:Agent | codex:*spawn_agent | codex:*followup_task | pi:subagent | pi:delegate_subagent | copilot:task | copilot:Agent | copilot:Task) return 0 ;;
   esac
   return 1
 }
