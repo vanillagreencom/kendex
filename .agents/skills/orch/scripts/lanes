@@ -3589,15 +3589,20 @@ cmd_pick_lane() {
 	# the launch question, the chooser's own wall.
 	lane_tier_inputs "[$record]" "$harness" "$model" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
-	local judged cache_path=""
+	local judged cache_path="" cache_at="" at
 	usage_cache_file "$harness" "$found" silent
-	[[ ! -f "$USAGE_CACHE_FILE" ]] || cache_path="$USAGE_CACHE_FILE"
+	# The record is served while its own sample time is within the serve age,
+	# read_usage_cache's rule. The row's age was observed before this judge, so
+	# a clock read here can be a second past it.
+	if [[ -f "$USAGE_CACHE_FILE" ]] && at="$(jq -r '.usage_fetched_at // .fetched_at' "$USAGE_CACHE_FILE" 2>/dev/null)" \
+		&& [[ "$at" =~ ^[0-9]+$ ]]; then
+		cache_path="$USAGE_CACHE_FILE" cache_at="$at"
+	fi
 	usage_serve_max_age silent
-	lane_now
-	judged="$(jq -r --arg cache "$cache_path" --argjson now "$LANE_NOW" --argjson max "$USAGE_SERVE_MAX_AGE" "$LANE_MODEL_JQ"'
+	judged="$(jq -r --arg cache "$cache_path" --argjson at "${cache_at:-null}" --argjson max "$USAGE_SERVE_MAX_AGE" "$LANE_MODEL_JQ"'
 	  .usage_cache = (if $cache != "" and .measured_through == "local"
 	    and (.headroom_pct | type) == "number" and (.usage_age_s | type) == "number" then
-	      {path: $cache, served_until: ([$now - .usage_age_s + $max,
+	      {path: $cache, served_until: ([$at + $max,
 	        (.resets[], .model_buckets[]?.resets_at | reset_epoch | select(. != null))] | min)}
 	    else null end)
 	  | .verdict, (if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public | tojson)' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
