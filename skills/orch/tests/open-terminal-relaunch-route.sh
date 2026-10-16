@@ -67,7 +67,10 @@ chmod +x "$RELAUNCH_PROVIDER"
 # The screen a working claude draws, which pane_harness_up reads as a harness.
 HARNESS_SCREEN="$TMP_ROOT/harness-screen"
 printf 'Working (esc to interrupt)\n' > "$HARNESS_SCREEN"
-PI_SCREEN="$TEST_DIR/fixtures/oversee-watch/pi-current.txt"
+# pi-qol omits the activity prefix at idle. Readiness must stand without the
+# independent working-screen proof.
+PI_SCREEN="$TMP_ROOT/pi-idle-screen"
+sed '/^● fleet /s/^● //' "$TEST_DIR/fixtures/oversee-watch/pi-current.txt" > "$PI_SCREEN" || exit 1
 
 # A claude that logs its argv, one line per run. A `--continue` run exits
 # $CLAUDE_CONTINUE_RC after the words claude prints where it finds no session;
