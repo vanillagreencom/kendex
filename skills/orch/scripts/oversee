@@ -74,9 +74,8 @@
 #        the entry's model and effort words, the harness's full-bypass
 #        permission words, its launch settings, the compaction words for the
 #        entry's model, its question-tool words where ORCH_QUESTION_TOOL is
-#        off, its default, and the brief naming --handoff. A claude model the
-#        adapter names no window for refuses `model-window-unknown`, since the
-#        overseer runs with compaction off. An unattended overseer takes no
+#        off, its default, and the brief naming --handoff. Claude uses the
+#        adapter's family or default handoff budget. An unattended overseer takes no
 #        flags from the caller:
 #        the words are spelled per harness by lib/lane-launch.sh's table, so a
 #        preference that names two harnesses is never handed one harness's
@@ -213,7 +212,7 @@ message() { # KEY FIELD=VALUE...
     predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A record carrying no server start names none: run oversee register in its pane first. A succession only ever stops the recorded overseer; nothing was opened.' ;;
     option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An entry naming no model is refused. A first launch skips pi entries.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An empty model selects the native default on claude, codex or copilot; pi requires provider/id. A first launch skips pi entries.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
@@ -222,7 +221,7 @@ message() { # KEY FIELD=VALUE...
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
     successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
-    model-window-unknown) text='The claude adapter names no context window for the model this entry names, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a claude model the window table in lib/adapters/claude.sh names.' ;;
+    model-window-unknown) text='The Claude adapter could not read the family or default handoff budget. Nothing was launched. Check the adapter error before this message.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
     launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
     record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again, or at step=pending never opened, and a predecessor keeps running: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;

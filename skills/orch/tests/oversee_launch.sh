@@ -375,14 +375,14 @@ run_oversee -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
 assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
   "a first launch from outside tmux opens the overseer at the base index and records it"
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded server_start)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
+  "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server and its start, pane, window, account, line and generation"
 WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
-assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|claude-fable-5-1|high|$WORK_REAL|" \
+assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|" \
   "the session record carries the launch identity the command was built with"
 assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
   "oversee: overseer-launch form=prefix lane=$H/.claude trust=account-config session=%N window=@N server=$SOCKET" \
@@ -482,7 +482,6 @@ FLEET_STATE="$PRIOR_FLEET_STATE"
 for row in \
   "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
   "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
-  "ORCH_OVERSEER_PREFERENCE=claude:claude-sonnet-4-6:high|model-window-unknown entry=claude:claude-sonnet-4-6:high model=claude-sonnet-4-6|a claude model the adapter names no window for" \
   "ORCH_TMUX_SESSION=|tmux-session-missing session=work server=$SOCKET|the default repository session is absent" \
   "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
   "ORCH_OVERSEER_HOST=$TMP_ROOT/other|runtime-unsupported host=$TMP_ROOT/other|a runtime other than tmux" \
@@ -601,16 +600,16 @@ tm kill-window -t "$(recorded window)"
 # launcher that stops reading the setting fails one side.
 run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
 assert_eq "$RC|$(recorded_argv)" \
-  "0|lane=$H/.claude;-n;overseer;--model;claude-fable-5-1;--effort;high;$BYPASS;$COMPACT;$BRIEF;" \
+  "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$BRIEF;" \
   "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
 tm kill-window -t "$(recorded window)"
 
 # A fleet whose settings name no preference: the first launch walks the default
-# ladder and opens on its Opus rung.
+# order and opens on its standard Sonnet alias.
 LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
-  "0|claude-opus-5-5|lane=$H/.claude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "an unset preference launches the first overseer on the default ladder's Opus rung"
+  "0|sonnet|lane=$H/.claude;-n;overseer;--model;sonnet;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+  "an unset preference launches the first overseer on the standard Sonnet alias"
 tm kill-window -t "$(recorded window)"
 
 # A pi entry ahead of a claude entry with room: the launch table names no
@@ -619,7 +618,7 @@ tm kill-window -t "$(recorded window)"
 pi_first_row() { # [OVERSEE_BIN]
   OVERSEE_BIN="${1:-}" LAUNCH_PREF='pi:openai/gpt-5:high,claude:fable:high' run_oversee -- launch --wait-secs 20
   assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
-  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|claude-fable-5-1" \
+  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|fable" \
   "a first launch skips a pi entry and opens on the claude entry after it"
 }
 pi_first_row
@@ -1062,11 +1061,11 @@ STUB
   fi
   LAUNCH_PREF=claude:1:high run_oversee -- launch ${predecessor[@]+"${predecessor[@]}"} --wait-secs 20
   assert_eq "$RC|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(recorded_argv)" \
-    "0|1|claude|$H/.eclaude|claude-opus-5-5|high|lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+    "0|1|claude|$H/.eclaude|sonnet|high|lane=$H/.eclaude;-n;overseer;--model;sonnet;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
     "a numeric $verb preference uses the default preference model under $form"
   conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
   assert_eq "$(grep -c '^preference-deprecated ' <<<"$OUT")|$(field "$conversion" entry)|$(field "$conversion" replacement)|$(field "$(keyed overseer-launch "$OUT")" form)" \
-    "1|claude:1:high|claude:claude-opus-5-5:high|$want_form" \
+    "1|claude:1:high|claude:sonnet:high|$want_form" \
     "the numeric $verb warning names its conversion and the launch reports $form"
   tm kill-window -t "$(recorded window)"
 done
@@ -1074,8 +1073,8 @@ rm -- "$BIN/eclaude"
 # The migration diagnostic pairs the original consumer entry with its own
 # conversion before an account or permission refusal can skip that entry.
 for row in \
-  'later-account|claude:1:high,codex:2:high|95|20|0|codex|claude:1:high|claude:claude-opus-5-5:high|' \
-  'all-walled|claude:1:high,codex:2:high|95|99|3|none|claude:1:high|claude:claude-opus-5-5:high|' \
+  'later-account|claude:1:high,codex:2:high|95|20|0|codex|claude:1:high|claude:sonnet:high|' \
+  'all-walled|claude:1:high,codex:2:high|95|99|3|none|claude:1:high|claude:sonnet:high|' \
   'permission-skip|pi:1:high,claude:2:high|60|99|0|claude|pi:1:high||harness-default'; do
   IFS='|' read -r case_name preference claude_used codex_used expected_rc selected original replacement native_model <<<"$row"
   claude_usage "$claude_used" 20 5 Opus > "$FIXTURE_DIR/.claude.json"

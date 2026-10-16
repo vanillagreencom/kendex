@@ -97,7 +97,9 @@ seat() {
     limits: [{kind: "weekly_scoped", percent: $f, resets_at: "2099-08-01T06:00:00Z",
               scope: {model: {display_name: "Fable 5.1"}}},
              {kind: "weekly_scoped", percent: $o, resets_at: "2099-08-01T06:00:00Z",
-              scope: {model: {display_name: "Opus"}}}]
+              scope: {model: {display_name: "Opus"}}},
+             {kind: "weekly_scoped", percent: $o, resets_at: "2099-08-01T06:00:00Z",
+              scope: {model: {display_name: "Sonnet"}}}]
   }' > "$FIXTURE_DIR/.$1.json"
 }
 codex_seat() { # LANE USED_PCT
@@ -193,9 +195,9 @@ keyed() { grep -m1 "^oversee-succeed: $1 " <<<"$OUT" || echo none; }
 
 echo "=== oversee-succeed: the model ladder ==="
 
-# Every claude seat is Fable-walled, .eclaude alone has Opus room, and codex is
-# walled. Under the default ladder the first entry is Opus and that
-# entry takes .eclaude: the seat is judged on the bucket that walls Opus, not
+# Every claude seat is Fable-walled, .eclaude alone has Sonnet room, and codex is
+# walled. Under the default ladder the first entry is Sonnet and that
+# entry takes .eclaude: the seat is judged on the bucket that walls Sonnet, not
 # on its binding bucket, which the Fable window holds at 99.
 seat claude 10 99 99
 seat eclaude 10 99 10
@@ -205,17 +207,17 @@ codex_seat dcodex 99
 new_caller
 run_succeed opus unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex)|$(grep -cx -e --effort -e high "$TMP_ROOT/argv.claude")" \
-  "0|no|$H/.eclaude claude-opus-5-5|none|2" \
-  "a Fable-walled seat with Opus room is chosen for the default ladder's Opus entry, at high effort"
+  "0|no|$H/.eclaude sonnet|none|2" \
+  "a Fable-walled seat with Sonnet room is chosen for the default ladder's Sonnet entry, at high effort"
 
 # An overseer that hits the Fable wall mid-turn takes no turn, so the watch
 # recovers it through --walled-pane. That recovery walks the same ladder, so
-# the wall itself moves it onto Opus, never onto the account that walled.
+# the wall itself moves it onto Sonnet, never onto the account that walled.
 new_caller
 run_succeed walled unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(caller_open)|$(launched claude)" \
-  "0|no|$H/.eclaude claude-opus-5-5" \
-  "a walled Fable overseer is recovered onto the ladder's Opus entry"
+  "0|no|$H/.eclaude sonnet" \
+  "a walled Fable overseer is recovered onto the ladder's Sonnet entry"
 # Its control: a walled recovery that walks the caller entry alone stays on
 # Fable and refuses the fleet the ladder recovers on.
 WALLEDCTL="$(mutant_scripts walledctl oversee-succeed)" || exit 1
@@ -224,32 +226,32 @@ new_caller
 SUCCEED_BIN="$WALLEDCTL/oversee-succeed" run_succeed walledctl unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $3}')|$(caller_open)|$(launched claude)" \
   "3|no-lane-qualifies entries=0|yes|none" \
-  "control: a walled recovery walking the caller entry alone refuses a fleet with Opus room"
+  "control: a walled recovery walking the caller entry alone refuses a fleet with Sonnet room"
 
-# The walled account's own Opus window has room too, and it carries no lane
-# claim, so a pick that judged it could name it for the Opus entry. The pick
-# leaves the walled account out, so the Opus entry lands on .eclaude rather
+# The walled account's own Sonnet window has room too, and it carries no lane
+# claim, so a pick that judged it could name it for the Sonnet entry. The pick
+# leaves the walled account out, so the Sonnet entry lands on .eclaude rather
 # than being dropped.
 seat claude 10 99 10
 new_caller
 run_succeed walledopus unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(caller_open)|$(launched claude)" \
-  "0|no|$H/.eclaude claude-opus-5-5" \
-  "a walled account with Opus room of its own is left out of the Opus pick"
+  "0|no|$H/.eclaude sonnet" \
+  "a walled account with Sonnet room of its own is left out of the Sonnet pick"
 # Its control: a walled pick that keeps the walled account names it, the entry
-# is dropped, and the recovery refuses with .eclaude's Opus room unused.
+# is dropped, and the recovery refuses with .eclaude's Sonnet room unused.
 EXCLUDECTL="$(mutant_scripts excludectl oversee-succeed)" || exit 1
 mutate_file "$EXCLUDECTL/oversee-succeed" '  [[ "$MODE" != walled ]] || exclude="$WALLED_LANE"' ''
 new_caller
 SUCCEED_BIN="$EXCLUDECTL/oversee-succeed" run_succeed excludectl unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(keyed successor-lane-spent | awk '{print $2, $4}')|$(caller_open)|$(launched claude)" \
-  "3|successor-lane-spent entry=claude:claude-opus-5-5:high|yes|none" \
-  "control: a walled pick that keeps the walled account drops the Opus entry"
+  "3|successor-lane-spent entry=claude:sonnet:high|yes|none" \
+  "control: a walled pick that keeps the walled account drops the Sonnet entry"
 seat claude 10 99 99
 
-# An entry naming no model, zero or an empty field, is a setting
-# to fix: refused with a keyed line before any pick, on a fleet with Opus room.
-for entry in 'claude:0:high' 'claude::high' 'codex:high' 'copilot:0:high'; do
+# An entry naming zero or missing its effort field, is a setting
+# to fix: refused with a keyed line before any pick, on a fleet with Sonnet room.
+for entry in 'claude:0:high' 'codex:high' 'copilot:0:high'; do
   new_caller
   run_succeed nomodelentry "$entry"
   assert_eq "$RC|$(keyed invalid-preference | awk '{print $2, $3}')|$(caller_open)|$(launched claude)" \
@@ -260,7 +262,7 @@ done
 # entry, which then fails somewhere other than the parse.
 RANKCTL="$(mutant_scripts rankctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$RANKCTL/lib/overseer-launch.sh" \
-  '    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
+  '    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):([a-z][a-z0-9.-]*)?:[a-z]+$ \' \
   '    elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):([0-9]+|[a-z][a-z0-9.-]*):[a-z]+$ \'
 new_caller
 SUCCEED_BIN="$RANKCTL/oversee-succeed" run_succeed rankctl 'claude:0:high'
@@ -272,8 +274,8 @@ assert_eq "$(keyed invalid-preference)" "none" \
 # the same fleet the default ladder succeeds on.
 NOMODEL="$(mutant_scripts nomodel lib/overseer-launch.sh)" || exit 1
 mutate_file "$NOMODEL/lib/overseer-launch.sh" \
-  '  [[ -n "$OL_ENTRY_MODEL" ]] || OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"' \
-  '  OL_ENTRY_MODEL=""'
+  '  OL_ENTRY_HOST=""' \
+  '  OL_ENTRY_HOST=""; OL_ENTRY_MODEL=""'
 new_caller
 SUCCEED_BIN="$NOMODEL/oversee-succeed" run_succeed nomodel unset
 assert_eq "$RC|$(first_key)|$(caller_open)|$(launched claude)" \
@@ -281,14 +283,14 @@ assert_eq "$RC|$(first_key)|$(caller_open)|$(launched claude)" \
   "control: a walk that drops the entry's model refuses the fleet the ladder succeeds on"
 
 # Set to empty, the setting names no entry: the walk is the caller's own
-# harness alone, on Fable, and the unset default is what reached Opus above.
+# harness alone, on Fable, and the unset default is what reached Sonnet above.
 new_caller
 run_succeed empty ''
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')" \
   "3|no-lane-qualifies entries=0" \
   "an empty preference walks no ladder"
 
-# Two seats with equal Opus room, the first in the fleet's order carrying a
+# Two seats with equal Sonnet room, the first in the fleet's order carrying a
 # live lane claim: the successor goes to the empty one. The row after it is
 # the same fleet with no claim, where the first seat is taken.
 seat fclaude 10 99 10
@@ -296,24 +298,24 @@ new_caller
 write_claim claimed eclaude
 run_succeed claimed unset
 assert_eq "$RC|$(launched claude)" \
-  "0|$H/.fclaude claude-opus-5-5" \
+  "0|$H/.fclaude sonnet" \
   "a seat carrying a lane claim is skipped for an empty one at equal headroom"
 new_caller
 run_succeed unclaimed unset
 assert_eq "$RC|$(launched claude)" \
-  "0|$H/.eclaude claude-opus-5-5" \
+  "0|$H/.eclaude sonnet" \
   "the same fleet with no claim takes the first seat"
 
 # Every claude seat walled for every model: the default reaches codex on
-# GPT-6.1 Sol, the second entry.
+# its native default, the second entry.
 seat eclaude 99 99 10
 seat fclaude 99 99 10
 codex_seat codex 20
 new_caller
 run_succeed codex unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex | awk '{print $2}')|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-  "0|no|none|gpt-6.1-sol|1" \
-  "every claude entry walled: the default reaches codex on GPT-6.1 Sol"
+  "0|no|none||1" \
+  "every claude entry walled: the default reaches codex on its native default"
 
 # The setting is the one list of models: a codex model no tier ladder and no
 # script names launches as the setting writes it.
@@ -333,12 +335,12 @@ order_row
 assert_eq "$RC|$(launched claude)|$(launched codex | awk '{print $2}')" "0|none|gpt-5.6-sol" \
   "an edited order is walked in the setting's order"
 # Its control: a walk that reads a built-in order in place of the setting
-# opens on Opus, the built-in first entry, and ignores the edit.
+# opens on Sonnet, the built-in first entry, and ignores the edit.
 ORDERCTL="$(mutant_scripts orderctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$ORDERCTL/lib/overseer-launch.sh" \
   '"${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"' '"$OL_DEFAULT_PREFERENCE"'
 order_row "$ORDERCTL/oversee-succeed"
-assert_eq "$RC|$(launched claude | awk '{print $2}')|$(launched codex)" "0|claude-opus-5-5|none" \
+assert_eq "$RC|$(launched claude | awk '{print $2}')|$(launched codex)" "0|sonnet|none" \
   "control: a walk on a built-in order ignores the edited setting"
 
 # A copilot entry: `lanes pick --harness copilot` judges a Copilot account on
@@ -447,7 +449,7 @@ for control in observed flags; do
   CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
     run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
   assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-    "0|$CODEX_LAUNCH_HOME gpt-6.1-sol|1" "control: dropping the $control model breaks numeric launch identity"
+    "0|$CODEX_LAUNCH_HOME |1" "control: dropping the $control model breaks numeric launch identity"
 done
 CALLER_FLAGS=("$BYPASS")
 seat eclaude 10 99 10
@@ -464,7 +466,7 @@ new_caller codex
 CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=high -a never)
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexcaller unset
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(launched codex | sed "s|^$H/.dcodex[^ ]* |dcodex |")|$(grep -cx never "$TMP_ROOT/argv.codex")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:claude-opus-5-5:high source=codex target=claude|none|dcodex gpt-6.1-sol|1" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:sonnet:high source=codex target=claude|none|dcodex |1" \
   "a codex caller whose permission words cannot cross skips the claude entries and succeeds on codex"
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
@@ -526,7 +528,7 @@ claude_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_RO
 CLAUDE_SUCCESSOR="lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$CLAUDE_COMPACT"
 copilot_ladder copilotcaller walled
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(claude_argv)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=claude-opus-5.5|$CLAUDE_SUCCESSOR;$BRIEF;" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:1:high source=copilot target=claude model=claude-opus-5.5|$CLAUDE_SUCCESSOR;$BRIEF;" \
   "a Copilot caller onto claude skips the numeric entry and carries no Copilot word onto the claude line"
 # Its controls, one per rule: a walk that hands the caller's other words on,
 # as the cross-harness line once did, puts the Copilot words on the claude
@@ -539,7 +541,7 @@ assert_eq "$RC|$(claude_argv)" \
   "0|$CLAUDE_SUCCESSOR;--yolo;--autopilot;--max-autopilot-continues;5;$BRIEF;" \
   "control: a cross-harness line keeping the caller's other words carries Copilot's run mode onto claude"
 NUMCTL="$(mutant_scripts numctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$NUMCTL/lib/overseer-launch.sh" '  if [[ "$1" == *::* ]]; then' '  if false; then'
+mutate_file "$NUMCTL/lib/overseer-launch.sh" '  if [[ "$OL_ENTRY_DEPRECATED" == true && "$1" =~ :[1-9][0-9]*: ]]; then' '  if false; then'
 copilot_ladder numctl walled "$NUMCTL/oversee-succeed"
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)" "0|none|$H/.eclaude claude-opus-5.5" \
   "control: a walk admitting the numeric entry hands claude the Copilot model spelling"
@@ -555,7 +557,7 @@ for row in 'empty|0|none' 'caller|3|model' 'restricted|3|permission'; do
   assert_eq "$RC" "$expected_rc" "numeric target resolution retains the $source eligibility rule"
   if [[ "$skip_kind" == none ]]; then
     assert_eq "$(keyed entry-permission-untransferable)|$(claude_argv)" \
-      "none|$CLAUDE_SUCCESSOR;$BRIEF;" \
+      "none|${CLAUDE_SUCCESSOR/claude-opus-5-5/sonnet};$BRIEF;" \
       "a model-less walled Copilot caller reaches the numeric Claude target with its model and effort"
   else
     assert_eq "$(launched claude)|$(keyed no-lane-qualifies | awk '{print $2}')" "none|no-lane-qualifies" \
@@ -565,8 +567,8 @@ for row in 'empty|0|none' 'caller|3|model' 'restricted|3|permission'; do
 done
 TARGETCTL="$(mutant_scripts targetctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$TARGETCTL/lib/overseer-launch.sh" \
-  '[[ -z "$OL_ENTRY_MODEL" ]] || permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"' \
-  ': [[ -z "$OL_ENTRY_MODEL" ]] || permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"'
+  '          permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"' \
+  '          : permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"'
 copilot_ladder targetctl walled "$TARGETCTL/oversee-succeed" empty 'claude:1:high'
 assert_eq "$RC|$(launched claude)" "3|none" \
   "control: treating the target default as caller-derived loses the available Claude successor"
@@ -724,8 +726,8 @@ codex_seat dcodex 99
 new_caller
 run_succeed fable unset
 assert_eq "$RC|$(launched claude)|$(launched codex)" \
-  "0|$H/.eclaude claude-opus-5-5|none" \
-  "the default ladder opens on Opus on the first seat with Opus room"
+  "0|$H/.eclaude sonnet|none" \
+  "the default order opens on Sonnet on the first seat with Sonnet room"
 
 # A pi overseer on the pi-claude provider, its pane naming no harness and its
 # launch record naming pi, Fable and the account .claude, whose Fable and Opus

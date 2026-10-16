@@ -233,7 +233,7 @@ assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")" \
   "1" \
   "the watch serving the predecessor's pane is stopped, once"
 assert_eq "${NEW:+found}|$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')" \
-  "found|pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model claude-fable-5-1 --effort high $BYPASS $COMPACT $QUESTION_OFF" \
+  "found|pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF" \
   "and started again from the successor pane, with the successor's harness, flags and account"
 assert_eq "$(started_line "${NEW:-none}" | sed -n 's/.* tmux=\([^,]*\),\([0-9]*\),[0-9]* .*/\1 \2/p')" "$SOCKET $SERVER_PID" \
   "a launch from outside tmux hands the restarted watch the successor's tmux server"
@@ -259,7 +259,7 @@ for COMMAND_CASE in live released; do
   [[ "$COMMAND_CASE" != live ]] || wait_restart
   watch_pid_live "$FLEET_STATE" || true
   NEW="${WATCH_PID:-}"
-  EXPECT_COMMAND="pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/configured argv=${WATCH_ARGS% --handoff=old-handoff --harness codex} --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model claude-fable-5-1 --effort high $BYPASS $COMPACT $QUESTION_OFF"
+  EXPECT_COMMAND="pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/configured argv=${WATCH_ARGS% --handoff=old-handoff --harness codex} --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF"
   ACTUAL_COMMAND="$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')"
   assert_eq "$RC|$ACTUAL_COMMAND" "0|$EXPECT_COMMAND" \
     "$COMMAND_CASE: replay keeps script, cwd, selection and cadence and replaces only successor values"

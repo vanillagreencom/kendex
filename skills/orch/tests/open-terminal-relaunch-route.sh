@@ -316,10 +316,10 @@ assert_eq "rc=$RC unrecorded=$(said '^open-terminal: record-write-failed item=KE
 echo "=== a relaunch across a harness switch renders the start brief alone ==="
 run_ot claude "$HARNESS_SCREEN" claude '--model fable --effort high'
 assert_eq "$(replay 1)" 'continue,fresh' 'a recorded-model resume retains its fresh fallback'
-assert_eq "$(grep -c -- '--model claude-fable-5-1' "$RUN/claude.log")" 2 \
+assert_eq "$(grep -c -- '--model fable' "$RUN/claude.log")" 2 \
   'native resume and fresh fallback both receive the explicit launched model'
 assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].model')" \
-  claude-fable-5-1 'the lane launch records canonical identity before a family override can change'
+  fable 'the lane launch retains the native alias when no family override resolves it'
 run_ot codex "$HARNESS_SCREEN" claude
 assert_eq "rc=$RC switched=$(said '^open-terminal: harness-switched item=KEN-1 harness=claude recorded=codex') continue=$(remote | grep -c -- '--continue') fresh=$(remote | grep -c "exec claude -n KEN-1 .*/orch start KEN-1")" \
   "rc=0 switched=1 continue=0 fresh=1" \

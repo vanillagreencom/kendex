@@ -138,13 +138,15 @@ while IFS='|' read -r label want args; do
   assert_eq "$(launch row "$@")" "$want" "$label"
 done <<ROWS
 claude on a model with a window passes|passed|${FLEET[*]} --harness claude --launch-flags '--model opus --effort high'
-claude on sonnet, written as claude-sonnet-5-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model sonnet --effort high'
-claude on haiku, written as claude-haiku-4-5, passes|passed|${FLEET[*]} --harness claude --launch-flags '--model haiku --effort high'
+claude on the native sonnet alias passes|passed|${FLEET[*]} --harness claude --launch-flags '--model sonnet --effort high'
+claude on the native haiku alias passes|passed|${FLEET[*]} --harness claude --launch-flags '--model haiku --effort high'
 claude on the attached --model=sonnet passes the same way|passed|${FLEET[*]} --harness claude --launch-flags '--model=sonnet --effort high'
-a claude --cmd on the bare sonnet alias, run as written, is refused|open-terminal: launch-window-unknown harness=claude model=sonnet|${FLEET[*]} --harness claude --cmd "claude --model sonnet --effort high \$CLAUDE_QUESTION \$CLAUDE_WORDS {item}"
+a claude --cmd on the bare sonnet alias passes|passed|${FLEET[*]} --harness claude --cmd "claude --model sonnet --effort high \$CLAUDE_QUESTION \$CLAUDE_WORDS {item}"
 a claude --cmd on claude-sonnet-5-5 passes|passed|${FLEET[*]} --harness claude --cmd "claude --model claude-sonnet-5-5 --effort high \$CLAUDE_QUESTION \$CLAUDE_WORDS {item}"
-claude on a model whose window no row names is refused|open-terminal: launch-window-unknown harness=claude model=claude-sonnet-4-6|${FLEET[*]} --harness claude --launch-flags '--model claude-sonnet-4-6 --effort high'
-claude naming no model is refused the same way|open-terminal: launch-window-unknown harness=claude model=none|${FLEET[*]} --harness claude
+claude on a new Sonnet version passes|passed|${FLEET[*]} --harness claude --launch-flags '--model claude-sonnet-9-9 --effort high'
+claude on an unknown family uses the default budget|passed|${FLEET[*]} --harness claude --launch-flags '--model claude-lyra-9-9 --effort high'
+claude on a new Haiku version passes|passed|${FLEET[*]} --harness claude --launch-flags '--model claude-haiku-5-5 --effort high'
+claude naming no model passes the window gate with the default budget|passed|${FLEET[*]} --harness claude
 codex passes, its rollout naming its window|passed|${FLEET[*]} --harness codex --launch-flags '-m gpt-6-astra -c model_reasoning_effort=high'
 a claude --cmd carrying the compaction words passes|passed|${FLEET[*]} --harness claude --cmd "\$CLAUDE_TEMPLATE"
 a claude --cmd without them is refused, naming them|open-terminal: launch-compaction-missing harness=claude word=--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}|${FLEET[*]} --harness claude --cmd 'claude --model opus --effort high $CLAUDE_QUESTION {item}'
@@ -382,13 +384,6 @@ control() { # NAME OLD NEW
 control unsupported-ctrl '*) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1 ;;' $'*) : \'ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1\' ;;'
 assert_eq "$(OT="$CTRL_OT" launch unsupported-ctrl "${FLEET[@]}" --harness opencode --launch-flags '--model m')" passed \
   "control: without its refusal an opencode fleet launch passes the gate"
-control window-ctrl 'ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2' ': '
-assert_eq "$(OT="$CTRL_OT" launch window-ctrl "${FLEET[@]}" --harness claude --launch-flags '--model claude-sonnet-4-6 --effort high')" passed \
-  "control: without its refusal a claude fleet lane on a model with no window passes"
-control alias-id-ctrl '        [[ "$LAUNCH_CHOICE_COMPACTION" == on ]] || gate_window=false' '        launch_choice_compaction "$LAUNCH_HARNESS" "$LAUNCH_MODEL" >/dev/null || gate_window=false'
-assert_eq "$(OT="$CTRL_OT" launch alias-id-ctrl "${FLEET[@]}" --harness claude --launch-flags '--model sonnet --effort high')" \
-  "open-terminal: launch-window-unknown harness=claude model=sonnet" \
-  "control: judged on the alias rather than the id it is written as, a sonnet fleet lane is refused"
 control compaction-missing-ctrl 'ot_message launch-compaction-missing "harness=$LAUNCH_HARNESS" "${compaction_fields[@]}" >&2' ': '
 assert_eq "$(OT="$CTRL_OT" launch compaction-missing-ctrl "${FLEET[@]}" --harness claude --cmd "claude --model opus --effort high $CLAUDE_QUESTION {item}")" passed \
   "control: without its refusal a --cmd fleet lane keeps its compaction on"

@@ -128,11 +128,11 @@ echo "=== every command open-terminal builds takes the question tool away ==="
 # an ITEM spelled REPO#N launches GitHub item N of REPO.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
-  "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1 $UNATTENDED_TEXT'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
-  "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-opus-5-5' '/orch start CC-6 $UNATTENDED_TEXT'|a claude model the adapter names a window for turns its compaction off" \
-  "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-5-5' '/orch start CC-8 $UNATTENDED_TEXT'|a claude alias is written as its model id, whose window turns its compaction off" \
-  "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=claude-sonnet-5-5' '/orch start CC-10 $UNATTENDED_TEXT'|the attached form of a claude alias is written as its model id too" \
-  "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7 $UNATTENDED_TEXT'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
+  "claude|-|CC-1|claude -n CC-1 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1 $UNATTENDED_TEXT'|claude denies AskUserQuestion and EnterPlanMode; its native default uses the default handoff budget" \
+  "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'opus' '/orch start CC-6 $UNATTENDED_TEXT'|a claude model the adapter names a window for turns its compaction off" \
+  "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'sonnet' '/orch start CC-8 $UNATTENDED_TEXT'|a native claude alias uses its family budget" \
+  "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=sonnet' '/orch start CC-10 $UNATTENDED_TEXT'|the attached form keeps the native claude alias" \
+  "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7 $UNATTENDED_TEXT'|an older Sonnet uses the Sonnet family budget" \
   "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2. $UNATTENDED_TEXT'|codex disables the request_user_input feature after its update and compaction settings" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
   "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
@@ -260,23 +260,6 @@ for row in "claude|CC-1|$CLAUDE_WANT" "pi|CC-3|$PI_WANT" "opencode|CC-4|$OPENCOD
     pass "control: the hook flag in $harness fails the command assertion"
   fi
 done
-# No rewrite at all: the id is judged and the bare alias written.
-lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
-launch CC-9 --harness claude --launch-flags '--model sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-9' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
-  "control: without the rewrite a claude alias reaches the command as named"
-# The attached form missed: the alias runs as named, judged so, and keeps its
-# compaction on, the attached row's value and words both gone.
-ATTACHED='      words="${words//"$nl$spelling$model$nl"/$nl$spelling$model_id$nl}"'
-lead_control "$ATTACHED" '      :'
-launch CC-21 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-21' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
-  "control: an attached alias the rewrite misses keeps its compaction on"
-# The same miss with no judge after it: compaction off on the bare alias.
-lead_control "$ATTACHED" '      :' '      || model_id="$model"' '      || :'
-launch CC-22 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "export KENDEX_LANE_ORIGIN='$TMP_ROOT/wt/CC-22' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
-  "control: without the check after it, that miss turns compaction off on the bare alias"
 # The unattended words gone from the text LAUNCH_UNATTENDED_TEXT: a claude
 # --cmd launch carrying none of them then launches, which the gate row above
 # refuses.

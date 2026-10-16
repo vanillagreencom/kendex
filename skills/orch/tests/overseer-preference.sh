@@ -35,11 +35,13 @@ for row in \
   'pi:pi-claude/fable:high|other|0|1|pi:pi-claude/fable:high||||0' \
   '|fable|0|0|||||0' \
   'claude:0:high|fable|1|0|||claude:0:high|claude:0:high|0' \
-  'claude::high|fable|1|0|||claude::high|claude::high|0' \
+  'claude::high|fable|0|1|claude::high||||0' \
+  'codex::high|fable|0|1|codex::high||||0' \
+  'claude:1:high,claude::high|fable|0|2|claude:fable:high claude::high|claude:1:high|||1' \
   'claude:-1:high|fable|1|0|||claude:-1:high|claude:-1:high|0' \
   'claude:1x:high|fable|1|0|||claude:1x:high|claude:1x:high|0' \
   'claude:1:HIGH|fable|1|0|||claude:1:HIGH|claude:1:HIGH|0' \
-  'bad,claude:1:high,codex::low|fable|1|1|claude:fable:high|claude:1:high|bad codex::low|bad|1'; do
+  'bad,claude:1:high,codex::low|fable|1|2|claude:fable:high codex::low|claude:1:high|bad|bad|1'; do
   IFS='|' read -r preference caller rc named models deprecated refused first warnings <<<"$row"
   OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" bash "$TMP_ROOT/read" "$LIB" "$preference" "$caller" 2>"$TMP_ROOT/err")"
   warning_count="$(wc -l <"$TMP_ROOT/err" | tr -d ' ')"
@@ -80,7 +82,7 @@ for mutation in refusal model warning; do
       old='    if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then'
       new='    if false && [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then' ;;
     model)
-      old='  [[ -n "$OL_ENTRY_MODEL" ]] || OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"'
+      old='    OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"'
       new='  : # caller model is dropped' ;;
     warning)
       old='      if (( ! OL_DEPRECATION_WARNED )); then'

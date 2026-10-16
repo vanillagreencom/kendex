@@ -353,8 +353,9 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # the provider in those same characters, the model in lowercase letters,
 # digits, dots, underscores, hyphens and slashes, starting with a letter or
 # digit. The effort is lowercase letters, the level as that harness spells
-# it; on pi it is the thinking level. In this grammar, an entry that names no
-# model stops the launch. The deprecated positive account number first uses
+# it; on pi it is the thinking level. An empty model selects the harness
+# default on claude, codex or copilot. Pi requires provider/model.
+# The deprecated positive account number first uses
 # the caller's model. With no caller model, the overseer uses the same-harness
 # model from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
 # uses the harness's native model default. It warns once per run until the
@@ -362,12 +363,13 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Numeric succession entries can cross harnesses only when the model comes
 # from the target harness's default preference. The permission rules in
 # oversee-succeed --help still apply.
-# Replace it with a model name, such as claude:claude-opus-5-5:high. The name is not checked
+# Replace it with a family alias, such as claude:sonnet:high, or the harness default.
+# The name is not checked
 # before launch, so a misspelled codex, copilot or pi model opens the new
 # overseer on that name. Which entries a first launch and a succession skip is in
-# oversee --help and oversee-succeed --help. Change the order here when
-# models change; no code holds another order. Empty names no entries.
-# ORCH_OVERSEER_PREFERENCE = "claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
+# oversee --help and oversee-succeed --help. Family aliases and harness defaults
+# need no edit when model versions change. An empty setting names no entries.
+# ORCH_OVERSEER_PREFERENCE = "claude:sonnet:high,codex::high"
 
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
 # provider executable path for that entry; without it, the caller's --host or

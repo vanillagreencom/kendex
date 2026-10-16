@@ -31,8 +31,7 @@ source "${BASH_SOURCE[0]%/*}/toml.sh"
 # which account a session is spending.
 # shellcheck source=lane-home.sh
 source "${BASH_SOURCE[0]%/*}/lane-home.sh"
-# The claude adapter names the window a claude model runs, which decides
-# whether a claude command may turn its compaction off (launch_choice_compaction).
+# The Claude adapter supplies the family or default budget for context handoff.
 # shellcheck source=adapters/claude.sh
 source "${BASH_SOURCE[0]%/*}/adapters/claude.sh"
 
@@ -564,9 +563,8 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
 # preference on a first launch names effort alone and leaves the model to
 # the harness default. Status 1 where either value is named and the table
 # holds no row for that harness. A row with no effort spelling omits effort.
-# The model a launch of HARNESS writes for MODEL: a claude alias the adapter
-# maps is written as its id, so no ANTHROPIC_DEFAULT_*_MODEL pin moves the
-# model its window was judged on; every other model as named.
+# Claude family overrides retain their explicit IDs. Unpinned aliases stay
+# native aliases so a harness model release needs no launcher edit.
 launch_choice_model_id() { # HARNESS MODEL [launch|resolved|recorded]
   if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}" "${3:-}"; else printf '%s\n' "${2:-}"; fi
 }
@@ -629,8 +627,8 @@ launch_choice_permission_write() { # HARNESS
 # alias after that is judged as the alias. open-terminal's fleet gate asks
 # this same judge.
 # LAUNCH_CHOICE_COMPACTION says what became of the compaction words: `on`,
-# `none` for a row that has none, `no-model` where no model is named and
-# `no-window` where its window is unnamed, the last two leaving compaction on. A caller's flags handed
+# `none` for a row that has none. An adapter failure gives `no-window`, or
+# `no-model` when the launch uses the native default. A caller's flags handed
 # on keep none of their own: the same harness would carry them twice, another
 # harness would be handed a word its launch form refuses, and whether a launch
 # keeps its question tool is the flag's answer, never the caller's words.
@@ -663,6 +661,10 @@ launch_choice_lead_settings() { # [--question-off] [--model MODEL] HARNESS WORD.
     # A spelling still naming the alias runs it as named, and is judged so.
     [[ "$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "${words//$nl/ }")" != "$model" ]] \
       || model_id="$model"
+  fi
+  # Keep notice state in the launcher shell across its gate and command build.
+  if [[ "$harness" == claude ]]; then
+    lane_adapter_claude_window "$model_id" notice >/dev/null || return 1
   fi
   own_compaction="$(launch_choice_compaction "$harness" "$model_id")" || compaction_rc=$?
   case "$compaction_rc:$own_compaction" in
@@ -774,19 +776,16 @@ launch_overseer_question_words() { # HARNESS
 }
 
 # launch_choice_compaction HARNESS MODEL: the compaction policy settings for
-# a session on MODEL, empty where the row names none. Exit 1,
-# printing nothing, where the row names words and no adapter can name MODEL's
-# window: disabling Claude compaction would leave its capacity unknown.
-# The one owner of that rule: every command a
-# launcher builds takes its words from here, and a fleet launch refuses on the
-# same answer. A claude window is the claude adapter's by model; a codex
-# rollout names its own window whatever the model.
+# a session on MODEL, empty where the row names none. Claude uses its adapter's
+# family or default budget, so an unfamiliar model keeps compaction disabled.
 launch_choice_compaction() { # HARNESS MODEL
-  local words
+  local words window
   words="$(launch_choice_compaction_off "$1")"
   [[ -n "$words" ]] || return 0
   case "$1" in
-    claude) [[ -n "$(lane_adapter_claude_window "${2:-}")" ]] || return 1 ;;
+    claude)
+      window="$(lane_adapter_claude_window "${2:-}" notice)" || return 1
+      [[ -n "$window" ]] || return 1 ;;
   esac
   printf '%s\n' "$words"
 }

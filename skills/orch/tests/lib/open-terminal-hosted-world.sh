@@ -16,7 +16,7 @@ printf 'Working (esc to interrupt)\n' > "$TMP_ROOT/harness-screen"
 HARNESS_UP="OT_HARNESS_SCREEN=$TMP_ROOT/harness-screen"
 
 UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT" )" || exit 1
-CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}claude-opus-5-5$Q $Q--effort$Q ${Q}high$Q"
+CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
 # hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude
 # relaunch, the continuation line and the start brief each closing on the
 # unattended words.

@@ -188,11 +188,8 @@
 #        reading (lane_context_mark_model): a claude successor is judged on its
 #        model, so the model wall IS that reading; a codex successor is judged
 #        on the account's own binding bucket and the pick adds
-#        `--binding-floor` to hold it there. An entry, the caller's own
-#        included, whose claude successor would run on a model the claude
-#        adapter names no window for refuses `model-window-unknown` and ends
-#        the run rather than being skipped, a setting to fix and not a lane to
-#        pass over, as does a pi
+#        `--binding-floor` to hold it there. Claude uses the adapter's family
+#        or default handoff budget. The run refuses a pi
 #        successor, `pi-handoff-unmarked`, whose settings leave compaction on
 #        or cannot be read, or whose pi-hooks carrier sends no window, read
 #        under the Pi root it runs on: the picked account's on the Copilot
@@ -537,10 +534,10 @@ message() { # KEY FIELD=VALUE...
     account-below-mark) text="No account mark is reached. This run was handed no --context reading, so the context mark was not judged; references/oversee-events.md § Judgement rules says who judges it. $headroom_text" ;;
     mark-reached) text='This overseer is at or past one of its own marks and has to hand this session over. Run oversee-succeed with the permission, model and effort flags this session runs under; where succession is off, write the overseer handoff file and ask for a fresh overseer session by hand.' ;;
     mark-unmeasured) text='One trigger could not be measured this time, and no other trigger fired. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An entry naming no model is refused.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An empty model selects the native default on claude, codex or copilot; pi requires provider/id.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     walled-lane-unknown) text='The caller account for this recovery request could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, and a pi session on a model no lane measures or naming no provider, are the shapes that reach this.' ;;
-    model-window-unknown) text='The claude adapter names no context window for the model this successor would run, and a successor runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a claude model the window table in lib/adapters/claude.sh names.' ;;
+    model-window-unknown) text='The Claude adapter could not read the family or default handoff budget. Nothing was launched. Check the adapter error before this message.' ;;
     pi-account-unknown) text='This pi overseer names its model with no provider, in its launch record, the --model word after -- and its context reading alike, so the account its successor would spend is unknown and nothing was launched. Pass --model as provider/id after --, pi-claude/<id> for a claude account.' ;;
     pi-handoff-unmarked) text='A pi successor would compact or reach its wall with no handoff mark, so nothing was launched. The reason field names which: compaction-on is a pi settings file, the one the file field names, leaving compaction.enabled on; settings-unreadable is that file present and unreadable, its reader words below; no-window-read is no installed pi-hooks carrier sending the context window.' ;;
     successor-account-unmeasured) text='The successor opens on this overseer'\''s own account, which nothing measured and the caller already spends.' ;;

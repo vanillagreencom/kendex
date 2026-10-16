@@ -846,7 +846,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=
 # The same pane with a record: the harness, account, model and effort are the
 # record's, the permission word the caller's own flags, and the pending
 # successor changes none of it.
-RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $LEAD $BYPASS '$BRIEF'"
+RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
 for pending in '{}' "$PENDING"; do
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$pending")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
@@ -861,7 +861,7 @@ PAIRCTL="$(mutant_scripts pairctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PAIRCTL/lib/overseer-launch.sh" '  if [[ -z "$model" && -z "$effort" ]]; then' '  if true; then'
 state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
-assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model claude-fable-5-1 --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
 
 # A pi overseer's line: its model and level words, its question-tool words and
@@ -1059,7 +1059,6 @@ for row in \
     "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
   print_on_successor
   print_model="$row_model"
-  [[ "$print_model" != fable ]] || print_model=claude-fable-5-1
   assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $print_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
     "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
 done
