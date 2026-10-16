@@ -22,6 +22,8 @@ item = json.loads(state.read_text())
 with (root / "calls.jsonl").open("a") as out:
     out.write(json.dumps(args) + "\n")
 row = os.environ["TRACKER_ROW"]
+comments_path = root / "comments.json"
+comments = json.loads(comments_path.read_text())
 if args[:2] == ["users", "list"]:
     print(json.dumps([{"id": "owner", "name": "Owner Person", "email": "owner@example.test"}]))
 elif args[:2] == ["issues", "get"]:
@@ -29,10 +31,23 @@ elif args[:2] == ["issues", "get"]:
 elif args[:2] == ["comments", "create"]:
     if row == "comment-failed" and not (root / "closing").exists():
         sys.exit(1)
-    print("{}")
+    comment_id = "comment-" + str(len(comments))
+    comments[comment_id] = Path(args[args.index("--body-file") + 1]).read_text()
+    comments_path.write_text(json.dumps(comments))
+    print(json.dumps({"success": True, "data": {"comment": {"id": comment_id}}}))
+elif args[:2] == ["comments", "delete"]:
+    if row == "cancel-failed":
+        print("tracker: refused=comment-delete", file=sys.stderr)
+        sys.exit(1)
+    if row == "cancel-refused":
+        print(json.dumps({"success": False}))
+    else:
+        del comments[args[2]]
+        comments_path.write_text(json.dumps(comments))
+        print(json.dumps({"success": True}))
 elif args[:2] == ["issues", "update"]:
     if not (root / "closing").exists() and (
-        (row in ("label-failed", "description-failed") and "--labels" in args)
+        (row in ("label-failed", "description-failed", "cancel-failed", "cancel-refused") and "--labels" in args)
         or (row == "description-failed" and "--description" in args)
     ):
         print("tracker: refused=write", file=sys.stderr)
@@ -56,9 +71,11 @@ else:
 
 
 def run(source, scratch, bash):
-    facts = {"unposted": True, "notice": True, "posted": True, "edited": True, "retained_error": True}
+    facts = {"unposted": True, "notice": True, "posted": True, "edited": True,
+             "retained_error": True, "comments": True, "cancel_notice": True}
     for row, posted in (("description-failed", False), ("comment-failed", False),
-                        ("posted", True), ("label-failed", False), ("edited", True)):
+                        ("posted", True), ("label-failed", False), ("edited", True),
+                        ("cancel-failed", False), ("cancel-refused", False)):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"
@@ -77,6 +94,9 @@ def run(source, scratch, bash):
             item = {"description": original, "labels": labels, "assignee": "Owner Person"}
             state = root / "item.json"
             state.write_text(json.dumps(item))
+            comments_path = root / "comments.json"
+            previous_comments = {"previous": "An existing comment stays."}
+            comments_path.write_text(json.dumps(previous_comments))
             message = root / "question"
             message.write_text("Approve the change?\n")
             env = {"PATH": os.environ["PATH"], "HOME": str(root), "TMPDIR": str(root),
@@ -94,6 +114,27 @@ def run(source, scratch, bash):
             ask_id = ask.stdout.strip().split("=", 1)[1]
             pending = json.loads(invoke("pending", "--item", "overseer", "--to", "owner").stdout)
             after_ask = json.loads(state.read_text())
+            after_comments = json.loads(comments_path.read_text())
+            cancellations = [args for args in map(json.loads, (root / "calls.jsonl").read_text().splitlines())
+                             if args[:2] == ["comments", "delete"]]
+            if posted or row in ("cancel-failed", "cancel-refused"):
+                facts["comments"] &= (after_comments.get("previous") == previous_comments["previous"]
+                    and set(after_comments) == {"previous", "comment-1"}
+                    and ("ask=" + ask_id) in after_comments["comment-1"])
+            else:
+                facts["comments"] &= after_comments == previous_comments
+            facts["comments"] &= cancellations == ([] if posted or row == "comment-failed" else
+                                                    [["comments", "delete", "comment-1"]])
+            if row in ("cancel-failed", "cancel-refused"):
+                diagnostics = ask.stderr.splitlines()
+                retained = {}
+                for line in diagnostics:
+                    if "error-file=" in line:
+                        category = line.split("cause=", 1)[1].split(" ", 1)[0]
+                        retained[category] = Path(line.split("error-file=", 1)[1]).read_bytes()
+                facts["cancel_notice"] &= (retained.get("label") == b"tracker: refused=write\n"
+                    and retained.get("comment-cancel") == (b"tracker: refused=comment-delete\n"
+                        if row == "cancel-failed" else b'{"success": false}\n'))
             if not posted:
                 facts["unposted"] &= pending["tracker_posted"] is False and after_ask == item
                 facts["notice"] &= "tracker-unwritten issue=KEN-7 cause=" in ask.stderr

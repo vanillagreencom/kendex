@@ -45,8 +45,10 @@ assert_eq "$(jq '.notice' <<<"$CLOSE_FACTS")" true 'failed tracker writes retain
 assert_eq "$(jq '.posted' <<<"$CLOSE_FACTS")" true 'posted tracker asks release only their description and labels'
 assert_eq "$(jq '.edited' <<<"$CLOSE_FACTS")" true 'close preserves an action line changed after posting'
 assert_eq "$(jq '.retained_error' <<<"$CLOSE_FACTS")" true 'a refused label retains tracker error bytes after close'
+assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'failed posts cancel only their question and posted questions stay active'
+assert_eq "$(jq '.cancel_notice' <<<"$CLOSE_FACTS")" true 'failed question cancellation reports its cause and retains the primary error'
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed unposted exact-action retained-error; do
+  for rule in pending failed bound private-failed unposted exact-action retained-error comment-cancel; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -76,11 +78,15 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         'ltrimstr($prefix) as $body' 'owner_action_body as $body'
       assertion='close preserves an action line changed after posting'
-    else
+    elif [[ "$rule" == retained-error ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \
         'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"'
       assertion='a refused label retains tracker error bytes after close'
+    else
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        'if "$tracker" comments delete "$comment_id"' 'if : "$tracker" comments delete "$comment_id"'
+      assertion='failed posts cancel only their question and posted questions stay active'
     fi
     control_rc=0
     MAILBOX_UNDER_TEST="$TMP_ROOT/control-$rule" "$BASH" "$ROOT/skills/mailbox/tests/owner-tracker.sh" \

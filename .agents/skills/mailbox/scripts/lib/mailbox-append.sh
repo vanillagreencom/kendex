@@ -251,7 +251,7 @@ owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTE
 }
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
-  local tracker="$1" envelope="$2" work="$3" issue labels current owner description
+  local tracker="$1" envelope="$2" work="$3" issue labels current owner description comment_id cancel_error
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
@@ -281,8 +281,21 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
     OWNER_TRACKER_CAUSE=comment; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
+  # The Linear comments interface returns this identity for cancellation.
+  comment_id="$(jq -er '.data.comment.id | strings | select(length > 0)' "$work/tracker.out" 2>"$work/tracker.err")" || {
+    OWNER_TRACKER_CAUSE=comment-id; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
+  }
   "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
+    OWNER_TRACKER_CAUSE=label
+    owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"
+    # Unposted asks use chat. Do not leave a question whose replies are ignored.
+    cancel_error="$work/tracker-cancel.err"
+    if "$tracker" comments delete "$comment_id" >"$work/tracker-cancel.out" 2>"$work/tracker-cancel.err"; then
+      if jq -e '.success == true' "$work/tracker-cancel.out" >/dev/null 2>"$work/tracker-cancel.err"; then return 0; fi
+      cancel_error="$work/tracker-cancel.out"
+    fi
+    owner_tracker_unwritten "$issue" comment-cancel "$cancel_error"
+    return 0
   }
   OWNER_TRACKER_POSTED=1
 }
