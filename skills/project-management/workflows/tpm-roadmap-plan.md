@@ -20,7 +20,7 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision. Pre
 
 ### 1.1 Team Scope
 
-Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. The § 1.4 project list and the § 1.5 comparison set both return the whole workspace; drop everything outside the scope before comparing against either. § 2 proposes `cancel` and `supersede` against that set, and roadmap-create executes them.
+Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. Pass `--team` on every comparison `issues list` to filter on the server. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison. § 2 proposes changes only to active rows; closed rows remain historical comparison evidence per tpm-audit § 1.1. roadmap-create executes the recommendations.
 
 ### 1.2 Label Policy
 
@@ -55,13 +55,23 @@ Store `id`, `name`, `state`, `description`, `content` per project.
 
 ### 1.5 Issues
 
-Fetch every project's issues in ONE command — never loop `--project` per project:
+Fetch active comparison rows in one command; never loop `--project` per project:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying,Done" --max
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max
 ```
 
 Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison, for the in-scope rows alone.
+
+For each proposed issue, read closed comparison evidence with its title, target, or component terms:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Done,Canceled" --search "[TERMS]"
+```
+
+Use the comparison and truncation rules in [tpm-audit](tpm-audit.md) § 1.5: no `--max` on closed searches, no whole-history read, and no disposition on closed rows. Retain closed results and any truncation notice per proposed issue. A truncated search limits that issue's findings to returned evidence and never proves no match. Verifying rows retain their live checks on the merged item (tpm-audit § 1.1).
+
+Before § 2, select candidate duplicate, relation, and supersession rows from the fetched bodies and select active cancellation candidates. Read comments once per tpm-audit § 1.4.1: one `comments bulk-list` for the existing input issues from § 1.3 and the candidate rows, including closed candidates and every active row proposed for cancellation. Do not read every comparison row's comments. Use the comments to verify recommendations before assigning an action.
 
 ### 1.6 Research
 
@@ -71,7 +81,7 @@ Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `bl
 
 ## 2. Cross-Project Analysis
 
-Compare each proposed issue against every fetched issue. Same title and scope is an exact duplicate (`skip`, reference the existing one); overlapping scope with a different approach means `expand` the existing issue or descope the proposal; a proposal that entirely replaces an existing issue means `cancel` the old one. Record in `cross_project_findings.duplicates[]`.
+Compare each proposed issue against the active comparison set and its own closed search results. Same title and scope is an exact duplicate (`skip`, reference the existing one); overlapping scope with a different approach means `expand` an active existing issue or descope the proposal; a proposal that entirely replaces an active existing issue means `cancel` the old one. Done and Canceled rows are evidence only: never expand, cancel, or supersede them. Record in `cross_project_findings.duplicates[]` and state any limit from that proposal's closed search.
 
 For each `conflicts_with` entry, search existing issues and code for the target and assess whether the proposal breaks existing work, collides with work in progress, or can coexist with modification. Record in `cross_project_findings.conflicts[]`.
 
@@ -117,7 +127,7 @@ Store in `organized_issues[]` sorted by `position`, each with `priority`, full `
 
 ## 5. Validate
 
-For each organized issue, search the fetched issues for Done-state work covering the same scope. Match on title similarity plus description overlap, verify against the code that the implementation exists, and mark `obsolete` only at ≥90% confidence with evidence `{completed_by[], files_verified[]}`.
+For each organized issue, use its § 1.5 closed search results to find Done-state work covering the same scope. Match on title similarity plus description overlap, verify against the code that the implementation exists, and mark the proposal `obsolete` only at ≥90% confidence with evidence `{completed_by[], files_verified[]}`. Keep each finding within that issue's returned evidence and record any truncation. The completed issue takes no disposition.
 
 Assign the action: obsolete → `cancel`; exact duplicate → `skip`; partial overlap recommending expansion → `expand`; replaces an existing issue → `supersede`; fails the creation bar → `skip` with the failing test named; otherwise `create`. Store `action`, `target` (the existing issue for `expand`/`supersede`, else null), and `reason`.
 

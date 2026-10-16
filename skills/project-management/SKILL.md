@@ -98,17 +98,17 @@ TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](wor
 
 ## Scope by Path
 
-A Linear list read is workspace-wide, so each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters. Silence is not inheritance: a new mode adds its row.
+A Linear list read is workspace-wide unless it passes `--team`, so each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters. TPM comparison `issues list` reads pass `--team` on the server. Closed comparison rows come only from per-input `--state "Done,Canceled" --search` reads without `--max`; tpm-audit § 1.5 owns the comparison and truncation rules. Silence is not inheritance: a new mode adds its row.
 
 | Path | Resolves | Filters |
 |------|----------|---------|
-| tpm-audit `project`, `team` | yes | § 1.3 projects, § 1.4 input set, § 1.5 comparison set |
-| tpm-audit `issues`, Linear | yes | § 1.5 comparison set; a § 1.4 input issue outside scope halts |
+| tpm-audit `project`, `team` | yes | § 1.3 projects; § 1.4 input and § 1.5 active/closed issue lists pass `--team`; § 1.4.1 comments cover inputs and candidates |
+| tpm-audit `issues`, Linear | yes | § 1.5 active/closed issue lists pass `--team`; § 1.4.1 comments cover inputs and candidates; a § 1.4 input issue outside scope halts |
 | tpm-audit `issues`, GitHub | n/a, reads nothing from Linear | n/a |
-| tpm-audit `single`, Linear | yes | § 1.3 projects, § 14 title list |
+| tpm-audit `single`, Linear | yes | § 1.3 projects; § 14 title list passes `--team` |
 | tpm-audit `single`, GitHub | n/a, reads nothing from Linear | n/a |
-| tpm-audit `project-order` | yes | § 11 initiatives, projects, and per-project issues |
-| tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects, § 1.5 comparison set |
+| tpm-audit `project-order` | yes | § 11 initiatives and projects; per-project issue lists pass `--team` |
+| tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects; § 1.5 active/closed issue lists pass `--team` and comments cover inputs and candidates |
 | tpm-cycle-plan | **no** | **no**. `session-status` picks the active project workspace-wide, and every later read is scoped to that pick |
 | audit-issues §§ 7.2-7.5 | n/a, executes an artifact tpm-audit produced under its scope | reads rooted at an in-scope project or an issue this run mutated |
 | audit-issues § 1.2.1, § 3 | **no** | **no**. `session-status` selects projects workspace-wide |
