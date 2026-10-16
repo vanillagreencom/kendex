@@ -307,10 +307,6 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # remaining an empty read for advisory callers. Cycle callers may try their PR
 # key after a state-absent refusal.
 LANE_ITEM_STATE=""
-# merge-pr saves this copy before workflow-state remove and worktree disposal.
-# The recorder removes a local copy only after its cycle has been written.
-# Its parent directory survives remove's item-named top-level entry scan.
-LANE_ITEM_SAVED_PATH=""
 LANE_ITEM_STATE_TRIED=()
 lane_item_state_absent() { # ITEM SCRATCH
   LANE_ITEM_STATE_REASON=state-absent
@@ -331,8 +327,7 @@ lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH STATE_KEY
   lane_host_fetch "$1" "$2" "$path" "$4/saved-state.json" "$4/state.err" || rc=$?
   case "$rc" in
     0)
-      LANE_ITEM_STATE="$(jq -ce 'if type == "object" then . else error("state-object-required") end' -- "$4/saved-state.json" 2>"$4/state.err")" || return 2
-      [[ -z "$LANE_ITEM_STATE" ]] || LANE_ITEM_SAVED_PATH="$path" ;;
+      LANE_ITEM_STATE="$(jq -ce 'if type == "object" then . else error("state-object-required") end' -- "$4/saved-state.json" 2>"$4/state.err")" || return 2 ;;
     1) ;;
     *) return "$rc" ;;
   esac
@@ -340,7 +335,7 @@ lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH STATE_KEY
 
 lane_item_state() {
   local path files clone="${11:-}" cycle="${12:-false}" rc=0 state_key="${9:-$4}"
-  LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON="" LANE_ITEM_SAVED_PATH=""
+  LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON=""
   LANE_ITEM_STATE_TRIED=()
   if [[ "${10:-false}" == true && -z "$6" ]]; then
     LANE_ITEM_STATE_REASON=root-unbound

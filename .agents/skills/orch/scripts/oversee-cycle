@@ -766,7 +766,3 @@ if [[ -n "$repeat" ]]; then
   log_row "$ITEM" "$repeat"
   printf '%s\n' "$repeat"
 fi
-
-if [[ -z "$LANE_HOST_SPEC" && -n "$LANE_ITEM_SAVED_PATH" ]]; then
-  rm -f -- "$LANE_ITEM_SAVED_PATH" || refuse saved-state-remove-failed "$LANE_ITEM_SAVED_PATH"
-fi

@@ -629,10 +629,8 @@ for form in local hosted; do
     cp -- "$CASE/address-source.json" "$CASE/state/workflow-state-oversee.json"
     printf 'clone-root\tKEN-6\t/clone\n' > "$REPO/tmp/oversee-watch/saved__none.mail"
   else
-    cp -- "$saved" "$CASE/saved-source.json"
     got="$(record KEN-6 micro)"
     assert_eq "$(field fix "$got")" 'fix=5' 'a standing clone records saved state after live state removal' "$CASE/err"
-    cp -- "$CASE/saved-source.json" "$saved"
     git -C "$REPO" worktree add -q --detach "$CASE/lane" HEAD
     git -C "$REPO" worktree remove "$CASE/lane"
     edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-6\")) += {mail_root:\"$CASE/lane\"}"
@@ -641,7 +639,11 @@ for form in local hosted; do
   assert_eq "$(field review "$got") $(field fix "$got") $(field bot "$got") $(field full_validations "$got")" \
     'review=3 fix=5 bot=4 full_validations=2' "$form removed lane records numeric rounds from saved state" "$CASE/err"
   if [[ "$form" == local ]]; then
-    assert_eq "$([[ ! -e "$saved" ]] && printf removed)" removed 'a successful local record removes its saved copy'
+    got="$(record KEN-6 micro)"
+    assert_eq "$(field review "$got") $(field fix "$got") $(field bot "$got") $(field full_validations "$got")" \
+      'review=3 fix=5 bot=4 full_validations=2' 'a repeated local record reads the saved copy again' "$CASE/err"
+    assert_eq "$(state '.lanes[] | select(.item == "KEN-6") | .cycle.stages')" "$(jq -c '.stages' "$saved")" \
+      'a repeated local record keeps the saved stages'
   else
     assert_eq "$([[ -f "$CASE/host/clone/tmp/cycle-state/workflow-state-KEN-6.json" ]] && printf retained)" retained 'the hosted saved copy remains for host close'
     cp -p "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$TMP_ROOT/no-saved-read.sh"
