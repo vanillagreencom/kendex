@@ -102,7 +102,22 @@ Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 All orders end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
 
 - `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once.
-- `push-first` → the same early submit and existence check as `open-first` below. Submit creates a draft and leaves auto-merge unarmed. Its `ci` record accepts completed local edits with required CI pending. Keep the draft through internal fix rounds. The passing review and submit own the ready transition and combined fix push.
+- `push-first` → the same early submit and existence check as `open-first` below. Submit creates a draft and leaves auto-merge unarmed. Its `ci` record accepts completed local edits with required CI pending. After the successful existence check, read `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state,headRefOid` and bind the open PR's head as `[HEAD_SHA]`; a failed read stops this pass. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing).
+
+  **Push-first first head.** Request Copilot before entering the review step:
+
+  ```bash
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
+  ```
+
+  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass with no request record. Then record the head:
+
+  ```bash
+  .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'
+  ```
+
+  Continue to the review step. Keep `pr_order` at `push-first` and the lane's `Review: pending` line through internal fix rounds: it holds overseer approval, and submit § 2 step 5 arms nothing. The passing review and submit publish the combined fixes and request each unrecorded head.
+
 - `open-first` → `⤵ workflows/submit-pr.md § 1-2` with context `worktree`, `lifecycle: "managed"`, `issue_id`. It pushes the commit § 2 validated and opens a pull request, not a draft, so Copilot reviews it while the review step runs; the `open-first` recorded above keeps its § 2 step 5 from arming it. Then confirm the pull request exists:
 
   ```bash

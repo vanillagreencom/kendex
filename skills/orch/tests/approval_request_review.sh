@@ -200,8 +200,8 @@ for action in --request-review --resolve-mode; do
     assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$QUERY_LOG")|$(cat "$EXECUTION_LOG")" '2||0||' "$action refuses unavailable context [$context] before native reads" "$ERR"
   done
 done
-# submit-pr produces --mark-ready only after internal review passes. The
-# real request owner holds the draft until that command and confirms its head.
+# Publication supplies --mark-ready. The real request owner holds the draft
+# until that command and confirms its head.
 write_settings "$TMP_ROOT/catalog/kendex.settings.toml" '"enforce"' ''
 write_settings "$BASE/kendex.settings.toml" '"enforce"' ''
 # REST reads and requests do not need GraphQL. The ready command is an
@@ -334,12 +334,16 @@ ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
 PUBLICATION_SCRIPT="$TMP_ROOT/publication.sh"
 code="$(awk '/^[[:space:]]*COPILOT_REQUESTED_HEAD=/ {take=1} take {print} take && /^[[:space:]]*fi$/ {exit}' "$REPO_ROOT/skills/orch/workflows/submit-pr.md")"
 [[ -n "$code" ]] || exit 1
-code="${code//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
-code="${code//\[PR_NUMBER\]/42}"
-code="${code//\[ISSUE_ID\]/KEN-3231}"
-code="${code//\[HEAD_SHA\]/current-head}"
-code="${code//\[REVIEW_BASE_CHECKOUT\]/\"\$REVIEW_BASE_FIXTURE\"}"
-printf 'set -euo pipefail\n%s\n' "$code" > "$PUBLICATION_SCRIPT"
+publication_script() { # CODE HEAD FILE
+  local code="$1"
+  code="${code//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
+  code="${code//\[PR_NUMBER\]/42}"
+  code="${code//\[ISSUE_ID\]/KEN-3231}"
+  code="${code//\[HEAD_SHA\]/$2}"
+  code="${code//\[REVIEW_BASE_CHECKOUT\]/\"\$REVIEW_BASE_FIXTURE\"}"
+  printf 'set -euo pipefail\n%s\n' "${code:-:}" > "$3"
+}
+publication_script "$code" current-head "$PUBLICATION_SCRIPT"
 "$STATE" --state-dir "$TMP_ROOT/state" set KEN-3231 pr_order push-first-returned >/dev/null
 printf 'true\n' > "$DRAFT_FILE"
 printf 'current-head\n' > "$HEAD_FILE"
@@ -359,6 +363,42 @@ cp "$PUBLICATION_SCRIPT" "$TMP_ROOT/publication-mutant.sh"
 mutate_file "$TMP_ROOT/publication-mutant.sh" 'if [[ "$COPILOT_REQUESTED_HEAD" != "current-head" ]]; then' 'if true; then'
 run_action "$TMP_ROOT/publication-mutant.sh" 0
 assert_eq "$REQUESTS" 1 'control: ignoring the request record duplicates the ready head request' "$ERR"
+# Execute the early publication block before internal review returns, then
+# submit's unchanged per-head request on the combined fix head.
+early_publication_code() { # DOC
+  awk '
+    /^[[:space:]]*\*\*Push-first first head/ {take=1}
+    /^- `open-first`/ {exit}
+    take && /^[[:space:]]*```bash/ {inside=1; next}
+    take && /^[[:space:]]*```/ {inside=0; next}
+    inside {print}
+  ' "$1"
+}
+early_doc="$REPO_ROOT/skills/orch/workflows/start-worktree.md"
+early_code="$(early_publication_code "$early_doc")"
+[[ -n "$early_code" ]] || exit 1
+publication_script "$early_code" first-head "$TMP_ROOT/early-publication.sh"
+"$STATE" --state-dir "$TMP_ROOT/state" update KEN-3231 '.pr_order = "push-first" | .pr_approval.copilot_rerequest_head = null' >/dev/null
+printf 'true\n' > "$DRAFT_FILE"
+printf 'first-head\n' > "$HEAD_FILE"
+run_action "$TMP_ROOT/early-publication.sh" 0
+assert_eq "$RC|$REQUESTS|$(paste -sd, "$TRANSITION_LOG")|$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-3231 '.pr_order + "|" + .pr_approval.copilot_rerequest_head')" \
+  '0|1|ready,request head=first-head draft=false|push-first|first-head' 'early publication requests and records the first head before review returns' "$ERR"
+"$STATE" --state-dir "$TMP_ROOT/state" set KEN-3231 pr_order push-first-returned >/dev/null
+printf 'current-head\n' > "$HEAD_FILE"
+run_action "$PUBLICATION_SCRIPT" 0
+assert_eq "$RC|$REQUESTS|$(cat "$TRANSITION_LOG")" '0|1|request head=current-head draft=false' \
+  'submit still requests the later combined head' "$ERR"
+cp "$early_doc" "$TMP_ROOT/early-mutant.md"
+early_block="$(sed -n '/^[[:space:]]*\*\*Push-first first head/,/^- `open-first`/p' "$early_doc")"
+mutate_file "$TMP_ROOT/early-mutant.md" "$early_block" "$(sed 's/^[[:space:]]*env .*approval-wait /  : # &/; s/^[[:space:]]*\.agents\/skills\/orch\/scripts\/workflow-state update /  : # &/' <<<"$early_block")"
+publication_script "$(early_publication_code "$TMP_ROOT/early-mutant.md")" first-head "$TMP_ROOT/early-publication.sh"
+"$STATE" --state-dir "$TMP_ROOT/state" update KEN-3231 '.pr_order = "push-first" | .pr_approval.copilot_rerequest_head = null' >/dev/null
+printf 'true\n' > "$DRAFT_FILE"
+printf 'first-head\n' > "$HEAD_FILE"
+run_action "$TMP_ROOT/early-publication.sh" 0
+assert_eq "$RC|$REQUESTS|$(cat "$DRAFT_FILE")|$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-3231 '.pr_approval.copilot_rerequest_head // empty')" \
+  '0|0|true|' 'control: removing the early block loses the request before push-first-returned' "$ERR"
 # GitHub produces queued/running checks, timeline-only requests and submitted
 # head reviews. approval is the request answer consumed by submit-pr and the
 # review workflow; stderr records the cause and head for the caller's log.

@@ -1,6 +1,6 @@
 # PR Review Workflow
 
-Pre-submission review, bounded fixes, QA, and issue audit. `review-pr [PR#]` resolves that PR's worktree; `start-worktree` supplies managed caller context. After [start-worktree.md](start-worktree.md) § 2.1 opened the PR early, this review runs on the pushed head and its fix rounds stay local until submit-pr pushes them. Under `push-first`, the PR stays draft until this internal review passes. A `ci` fix receipt accepts local edits and leaves required CI pending on the combined published head.
+Pre-submission review, bounded fixes, QA, and issue audit. `review-pr [PR#]` resolves that PR's worktree; `start-worktree` supplies managed caller context. After [start-worktree.md](start-worktree.md) § 2.1 opened the PR early, this review runs on the pushed head and its fix rounds stay local until submit-pr pushes them. Under `push-first`, the early request marks the PR ready so Copilot reviews it during internal review. A `ci` fix receipt accepts local edits and leaves required CI pending on the combined published head.
 
 **Caller context** (via `⤵`): `worktree`; `agents` — an explicit reviewer panel, default the first-cycle panel § 2 selects from the diff; `lifecycle` — `"managed"` (return at § 9) or `"self"` (default); `dev_agent` — a live dev agent for fix delegation; `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
@@ -513,7 +513,7 @@ After delegating children, apply the § 4 bounded re-review rule to their diff.
   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-returned
   ```
 
-- **`push-first`**: keep the pending review line and the draft until `[VERDICT]` is `pass`. Only a `pass` records `push-first-returned` with `workflow-state set [ISSUE_ID] pr_order push-first-returned`. Submit publishes the combined fixes and marks the draft ready before it requests Copilot or arms auto-merge.
+- **`push-first`**: keep the pending review line until `[VERDICT]` is `pass`; it holds overseer approval while submit § 2 step 5 arms nothing. The early request already marked the PR ready. Only a `pass` records `push-first-returned` with `workflow-state set [ISSUE_ID] pr_order push-first-returned`. Submit publishes the combined fixes and requests each unrecorded head before it arms auto-merge.
 
 - **Any other value, or absent**: in a lane whose brief names a status file, write its review line, `Review: [VERDICT]`. Record no workflow state: a review-first lane, a re-submit review and a trivial-diff skip leave `pr_order` as they found it.
 

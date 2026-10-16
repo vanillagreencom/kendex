@@ -86,8 +86,6 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed. While workflow state `pr_order` reads `open-first` or `push-first`, an armed read is a PR armed before its internal review returned: unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1, whose hand-back pushes nothing and returns to the caller. After § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
 
-With `pr_order` reading `push-first`, read the existing PR's draft flag before any interim push. Keep or convert an open PR to draft with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr ready [PR_NUMBER] --undo` from `[WORKTREE_PATH]`. Keep it draft until internal review returns `pass`.
-
 1. **Push**. With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened, first run § 3's triage pass (under `push-first-returned`, skip its bounded Copilot wait while the PR is draft), `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context, `[PR_NUMBER]` being the `number` this section's opening `pr-view-json` read printed: its fix round commits on top of the internal review's, its push through `worktree-push` by that workflow's § 6.1 carries both, and that workflow resolves its own fix SHAs through `.rebase_map` before its replies cite them, and the push below sends what remains. The triage returns to the `worktree-push` command below, never to this step's start, whose condition still holds.
 
    ```bash
@@ -156,7 +154,7 @@ With `pr_order` reading `push-first`, read the existing PR's draft flag before a
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-create --title "[PREFIX]([ISSUE_ID]): [ISSUE_TITLE]" --body-file "$BODY_FILE"
    ```
 
-   With `pr_order` reading `push-first`, add `--draft` to that create command. Keep a push-first PR draft until internal review returns `pass`.
+   With `pr_order` reading `push-first`, add `--draft` to that create command. The caller's early request owns the ready transition.
 
    With an existing PR, update the body instead:
 
@@ -166,7 +164,7 @@ With `pr_order` reading `push-first`, read the existing PR's draft flag before a
 
    `[ISSUE_TITLE]` comes from `linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
-   **Push-first ready head.** With `pr_order` reading `push-first-returned`, confirm the internal review's verdict is `pass`. Read the draft flag and head before marking it ready:
+   **Push-first ready head.** With `pr_order` reading `push-first-returned`, confirm the internal review's verdict is `pass`. The early request can have marked the PR ready already. Read the draft flag and head before requesting the combined head:
 
    ```bash
    .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,isDraft,headRefOid
@@ -181,7 +179,7 @@ With `pr_order` reading `push-first`, read the existing PR's draft flag before a
    fi
    ```
 
-   The existing request owner checks the request policy before marking a draft ready. It confirms the head and requests it, including an already ready head with no recorded request. Route its answer by [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass and leaves the request record unset, so the next pass resumes here. A head already recorded takes no request. Then move `pr_order` to `push-first-pushed` with `workflow-state set`, and write the lane's `Review: pass` line. Complete this request route before [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route)'s later wait. A draft pass before internal review sends no request and never runs the head route.
+   The existing request owner checks the request policy before marking a draft ready. It confirms the head and requests it, including an already ready head with no recorded request. Route its answer by [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass and leaves the request record unset, so the next pass resumes here. A head already recorded takes no request. Then move `pr_order` to `push-first-pushed` with `workflow-state set`, and write the lane's `Review: pass` line. Complete this request route before [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route)'s later wait. The early submit returns to its caller for the first request; this ready-head block preserves a request on each later unrecorded head.
 
 5. **Arm auto-merge** as soon as the PR exists, on every pass through this section, for a PR that will take the queue: the arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route and arms nothing where that route takes the PR past the queue. **Skip if** `orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`: the arm is the merge consent that setting holds back. **Skip if** workflow state `pr_order` reads `open-first` or `push-first`: the internal review of the PR [start-worktree.md](start-worktree.md) § 2.1 opened has not returned, and the pass after [review-pr.md](review-pr.md) § 9 arms it, as a review-first PR is armed once its review returns.
 
