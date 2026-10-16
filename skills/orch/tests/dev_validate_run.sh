@@ -643,15 +643,17 @@ assert_eq "$(output_of "$OUT")" "ran-under-bash" \
 # A committed project whose full battery and range command each print which one
 # ran; the range command also prints the base it was handed.
 RANGE_CMD='echo range $DEV_VALIDATE_BASE'
-# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)|record's class base
+# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)|record's class base|ignored-base notices
 MODE_ROWS=(
-  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no|"
-  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes| class-base=HEAD"
-  "a range run in a project with no range command runs the whole battery and records full, with the class base that run read||--validate-mode range --base HEAD|full|full|no| class-base=HEAD"
+  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no||0"
+  "a default full run ignores a carried base with one notice|$RANGE_CMD|--base HEAD|full|full|no||1"
+  "an explicit full run ignores an unreadable base with one notice|$RANGE_CMD|--validate-mode full --base no-such-ref|full|full|no||1"
+  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes| class-base=HEAD|0"
+  "a range run in a project with no range command runs the whole battery and records full, with the class base that run read||--validate-mode range --base HEAD|full|full|no| class-base=HEAD|0"
 )
 n=0
 for row in "${MODE_ROWS[@]}"; do
-  IFS='|' read -r label range_cmd args want_log want_mode want_base want_class_base <<<"$row"
+  IFS='|' read -r label range_cmd args want_log want_mode want_base want_class_base want_notices <<<"$row"
   n=$((n + 1))
   proj="$(make_mode_proj "proj-mode-$n" "$range_cmd")"
   head_sha="$(git -C "$proj" rev-parse HEAD)"
@@ -662,7 +664,9 @@ for row in "${MODE_ROWS[@]}"; do
   mode_dir="$(run_dir_of "$OUT")"
   got_base=no
   [[ "$(start_line "$mode_dir" validate-base)" != "$head_sha" ]] || got_base=yes
-  assert_eq "$(verdict_of "$OUT") $(output_of "$OUT")" "state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
+  assert_eq "$RC $(verdict_of "$OUT") $(output_of "$OUT")" "0 state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
+  assert_eq "$(grep -c -x -F -- 'dev-validate-run: option-ignored option=--base validate-mode=full' "$ERR" || true)" \
+    "$want_notices" "$label: ignored option category and count" "$ERR"
   assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
@@ -670,6 +674,12 @@ for row in "${MODE_ROWS[@]}"; do
     "validate-mode=$want_mode selection=unreported verdict=pass head=$head_sha start=$(start_of "$mode_dir")$want_class_base seconds=N started-at=T ended-at=T" \
     "$label — the run's record names that mode, the pass, the HEAD and second it started at, any class base and its wall time" "$ERR"
 done
+# A missing notice must turn the carried-base assertion while the run still passes.
+mutant mutant-full-base-notice 'if [[ "$base_given" == true ]]; then' 'if [[ "$base_given" == false ]]; then'
+proj="$(make_mode_proj proj-full-base-control "$RANGE_CMD")"
+run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode full --base HEAD
+assert_eq "$RC $(grep -c -x -F -- 'dev-validate-run: option-ignored option=--base validate-mode=full' "$ERR" || true)" \
+  "0 0" "control: a full start without its ignored-base notice changes the expected count" "$ERR"
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
 proj="$(make_mode_proj proj-mode-line "$RANGE_CMD")"
@@ -1837,7 +1847,6 @@ MODE_REFUSALS=(
   "a validation mode outside the three is refused, naming it|--worktree $proj_refuse --validate-mode fast|dev-validate-run: invalid-mode option=--validate-mode value=fast"
   "a range run with no base is refused|--worktree $proj_refuse --validate-mode range|dev-validate-run: required option=--base validate-mode=range"
   "a ci run with no base is refused|--worktree $proj_refuse --validate-mode ci|dev-validate-run: required option=--base validate-mode=ci"
-  "a base handed to a full run is refused, never silently dropped|--worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base validate-mode=full"
   "a base that names no commit is refused, naming it|--worktree $proj_refuse --validate-mode range --base no-such-ref|dev-validate-run: invalid-base base=no-such-ref"
   "a validation mode handed to the waiter is refused|--wait --run-dir $stale --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=wait"
   "a base handed to the waiter is refused|--wait --run-dir $stale --base HEAD|dev-validate-run: option-unused option=--base mode=wait"

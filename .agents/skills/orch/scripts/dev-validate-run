@@ -48,6 +48,8 @@
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Harness launch and resume routes:
 #       ../../dev/SKILL.md § Long-Running Validation.
+#       A full start ignores --base and prints one stderr notice naming it.
+#       Range and ci starts require --base. Other unused options are refused.
 #       One run at a time per worktree: while a run directory there has no
 #       verdict and its child, the process its pid file names with that run's
 #       --child argv, still runs, a start is refused as run-live, naming that
@@ -711,8 +713,8 @@ done
 # --live the worktree whose runs are read.
 [[ -n "$mode" || "$worktree_given" == false ]] || mode=start
 
-# Every option belongs to one mode. A flag the mode cannot use is refused rather
-# than dropped, so no caller believes it set a bound this script then ignores.
+# Unused options are refused, except --base carried from --resolve-mode into
+# a full start: its notice lets that resolved start proceed.
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
 [[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
 [[ -z "$proof_head" || "$mode" == resolve ]] || die option-unused option=--require-proof "mode=$mode"
@@ -731,7 +733,11 @@ case "$mode" in
       [[ "$base_given" == false || "$mode" == resolve ]] || die option-unused "option=--base" "mode=$mode"
     else
       case "$validate_mode" in
-        full) [[ "$base_given" == false ]] || die option-unused "option=--base" "validate-mode=$validate_mode" ;;
+        full)
+          if [[ "$base_given" == true ]]; then
+            printf 'dev-validate-run: option-ignored option=--base validate-mode=full\n' >&2
+          fi
+          ;;
         range|ci) [[ -n "$base" ]] || die required "option=--base" "validate-mode=$validate_mode" ;;
         *) die invalid-mode "option=--validate-mode" "value=$validate_mode" ;;
       esac
