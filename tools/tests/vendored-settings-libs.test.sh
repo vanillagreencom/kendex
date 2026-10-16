@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Inputs: skills/*/scripts/lib/kendex-env.sh .agents/skills/*/scripts/lib/kendex-env.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
