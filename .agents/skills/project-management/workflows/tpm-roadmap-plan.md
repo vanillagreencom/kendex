@@ -71,7 +71,7 @@ For each proposed issue, read closed comparison evidence with its title, target,
 
 Use the comparison and truncation rules in [tpm-audit](tpm-audit.md) § 1.5: no `--max` on closed searches, no whole-history read, and no disposition on closed rows. Retain closed results and any truncation notice per proposed issue. A truncated search limits that issue's findings to returned evidence and never proves no match. Verifying rows retain their live checks on the merged item (tpm-audit § 1.1).
 
-Before § 2, select candidate duplicate, relation, and supersession rows from the fetched bodies and select active cancellation candidates. Read comments once per tpm-audit § 1.4.1: one `comments bulk-list` for the existing input issues from § 1.3 and the candidate rows, including closed candidates and every active row proposed for cancellation. Do not read every comparison row's comments. Use the comments to verify recommendations before assigning an action.
+Before § 2, select candidate duplicate, relation, and supersession rows from the fetched bodies and select active cancellation candidates. Read comments once per tpm-audit § 1.4.1: one `comments bulk-list` for the existing input issues from § 1.3 and the candidate rows, including closed candidates and every active row proposed for cancellation. When that set is empty, because § 1.3 was skipped and no row is a candidate, make no call, per the same section. Do not read every comparison row's comments. Use the comments to verify recommendations before assigning an action.
 
 ### 1.6 Research
 
