@@ -76,14 +76,22 @@ linear_private_paths() {
     _LINEAR_PRIVATE_PATHS+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")
 }
 
+linear_private_eligible() {
+    _LINEAR_PRIVATE_CAUSE=''
+    if [[ -L "$1" ]]; then _LINEAR_PRIVATE_CAUSE=symlink
+    elif [[ ! -O "$1" ]]; then _LINEAR_PRIVATE_CAUSE=not-owned
+    else return 0
+    fi
+    return 1
+}
+
 linear_private_stage() {
     local prefix="$1" candidate cause
     _LINEAR_PRIVATE_STAGE='' _LINEAR_PRIVATE_DIR='' _LINEAR_PRIVATE_FAILURES=''
     linear_private_paths
     for candidate in "${_LINEAR_PRIVATE_PATHS[@]}"; do
         if ! mkdir -p -- "$candidate" 2>/dev/null; then cause=mkdir-failed
-        elif [[ -L "$candidate" ]]; then cause=symlink
-        elif [[ ! -O "$candidate" ]]; then cause=not-owned
+        elif ! linear_private_eligible "$candidate"; then cause="$_LINEAR_PRIVATE_CAUSE"
         elif ! _LINEAR_PRIVATE_STAGE=$(mktemp "$candidate/.$prefix.XXXXXX" 2>/dev/null); then cause=not-writable
         else
             _LINEAR_PRIVATE_DIR="$candidate"

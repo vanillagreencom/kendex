@@ -452,12 +452,13 @@ linear_quota_read() {
     local binding="$1" dir file value result=''
     linear_private_paths
     for dir in "${_LINEAR_PRIVATE_PATHS[@]}"; do
+        linear_private_eligible "$dir" || continue
         file="$dir/quota-$binding.json"
         if [[ -d "$dir" && ( ! -r "$dir" || ! -x "$dir" ) ]]; then
             linear_quota_unavailable "directory:$dir"; return 1
         fi
         [[ -e "$file" || -L "$file" ]] || continue
-        if [[ -L "$dir" || ! -O "$dir" || -L "$file" || ! -f "$file" || ! -O "$file" || ! -r "$file" ]]; then
+        if [[ -L "$file" || ! -f "$file" || ! -O "$file" || ! -r "$file" ]]; then
             linear_quota_unavailable "ownership:$file"; return 1
         fi
         if ! value=$(jq -ce --arg binding "$binding" '

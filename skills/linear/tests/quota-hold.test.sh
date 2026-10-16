@@ -4,6 +4,7 @@
 # network fixture. The received-response arm also models an in-flight reply
 # that arrives after another process has saved a later hold.
 set -euo pipefail
+export MSYS=winsymlinks:nativestrict
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)" || exit 1
 source "$SCRIPT_DIR/lib/assert.sh"
@@ -172,6 +173,22 @@ assert_ne 'unreadable required hold refuses' "$RC" 0
 assert_file_contains 'unreadable required hold reports unavailable' "$LOG/err" '"code":"LINEAR_HOLD_UNAVAILABLE"'
 assert_eq 'unreadable required hold sends no HTTP' "$(wc -l <"$LOG/sends" | tr -d ' ')" "$before"
 rm -- "$PROJECT/bin/jq"
+
+# Auth never selects a symlink candidate. Its contents cannot become required
+# quota state merely because a prior hold exists behind that link.
+world ineligible_candidate
+reply 'Rate limit exceeded.' 20000000 '' '' ''
+run cli auth-check
+record=$(find "$LOG/home" -name 'quota-*.json' -type f)
+private_dir=${record%/*}
+mv -- "$private_dir" "$LOG/excluded"
+ln -s "$LOG/excluded" "$private_dir"
+[[ -L "$private_dir" ]] || { printf 'quota-hold: fixture=symlink-failed\n' >&2; exit 1; }
+printf 'success\n' >"$LOG/reply"
+before=$(wc -l <"$LOG/sends" | tr -d ' ')
+run cli auth-check
+assert_eq 'unselected symlink candidate permits GraphQL' "$RC" 0
+assert_eq 'unselected candidate sends one HTTP' "$(wc -l <"$LOG/sends" | tr -d ' ')" "$((before + 1))"
 
 world failed_store
 reply 'Rate limit exceeded.' 20000000 '' '' ''

@@ -21,9 +21,9 @@ Cancel, duplicate, and absorb are all `comments create` + `issues update --state
 
 A command Linear rate-limits exits nonzero with one JSON stderr line carrying `code:"RATELIMITED"`. Its `quota` receipt contains `status` (`future`, `elapsed`, `missing`, `invalid`), `reset` (UTC deadline or `unavailable`), `reset_epoch` (whole seconds or null), and `limit` (`requests`, `complexity`, `endpoint`, `unknown`). The request code selects the reset for the limit the refusal names. With no named limit, it selects the latest usable future request, complexity or endpoint reset. It rounds fractional epochs up. `requests_reset` keeps the raw request-reset header's UTC time or `unavailable`; it can be earlier than the selected deadline.
 
-Future holds persist privately per credential binding on this host. Same-binding calls refuse before GraphQL HTTP or credential renewal. App-pair bindings survive token renewal. Personal keys and pre-minted app tokens have separate bindings. This does not coordinate other hosts, users or token aliases. A local refusal has `source:"local"` and adds no HTTP journal row. Missing storage means no learned hold. Malformed or unreadable required storage returns `code:"LINEAR_HOLD_UNAVAILABLE"`. A failed save retains the refusal with `hold_storage:"unavailable"`.
+Future holds persist privately per credential binding on this host. Same-binding GraphQL calls refuse before HTTP or credential renewal. App-pair bindings survive token renewal. Personal keys and pre-minted app tokens have separate bindings. This does not coordinate other hosts, users or token aliases. A local refusal has `source:"local"` and adds no HTTP journal row. Missing storage means no learned hold. Malformed or unreadable required storage returns `code:"LINEAR_HOLD_UNAVAILABLE"`. A failed save retains the refusal with `hold_storage:"unavailable"`.
 
-A usable future deadline ends the current transport attempt without retry HTTP. Missing, invalid or elapsed resets keep the existing bounded retry.
+A usable future deadline ends the current GraphQL attempt without retry HTTP. Missing, invalid or elapsed resets keep the existing bounded retry. Attachment downloads keep their separate retry loop and do not consult the GraphQL hold.
 
 An `activate` or `complete` that answers with a quota refusal is held:
 
