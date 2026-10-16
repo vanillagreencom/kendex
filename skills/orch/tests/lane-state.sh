@@ -100,6 +100,10 @@ screen_for() {
     pi_working) cat "$CODEX_PANES/pi-working.txt" ;;
     # Offline Pi 1.3.0 with only pi-qol loaded, captured in an owned tmux pane.
     pi_qol_idle) cat "$CODEX_PANES/pi-qol-idle.txt" ;;
+    # SettingsSelectorComponent's SettingsList renders this footer while its
+    # search input handles bracketed paste, without writing a new Pi turn row.
+    pi_settings) printf '%s\n' '  Type to search · Enter/Space to change · Esc to cancel' ;;
+    pi_settings_before_turn) screen_for pi_settings; printf '%s\n' '❯ another turn'; screen_for pi_qol_idle ;;
     # Fleet's retained Pi 1.2.0 viewer, captured 2026-10-15T01:20:55Z with
     # tmux capture-pane -pJ from fleet:gh-1326 pane %1656, after the refusals.
     # Full viewport/provenance: KEN-4109 attachment overseer215-pi-screen-capture-source.md.
@@ -179,6 +183,7 @@ a copilot footer running a command is a turn in flight|listed|node|100|copilot_w
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
 a Pi pane without rows remains unjudged|listed|pi|100|pi_current_idle|||unjudged
 a pi-qol pane without rows remains unjudged|listed|pi|100|pi_qol_idle|||unjudged
+a Pi settings selector retains the shared asking answer|listed|pi|100|pi_settings|||asking
 ROWS
 
 # A disabled classifier leaves the signed-out capture at the composer rung.
@@ -311,6 +316,10 @@ scan_state=""
 LANE_STATE_GREP_FAIL=1 lane_state scan_state listed claude 100 "$(screen_for idle)" idle || scan_rc=$?
 assert_eq "$scan_state rc=$scan_rc" "unjudged rc=2" \
   "a failed scan is exit 2 and unjudged, never the idle its session read claimed"
+scan_rc=0
+LANE_STATE_GREP_FAIL=1 lane_input_ready scan_state listed pi 100 "$(screen_for pi_settings)" '' '' idle '' pi provider || scan_rc=$?
+assert_eq "$scan_state rc=$scan_rc" "unjudged rc=2" \
+  "an unreadable dialog scan cannot turn idle ROWS into input readiness"
 rm -f -- "${TMP_ROOT:?}/bin/grep"
 hash -r
 
@@ -401,6 +410,10 @@ an unreadable capture still refuses an idle row|pi|pi|pi_qol_idle|||ended|unread
 the old working editor refuses absent ROWS|pi|pi|pi_working|||-|provider|unjudged|1
 a dialog refuses absent Pi ROWS|pi|pi|asking|||-|provider|asking|1
 a dialog cannot authorize input over working ROWS|pi|pi|asking|||reopened|provider|working|1
+an idle Stop row cannot authorize a paste into Pi settings|pi|pi|pi_settings|||ended|provider|asking|1
+dialog text before the shared turn boundary does not block an idle editor|pi|pi|pi_settings_before_turn|||ended|provider|idle|0
+an unreadable settings capture stays unjudged|pi|pi|pi_settings|||ended|unreadable|unjudged|1
+a busy SESSION still refuses the settings capture|pi|pi|pi_settings|busy||ended|provider|working|1
 the provider must name its intended harness|pi||pi_qol_idle|idle||-|provider|unjudged|1
 Claude input retains its idle answer|claude|claude|idle|||-|provider|idle|0
 Claude input retains its working refusal|claude|claude|working|||-|provider|working|1
@@ -421,6 +434,16 @@ for screen in pi_current_idle pi_qol_idle; do
   )"
   assert_eq "$pi_input_control" 'state=idle rc=0' "control: removing trusted ROWS admission wrongly accepts $screen from SESSION alone"
 done
+
+PI_DIALOG_MUTANT="$(mutant_scripts pi-dialog lib/lane-state.sh)" || exit 1
+mutate_file "$PI_DIALOG_MUTANT/lib/lane-state.sh" 'if [[ "$_lir_state" == idle && "$_lir_harness" == pi ]]; then' 'if false && [[ "$_lir_state" == idle && "$_lir_harness" == pi ]]; then'
+pi_dialog_control="$(
+  source "$PI_DIALOG_MUTANT/lib/lane-state.sh"
+  control_rc=0
+  lane_input_ready row_state listed pi 100 "$(screen_for pi_settings)" '' '' idle '' pi provider || control_rc=$?
+  printf 'state=%s rc=%s' "$row_state" "$control_rc"
+)"
+assert_eq "$pi_dialog_control" 'state=idle rc=0' 'control: removing dialog admission wrongly permits a paste into the settings selector'
 
 echo "=== lane-state § observe: the pane handed to the judge ==="
 

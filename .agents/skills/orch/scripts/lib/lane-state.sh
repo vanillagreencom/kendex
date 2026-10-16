@@ -53,7 +53,8 @@
 WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom [(]|esc interrupt'
 
 # A dialog waiting on an answer: the selected numbered row, drawn with each
-# harness's marker, and Claude Code's question and key hints.
+# harness's marker, and Claude Code's question and key hints. Pi's SettingsList
+# also emits the Esc to cancel hint while its search input has focus.
 LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
 # The account is spent. Claude Code opens the banner with "You've hit your
 # <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
@@ -133,6 +134,9 @@ DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
+
+# pane_asking SLICE — a dialog below the last turn, from pane_below_last_turn.
+pane_asking() { grep -Eq -- "$LANE_ASKING_RE" <<<"$1"; }
 
 # The folder-trust question, which STOPS a harness before it reads the
 # arguments it was launched with. Claude Code asks it about a folder it holds
@@ -1139,7 +1143,7 @@ lane_state() {
       *) printf -v "$_ls_out" unjudged; return 0 ;;
     esac
   fi
-  if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
+  if pane_asking "$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
   if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
   # The supplied process read, whole, before any rung that could answer `idle`.
   # Anything but `idle` here answers by itself: `busy` is a turn the screen has
@@ -1168,12 +1172,25 @@ lane_state() {
 # Pi's pulse and hidden indicators cannot establish activity from a capture.
 # Its provider must supply session_rows_lane_verdict's idle ROWS verdict;
 # lane_state alone can also reach idle through SESSION or a lifted wall.
+# Opening Pi's settings selector writes no activity row, so row-derived idle
+# still needs the shared dialog check over the capture lane_state actually read.
 lane_input_ready() {
-  local _lir_out="$1" _lir_rows="${8:-}" _lir_harness="${10:-}" _lir_state=unjudged _lir_rc=0
+  local _lir_out="$1" _lir_rows="${8:-}" _lir_harness="${10:-}" _lir_state=unjudged _lir_rc=0 _lir_slice _lir_asking=0
   shift
   lane_state _lir_state "$@" || _lir_rc=$?
   if [[ -z "$_lir_harness" || ( "$_lir_harness" == pi && "$_lir_rows" != idle ) ]]; then
     [[ "$_lir_state" != idle ]] || _lir_state=unjudged
+  fi
+  if [[ "$_lir_state" == idle && "$_lir_harness" == pi ]]; then
+    _lir_slice="$(pane_below_last_turn "$LANE_PANE_SCREEN")" || _lir_rc=2
+    if [[ "$_lir_rc" -eq 0 ]]; then
+      pane_asking "$_lir_slice" || _lir_asking=$?
+      case "$_lir_asking" in
+        0) _lir_state=asking ;;
+        1) ;;
+        *) _lir_state=unjudged; _lir_rc=2 ;;
+      esac
+    else _lir_state=unjudged; fi
   fi
   printf -v "$_lir_out" '%s' "$_lir_state"
   [[ "$_lir_rc" -eq 0 ]] || return "$_lir_rc"
