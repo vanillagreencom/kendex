@@ -36,11 +36,11 @@ if [[ "$1:$2" == users:list ]]; then
   read -r release < "$TRACKER_CASE/release"
 fi
 case "$TRACKER_ROW:$1:$2:${4:-}" in
-  owner-read:users:list:*|assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
+  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
 esac
 case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
-  users:list) printf '[{"id":"person","name":"Owner Person","email":"owner@example.test"}]\n' ;;
+  users:list) printf '[{"id":"person","name":"Owner Person","email":"owner@example.test","display_name":"owner"}]\n' ;;
   issues:get)
     if [[ "$TRACKER_ROW" == prepare ]]; then printf '{"labels":"invalid"}\n'
     else printf '{"labels":["skills"],"description":"Item body"}\n'; fi ;;
@@ -52,9 +52,9 @@ esac
 
 
 def run(source, scratch, bash):
-    facts = {"pending": True, "terminal": True, "projection": True, "delivery": True, "bound": True}
+    facts = {"pending": True, "terminal": True, "projection": True, "outcome": True, "delivery": True, "bound": True}
     os.environ["SLACK_ORCH_DIR"] = str(REPO / "skills/orch")
-    for row in ("posted", "owner-read", "assign", "labels-read", "label", "comment", "prepare", "missing"):
+    for row in ("posted", "owner-read", "workspace-read", "assign", "labels-read", "label", "comment", "prepare", "missing"):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"
@@ -202,6 +202,10 @@ else exec '{shutil.which("date")}' "$@"; fi
                     envelopes = [e for e in rows if e["kind"] == "ask"]
                     facts["projection"] &= (len(envelopes) == 1 and envelopes[0]["id"] == ask["id"]
                         and envelopes[0]["tracker_posted"] is posted and "tracker_pending" not in envelopes[0])
+                    # The ask row names the failed operation, or the posted comment replies follow.
+                    facts["outcome"] &= (len(envelopes) == 1
+                        and envelopes[0].get("tracker_cause") == (None if posted else row)
+                        and envelopes[0].get("tracker_comment") == ("question-id" if posted else None))
                 events = [e for e in read("events") if e["kind"] == "ask"]
                 facts["projection"] &= len(events) == 1 and events[0]["line"] == 1 and events[0]["count"] == 3
                 cursor_rows = read("drain", "--after", "1")

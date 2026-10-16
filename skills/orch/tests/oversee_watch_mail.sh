@@ -1810,6 +1810,7 @@ if [[ -f "$TRACKER_CASE_DIR/fail" ]]; then
 fi
 case "$1:$2" in
   users:list) cat "$TRACKER_CASE_DIR/user" ;;
+  teams:keys) echo '{"urlKey":"test","keys":["KEN"]}' ;;
   issues:get) cat "$item" ;;
   issues:update)
     shift 3
@@ -1837,7 +1838,9 @@ case "$1:$2" in
       esac
     done
     jq --arg label "$label" '[select(.labels | index($label) != null)]' "$TRACKER_CASE_DIR/item" ;;
-  comments:create) cp -- "$5" "$TRACKER_CASE_DIR/posted"; echo '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}' ;;
+  comments:create)
+    cp -- "$5" "$TRACKER_CASE_DIR/posted"
+    jq -cn --arg id "question-$(wc -l <"$TRACKER_CASE_DIR/calls" | tr -d ' ')" '{success:true,data:{success:true,comment:{id:$id}}}' ;;
   comments:bulk-list) cat "$TRACKER_CASE_DIR/comments" ;;
   *) exit 1 ;;
 esac
@@ -1853,6 +1856,9 @@ tracker_pass() { # WATCH
     TRACKER_CASE_DIR="$STUB_DIR" OVERSEE_WATCH_TRACKER="$TRACKER_STUB" \
     OVERSEE_WATCH_LANE_MAIL="$TRACKER_MAIL" -- --max-loops 1 2>"$STUB_DIR/tracker.err")"
 }
+tracker_comment_id() { # ASK
+  tracker_mail pending --item overseer --to owner | jq -r --arg id "$1" 'select(.id == $id) | .tracker_comment // ""'
+}
 tracker_answer_count() { # ASK
   local box="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
   if [[ ! -f "$box" ]]; then printf '0\n'; return 0; fi
@@ -1864,9 +1870,9 @@ tracker_case() { # ROW WATCH
   mail_reset overseer
   : >"$STUB_DIR/calls"
   printf 'Engineering body.\n\nKeep these bytes.\n\n' >"$STUB_DIR/old-description"
-  printf '{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com"}\n' >"$STUB_DIR/owner"
+  printf '{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com","display_name":"maya"}\n' >"$STUB_DIR/owner"
   # The shipped users list --max route returns all workspace users.
-  jq -n --slurpfile owner "$STUB_DIR/owner" '[{id:"87654321-4321-4321-4321-cba987654321",name:"Riley Other",email:"other@example.test"},$owner[0]]' >"$STUB_DIR/user"
+  jq -n --slurpfile owner "$STUB_DIR/owner" '[{id:"87654321-4321-4321-4321-cba987654321",name:"Riley Other",email:"other@example.test",display_name:"riley"},$owner[0]]' >"$STUB_DIR/user"
   jq -n --rawfile body "$STUB_DIR/old-description" '{id:"KEN-7",labels:["skills","feature"],description:$body,assignee:"",url:"https://linear.app/test/issue/KEN-7"}' >"$STUB_DIR/item"
   jq '.id = "KEN-8"' "$STUB_DIR/item" >"$STUB_DIR/other-item"
   TRACKER_LABEL=owner-gated
@@ -2052,8 +2058,8 @@ tracker_case() { # ROW WATCH
       '.description == ("**" + ($owner[0].name | split(" ")[0]) + ", what you do:** " + $action + "\n\n" + $body)
       and .assignee == $owner[0].name and .labels == $labels' "$STUB_DIR/item")" \
       true "$row retains the remaining owner action and ownership"
-    jq -n --arg ask "$kept" '{"KEN-7":[
-      {id:"ask-comment",body:("ask=" + $ask),user_email:"agent@example.test",created_at:"2026-10-01T00:00:00Z"},
+    jq -n --arg comment "$(tracker_comment_id "$kept")" '{"KEN-7":[
+      {id:$comment,body:"Approve the action?",user_email:"agent@example.test",created_at:"2026-10-01T00:00:00Z"},
       {id:"owner-comment",body:"approve",user_email:"owner@example.com",created_at:"2026-10-02T00:00:00Z"}]}' >"$STUB_DIR/comments"
     tracker_pass "$watch"
     assert_eq "$(tracker_answer_count "$kept")" 1 "$row delivers the remaining owner reply"
@@ -2090,10 +2096,20 @@ tracker_case() { # ROW WATCH
       "$(jq -r '.id' "$STUB_DIR/owner")" 'tracker ask assigns the configured person'
     assert_eq "$(jq -s -r '.[] | select(index("--labels")) | .[4]' "$STUB_DIR/calls")" \
       feature,owner-gated,skills 'tracker ask preserves the existing labels'
-    assert_contains "$(cat "$STUB_DIR/posted")" "ask=$id" 'tracker comment carries the machine-read ask marker'
+    assert_eq "$(head -n 1 "$STUB_DIR/posted")" https://linear.app/test/profiles/maya 'tracker comment opens with the owner mention'
+    assert_not_contains "$(cat "$STUB_DIR/posted")" "$id" 'tracker comment carries no ask id'
   fi
-  jq -n --arg id "$id" --arg email "$author" --arg time "$time" --arg row "$row" '{"KEN-7": ([
-    {id:"ask-comment", body:("ask=" + $id), user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"},
+  # A legacy posting record has no comment id; its question carries the ask= line.
+  local question
+  question="$(tracker_comment_id "$id")"
+  if [[ "$row" == legacy-comment ]]; then
+    jq -c 'del(.tracker_comment)' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl" >"$STUB_DIR/legacy"
+    mv -- "$STUB_DIR/legacy" "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
+    question=''
+  fi
+  jq -n --arg id "$id" --arg question "$question" --arg email "$author" --arg time "$time" --arg row "$row" '{"KEN-7": ([
+    if $question == "" then {id:"ask-comment", body:("Approve the action?\nask=" + $id), user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"}
+    else {id:$question, body:"Approve the action?", user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"} end,
     {id:"owner-comment", body:"OK", user_email:$email, created_at:$time}]
     + (if $row == "large" then [range(0;512) | {id:("history-" + tostring), body:("Ordinary history " + ("x" * 1024)),
         user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"}] else [] end))}' >"$STUB_DIR/comments"
@@ -2175,6 +2191,7 @@ tracker_case() { # ROW WATCH
 }
 if [[ "$PART" != tracker_controls ]]; then
 TRACKER_CASES='enabled|1,0
+legacy-comment|1,0
 missing-action|0,0
 empty-action|0,0
 replacement|1,0
@@ -2433,6 +2450,20 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-replay/github"
 mutate_file "$TRACKER_MUTANT" '--delivery-id "linear:$id"' ''
 tracker_case enabled "$TRACKER_MUTANT"
 assert_eq "$TRACKER_FACTS" 1,1 'control: dropping delivery ID fails the 1,0 replay assertion'
+
+# The reply follows the recorded comment, and a legacy record its ask= line.
+for rule in comment-id legacy-line; do
+  TRACKER_MUTANT="$(mutant_scripts "tracker-$rule/orch" oversee-watch)/oversee-watch"
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-$rule/github"
+  if [[ "$rule" == comment-id ]]; then
+    mutate_file "$TRACKER_MUTANT" 'if $ask.tracker_comment != null then' 'if false then'
+    tracker_case enabled "$TRACKER_MUTANT"
+  else
+    mutate_file "$TRACKER_MUTANT" '(.body | split("\n") | index("ask=" + $ask.id)) != null end' 'false end'
+    tracker_case legacy-comment "$TRACKER_MUTANT"
+  fi
+  assert_eq "$TRACKER_FACTS" 0,0 "control: dropping the $rule match fails its 1,0 assertion"
+done
 
 for rule in author time; do
   TRACKER_MUTANT="$(mutant_scripts "tracker-$rule/orch" oversee-watch)/oversee-watch"

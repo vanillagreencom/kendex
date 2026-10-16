@@ -2495,7 +2495,9 @@ read_owner_tracker_answers() {
     --slurpfile asks "$WORK_DIR/tracker-asks" '
       $asks[] | select(.tracker_posted == true) | . as $ask
       | ($comments[0][$ask.issue] // []) as $rows
-      | ([$rows[] | select((.body | split("\n") | index("ask=" + $ask.id)) != null)]
+      # A legacy record carries no comment id; its comment carries an ask= line.
+      | ([$rows[] | select(if $ask.tracker_comment != null then .id == $ask.tracker_comment
+          else (.body | split("\n") | index("ask=" + $ask.id)) != null end)]
         | sort_by(.created_at) | first) as $posted
       | select($posted != null)
       | ($rows | sort_by(.created_at))[] | select((.user_email | ascii_downcase) == ($email | ascii_downcase)

@@ -36,6 +36,7 @@ FACTS="$(run_rows "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}")"
 assert_eq "$(jq '.pending' <<<"$FACTS")" true 'tracker calls start after a marked immutable ask'
 assert_eq "$(jq '.terminal' <<<"$FACTS")" true 'each tracker result appends its terminal outcome'
 assert_eq "$(jq '.projection' <<<"$FACTS")" true 'readers fold terminal outcomes without replay or private events'
+assert_eq "$(jq '.outcome' <<<"$FACTS")" true 'the folded ask names its failure cause or posted comment'
 assert_eq "$(jq '.delivery' <<<"$FACTS")" true 'the real relay holds pending asks then posts the selected form once'
 assert_eq "$(jq '.bound' <<<"$FACTS")" true 'a missing outcome releases at the fixed bound and preserves later delivery'
 CLOSE_FACTS="$(python3 "$ROOT/skills/mailbox/tests/lib/owner-tracker-close.py" \
@@ -51,8 +52,9 @@ assert_eq "$(jq '.rollback_unowned' <<<"$CLOSE_FACTS")" true 'rollback preserves
 assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback reports its cause and retains the comment error'
 assert_eq "$(jq '.comment_refused' <<<"$CLOSE_FACTS")" true 'refused comment acknowledgements stay unposted and retain the response'
 assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes only the added owner label from fresh labels'
+assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed unposted exact-action retained-error rollback-owner comment-refused rollback-label; do
+  for rule in pending failed bound private-failed cause comment-id mention unposted exact-action retained-error rollback-owner comment-refused rollback-label; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -72,6 +74,18 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
         'select(.kind != "tracker-posted" and .kind != "tracker-failed")' \
         'select(.kind != "tracker-posted")'
       assertion='readers fold terminal outcomes without replay or private events'
+    elif [[ "$rule" == cause ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        '.tracker_cause = $record.cause' '.'
+      assertion='the folded ask names its failure cause or posted comment'
+    elif [[ "$rule" == comment-id ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        'OWNER_TRACKER_COMMENT="$comment_id"' ':'
+      assertion='the folded ask names its failure cause or posted comment'
+    elif [[ "$rule" == mention ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        '"https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",' ''
+      assertion='the question comment mentions the owner and carries no ask id'
     elif [[ "$rule" == unposted ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         '[[ "$posted" == true ]] || return 0' '[[ "$posted" == true ]] || :'
@@ -93,7 +107,7 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       assertion='rollback preserves a later description and reports lost ownership'
     elif [[ "$rule" == comment-refused ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        "if jq -e '.success == true'" "if : jq -e '.success == true'"
+        "select(.success == true) | .data.comment.id" "select(true) | .data.comment.id"
       assertion='refused comment acknowledgements stay unposted and retain the response'
     else
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \

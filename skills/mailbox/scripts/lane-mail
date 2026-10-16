@@ -400,7 +400,9 @@ reserved (true on a reserved ask only), issue (a configured item ask),
 tracker_pending (true on the immutable ask while its tracker outcome is missing),
 tracker_posted (a boolean projected by mailbox reads after the complete tracker
 question is confirmed), tracker_label (the confirmed label used for close
-when settings change or cannot be read),
+when settings change or cannot be read), tracker_comment (the posted
+question comment's tracker id, which owner replies follow), tracker_cause (the
+failed operation of an unposted tracker question),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close). kind is ask, notice, answer, resolution or directive;
 at is UTC; id is <epoch>-<pid>-<random>. from
@@ -411,7 +413,8 @@ verb writes the item, a send into the overseer's own mailbox and a `resolve
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
 A private tracker-posted or tracker-failed record carries an immutable ask's
-outcome by its re and issue. Failure records carry the failed operation in cause.
+outcome by its re and issue. Posted records carry the question comment's id in
+tracker_comment. Failure records carry the failed operation in cause.
 Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. Closure changes
@@ -2158,6 +2161,8 @@ case "$VERB" in
       # Linear is optional. An unconfigured tracker leaves the chat ask intact.
       if owner_tracker_settings "$SCRIPT_DIR"; then
         OWNER_TRACKER_ACTIVE=1
+        # Named before the append, so a refused read leaves no ask pending.
+        OWNER_TRACKER_ASKER="the $(lm_repository) overseer" || exit
       else
         owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_SETTINGS_CAUSE"
         ISSUE=""
@@ -2186,12 +2191,14 @@ case "$VERB" in
       lm_append_local "$TO_OVERSEER" "$LINE"
     fi
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
-      if ! owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR"; then
+      if ! owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR" "$OWNER_TRACKER_ASKER"; then
         owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_CAUSE"
       fi
       if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then
-        POSTED_LINE="$(jq -c --arg label "$OWNER_TRACKER_LABEL" '{id: (.id + "-tracker"), kind: "tracker-posted", at, from,
-          re: .id, issue, tracker_label: $label, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
+        POSTED_LINE="$(jq -c --arg label "$OWNER_TRACKER_LABEL" --arg comment "$OWNER_TRACKER_COMMENT" '{id: (.id + "-tracker"),
+          kind: "tracker-posted", at, from, re: .id, issue, tracker_label: $label}
+          + (if $comment == "" then {} else {tracker_comment: $comment} end) + {text: ""}' <<<"$LINE")" ||
+          refuse write-failed "$TO_OVERSEER"
       else
         POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" '{id: (.id + "-tracker"), kind: "tracker-failed", at, from,
           re: .id, issue, cause: $cause, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"

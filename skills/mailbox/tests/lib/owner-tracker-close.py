@@ -25,7 +25,10 @@ row = os.environ["TRACKER_ROW"]
 comments_path = root / "comments.json"
 comments = json.loads(comments_path.read_text())
 if args[:2] == ["users", "list"]:
-    print(json.dumps([{"id": "owner", "name": "Owner Person", "email": "owner@example.test"}]))
+    print(json.dumps([{"id": "owner", "name": "Owner Person", "email": "owner@example.test",
+                       "display_name": "owner.person"}]))
+elif args[:2] == ["teams", "keys"]:
+    print(json.dumps({"urlKey": "workspace", "keys": ["KEN"]}))
 elif args[:2] == ["issues", "get"]:
     if row == "rollback-read" and (root / "comment-attempted").exists():
         print("tracker: refused=rollback-read", file=sys.stderr)
@@ -78,7 +81,7 @@ def run(source, scratch, bash):
     facts = {"unposted": True, "notice": True, "posted": True, "edited": True,
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
-             "rollback_labels": True}
+             "rollback_labels": True, "comment_form": True}
     for row, posted in (("label-failed", False), ("comment-failed", False),
                         ("comment-edited", False), ("rollback-read", False),
                         ("rollback-failed", False), ("posted", True), ("edited", True),
@@ -129,8 +132,15 @@ def run(source, scratch, bash):
             after_ask = json.loads(state.read_text())
             after_comments = json.loads(comments_path.read_text())
             if posted:
-                facts["comments"] &= (after_comments[:1] == previous_comments
-                    and len(after_comments) == 2 and ("ask=" + ask_id) in after_comments[-1])
+                facts["comments"] &= after_comments[:1] == previous_comments and len(after_comments) == 2
+                lines = after_comments[-1].splitlines()
+                # Linear turns the profile URL into a mention of the owner.
+                facts["comment_form"] &= (len(after_comments) == 2
+                    and lines[0] == "https://linear.app/workspace/profiles/owner.person"
+                    and "Approve the change?" in lines and pending["deadline"] in after_comments[-1]
+                    and any(line.startswith("Reply to this comment") for line in lines)
+                    and lines[-1] == "Requested by the " + root.name + " overseer"
+                    and ask_id not in after_comments[-1] and "ask=" not in after_comments[-1])
             else:
                 facts["comments"] &= after_comments == previous_comments
             if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit"):
