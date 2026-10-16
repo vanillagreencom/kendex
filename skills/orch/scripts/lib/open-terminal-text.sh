@@ -708,16 +708,14 @@ Options:
                     A parked record keeps its slot under --state-dir's fleet
                     cap, so this relaunch replaces the lane it holds and is
                     never refused as cap-reached.
-  --live-display    Keep the owner's live desktop session for the lane:
-                    WAYLAND_DISPLAY, DISPLAY and HYPRLAND_INSTANCE_SIGNATURE,
-                    which every other launch clears from the lane's process
-                    with the launching session's identity, so a key, pointer
-                    or capture tool the lane runs does not reach the owner's
-                    screen. A tmux pane the lane opens on the server itself,
-                    such as a Pi subagent pane, takes the server's
-                    environment and holds them again. Pass it only for an
-                    item whose brief declares that need; a lane that needs
-                    any screen runs its own nested display. Recorded as
+  --live-display    Keep WAYLAND_DISPLAY, DISPLAY and
+                    HYPRLAND_INSTANCE_SIGNATURE for the lane, which every
+                    other launch clears from the lane's process with the
+                    launching session's identity. What clearing them does
+                    and does not cover is the LANE_LAUNCH_SCRUB comment in
+                    lib/lane-launch.sh. Pass it only for an item whose
+                    brief declares that need; a lane that needs any screen
+                    runs its own nested display. Recorded as
                     live_display true in the lane record under --state-dir.
                     A Claude, Codex or Copilot --wake keeps them where that
                     record holds it; a Pi wake reaches the session the launch

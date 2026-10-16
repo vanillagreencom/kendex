@@ -1415,20 +1415,18 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
   esac
 }
 
-# The variables that name the session a launch is made from, and those that
-# reach the owner's live desktop session (LANE_LAUNCH_LIVE_SESSION), cleared
+# The variables that name the session a launch is made from, and the display
+# names of the owner's desktop session (LANE_LAUNCH_LIVE_SESSION), cleared
 # from every child a launcher starts so the child never writes that session's
-# records, answers as it, or types into or captures the owner's screen:
+# records or answers as it, and finds no display through those names:
 # lane_launch_line opens each `env` line it renders with them,
 # open-terminal's run_detached clears them from a wake, and from a GUI terminal
 # all but the live-session names, which the terminal keeps to open its window
 # and the lane's shell inside it clears with `unset` (open_gui), and its hosted
 # command, POSIX shell text, clears them with `unset`. A tmux window takes the
 # server's environment rather than the launcher's, so the scrub rides in the
-# command and not in the caller's process. The same holds for a pane the lane
-# opens on that server itself, such as a Pi subagent pane, which holds the
-# live-session names again: the scrub covers the lane's process. Account and home
-# variables are not listed: a launch sets the child's own after this scrub, and
+# command and not in the caller's process. Account and home variables are not
+# listed: a launch sets the child's own after this scrub, and
 # KENDEX_LANE_ORIGIN, exported ahead of the command, stays.
 #   Claude Code  CLAUDECODE, the nested-session marker; CLAUDE_CODE_SESSION_ID,
 #                the session id it exports to its tools (2.1.42), and
@@ -1448,12 +1446,20 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 # payload alone.
 #   Live session WAYLAND_DISPLAY, DISPLAY and HYPRLAND_INSTANCE_SIGNATURE: a
 #                tmux server started inside the desktop session holds them, and
-#                a key, pointer or capture tool in the lane reaches the
-#                owner's screen through them. A lane that needs a screen runs
-#                its own nested display; one that needs the owner's declares
-#                it at launch, and lane_launch_keep_live_session keeps them,
-#                as it does for a Jarvis session and the overseer, which are
-#                not lanes.
+#                a key, pointer or capture tool finds the owner's screen
+#                through them. Clearing them stops only a tool that finds the
+#                screen that way; other sites point here for what it covers.
+#                It does not cover a Wayland client that falls back to
+#                $XDG_RUNTIME_DIR/wayland-0 where a compositor serves that
+#                socket, a lane that sets a display name itself, a tool with
+#                its own route such as ydotool through ydotoold's socket, or a
+#                pane the lane opens on the tmux server it runs on, such as a
+#                Pi subagent pane or a Claude Code agent-team teammate in tmux
+#                mode, which takes the server's environment and holds the
+#                names again. A lane that needs a screen runs its own nested
+#                display; one that needs the owner's declares it at launch,
+#                and lane_launch_keep_live_session keeps them, as it does for
+#                a Jarvis session and the overseer, which are not lanes.
 LANE_LAUNCH_LIVE_SESSION=(WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE)
 LANE_LAUNCH_SCRUB=(
   CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_PROJECT_DIR
