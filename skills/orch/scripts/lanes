@@ -266,6 +266,8 @@
 #         A seat is judged against the reserve too: a running lane hands off
 #         at its first turn end at or below it, so it can overrun by one turn.
 #         --for-overseer exempts the overseer's own mark from the reserve.
+#         Under --json, usage_cache names the local measured record's path and
+#         served_until epoch, or is null when no local figure was measured.
 #         Exit 0 has room and prints the env prefix, or the lane's record under
 #         --json; 3 is a wall at or above --max-pct no credit room lifts, or
 #         `verdict=seat-reserve` at or below the seat reserve; 5 is a lane nothing
@@ -3580,8 +3582,18 @@ cmd_pick_lane() {
 	# the launch question, the chooser's own wall.
 	lane_tier_inputs "[$record]" "$harness" "$model" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
-	local judged
-	judged="$(jq -r "$LANE_MODEL_JQ"'.verdict, (if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public | tojson)' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
+	local judged cache_path=""
+	usage_cache_file "$harness" "$found" silent
+	[[ ! -f "$USAGE_CACHE_FILE" ]] || cache_path="$USAGE_CACHE_FILE"
+	usage_serve_max_age silent
+	lane_now
+	judged="$(jq -r --arg cache "$cache_path" --argjson now "$LANE_NOW" --argjson max "$USAGE_SERVE_MAX_AGE" "$LANE_MODEL_JQ"'
+	  .usage_cache = (if $cache != "" and .measured_through == "local"
+	    and (.headroom_pct | type) == "number" and (.usage_age_s | type) == "number" then
+	      {path: $cache, served_until: ([$now - .usage_age_s + $max,
+	        (.resets[], .model_buckets[]?.resets_at | reset_epoch | select(. != null))] | min)}
+	    else null end)
+	  | .verdict, (if .verdict != "seat-reserve" then del(.verdict) else . end | lane_public | tojson)' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
 	{ IFS= read -r verdict; IFS= read -r record; } <<<"$judged"
 	if [[ "$verdict" == walled || "$verdict" == unmeasured ]]; then
 		refusal="$(jq -r 'if .refusal == null then empty else [.refusal.cause, (.refusal.retry_at // "none")] | @tsv end' <<<"$record")" || return 1

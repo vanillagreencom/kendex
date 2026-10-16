@@ -370,7 +370,12 @@
 #   --check-marks    Judge supplied context before pane or harness discovery.
 #                    A due reading returns its keyed result; otherwise judge
 #                    this overseer's account triggers. No window is opened and
-#                    nothing is launched. Lanes are picked only to judge
+#                    nothing is launched.
+#                    The caller judgement memo in the overseer box checks the
+#                    account, model, headroom policy, usage record, wall and
+#                    claims, in a separate file per caller freshness bound.
+#                    Its absolute wall_at counts down on every judgement.
+#                    Lanes are picked only to judge
 #                    whether a qualifying mark has a successor that settles
 #                    it, and that judgement can refuse at exit 1 as the walk
 #                    does (step 2). `mark-reached` carries
@@ -638,7 +643,7 @@ esac
 # settings load keeps it.
 DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
-trap 'rm -f -- "$DEP_ERR"' EXIT
+trap 'rm -f -- "$DEP_ERR" "${memo_tmp:-}"' EXIT
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
@@ -651,6 +656,8 @@ source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/account-wall.sh
+source "$SCRIPT_DIR/lib/account-wall.sh"
 # shellcheck source=lib/lane-model.sh
 source "$SCRIPT_DIR/lib/lane-model.sh"
 # The launch steps shared with `oversee launch`: the walk, the flags, the
@@ -1235,13 +1242,64 @@ CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS="" CALLER_STATUS="" CALLER_DE
 CALLER_RESERVE_ONLY=false
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
 if (( JUDGES )); then
+  # This local memo reuses the single-account judge; lanes owns serve age and
+  # discovery spelling, so neither rule is reconstructed here.
+  [[ -n "$OVERSEER_BOX" ]] || OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
+  caller_now="$(date +%s)" || die launch-failed step=clock
+  caller_memo="" caller_hit=0 caller_wall_at=""
+  if [[ -z "${ORCH_LANES_USAGE_MAX_AGE:-}" || "${ORCH_LANES_USAGE_MAX_AGE:-}" =~ ^[0-9]+$ ]]; then
+    caller_memo="$OVERSEER_BOX/account-mark-${ORCH_LANES_USAGE_MAX_AGE:-}.memo"
+    if [[ -f "$caller_memo" ]] && {
+      IFS= read -r memo_cfg && IFS= read -r memo_harness && IFS= read -r memo_model &&
+      IFS= read -r memo_trigger && IFS= read -r memo_until && IFS= read -r memo_cache &&
+      IFS= read -r memo_wall && IFS= read -r memo_claims && IFS= read -r caller_wall_at &&
+      IFS= read -r caller_rc && IFS= read -r caller_record
+    } < "$caller_memo" && [[ "$memo_cfg" == "$CALLER_CFG" && "$memo_harness" == "$CALLER_ACCOUNT_HARNESS"
+      && "$memo_model" == "$CALLER_ACCOUNT_MODEL" && "$memo_trigger" == "$HEADROOM_TRIGGER"
+      && "$memo_until" =~ ^[0-9]+$ && "$caller_now" -lt "$memo_until"
+      && -f "$memo_cache" && "$caller_memo" -nt "$memo_cache"
+      && ( ! -e "$memo_wall" || "$caller_memo" -nt "$memo_wall" )
+      && ( ! -e "$memo_claims" || "$caller_memo" -nt "$memo_claims" ) ]]; then
+      caller_hit=1
+    fi
+  fi
   # An account `lanes` does not measure is one nothing measured, its exit 4.
-  caller_rc=4 caller_record=""
-  if ol_account_measured "$CALLER_ACCOUNT_HARNESS"; then
-    caller_rc=0
-    caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" --for-overseer \
-      --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--model "$CALLER_ACCOUNT_MODEL"} \
-      --json 2>"$DEP_ERR")" || caller_rc=$?
+  if (( ! caller_hit )); then
+    caller_rc=4 caller_record="" caller_wall_at=""
+    if ol_account_measured "$CALLER_ACCOUNT_HARNESS"; then
+      caller_rc=0
+      caller_record="$(ol_lanes pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" --for-overseer \
+        --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--model "$CALLER_ACCOUNT_MODEL"} \
+        --json 2>"$DEP_ERR")" || caller_rc=$?
+    fi
+    memo_fields=""
+    if [[ "$caller_rc" == 0 || "$caller_rc" == 3 ]]; then
+      memo_fields="$(jq -r --argjson now "$caller_now" '
+        (if .usage_rate_state == "measured" and (.usage_age_s | type) == "number"
+          and (.projected_wall_minutes | type) == "number"
+          then $now - .usage_age_s + .projected_wall_minutes * 60 else "" end),
+        (.usage_cache.path // ""), (.usage_cache.served_until // ""),
+        ($now | strftime("%Y%m%d%H%M.%S"))' <<<"$caller_record" 2>"$DEP_ERR")" || memo_fields=""
+    fi
+    { IFS= read -r caller_wall_at; IFS= read -r memo_cache; IFS= read -r memo_until;
+      IFS= read -r memo_stamp; } <<<"$memo_fields" || true
+    if [[ -n "$caller_memo" ]]; then
+      if [[ -n "$memo_cache" && "$memo_until" =~ ^[0-9]+$ ]] \
+        && account_wall_file "$PROJECT_ROOT" "$CALLER_CFG" \
+        && memo_claims="$(lane_claims_dir "$PROJECT_ROOT")" && mkdir -p -- "$OVERSEER_BOX"; then
+        memo_tmp="$(mktemp "$OVERSEER_BOX/.account-mark.XXXXXX")" || die launch-failed step=mktemp
+        # Whole-second precision makes every input in this second a miss,
+        # including on hosts whose -nt compares fractional timestamps.
+        if ! { printf '%s\n' "$CALLER_CFG" "$CALLER_ACCOUNT_HARNESS" "$CALLER_ACCOUNT_MODEL" \
+          "$HEADROOM_TRIGGER" "$memo_until" "$memo_cache" "$ACCOUNT_WALL_FILE" "$memo_claims" \
+          "$caller_wall_at" "$caller_rc" "$caller_record" > "$memo_tmp" \
+          && TZ=UTC touch -t "$memo_stamp" -- "$memo_tmp" && mv -- "$memo_tmp" "$caller_memo"; }; then
+          rm -f -- "$memo_tmp" "$caller_memo"
+        fi
+      else
+        rm -f -- "$caller_memo"
+      fi
+    fi
   fi
   case "$caller_rc" in
     0|3)
@@ -1282,6 +1340,10 @@ if (( JUDGES )); then
       ;;
     *) ;;
   esac
+  if [[ "$caller_wall_at" =~ ^[0-9]+$ ]]; then
+    WALL_PROJECTED=$(((caller_wall_at - caller_now + 59) / 60))
+    (( WALL_PROJECTED >= 0 )) || WALL_PROJECTED=0
+  fi
 fi
 
 # One line names one trigger. The level trigger leads when several fire on the

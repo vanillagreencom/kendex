@@ -221,6 +221,7 @@ record_caller() { # SCREEN PANE
 # foreground process names no harness.
 new_caller() {
   fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+  rm -f -- "$TMP_ROOT/work/tmp/lane-mail/overseer/"account-mark-*.memo
   local f="$TMP_ROOT/caller.screen" spec marker="${2:-(fixture@example.com)}"
   local cmd="${3:-cat '$f'; exec sleep 100000}"
   printf '%s\n' "$1" > "$f"
@@ -301,6 +302,8 @@ settle="ORCH_LANE_SETTLE_MS=100"
 # judge itself to fail rather than answer.
 ttl=""
 [ -z "\${USAGE_TTL:-}" ] || ttl="ORCH_LANES_USAGE_TTL=\$USAGE_TTL"
+max_age=""
+[ -z "\${USAGE_MAX_AGE:-}" ] || max_age="ORCH_LANES_USAGE_MAX_AGE=\$USAGE_MAX_AGE"
 wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
 [ "\$wall" != ORCH_OVERSEER_WALL_MINUTES=default ] || wall=""
 successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
@@ -333,11 +336,12 @@ lh=""
 [ -z "\${LANE_HOST_ACCOUNTS:-}" ] || lh="ORCH_LANE_HOST=$TEST_DIR/fixtures/lane-host LANE_HOST_STUB_ACCOUNTS=\$LANE_HOST_ACCOUNTS LANE_HOST_STUB_LOG=$TMP_ROOT/host.log"
 cd "\${RUN_DIR:-$TMP_ROOT/work}" && exec env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="\${PATH_PREFIX:+\$PATH_PREFIX:}\$clock_path$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \$clock \\
+  JUDGE_NOW="\${JUDGE_NOW:-}" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \$settle \\
-  \$hp \$cm \$reserve \$ttl \$wall \$successors \$qt \$host \$lh "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$reserve \$ttl \$max_age \$wall \$successors \$qt \$host \$lh "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it and its reading is recorded for this pane, then become the
@@ -1756,6 +1760,151 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   'control: removing the skip preserves the below-mark line'
 assert_eq "$(wc -l <<<"$picks" | tr -d ' ')" 2 'control: removing the skip fails the one-pick bound'
 assert_contains "$(sed -n 2p <<<"$picks")" '--for-overseer' 'control: the extra pick scans successor capacity'
+
+# The hook and watch reuse only their own unchanged single-account reading.
+# The date stub advances the judgement clock without waiting for reset or TTL.
+MEMO_CLOCK="$TMP_ROOT/memo-clock"
+mkdir -p "$MEMO_CLOCK"
+cat > "$MEMO_CLOCK/date" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == +%s && -n "${JUDGE_NOW:-}" ]]; then printf '%s\n' "$JUDGE_NOW"; exit 0; fi
+exec "$STUB_REAL_DATE" "$@"
+STUB
+chmod +x "$MEMO_CLOCK/date"
+memo_case() { # ROW SCRIPT
+  local name="$1" script="$2" row="memo-$1" state="$TMP_ROOT/state-memo-$1"
+  local now age=0 current=56 first calls record stamp memo wall claims before_until second_now max_age=""
+  local PATH_PREFIX="$MEMO_CLOCK" SUCCEED_BIN="$script" SUCCESSOR_ACCOUNTS=1 NO_CONTEXT=1 WALL_MINUTES=0
+  local USAGE_MAX_AGE="" HEADROOM_PCT="$TRIGGER" USAGE_TTL=300
+  export PATH_PREFIX SUCCEED_BIN SUCCESSOR_ACCOUNTS NO_CONTEXT WALL_MINUTES USAGE_MAX_AGE HEADROOM_PCT USAGE_TTL
+  now="$("$STUB_REAL_DATE" +%s)"
+  second_now="$now"
+  case "$name" in
+    watch-hook) USAGE_MAX_AGE=480 ;;
+    watch-aged) age=400; USAGE_MAX_AGE=480 ;;
+    cached-rate) age=180; WALL_MINUTES=20 ;;
+    crossing-rate) WALL_MINUTES=20 ;;
+    replay-rate) current=60; WALL_MINUTES=20 ;;
+    replay-headroom) current=99 ;;
+  esac
+  new_caller "$UNDER_MARK"
+  caller_record claude claude-fable-5-1
+  stage_usage_pair "$row" "$current" "$((current - 20))" 600
+  for record in "$state"/usage/*.json; do
+    [[ "$(jq -r '.config_dir' "$record")" == "$H/.claude" ]] && break
+  done
+  jq --argjson at "$((now - age))" '.fetched_at = $at | .prior.fetched_at = ($at - 600) | del(.normalized)' "$record" > "$record.tmp"
+  mv -- "$record.tmp" "$record"
+  claims="$state/claims"
+  mkdir -p "$claims"
+  if [[ "$name" == claim-removed ]]; then write_own_claim "$row" "$CALLER_PANE" "$H/.claude"; fi
+  if [[ "$name" == reset ]]; then
+    jq --argjson at "$((now + 120))" '.usage.five_hour.resets_at = ($at | todate) | .prior.usage.five_hour.resets_at = ($at | todate)' "$record" > "$record.tmp"
+    mv -- "$record.tmp" "$record"
+  fi
+  # Normalize the seeded prior sample through the production reader before
+  # assigning historical mtimes. The first judged read then writes no input.
+  JUDGE_NOW="$now" run_succeed "$row" '' --check-marks
+  stamp="$(jq -nr --argjson at "$((now - 1))" '$at | strftime("%Y%m%d%H%M.%S")')"
+  TZ=UTC touch -t "$stamp" "$record" "$claims"
+  rm -f -- "$TMP_ROOT/work/tmp/lane-mail/overseer/"account-mark-*.memo
+  : > "$TMP_ROOT/qualifying-picks.log"
+  JUDGE_NOW="$now" run_succeed "$row" '' --check-marks
+  first="$(sed -n 1p <<<"$OUT")"
+  assert_eq "$RC" 0 "memo $name first judgement succeeds"
+  memo="$TMP_ROOT/work/tmp/lane-mail/overseer/account-mark-$USAGE_MAX_AGE.memo"
+  case "$name" in
+    cached-rate) assert_contains "$first" 'mark-reached kind=rate value=19 ' 'cache-served rate counts down from its sample'; return ;;
+    replay-rate) assert_contains "$first" 'mark-reached kind=rate value=20 ' 'rate replay starts at its measured wall' ;;
+    replay-headroom) assert_contains "$first" 'mark-reached kind=headroom value=1 ' 'headroom replay starts at its measured mark' ;;
+    *) assert_eq "$first" 'oversee-succeed: account-below-mark headroom=44' "memo $name starts below the account marks" ;;
+  esac
+  wall="$(sed -n 7p "$memo" 2>/dev/null)" || wall=""
+  case "$name" in
+    unchanged|replay-headroom) ;;
+    other-record) touch "$state/usage/other-account.json" ;;
+    other-wall) mkdir -p "$state/walls"; touch "$state/walls/other-account.json" ;;
+    watch-hook|watch-aged) USAGE_MAX_AGE="" ;;
+    record-rewritten)
+      jq '.usage.five_hour.utilization = 99 | del(.normalized)' "$record" > "$record.tmp"
+      mv -- "$record.tmp" "$record" ;;
+    record-missing) rm -- "$record" ;;
+    claim-added) write_own_claim "$row" "$CALLER_PANE" "$H/.claude" ;;
+    claim-removed) rm -- "$claims/own.claim" ;;
+    wall-written)
+      mkdir -p "$state/walls"
+      jq -n --arg dir "$H/.claude" --argjson at "$((now + 120))" '{config_dir: $dir, resets_at: $at}' > "$wall" ;;
+    headroom-policy) HEADROOM_PCT=10 ;;
+    model) caller_record claude claude-sonnet-5 ;;
+    served-until) second_now=$((now + 300)) ;;
+    reset) second_now=$((now + 120)) ;;
+    own-second)
+      stamp="$(jq -nr --argjson at "$now" '$at | strftime("%Y%m%d%H%M.%S")')"
+      TZ=UTC touch -t "$stamp" "$record" ;;
+    context) printf '520000:1000000\n' > "$CALLER_CONTEXT_FILE"; NO_CONTEXT="" ;;
+    crossing-rate|replay-rate) second_now=$((now + 180)) ;;
+    failed-1) touch "$record"; USAGE_TTL=bad ;;
+    failed-5) rm -- "$record"; mv -- "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.held" ;;
+  esac
+  : > "$TMP_ROOT/qualifying-picks.log"
+  JUDGE_NOW="$second_now" run_succeed "$row" '' --check-marks
+  calls="$(wc -l < "$TMP_ROOT/qualifying-picks.log" | tr -d ' ')"
+  case "$name" in
+    unchanged|other-record|other-wall|replay-headroom)
+      assert_eq "$calls|$(sed -n 1p <<<"$OUT")" "0|$first" "memo $name reuses the caller judgement" ;;
+    context)
+      assert_eq "$calls" 0 'a context mark precedes the standing account memo'
+      assert_contains "$(sed -n 1p <<<"$OUT")" 'mark-reached kind=context ' 'context is judged fresh on a memo hit' ;;
+    crossing-rate|replay-rate)
+      local value=19
+      [[ "$name" != replay-rate ]] || value=17
+      assert_eq "$calls|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: mark-reached kind=rate value=$value mark=20 succession=on account=claude" "memo $name counts down without lanes" ;;
+    *)
+      assert_eq "$((calls > 0))" 1 "memo $name reads lanes after its input changes"
+      case "$name" in
+        record-rewritten) assert_contains "$(sed -n 1p <<<"$OUT")" 'mark-reached kind=headroom value=1 ' 'the first new reading fires headroom' ;;
+        failed-1|failed-5)
+          [[ "$name" != failed-5 ]] || mv -- "$FIXTURE_DIR/.claude.held" "$FIXTURE_DIR/.claude.json"
+          assert_eq "$([[ ! -e "$memo" ]] && printf absent || printf present)" absent "memo $name removes its standing reading"
+          USAGE_TTL=300 ;;
+      esac
+      if [[ "$name" == watch-hook || "$name" == failed-* ]]; then
+        : > "$TMP_ROOT/qualifying-picks.log"
+        JUDGE_NOW="$second_now" run_succeed "$row" '' --check-marks
+        calls="$(wc -l < "$TMP_ROOT/qualifying-picks.log" | tr -d ' ')"
+        if [[ "$name" == watch-hook ]]; then
+          assert_eq "$calls" 0 'the hook reuses its own bound after the first miss'
+        else
+          assert_eq "$((calls > 0))" 1 "memo $name retries lanes on its next judgement"
+        fi
+      fi ;;
+  esac
+}
+for memo_row in unchanged other-record other-wall watch-hook watch-aged record-rewritten record-missing claim-added claim-removed wall-written headroom-policy model served-until reset own-second context failed-1 failed-5 replay-headroom crossing-rate cached-rate replay-rate; do
+  memo_case "$memo_row" "$PICKLOG/oversee-succeed"
+done
+
+# Each disposable mutant removes the condition its row must detect. Reuse
+# disabled is the pre-memo caller read; the rest cover unsafe reuse and rate.
+for control in base record bound expiry precision rate; do
+  MEMOCTL="$(mutant_scripts "memo-control-$control" oversee-succeed)" || exit 1
+  rm -- "$MEMOCTL/lanes"
+  cp -p -- "$PICKLOG/lanes" "$MEMOCTL/lanes"
+  case "$control" in
+    base) mutate_file "$MEMOCTL/oversee-succeed" '      caller_hit=1' '      caller_hit=0'; rows=unchanged ;;
+    record) mutate_file "$MEMOCTL/oversee-succeed" '&& -f "$memo_cache" && "$caller_memo" -nt "$memo_cache"' '&& -f "$memo_cache"'; rows=record-rewritten ;;
+    bound) mutate_file "$MEMOCTL/oversee-succeed" 'account-mark-${ORCH_LANES_USAGE_MAX_AGE:-}.memo' 'account-mark-.memo'; rows='watch-hook watch-aged' ;;
+    expiry) mutate_file "$MEMOCTL/oversee-succeed" '&& "$caller_now" -lt "$memo_until"' ''; rows='served-until reset' ;;
+    precision) mutate_file "$MEMOCTL/oversee-succeed" '&& TZ=UTC touch -t "$memo_stamp" -- "$memo_tmp"' ''; rows=own-second ;;
+    rate) mutate_file "$MEMOCTL/oversee-succeed" 'if [[ "$caller_wall_at" =~ ^[0-9]+$ ]]; then' 'if false; then'; rows='crossing-rate cached-rate' ;;
+  esac
+  for memo_row in $rows; do
+    control_rc=0
+    ( FAIL=0; memo_case "$memo_row" "$MEMOCTL/oversee-succeed"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/memo-control-$control-$memo_row.log" 2>&1 || control_rc=$?
+    assert_eq "$control_rc" 1 "control $control fails memo row $memo_row"
+  done
+done
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # A known harness remains enough to judge account triggers when its context

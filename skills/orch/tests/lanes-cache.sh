@@ -64,6 +64,7 @@ cat > "$TMP_ROOT/bin/date" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ -n "$FAKE_TODAY" && "$*" == "-u +%Y-%m-%d" ]]; then printf '%s\n' "$FAKE_TODAY"; exit 0; fi
+if [[ -n "${FAKE_NOW:-}" && "$*" == +%s ]]; then printf '%s\n' "$FAKE_NOW"; exit 0; fi
 exec "$REAL_DATE" "$@"
 STUB
 chmod +x "$TMP_ROOT/bin/date"
@@ -78,7 +79,7 @@ cache_run() { # STATE POLICY COMMAND...
   (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$H" \
     REAL_JQ="$REAL_JQ" CREDENTIAL_LOG="$TMP_ROOT/credentials" CACHE_READ_LOG="$TMP_ROOT/cache-reads" \
     REAL_RM="$REAL_RM" CACHE_RM_FAIL="${CACHE_RM_FAIL:-0}" \
-    REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" \
+    REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" FAKE_NOW="${FAKE_NOW:-}" \
     LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$FIXTURE_DIR" \
     FETCH_LOG="$TMP_ROOT/fetch-log" FETCH_STATUS="${FETCH_STATUS:-200}" FETCH_RETRY_AFTER=300 \
@@ -538,6 +539,45 @@ LANES="$control_dir/lanes"
 rc=0
 cache_run "$state" ORCH_LANE_EXCLUDE=claude list --local --json > "$TMP_ROOT/out" || rc=$?
 assert_eq "$rc" 0 'control: swallowing deletion failure makes the refusal assertion fail'
+
+# The succession judge consumes this local-record reference. Expected expiry
+# comes from the file's sample time, not from the field under test.
+LANES="$ORIGINAL_LANES"
+CACHE_RM_FAIL=0
+pick_cache_case() { # ROW
+  local row="$1" state="$TMP_ROOT/pick-cache-$1" record fetched expected policy
+  policy='ORCH_LANE_HOST=local ORCH_LANES_USAGE_TTL=300'
+  FAKE_NOW=1792140000 cache_run "$state" "$policy" pick --lane "$H/.claude/" --harness claude --for-overseer --json > "$TMP_ROOT/out"
+  record="$(compgen -G "$state/usage/claude-*.json")"
+  fetched="$(jq -r '.fetched_at' "$record")"
+  expected=$((fetched + 300))
+  case "$row" in
+    fetched) ;;
+    cached) FAKE_NOW=1792140001 cache_run "$state" "$policy" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" ;;
+    wider)
+      expected=$((fetched + 480))
+      FAKE_NOW=1792140001 cache_run "$state" "$policy ORCH_LANES_USAGE_MAX_AGE=480" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" ;;
+    reset)
+      expected=$((fetched + 120))
+      jq --argjson at "$expected" '.usage.five_hour.resets_at = ($at | todate) | del(.normalized)' "$record" > "$record.tmp"
+      mv -- "$record.tmp" "$record"
+      FAKE_NOW=1792140001 cache_run "$state" "$policy" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" ;;
+    no-credentials)
+      mv -- "$H/.claude/.credentials.json" "$H/.claude/.credentials.held"
+      FAKE_NOW=1792140001 cache_run "$state" "$policy" pick --lane "$H/.claude" --harness claude --for-overseer --json > "$TMP_ROOT/out" || [[ $? == 5 ]]
+      mv -- "$H/.claude/.credentials.held" "$H/.claude/.credentials.json"
+      assert_eq "$(jq -r '.usage_cache == null' "$TMP_ROOT/out")" true 'pick cache no credentials carries null'
+      return ;;
+  esac
+  assert_eq "$(jq -r '.usage_cache | [.path, .served_until] | @tsv' "$TMP_ROOT/out")" \
+    "$(printf '%s\t%s' "$record" "$expected")" "pick cache $row names its measured file and serve bound"
+}
+for row in fetched cached wider reset no-credentials; do pick_cache_case "$row"; done
+control_dir="$(mutant_scripts pick-cache-control lanes)" || exit 1
+mutate_file "$control_dir/lanes" '.usage_cache = (if $cache != ""' '.usage_cache = (if false and $cache != ""'
+control_rc=0
+( FAIL=0; LANES="$control_dir/lanes"; pick_cache_case fetched; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/pick-cache-control.log" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 'control: a missing local record reference fails the fetched row'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
