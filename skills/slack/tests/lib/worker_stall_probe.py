@@ -64,19 +64,42 @@ from settings import load
 
 root, mode, file_path = Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
 settings = load()
-# Shorten existing figures inside this child. The connected clock advances
-# only at polls, so reader shutdown cannot age with runner scheduling delays.
+# The watchdog measures fixture work, never time lost to runner scheduling.
 settings.poll_seconds = 0.2
 relay.RECONNECT_BOUND_SECONDS = 1
 relay.RETRY_FIRST_SECONDS = 0.4
 relay.RETRY_MAX_SECONDS = 0.8
 main.load = lambda **kwargs: settings
 bound = 1.2
-clock = time.monotonic
-connected_time = 0.0
-if mode == "connected":
-    clock = lambda: connected_time
-    relay.time = SimpleNamespace(monotonic=clock, time=time.time, sleep=time.sleep)
+
+
+class WorkClock:
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.now = 0.0
+        self.observed = 0.0
+
+    def __call__(self):
+        with self.condition:
+            if threading.current_thread() is threading.main_thread():
+                self.observed = self.now
+                self.condition.notify_all()
+            return self.now
+
+    def advance(self, seconds):
+        with self.condition:
+            self.now += seconds
+            self.condition.notify_all()
+            # Let the real watchdog judge each interval before the worker
+            # can renew progress or finish and hide a missing renewal.
+            if threading.current_thread() is not threading.main_thread():
+                self.condition.wait_for(lambda: self.observed == self.now)
+
+
+clock = WorkClock()
+relay.time = SimpleNamespace(monotonic=clock, time=time.time, sleep=time.sleep)
+relay.threading = SimpleNamespace(Condition=lambda: clock.condition, Thread=threading.Thread,
+                                 Event=threading.Event)
 started = clock()
 polls, attempts, api_calls, chunks = [], [], [], []
 original_get, original_post, original_open = Slack.get, Slack.post, Slack._open
@@ -89,6 +112,7 @@ once = mode in ("startup-api-once", "poll-api", "api-progress", "download", "dow
 
 def block(*args, **kwargs):
     print(json.dumps({"blocked": mode}), flush=True)
+    clock.advance(bound)
     threading.Event().wait()
 
 
@@ -108,7 +132,7 @@ def post(self, method, **body):
             block()
         attempts.append(clock() - started)
         if mode == "reconnect":
-            if attempts[-1] > 3:
+            if attempts[-1] > 3 and len(attempts) >= 3 and len(polls) >= 4:
                 raise Finished
             raise Refusal("slack-unreachable", "fixture-outage")
     answer = original_post(self, method, **body)
@@ -118,13 +142,14 @@ def post(self, method, **body):
 
 
 def opened(self, *args, **kwargs):
+    clock.advance(0.4)
     result = original_open(self, *args, **kwargs)
     api_calls.append(clock() - started)
     return result
 
 
 class MovingResponse:
-    """Delay a real download's reads while keeping its bytes and headers."""
+    """Advance each real download read while keeping its bytes and headers."""
 
     def __init__(self, response):
         self.response = response
@@ -141,9 +166,9 @@ class MovingResponse:
     def read(self, count):
         if mode == "download-stall" and chunks:
             block()
-        # This delay models a link that delivers chunks within the deadline
+        # Each read models a link that delivers chunks within the deadline
         # while the whole file takes longer than the deadline.
-        time.sleep(0.3)
+        clock.advance(0.3)
         chunk = self.response.read(count)
         if chunk:
             chunks.append(chunk)
@@ -162,7 +187,6 @@ def poll(self, bot_user):
     elif mode == "api-progress":
         for _ in range(8):
             self.api.get("auth.test")
-            time.sleep(0.4)
     elif mode in ("download", "download-stall"):
         stamp = f"{time.time():.6f}"
         self.on_message({"ts": stamp, "user": "U001", "text": "Moving file.",
@@ -175,11 +199,9 @@ def poll(self, bot_user):
 
 
 def polled(self):
-    global connected_time
-    if mode == "connected":
-        connected_time += settings.poll_seconds
+    clock.advance(settings.poll_seconds)
     result = original_poll_once(self)
-    if mode == "connected" and polls[-1] > 3:
+    if mode == "connected" and polls[-1] > 3 and len(polls) >= 4:
         raise Finished
     return result
 

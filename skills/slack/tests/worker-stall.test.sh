@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Surface: listener worker progress. Inputs: skills/slack/scripts/lib/**,
 # skills/slack/tests/lib/** and skills/mailbox/scripts/lib/**.
-# Short real deadlines prove timer wiring; the parent bounds every child.
+# One fixture clock drives the watchdog; the parent bounds every child.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
