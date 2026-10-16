@@ -31,7 +31,7 @@ config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
 
-issue_json='{"id":"issue-uuid","identifier":"PROJ-42","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"p1","name":"Phase 2"},"projectMilestone":null,"cycle":null,"parent":{"id":"par-uuid","identifier":"PROJ-10","title":"Parent"},"team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:iced"}]},"priority":2,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-42","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
+issue_json='{"id":"issue-uuid","identifier":"PROJ-42","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"p1","name":"Phase 2"},"projectMilestone":null,"cycle":null,"parent":{"id":"par-uuid","identifier":"PROJ-10","title":"Parent"},"team":{"key":"PROJ","id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:iced"}]},"priority":2,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/PROJ-42","createdAt":"2026-07-03T00:00:00Z","updatedAt":"2026-07-03T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
 
 case "$query" in
 *"issueUpdate(id:"*)

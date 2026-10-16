@@ -78,16 +78,16 @@ case "$query" in
   # ISS-1 is in a project; ISS-2 is in none, which is the only issue a
   # milestone name on the update path can still be refused for.
   if [ "$(jq -r '.variables.id // empty' <<<"$payload")" = "ISS-2" ]; then
-    printf '%s' '{"data":{"issue":{"id":"iss2-uuid","identifier":"ISS-2","team":{"id":"team-uuid"},"project":null}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issue":{"id":"iss2-uuid","identifier":"ISS-2","team":{"key":"ISS","id":"team-uuid"},"project":null}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"id":"team-uuid"},"project":{"id":"old-uuid","name":"Old"}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"key":"ISS","id":"team-uuid"},"project":{"id":"old-uuid","name":"Old"}}}}___HTTP_CODE___200'
   fi
   ;;
 *"fileUpload"*)
   printf '%s' '{"data":{"fileUpload":{"success":false}}}___HTTP_CODE___200'
   ;;
 *"issueCreate(input:"*)
-  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"live-uuid","name":"Dup"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"TestTeam"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-900","createdAt":"2026-09-02T00:00:00Z","updatedAt":"2026-09-02T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"live-uuid","name":"Dup"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"key":"ISS","name":"TestTeam"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-900","createdAt":"2026-09-02T00:00:00Z","updatedAt":"2026-09-02T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *"issueUpdate"*)
   printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"iss-uuid","identifier":"ISS-1"}}}}___HTTP_CODE___200'
@@ -134,19 +134,19 @@ CREATE='issues create --title t --team ISS --labels agent:rust --priority 3 --de
 printf 'x' >"$TMP_ROOT/asset.bin"
 ROWS='
 issues create files the issue under the project own milestone|$CREATE --project Dup --milestone Alpha|0|GetTeam(name=ISS),GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),GetLabel(name=agent:rust),CreateIssue(input.projectMilestoneId=alpha-here)
---project wins over the project the issue is already in|issues update ISS-1 --project Dup --milestone Alpha|0|GetTeam(name=ISS),GetIssue(),GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),UpdateIssue(input.projectMilestoneId=alpha-here)
+--project wins over the project the issue is already in|issues update ISS-1 --project Dup --milestone Alpha|0|IssueTeam(),GetTeam(name=ISS),GetIssue(),GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),UpdateIssue(input.projectMilestoneId=alpha-here)
 two milestones of that name in the project is a refusal, not a pick|$CREATE --project Dup --milestone Twin|1|GetTeam(name=ISS),GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)
 a failed milestone lookup refuses before mutation|$CREATE --project Dup --milestone Boom|1|GetTeam(name=ISS),GetProject(name=Dup),GetMilestone(name=Boom,projectId=live-uuid)
 an unmatched milestone name refuses before mutation|$CREATE --project Dup --milestone Ghost|1|GetTeam(name=ISS),GetProject(name=Dup),GetMilestone(name=Ghost,projectId=live-uuid)
 a milestone name with no project to scope it is refused before any milestone lookup|$CREATE --milestone Alpha|1|GetTeam(name=ISS)
-issues update scopes the name to the issue own project|issues update ISS-1 --milestone Alpha|0|GetTeam(name=ISS),GetIssue(),GetMilestone(name=Alpha,projectId=old-uuid),UpdateIssue(input.projectMilestoneId=alpha-old)
-a milestone UUID needs no project and no lookup|issues update ISS-2 --milestone 11111111-2222-3333-4444-555555555555|0|GetTeam(name=ISS),GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-555555555555)
-an uppercase UUID is a UUID too|issues update ISS-2 --milestone 11111111-2222-3333-4444-5555555555AA|0|GetTeam(name=ISS),GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-5555555555AA)
+issues update scopes the name to the issue own project|issues update ISS-1 --milestone Alpha|0|IssueTeam(),GetTeam(name=ISS),GetIssue(),GetMilestone(name=Alpha,projectId=old-uuid),UpdateIssue(input.projectMilestoneId=alpha-old)
+a milestone UUID needs no project and no lookup|issues update ISS-2 --milestone 11111111-2222-3333-4444-555555555555|0|IssueTeam(),GetTeam(name=ISS),GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-555555555555)
+an uppercase UUID is a UUID too|issues update ISS-2 --milestone 11111111-2222-3333-4444-5555555555AA|0|IssueTeam(),GetTeam(name=ISS),GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-5555555555AA)
 a project-less name refuses the create before its upload|$CREATE --milestone Alpha --attach $TMP_ROOT/asset.bin|1|GetTeam(name=ISS)
-a name refuses the update of an issue in no project before its upload|issues update ISS-2 --milestone Alpha --attach $TMP_ROOT/asset.bin|1|GetTeam(name=ISS),GetIssue()
+a name refuses the update of an issue in no project before its upload|issues update ISS-2 --milestone Alpha --attach $TMP_ROOT/asset.bin|1|IssueTeam(),GetTeam(name=ISS),GetIssue()
 an unreadable --attach path refuses before any lookup|$CREATE --project Dup --milestone Alpha --attach $TMP_ROOT/nope.bin|1|
 an ambiguous name refuses the create before its upload|$CREATE --project Dup --milestone Twin --attach $TMP_ROOT/asset.bin|1|GetTeam(name=ISS),GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)
-an ambiguous name refuses the update before its upload|issues update ISS-1 --project Dup --milestone Twin --attach $TMP_ROOT/asset.bin|1|GetTeam(name=ISS),GetIssue(),GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)
+an ambiguous name refuses the update before its upload|issues update ISS-1 --project Dup --milestone Twin --attach $TMP_ROOT/asset.bin|1|IssueTeam(),GetTeam(name=ISS),GetIssue(),GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)
 '
 
 while IFS='|' read -r label args rc wire; do

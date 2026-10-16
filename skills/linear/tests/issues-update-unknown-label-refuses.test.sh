@@ -43,7 +43,7 @@ case "$query" in
   fi
   ;;
 *"issue(id:"*|*"issues(filter:"*)
-  printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"id":"team-uuid","name":"TestTeam"}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"key":"ISS","id":"team-uuid","name":"TestTeam"}}}}___HTTP_CODE___200'
   ;;
 *"issueUpdate"*)
   printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"iss-uuid","identifier":"ISS-1"}}}}___HTTP_CODE___200'

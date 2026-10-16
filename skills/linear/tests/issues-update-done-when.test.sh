@@ -43,7 +43,7 @@ case "$query" in
   jq -cn --argjson payload "$payload" --argjson descriptions "${DESCRIPTIONS:?}" --arg current "${CURRENT_STATE:-Todo}" '
     $payload.variables as $v
     | {id:$v.id,identifier:$v.id,title:"item",description:($descriptions[$v.id] // ""),
-       team:{id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},
+       team:{key:"CC",id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},
        state:{name:$current,type:"started"},parent:null,children:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},
        labels:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},
        relations:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},

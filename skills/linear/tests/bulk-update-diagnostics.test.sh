@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 
-# Under LINEAR_TEAM=CC the cross-team guard reads that team before the first
-# item; each child's graphql_request answers that read, and only that read.
+# The guard reads each issue's team and LINEAR_TEAM before bulk updates.
+# The request stub answers both reads so the cases reach result aggregation.
 
 rc=0
 out="$(
@@ -18,7 +18,12 @@ out="$(
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
-        graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
+        graphql_request() {
+            if [[ "$1" == *"issue(id:"* ]]; then
+                printf "%s" "{\"issue\":{\"team\":{\"key\":\"CC\"}}}"
+                return 0
+            fi
+            [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
 
         update_issue() {
             case "$1" in
@@ -66,7 +71,12 @@ warn_out="$(
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
-        graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
+        graphql_request() {
+            if [[ "$1" == *"issue(id:"* ]]; then
+                printf "%s" "{\"issue\":{\"team\":{\"key\":\"CC\"}}}"
+                return 0
+            fi
+            [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
 
         update_issue() {
             printf "WARN: %s is a sub-issue of CC-1 — sort order has no effect on sub-issues\n" "$1" >&2
@@ -83,7 +93,12 @@ warn_err="$(
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"
-        graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
+        graphql_request() {
+            if [[ "$1" == *"issue(id:"* ]]; then
+                printf "%s" "{\"issue\":{\"team\":{\"key\":\"CC\"}}}"
+                return 0
+            fi
+            [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
 
         update_issue() {
             printf "WARN: %s is a sub-issue of CC-1 — sort order has no effect on sub-issues\n" "$1" >&2

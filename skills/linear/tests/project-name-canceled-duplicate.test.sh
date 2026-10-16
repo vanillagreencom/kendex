@@ -55,7 +55,7 @@ case "$query" in
   ;;
 *"issue(id:"*)
   ref="$(jq -r '.variables.id' <<<"$payload")"
-  jq -cn --arg ref "$ref" '{data:{issue:{id:($ref + "-uuid"),identifier:$ref,team:(if $ref == "CC-2" then null else {id:(if ($ref | startswith("HT-")) or $ref == "CC-3" then "ht-team" else "cc-team" end)} end),project:null}}}'
+  jq -cn --arg ref "$ref" '{data:{issue:{id:($ref + "-uuid"),identifier:$ref,team:(if $ref == "CC-2" then null else (if ($ref | startswith("HT-")) or $ref == "CC-3" then {id:"ht-team",key:"HT"} else {id:"cc-team",key:"CC"} end) end),project:null}}}'
   ;;
 *"issueCreate(input:"*)
   printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","team":{"name":"CC"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
@@ -76,7 +76,7 @@ ROWS='
 canceled twins lose to the live project in the configured team|CC|$CREATE --project Dup|0|live-uuid|-
 same-name projects in two teams resolve under the explicit create team||$CREATE --team HT --project Dup|0|foreign-uuid|-
 update uses the issue team when the configured team is absent||issues update HT-1 --project Dup|0|foreign-uuid|-
-update uses the live issue team rather than an old identifier prefix|CC|issues update CC-3 --project Dup|0|foreign-uuid|-
+update uses the live issue team rather than an old identifier prefix|HT|issues update CC-3 --project Dup|0|foreign-uuid|-
 bulk-update resolves the same project name separately for each issue team||issues bulk-update CC-1 HT-1 --project Dup|0|live-uuid,foreign-uuid|-
 ambiguous live names refuse with every candidate and its team|CC|$CREATE --project Twin|1||AMBIGUOUS_PROJECT
 update refuses ambiguous live names before writing||issues update CC-1 --project Twin|1||AMBIGUOUS_PROJECT

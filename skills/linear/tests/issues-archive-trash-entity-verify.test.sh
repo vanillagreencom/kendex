@@ -66,7 +66,7 @@ case "\$query" in
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"PROJ","name":"Claude"}]}}}___HTTP_CODE___200' ;;
 *"issue(id:"*)
-  printf '%s' '{"data":{"issue":{"id":"$UUID"}}}___HTTP_CODE___200' ;;
+  printf '%s' '{"data":{"issue":{"id":"$UUID","team":{"key":"PROJ"}}}}___HTTP_CODE___200' ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200' ;;
 esac

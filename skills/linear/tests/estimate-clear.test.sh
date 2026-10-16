@@ -36,6 +36,10 @@ run_update() {
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
             attach_download_from_text() { :; }
             graphql_query() {
+                if [[ "$1" == *"query IssueTeam("* ]]; then
+                    printf "%s" "{\"issue\":{\"team\":{\"key\":\"CC\"}}}"
+                    return 0
+                fi
                 printf "%s" "$2" >"$capture"
                 printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"estimate\":null,\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"}}}}"
             }
@@ -94,8 +98,8 @@ assert "--clear-estimate with --estimate 0 builds estimate: null" \
     jq -e '.input.estimate == null' "$cap"
 
 # --- bulk-update forwards --clear-estimate to the mutation ----------------
-# Under LINEAR_TEAM=CC the cross-team guard reads that team before the first
-# item; each child's graphql_request answers that read, and only that read.
+# The guard reads each issue's team and LINEAR_TEAM before bulk updates.
+# Query stubs answer issue-team reads without recording them as mutations.
 cap="$TMP/bulk-clear.json"
 out="$(
     CAPTURE_FILE="$cap" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
@@ -109,6 +113,10 @@ out="$(
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
             attach_download_from_text() { :; }
             graphql_query() {
+                if [[ "$1" == *"query IssueTeam("* ]]; then
+                    printf "%s" "{\"issue\":{\"team\":{\"key\":\"CC\"}}}"
+                    return 0
+                fi
                 printf "%s" "$2" >"$capture"
                 printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"estimate\":null,\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"}}}}"
             }
@@ -130,7 +138,13 @@ out="$(
             graphql_request() { [[ "$1" == *"teams(filter:"* ]] || return 1; printf "%s" "{\"teams\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"id\":\"team-uuid\",\"key\":\"CC\",\"name\":\"Claude\"}]}}"; }
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
             attach_download_from_text() { :; }
-            graphql_query() { printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{}}}"; }
+            graphql_query() {
+                if [[ "$1" == *"query IssueTeam("* ]]; then
+                    printf "%s" "{\"issue\":{\"team\":{\"key\":\"CC\"}}}"
+                else
+                    printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{}}}"
+                fi
+            }
             bulk_update_issues CC-1 --estimate 6
         ' _ "$ISSUES_SH" 2>/dev/null
 )"
