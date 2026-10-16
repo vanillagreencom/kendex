@@ -104,10 +104,29 @@ comments_empty() {
 if [[ "$query" == *"GetIssueWithBundle"* ]]; then
   case "$vid" in
   CC-900) bundle_parent CC-900 "$(bundle_child CC-901 Done completed CC-900),$(bundle_child CC-902 Done completed CC-900)" ;;
-  CC-910) bundle_parent CC-910 "$(bundle_child CC-911 Done completed CC-910),$(bundle_child CC-912 'In Progress' started CC-910)" ;;
+  CC-910)
+    # Multi-child expansion is covered before the checklist matrix. Each
+    # matrix row varies one child, so omit the already-proved Done sibling.
+    if [[ -n "${CHILD_CHECKLIST_FILE:-}" ]]; then
+      bundle_parent CC-910 "$(bundle_child CC-912 'In Progress' started CC-910)"
+    else
+      bundle_parent CC-910 "$(bundle_child CC-911 Done completed CC-910),$(bundle_child CC-912 'In Progress' started CC-910)"
+    fi ;;
   CC-920) bundle_parent CC-920 "$(bundle_child CC-921 Done completed CC-920),$(bundle_child CC-922 Canceled canceled CC-920)" ;;
-  CC-930) bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930),$(bundle_child CC-932 Done completed CC-930)" Todo unstarted ;;
-  CC-940) bundle_parent CC-940 "$(bundle_child CC-941 Done completed CC-940),$(bundle_child CC-942 'In Progress' started CC-940)" Todo unstarted ;;
+  CC-930)
+    # The parent-checklist matrix needs one Done child to reach --container.
+    # The earlier multi-child scenario retains both children.
+    if [[ -n "${CONTAINER_CHECKLIST_FILE:-}" ]]; then
+      bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930)" Todo unstarted
+    else
+      bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930),$(bundle_child CC-932 Done completed CC-930)" Todo unstarted
+    fi ;;
+  CC-940)
+    if [[ -n "${CHILD_CHECKLIST_FILE:-}" ]]; then
+      bundle_parent CC-940 "$(bundle_child CC-942 'In Progress' started CC-940)" Todo unstarted
+    else
+      bundle_parent CC-940 "$(bundle_child CC-941 Done completed CC-940),$(bundle_child CC-942 'In Progress' started CC-940)" Todo unstarted
+    fi ;;
   CC-901) bundle_parent CC-901 "" Done completed ;;
   *) emit '{"errors":[{"message":"unknown bundle"}]}' ;;
   esac
