@@ -15,7 +15,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 # A direct run keeps every row; run-all bounds each measured group separately.
 PART="${1:-all}"
 case "$PART" in
-  all|delivery|local|hosted|cadence|failures|tracker|tracker_close|tracker_controls|process) ;;
+  all|delivery|local|hosted|cadence|failures|tracker|tracker_close|tracker_controls|process|long_process) ;;
   *) echo "oversee_watch_mail: part-invalid value=$PART" >&2; exit 1 ;;
 esac
 
@@ -2578,6 +2578,89 @@ if [[ "$PART" == all || "$PART" == process ]]; then
 PROCESS_RC=0
 "$BASH" "$REPO_ROOT/skills/orch/tests/lib/watch-process-cases.sh" || PROCESS_RC=$?
 assert_eq "$PROCESS_RC" 0 'idle ticks and complete lane mail passes meet their process ceilings'
+fi
+
+if [[ "$PART" == all || "$PART" == delivery || "$PART" == long_process ]]; then
+source "$REPO_ROOT/skills/orch/tests/lib/process-count.sh"
+if [[ -n "${BASHPID:-}" ]]; then
+long_cost() { # NAME LANES WATCH
+  local name="$1" lanes="$2" watch="$3" i counter rc=0
+  new_case "$name"
+  : >"$STUB_DIR/windows.txt"
+  for ((i=1; i<=lanes; i++)); do
+    printf 'KEN-%s\n' "$i" >>"$STUB_DIR/windows.txt"
+    printf 'claude\n' >"$STUB_DIR/cmd-KEN-$i.txt"
+    printf '900%s\n' "$i" >"$STUB_DIR/panepid-KEN-$i.txt"
+    printf 'Working\n' >"$STUB_DIR/pane-KEN-$i.txt"
+    printf 'Step: Implement\n' >"$CASE_REPO_ROOT/tmp/lane-status-KEN-$i.md"
+  done
+  jq -n --argjson lanes "$lanes" --arg root "$CASE_REPO_ROOT" '{lanes:
+    [range(1; $lanes + 1) | {item: ("KEN-" + tostring), window: ("KEN-" + tostring),
+     status: "running", harness: "claude", host: "local", mail_root: $root,
+     launched_at: "2026-10-16T00:00:00Z"}]}' >"$STUB_DIR/fleet.json"
+  jq -n --argjson lanes "$lanes" '[range(1; $lanes + 1) |
+    {number: ., headRefName: ("ken-" + tostring), headRepositoryOwner: {login: "owner"},
+     title: "Merged", body: "", mergedAt: "2026-10-16T01:00:00Z"}]' >"$STUB_DIR/merged.json"
+  counter="$STUB_DIR/count"
+  python3 "$REPO_ROOT/skills/orch/tests/lib/process-count.py" install "$counter" "$TMP_ROOT/bin:$PATH" "$BASH" "$watch" passes
+  # Only the fork executing long_pass gains this tag. Helpers inherit it;
+  # the parent keeps its mail tag. No per-command stack walk is needed.
+  cat >>"$counter/bash-env" <<'TRACE'
+_pc_step() {
+  case "$BASH_COMMAND" in long_pass)
+    _KENDEX_PROCESS_COUNT_STEP=long_pass.fixture
+    export _KENDEX_PROCESS_COUNT_STEP ;;
+  esac
+}
+set +x
+TRACE
+  WATCH_BIN="$watch" run_watch BASH_ENV="$counter/bash-env" PATH="$counter/bin:$TMP_ROOT/bin:$PATH" \
+    LINEAR_TEAM= ORCH_SECURITY_ALERTS=off ORCH_EXTERNAL_TRIAGE=off -- \
+    --max-loops 1 --state "$STUB_DIR/fleet.json" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || rc=$?
+  assert_eq "$rc" 0 "$name completes the production long pass" "$STUB_DIR/err"
+  assert_eq "$(grep -c '^EVENT merged ' "$STUB_DIR/out" || :)" "$lanes" "$name evaluates every lane's merged delivery"
+  LONG_COST="$(awk 'NR == FNR { step[$1] = $4; next }
+    $4 == "jq" && step[$2] ~ /^long_pass[.]/ { n++ } END { print n+0 }' "$counter/steps" "$counter/external")"
+  assert_le "$lanes" "$LONG_COST" "$name records jq work for the complete lane set"
+  LONG_OUTPUT="$STUB_DIR/out"
+  printf 'long-pass evidence: name=%s lanes=%s jq=%s\n' "$name" "$lanes" "$LONG_COST"
+}
+LONG_WATCH="$REPO_ROOT/skills/orch/scripts/oversee-watch"
+LONG_BASE=""
+if [[ -n "${2:-}" ]]; then
+  LONG_BASE="$(mutant_scripts long-base/orch oversee-watch)/oversee-watch"
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/long-base/github"
+  cat -- "$2" >"$LONG_BASE"
+fi
+LONG_CONTROL="$(mutant_scripts long-cost-control/orch oversee-watch)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/long-cost-control/github"
+# Restore the former per-item fleet reads without changing the emitted events.
+mutate_file "$LONG_CONTROL" '    until="" dependency_record="" own_pr="" own_repo=""' \
+  '    jq -r --arg item "$item" '\''(.lanes // [])[] | select(.item == $item and .status == "parked") | .parked.until_pr // empty'\'' <<<"${FLEET_STATE:-"{}"}" >/dev/null
+    jq -c --arg item "$item" '\''(.lanes // [])[] | select(.item == $item) | (.parked // .pending_pr) | select(.until_pr != null)'\'' <<<"${FLEET_STATE:-"{}"}" >/dev/null
+    until="" dependency_record="" own_pr="" own_repo=""'
+for lanes in 8 16; do
+  long_cost "long-$lanes" "$lanes" "$LONG_WATCH"
+  candidate_cost="$LONG_COST"; candidate_output="$LONG_OUTPUT"
+  # GitHub's fixture implements each lookup with jq too. Count those children
+  # and all other long-pass jq starts, including starts inside helper scripts.
+  bound=$((lanes * 3 + 8))
+  assert_le "$candidate_cost" "$bound" "$lanes lanes meet the long-pass jq ceiling"
+  long_cost "long-control-$lanes" "$lanes" "$LONG_CONTROL"
+  output_rc=0; cmp -s "$LONG_OUTPUT" "$candidate_output" || output_rc=$?
+  assert_eq "$output_rc" 0 "$lanes lanes keep control output byte-equal"
+  assert_eq "$((LONG_COST > bound))" 1 'control: repeated fleet reads exceed the jq ceiling'
+  if [[ -n "$LONG_BASE" ]]; then
+    long_cost "long-base-$lanes" "$lanes" "$LONG_BASE"
+    output_rc=0; cmp -s "$LONG_OUTPUT" "$candidate_output" || output_rc=$?
+    assert_eq "$output_rc" 0 "$lanes lanes keep base output byte-equal"
+    assert_le "$((candidate_cost * 2))" "$LONG_COST" "$lanes lanes halve the base jq starts"
+    assert_eq "$((LONG_COST > bound))" 1 'control: the full base exceeds the jq ceiling'
+  fi
+done
+else
+  printf 'skip: long-pass process counting requires BASHPID\n'
+fi
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -866,6 +866,16 @@ PARKED_ROWS_FILTER='
     else "\(.item)\u001f\((.parked.until_repo // .parked.repo) | ascii_downcase)#\(.parked.until_pr // .parked.pr)\u001f\(.launched_at | if . == null then "" else (fromdateiso8601 | tostring) end)" end'
 PARKED_ITEMS=()
 PARKED_KEYS=()
+MERGED_FIELDS=""
+MERGED_FIELDS_FILTER='
+  (.lanes // [])[] | objects | . as $lane
+  | (try (
+      (select(.status == "parked") | .parked.until_pr // empty | ["until", $lane.item, .]),
+      ((.parked // .pending_pr) | select(.until_pr != null)
+       | ["dependency", $lane.item, "1"], ["pr", $lane.item, (.pr // "")],
+         ["repo", $lane.item, (.repo | ascii_downcase)])
+    ) catch ["invalid", $lane.item, "parked"])
+  | map(tostring) | join("\u001f")'
 
 # The one reader of the state, asked by the repeat wrapper before every pass
 # and by the pass itself before every loop: the live set changes on every
@@ -895,9 +905,10 @@ fleet_merge() { # [quiet]
   merged="$(jq -r '(('"$LANE_ROWS_FILTER"') | "running\u001e\(.)"),
     (('"$PREPARE_ROWS_FILTER"') | "prepare\u001e\(.)"),
     (('"$PARKED_ROWS_FILTER"') | "parked\u001e\(.)"),
-    ((.lanes // [])[] | objects | .item | strings | "recorded\u001e\(.)")' <<<"$state" 2>&1)" \
+    ((.lanes // [])[] | objects | .item | strings | "recorded\u001e\(.)"),
+    (('"$MERGED_FIELDS_FILTER"') | "merge\u001e\(.)")' <<<"$state" 2>&1)" \
     || die state-invalid "$merged" "option=--state" "path=$STATE_FILE"
-  rows=""; PREPARE_ROWS=""; parked=""; recorded=""
+  rows=""; PREPARE_ROWS=""; parked=""; recorded=""; MERGED_FIELDS=""
   while IFS= read -r line; do
     tag="${line%%$'\x1e'*}"
     line="${line#*$'\x1e'}"
@@ -906,6 +917,7 @@ fleet_merge() { # [quiet]
       prepare) PREPARE_ROWS+="$line"$'\n' ;;
       parked) parked+="$line"$'\n' ;;
       recorded) recorded+="$line"$'\n' ;;
+      merge) MERGED_FIELDS+="$line"$'\n' ;;
     esac
   done <<<"$merged"
   rows="${rows%$'\n'}"; PREPARE_ROWS="${PREPARE_ROWS%$'\n'}"
@@ -1714,6 +1726,7 @@ MERGED_SEARCH_PAGE=1000
 # One merged-PR reader owns lookup and lane_merged evaluation. Verification
 # uses its mergedAt for the publication floor and its merge commit for containment.
 MERGED_ITEM_ROWS=""
+MERGED_ITEM_HITS=""
 merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [ITEM_SEARCH] [ITEMS_JSON]
   local item="$1" repo="$2" pr="$3" since="${4:-null}" floor="${5:-}"
   local branch list named search rows errf="$WORK_DIR/merged.err"
@@ -1757,26 +1770,41 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [I
   named="$(gh pr list --repo "$repo" --search "$search" --state merged --limit "$MERGED_SEARCH_PAGE" --json "$fields" 2>"$errf")" \
     || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
   fi
-  rows="$(jq length <<<"$named" 2>"$errf")" || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
-  [[ -n "${6:-}" || "$rows" -lt "$MERGED_SEARCH_PAGE" ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
-  if ! MERGED_ITEM_ROWS="$(jq -cs --arg item "$item" --arg owner "${repo%%/*}" --argjson pr "$pr" --argjson since "$since" \
-    "$LANE_MERGED_JQ"' add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
-    | lane_merged($item; $owner; $pr; $since)' \
+  if ! rows="$(jq -rs --arg item "$item" --arg repo "$repo" --arg owner "${repo%%/*}" --argjson pr "$pr" --argjson since "$since" \
+    --argjson cap "$MERGED_SEARCH_PAGE" "$LANE_MERGED_JQ"'
+    if (.[1] | length) >= $cap then "null" else
+      (add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
+       | lane_merged($item; $owner; $pr; $since)) as $rows
+      | ($rows | tojson), ($rows[] | "\(.number) \($item | ascii_downcase) \($repo)")
+    end' \
     <<<"$list$named" 2>"$errf")"; then
     die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
   fi
+  [[ "$rows" != null ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
+  MERGED_ITEM_ROWS="${rows%%$'\n'*}"
+  MERGED_ITEM_HITS=""; [[ "$rows" != *$'\n'* ]] || MERGED_ITEM_HITS="${rows#*$'\n'}"
 }
 
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo pr hit hits prior keys fresh key line until view dependency_state dependency_record own_pr own_repo state="${PW_SEEN[0]}"
+  local field recorded value
   for item in "${MERGED_ITEMS[@]}"; do
     PARKED_MERGE_DEFERRED=0
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     PARKED_KEY=""
     item_parked "$item" || true
-    until="$(jq -r --arg item "$item" '(.lanes // [])[] | select(.item == $item and .status == "parked") | .parked.until_pr // empty' <<<"${FLEET_STATE:-"{}"}")" \
-      || die state-invalid "" "path=$STATE_FILE" "field=parked"
+    until="" dependency_record="" own_pr="" own_repo=""
+    while IFS=$'\x1f' read -r field recorded value; do
+      [[ "$recorded" == "$item" ]] || continue
+      case "$field" in
+        until) until+="${until:+$'\n'}$value" ;;
+        dependency) dependency_record=1 ;;
+        pr) own_pr+="${own_pr:+$'\n'}$value" ;;
+        repo) own_repo+="${own_repo:+$'\n'}$value" ;;
+        invalid) die state-invalid "" "path=$STATE_FILE" "field=$value" ;;
+      esac
+    done <<<"$MERGED_FIELDS"
     if [[ -n "$until" ]]; then
       repo="${PARKED_KEY%#*}"
       view="$(gh pr view "$until" --repo "$repo" --json state 2>"$errf")" \
@@ -1797,15 +1825,6 @@ check_merged() {
     fi
     # Its own delivery still needs a merged row before terminal close can
     # remove the lane. Recovery keeps that identity in pending_pr as well.
-    dependency_record="$(jq -c --arg item "$item" '(.lanes // [])[] | select(.item == $item) | (.parked // .pending_pr) | select(.until_pr != null)' <<<"${FLEET_STATE:-"{}"}")" \
-      || die state-invalid "" "path=$STATE_FILE" "field=parked"
-    own_pr="" own_repo=""
-    if [[ -n "$dependency_record" ]]; then
-      own_pr="$(jq -r '.pr // empty' <<<"$dependency_record")" \
-        || die state-invalid "" "path=$STATE_FILE" "field=parked"
-      own_repo="$(jq -r '.repo | ascii_downcase' <<<"$dependency_record")" \
-        || die state-invalid "" "path=$STATE_FILE" "field=parked"
-    fi
     hits=""
     for repo in "${REPOS[@]}"; do
       pr=null
@@ -1821,11 +1840,12 @@ check_merged() {
           "$LANE_MERGED_JQ"' [.] | lane_merged($item; $owner; $pr; $since)' <<<"$view" 2>"$errf")"; then
           die pr-list-invalid "$(cat "$errf")" "repo=$repo" "pr=$pr"
         fi
+        if ! hit="$(jq -r --arg item "$item" --arg repo "$repo" '.[] | "\(.number) \($item | ascii_downcase) \($repo)"' <<<"$MERGED_ITEM_ROWS" 2>"$errf")"; then
+          die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+        fi
       else
         merged_item_read "$item" "$repo" "$pr" "$SINCE_EPOCH" "$SINCE"
-      fi
-      if ! hit="$(jq -r --arg item "$item" --arg repo "$repo" '.[] | "\(.number) \($item | ascii_downcase) \($repo)"' <<<"$MERGED_ITEM_ROWS" 2>"$errf")"; then
-        die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+        hit="$MERGED_ITEM_HITS"
       fi
       [[ -z "$hit" ]] || hits+="$hit"$'\n'
     done
