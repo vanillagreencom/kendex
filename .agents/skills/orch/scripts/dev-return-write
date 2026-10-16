@@ -168,7 +168,8 @@ source "$SCRIPT_DIR/lib/rebase-map.sh"
 # The Apple gate's trigger and its record. A changed path is Apple when one of
 # its directory segments matches an APPLE_DIR_GLOBS glob, the way .gitignore
 # matches a pattern with no slash, or when it is an APPLE_MANIFEST whose content
-# at the commit matches APPLE_MANIFEST_PLATFORMS.
+# at the commit matches APPLE_MANIFEST_PLATFORMS. Committed Xcode reference and
+# synchronized-root names also select matching file or directory names.
 APPLE_WORKFLOW=".github/workflows/mac-run.yml"
 APPLE_LABELS=(ios macos)
 APPLE_DIR_GLOBS=('*.xcodeproj' '*.xcworkspace' ios macos)
@@ -320,6 +321,7 @@ EOF
   printf '  labels:    %s\n' "${APPLE_LABELS[*]}"
   printf '  paths:     a changed path with a directory segment matching %s\n' "${APPLE_DIR_GLOBS[*]}"
   printf '  manifest:  a changed %s matching %s at the commit\n' "$APPLE_MANIFEST" "$APPLE_MANIFEST_PLATFORMS"
+  printf '  projects:  file or directory names from Xcode references and synchronized roots at the merge base or commit\n'
   printf '  record:    %s\n' "$MAC_RUN_PASS"
 }
 
@@ -712,6 +714,7 @@ fi
 # directory under its old path too.
 apple_trigger() {
   local base_ref="$1" paths_file="$2" label apple path rest segment glob listed manifest
+  local merge_base revision project names member projects_file="${2%/*}/projects"
   APPLE_CAUSE=""
   for label in ${labels[@]+"${labels[@]}"}; do
     for apple in "${APPLE_LABELS[@]}"; do
@@ -745,6 +748,73 @@ apple_trigger() {
       return 0
     fi
   done <"$paths_file"
+
+  merge_base="$(git -C "$worktree" merge-base "$base_ref" "$commit")" || return 1
+  for revision in "$merge_base" "$commit"; do
+    git -C "$worktree" ls-tree -r --full-tree --name-only -z "$revision" >"$projects_file" || return 1
+    while IFS= read -r -d '' project; do
+      [[ "$project" == *.xcodeproj/project.pbxproj ]] || continue
+      # A listed project whose contents cannot be read cannot rule out Mac work.
+      if ! manifest="$(git -C "$worktree" cat-file blob "$revision:$project")"; then
+        APPLE_CAUSE="project=$project"
+        return 0
+      fi
+      # Read object fields only. No group paths or build-phase graph are resolved.
+      # Relative values contribute each non-dot component, accepting extra Mac
+      # selections rather than missing a member through its relative spelling.
+      if ! names="$(python3 -c '
+import re
+import sys
+
+tokens = re.finditer(r"/\*.*?\*/|//[^\n]*|\"(?:\\.|[^\"\\])*\"|[{}=;()]|[^\s{}=;()]+", sys.stdin.read(), re.S)
+objects = []
+statement = []
+for match in tokens:
+    token = match.group()
+    if token.startswith(("/*", "//")):
+        continue
+    if token == "{":
+        objects.append({})
+        statement = []
+    elif token == "}":
+        obj = objects.pop()
+        if obj.get("isa") in ("PBXFileReference", "PBXFileSystemSynchronizedRootGroup"):
+            for key in ("path", "name"):
+                for part in obj.get(key, "").split("/"):
+                    if part and part not in (".", ".."):
+                        print(part)
+        statement = []
+    elif token == ";":
+        if objects and len(statement) == 3 and statement[1] == "=":
+            key, _, value = statement
+            if value.startswith(chr(34)):
+                value = re.sub(r"\\(.)", r"\1", value[1:-1])
+            objects[-1][key] = value
+        statement = []
+    else:
+        statement.append(token)
+if objects:
+    sys.exit(1)
+' <<<"$manifest")"; then
+        APPLE_CAUSE="project=$project"
+        return 0
+      fi
+      while IFS= read -r -d '' path; do
+        rest="$path"
+        while [[ -n "$rest" ]]; do
+          segment="${rest%%/*}"
+          while IFS= read -r member; do
+            if [[ -n "$member" && "$segment" == "$member" ]]; then
+              APPLE_CAUSE="path=$path"
+              return 0
+            fi
+          done <<<"$names"
+          [[ "$rest" == */* ]] || break
+          rest="${rest#*/}"
+        done
+      done <"$paths_file"
+    done <"$projects_file"
+  done
 }
 
 # GitHub dispatches the workflow only from the base branch, so the base, never
@@ -762,10 +832,11 @@ if [[ -n "$apple_armed" ]]; then
   if [[ "$no_labels" == false ]] && (( ${#labels[@]} == 0 )); then
     die labels-undeclared "path=$worktree" "base=$apple_base_ref"
   fi
-  apple_paths="$(mktemp)" || die scratch-failed "tmpdir=${TMPDIR:-/tmp}"
-  trap 'rm -f -- "${apple_paths:?}"' EXIT
+  apple_scratch="$(mktemp -d)" || die scratch-failed "tmpdir=${TMPDIR:-/tmp}"
+  trap 'rm -rf -- "${apple_scratch:?}"' EXIT
+  apple_paths="$apple_scratch/paths"
   apple_trigger "$apple_base_ref" "$apple_paths" || die apple-git-failed "path=$worktree" "commit=$commit"
-  rm -f -- "${apple_paths:?}"
+  rm -rf -- "${apple_scratch:?}"
   trap - EXIT
   if [[ -n "$APPLE_CAUSE" ]]; then
     mac_run_recorded=false

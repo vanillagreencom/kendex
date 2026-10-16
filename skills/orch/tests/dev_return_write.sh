@@ -271,15 +271,39 @@ table "a full pass whose command stood lanes down carries subset beside the clas
 rm -- "${VRUN_FIX_CLASS:?}/log"
 
 echo "=== the Apple gate: a triggered pass carries the mac run test line ==="
-# AW's main holds the mac-run workflow, a Package.swift naming neither platform
-# and ios/Moved.swift. Each trigger is one commit off main: apple_commit PATH
+# AW's main holds the mac-run workflow, an Xcode project, a Package.swift naming
+# neither platform and ios/Moved.swift. Each trigger is one commit off main: apple_commit PATH
 # [CONTENT] writes PATH, or deletes it with no CONTENT, and prints the commit.
 AW="$(new_repo apple-wt)"
-mkdir -p "$AW/.github/workflows" "$AW/ios"
+mkdir -p "$AW/.github/workflows" "$AW/ios" "$AW/App.xcodeproj" "$AW/App" "$AW/AppTests"
 printf 'name: mac-run\n' > "$AW/.github/workflows/mac-run.yml"
 printf 'let package = Package(platforms: [.tvOS(.v17)])\n' > "$AW/Package.swift"
 printf 'moved\n' > "$AW/ios/Moved.swift"
-git -C "$AW" add .github Package.swift ios
+printf 'source\n' > "$AW/App/Greeting.swift"
+printf 'test\n' > "$AW/AppTests/GreetingTests.swift"
+cat > "$AW/App.xcodeproj/project.pbxproj" <<'PBX'
+// !$*UTF8*$!
+{
+  objects = {
+    SOURCE = {isa = PBXFileReference; path = Greeting.swift; sourceTree = "<group>"; };
+    TEST = {
+      isa = PBXFileReference;
+      name = "GreetingTests.swift";
+      path = ../External/TestBody.swift;
+      sourceTree = "<group>";
+    };
+    SYNC = {
+      isa = PBXFileSystemSynchronizedRootGroup;
+      explicitFileTypes = {};
+      path = "Features";
+      sourceTree = "<group>";
+    };
+    RELATIVE = {isa = PBXFileReference; path = "../Assets/Shared"; sourceTree = "<group>"; };
+    GROUP = {isa = PBXGroup; path = Tools; sourceTree = "<group>"; };
+  };
+}
+PBX
+git -C "$AW" add .github Package.swift ios App.xcodeproj App AppTests
 git -C "$AW" commit -q -m workflow
 apple_commit() {
   git -C "$AW" checkout -q --detach main &&
@@ -292,6 +316,11 @@ apple_commit() {
     git -C "$AW" rev-parse HEAD
 }
 A_PLAIN="$(apple_commit notes.txt plain)" || exit 1
+A_SOURCE="$(apple_commit App/Greeting.swift changed)" || exit 1
+A_TEST="$(apple_commit AppTests/GreetingTests.swift changed)" || exit 1
+A_SYNC="$(apple_commit Features/New.swift added)" || exit 1
+A_RELATIVE="$(apple_commit Assets/new.txt added)" || exit 1
+A_UNRELATED="$(apple_commit Tools/notes.txt unrelated)" || exit 1
 A_XCODEPROJ="$(apple_commit App.xcodeproj/project.pbxproj objects)" || exit 1
 A_XCWORKSPACE="$(apple_commit App.xcworkspace/contents.xcworkspacedata workspace)" || exit 1
 A_IOS="$(apple_commit ios/App.swift app)" || exit 1
@@ -327,6 +356,11 @@ APPLE_ROWS=(
   "an ios/ path|$APN --commit $A_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
   "a nested macos/ path|$APN --commit $A_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=apps/macos/App.swift=true"
   "a move out of ios/|$APN --commit $A_MOVED|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/Moved.swift=true"
+  "an Xcode source-only change|$APN --commit $A_SOURCE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App/Greeting.swift=true"
+  "an Xcode test-only change selected by name|$APN --commit $A_TEST|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=AppTests/GreetingTests.swift=true"
+  "a synchronized Xcode folder member|$APN --commit $A_SYNC|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Features/New.swift=true"
+  "a relative reference directory component|$APN --commit $A_RELATIVE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Assets/new.txt=true"
+  "an unrelated group name|$APN --commit $A_UNRELATED|rc=0 written=yes .validate_note=null"
   "a Package.swift naming .iOS|$APN --commit $A_PKG_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Package.swift=true"
   "a nested Package.swift naming .macOS|$APN --commit $A_PKG_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=pkg/Package.swift=true"
   "a no-verdict is held as a pass is|$AW_ARGS --commit $A_PLAIN --label ios --validate no-verdict --validate-run-dir $VRUN_CUT --validate-note scoped+suites+green|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=no-verdict=true"
@@ -339,6 +373,21 @@ APPLE_ROWS=(
   "a FAILING mac run test needs no pass line and no labels|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=0 .validate=FAILING:+mac+run+test roundtrip=valid"
 )
 table "${APPLE_ROWS[@]}"
+# An incomplete Git object store can list a committed project without reading it.
+UW="$(new_repo apple-unreadable)"
+mkdir -p "$UW/.github/workflows" "$UW/App.xcodeproj"
+printf 'name: mac-run\n' > "$UW/.github/workflows/mac-run.yml"
+printf '{ objects = {}; }\n' > "$UW/App.xcodeproj/project.pbxproj"
+git -C "$UW" add .github App.xcodeproj
+git -C "$UW" commit -q -m project
+git -C "$UW" switch -q -c work
+printf 'unrelated\n' > "$UW/notes.txt"
+git -C "$UW" add notes.txt
+git -C "$UW" commit -q -m notes
+U_HEAD="$(git -C "$UW" rev-parse HEAD)"
+U_BLOB="$(git -C "$UW" rev-parse HEAD:App.xcodeproj/project.pbxproj)"
+rm -- "$UW/.git/objects/${U_BLOB:0:2}/${U_BLOB:2}"
+table "a present unreadable project requires Mac proof|--worktree $UW --kind implement --issue issue-apple --round-id 30-30 --branch b --commit $U_HEAD --no-labels --validate pass --validate-run-dir $VRUN|rc=2 written=no stderr~dev-return-write:+mac-run-missing+project=App.xcodeproj/project.pbxproj=true"
 # A no-verdict note names its scoped suites and the pass line, one per line.
 run --worktree "$AW" --kind implement --issue issue-apple --round-id 30-30 --branch b --commit "$A_IOS" --no-labels \
   --validate no-verdict --validate-run-dir "$VRUN_CUT" --validate-note $'scoped suites green: x.sh\nmac run test: pass run=4242'
@@ -400,6 +449,8 @@ APPLE_CONTROLS=(
   "label declaration|if [[ \"\$no_labels\" == false ]] && (( \${#labels[@]} == 0 )); then|if false; then|$AP --commit $A_PLAIN|rc=0"
   "label conflict|if [[ \"\$no_labels\" == true ]] && (( \${#labels[@]} > 0 )); then|if false; then|$AP --commit $A_PLAIN --label skills --no-labels|rc=0"
   "directory globs|if [[ \"\$segment\" == \$glob ]]; then|if false; then|$APN --commit $A_IOS|rc=0"
+  "Xcode source names|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] && false; then|$APN --commit $A_SOURCE|rc=0"
+  "Xcode test names|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] && false; then|$APN --commit $A_TEST|rc=0"
   "renamed paths|--name-only --no-renames -z|--name-only -z|$APN --commit $A_MOVED|rc=0"
   "manifest platforms|if LC_ALL=C grep -Eq -- \"\$APPLE_MANIFEST_PLATFORMS\" <<<\"\$manifest\"; then|if false; then|$APN --commit $A_PKG_IOS|rc=0"
   "deleted manifest|[[ -n \"\$listed\" ]] \|\| continue|[[ -n \"\$listed\" ]] \|\| true|$APN --commit $A_PKG_DELETED|rc=2"
