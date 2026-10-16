@@ -229,6 +229,20 @@ class SessionContract(unittest.TestCase):
             + shlex.quote(real) + ' "$@"\n')
         wrapper.chmod(0o755)
 
+    def hold_inspection_until_started(self, events, drawn):
+        # A barrier, not a clock: a pane read the worker began against the
+        # unstarted record answers only once SessionStart stamped the record
+        # and the pane drew what follows it.
+        real = shutil.which("tmux")
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + os.environ["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + "for arg in \"$@\"; do if [[ $arg == capture-pane ]]; then printf 'inspect\\n' >> "
+            + shlex.quote(str(events)) + "; until jq -e " + shlex.quote(".pending.started_at != null") + " "
+            + shlex.quote(str(self.record)) + " >/dev/null 2>&1 && screen=\"$(" + shlex.quote(real)
+            + ' "$@")" && [[ $screen == *' + shlex.quote(drawn) + "* ]]; do sleep 0.05; done; "
+            + "printf '%s\\n' \"$screen\"; exit; fi; done\nexec " + shlex.quote(real) + ' "$@"\n')
+        wrapper.chmod(0o755)
+
     def await_worker_result(self):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -528,13 +542,17 @@ class SessionContract(unittest.TestCase):
         self.wait("stopped")
         events = self.observe_inspection()
         os.mkfifo(self.gate)
-        for drawn in ("pending", "confirmed"):
+        # Pending: two reads of the held, unstarted pane complete before its
+        # start. Confirmed: the first read, begun before the start, captures
+        # the pane after it, and the worker discards that answer.
+        for drawn, reads in (("pending", 2), ("confirmed", 1)):
             with self.subTest(drawn=drawn):
+                if drawn == "confirmed":
+                    self.hold_inspection_until_started(events, "Do you trust the files")
                 fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"history": drawn}))
                 inspections = len(events.read_text().splitlines()) if events.exists() else 0
                 self.call("start", "copilot")
-                # Two reads of the held, unstarted pane complete before its start.
-                self.await_rows(events, inspections + 2)
+                self.await_rows(events, inspections + reads)
                 with self.gate.open("w") as stream:
                     stream.write("1")
                 answer = self.wait(reason="resumed")

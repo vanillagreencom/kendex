@@ -492,12 +492,6 @@ class Session:
                     "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", ""),
                     "delivered" if record.get("brief_delivered") else "undelivered").stdout
                 observed, _, dialog = observed.partition("\n")
-                if observed == "auth":
-                    raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
-                if observed == "wrong-account":
-                    raise Refusal("selection-conflict")
-                if observed == "trust":
-                    raise Refusal("trust-required", dialog_question(dialog))
                 with self.locked():
                     inspected = record
                     record = self.read()
@@ -506,6 +500,12 @@ class Session:
                     # The pane answered for the record it was read against.
                     if any(record.get(key) != inspected.get(key) for key in ("pending", "brief_delivered")):
                         continue
+                    if observed == "auth":
+                        raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
+                    if observed == "wrong-account":
+                        raise Refusal("selection-conflict")
+                    if observed == "trust":
+                        raise Refusal("trust-required", dialog_question(dialog))
                     if identity.get("native_session_id") and identity.get("started_at") and observed in ("idle", "working"):
                         record["identity_verified"] = True
                         record["history"] = self.confirmed_history(record)
