@@ -516,6 +516,7 @@ environment_rows() {
 [0,"env -- git status","launcher-options-end"]
 [0,"env -u env git status","launcher-option-value"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args","wrapper-launcher"]
+[0,"sh /workspace/tmp/waiter.ABC123/launch.sh /workspace/tmp/waiter.ABC123/wait .agents/skills/worktree/scripts/worktree push KEN-4156 --set-upstream","waiter-launch-worktree-set-upstream"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args > out","wrapper-launcher-redirect"]
 [0,"env -u NAME -u OTHER command-name args","unset-launcher"]
 [0,"bash wrapper.sh env -u NAME -u OTHER command-name args","wrapper-unset-launcher"]
@@ -547,6 +548,7 @@ environment_rows() {
 [0,"{ printf '%s\\n' start > receipt; set -o pipefail; command-name args | tee -a receipt; printf 'exit=%s\\n' \"$?\" >> receipt; }","strict-set-receipt"]
 [2,"set > out","bare-set-redirect"]
 [2,"bash wrapper.sh set","wrapper-bare-set"]
+[2,"sh wrapper.sh set","sh-wrapper-bare-set"]
 [2,"bash wrapper.sh set > out","wrapper-bare-set-redirect"]
 [0,"cat <<'EOF' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF","quoted-heredoc-script"]
 [0,"cat <<\"EOF\" > script.py\nset -euo pipefail\nenv -u NAME -u OTHER command-name\n$(env)\nEOF","double-quoted-heredoc-data"]
@@ -1108,6 +1110,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
+      defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
         print "    if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++
       }
@@ -1211,6 +1214,7 @@ main-evidence-cut|FAIL environment: r12-if-shell-declaration-body-main-refusal: 
 main-evidence-cut|FAIL environment: r12-time-shell-declaration-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: wrapper-quoted-unproved-operand-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: wrapper-unterminated-quote-main-refusal: exit=0 expected=2
+set-word-boundary|FAIL environment: waiter-launch-worktree-set-upstream: exit=2 expected=0
 main-evidence-cut|FAIL environment: receipt-without-status-write-main-refusal: exit=0 expected=2
 no-check|FAIL environment: interpreted-quoted-data-retains-main-refusal: exit=0 expected=2
 no-check|FAIL environment: interpreted-file-body-retains-main-refusal: exit=0 expected=2
