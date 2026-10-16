@@ -355,6 +355,8 @@ SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 source "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
 
 # The poll granularity, and with it the slack the cap carries over the command's
 # own limit: a command killed at its limit still has one interval in which to
@@ -853,6 +855,7 @@ ci_runs_validation() {
     ci_fallback=base-unresolved
     return 1
   fi
+  orch_load_env_bot_token "$worktree" 2>>"$log" || true
   if ! rules="$(gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate --jq '.' 2>>"$log")"; then
     unread=true
   fi

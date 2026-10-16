@@ -1126,12 +1126,15 @@ chmod +x "$GH_STUB_BIN/jq"
 cat > "$GH_STUB_BIN/gh" <<'SH'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
-  "auth status") exit 0 ;;
+  "auth status") [[ "${STUB_REQUIRE_TOKEN:-false}" != true ]]; exit $? ;;
   "pr view") path=pr-view ;;
   "api "*) path="$2" ;;
   *) exit 9 ;;
 esac
 shift 2
+if [[ "${STUB_REQUIRE_TOKEN:-false}" == true ]]; then
+  [[ "${GH_TOKEN:-}" == fixture-shared-token ]] || exit 1
+fi
 filter=""
 while (( $# > 0 )); do
   case "$1" in
@@ -1144,6 +1147,7 @@ done
 [[ -n "$filter" || "$path" == pr-view ]] || exit 9
 list() { jq -cn --arg v "$1" '$v | split(",") | map(select(. != ""))'; }
 case "$path" in
+  user) payload='{"login":"fixture"}'; status=0 ;;
   pr-view)
     payload="${STUB_PR_PAYLOAD:-}"
     [[ -n "$payload" ]] || payload="$(jq -cn --arg base "${STUB_PR_BASE-main}" --arg state "${STUB_PR_STATE:-OPEN}" '{baseRefName: $base, state: $state}')"
@@ -1313,6 +1317,46 @@ for row in "${CI_ROWS[@]}"; do
   [[ -z "$queue" && "$world" != queue-required ]] || want_fallback="$want_fallback|$event"
   assert_eq "$got" "$want_out|$want_mode|$want_fallback" "$label" "$err"
 done
+# These rows hold the known-open PR fixed to reach the rule reader even
+# without credentials. The other rows exercise the installed PR lookup chain.
+cp -p -- "$LAYOUT/orch/scripts/pr-view-json" "$TMP_ROOT/pr-view-json.kept"
+printf '#!/usr/bin/env bash\nprintf '\''{"baseRefName":"main","state":"OPEN"}\\n'\''\n' > "$LAYOUT/orch/scripts/pr-view-json"
+proj_ci_auth="$(ci_proj proj-ci-auth CI)"
+mkdir -p "$proj_ci_auth/.kendex"
+CI_AUTH_ROWS=(
+  'shared|state=done guard-exit=0 validate=pass |ci|'
+  'absent|state=done guard-exit=0 validate=pass range|range|rules-unread'
+)
+ci_auth_row() { # SCRIPT CREDENTIAL
+  rm -rf -- "${proj_ci_auth:?}"/tmp/dev-validate-*
+  # The private file wins over both settings files in the existing loader.
+  if [[ "$2" == shared ]]; then
+    printf 'GH_BOT_TOKEN = "fixture-root-token"\n' >> "$proj_ci_auth/kendex.settings.toml"
+    printf '[env]\nGH_BOT_TOKEN = "fixture-nested-token"\n' > "$proj_ci_auth/.kendex/settings.toml"
+    printf 'GH_BOT_TOKEN=fixture-shared-token\n' > "$proj_ci_auth/.env.local"
+  else
+    sed -i.bak '/^GH_BOT_TOKEN =/d' "$proj_ci_auth/kendex.settings.toml"
+    rm -- "$proj_ci_auth/.kendex/settings.toml" "$proj_ci_auth/.env.local"
+  fi
+  ci_world rules
+  RUN_PATH="$GH_STUB_BIN:$PATH" STUB_REQUIRE_TOKEN=true STUB_ANSWER=change_class=standard STUB_DOCS=false STUB_MEASURED=true \
+    run_script "$1" --worktree "$proj_ci_auth" --poll 1 --validate-mode ci --base HEAD
+  local dir
+  dir="$(run_dir_of "$OUT")"
+  printf '%s %s|%s|%s\n' "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
+    "$(start_line "$dir" validate-mode)" "$(start_line "$dir" ci-fallback)"
+}
+for row in "${CI_AUTH_ROWS[@]}"; do
+  IFS='|' read -r credential want <<<"$row"
+  got="$(ci_auth_row "$CI_SCRIPT" "$credential")"
+  assert_eq "$got" "$want" "CI rule reads with $credential credential and no ambient login"
+done
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'orch_load_env_bot_token "$worktree" 2>>"$log" || true' ': # orch_load_env_bot_token "$worktree" 2>>"$log" || true'
+got="$(ci_auth_row "$CI_SCRIPT.mutant" shared)"
+assert_eq "$got" 'state=done guard-exit=0 validate=pass range|range|rules-unread' \
+  'control: the main credential behavior falls back despite a configured shared credential'
+cp -p -- "$TMP_ROOT/pr-view-json.kept" "$LAYOUT/orch/scripts/pr-view-json"
 # A failed read's own stderr is kept beside the run, never discarded.
 ci_world rules-fail
 STUB_RULES_STDERR='gh: HTTP 401: Bad credentials' RUN_PATH="$GH_STUB_BIN:$PATH" \
