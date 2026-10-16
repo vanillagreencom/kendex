@@ -330,7 +330,7 @@ fi
 reply_reader="$SCRIPT_DIR/../../github/scripts/github.sh"
 [[ -x "$reply_reader" ]] || refuse 1 review-replies "$PR_NUM" "$REPO" "$live" 127 unavailable
 reply_status=0
-reply_result="$(GH_TOKEN="$token" GH_REPO="$REPO" "$reply_reader" -C "$PROJECT_ROOT" check-review-replies "$PR_NUM" 2>&1)" \
+reply_result="$(GH_REPO="$REPO" "$reply_reader" -C "$PROJECT_ROOT" check-review-replies "$PR_NUM" 2>&1)" \
   || reply_status=$?
 [[ "$reply_status" -eq 0 && "$reply_result" == "review-replies: pass head=$live" ]] \
   || refuse 1 review-replies "$PR_NUM" "$REPO" "$live" "$reply_status" "$reply_result"

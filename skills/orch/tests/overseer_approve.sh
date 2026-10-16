@@ -84,10 +84,18 @@ set -euo pipefail
 # Reader API calls use separate evidence so the existing approval-call
 # assertions keep their scope. The reader itself judges the Copilot body.
 case "$*" in
-  'api user --jq .login') echo 'review-app[bot]'; exit 0 ;;
+  'api user --jq .login')
+    if [[ "${GH_TOKEN:-}" == fixture_lane ]]; then echo 'lane-app[bot]'; else echo 'overseer-app[bot]'; fi
+    exit 0 ;;
   'api graphql '*)
     if [[ "$*" == *'viewer {'* ]]; then
-      echo '{"data":{"viewer":{"login":"review-app[bot]","databaseId":2002}}}'
+      if [[ "${GH_TOKEN:-}" == fixture_lane ]]; then
+        echo '{"data":{"viewer":{"login":"lane-app[bot]","databaseId":2002}}}'
+      else
+        echo '{"data":{"viewer":{"login":"overseer-app[bot]","databaseId":4004}}}'
+      fi
+    elif [[ "$REPLY_MODE" == bad-lane-reply ]]; then
+      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot","databaseId":3003},"authorAssociation":"NONE","body":"The read can accept an empty value."},{"author":{"login":"lane-app","__typename":"Bot","databaseId":2002},"authorAssociation":"CONTRIBUTOR","body":"Tracked separately."}]}}]}}}}}'
     else
       echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
     fi
@@ -101,11 +109,15 @@ case "$*" in
     jq -nc --arg head "$REPLY_HEAD" '{head:{sha:$head},user:{login:"author",type:"User",id:1001}}'
     exit 0 ;;
   'api repos/o/r/pulls/42/reviews?per_page=100 --paginate')
-    if [[ "$REPLY_MODE" == body-findings ]]; then
+    if [[ "$REPLY_MODE" == body-findings || "$REPLY_MODE" == lane-disposition ]]; then
       jq -nc --arg head "$REPLY_HEAD" '[{id:5539256602,state:"COMMENTED",commit_id:$head,user:{login:"copilot-pull-request-reviewer[bot]",type:"Bot",id:3003},author_association:"NONE",body:"<!-- ccr-overview-v2 -->\n\n### Changes recommended\n\nTwo problems remain in the review body.\n\n**0 open findings**"}]'
     else echo '[]'; fi
     exit 0 ;;
-  'api repos/o/r/issues/42/comments?per_page=100 --paginate') echo '[]'; exit 0 ;;
+  'api repos/o/r/issues/42/comments?per_page=100 --paginate')
+    if [[ "$REPLY_MODE" == lane-disposition ]]; then
+      jq -nc --arg head "$REPLY_HEAD" '[{user:{login:"lane-app[bot]",type:"Bot",id:2002},author_association:"CONTRIBUTOR",body:("Dispositions at " + $head + "\nreview:5539256602 - Declined: the caller rejects empty values before the read.")}]'
+    else echo '[]'; fi
+    exit 0 ;;
 esac
 printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CALLS"
 case "$*" in
@@ -226,6 +238,7 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   RC=0
   (cd -- "$TMP_ROOT/cwd" && env -i GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     ${setting[@]+"${setting[@]}"} \
+    GH_BOT_TOKEN=fixture_lane \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
     CHECK_MODE="${CHECK_MODE-finishing}" CHECK_READS="$CHECK_READS" \
     HEAD_READS="$HEAD_READS" AFTER_HOLD_HEAD="${AFTER_HOLD_HEAD-$live}" \
@@ -250,14 +263,21 @@ assert_eq "$(jq -c . "$INPUT")" \
   "$(jq -cn --arg sha "$GIVEN" '{commit_id: $sha, event: "APPROVE", body: "Each decline holds.\n\"Quoted\" line\n"}')" \
   'the review binds the given commit, APPROVE and the body text' "$ERR"
 assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" 'approval prints no token'
-assert_eq "$(cat "$REPLY_CALLS")" "$TOKEN|o/r|api repos/o/r/pulls/42" \
-  'the reader uses the approval token and target repository' "$ERR"
+assert_eq "$(cat "$REPLY_CALLS")" "fixture_lane|o/r|api repos/o/r/pulls/42" \
+  'the reader keeps the router-selected identity and target repository' "$ERR"
+
+identity_scripts="$(mutant_scripts reader-identity/orch overseer-approve)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reader-identity/github"
+mutate_file "$identity_scripts/overseer-approve" 'reply_result="$(GH_REPO="$REPO"' \
+  'reply_result="$(GH_TOKEN="$token" GH_REPO="$REPO"'
 
 # The reader's verdict and full head, rather than the caller's short prefix,
 # decide whether a body-only finding can receive an approval.
-while IFS='|' read -r label mode reader_head want_rc want_post result; do
+while IFS='|' read -r label mode reader_head want_rc want_post result subject; do
   REPLY_MODE="$mode" REPLY_HEAD="$reader_head" CHECK_MODE=completed
-  run_approve "$RUN" "$TMP_ROOT/token" "$GIVEN" ok 42 "${GIVEN:0:8}" \
+  subject_script="$RUN"
+  [[ "${subject:-}" != identity-control ]] || subject_script="$identity_scripts/overseer-approve"
+  run_approve "$subject_script" "$TMP_ROOT/token" "$GIVEN" ok 42 "${GIVEN:0:8}" \
     --body-file "$TMP_ROOT/body" --repo o/r --hold-copilot
   posted=no
   [[ ! -f "$INPUT" ]] || posted=yes
@@ -274,6 +294,10 @@ reader passes the bound head|pass|$GIVEN|0|yes|
 reader passes another head|pass|$MOVED|1|no|$MOVED
 reader cannot read the review|unavailable|$GIVEN|1|no|read-failed
 reader receives malformed evidence|malformed|$GIVEN|1|no|read-malformed
+lane app answers a body finding on a person-authored PR|lane-disposition|$GIVEN|0|yes|
+lane app names no issue in a thread reply on a person-authored PR|bad-lane-reply|$GIVEN|1|no|untracked-claim
+must-fail: changed reader identity rejects the valid lane answer|lane-disposition|$GIVEN|1|no|suppressed-entry|identity-control
+must-fail: changed reader identity ignores the invalid lane reply|bad-lane-reply|$GIVEN|0|yes||identity-control
 EOF
 unset REPLY_MODE REPLY_HEAD CHECK_MODE
 
