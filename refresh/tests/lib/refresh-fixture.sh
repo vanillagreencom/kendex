@@ -23,9 +23,9 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve(); text = p.read_text()
 old = 'https://github.com/vanillagreencom/kendex.git'
-assert text.count(old) == 1
+assert text.count(old) == 1, 'fixture-error=edit-matches value=' + repr(old)
 changed = text.replace(old, sys.argv[2])
-assert changed != text
+assert changed != text, 'fixture-error=edit-unchanged value=' + sys.argv[1]
 p.write_text(changed)
 TRANSPORT
 }
@@ -297,14 +297,15 @@ root = Path(sys.argv[1])
 path, owner, disposition = sys.argv[2:]
 before = json.loads(subprocess.check_output(["git", "show", "HEAD:.kendex-generated.json"], cwd=root, text=True))
 expected = [e for e in before if isinstance(e, dict) and e["template"] == owner]
-assert len(expected) == 1 and expected[0]["path"] == path
+assert len(expected) == 1 and expected[0]["path"] == path, "retirement=committed-record value=" + path
 after = json.loads((root / ".kendex-generated.json").read_text())
 actual = [e for e in after if isinstance(e, dict) and e["template"] == owner]
 if disposition == "preserved":
-    assert actual == expected
-    assert (root / path).read_bytes() == subprocess.check_output(["git", "show", "HEAD:" + path], cwd=root)
+    assert actual == expected, "retirement=record disposition=preserved value=" + path
+    assert (root / path).read_bytes() == subprocess.check_output(["git", "show", "HEAD:" + path], cwd=root), "retirement=writer-bytes disposition=preserved value=" + path
 elif disposition == "removed":
-    assert actual == [] and not (root / path).exists()
+    assert actual == [], "retirement=record disposition=removed value=" + path
+    assert not (root / path).exists(), "retirement=writer disposition=removed value=" + path
 else:
     raise AssertionError("unknown retirement disposition: " + disposition)
 PY
@@ -319,8 +320,8 @@ import sys
 root = Path(sys.argv[1])
 path, template = sys.argv[2:]
 data = (root / template).read_bytes()
-assert (root / path).read_bytes() == data
-assert json.loads((root / ".kendex-generated.json").read_text()) == [{"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()}]
+assert (root / path).read_bytes() == data, "adoption=workflow-bytes value=" + path
+assert json.loads((root / ".kendex-generated.json").read_text()) == [{"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()}], "adoption=inventory value=" + path
 PY
 }
 

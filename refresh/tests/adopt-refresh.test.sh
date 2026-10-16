@@ -7,7 +7,18 @@ SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)" || { echo 'adopt-refresh: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "adopt-refresh: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'adopt-refresh: scratch=resolve-failed' >&2; exit 1; }
-trap 'rm -rf -- "${TMP:?}"' EXIT
+# A loop that sets ROW names that row, with its last adopter RC and output,
+# when the suite exits inside it: an explicit exit or a set -e stop.
+ROW=''
+exit_report() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ -n "$ROW" ]; then
+    printf 'adopt-refresh: row-exit=%s status=%s rc=%s\n' "$ROW" "$status" "${RC-unset}" >&2
+    printf '%s\n' "${OUT-}" | sed 's/^/        /' >&2
+  fi
+  rm -rf -- "${TMP:?}"
+}
+trap exit_report EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
 ADOPT='refresh/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
@@ -49,16 +60,16 @@ GH_ENVIRONMENT
     python3 - "$DIR/.agents/skills/review-gate/scripts/lib/environment.py" "$key" <<'DROP_ENVIRONMENT'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); old='"'+sys.argv[2]+'", '; assert s.count(old)==1
-changed=s.replace(old, ''); assert changed!=s; p.write_text(changed)
+p=Path(sys.argv[1]); s=p.read_text(); old='"'+sys.argv[2]+'", '; assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
+changed=s.replace(old, ''); assert changed!=s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 DROP_ENVIRONMENT
   elif [ "$mutation" != none ]; then
     python3 - "$DIR/.agents/skills/review-gate/scripts/lib/environment.py" "$mutation" <<'INHERITED_ENVIRONMENT'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); old='env=environment'; assert s.count(old)==1
+p=Path(sys.argv[1]); s=p.read_text(); old='env=environment'; assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
 condition="'--paginate' not in arguments" if sys.argv[2]=='discovery-inherited' else "'--paginate' in arguments"
-changed=s.replace(old, 'env=(None if '+condition+' else environment)'); assert changed!=s; p.write_text(changed)
+changed=s.replace(old, 'env=(None if '+condition+' else environment)'); assert changed!=s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 INHERITED_ENVIRONMENT
   fi
   RC=0
@@ -140,7 +151,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve(); s = p.read_text()
 old = 'if not shipped_copy:'
-assert s.count(old) == 1
+assert s.count(old) == 1, 'fixture-error=edit-matches value=' + repr(old)
 new = '''consumer_path = ".agents/skills/review-gate/templates/kendex-refresh.yml"
 consumer_commits = subprocess.check_output(
     ["git", "-C", str(root), "log", "--full-history", "--format=%H", "HEAD", "--", consumer_path],
@@ -151,7 +162,7 @@ for consumer_commit in consumer_commits:
     shipped_copy = shipped_copy or copied == candidate
 ''' + old
 changed = s.replace(old, new)
-assert changed != s
+assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]
 p.write_text(changed)
 CONSUMER_HISTORY_CONTROL
       run_refresh_command "$DIR" "$DIR/$ADOPT"
@@ -186,7 +197,7 @@ for rule in workflow template history symlink baseline; do
       python3 - "$DIR/$ADOPT" "$CATALOG" <<'BROKEN_TRANSPORT'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); assert s.count(sys.argv[2]) == 1
+p=Path(sys.argv[1]); s=p.read_text(); assert s.count(sys.argv[2]) == 1, 'fixture-error=edit-matches value=' + sys.argv[2]
 p.write_text(s.replace(sys.argv[2], sys.argv[2] + '-missing'))
 BROKEN_TRANSPORT
       ;;
@@ -211,12 +222,12 @@ mutations={
  'symlink': ('if refresh.is_symlink():', 'if False and refresh.is_symlink():', 2),
  'history': ('print("refresh-error=read value=workflow-history", file=sys.stderr)', 'if False: print("refresh-error=read value=workflow-history", file=sys.stderr)', 1),
 }
-old,new,count=mutations[sys.argv[2]]; assert s.count(old)==count
+old,new,count=mutations[sys.argv[2]]; assert s.count(old)==count, 'fixture-error=edit-matches value=' + repr(old)
 changed=s.replace(old,new)
 if sys.argv[2]=='history':
- old='raise SystemExit(2) from error'; assert changed.count(old)==2
+ old='raise SystemExit(2) from error'; assert changed.count(old)==2, 'fixture-error=edit-matches value=' + repr(old)
  position=changed.index(old, changed.index('def git(')); changed=changed[:position]+changed[position:].replace(old, 'return b"" # ' + old, 1)
-assert changed != s; p.write_text(changed)
+assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 CONTROL
   fi
   run_refresh_command "$DIR" "$DIR/$ADOPT"
@@ -246,7 +257,7 @@ for rule in workflow template symlink; do
 from pathlib import Path
 import shlex, sys
 p=Path(sys.argv[1]); s=p.read_text(); old='PREFLIGHT\n# Re-read inventory'
-assert s.count(old)==1
+assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
 root=Path(sys.argv[3]); workflow=root/'.github/workflows/kendex-refresh.yml'
 if sys.argv[2]=='symlink':
  target=Path(sys.argv[4])/'concurrent-target'; target.write_bytes(workflow.read_bytes())
@@ -254,7 +265,7 @@ if sys.argv[2]=='symlink':
 else:
  target=workflow if sys.argv[2]=='workflow' else root/'.agents/skills/review-gate/templates/kendex-refresh.yml'
  effect="printf '# concurrent edit\\n' >>"+shlex.quote(str(target))
-changed=s.replace(old, 'PREFLIGHT\n'+effect+'\n# Re-read inventory'); assert changed != s; p.write_text(changed)
+changed=s.replace(old, 'PREFLIGHT\n'+effect+'\n# Re-read inventory'); assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 CONCURRENT
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$rule" = template ]; then key=template-changed; target="$TEMPLATE"; else key=workflow-changed; target="$REFRESH"; fi
@@ -273,10 +284,10 @@ p=Path(sys.argv[1]); s=p.read_text()
 old={'workflow':'if (refresh.read_bytes() if refresh.exists() else None) != observed:',
      'template':'if template.read_bytes() != (scratch / "source-template").read_bytes():',
      'symlink':'if refresh.is_symlink():'}[sys.argv[2]]
-assert s.count(old)==(2 if sys.argv[2]=='symlink' else 1)
+assert s.count(old)==(2 if sys.argv[2]=='symlink' else 1), 'fixture-error=edit-matches value=' + repr(old)
 before, after = s.rsplit(old, 1)
 changed=before + 'if False: # ' + old + after
-assert changed != s; p.write_text(changed)
+assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 PRECONDITION_CONTROL
   # The preflight now sees the concurrent edit. Reset it before the mutant
   # runs so the planted change again arrives only after classification.
@@ -315,7 +326,7 @@ while IFS='|' read -r rule pattern; do
   python3 - "$DIR/.agents/skills/review-gate/scripts/lib/environment.py" "$pattern" "$rule" <<'ENV_CONTROL'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2].replace("\\n", "\n"); assert s.count(old)==1
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2].replace("\\n", "\n"); assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
 if sys.argv[3]=='read':
  # Keep the failed API request and refusal text. Valid fallback data lets
  # the later policy checks pass, so only the ignored read changes adoption.
@@ -324,9 +335,9 @@ if sys.argv[3]=='read':
 else:
  s=s.replace(old, 'if False and ('+old[3:-1]+'):' )
 if sys.argv[3]=='missing':
- old='policy = selected[0].get("deployment_branch_policy")'; assert s.count(old)==1
+ old='policy = selected[0].get("deployment_branch_policy")'; assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
  s=s.replace(old, 'policy = selected[0].get("deployment_branch_policy") if selected else {"custom_branch_policies": True, "protected_branches": False}')
-assert s != p.read_text(); p.write_text(s)
+assert s != p.read_text(), 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(s)
 ENV_CONTROL
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
@@ -538,7 +549,7 @@ import hashlib, json, sys
 from pathlib import Path
 root = Path(sys.argv[1]); path, template = sys.argv[2:]
 record = [e for e in json.loads((root / '.kendex-generated.json').read_text()) if isinstance(e, dict) and e['path'] == path]
-assert record == [{'path': path, 'template': template, 'templateHash': 'sha256:' + hashlib.sha256((root / template).read_bytes()).hexdigest()}]
+assert record == [{'path': path, 'template': template, 'templateHash': 'sha256:' + hashlib.sha256((root / template).read_bytes()).hexdigest()}], 'adoption=record value=' + path
 RECORD
 then ok 'the rendered caller template adopts with the shared workflow names'
 else bad "rendered caller adoption (rc=$RC)" "$OUT"; fi
@@ -627,9 +638,9 @@ import sys
 p=Path(sys.argv[1]); s=p.read_text()
 rule=sys.argv[2]
 if rule=='legacy':
- assert s.count('environment: kendex')==0 and sys.argv[3]=='kendex'
+ assert s.count('environment: kendex')==0 and sys.argv[3]=='kendex', 'fixture-error=caller-environment value=' + sys.argv[3]
  raise SystemExit(0)
-assert s.count('environment: kendex')==1
+assert s.count('environment: kendex')==1, "fixture-error=edit-matches value='environment: kendex'"
 s=s.replace('environment: kendex', 'environment: '+sys.argv[3])
 if rule=='custom': s=s.replace('secrets.KENDEX_APP_ID', 'secrets.CUSTOM_APP_ID')
 elif rule=='missing': s=s.replace('      KENDEX_APP_PRIVATE_KEY: ${{ secrets.KENDEX_APP_PRIVATE_KEY }}\n', '')
@@ -663,24 +674,24 @@ FIXED_ENVIRONMENT
     python3 - "$owner" "$pattern" <<'CASE_CONTROL'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
-changed=s.replace(old, old.replace('.upper()', '')); assert changed != s; p.write_text(changed)
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
+changed=s.replace(old, old.replace('.upper()', '')); assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 CASE_CONTROL
   elif [ "$mutation" = widened ]; then
     python3 - "$DIR/refresh/lib/caller.py" <<'WIDEN_PAIR_FILTER'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(); old='if set(pair).issubset(secrets)'
-assert s.count(old)==1
-changed=s.replace(old, 'if True or set(pair).issubset(secrets)'); assert changed!=s
+assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
+changed=s.replace(old, 'if True or set(pair).issubset(secrets)'); assert changed!=s, 'fixture-error=edit-unchanged value=' + sys.argv[1]
 p.write_text(changed)
 WIDEN_PAIR_FILTER
   elif [ "$mutation" = disabled ]; then
     python3 - "$DIR/refresh/lib/caller.py" "$pattern" <<'FIXED_MAPPING_CONTROL'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1
-changed=s.replace(old, 'if False and ('+old[3:-1]+'):'); assert changed != s; p.write_text(changed)
+p=Path(sys.argv[1]); s=p.read_text(); old=sys.argv[2]; assert s.count(old)==1, 'fixture-error=edit-matches value=' + repr(old)
+changed=s.replace(old, 'if False and ('+old[3:-1]+'):'); assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 FIXED_MAPPING_CONTROL
   fi
   run_refresh_command "$DIR" "$DIR/$ADOPT"
@@ -821,6 +832,7 @@ MAPPING_ROWS
 # token expressions read both fixed pairs, even when the other pair is
 # complete. Exercise the placement owner, not a second token selector.
 while IFS='|' read -r scope held outside mutation; do
+  ROW="placement scope=$scope held=[$held] outside=[$outside] mutation=$mutation"
   sandbox
   cp "$CALLER" "$DIR/$TEMPLATE"
   cp "$TMP/default-environments" "$FIXTURES/environments.json"
@@ -876,6 +888,7 @@ organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_PRIVATE_KEY|FLEET
 repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_ID|judgment
 repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|refusal
 PLACEMENT_ROWS
+ROW=''
 
 # This table reaches production validation through adoption. Repository
 # discovery succeeds; failed metadata reads belong to the later validator.
@@ -885,9 +898,9 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1]); text = p.read_text()
 old = 'if [ -n "${GH_SHIM_FAIL:-}" ] && [ "$GH_SHIM_FAIL" = "$name" ]; then'
-assert text.count(old) == 1
+assert text.count(old) == 1, 'fixture-error=edit-matches value=' + repr(old)
 changed = text.replace(old, 'if [ "$paginate" = 1 ] && ' + old[3:])
-assert changed != text
+assert changed != text, 'fixture-error=edit-unchanged value=' + sys.argv[1]
 p.write_text(changed)
 VALIDATION_READ_FAILURE
 while IFS='|' read -r owner evidence expected organization_read; do
