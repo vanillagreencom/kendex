@@ -8,7 +8,8 @@
 # listed name, and reads the child's environment from a harness fixture. The
 # live desktop session's names are on that list: the raw tmux rows start the
 # server with them in its global environment, as a server started inside the
-# desktop session holds them, and a --live-display launch keeps them.
+# desktop session holds them, and a --live-display launch keeps them, as the
+# overseer's own line does.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -158,6 +159,43 @@ while IFS='|' read -r form harness var flags label child_env; do
   fi
   assert_eq "$got" "$identity|account=$account|origin=$TMP_ROOT/wt|pane=%9|record=$record|generation=$generation" "$label: child environment"
 done < "$TMP_ROOT/rows"
+
+# The overseer is not a lane: its own line clears the session identity and
+# keeps the owner's live desktop session, so the wakes and GUI terminals it
+# starts have the display to hand on. Run under a parent holding every name.
+overseer_held() { # LIB
+  local line parent=()
+  line="$(env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" "$BASH" -c '
+    source "$1/lane-launch.sh"
+    source "$1/overseer-launch.sh"
+    DEP_ERR="$2/dep.err"
+    lane_trust_prepare() { LANE_TRUST_HOME=""; LANE_TRUST_ROUTE=none; }
+    cd -- "$2" && ol_command_line claude tmp/handoff.md "" "$2" --model opus || exit
+    printf "%s" "$OL_CMD"
+  ' _ "$1" "$TMP_ROOT")" || return 1
+  for name in $NAMES; do parent+=("$name=parent-$name"); done
+  env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" "${parent[@]}" \
+    SCRUB_NAMES="$NAMES" ACCOUNT_VAR=CLAUDE_CONFIG_DIR "$BASH" -c "$line"
+}
+OVERSEER_LIVE="$(env -i PATH="$PATH" "$BASH" -c 'source "$1/lane-launch.sh" && printf "%s," "${LANE_LAUNCH_LIVE_SESSION[@]}"' _ "$LIB")" \
+  || { echo "lane-launch-scrub: live=unread" >&2; exit 1; }
+assert_contains "$(overseer_held "$LIB")" "held=$OVERSEER_LIVE|" \
+  "the overseer's line keeps the live session and clears the session identity"
+if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
+  # Must-fail control: an overseer line built like a lane's holds none of it.
+  cp -R "$LIB" "$TMP_ROOT/overseer-mutant-lib"
+  python3 - "$TMP_ROOT/overseer-mutant-lib/overseer-launch.sh" <<'PYOVERSEER'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+old = "lane_launch_keep_live_session && lane_launch_line"
+text = path.read_text()
+assert text.count(old) == 2
+path.write_text(text.replace(old, "lane_launch_line"))
+PYOVERSEER
+  assert_contains "$(overseer_held "$TMP_ROOT/overseer-mutant-lib")" "held=-|" \
+    "control: an overseer line without the kept live session holds none of it"
+fi
 
 # Execute the launch in each configured shell, including a default-command
 # that initializes the custom function. A bounded child owns each tmux server.

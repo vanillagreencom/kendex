@@ -111,6 +111,7 @@ ot_message() { # REASON FIELD=VALUE...
     brief-undelivered) text='The brief is still undelivered. Attach to the session and start it manually.' ;;
     terminal-missing) text='Set TERMINAL to an installed terminal or install xdg-terminal-exec.' ;;
     terminal-fallback) text='The requested terminal is unavailable. The selected terminal will open the lane.' ;;
+    live-display-dropped) text='The lane record declares the owner'"'"'s live display, and this relaunch does not pass --live-display: the lane runs without the display and its record drops the declaration. Relaunch with --live-display to keep it.' ;;
     terminal-opened) text='The GUI terminal launch was started.' ;;
     issue-invalid) text='The issue identifier does not match the configured pattern.' ;;
     issue-canonical-failed) text='The git-context helper could not canonicalize the issue identifier. Nothing was created.' ;;
@@ -709,14 +710,20 @@ Options:
                     never refused as cap-reached.
   --live-display    Keep the owner's live desktop session for the lane:
                     WAYLAND_DISPLAY, DISPLAY and HYPRLAND_INSTANCE_SIGNATURE,
-                    which every other launch clears with the launching
-                    session's identity, so a key, pointer or capture tool in
-                    the lane cannot reach the owner's screen. Pass it only
-                    for an item whose brief declares that need; a lane that
-                    needs any screen runs its own nested display. Recorded
-                    as live_display true in the lane record under
-                    --state-dir, and repeated by an automatic recovery
-                    relaunch. A --wake without it clears them. A GUI
+                    which every other launch clears from the lane's process
+                    with the launching session's identity, so a key, pointer
+                    or capture tool the lane runs does not reach the owner's
+                    screen. A tmux pane the lane opens on the server itself,
+                    such as a Pi subagent pane, takes the server's
+                    environment and holds them again. Pass it only for an
+                    item whose brief declares that need; a lane that needs
+                    any screen runs its own nested display. Recorded as
+                    live_display true in the lane record under --state-dir.
+                    A Claude, Codex or Copilot --wake keeps them where that
+                    record holds it; a Pi wake reaches the session the launch
+                    started. An automatic recovery relaunch repeats the
+                    option; a manual relaunch without it clears them, drops
+                    the declaration and prints live-display-dropped. A GUI
                     terminal keeps them to open its window, and the lane's
                     shell inside it clears them.
   --wake            Wake an idle lane in its existing worktree: resume its

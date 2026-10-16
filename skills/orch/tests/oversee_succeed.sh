@@ -163,9 +163,10 @@ SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # a second copy of its test. See § The account the pane is really on.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
-# The env words a rendered line opens with, clearing the launching session's
-# identity (LANE_LAUNCH_SCRUB).
-printf -v SCRUB_ENV -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
+# The env words an overseer line opens with, clearing the launching session's
+# identity (LANE_LAUNCH_SCRUB) and keeping the owner's live desktop session
+# (lane_launch_keep_live_session), since the overseer is not a lane.
+SCRUB_ENV="$(lane_launch_keep_live_session && printf ' -u %s' "${LANE_LAUNCH_SCRUB[@]}")"
 SCRUB_ENV="env$SCRUB_ENV"
 # The caller's full-bypass permission word, from the launch table, for the rows
 # whose preference names a codex entry: only a transferable posture lets the

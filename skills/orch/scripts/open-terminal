@@ -174,6 +174,9 @@ LANE_SSH_PROMPT_SECS="${ORCH_LANE_SSH_PROMPT_SECS:-$LANE_SSH_PROMPT_DEFAULT}"
 
 parse_argv "$@"
 [[ "$LIVE_DISPLAY" != true ]] || lane_launch_keep_live_session
+# Each item starts from this scrub; lane_live_display_apply changes it for a
+# woken item alone.
+LAUNCH_SCRUB_BASE=("${LANE_LAUNCH_SCRUB[@]}")
 # The threshold is FORWARDED, never defaulted here: `lanes` owns the bound, its
 # default and ORCH_LANE_MAX_PCT, and a second default in this script is what let
 # a pick typed from the oversee directive refuse an account this gate allowed.
@@ -1478,7 +1481,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$record_model" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
-    --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" --argjson live_display "$LIVE_DISPLAY" \
+    --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" --argjson live_display "${LIVE_DISPLAY:-false}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" --argjson cloud_repo_access "${LAUNCH_REPO_ACCESS:-null}" \
@@ -1545,6 +1548,24 @@ lane_record_read() { # WT_ID FIELD
       '[.lanes[]? | objects | select(.item == "'"$1"'") | .'"$2"'] | first // "absent"')"; then
     ot_message state-read-failed "item=$1" >&2
     return 2
+  fi
+}
+
+# A wake reads the owner's live display from the lane record (live_display):
+# the woken turn is a new process the scrub would clear, and the overseer's
+# wake names no --live-display. A manual relaunch takes the option alone, as it
+# takes --lane-refresh, so one that drops a recorded declaration says so. Each
+# item starts from the launch's own scrub, so one item's record never reaches
+# the next.
+lane_live_display_apply() { # WT_ID ITEM
+  LANE_LAUNCH_SCRUB=("${LAUNCH_SCRUB_BASE[@]}")
+  [[ "$FLEET" == true && "$LIVE_DISPLAY" != true && ( "$WAKE" == true || "$RELAUNCH" == true ) ]] || return 0
+  lane_record_read "$1" live_display || return 1
+  [[ "$LANE_RECORD_VALUE" == true ]] || return 0
+  if [[ "$WAKE" == true ]]; then
+    lane_launch_keep_live_session
+  else
+    ot_message live-display-dropped "item=$2" >&2
   fi
 }
 
@@ -3883,6 +3904,10 @@ for raw in "${ITEMS[@]}"; do
         || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
     fi
     state_ready=true
+  fi
+  if ! lane_live_display_apply "$wt_id" "$item"; then
+    failed=$((failed + 1))
+    continue
   fi
   if ! launch_blockers_gate "$item"; then
     failed=$((failed + 1))

@@ -84,8 +84,16 @@ esac
 exit 0
 LANES
 # claude holds while the file STUB_CLAUDE_HOLD names exists, a woken turn
-# still running, and exits at once where no row sets it.
-printf '#!/usr/bin/env bash\n[[ -z "${STUB_CLAUDE_ARGV:-}" ]] || { printf "%%s\\n" "$@" > "$STUB_CLAUDE_ARGV.part" && mv -- "$STUB_CLAUDE_ARGV.part" "$STUB_CLAUDE_ARGV"; }\nwhile [[ -n "${STUB_CLAUDE_HOLD:-}" && -e "$STUB_CLAUDE_HOLD" ]]; do sleep 0.1; done\nexit 0\n' > "$BIN/claude"
+# still running, and exits at once where no row sets it. Where
+# STUB_CLAUDE_DISPLAY names a file, it writes the live-session names it holds.
+cat > "$BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+[[ -z "${STUB_CLAUDE_ARGV:-}" ]] || { printf '%s\n' "$@" > "$STUB_CLAUDE_ARGV.part" && mv -- "$STUB_CLAUDE_ARGV.part" "$STUB_CLAUDE_ARGV"; }
+[[ -z "${STUB_CLAUDE_DISPLAY:-}" ]] \
+  || printf '%s,%s,%s\n' "${WAYLAND_DISPLAY-unset}" "${DISPLAY-unset}" "${HYPRLAND_INSTANCE_SIGNATURE-unset}" > "$STUB_CLAUDE_DISPLAY"
+while [[ -n "${STUB_CLAUDE_HOLD:-}" && -e "$STUB_CLAUDE_HOLD" ]]; do sleep 0.1; done
+exit 0
+STUB
 # The GUI terminal runs every harness a row launches; none reaches the host's.
 for harness in codex pi copilot; do printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/$harness"; done
 # kendex hooks-off, which a Copilot fleet launch asks whether Copilot's settings
@@ -307,9 +315,25 @@ assert_eq "launch=$(launch_of CC-2) unread=$(grep -c '^open-terminal: launch-ide
   "a tmux launch whose pane runs no harness records its pane and server, no harness, and says so"
 # A launch that declares the owner's live display records the declaration;
 # the full-record rows above hold its absence from every other launch.
+live_display_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .live_display'; }
+dropped_of() { grep -c "^open-terminal: live-display-dropped item=$1$" <<<"$ERR" || true; }
 RUN_TMUX=stub,1,0 run_ot --tmux --live-display "${FLEET_CMD[@]}" CC-5
-assert_eq "rc=$RC live_display=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-5") | .live_display')" \
+assert_eq "rc=$RC live_display=$(live_display_of CC-5)" \
   "rc=0 live_display=true" "a --live-display launch records the declaration in its lane record"
+# A manual relaunch takes the option alone, as it takes --lane-refresh.
+RUN_TMUX=stub,1,0 run_ot --relaunch --tmux --live-display "${FLEET_CMD[@]}" CC-5
+assert_eq "rc=$RC dropped=$(dropped_of CC-5) live_display=$(live_display_of CC-5)" \
+  "rc=0 dropped=0 live_display=true" "a relaunch passing the option keeps the declaration"
+RUN_TMUX=stub,1,0 run_ot --relaunch --tmux "${FLEET_CMD[@]}" CC-5
+assert_eq "rc=$RC dropped=$(dropped_of CC-5) live_display=$(live_display_of CC-5)" \
+  "rc=0 dropped=1 live_display=null" "a relaunch without the option drops the declaration and says so"
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-5")) |= (.live_display = true)' >/dev/null
+DROPPED_OT="$(mutant_scripts dropped-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$DROPPED_OT" 'ot_message live-display-dropped "item=$2" >&2' ':'
+RUN_TMUX=stub,1,0 run_ot SCRIPT="$DROPPED_OT" --relaunch --tmux "${FLEET_CMD[@]}" CC-5
+assert_eq "rc=$RC dropped=$(dropped_of CC-5) live_display=$(live_display_of CC-5)" \
+  "rc=0 dropped=0 live_display=null" "control: a relaunch that does not read the record drops the declaration silently"
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-5")) |= (.live_display = true)' >/dev/null
 RUN_TMUX=stub,1,0 run_ot --tmux "${FLEET_CMD[@]}" CC-5
 assert_eq "rc=$RC live_display=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-5") | .live_display')" \
   "rc=0 live_display=null" "a later launch without the option drops the declaration"
@@ -648,6 +672,30 @@ ORCH_OVERSEER_LANES=1 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) capped=$(grep -c '^open-terminal: cap-' <<<"$OUT$ERR" || true)" \
   "rc=0 woken=1 capped=0" \
   "a wake at a full fleet goes through with no cap line"
+
+echo "=== a wake keeps the owner's live display where the lane record declares it ==="
+# The overseer's wake names no --live-display, and its own line keeps the live
+# session, so the caller holds the names and the record decides what the turn
+# gets.
+wake_display() { # DECLARED [SCRIPT]
+  "$WS" --state-dir "$STATE" update oversee "(.lanes[] | select(.item == \"CC-1\")) |= (if $1 then .live_display = true else del(.live_display) end)" >/dev/null
+  rm -f -- "${TMP_ROOT:?}/wake-display"
+  STUB_CLAUDE_DISPLAY="$TMP_ROOT/wake-display" WAYLAND_DISPLAY=wayland-1 DISPLAY=:0 HYPRLAND_INSTANCE_SIGNATURE=instance-1 \
+    run_ot ${2:+SCRIPT="$2"} --wake --harness claude CC-1
+  WAKE_DISPLAY="rc=$RC turn=$(cat -- "$TMP_ROOT/wake-display" 2>/dev/null || echo unwritten) live_display=$(live_display_of CC-1)"
+}
+wake_display true
+assert_eq "$WAKE_DISPLAY" 'rc=0 turn=wayland-1,:0,instance-1 live_display=true' \
+  "a wake of a lane recorded live_display keeps the live session for its turn and the declaration in its record"
+wake_display false
+assert_eq "$WAKE_DISPLAY" 'rc=0 turn=unset,unset,unset live_display=null' \
+  "a wake of any other lane clears the live session from its turn"
+DISPLAY_OT="$(mutant_scripts wake-display-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$DISPLAY_OT" $'    lane_launch_keep_live_session\n  else' $'    :\n  else'
+wake_display true "$DISPLAY_OT"
+assert_eq "$WAKE_DISPLAY" 'rc=0 turn=unset,unset,unset live_display=true' \
+  "control: a wake that does not read the record clears the display of a lane the record declares"
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= del(.live_display)' >/dev/null
 
 echo "=== a wake of an item no record names is refused as record-missing, with nothing written ==="
 touch "$EXISTS_DIR/CC-40"

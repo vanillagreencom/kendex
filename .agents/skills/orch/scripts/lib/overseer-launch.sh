@@ -690,10 +690,13 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   OL_LAUNCH_HOME="$LANE_TRUST_HOME"
   OL_FORM="$(lane_launch_form "$cmd" "$harness" "$OL_LAUNCH_HOME" "")"
   OL_CMD="$cmd"
+  # The overseer is not a lane: it keeps the owner's live desktop session, so
+  # a --live-display launch, a wake of a lane recorded with it and a GUI
+  # terminal it opens all have the display to hand on.
   if [[ -n "$OL_LAUNCH_HOME" ]]; then
-    OL_CMD="$(lane_launch_line "$cmd" "$harness" "$OL_LANE_VAR" "$OL_LAUNCH_HOME" "$OL_FORM")" || return 1
+    OL_CMD="$(lane_launch_keep_live_session && lane_launch_line "$cmd" "$harness" "$OL_LANE_VAR" "$OL_LAUNCH_HOME" "$OL_FORM")" || return 1
   else
-    OL_CMD="$(lane_launch_line "$cmd" "$harness" "" "" "$OL_FORM")" || return 1
+    OL_CMD="$(lane_launch_keep_live_session && lane_launch_line "$cmd" "$harness" "" "" "$OL_FORM")" || return 1
   fi
   ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_model_id "$harness" "$model" launch)" \
     "$(launch_choice_effort "$harness" "$*")" "$launch_dir" || OL_IDENTITY=""

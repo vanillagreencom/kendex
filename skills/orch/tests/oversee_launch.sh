@@ -25,9 +25,10 @@ OVERSEE="$SRC_DIR/oversee"
 # harness without this file spelling it.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
-# The env words a rendered line opens with, clearing the launching session's
-# identity (LANE_LAUNCH_SCRUB).
-printf -v SCRUB_ENV -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
+# The env words an overseer line opens with, clearing the launching session's
+# identity (LANE_LAUNCH_SCRUB) and keeping the owner's live desktop session
+# (lane_launch_keep_live_session), since the overseer is not a lane.
+SCRUB_ENV="$(lane_launch_keep_live_session && printf ' -u %s' "${LANE_LAUNCH_SCRUB[@]}")"
 SCRUB_ENV="env$SCRUB_ENV"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
 # The word that takes claude's question tool away, from the same table: an
