@@ -683,9 +683,7 @@ done
 read -r -a entries <<<"$symlinks"
 for entry in ${entries[@]+"${entries[@]}"}; do
   case "/$entry/" in */../*|*/./*|//*) continue ;; esac
-  while [[ "$entry" != "/" && "$entry" == */ ]]; do
-    entry="${entry%/}"
-  done
+  strip_trailing_slashes "$entry" entry
   case "$entry" in node_modules|*/node_modules) ;; *) continue ;; esac
   lockfile=${entry%node_modules}package-lock.json
   if ! blob=$(git -C "$1" rev-parse -q --verify "HEAD:$lockfile"); then

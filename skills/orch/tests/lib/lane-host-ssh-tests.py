@@ -1361,11 +1361,11 @@ touch node_modules/dep
 
     def test_control_raw_dependency_entry_skips_trailing_slashes(self):
         original = self.script.read_text()
-        fragment = 'while [[ "$entry" != "/" && "$entry" == */ ]]; do'
+        fragment = 'strip_trailing_slashes "$entry" entry'
         self.assertEqual(original.count(fragment), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(fragment, 'while false && [[ "$entry" != "/" && "$entry" == */ ]]; do'))
+            self.executable(self.script, original.replace(fragment, ': ' + fragment))
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
                 self.assert_dependency_entry("node_modules/", Path("."), True)
