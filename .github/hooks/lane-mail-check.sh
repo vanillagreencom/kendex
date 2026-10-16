@@ -2004,7 +2004,7 @@ claude_attached_agents() { # [emergency STATE_FILE]
 # child identity and do not reach the lead-only check below.
 attached_launch() {
   case "$HARNESS:$TOOL" in
-    claude:Agent | codex:spawn_agent | codex:multi_agent.spawn_agent | codex:multi_agent_v1.spawn_agent | codex:multi_agent_v2.spawn_agent | pi:subagent | pi:delegate_subagent | copilot:task | copilot:Agent | copilot:Task) return 0 ;;
+    claude:Agent | codex:spawn_agent | codex:multi_agent.spawn_agent | codex:multi_agent_v1.spawn_agent | codex:multi_agent_v2.spawn_agent | codex:followup_task | codex:collaborationfollowup_task | pi:subagent | pi:delegate_subagent | copilot:task | copilot:Agent | copilot:Task) return 0 ;;
   esac
   return 1
 }

@@ -93,7 +93,7 @@ unmark_lanes
 launch 600000 Agent
 expect 0 - 'an ordinary session is outside the lane mark'
 
-while IFS='|' read -r harness tool tokens window rc; do
+while IFS='|' read -r harness tool tokens window rc key; do
   new_lane "agent_$harness-$tool-$tokens" AGENT-1
   mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
   case "$harness" in
@@ -104,14 +104,18 @@ while IFS='|' read -r harness tool tokens window rc; do
   ARM_ARGS=(halt)
   run_payload "$(jq -nc --arg p "$TRANSCRIPT" --arg t "$tool" --argjson w "$window" \
     '{session_id:"s1",transcript_path:$p,tool_name:$t,context_window:$w}')" ORCH_HANDOFF_AGENT_RESERVE_TOKENS=10000
-  assert_eq "$RC" "$rc" "$harness attached tool $tool at its reserve boundary"
+  expect "$rc" "$key" "$harness attached tool $tool at its reserve boundary"
   ARM_ARGS=()
 done <<'ROWS'
-codex|spawn_agent|119199|258400|0
-codex|spawn_agent|119200|258400|2
-codex|multi_agent_v2.spawn_agent|119200|258400|2
-pi|subagent|89999|200000|0
-pi|subagent|90000|200000|2
+codex|spawn_agent|119199|258400|0|-
+codex|spawn_agent|119200|258400|2|lane-mail-check: agent-launch=spawn_agent tokens=119200 reserve=10000
+codex|multi_agent_v2.spawn_agent|119200|258400|2|lane-mail-check: agent-launch=multi_agent_v2.spawn_agent tokens=119200 reserve=10000
+codex|followup_task|119199|258400|0|-
+codex|followup_task|119200|258400|2|lane-mail-check: agent-launch=followup_task tokens=119200 reserve=10000
+codex|collaborationfollowup_task|119200|258400|2|lane-mail-check: agent-launch=collaborationfollowup_task tokens=119200 reserve=10000
+codex|send_message|119200|258400|0|-
+pi|subagent|89999|200000|0|-
+pi|subagent|90000|200000|2|lane-mail-check: agent-launch=subagent tokens=90000 reserve=10000
 ROWS
 
 new_lane agent_copilot AGENT-1
