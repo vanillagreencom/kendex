@@ -107,7 +107,7 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
 SERVER_START="$(tm display-message -p '#{start_time}')"
 
-BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
+BRIEF='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
 # new_caller [claude] — a caller pane at index 1, with no context reading yet;
 # sets CALLER_PANE. With `claude` its foreground process names claude; without,
@@ -333,6 +333,10 @@ BARRIER
     assert_eq "$model" "$executable" "$scenario watch record retains the executable selector"
     assert_eq "$(jq -r .overseer.model "$FLEET_STATE")" "$recorded" "$scenario comparison model omits the selector"
     case "$scenario" in
+      absolute)
+        # A retained record from the earlier brief still names its custom handoff.
+        line="${line/Read .agents\/skills\/orch\/SKILL.md and follow .agents\/skills\/orch\/workflows\/oversee-takeover.md with the overseer handoff at /Read .agents\/skills\/orch\/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at }"
+        "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.launch_line=$line' --arg line "$line" >/dev/null ;;
       launch-missing) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.model=null' >/dev/null ;;
       launch-command-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.launch_line)' >/dev/null ;;
       cwd-unread) "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee 'del(.overseer.cwd)' >/dev/null ;;
@@ -874,7 +878,7 @@ assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_D
 # names the harness, and a model off the pi-claude provider names no account,
 # so the line carries no lane variable. The pane opens in the work directory,
 # where no pi project settings stand.
-PI_BRIEF="'/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'"
+PI_BRIEF="'/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'"
 pi_print_row() { # [SUCCEED_BIN] [MODEL] [BRIEF_FILE]
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet

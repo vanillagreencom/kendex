@@ -500,7 +500,7 @@ CALLER_FLAGS=("$BYPASS")
 COPILOT_LINE=(--model claude-opus-5.5 --reasoning-effort high --yolo --autopilot
   --max-autopilot-continues 5 --context long_context --no-auto-update)
 CLAUDE_COMPACT="$(launch_choice_compaction_off claude)"
-BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
+BRIEF='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 # copilot_ladder ROW walled|check|context|below [SUCCEED_BIN] [caller|empty|restricted] [PREFERENCE] — the
 # Copilot caller, its launch record naming its account, run as the wall
 # recovery under its whole line, as a succession past its context mark
@@ -769,7 +769,7 @@ CALLER_FLAGS=(--model pi-claude/claude-fable-5-1 --thinking high)
 new_pi_caller
 run_succeed piwalled 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
 assert_eq "$RC|$(caller_open)|$(launched pi)|$(grep -cx -e --thinking -e high "$TMP_ROOT/argv.pi")|$(tail -n 1 "$TMP_ROOT/argv.pi")" \
-  "0|no|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
+  "0|no|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
   "a walled pi overseer is recovered onto a pi entry with a model, on a claude account with room for it"
 seat claude 10 99 99
 # Its control: a preference parse naming no pi refuses the entry.

@@ -642,7 +642,7 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # The brief is a positional prompt on claude, codex and pi; copilot takes it
 # as the interactive option's value, which starts the session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
-OL_HANDOFF_PROMPT='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at '
+OL_HANDOFF_PROMPT='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at '
 ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   local brief_given=0 caller_brief=""
   if [[ "${1:-}" == --brief ]]; then
@@ -655,7 +655,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   case "$harness" in
     claude) cmd="claude -n overseer" ;;
     copilot) cmd="copilot" brief_flag=" -i" ;;
-    pi) cmd="pi" brief="/skill:orch oversee after reading the overseer handoff at $handoff" ;;
+    pi) cmd="pi" brief="/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at $handoff" ;;
     *) cmd="codex" ;;
   esac
   (( ! brief_given )) || brief="$caller_brief"
@@ -701,7 +701,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # destination; an arbitrary --brief has none. No command text is evaluated.
 OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
 ol_command_read() { # HARNESS LINE
-  local i end prompt handoff
+  local i end prompt handoff=""
   OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
   launch_choice_shell_words "$2" || return 1
   [[ ${#LAUNCH_CHOICE_ARGV[@]} -gt 0 ]] || return 1
@@ -710,6 +710,11 @@ ol_command_read() { # HARNESS LINE
   prompt="${LAUNCH_CHOICE_ARGV[end]}"
   if [[ "$prompt" == "$OL_HANDOFF_PROMPT"* ]]; then
     handoff="${prompt#"$OL_HANDOFF_PROMPT"}"
+  elif [[ "$prompt" == 'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at '* ]]; then
+    # Retained fleet records can hold the default brief from before the takeover route.
+    handoff="${prompt#'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at '}"
+  fi
+  if [[ -n "$handoff" ]]; then
     # Recovery must supply a path the public succession and watch can accept.
     if [[ "$handoff" =~ ^[A-Za-z0-9._/-]+$ ]]; then OL_COMMAND_HANDOFF="$handoff"; fi
   fi

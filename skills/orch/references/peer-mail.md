@@ -1,6 +1,6 @@
 # Peer mail
 
-The overseer-to-overseer channel: one repository's overseer writes another's mailbox. [oversee.md](../workflows/oversee.md) § 4 loads this on a `peer-note` event, and § 1 names the channel. The lane-side verbs are unchanged; `lane-mail --help` holds the protocol and every refusal key.
+The overseer-to-overseer channel: one repository's overseer writes another's mailbox. [oversee.md](../workflows/oversee.md) § 4 loads this on a `peer-note` event, and [overseer takeover § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff) names the channel. The lane-side verbs are unchanged; `lane-mail --help` holds the protocol and every refusal key.
 
 ## Verbs
 

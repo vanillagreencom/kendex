@@ -1,6 +1,6 @@
 # Watch delivery
 
-Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch, and from [skill-rules.md § Coordination](skill-rules.md#coordination), Lane mail, before a lane arms its mailbox monitor.
+At [overseer takeover § 2](../workflows/oversee-takeover.md#2-claim-and-follow-the-watch), read this introduction and Repeat watch for reader setup, the claim read and its refusals, the numbered follow and the current harness row. Read only the standing-watch section that row names. Leave the paragraphs beginning “For a hand-opened session”, “To stop a launcher-owned watch” and “The [oversee.md § 5]” for their launch or stop action. A runtime that wakes only at a background command's exit also reads Single passes, except its final hand-opened-fleet paragraph and its Stop sentence. Read stop instructions only at [oversee.md § 5](../workflows/oversee.md#5-stop). Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch, and from [skill-rules.md § Coordination](skill-rules.md#coordination), Lane mail, before a lane arms its mailbox monitor.
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
