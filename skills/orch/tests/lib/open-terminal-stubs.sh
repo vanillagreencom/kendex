@@ -5,8 +5,9 @@
 # and answers as the real command would, so a row reads the windows a launch
 # opened, the lines it typed and the worktrees it created without opening a
 # real window; sleep logs nothing, and returns at once for a whole-second
-# argument where OT_SLEEP_INSTANT is set. The suites that drive open-terminal
-# through lanes, hosts and cloud sessions share them: the open-terminal-lane
+# argument where OT_SLEEP_INSTANT is set; ssh answers handoff reads, and the
+# claude, codex, pi and copilot stubs exit at once. The suites that drive
+# open-terminal through lanes, hosts and cloud sessions share them: the open-terminal-lane
 # suites, open-terminal-brief-file.sh, open-terminal-cloud.sh and the others
 # that call ot_stub_bin. ot_fleet_state seeds the fleet state a launch under
 # --state-dir binds to.
@@ -14,7 +15,7 @@
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run.
 
-# ot_stub_bin DIR — writes the five stubs into DIR, which it creates.
+# ot_stub_bin DIR — writes those stubs into DIR, which it creates.
 ot_stub_bin() {
 mkdir -p "$1"
 # `worktree create` hands back a fresh directory beside its log, under the
@@ -236,6 +237,13 @@ cat > "$1/ghostty" <<'STUBEOF'
 [[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" > "$OT_CAPTURE"
 exec "$BASH" -c "${!#}"
 STUBEOF
+# Every harness that command can start exits at once, so a GUI row never
+# reaches a host's real CLI and its account. A suite that reads what its
+# harness was handed writes its own stub after this call, or earlier on PATH.
+for harness in claude codex pi copilot; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$1/$harness"
+  chmod +x "$1/$harness"
+done
 chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty" "$1/sleep"
 # Synchronous handoff reads use SSH, independently of the terminal prefix.
 # A neutral host has no handoff. Integration rows execute the real judge in

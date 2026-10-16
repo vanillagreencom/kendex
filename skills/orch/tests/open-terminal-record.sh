@@ -86,6 +86,8 @@ LANES
 # claude holds while the file STUB_CLAUDE_HOLD names exists, a woken turn
 # still running, and exits at once where no row sets it.
 printf '#!/usr/bin/env bash\n[[ -z "${STUB_CLAUDE_ARGV:-}" ]] || { printf "%%s\\n" "$@" > "$STUB_CLAUDE_ARGV.part" && mv -- "$STUB_CLAUDE_ARGV.part" "$STUB_CLAUDE_ARGV"; }\nwhile [[ -n "${STUB_CLAUDE_HOLD:-}" && -e "$STUB_CLAUDE_HOLD" ]]; do sleep 0.1; done\nexit 0\n' > "$BIN/claude"
+# The GUI terminal runs every harness a row launches; none reaches the host's.
+for harness in codex pi copilot; do printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/$harness"; done
 # kendex hooks-off, which a Copilot fleet launch asks whether Copilot's settings
 # switch its hooks off: nothing does here.
 cat > "$BIN/kendex" <<'EOF'
@@ -126,7 +128,7 @@ case "${1:-}" in
 esac
 exit 0
 EOF
-chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/lanes" "$BIN/claude" "$BIN/kendex" "$BIN/tmux"
+chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/lanes" "$BIN/claude" "$BIN/codex" "$BIN/pi" "$BIN/copilot" "$BIN/kendex" "$BIN/tmux"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-stubs.sh"
 ot_stub_bin "$TMP_ROOT/handoff-bin"
 ln -s "$TMP_ROOT/handoff-bin/ssh" "$BIN/ssh"
