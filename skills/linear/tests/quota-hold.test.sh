@@ -31,6 +31,17 @@ case "$config" in
   *'/oauth/token'*)
     printf 'mint\n' >>"$LOG/sends"
     printf '%s' '{"access_token":"fixture-token","token_type":"Bearer","expires_in":3600}___HTTP_CODE___200' ;;
+  *'https://uploads.linear.app/'*)
+    printf 'download\n' >>"$LOG/sends"
+    output=''
+    while (($#)); do
+      if [[ "$1" == -o ]]; then output="$2"; shift; fi
+      shift
+    done
+    printf 'fixture-content' >"$output"
+    code=$(cat "$LOG/download-code")
+    printf '200\n' >"$LOG/download-code"
+    printf '___HTTP_CODE___%s' "$code" ;;
   *)
     printf 'graphql\n' >>"$LOG/sends"
     if [[ "$(cat "$LOG/reply")" == rate ]]; then
@@ -141,14 +152,31 @@ reply 'Rate limit exceeded.' 20000000 '' '' ''
 run cli auth-check
 assert_ne 'app refusal fails' "$RC" 0
 assert_eq 'app initial request mints once' "$(grep -c '^mint$' "$LOG/sends" || true)" 1
-before=$(wc -l <"$LOG/sends" | tr -d ' ')
 token_file=$(find "$LOG/home" -name '*.json' -type f ! -name 'quota-*')
-jq '.expires_at=0' "$token_file" >"$LOG/expired-token"
-mv -- "$LOG/expired-token" "$token_file"
 printf 'success\n' >"$LOG/reply"
-run cli auth-check
-assert_ne 'app binding stays held in another process' "$RC" 0
-assert_eq 'app hold refuses before HTTP or renewal' "$(wc -l <"$LOG/sends" | tr -d ' ')" "$before"
+# The shipped download authorizes initially and renews once after a 401.
+# Both use the same mint transport as GraphQL's authorization path.
+while IFS='|' read -r name transport expires download_code expected_rc expected_sends; do
+    jq --argjson expires "$expires" '.expires_at=$expires' "$token_file" >"$LOG/expired-token"
+    mv -- "$LOG/expired-token" "$token_file"
+    printf '%s\n' "$download_code" >"$LOG/download-code"
+    : >"$LOG/sends"
+    if [[ "$transport" == graphql ]]; then run cli auth-check
+    else run cli attachments fetch https://uploads.linear.app/fixture --output "$LOG/$name.out"
+    fi
+    assert_eq "$name status" "$RC" "$expected_rc"
+    assert_eq "$name HTTP sequence" "$(paste -sd, "$LOG/sends")" "$expected_sends"
+    if [[ "$transport" == graphql ]]; then
+        assert_jq "$name local refusal" "$(quota)" '.source == "local" and .quota.reset_epoch == 20000'
+    else
+        assert_file_contains "$name downloaded file" "$LOG/$name.out" fixture-content
+    fi
+done <<'ROWS'
+graphql-held|graphql|0|200|1|
+download-initial|download|0|200|0|mint,download
+download-renewal|download|20000|401|0|download,mint,download
+ROWS
+before=$(wc -l <"$LOG/sends" | tr -d ' ')
 
 # Private files are required evidence. Malformed and unreadable records never
 # become a successful empty inventory. A failed save retains the refusal.

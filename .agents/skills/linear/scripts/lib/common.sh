@@ -618,7 +618,9 @@ linear_http_post() {
     local config="$1" kind="$2" attempt=1 raw code body headers quota
     local delimiter="___HTTP_CODE___"
     while true; do
-        linear_quota_check || return 1
+        if [[ "${_LJ_TRANSPORT:-graphql}" == graphql ]]; then
+            linear_quota_check || return 1
+        fi
         headers=''
         # Headers go to stdout ahead of the body ("-" is curl's own stdout
         # stream, so they cannot interleave), and are split off below.

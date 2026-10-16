@@ -17,3 +17,8 @@ control_expect 'unselected symlink candidate permits GraphQL'
 control_replace scripts/lib/common.sh 1 \
     '        linear_private_eligible "$dir" || continue' \
     '        : linear_private_eligible "$dir" || continue'
+
+control_expect 'download-initial HTTP sequence'
+control_replace scripts/lib/common.sh 1 \
+    '        if [[ "${_LJ_TRANSPORT:-graphql}" == graphql ]]; then' \
+    '        if true || [[ "${_LJ_TRANSPORT:-graphql}" == graphql ]]; then'
