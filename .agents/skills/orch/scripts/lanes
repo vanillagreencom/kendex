@@ -568,6 +568,11 @@
 #                      config dir on this machine: the setting says the account
 #                      is not this fleet's to use, which a copy of it on another
 #                      machine does not change.
+#   ORCH_MODEL_RECOVERY_LIMIT (default 3): refuse this item's Nth consecutive
+#                      model-switch recovery after N-1 successful replacements.
+#                      A replacement's first turn without a mismatch resets it.
+#                      Refusal: lane-relaunch: model-recovery=limit item=ITEM
+#                      recoveries=COUNT limit=N. The fleet log keeps one row.
 #   ORCH_LANE_MAX_PCT  The default of --max-pct (default 95), read against the
 #                      binding bucket or, with --model, against the window that
 #                      walls that model, and never compared with

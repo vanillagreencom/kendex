@@ -77,15 +77,24 @@ lane_recovery_stop_confirmed() { # OUTPUT ITEM
   [[ "$out" =~ ^stopped\ item=([^\ ]+)\ processes=([0-9]+)$ && "${BASH_REMATCH[1]}" == "$item" ]]
 }
 
+lane_model_recovery_result() { # RECORD STATE_DIR SCRIPTS SESSION RESULT
+  "$3/workflow-state" --state-dir "$2" update oversee '
+    (.fleet_log[]? | select(.kind == "model-switched" and .item == $record.item
+      and .session_id == $session
+      and .launch_identity == ($record | {launch,launched_at}))).recovery = $result
+    ' --argjson record "$1" --arg session "$4" --arg result "$5" >/dev/null
+}
+
 # The hook acquires one session's recovery under workflow-state's lock before
 # starting this outside the predecessor's process group. Check the recovery
 # arguments before stopping it; account selection and launch follow the stop.
 lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
-  local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
+  local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity limit rc=0 result
   fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),
     (.launch.pid // ""), (.launch.start // ""), (.wake.pid // ""),
     (.wake.start // ""), (.account // "")] | join("\u001f")' <<<"$record")" || return 1
   IFS=$'\x1f' read -r item host harness pane pid start wake_pid wake_start account <<<"$fields"
+  limit="$("$SCRIPT_DIR/orch-env" ORCH_MODEL_RECOVERY_LIMIT 3)" || return 1
   claim="$("$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update-report oversee '
     first(.lanes[]? | select(.item == $item)) as $current
     | if $current.launch != $record.launch or $current.launched_at != $record.launched_at
@@ -93,7 +102,24 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
         or $current.model_check.recovery_started == true
       then {state:.,report:false}
       else (.lanes[] | select(.item == $item)).model_check.recovery_started = true
-        | {state:.,report:true} end' --arg item "$item" --arg session "$session" --argjson record "$record")" || return 1
+        | (reduce (.fleet_log[]? | select(.item == $item)) as $row (0;
+            if $row.kind == "model-recovery-reset" then 0
+            elif $row.kind == "model-switched" and ($row.recovery == "replaced"
+              or ($row.recovery == "starting" and $row.launch_identity != $current.model_check.launch_identity))
+            then . + 1 else . end)) as $recoveries
+        | if $recoveries + 1 >= ($limit | tonumber) then
+            ("lane-relaunch: model-recovery=limit item=" + $item
+              + " recoveries=" + ($recoveries | tostring) + " limit=" + $limit) as $text
+            | .fleet_log = ((.fleet_log // []) + [{kind:"model-recovery-limit",item:$item,
+                at:(now|strftime("%Y-%m-%dT%H:%M:%SZ")),recoveries:$recoveries,
+                limit:($limit|tonumber),text:$text}])
+            | {state:.,report:$text}
+          else {state:.,report:true} end
+      end' --arg item "$item" --arg session "$session" --argjson record "$record" --arg limit "$limit")" || return 1
+  if [[ "$claim" != true && "$claim" != false ]]; then
+    jq -r . <<<"$claim" >&2 || return 1
+    return 1
+  fi
   [[ "$claim" == true ]] || return 0
   lane_recovery_args "$record" "$account" "$state_dir" "$SCRIPT_DIR/open-terminal" model-switched || {
     printf 'lane-relaunch: model-recovery=prepare-failed item=%s cause=%s\n' "$item" "$LANE_RECOVERY_CAUSE" >&2
@@ -121,7 +147,14 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
     --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
   export ORCH_TMUX_SESSION="$LANE_RECOVERY_SESSION"
   cd -- "$LANE_RECOVERY_CWD" || return 1
-  "${LANE_RECOVERY_ARGS[@]}"
+  # A new mismatch can arrive before the launcher returns. Its new launch
+  # identity proves that this pending replacement reached a live harness.
+  lane_model_recovery_result "$record" "$state_dir" "$SCRIPT_DIR" "$session" starting || return 1
+  "${LANE_RECOVERY_ARGS[@]}" || rc=$?
+  result=replaced
+  [[ "$rc" -eq 0 ]] || result=failed
+  lane_model_recovery_result "$record" "$state_dir" "$SCRIPT_DIR" "$session" "$result" || return 1
+  return "$rc"
 }
 
 # Pi resolves a relative session directory from the process working directory,
