@@ -225,15 +225,49 @@ Once the PR exists, this run is a continuing action. Clear any stop a capped run
 
 ### 2.1 Base publication
 
-Keep the tier's local validation and internal review. `pr-order` selects `review-first` for `ORCH_DELIVERY=push-base`, so no early pull request exists. Preserve a GitHub item's `Closes [ISSUE_REF]` commit line when the item commits are folded.
+`pr-order` selects `review-first` for `ORCH_DELIVERY=push-base`, so no early pull request exists. Apply § 6.1 Gate 1 before preparation. Bind `[LIFECYCLE]` to `managed` or `self`. For a managed caller, bind `[REVIEW_VERDICT]` to the internal review's returned verdict. A standalone caller needs a non-empty `json_paths` record. Section 1.2's advisory external review supplies no substitute. Micro keeps its explicit internal-review exception.
 
 ```bash
-.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+if ! BASE_REVIEW_STATE="$(.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{tier: (.tier // "standard"), json_paths: (.json_paths // [])}')"; then
+  exit 1
+fi
+if ! jq -e --arg lifecycle "[LIFECYCLE]" --arg verdict "[REVIEW_VERDICT]" '.tier == "micro" or (if $lifecycle == "managed" then $verdict == "pass" else (.json_paths | length) > 0 end)' <<<"$BASE_REVIEW_STATE" >/dev/null; then
+  printf 'delivery-review: issue=%s state=unaccepted\n' '[ISSUE_ID]' >&2
+  exit 1
+fi
 ```
 
-This command owns preparation, commit hooks, SHA reconciliation and validation before transport. Read its `delivery: mode=push-base base=[BASE] commit=[PUSHED_SHA] at=[PUSHED_AT]` receipt only after exit zero. `worktree-push --help` owns its failure contract. A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal returns to the guarded restack in [merge-pr-restack.md](merge-pr-restack.md) steps 1-3. With direct delivery, that route skips its PR reads and uses the same publication owner. A red validation publishes nothing. A failed push sends no completion notice.
+A refused review check publishes nothing. Run [review-pr.md § 1-9](review-pr.md), then repeat this check with its result. Keep the tier's local validation. Bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`, then prepare:
 
-**Linear completion.** Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Keep open post-merge boxes for the overseer. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded. A tracker failure is reported with the pushed SHA and does not repeat transport.
+```bash
+.agents/skills/orch/scripts/worktree-push --prepare-base --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+```
+
+This call runs the existing worktree preparation, normal commit hooks and SHA reconciliation. It returns before validation and transport. Bind `[PREPARED_BASE]` and `[PREPARED_HEAD]` from its `prepared-base: base=[BASE] before=[PREPARED_BASE] commit=[PREPARED_HEAD]` receipt. Apply [The Cycle, Rules reload after a rebase](../SKILL.md#the-cycle) at once against `[BOUND_HEAD]`. Re-read every changed loaded rule before continuing. If the new rules require edits or review, complete that work and restart this section. Keep both receipt values across this pause.
+
+```bash
+.agents/skills/orch/scripts/worktree-push --publish-base [PREPARED_BASE] [PREPARED_HEAD] --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+```
+
+This call refuses a changed head before validation. It validates the prepared head locally, checks it again, then uses the existing pinned base transport without rebasing. Micro runs its final path check after the normal preparation hooks. Read `delivery: mode=push-base base=[BASE] commit=[PUSHED_SHA] at=[PUSHED_AT]` only after exit zero. `worktree-push --help` owns the failure contract. A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal returns to [merge-pr-restack.md](merge-pr-restack.md). That direct route returns here after its guarded restack and rules reload. A red validation publishes nothing. A failed push sends no completion notice.
+
+**Linear completion.** Bind the common checkout before entering the reused step, including for a standalone caller:
+
+```bash
+if ! MAIN_REPO_ROOT="$(.agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]")"; then
+  exit 1
+fi
+```
+
+Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Keep open post-merge boxes for the overseer. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded.
+
+**GitHub completion.** Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
+
+```bash
+gh issue close [ISSUE_NUMBER] --repo "[OWNER/REPO]" --reason completed
+```
+
+Repeat that command with each qualified started bundle child's resolved number and repository. These are the children the PR body's `Closes` lines would include. Normal item commits need no closing trailer. A tracker failure is reported with the pushed SHA and does not repeat transport.
 
 **Completion notice.** Write `[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md` with `Pushed [PUSHED_SHA] to [BASE].` and the tracker completion result. Send that file through the existing lane mailbox:
 

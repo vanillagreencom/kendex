@@ -87,9 +87,12 @@
 #   worktree-push --worktree PATH --issue ID [--state-dir DIR] [push flags...]
 #   worktree-push --check-live-round --worktree PATH --issue ID [--state-dir DIR]
 #   worktree-push --record-restack-validation RUN_DIR --worktree PATH --issue ID [--state-dir DIR]
+#   worktree-push --prepare-base --worktree PATH --issue ID [--state-dir DIR]
+#   worktree-push --publish-base BASE_OID HEAD_OID --worktree PATH --issue ID [--state-dir DIR]
 #
 # Under pr delivery, every argument outside this wrapper's own namespace (--worktree, --issue,
-# --state-dir, --check-live-round, --record-restack-validation, --help) is forwarded verbatim to
+# --state-dir, --check-live-round, --record-restack-validation, --prepare-base,
+# --publish-base, --help) is forwarded verbatim to
 # `worktree push`, which rejects
 # a flag it does not know. The push flag vocabulary lives there alone; see
 # `worktree push --help`, which is where a mistyped flag is caught. The state
@@ -100,15 +103,18 @@
 # validation run for its pre-push head through dev-validate-run --record,
 # once per run directory. A skipped re-test has no run for that head.
 # ORCH_DELIVERY is read through orch-env in the target checkout. Unset and pr
-# retain the branch push. push-base prepares one guarded item commit through
-# worktree push --prepare-base, reconciles it, validates locally, then uses
-# --to-base with the prepared base OID. Transport never rebases after proof.
+# retain the branch push. push-base requires two separate calls. --prepare-base
+# prepares one guarded item commit through worktree push --prepare-base,
+# reconciles it and returns the prepared-base receipt without validation or
+# transport. The lane reloads changed rules before --publish-base BASE_OID HEAD_OID
+# validates that exact prepared head locally and uses --to-base with its base OID.
+# Transport never rebases after proof. A bare direct push refuses.
 # The micro tier uses the normal commit hooks and final item-tier check;
 # other tiers run DEV_VALIDATE_CMD locally. A failed preparation, validation
 # or base-race refusal publishes nothing and requires the restack route.
 # Success emits delivery: mode=push-base base=BRANCH commit=SHA at=UTC.
 # The caller completes the tracker with that timestamp and reports that SHA.
-# Direct delivery ignores --set-upstream and -u because it creates no upstream.
+# The two direct phases accept no branch-push flags because they create no upstream.
 # The worktree-private pending timing record keeps that run's identity after
 # SHA reconciliation deletes the map. A failed publication leaves it for a
 # successful retry of the same head; a completed timing write clears it.
@@ -211,7 +217,7 @@ message() {
 	map-read) printf 'The worktree-private rebase-map file could not be read. Nothing was reconciled and the file was kept.\n' ;;
 	map-sha) printf 'A rebase-map SHA is invalid. The mappings that map carries are not reconciled.\n' ;;
 	map-build) printf 'The rebase map could not be assembled. The mappings it carries are not reconciled.\n' ;;
-	delivery-prepare | delivery-validate | delivery-tier) printf 'Base publication stopped before transport. Repair the named result and prepare again.\n' ;;
+	delivery-prepare | delivery-validate | delivery-tier | delivery-phase) printf 'Base publication stopped before transport. Repair the named result and prepare again.\n' ;;
 	delivery-read) printf 'The publication setting or transport receipt could not be read. A push-exit=0 value means transport already succeeded.\n' ;;
 	esac
 }
@@ -235,6 +241,9 @@ issue=''
 state_dir=''
 check_live_round=false
 record_run_dir=''
+base_phase=''
+prepared_before=''
+prepared_head=''
 push_args=()
 
 while [[ $# -gt 0 ]]; do
@@ -275,6 +284,19 @@ while [[ $# -gt 0 ]]; do
 		record_run_dir="$2"
 		shift 2
 		;;
+	--prepare-base)
+		[[ -z "$base_phase" ]] || fail delivery-phase option="$1"
+		base_phase=prepare
+		shift
+		;;
+	--publish-base)
+		[[ -z "$base_phase" && $# -ge 3 ]] || fail delivery-phase option="$1"
+		[[ "$2" =~ ^[0-9a-f]{40}$ && "$3" =~ ^[0-9a-f]{40}$ ]] || fail delivery-phase option="$1"
+		base_phase=publish
+		prepared_before="$2"
+		prepared_head="$3"
+		shift 3
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -301,6 +323,9 @@ if [[ "$check_live_round" == true || -n "$record_run_dir" ]] && (( ${#push_args[
 	fail check-argument "argument=${push_args[0]}"
 fi
 [[ "$check_live_round" != true || -z "$record_run_dir" ]] || fail check-argument argument=--record-restack-validation
+if [[ -n "$base_phase" ]]; then
+	[[ "$check_live_round" == false && -z "$record_run_dir" && ${#push_args[@]} == 0 ]] || fail delivery-phase "phase=$base_phase"
+fi
 [[ -x "$WORKTREE_BIN" ]] || fail not-executable "path=$WORKTREE_BIN"
 command -v jq >/dev/null 2>&1 || fail missing-command command=jq
 
@@ -554,13 +579,14 @@ delivery="$(cd -- "$worktree_abs" && "$SCRIPT_DIR/orch-env" ORCH_DELIVERY pr)" \
 	|| fail delivery-read "worktree=$worktree_abs"
 base_transport_args=()
 if [[ "$delivery" == push-base ]]; then
-	# Existing PR callers request an upstream; direct delivery creates none.
-	prepare_args=()
-	for arg in ${push_args[@]+"${push_args[@]}"}; do
-		[[ "$arg" == --set-upstream || "$arg" == -u ]] || prepare_args+=("$arg")
-	done
+	[[ -n "$base_phase" ]] || fail delivery-phase phase=missing
+fi
+if [[ -n "$base_phase" ]]; then
+	[[ "$delivery" == push-base ]] || fail delivery-phase "delivery=$delivery"
+fi
+if [[ "$base_phase" == prepare ]]; then
 	prepare_rc=0
-	(cd -- "$worktree_abs" && "$WORKTREE_BIN" push "$worktree_abs" --prepare-base ${prepare_args[@]+"${prepare_args[@]}"}) >"$push_out" || prepare_rc=$?
+	(cd -- "$worktree_abs" && "$WORKTREE_BIN" push "$worktree_abs" --prepare-base) >"$push_out" || prepare_rc=$?
 	cat "$push_out"
 	consume_rebase_map_file restack-reconcile
 	[[ "$prepare_rc" == 0 ]] || exit "$prepare_rc"
@@ -571,6 +597,11 @@ if [[ "$delivery" == push-base ]]; then
 	else
 		fail delivery-prepare "worktree=$worktree_abs"
 	fi
+	exit 0
+fi
+if [[ "$base_phase" == publish ]]; then
+	current_head="$(git -C "$worktree_abs" rev-parse HEAD)" || fail delivery-validate "commit=$prepared_head"
+	[[ "$current_head" == "$prepared_head" ]] || fail delivery-validate "commit=$prepared_head" "head=$current_head"
 	tier=standard
 	if [[ "$state_present" == true ]]; then
 		tier="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.tier // "standard"')" \
