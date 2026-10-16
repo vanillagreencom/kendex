@@ -104,10 +104,8 @@ screen_for() {
     # tmux capture-pane -pJ from fleet:gh-1326 pane %1656, after the refusals.
     # Full viewport/provenance: KEN-4109 attachment overseer215-pi-screen-capture-source.md.
     pi_current) cat "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_no_title) sed '1d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_footer) sed '/^● fleet /d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_dashboard) sed '/^┏/,/^┗/d' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_no_prompt) sed '/^π/d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_empty_bar) sed '/^● fleet /{s/─/ /g;s/[0-9][0-9]*%/0%/;}' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_empty_bar_no_dashboard) screen_for pi_current_empty_bar | sed '/^┏/,/^┗/d' ;;
     # QolStatusEditor omits the prefix at idle. Pi's CompactionStatusIndicator
@@ -115,6 +113,12 @@ screen_for() {
     # child badge come from renderStatusLine and subagentStatuslineMarker.
     pi_current_idle) sed '/^● fleet /s/^● //' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_other_busy) sed '/^● fleet /s/^● /⠋ Compacting context... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_animated) sed '/^● fleet /s/^● /⠏ /' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_retry) sed '/^● fleet /s/^● /⠙ Retrying (1\/3) in 2s... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_auto_compact) sed '/^● fleet /s/^● /⠹ Context overflow detected, Auto-compacting... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_summary) sed '/^● fleet /s/^● /⠸ Summarizing branch... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
+    pi_current_transcript_bullet) printf '● Finished the task.\n'; screen_for pi_current_idle ;;
+    pi_current_quoted_footer) screen_for pi_current; screen_for pi_current_idle ;;
     pi_current_idle_empty_bar_no_dashboard) screen_for pi_current_empty_bar_no_dashboard | sed '/^● fleet /s/^● //' ;;
     pi_current_unknown_context_suffix) screen_for pi_current_idle_empty_bar_no_dashboard | sed '/^fleet /s/0%/…% child-agent/' ;;
     pi_current_idle_no_title) screen_for pi_current_idle_empty_bar_no_dashboard | sed '1d' ;;
@@ -130,18 +134,18 @@ screen_for() {
 
 echo "=== lane-state § states: one row per state, over screens and process reads ==="
 
-# NAME|WINDOW|CMD|PID|SCREEN|SESSION|ACCOUNT|WANT
+# NAME|WINDOW|CMD|PID|SCREEN|SESSION|ACCOUNT|WANT|LOCALE
 #
 # Every state the judge can name has a row, and each row is the inverse of a
 # neighbour: the same screen under a different process observation or account
 # reading, or the same process under a different screen, lands elsewhere in the
 # table. WANT is the one word plus the status, so a row fails on the fact it
 # names.
-while IFS='|' read -r name window cmd pid screen session account want; do
+while IFS='|' read -r name window cmd pid screen session account want screen_locale; do
   [[ -n "$name" ]] || continue
   row_state=""
   row_rc=0
-  lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" "$account" || row_rc=$?
+  LC_ALL="${screen_locale:-C}" lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" "$account" || row_rc=$?
   assert_eq "$row_state rc=$row_rc" "$want rc=0" "$name"
 done <<'ROWS'
 no window is gone, whatever its last screen said|gone|claude|100|idle|||gone
@@ -179,23 +183,40 @@ a signed-out copilot capture is walled despite its idle composer|listed|node|100
 a signed-out copilot capture is walled despite its draft|listed|node|100|copilot_signed_out_draft|||walled
 a copilot footer running a command is a turn in flight|listed|node|100|copilot_working|||working
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
-a current Pi editor is input-ready|listed|pi|100|pi_current|||idle
+a current idle Pi editor is input-ready|listed|pi|100|pi_current_idle|||idle
 a compact pi-qol editor is input-ready|listed|pi|100|pi_qol_idle|||idle
+a static working Pi footer refuses input|listed|pi|100|pi_current|||working
+a static working Pi footer refuses input in UTF-8 locale|listed|pi|100|pi_current|||working|C.UTF-8
+an animated working Pi footer refuses input|listed|pi|100|pi_current_animated|||working
+a compacting Pi footer refuses input|listed|pi|100|pi_current_other_busy|||working
+a compacting Pi footer refuses input in UTF-8 locale|listed|pi|100|pi_current_other_busy|||working|C.UTF-8
+an automatic compaction Pi footer refuses input|listed|pi|100|pi_current_auto_compact|||working
+a retrying Pi footer refuses input|listed|pi|100|pi_current_retry|||working
+a branch summary Pi footer refuses input|listed|pi|100|pi_current_summary|||working
+a transcript bullet does not make idle Pi busy|listed|pi|100|pi_current_transcript_bullet|||idle
+a quoted active footer does not make idle Pi busy|listed|pi|100|pi_current_quoted_footer|||idle
 a Pi working editor stays refused|listed|pi|100|pi_working|||unjudged
 a dialog in a Pi pane stays refused|listed|pi|100|asking|||asking
 a busy Pi process outranks its editor|listed|pi|100|pi_qol_idle|busy||working
 an unreadable Pi process stays refused|listed|pi|100|pi_qol_idle|unjudged||unjudged
 a Pi editor without its footer stays unjudged|listed|pi|100|pi_current_no_footer|||unjudged
-a Pi editor without its prompt stays unjudged|listed|pi|100|pi_current_no_prompt|||unjudged
+a Pi editor without its prompt stays unjudged|listed|pi|100|pi_current_idle_no_prompt|||unjudged
 ROWS
 
 lane_state row_state listed pi 100 "$(screen_for pi_qol_idle)" '' '' '' '' '' unreadable
 assert_eq "$row_state" unjudged 'an unreadable Pi pane stays refused'
 PI_INPUT_MUTANT="$(mutant_scripts pi-input lib/lane-state.sh)" || exit 1
 mutate_file "$PI_INPUT_MUTANT/lib/lane-state.sh" '|| pane_pi_editor_ready "$_ls_slice"' ''
-for screen in pi_current pi_qol_idle; do
+for screen in pi_current_idle pi_qol_idle; do
   pi_input_control="$(source "$PI_INPUT_MUTANT/lib/lane-state.sh"; lane_state row_state listed pi 100 "$(screen_for "$screen")"; printf '%s' "$row_state")"
   assert_eq "$pi_input_control" unjudged "control: removing Pi input readiness rejects $screen"
+done
+
+PI_ACTIVITY_MUTANT="$(mutant_scripts pi-activity lib/lane-state.sh)" || exit 1
+mutate_file "$PI_ACTIVITY_MUTANT/lib/lane-state.sh" 'activity="$PI_CURRENT_ACTIVITY_RE"' 'activity="a^"'
+for screen in pi_current pi_current_other_busy; do
+  pi_activity_control="$(source "$PI_ACTIVITY_MUTANT/lib/lane-state.sh"; lane_state row_state listed pi 100 "$(screen_for "$screen")"; printf '%s' "$row_state")"
+  assert_eq "$pi_activity_control" idle "control: without footer activity the active $screen editor wrongly accepts input"
 done
 
 # A disabled classifier leaves the signed-out capture at the composer rung.
@@ -296,18 +317,15 @@ idle Pi with an empty bar and no footer is not ready in UTF-8 locale|pi_current_
 idle Pi with an empty bar and no prompt is not ready in C locale|pi_current_idle_no_prompt|no|C
 idle Pi with an empty bar and no prompt is not ready in UTF-8 locale|pi_current_idle_no_prompt|no|C.UTF-8
 current Pi readiness allows different title and footer content|pi_current_variable|yes
-current Pi without its title is not ready|pi_current_no_title|no
+current idle Pi without its title is not ready|pi_current_idle_no_title|no
 current Pi without its footer is not ready|pi_current_no_footer|no
-current Pi without its prompt is not ready|pi_current_no_prompt|no
+current idle Pi without its prompt is not ready|pi_current_idle_no_prompt|no
 a Pi startup interrupted before its editor is not ready|pi_header_only|no
 a Working border without Pi startup is not proof of Pi|pi_editor_only|no
 a bare shell is not the harness up|shell|no
 a blank screen is not the harness up|blank|no
 ROWS
 
-up=no
-! pane_working "$(screen_for pi_current)" || up=yes
-assert_eq "$up" no 'current Pi readiness does not assert turn activity'
 PI_CURRENT_MUTANT="$(mutant_scripts pi-current lib/lane-state.sh)" || exit 1
 mutate_file "$PI_CURRENT_MUTANT/lib/lane-state.sh" '|| { grep -Eq -- "$PI_CURRENT_TITLE_RE"' '|| { false && grep -Eq -- "$PI_CURRENT_TITLE_RE"'
 pi_up="$(export LC_ALL=C; source "$PI_CURRENT_MUTANT/lib/lane-state.sh"; if pane_harness_up "$(screen_for pi_current_idle_empty_bar_no_dashboard)"; then printf yes; else printf no; fi)"

@@ -132,7 +132,18 @@ FRAME_RULE_RE=$'^\xe2\x94\x80'
 DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
-pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
+pane_working() {
+  local rc=0
+  grep -Eq -- "$WORKING_RE" <<<"$1" || rc=$?
+  [[ "$rc" == 1 ]] || return "$rc"
+  # QolStatusEditor embeds Pi's live indicator in renderStatusLine's model
+  # footer. Read the last footer so quoted captures and transcript bullets
+  # above an idle footer cannot turn a completed turn back into work.
+  awk -v footer="$PI_CURRENT_FOOTER_RE" -v activity="$PI_CURRENT_ACTIVITY_RE" '
+    $0 ~ footer { working = ($0 ~ activity) }
+    END { exit !working }
+  ' <<<"$1"
+}
 
 # The folder-trust question, which STOPS a harness before it reads the
 # arguments it was launched with. Claude Code asks it about a folder it holds
@@ -205,9 +216,13 @@ PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working (─)+[[:space:]]*$'
 # Group repeated glyphs so byte-oriented C locale repeats the whole character.
 PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+(─)+[[:space:]]*$'
 # pi-qol joins variable metadata with " / " and draws a percent display token.
-# Activity prefixes, bar fill, context values and child badges vary independently
-# of editor readiness; do not interpret them here.
+# Bar fill, context values and child badges vary independently of editor
+# readiness. pane_working owns the activity prefix's meaning.
 PI_CURRENT_FOOTER_RE='^.+ / .+ [^[:space:]]+%([[:space:]].*)?$'
+# pi-qol applyWorkingIndicatorMode emits ● in static mode. Pi's Loader emits
+# these frames for animated work, retry, compaction and branch summaries.
+# Alternation keeps whole glyphs intact in byte-oriented C locale.
+PI_CURRENT_ACTIVITY_RE='^(●|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)[[:space:]]'
 PI_CURRENT_PROMPT_RE='^π[[:space:]]*$'
 
 # The compact editor can put its title in tmux's pane border, outside capture.
