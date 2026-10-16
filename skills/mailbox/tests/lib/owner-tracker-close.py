@@ -32,16 +32,23 @@ elif args[:2] == ["issues", "get"]:
         sys.exit(1)
     print(json.dumps(item))
 elif args[:2] == ["comments", "create"]:
-    if row in ("comment-failed", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
+    if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
         if row == "comment-edited":
             item["description"] = json.loads((root / "later-description.json").read_text())
             state.write_text(json.dumps(item))
+        if row == "comment-label-edit":
+            item["labels"].remove("removed-later")
+            item["labels"].append("added-later")
+            state.write_text(json.dumps(item))
+        if row == "comment-refused":
+            print(json.dumps({"success": False, "data": {"success": False, "comment": None}}))
+            sys.exit(0)
         print("tracker: refused=comment", file=sys.stderr)
         sys.exit(1)
     comments.append(Path(args[args.index("--body-file") + 1]).read_text())
     comments_path.write_text(json.dumps(comments))
-    print("{}")
+    print(json.dumps({"success": True, "data": {"success": True, "comment": {"id": "question-id"}}}))
 elif args[:2] == ["issues", "update"]:
     if row == "label-failed" and "--labels" in args and not (root / "closing").exists():
         print("tracker: refused=write", file=sys.stderr)
@@ -70,10 +77,13 @@ else:
 def run(source, scratch, bash):
     facts = {"unposted": True, "notice": True, "posted": True, "edited": True,
              "retained_error": True, "comments": True, "rollback_owned": True,
-             "rollback_unowned": True, "rollback_notice": True}
+             "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
+             "rollback_labels": True}
     for row, posted in (("label-failed", False), ("comment-failed", False),
                         ("comment-edited", False), ("rollback-read", False),
-                        ("rollback-failed", False), ("posted", True), ("edited", True)):
+                        ("rollback-failed", False), ("posted", True), ("edited", True),
+                        ("comment-refused", False), ("comment-preexisting", False),
+                        ("comment-label-edit", False)):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"
@@ -91,7 +101,9 @@ def run(source, scratch, bash):
             written = "**Owner, what you do:** Approve change\n\n" + body
             later = "A later edit keeps its own purpose.\r\n\r\nKeep these bytes.\n\n"
             (root / "later-description.json").write_text(json.dumps(later))
-            labels = ["skills"] if posted else ["owner-gated", "skills"]
+            labels = ["owner-gated", "skills"] if row in ("label-failed", "comment-preexisting") else ["skills"]
+            if row == "comment-label-edit":
+                labels.append("removed-later")
             item = {"description": original, "labels": labels, "assignee": "Owner Person"}
             state = root / "item.json"
             state.write_text(json.dumps(item))
@@ -121,10 +133,19 @@ def run(source, scratch, bash):
                     and len(after_comments) == 2 and ("ask=" + ask_id) in after_comments[-1])
             else:
                 facts["comments"] &= after_comments == previous_comments
-            if row == "comment-failed":
+            if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit"):
                 facts["rollback_owned"] &= original != written and after_ask["description"] == original
+                expected_labels = ["added-later", "skills"] if row == "comment-label-edit" else labels
+                facts["rollback_labels"] &= after_ask["labels"] == expected_labels
+                if row == "comment-refused":
+                    response_file = Path(ask.stderr.partition("error-file=")[2].strip())
+                    facts["comment_refused"] &= (pending["tracker_posted"] is False
+                        and "cause=comment" in ask.stderr and response_file.is_file()
+                        and json.loads(response_file.read_text()) == {"success": False,
+                            "data": {"success": False, "comment": None}})
             elif row == "comment-edited":
                 facts["rollback_unowned"] &= (after_ask["description"] == later
+                    and after_ask["labels"] == ["owner-gated", "skills"]
                     and "cause=rollback-unowned" in ask.stderr)
             elif row in ("rollback-read", "rollback-failed"):
                 diagnostics = ask.stderr.splitlines()

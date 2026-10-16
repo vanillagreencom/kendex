@@ -252,6 +252,8 @@ owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTE
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   local tracker="$1" envelope="$2" work="$3" issue labels current owner description latest owns_description original_description
+  local added_label rollback_labels comment_error
+  local rollback_label_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
@@ -267,6 +269,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
     OWNER_TRACKER_CAUSE=labels-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
+  added_label="$(jq -r --arg label "$OWNER_TRACKER_LABEL" '.labels | index($label) == null' <<<"$current")" || return 1
   description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
     (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
   description="${description%.}"
@@ -280,28 +283,40 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
     OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
   }
-  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err" || {
-    OWNER_TRACKER_CAUSE=comment
-    owner_tracker_unwritten "$issue" comment "$work/tracker-comment.err"
-    latest="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker-rollback.err")" || {
-      owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
-    }
-    # Restore only while the fresh read still contains this ask's exact write.
-    owns_description="$(jq -r --arg written "$description" '(.description // "") == $written' \
-      <<<"$latest" 2>"$work/tracker-rollback.err")" || {
-      owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
-    }
-    [[ "$owns_description" == true ]] || {
-      owner_tracker_unwritten "$issue" rollback-unowned; return 0;
-    }
-    original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
-    original_description="${original_description%.}"
-    "$tracker" issues update "$issue" --description "$original_description" \
-      >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
-      owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
-    return 0
+  comment_error="$work/tracker-comment.err"
+  if "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
+    if jq -e '.success == true' "$work/tracker.out" >/dev/null 2>"$work/tracker-comment.err"; then
+      OWNER_TRACKER_POSTED=1
+      return 0
+    fi
+    comment_error="$work/tracker.out"
+  fi
+  OWNER_TRACKER_CAUSE=comment
+  owner_tracker_unwritten "$issue" comment "$comment_error"
+  latest="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker-rollback.err")" || {
+    owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
   }
-  OWNER_TRACKER_POSTED=1
+  # Restore only while the fresh read still contains this ask's exact write.
+  owns_description="$(jq -r --arg written "$description" '(.description // "") == $written' \
+    <<<"$latest" 2>"$work/tracker-rollback.err")" || {
+    owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
+  }
+  [[ "$owns_description" == true ]] || {
+    owner_tracker_unwritten "$issue" rollback-unowned; return 0;
+  }
+  original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
+  original_description="${original_description%.}"
+  if [[ "$added_label" == true ]]; then
+    rollback_labels="$(owner_tracker_labels "$latest" REMOVE "$OWNER_TRACKER_LABEL" 2>"$work/tracker-rollback.err")" || {
+      owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
+    }
+    rollback_label_args=(--clear-labels)
+    [[ -z "$rollback_labels" ]] || rollback_label_args=(--labels "$rollback_labels")
+  fi
+  "$tracker" issues update "$issue" --description "$original_description" ${rollback_label_args[@]+"${rollback_label_args[@]}"} \
+    >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
+    owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
+  return 0
 }
 
 owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY

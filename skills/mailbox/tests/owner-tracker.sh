@@ -49,8 +49,10 @@ assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'only successful tracker po
 assert_eq "$(jq '.rollback_owned' <<<"$CLOSE_FACTS")" true 'failed comments restore the exact description the ask replaced'
 assert_eq "$(jq '.rollback_unowned' <<<"$CLOSE_FACTS")" true 'rollback preserves a later description and reports lost ownership'
 assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback reports its cause and retains the comment error'
+assert_eq "$(jq '.comment_refused' <<<"$CLOSE_FACTS")" true 'refused comment acknowledgements stay unposted and retain the response'
+assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes only the added owner label from fresh labels'
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed unposted exact-action retained-error rollback-owner; do
+  for rule in pending failed bound private-failed unposted exact-action retained-error rollback-owner comment-refused rollback-label; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -85,10 +87,18 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
         'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \
         'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"'
       assertion='a refused label retains tracker error bytes after close'
-    else
+    elif [[ "$rule" == rollback-owner ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         '[[ "$owns_description" == true ]] || {' '[[ "$owns_description" == true ]] || true || {'
       assertion='rollback preserves a later description and reports lost ownership'
+    elif [[ "$rule" == comment-refused ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        "if jq -e '.success == true'" "if : jq -e '.success == true'"
+      assertion='refused comment acknowledgements stay unposted and retain the response'
+    else
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        'if [[ "$added_label" == true ]]; then' 'if false && [[ "$added_label" == true ]]; then'
+      assertion='rollback removes only the added owner label from fresh labels'
     fi
     control_rc=0
     MAILBOX_UNDER_TEST="$TMP_ROOT/control-$rule" "$BASH" "$ROOT/skills/mailbox/tests/owner-tracker.sh" \
