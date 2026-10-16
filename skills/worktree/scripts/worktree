@@ -866,6 +866,24 @@ committed_settings_keys() (
   done <<<"$tracked"
 )
 
+# Fills COMMITTED_UNEXPORT with committed_settings_keys, for a git command
+# whose hooks must read the item tree's own settings.
+read_committed_unexport() {
+  local keys key
+  COMMITTED_UNEXPORT=()
+  keys="$(committed_settings_keys)" || return 1
+  while IFS= read -r key; do
+    [[ -z "$key" ]] || COMMITTED_UNEXPORT+=("$key")
+  done <<<"$keys"
+}
+
+# Runs the command with COMMITTED_UNEXPORT out of the environment git and its
+# hooks inherit. The keys stay shell variables, which the GitHub helper reads.
+without_committed_settings() (
+  [[ ${#COMMITTED_UNEXPORT[@]} -eq 0 ]] || export -n "${COMMITTED_UNEXPORT[@]}"
+  "$@"
+)
+
 # Parse `push`'s arguments. Sets PUSH_ARG, PUSH_SET_UPSTREAM and
 # PUSH_AUTO_REBASE; returns 1 with the usage error on stderr for anything it
 # does not accept.
@@ -3970,9 +3988,13 @@ case "${1:-}" in
           FOLD_TREE="$(git -C "$WT_PATH" rev-parse 'HEAD^{tree}')" || exit 1
           FOLD_COMMITS="$(git -C "$WT_PATH" rev-list --reverse "$BASE_PUSH_BEFORE..HEAD")" || exit 1
           FOLD_FIRST="${FOLD_COMMITS%%$'\n'*}"
+          if ! read_committed_unexport; then
+            worktree_message push-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the fold's commit hooks; refusing to prepare." >&2
+            exit 1
+          fi
           record_pending_rewrite "$WT_PATH" "$FOLD_HEAD" || exit 1
           git -C "$WT_PATH" reset --soft "$BASE_PUSH_BEFORE" || exit 1
-          if ! git -C "$WT_PATH" commit -C "$FOLD_FIRST"; then
+          if ! without_committed_settings git -C "$WT_PATH" commit -C "$FOLD_FIRST"; then
             # Preserve hook edits in the index while restoring the item head.
             git -C "$WT_PATH" reset --soft "$FOLD_HEAD" || exit 1
             clear_pending_rewrite "$WT_PATH" || exit 1
@@ -4021,24 +4043,17 @@ case "${1:-}" in
       BASE_PUSH_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
       PUSH_REF="$BASE_PUSH_HEAD:refs/heads/$DEFAULT_BRANCH"
     fi
-    if ! PUSH_COMMITTED_KEYS="$(committed_settings_keys)"; then
+    if ! read_committed_unexport; then
       worktree_message push-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the pre-push hooks; refusing to push." >&2
       exit 1
     fi
-    PUSH_UNEXPORT=()
-    while IFS= read -r PUSH_KEY; do
-      [[ -z "$PUSH_KEY" ]] || PUSH_UNEXPORT+=("$PUSH_KEY")
-    done <<<"$PUSH_COMMITTED_KEYS"
     PUSH_OUTPUT=""
     PUSH_TARGET="${CURRENT_BRANCH:-HEAD}"
     [[ -z "$PUSH_TO_BASE" ]] || PUSH_TARGET="$DEFAULT_BRANCH"
     # Capture Git's vendor text so a failed push can emit its stable record
     # first. A successful push is defined by its exit status and stays quiet.
-    # The committed keys stay shell variables, which the GitHub helper reads,
-    # and leave only the environment git and its hooks inherit.
     if ! PUSH_OUTPUT="$(
-      [[ ${#PUSH_UNEXPORT[@]} -eq 0 ]] || export -n "${PUSH_UNEXPORT[@]}"
-      LC_ALL=C git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1
+      LC_ALL=C without_committed_settings git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1
     )"; then
       if [[ -n "$PUSH_TO_BASE" ]] && push_output_lease_rejected "$PUSH_OUTPUT" base; then
         worktree_message push-base-rejected "origin/$DEFAULT_BRANCH" "The remote base advanced. Restack, prepare and validate again. No force push is permitted." >&2

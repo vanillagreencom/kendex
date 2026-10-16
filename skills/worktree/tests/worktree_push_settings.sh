@@ -5,7 +5,8 @@
 # committed settings, so the push leaves the main checkout's committed values
 # out of what git inherits: the lane reads the branch's own value, a value the
 # caller exported, or a personal override from the private env file or an
-# untracked settings file. The hook
+# untracked settings file. `push --prepare-base` folds the item commits with
+# the commit hooks running, under the same boundary. The hook
 # is the commit-guards resolver itself, reading COMMIT_GUARDS_CHANGELOG_PATHS
 # the way the changelog lane does.
 set -euo pipefail
@@ -57,8 +58,8 @@ quiet_repo() { # REPO
 
 # A main checkout whose committed FILE assigns the key `main-value`, or leaves
 # it out where MAIN is `-`, its origin, and an issue worktree whose branch
-# commits `branch-value` to the same file. The pre-push hook, shared by every
-# worktree, records what the resolver answers from the pushed worktree.
+# commits `branch-value` to the same file. The pre-push and pre-commit hooks,
+# shared by every worktree, record what the resolver answers from the worktree.
 build() { # ROOT SETTINGS-FILE MAIN
   local root="$1" file="$2" main="$1/main" wt="$1/trees/topic"
   mkdir -p "$main"
@@ -88,6 +89,7 @@ source "$SETTINGS_LIB"
 gg_setting COMMIT_GUARDS_CHANGELOG_PATHS built-in-default >"$root/hook.read"
 HOOK
   chmod +x "$main/.git/hooks/pre-push"
+  cp "$main/.git/hooks/pre-push" "$main/.git/hooks/pre-commit"
 }
 
 # The row's package copy, made once, its script path on stdout.
@@ -119,8 +121,9 @@ cut_copy() { # ROOT SED-EXPRESSION
 # `untracked-nested` adds an untracked .kendex/settings.toml override the same
 # way; `helper` is a package copy whose sibling GitHub library
 # exports the key when sourced, the way that library exports the token it
-# resolves. Each `unfixed` word is a must-fail control's world, a package
-# copy with one rule cut. The fixture names no WORKTREE_SYMLINKS, so the
+# resolves; `fold` runs `push --prepare-base`, whose fold commit fires the
+# pre-commit hook, in place of the push. Each `unfixed` word is a must-fail
+# control's world, a package copy with one rule cut. The fixture names no WORKTREE_SYMLINKS, so the
 # worktree has no private env file or untracked settings file of its own, and
 # an override reaches the hook only through the environment.
 ROWS='the hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|-|-|branch-value
@@ -137,7 +140,9 @@ an untracked settings file is a local override and stays exported|kendex.setting
 an untracked override equal to the committed value stays exported|kendex.settings.toml|main-value|untracked-nested:main-value|-|main-value
 must-fail: with the tracked check cut, the untracked override is dropped for the branch'"'"'s value|kendex.settings.toml|main-value|untracked-nested:nested-value unfixed-tracked|-|branch-value
 a key a sourced library exports at run time stays exported|kendex.settings.toml|-|helper|-|helper-value
-must-fail: with the subshell clearing cut, that key is dropped for the branch'"'"'s value|kendex.settings.toml|-|helper unfixed-clear|-|branch-value'
+must-fail: with the subshell clearing cut, that key is dropped for the branch'"'"'s value|kendex.settings.toml|-|helper unfixed-clear|-|branch-value
+the fold'"'"'s commit hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|fold|-|branch-value
+must-fail: with the fold'"'"'s boundary cut, its commit hook reads the main checkout'"'"'s value|kendex.settings.toml|main-value|fold unfixed-fold|-|main-value'
 
 echo "=== worktree push hands its hooks the branch's settings ==="
 n=0
@@ -146,6 +151,7 @@ while IFS='|' read -r label file main_value edit caller want; do
   root="$TMP_ROOT/row-$n"
   build "$root" "$file" "$main_value"
   script="$WORKTREE_SCRIPT"
+  op=(push topic --no-rebase --set-upstream)
   for word in $edit; do
     case "$word" in
       -) ;;
@@ -165,7 +171,9 @@ while IFS='|' read -r label file main_value edit caller want; do
         mkdir -p "$root/pkg/github/scripts/lib"
         printf 'export COMMIT_GUARDS_CHANGELOG_PATHS=helper-value\n' >"$root/pkg/github/scripts/lib/gh-auth.sh"
         ;;
-      unfixed) script="$(cut_copy "$root" 's/|| export -n "\${PUSH_UNEXPORT\[@\]}"$/|| : cut/')" ;;
+      fold) op=(push topic --prepare-base) ;;
+      unfixed) script="$(cut_copy "$root" 's/|| export -n "\${COMMITTED_UNEXPORT\[@\]}"$/|| : cut/')" ;;
+      unfixed-fold) script="$(cut_copy "$root" 's/if ! without_committed_settings git -C "\$WT_PATH" commit /if ! : cut || ! git -C "$WT_PATH" commit /')" ;;
       # The phase-two unset loop sits between the tracked snapshot and the
       # first loop that reads it; the clearing loop is the one that reads
       # compgen -e inside committed_settings_keys.
@@ -178,9 +186,9 @@ while IFS='|' read -r label file main_value edit caller want; do
   done
   rc=0
   if [[ "$caller" == - ]]; then
-    (cd "$root/main" && "$script" push topic --no-rebase --set-upstream >"$root/out" 2>&1) || rc=$?
+    (cd "$root/main" && "$script" "${op[@]}" >"$root/out" 2>&1) || rc=$?
   else
-    (cd "$root/main" && COMMIT_GUARDS_CHANGELOG_PATHS="$caller" "$script" push topic --no-rebase --set-upstream >"$root/out" 2>&1) || rc=$?
+    (cd "$root/main" && COMMIT_GUARDS_CHANGELOG_PATHS="$caller" "$script" "${op[@]}" >"$root/out" 2>&1) || rc=$?
   fi
   [[ "$rc" == 0 ]] || sed 's/^/        push: /' "$root/out"
   assert_eq "rc=$rc read=$(cat "$root/hook.read" 2>/dev/null || printf -- -)" "rc=0 read=$want" "$label"
