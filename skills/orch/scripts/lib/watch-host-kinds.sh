@@ -16,12 +16,10 @@
 # the fleet's registered cwd, then its state directory, to find that checkout.
 # Keep linked-worktree roots: the watch stores its rows there, not in the clone.
 # A fleet with no checkout address uses the caller, as a watch without state does.
+# The directory is that checkout's OVERSEE_WATCH_STATE_DIR as orch-env resolves
+# it there, the ladder the watch loads before it writes; a recorder loads none.
 lane_watch_state_dir() { # CALLER_ROOT [FLEET_STATE_FILE]
-  local owner="" dir="" root candidate git_context="${BASH_SOURCE[0]%/*}/../git-context"
-  if [[ -n "${OVERSEE_WATCH_STATE_DIR:-}" ]]; then
-    printf '%s\n' "$OVERSEE_WATCH_STATE_DIR"
-    return 0
-  fi
+  local owner="" dir="" root="$1" found candidate value scripts="${BASH_SOURCE[0]%/*}/.."
   if [[ -n "${2:-}" ]]; then
     owner="$(jq -r '.overseer.cwd // empty' "$2")" || return 2
     dir="${2%/*}"
@@ -29,12 +27,13 @@ lane_watch_state_dir() { # CALLER_ROOT [FLEET_STATE_FILE]
   fi
   for candidate in "$owner" "$dir" "$1"; do
     [[ -n "$candidate" ]] || continue
-    if root="$("$git_context" repo-root "$candidate" 2>/dev/null)"; then
-      printf '%s/tmp/oversee-watch\n' "$root"
-      return 0
+    if found="$("$scripts/git-context" repo-root "$candidate" 2>/dev/null)"; then
+      root="$found"
+      break
     fi
   done
-  printf '%s/tmp/oversee-watch\n' "$1"
+  value="$(cd -- "$root" && "$scripts/orch-env" OVERSEE_WATCH_STATE_DIR "")" || return 2
+  printf '%s\n' "${value:-$root/tmp/oversee-watch}"
 }
 
 # Shared row reads also serve the cycle recorder after worktree disposal.

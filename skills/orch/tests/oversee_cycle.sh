@@ -571,10 +571,13 @@ git -C "$connected_checkout" config gc.auto 0
 git -C "$connected_checkout" config maintenance.auto false
 owner_worktree="$TMP_ROOT/owner-worktree"
 git -C "$REPO" worktree add -q --detach "$owner_worktree" HEAD
+# settings=yes names the watch directory only in the writer's kendex settings,
+# which oversee-watch loads and this recorder does not.
 owner_address_rows() {
-  local label owner fleet_dir caller writer_root watch_dir override got env_args
-  while IFS='|' read -r label owner fleet_dir caller writer_root watch_dir override; do
+  local label owner fleet_dir caller writer_root watch_dir override settings got env_args
+  while IFS='|' read -r label owner fleet_dir caller writer_root watch_dir override settings; do
     mkdir -p "$fleet_dir" "$watch_dir"
+    [[ "$settings" != yes ]] || printf '[env]\nOVERSEE_WATCH_STATE_DIR = "%s"\n' "$watch_dir" > "$writer_root/kendex.settings.toml"
     jq --arg owner "$owner" 'if $owner == "" then del(.overseer.cwd) else .overseer.cwd=$owner end' \
       "$CASE/address-source.json" > "$fleet_dir/workflow-state-oversee.json"
     printf 'clone-root\tKEN-6\t/clone\n' > "$watch_dir/saved__none.mail"
@@ -589,12 +592,14 @@ owner_address_rows() {
     assert_eq "$(field review "$got") $(field fix "$got") $(field bot "$got") $(field full_validations "$got")" \
       'review=3 fix=5 bot=4 full_validations=2' "address $label counts" "$CASE/err"
     rm -- "$watch_dir/saved__none.mail"
+    [[ "$settings" != yes ]] || rm -- "${writer_root:?}/kendex.settings.toml"
   done <<ROWS
-registered-clone|$REPO|$CASE/state|$connected_checkout|$REPO|$REPO/tmp/oversee-watch|no
-state-directory||$REPO/tmp/primary-fleet|$connected_checkout|$REPO|$REPO/tmp/oversee-watch|no
-override|$REPO|$CASE/state|$connected_checkout|$connected_checkout|$connected_checkout/tmp/explicit-watch|yes
-linked-worktree|$owner_worktree|$CASE/state|$connected_checkout|$owner_worktree|$owner_worktree/tmp/oversee-watch|no
-external-no-cwd||$CASE/state|$REPO|$REPO|$REPO/tmp/oversee-watch|no
+registered-clone|$REPO|$CASE/state|$connected_checkout|$REPO|$REPO/tmp/oversee-watch|no|no
+state-directory||$REPO/tmp/primary-fleet|$connected_checkout|$REPO|$REPO/tmp/oversee-watch|no|no
+override|$REPO|$CASE/state|$connected_checkout|$connected_checkout|$connected_checkout/tmp/explicit-watch|yes|no
+linked-worktree|$owner_worktree|$CASE/state|$connected_checkout|$owner_worktree|$owner_worktree/tmp/oversee-watch|no|no
+external-no-cwd||$CASE/state|$REPO|$REPO|$REPO/tmp/oversee-watch|no|no
+owner-settings|$owner_worktree|$CASE/state|$connected_checkout|$owner_worktree|$TMP_ROOT/settings-watch|no|yes
 ROWS
 }
 for form in local hosted; do
