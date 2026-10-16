@@ -1321,5 +1321,53 @@ else
 fi
 
 echo
+# Base transport never changes the already-validated head. The remote base
+# can advance before the final fetch or during pre-push hook execution.
+for race in before-fetch during-push; do
+  build "base-$race" pair fix
+  prepared="$(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base 2>"$ROOT/prepare.err")"
+  prepared_before="$(sed -n 's/^prepared-base: .* before=\([^ ]*\) .*/\1/p' <<<"$prepared")"
+  prepared_head="$(git -C "$WT" rev-parse HEAD)"
+  if [[ "$race" == before-fetch ]]; then
+    commit_main advanced.txt advanced
+    want_key=worktree-push-base-conflict
+  else
+    printf 'race\n' > "$MAIN/race"
+    git -C "$MAIN" add race
+    git -C "$MAIN" commit -qm race
+    race_head="$(git -C "$MAIN" rev-parse HEAD)"
+    # Transfer the object without updating the base before advertisement.
+    git -C "$MAIN" push -q origin HEAD:refs/heads/race-object
+    cat > "$MAIN/.git/hooks/pre-push" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+git --git-dir="$ROOT/origin.git" update-ref refs/heads/main "$race_head"
+SH
+    chmod +x "$MAIN/.git/hooks/pre-push"
+    want_key=worktree-push-base-rejected
+  fi
+  race_rc=0
+  (cd "$MAIN" && GIT_TRACE="$ROOT/trace" "$WORKTREE_SCRIPT" push "$WT" --to-base "$prepared_before" >"$ROOT/out" 2>"$ROOT/err") || race_rc=$?
+  assert_eq "$race_rc" 1 "$race: base race refuses transport"
+  assert_eq "$(grep "^$want_key:" "$ROOT/err" | cut -d: -f1)" "$want_key" "$race: keyed restack refusal"
+  assert_eq "$(git -C "$WT" rev-parse HEAD)" "$prepared_head" "$race: transport does not rebase after validation"
+  assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$(git -C "$MAIN" rev-parse HEAD)" "$race: remote update is preserved"
+  assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
+done
+
+build fold-refused pair fix
+commit_wt second.txt second
+fold_before="$(git -C "$WT" rev-parse HEAD)"
+cat > "$MAIN/.git/hooks/pre-commit" <<'SH'
+#!/usr/bin/env bash
+exit 23
+SH
+chmod +x "$MAIN/.git/hooks/pre-commit"
+fold_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base >"$ROOT/out" 2>"$ROOT/err") || fold_rc=$?
+assert_eq "$fold_rc" 1 'a normal commit hook can refuse the fold'
+assert_eq "$(git -C "$WT" rev-parse HEAD)" "$fold_before" 'a refused fold restores the item branch head'
+assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$BASE" 'a refused fold publishes nothing'
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

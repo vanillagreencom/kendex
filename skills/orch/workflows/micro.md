@@ -1,6 +1,6 @@
 # Micro Workflow
 
-The tier for an item estimated to change a few lines. One agent reads the item, edits, commits, pushes, opens the pull request and waits the merge out: no dev subagent, no review cycle, no QA cycle, and no full validation battery. [oversee.md](oversee.md) § Item Tier picks the tier through `item-tier`, and § 4 checks the changed paths through that script. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
+The tier for an item estimated to change a few lines. One agent reads the item, edits, commits and pushes the change: no dev subagent, no review cycle, no QA cycle, and no full validation battery. [oversee.md](oversee.md) § Item Tier picks the tier through `item-tier`, and § 4 checks the changed paths through that script. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|
@@ -90,6 +90,12 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] branch "[BRANCH]"
 ```
 
+Record this tier after either state route. Direct publication uses it to retain this tier's commit-hook-only validation:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier micro
+```
+
 ## 2. Edit And Commit
 
 1. **Confirm the commit chain is armed**, before any file changes. That chain is this tier's whole validation: the diff-scoped guard rather than `DEV_VALIDATE_CMD`. An unarmed or unreadable answer escapes (§ Escape condition 2). Where the `commit-guards` package is installed this verb answers it and this workflow asks no other; elsewhere the project's own setup instructions name the verb.
@@ -124,6 +130,8 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 
 ## 3. Push And Open The PR
 
+`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication) through the shared entry below. It runs this tier's commit hooks and final path check before the base push. A wider tier stops before transport and takes § Escape condition 3. On successful direct delivery, restore the main checkout as below, then go to § 5. Report `[PUSHED_SHA]` and `[BASE]` in place of the PR and merge rows. Skip § 4.
+
 **Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. That range owns the push and its `sha-reconcile:` routing, and the create. The body is the three lines below rather than step 3's template. No headings and no other section.
 
 ```markdown
@@ -132,7 +140,7 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 Closes [ISSUE_REF]
 ```
 
-`[ISSUE_TITLE]` for the create comes from the § 1 read. **Main checkout only**, return to the base branch now that the pull request holds the work:
+`[ISSUE_TITLE]` for the create comes from the § 1 read. **Main checkout only**, return to the base branch after publication:
 
 ```bash
 git -C [MAIN_REPO_ROOT] checkout [BASE_BRANCH]

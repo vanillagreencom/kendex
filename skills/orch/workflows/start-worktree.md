@@ -87,6 +87,8 @@ The full session from inside a worktree: implement → publication and review in
 
 ### 2.1 Open Early
 
+With `ORCH_DELIVERY=push-base`, `pr-order` returns `review-first`. Continue through internal review before publication.
+
 Read the consumer's publication order through `pr-order --help`:
 
 ```bash
@@ -138,7 +140,7 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
 
 ## 4. Submit
 
-Before submit-pr can arm the PR, move a Linear development item to In Review. Read the item live first. A Done or Verifying item skips this mutation and continues through the existing merged-PR route in merge-pr. This state write belongs before arming because an armed PR can merge while submit-pr runs.
+Before submit-pr can arm the PR, move a Linear development item to In Review. Read the item live first. A Done or Verifying item skips this mutation. With `pr` delivery it continues through the existing merged-PR route in merge-pr. This state write belongs before arming because an armed PR can merge while submit-pr runs.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
@@ -150,6 +152,8 @@ Before submit-pr can arm the PR, move a Linear development item to In Review. Re
 **Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, then writes § 3's verdict line and routes the pushed head, and its step 5 arms the head once § 3 has returned.
 
 ## 5. Finalize
+
+After successful `push-base` delivery, submit-pr § 2.1 already completed the tracker and sent the pushed-commit notice. Run § 5.4, then end. Skip this section's PR stop, summaries and merge steps.
 
 Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creates `merge-gates-unmet`:
 

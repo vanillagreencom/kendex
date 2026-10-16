@@ -9,6 +9,12 @@ ORCH_APPLE_LABELS = "ios macos"
 # Leave unset to keep the defaults described by pr-order --help.
 # ORCH_PR_ORDER = "review-first"
 
+# Publication destination. pr also applies when unset. push-base keeps the
+# tier's local validation and internal review, then fast-forward pushes the
+# resolved base branch without a pull request. The overseer records the
+# pushed commit through the existing direct-push cycle route.
+# ORCH_DELIVERY = "push-base"
+
 # How a pull request is reviewed, merged and handed on, and how much of
 # that runs without asking you.
 

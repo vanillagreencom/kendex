@@ -96,7 +96,7 @@ run_script() { # SCRIPT ARG...
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_FINDING_PREFIX \
-    -u ORCH_PR_ORDER -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+    -u ORCH_PR_ORDER -u ORCH_DELIVERY -u DEV_VALIDATE_SELECTION_CMD -u DEV_VALIDATE_SCOPED -u DEV_VALIDATE_MODE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -2449,8 +2449,11 @@ assert_eq "$([[ "${OUT%% *} rc=$RC" == "run-dir=$last_full_dir rc=0" ]] && echo 
   "control: a read that takes any mode names the ci run"
 
 # --- The command's own preview resolves CI selection before launch -----------
-# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback|PR order
+# label|requested mode|probe configured|selection|PR world|recorded mode|scoped|record selection|class base|local launch|exit|ci-fallback|PR order|delivery
 SELECTION_ROWS=(
+  "direct full validation stays local|full|yes|all|rules|full||all|no|full|0|push-base|push-first|push-base"
+  "direct range validation stays local|range|yes|all|rules|range||all|yes|range|0|push-base|push-first|push-base"
+  "direct explicit CI validation stays local|ci|yes|all|rules|range||all|no|range|0|push-base|push-first|push-base"
   "a full all selection uses required PR CI|full|yes|all|rules|ci||all|no|absent|0"
   "a range all selection uses required PR CI|range|yes|all|rules|ci||all|no|absent|0"
   # KEN-3495's archived submit range selected all after PR #4528 opened.
@@ -2501,14 +2504,15 @@ SELECTION_ROWS=(
 )
 selection_rows() { # SCRIPT [LABEL]
   local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback got_verdict expected_rc args n answer measured
-  local initial_fail="$FAIL" order
+  local initial_fail="$FAIL" order delivery
   n=0
   for row in "${SELECTION_ROWS[@]}"; do
-    IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc _ order <<<"$row"
+    IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc _ order delivery <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "proj-selection-$n" CI)"
     sed -i.bak "s/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = \"${order:-review-first}\"/" "$proj/kendex.settings.toml"
+    [[ -z "$delivery" ]] || printf 'ORCH_DELIVERY = "%s"\n' "$delivery" >> "$proj/kendex.settings.toml"
     cat > "$proj/local-command" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >> local-launch
@@ -2608,6 +2612,9 @@ selection_control() { # LABEL ANCHOR REPLACEMENT ROW
 }
 # shellcheck disable=SC2016 # private production mutations
 {
+selection_control 'ignoring direct delivery defers its validation to CI' \
+  'if [[ "$delivery" == push-base ]]; then' 'if [[ "$delivery" == push-base ]] && false; then' \
+  'direct full validation stays local'
 selection_control 'ignoring an all selection turns CI resolution red' \
   '[[ "$selection" == selection=all ]]' '[[ "$selection" == selection=subset ]]' \
   'a full all selection uses required PR CI'
@@ -2632,7 +2639,7 @@ cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" \
   '( "$ci_fallback" == pr-not-open || ( "$pr_order" == push-first && "$ci_fallback" == class-uncovered ) )' '"$ci_fallback" == pr-not-open'
 for row in "${SELECTION_ROWS[@]}"; do
-  IFS='|' read -r label requested _ selected _ _ _ _ _ _ _ _ order <<<"$row"
+  IFS='|' read -r label requested _ selected _ _ _ _ _ _ _ _ order _ <<<"$row"
   [[ "$order" == push-first && "$selected" == all-render ]] || continue
   selection_base_got="$(selection_rows "$CI_SCRIPT.mutant" "$label")"
   selection_base_range=no

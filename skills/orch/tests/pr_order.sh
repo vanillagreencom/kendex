@@ -22,12 +22,16 @@ printf '%s\n' "$*" >> "$STUB_LOG"
 printf '%s\n' "$STUB_VISIBILITY"
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
-run() { # SCRIPT VALUE VISIBILITY
+run() { # SCRIPT VALUE VISIBILITY [DELIVERY]
   : > "$TMP_ROOT/gh-calls"
   rm -f "${TMP_ROOT:?}/checkout/kendex.settings.toml"
   [[ "$2" == unset ]] || printf '[env]\nORCH_PR_ORDER = "%s"\n' "$2" > "$TMP_ROOT/checkout/kendex.settings.toml"
+  if [[ -n "${4:-}" ]]; then
+    [[ -f "$TMP_ROOT/checkout/kendex.settings.toml" ]] || printf '[env]\n' > "$TMP_ROOT/checkout/kendex.settings.toml"
+    printf 'ORCH_DELIVERY = "%s"\n' "$4" >> "$TMP_ROOT/checkout/kendex.settings.toml"
+  fi
   set +e
-  OUT="$(cd "$TMP_ROOT/elsewhere" && env -u ORCH_PR_ORDER -u KENDEX_ENV_FILE \
+  OUT="$(cd "$TMP_ROOT/elsewhere" && env -u ORCH_PR_ORDER -u ORCH_DELIVERY -u KENDEX_ENV_FILE \
     GH_REPO=fixture/repo PATH="$TMP_ROOT/bin:$PATH" STUB_LOG="$TMP_ROOT/gh-calls" STUB_VISIBILITY="$3" \
     "$1" "$TMP_ROOT/checkout" 2>"$TMP_ROOT/err")"
   RC=$?
@@ -64,6 +68,11 @@ unknown|INTERNAL|empty|setting-unknown
 unset|UNREAD|empty|visibility-unreadable
 unset|UNKNOWN|empty|visibility-unknown
 ROWS
+for order in unset review-first open-first push-first; do
+  run "$LIVE" "$order" UNREAD push-base
+  assert_eq "$RC $OUT" '0 pr-order=review-first' "direct delivery reviews before publication for $order"
+  assert_eq "$(cat "$TMP_ROOT/gh-calls")" '' 'direct delivery needs no GitHub visibility read'
+done
 # A visibility decision after settings overrides a consumer's explicit choice.
 MUTANT_SCRIPTS="$(mutant_scripts visibility-order pr-order)" || exit 1
 orch_fixture_shared_libs "${MUTANT_SCRIPTS%/scripts}"

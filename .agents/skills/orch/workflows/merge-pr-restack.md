@@ -2,6 +2,8 @@
 
 Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-base-conflict` refusal that [submit-pr.md](submit-pr.md) § 2 step 1 routes here: steps 1-3, then continue that caller. Step 4 returns a merge caller to `merge-pr.md`. [§ Unarm at a stop](#unarm-at-a-stop) runs step 1 alone, to unarm a PR, and pushes or restacks nothing. A base conflict is not a CI failure.
 
+With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 through completion of the guarded restack, then go directly to step 3's `worktree-push` command. That owner folds and validates the final tree locally before base transport. On success, return its delivery receipt to [submit-pr.md § 2.1](submit-pr.md#21-base-publication) for completion. Skip the remaining PR proof and merge steps. A failed restack, validation or transport hands back without a completion notice.
+
 1. Unarm the PR before any push. If live `autoMergeRequest` is set, disable auto-merge first. If `isInMergeQueue` remains true, read the PR node id with `gh pr view [PR_NUMBER] --json id`, call GraphQL `dequeuePullRequest`, then re-read both fields. Either still set means hand back without pushing. This order prevents an armed PR from re-entering the queue while it is dequeued.
 
 2. Resolve the managed worktree, then ask whether a fix round is in flight before rebasing anything:

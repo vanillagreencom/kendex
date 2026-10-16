@@ -1,6 +1,6 @@
 # Submit PR Workflow
 
-Run a local pre-PR review, push, create or update the PR, triage review comments, wait for the reviewer-gate verdict, verify CI, and confirm the merge gates. The review gate (§ 4) runs before CI verification (§ 5).
+With `pr` delivery, run a local pre-PR review, push, create or update the PR, triage review comments, wait for the reviewer-gate verdict, verify CI, and confirm the merge gates. The review gate (§ 4) runs before CI verification (§ 5).
 
 Run every long waiter below through [Waiter launch](../references/waiter-launch.md). `approval-wait --resolve-mode` runs directly, not through that launch. Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
 
@@ -83,6 +83,14 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 ---
 
 ## 2. Push And Submit
+
+Read the delivery setting in `[WORKTREE_PATH]` before any pull-request read or push:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DELIVERY pr
+```
+
+`pr`, also when unset, follows the steps below. `push-base` runs § 2.1 instead, including when a tier enters only steps 1-4. A failed setting read stops publication.
 
 When a cut follows the last review pass, set the existing `pre_delegate_sha` workflow-state boundary to the cut commit's parent, route exactly once through [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review) before push, and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed. While workflow state `pr_order` reads `open-first` or `push-first`, an armed read is a PR armed before its internal review returned: unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1, whose hand-back pushes nothing and returns to the caller. After § 6.1 confirms all merge gates, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed submit returns that recorded decision with its final result so the caller's merge stage owns the canonical lifecycle. Arming happens only through `github.sh pr-merge --auto`, which refuses with `arm: no-merge-gate` on a repository with no merge gate; a raw `gh pr merge --auto` is never the arm.
 
@@ -214,6 +222,26 @@ Once the PR exists, this run is a continuing action. Clear any stop a capped run
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
 ```
+
+### 2.1 Base publication
+
+Keep the tier's local validation and internal review. `pr-order` selects `review-first` for `ORCH_DELIVERY=push-base`, so no early pull request exists. Preserve a GitHub item's `Closes [ISSUE_REF]` commit line when the item commits are folded.
+
+```bash
+.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+```
+
+This command owns preparation, commit hooks, SHA reconciliation and validation before transport. Read its `delivery: mode=push-base base=[BASE] commit=[PUSHED_SHA] at=[PUSHED_AT]` receipt only after exit zero. `worktree-push --help` owns its failure contract. A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal returns to the guarded restack in [merge-pr-restack.md](merge-pr-restack.md) steps 1-3. With direct delivery, that route skips its PR reads and uses the same publication owner. A red validation publishes nothing. A failed push sends no completion notice.
+
+**Linear completion.** Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For a single bundle, repeat it for each non-canceled child implemented in the pushed commit. Keep open post-merge boxes for the overseer. Follow that step's parent-outcome handoff. A completed container still takes its holder's existing `container-close` route after outcome evidence is recorded. A tracker failure is reported with the pushed SHA and does not repeat transport.
+
+**Completion notice.** Write `[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md` with `Pushed [PUSHED_SHA] to [BASE].` and the tracker completion result. Send that file through the existing lane mailbox:
+
+```bash
+.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md"
+```
+
+The overseer records that single commit through [Direct-push cycle records](../references/oversee-events.md#direct-push-cycle-records) before closing the lane. Return the receipt to the caller. Skip PR creation, comment triage, review-gate waits, Copilot, CI waits, the merge queue and the merge workflow. A managed caller retires its agents through [start-worktree.md § 5.4](start-worktree.md#54-retire-agents), then ends. A standalone caller ends here.
 
 ---
 

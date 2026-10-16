@@ -207,5 +207,19 @@ got="$(cd "$proj_bare" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORI
 assert_eq "$status|$got|$(cat "$TMP_ROOT/retired-mutant.err")" '0|3|' \
   "must-fail control: disabled retirement guard accepts the retired setting"
 
+# Publication callers consume this typed setting through the shared reader.
+while IFS='|' read -r value want_rc want; do
+  status=0
+  got="$(cd "$proj_bare" && env ORCH_DELIVERY="$value" "$ORCH_ENV" ORCH_DELIVERY pr 2>"$TMP_ROOT/delivery.err")" || status=$?
+  assert_eq "$status|$got" "$want_rc|$want" "delivery setting=$value"
+done <<'ROWS'
+pr|0|pr
+push-base|0|push-base
+|0|pr
+push-main|1|
+ROWS
+got="$(cd "$proj_bare" && env -u ORCH_DELIVERY "$ORCH_ENV" ORCH_DELIVERY pr)"
+assert_eq "$got" pr 'unset delivery uses pull requests'
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

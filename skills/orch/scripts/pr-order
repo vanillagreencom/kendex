@@ -12,6 +12,7 @@
 # push-first: publish a draft, then run internal review while CI may be pending.
 # Submit verifies required CI on the published head before merge.
 # Review completes before merge in every order.
+# ORCH_DELIVERY=push-base always returns review-first without a GitHub read.
 #
 # Exit 2 prints pr-order-error: cause=CAUSE on stderr and no order:
 # worktree-missing, setting-unreadable, setting-unknown, repo-unresolved,
@@ -30,6 +31,12 @@ esac
 worktree="${1:-.}"
 [[ -d "$worktree" ]] || die worktree-missing "path=$worktree"
 cd -- "$worktree"
+delivery="$("$SCRIPT_DIR/orch-env" ORCH_DELIVERY pr)" \
+  || die setting-unreadable setting=ORCH_DELIVERY
+if [[ "$delivery" == push-base ]]; then
+  printf 'pr-order=review-first\n'
+  exit 0
+fi
 order="$("$SCRIPT_DIR/orch-env" ORCH_PR_ORDER "")" \
   || die setting-unreadable setting=ORCH_PR_ORDER
 case "$order" in

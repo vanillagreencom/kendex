@@ -170,6 +170,7 @@
 #          for the branch, unless its command reports selection=battery: every
 #          lane it has, none stood down for that class.
 #   ci     a round deferred to required CI after publication.
+#          ORCH_DELIVERY=push-base keeps this request on local validation.
 #          It runs no command and completes the local round at once, with
 #          a zero-second wall time, only where the project names the status
 #          check context that runs its validation in DEV_VALIDATE_CI_CONTEXT
@@ -197,6 +198,7 @@
 #          selector supplies the round's evidence before CI can skip its work.
 #          The causes:
 #            setting-empty       DEV_VALIDATE_CI_CONTEXT is empty, the default
+#            push-base           direct delivery requires local validation
 #            pr-not-open         no pull request, or its state is CLOSED or
 #                                MERGED, confirmed by pr-view-json
 #            base-unresolved     the pull request lookup, response or base
@@ -819,6 +821,12 @@ ci_fallback=""
 ci_event=pull_request
 ci_runs_validation() {
   local context base_branch uri rules classic pr_json pr_state queue=false unread=false log="$class_scratch/ci.log"
+  # Direct publication has no required PR or merge-group run after its push.
+  # Keep every CI-admission path on the configured local command instead.
+  if [[ "$delivery" == push-base ]]; then
+    ci_fallback=push-base
+    return 1
+  fi
   context="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CI_CONTEXT "")" \
     || die unreadable-setting setting=DEV_VALIDATE_CI_CONTEXT
   if [[ -z "$context" ]]; then
@@ -894,6 +902,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   # orch-env resolves the project from the working directory, so the settings
   # read is the worktree's own.
   cd "$worktree"
+  delivery="$("$SCRIPT_DIR/orch-env" ORCH_DELIVERY pr)" \
+    || die unreadable-setting setting=ORCH_DELIVERY
   if [[ -n "$proof_head" ]]; then
     checkout_head="$(git rev-parse --verify 'HEAD^{commit}')" || die proof-head-unreadable
     if [[ "$checkout_head" != "$expected_head" ]]; then

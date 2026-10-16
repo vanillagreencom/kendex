@@ -4,7 +4,7 @@ The tier for a change inside one subsystem and within the `small` ceiling in [re
 
 **A subsystem** is what the harness-ci skill's `scripts/change-class` counts as one for the `small` class; its `--help` `small` entry is the definition. The filing rule, the project-management skill's [SKILL.md](../../project-management/SKILL.md) § Disposition **One landing per subsystem**, and the launch read, [oversee.md](oversee.md) § Lane directive step 2, apply it to an item's Location paths before a diff exists.
 
-It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review, submit and merge, under the bounds in § 3. [oversee.md](oversee.md) § Item Tier picks the tier; a `micro` item runs [micro.md](micro.md) and every other item runs [start.md](start.md).
+It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication, under the bounds in § 3. [oversee.md](oversee.md) § Item Tier picks the tier; a `micro` item runs [micro.md](micro.md) and every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|
@@ -47,6 +47,8 @@ Run [start-worktree.md](start-worktree.md) § 3 under these bounds:
 Before § 4, repeat the § 2 check on the tree the review left. `tier=small` continues; anything else escapes.
 
 ## 4. Submit
+
+`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication). Keep § 3's local validation and internal review. Report its pushed commit and take the direct-delivery finalize route below.
 
 Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
 

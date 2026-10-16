@@ -10,6 +10,7 @@
 # Usage: orch-env VAR_NAME DEFAULT
 #   orch-env PR_REVIEW_WAIT_SECS 900
 #   orch-env ORCH_LANE_PREFERENCE ""   (unset leaves the caller's model choice)
+#   orch-env ORCH_DELIVERY pr          (pr or push-base; unknown values refuse)
 #
 # ORCH_USER_MODE composes three autonomy keys. Under `ceo`, a composed key the
 # ladder leaves unset resolves to its unattended value instead of the supplied
@@ -73,6 +74,7 @@ orch_env_message() {
   case "$reason" in
   argument-count) printf '%s\n' 'Use orch-env with a variable name and default value.' ;;
   invalid-name) printf '%s\n' 'The variable name is not valid.' ;;
+  invalid-delivery) printf '%s\n' 'Set ORCH_DELIVERY to pr or push-base.' ;;
   retired-setting)
     printf '%s\n' 'Consumer refresh runs in each consumer repository through GitHub Actions.'
     printf '%s\n' 'Remove ORCH_CONSUMER_REPOS from the environment, kendex.settings.toml [env], .kendex/settings.toml [env], and the private env file, then retry.'
@@ -121,6 +123,14 @@ orch_env_value() { # NAME DEFAULT: settings already loaded by the caller.
     fi
   fi
   [[ -n "$value" ]] || value="$DEFAULT"
+  # A consumer edits this publication setting by hand. A misspelling cannot
+  # select a different delivery route and publish before the intended review.
+  if [[ "$VAR_NAME" == ORCH_DELIVERY ]]; then
+    case "$value" in
+    pr|push-base) ;;
+    *) orch_env_message invalid-delivery "value=$value" >&2; return 1 ;;
+    esac
+  fi
   if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
     value="$DEFAULT"
   fi
