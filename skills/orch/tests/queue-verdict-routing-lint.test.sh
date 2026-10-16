@@ -93,6 +93,26 @@ route_labels() { # doc
 }
 routes() { route_labels "$1" | sort -u; }
 
+# The queued row routes these machine-readable cause keys as well as its
+# verdict. Read the producer assignments before its JSON writer.
+queued_causes() { # queue-wait
+  sed -n '/^emit_result() {/,/^  if \$JSON_OUTPUT; then/p' "$1" \
+    | sed -n 's/.*last_cause="\([a-z_][a-z_]*\)".*/\1/p' | sort -u
+}
+queued_routes() { # doc
+  sed -n '/^   | `queued` |/p' "$1" \
+    | grep -o 'cause: [a-z_][a-z_]*' | sed 's/^cause: //' | sort -u
+}
+every_queued_cause_routed() { # queue-wait doc
+  local actual missing
+  actual="$(queued_causes "$1")"
+  [ -n "$actual" ] || { printf '        queued cause assignments were not read\n'; return 1; }
+  missing="$(comm -23 <(printf '%s\n' "$actual") <(queued_routes "$2"))"
+  [ -z "$missing" ] && return 0
+  printf '        queued causes with no route: %s\n' "$missing"
+  return 1
+}
+
 every_verdict_routed() { # queue-wait doc
   local missing
   missing="$(comm -23 <(verdicts "$1") <(routes "$2"))"
@@ -139,6 +159,7 @@ for root in "${ROOTS[@]}"; do
     enum_matches_code "$qw"
   check "$label: every verdict's route is one row, not several" \
     one_row_per_verdict "$doc"
+  check "$label: every queued cause has a route" every_queued_cause_routed "$qw" "$doc"
 done
 
 if [ "$checked" -eq 0 ]; then
@@ -171,6 +192,14 @@ grep -v "^   | \`$one_verdict\` |" "$CTL_DOC" > "$DROPPED"
 check "control: the row deletion really removed a row" planted "$DROPPED"
 check "control: a deleted routing row reds the coverage direction" \
   reds every_verdict_routed "$CTL_QW" "$DROPPED"
+
+MISSING_CAUSE="$MD_TMP/merge-pr-missing-cause.md"
+check "control: the cause rename has one match" \
+  test "$(grep -o 'cause: blocked_by_entry_ahead' "$CTL_DOC" | wc -l | tr -d ' ')" -eq 1
+sed 's/cause: blocked_by_entry_ahead/cause: no_such_cause/g' "$CTL_DOC" > "$MISSING_CAUSE"
+check "control: the cause rename changes the document" planted "$MISSING_CAUSE"
+check "control: a missing queued cause reds cause coverage" \
+  reds every_queued_cause_routed "$CTL_QW" "$MISSING_CAUSE"
 
 BOGUS="$MD_TMP/merge-pr-bogus.md"
 awk '{ print }

@@ -303,6 +303,9 @@ am_errs_on_200='{"data":{"disablePullRequestAutoMerge":null},"errors":[{"message
 # Progress-signal fixtures: a queue entry that exposes its
 # merge-group head commit, and REST check-runs bodies for that commit.
 q_in_queue_head='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":true,"mergeQueueEntry":{"state":"AWAITING_CHECKS","position":1,"headCommit":{"oid":"aaa111"}},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
+# GitHub holds an entry without a group when it cannot compose with a group
+# ahead. The queue read includes that live group's PR for merge-pr to watch.
+q_held_ahead='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":true,"mergeQueueEntry":{"state":"UNMERGEABLE","position":2,"headCommit":null,"mergeQueue":{"entries":{"nodes":[{"position":1,"headCommit":{"oid":"aaa111"},"pullRequest":{"number":9}}]}}},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 # checkruns_body <completed> <in_progress>
 # Counted loops, never `seq 1 "$n"`: BSD seq walks toward its last value, so
 # `seq 1 0` prints `1` and `0` where GNU seq prints nothing. A body asked for
@@ -366,6 +369,11 @@ stage() {
       state:closed) write_fixture state "$n" "$pr_closed" ;;
       queue:in) write_fixture queue "$n" "$q_in_queue" ;;
       queue:in_head) write_fixture queue "$n" "$q_in_queue_head" ;;
+      queue:held_ahead) write_fixture queue "$n" "$q_held_ahead" ;;
+      queue:held_no_group) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.mergeQueue.entries.nodes[0].headCommit = null' <<<"$q_held_ahead")" ;;
+      queue:held_group_behind) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.mergeQueue.entries.nodes[0].position = 3' <<<"$q_held_ahead")" ;;
+      queue:held_own_group) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.headCommit = {oid:"own222"}' <<<"$q_held_ahead")" ;;
+      queue:awaiting_ahead) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.state = "AWAITING_CHECKS"' <<<"$q_held_ahead")" ;;
       queue:out) write_fixture queue "$n" "$q_out" ;;
       queue:armed) write_fixture queue "$n" "$q_armed_only" ;;
       queue:braces) write_fixture queue "$n" '{}' ;;
@@ -495,6 +503,7 @@ observe() {
       auth_checks) value="$(cat "$SEQ_DIR/api_user.count" 2>/dev/null || echo 0)" ;;
       auth_timeouts) value="$(cat "$SEQ_DIR/api_user_timeout.count" 2>/dev/null || echo 0)" ;;
       checkruns_read) value="$([[ -f "$SEQ_DIR/checkruns.count" ]] && echo true || echo false)" ;;
+      queue_reads) value="$(cat "$SEQ_DIR/graphql.count" 2>/dev/null || echo 0)" ;;
       guard_warned) value="$(grep -qF 'queue-wait: guard-blind failures=3 pr=1' "$ERR" && echo true || echo false)" ;;
       checkrun_warned) value="$(grep -qF 'queue-wait: checks-blind failures=3 commit=' "$ERR" && echo true || echo false)" ;;
       *) value="$(json ".$name")" ;;
@@ -636,6 +645,7 @@ table "$QW" \
   "an overlong pagination walk stops at the bound, a failed read and not a count|open_queued,threads:pages=40,$DQ|1 1 1 --json --no-check-probe||verdict=queued mutations=none thread_reads=40"
 
 echo "=== the progress signal on a budget-exhausted queued verdict ==="
+HELD_EXPECT='rc=1 verdict=queued cause=blocked_by_entry_ahead queue_ahead_pr=9 progressing=null checkruns_read=false polls=4 queue_reads=4'
 # When the entry exposes its head commit, movement in the entry tuple or the
 # completed check-run count within the last three polls, or a check-run still
 # running, is still_progressing; measurable and unmoving is stalled. No head
@@ -653,9 +663,34 @@ table '1 1 8 --json --no-check-probe' \
   'a flat count with a run in progress is still progressing|open_queued_head,checkruns:last=c1.1|||verdict=queued polls=8 progressing=true cause=still_progressing progress_head_polls=8 progress_check_reads=8 last_running_count=1' \
   'a flat count with a run queued is still progressing|open_queued_head,checkruns:last=queued_run|||progressing=true cause=still_progressing' \
   'no head commit on the entry: progress unobservable, no check-run read|open_queued,checkruns:last=c3.0|1 1 4 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkruns_read=false progress_head_polls=0 progress_check_reads=0 last_running_count=null' \
+  "an UNMERGEABLE entry behind a live group waits for that entry|state:last=open,queue:last=held_ahead|1 1 4 --json --no-check-probe||$HELD_EXPECT" \
+  'an entry ahead without a group proves no hold|state:last=open,queue:last=held_no_group|1 1 4 --json --no-check-probe||cause=progress_unobservable has_queue_ahead_pr=false' \
+  'a live group behind this entry proves no hold|state:last=open,queue:last=held_group_behind|1 1 4 --json --no-check-probe||cause=progress_unobservable has_queue_ahead_pr=false' \
+  'an entry with its own group keeps its progress cause|state:last=open,queue:last=held_own_group,checkruns:last=c1.1|1 1 4 --json --no-check-probe||cause=still_progressing has_queue_ahead_pr=false' \
+  'a different entry state proves no hold|state:last=open,queue:last=awaiting_ahead|1 1 4 --json --no-check-probe||cause=progress_unobservable has_queue_ahead_pr=false' \
+  'a hold that clears drops the entry ahead from the result|state:last=open,queue:1=held_ahead,queue:last=in_head,checkruns:last=c1.1|1 1 4 --json --no-check-probe||cause=still_progressing has_queue_ahead_pr=false' \
   'every check-run read failing is unknown, never zero, and warns|open_queued_head,checkruns:last=fail502|1 1 5 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkrun_warned=true progress_head_polls=5 progress_check_reads=0 last_running_count=null' \
   'a failed read between two reads does not erase the movement|open_queued_head,checkruns:1=c1.0,checkruns:2=fail502,checkruns:last=c2.0|1 1 4 --json --no-check-probe||verdict=queued progressing=true cause=still_progressing' \
   'a merged verdict carries progressing and no cause|state:last=merged,queue:last=in_head|1 1 10 --json --no-check-probe||verdict=merged has_progressing=true has_cause=false'
+
+CONTROL_SCRIPTS="$(mutant_scripts no-ahead-cause/orch queue-wait)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/no-ahead-cause/github"
+mutate_file "$CONTROL_SCRIPTS/queue-wait" \
+  'elif [ "$verdict" = "queued" ] && [ -n "$queue_ahead_pr" ]; then' \
+  'elif false && [ "$verdict" = "queued" ] && [ -n "$queue_ahead_pr" ]; then'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$TMP_ROOT/no-ahead-cause/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+stage 'state:last=open,queue:last=held_ahead'
+run_wait '' 1 1 4 --json --no-check-probe
+assert_eq "$(json '.cause')" progress_unobservable 'control reaches the old unobservable cause' "$ERR"
+set +e
+( FAIL=0; assert_eq "$(observe "$HELD_EXPECT")" "$HELD_EXPECT" \
+  'entry-ahead cause disabled'; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/no-ahead-cause/assertion.log"
+CONTROL_RC=$?
+set -e
+assert_eq "$CONTROL_RC" 1 'the held-entry row rejects the disabled-cause control'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
 echo "=== an armed PR GitHub has not enqueued reads the PR's own check rollup ==="
 # No queue entry means no merge-group head, so progress is never the verdict

@@ -172,7 +172,8 @@ ci-wait owns check state and approval-wait owns the review gate.
 
 Each poll reads both signals the merge-pr routing table consumes:
 `gh pr view <PR> --json state,mergedAt,mergeable` plus the GraphQL
-isInMergeQueue / mergeQueueEntry { state position headCommit { oid } } /
+isInMergeQueue / mergeQueueEntry (state, position, headCommit and the first
+100 entries of its mergeQueue, with positions, heads and PR numbers) /
 autoMergeRequest fields (gh pr view exposes no queue-membership field),
 and — when the entry exposes its head commit — one paginated REST
 check-runs read on that commit for the progress signal. `mergeable` routes
@@ -212,7 +213,8 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               armed and fires on its own, so this is NOT a failure of the
               merge — and never a success either; exit_unconfirmed is no
               live arm, and nothing fires. Carries cause still_progressing,
-              stalled or
+              stalled, blocked_by_entry_ahead (UNMERGEABLE with no head,
+              behind an entry with a live group; queue_ahead_pr names it), or
               progress_unobservable (the entry exists and its head could
               not be read), and unconfirmed_verdict when the last poll held
               a candidate that never reached the confirmation count. Never
@@ -243,7 +245,8 @@ read failed — a failed read is unknown, never zero (absorbed, warned after
 3 consecutive failures, never compared), so a read failure can neither
 fabricate nor erase movement. The cause word follows the signal one for one:
 true is still_progressing, false is stalled, null is progress_unobservable,
-so a queue nobody could read never routes as an idle one. The reads behind
+except blocked_by_entry_ahead names the observed queue hold before progress.
+A queue nobody could read never routes as an idle one. The reads behind
 the word are reported with it: progress_head_polls (polls whose entry
 exposed a head commit), progress_check_reads (check-run reads that
 succeeded, over every head) and last_running_count (not-completed runs at
@@ -354,6 +357,7 @@ JSON output (always when --json):
                                    # late_findings |
                                    # late_findings_dequeue_failed |
                                    # still_progressing | stalled |
+                                   # blocked_by_entry_ahead |
                                    # progress_unobservable |
                                    # exit_unconfirmed (queued) |
                                    # checks_pending | checks_unread
@@ -362,6 +366,8 @@ JSON output (always when --json):
                                    # last poll held, which never reached
                                    # QUEUE_WAIT_CONFIRM_POLLS and so routes
                                    # nothing
+    "queue_ahead_pr": <int>,       # only when a headless UNMERGEABLE entry
+                                   # has a live group ahead in the queue read
     "pending_checks": [<string>],  # only on armed_awaiting_checks with
                                    # cause checks_pending: the checks the
                                    # last probe read as pending
@@ -533,6 +539,7 @@ last_merged_at=""
 last_mergeable=""
 last_in_queue="false"
 last_queue_state=""
+queue_ahead_pr=""
 last_auto_merge="false"
 last_cause=""
 last_pr_node_id=""
@@ -622,6 +629,8 @@ emit_result() {
   # short of its confirmation count, never a progress reading.
   if [ "$verdict" = "queued" ] && [ "$in_queue_now" = false ]; then
     last_cause="exit_unconfirmed"
+  elif [ "$verdict" = "queued" ] && [ -n "$queue_ahead_pr" ]; then
+    last_cause="blocked_by_entry_ahead"
   elif [ "$verdict" = "queued" ]; then
     case "$progressing" in
       true)  last_cause="still_progressing" ;;
@@ -640,6 +649,7 @@ emit_result() {
       --arg merged_at "$last_merged_at" \
       --argjson in_queue "$last_in_queue" \
       --arg queue_state "$last_queue_state" \
+      --arg ahead_pr "$queue_ahead_pr" \
       --argjson auto_merge "$last_auto_merge" \
       --argjson was_queued "$was_queued" \
       --argjson was_in_queue "$was_in_queue" \
@@ -672,6 +682,7 @@ emit_result() {
         progress_check_reads: $check_reads,
         last_running_count: (if $running == "" then null else ($running|tonumber) end)
       } + (if $cause == "" then {} else {cause: $cause} end)
+        + (if $ahead_pr == "" then {} else {queue_ahead_pr: ($ahead_pr|tonumber)} end)
         + (if $unconfirmed == "" then {} else {unconfirmed_verdict: $unconfirmed} end)
         + (if $pending_names == "" then {} else {pending_checks: ($pending_names|fromjson)} end)
         + (if $unresolved == "" then {} else {unresolved_count: ($unresolved|tonumber)} end)
@@ -713,6 +724,8 @@ emit_result() {
       esac
       if [ "$last_cause" = "exit_unconfirmed" ]; then
         echo "Merge queue: unconfirmed exit after ${elapsed}s — PR #$PR_NUM was out of the queue and unarmed at the last poll, ${unconfirmed:-an exit} short of its confirmation count. Wait again: that wait reads the arm afresh."
+      elif [ "$last_cause" = "blocked_by_entry_ahead" ]; then
+        echo "Merge queue: PR #$PR_NUM is held behind PR #$queue_ahead_pr after ${elapsed}s. Wait for that entry to leave, then read this PR's mergeable state."
       elif [ "${polls:-0}" -le 1 ]; then
         echo "Merge queue: still queued after ${elapsed}s — LOW CONFIDENCE: a single poll${poll_age:+, last observed ${poll_age}s ago}. Widen max_wait or shorten poll_interval for a live read. The merge stays armed and fires when checks and protection clear (${progress_note})"
       else
@@ -816,7 +829,7 @@ REPO_NAME="${REPO#*/}"
 # mergeQueueEntry.position and .headCommit are schema-verified fields
 # (`__type(name:"MergeQueueEntry")`); headCommit is the merge-group commit
 # whose check-runs are the progress signal.
-QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue mergeQueueEntry { state position headCommit { oid } } autoMergeRequest { enabledAt } } } }'
+QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue mergeQueueEntry { state position headCommit { oid } mergeQueue { entries(first: 100) { nodes { position headCommit { oid } pullRequest { number } } } } } autoMergeRequest { enabledAt } } } }'
 
 # Classify a failed gh call whose stderr sits in GH_ERR_FILE — identical
 # policy to approval-wait. Transient means the service or
@@ -1262,6 +1275,16 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   last_auto_merge=$(jq -r '.data.repository.pullRequest.autoMergeRequest != null' <<<"$queue_json")
   entry_position=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.position // ""' <<<"$queue_json")
   entry_head_oid=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' <<<"$queue_json")
+  # GitHub can hold a headless UNMERGEABLE entry behind a live group.
+  # Positive evidence in the existing queue read suffices. No match in this
+  # bounded page leaves the ordinary progress cause in place.
+  queue_ahead_pr=$(jq -r '
+    .data.repository.pullRequest.mergeQueueEntry as $entry
+    | if $entry.state == "UNMERGEABLE" and $entry.headCommit == null then
+        [$entry.mergeQueue.entries.nodes[]?
+         | select(.position < $entry.position and .headCommit.oid != null)]
+        | sort_by(.position) | .[0].pullRequest.number // ""
+      else "" end' <<<"$queue_json")
 
   in_queue_now=false
   [[ "$last_in_queue" == "true" || "$has_entry" == "true" ]] && in_queue_now=true
