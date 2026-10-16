@@ -649,10 +649,12 @@ CODEX_TOOL="{$CODEX_BASE,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash
 CODEX_STOP="{$CODEX_BASE,\"hook_event_name\":\"Stop\",\"stop_hook_active\":false,\"last_assistant_message\":\"ok\"}"
 COP_TOOL="{$COP_BASE,\"toolName\":\"view\",\"toolArgs\":\"{}\"}"
 COP_STOP="{$COP_BASE,\"stopReason\":\"end_turn\"}"
-# A Copilot preToolUse is the lead's only for a session recorded as one, the
-# record its session start writes.
-mkdir -p -- "$COP_HOME_DIR/.cache/lane-mail/copilot-leads"
-touch -- "$COP_HOME_DIR/.cache/lane-mail/copilot-leads/l1"
+# A custom subagent's preToolUse, under its own session id (Copilot CLI 1.0.88).
+COP_SUB_TOOL='{"sessionId":"s9","timestamp":1790975267602,"cwd":"/work","toolName":"view","toolArgs":"{}"}'
+# The jarvis bundle installs no lane-mail-start, so no Copilot lead record
+# stands: its tool calls reach the stamp as the unknown caller.
+assert_eq "$(find "$COP_HOME_DIR" -path '*/copilot-leads/*' | wc -l | tr -d ' ')" "0" \
+  "no Copilot lead record stands for the brief-taken rows"
 jarvis_delivered() { # PATCH
   jq -c "{state: \"starting\", brief_delivered: true} + . | .pending += {started_at: 1790000001} | $1" "$RECORD" >"$RECORD.next"
   mv "$RECORD.next" "$RECORD"
@@ -676,6 +678,7 @@ codex-tool|.codex/hooks|019a|lane-mail-halt|$CODEX_TOOL|.|true|JARVIS_GENERATION
 codex-stop|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.|none|JARVIS_GENERATION=3
 copilot-tool|.github/hooks|l1|lane-mail-halt|$COP_TOOL|.|true|JARVIS_GENERATION=3 ${COP_ENV[*]}
 copilot-stop|.github/hooks|l1|lane-mail-check|$COP_STOP|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
+copilot-subagent|.github/hooks|l1|lane-mail-halt|$COP_SUB_TOOL|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
 undelivered|.claude/hooks|5f0c|lane-mail-halt|$TOOL|.brief_delivered = false|none|JARVIS_GENERATION=3
 running|.claude/hooks|5f0c|lane-mail-check|$STOP|.state = "running"|none|JARVIS_GENERATION=3
 unstarted|.claude/hooks|5f0c|lane-mail-halt|$TOOL|.pending.started_at = null|none|JARVIS_GENERATION=3
@@ -735,9 +738,9 @@ session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" "$2" 
 JARVISCONTROL
 
 # Each brief-taken rule removed from a copy reddens its row: the hook's own
-# dispatch, the Claude Code turn-end allowlist, and the started, session,
-# delivery, launch state and write-once tests.
-while IFS='@' read -r label file old new home id wrapper payload patch want; do
+# dispatch, its Copilot unknown caller, the Claude Code turn-end allowlist, and
+# the started, session, delivery, launch state and write-once tests.
+while IFS='@' read -r label file old new home id wrapper payload patch want env; do
   jarvis_checkout "jarvis_taken_control_$label" "$home" "$id"
   jarvis_delivered "$patch"
   rm -f -- "${CHECKOUT:?}/.agents/skills/orch/scripts"
@@ -745,10 +748,12 @@ while IFS='@' read -r label file old new home id wrapper payload patch want; do
   LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
   [ "$file" = lib ] || LIB="$CHECKOUT/$home/lane-mail-check.sh"
   mutate_lib "$old" "$new"
-  run "$wrapper" "$payload" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+  # shellcheck disable=SC2086  # env is a list of assignments.
+  run "$wrapper" "$payload" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}" $env
   assert_eq "taken=$(taken)" "taken=$want" "control: brief-taken $label"
 done <<JARVISTAKENCONTROL
-dispatch@hook@{ [ "\$CALLER" = lead ] && [ -z "\$ITEM" ] && [ -n "\${JARVIS_RECORD:-}" ]; } || return 0@return 0@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.@none
+dispatch@hook@{ [ "\$CALLER" != subagent ] && [ -z "\$ITEM" ] && [ -n "\${JARVIS_RECORD:-}" ]; } || return 0@return 0@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.@none
+copilot-unknown@hook@[ "\$CALLER" != subagent ] && [ -z@[ "\$CALLER" = lead ] && [ -z@.github/hooks@l1@lane-mail-halt@$COP_TOOL@.@none@${COP_ENV[*]}
 turn-end@lib@[ "\$5" = PreToolUse ] || [ "\$4" = claude ] || return 0@:@.pi/kendex/hooks@p1@lane-mail-check@$PI_STOP@.@true
 started@lib@ and .pending.started_at != null@@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.pending.started_at = null@true
 session@lib@.pending.native_session_id == \$session and @@.claude/hooks@6a1d@lane-mail-halt@$TOOL@.@true
