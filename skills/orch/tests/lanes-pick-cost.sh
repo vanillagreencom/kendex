@@ -46,7 +46,9 @@ cat > "$TMP_ROOT/provider" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-  capabilities) printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n' ;;
+  capabilities)
+    if [[ "${2:-}" == --cache-key ]]; then echo cache-key=v1; exit 0; fi
+    printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n' ;;
   accounts)
     for name in a b c d; do
       printf 'account=%s/.%sclaude\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\n' "$LANES_HOME" "$name"
@@ -293,13 +295,16 @@ fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
 
-# The overseer chooses a model before its launch. Count the capabilities
-# interpreter independently of the accounts verb and compare stdout bytes.
+# The overseer chooses a model before its launch. Count full capability
+# answers separately from key probes and compare stdout bytes.
 CAPABILITY_PROVIDER="$TMP_ROOT/capability-provider"
 cat > "$CAPABILITY_PROVIDER" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" != capabilities ]] || printf 'capabilities\n' >> "$COST_COUNTER"
+if [[ "$1" == capabilities ]]; then
+  if [[ "${2:-}" == --cache-key ]]; then printf 'capability-key\n' >> "$COST_COUNTER"
+  else printf 'capabilities\n' >> "$COST_COUNTER"; fi
+fi
 exec "$COST_PROVIDER" "$@"
 STUB
 chmod +x "$CAPABILITY_PROVIDER"
@@ -312,17 +317,20 @@ capability_pick() { # LANES
     ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0 ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/capability-state" \
     "$1" pick --harness claude --model sonnet --json > "$TMP_ROOT/capability.out" 2> "$TMP_ROOT/capability.err") || RC=$?
   CAPABILITY_STARTS="$(awk '$0 == "capabilities" {n++} END {print n+0}' "$TMP_ROOT/counter")"
+  CAPABILITY_PROBES="$(awk '$0 == "capability-key" {n++} END {print n+0}' "$TMP_ROOT/counter")"
 }
 capability_pick "$LANES"
 assert_eq "$RC" 0 'cold overseer-form pick reaches the chooser' "$TMP_ROOT/capability.err"
-assert_eq "$CAPABILITY_STARTS" 1 'cold overseer-form pick starts the capability provider once'
+assert_eq "$CAPABILITY_STARTS" 1 'cold overseer-form pick fetches one full capability answer'
+assert_eq "$CAPABILITY_PROBES" 1 'cold overseer-form pick probes the capability key'
 cp -- "$TMP_ROOT/capability.out" "$TMP_ROOT/capability.cold"
 capability_pick "$LANES"
 assert_eq "$RC" 0 'warm overseer-form pick reaches the chooser' "$TMP_ROOT/capability.err"
-assert_eq "$CAPABILITY_STARTS" 0 'warm overseer-form pick starts no capability provider'
+assert_eq "$CAPABILITY_STARTS" 0 'warm overseer-form pick fetches no full capability answer'
+assert_eq "$CAPABILITY_PROBES" 1 'warm overseer-form pick probes the capability key'
 cmp_rc=0; cmp -s -- "$TMP_ROOT/capability.out" "$TMP_ROOT/capability.cold" || cmp_rc=$?
 assert_eq "$cmp_rc" 0 'warm overseer-form pick keeps cold stdout bytes'
-printf 'capability-cost: cold=1 warm=%s\n' "$CAPABILITY_STARTS"
+printf 'capability-cost: full-answer-cold=1 full-answer-warm=%s key-probes-warm=%s\n' "$CAPABILITY_STARTS" "$CAPABILITY_PROBES"
 CONTROL_PARENT="$("$TEST_DIR/../scripts/git-context" common-root "$TEST_DIR")"
 mkdir -p "${CONTROL_PARENT%/*}/tmp"
 CAPABILITY_CONTROL_ROOT="$(mktemp -d "${CONTROL_PARENT%/*}/tmp/capability-cost-control.XXXXXX")" || { echo 'lanes-pick-cost: scratch=mktemp-failed' >&2; exit 1; }
@@ -335,7 +343,7 @@ mutate_file "$CONTROL/lib/lane-capabilities.sh" \
   'LANE_CAPABILITIES="$(cd -- "${3:-.}" && ORCH_LANE_HOST="$2" "$1" capabilities)" # LANE_CAPABILITIES="$(lane_capabilities_answer "$1" "$2" "${3:-.}")"'
 capability_pick "$CONTROL/lanes"
 assert_eq "$RC" 0 'base-reader control reaches the chooser' "$TMP_ROOT/capability.err"
-assert_eq "$CAPABILITY_STARTS" 1 'base-reader control starts the capability provider once'
+assert_eq "$CAPABILITY_STARTS" 1 'base-reader control fetches one full capability answer'
 rc=0
 ( FAIL=0; assert_eq "$CAPABILITY_STARTS" 0 'warm capability starts'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-capability-cost.log" || rc=$?
 assert_eq "$rc" 1 'warm count assertion rejects the base capability reader'
