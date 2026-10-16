@@ -131,6 +131,57 @@ else
   bad 'input-note control changes the guard'
 fi
 
+# Shared skill libraries have consumers in other trees, directly or through
+# a test helper. An unrelated library must keep those consumers excluded.
+mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/orch/tests" "$R/hooks/tests/lib" "$R/refresh/tests"
+printf ':\n' > "$R/skills/orch/scripts/lib/shared.sh"
+printf ':\n' > "$R/skills/orch/scripts/lib/private.sh"
+printf 'source "$PWD/skills/orch/scripts/lib/shared.sh"\n' > "$R/hooks/tests/lib/shared-world.sh"
+cat > "$R/skills/orch/tests/libraries.test.sh" <<'SH'
+#!/usr/bin/env bash
+source "$PWD/skills/orch/scripts/lib/shared.sh"
+source "$PWD/skills/orch/scripts/lib/private.sh"
+printf 'orch\n' >> "$SUITE_LOG"
+SH
+cat > "$R/hooks/tests/shared.test.sh" <<'SH'
+#!/usr/bin/env bash
+source "$PWD/hooks/tests/lib/shared-world.sh"
+printf 'hooks\n' >> "$SUITE_LOG"
+SH
+cat > "$R/refresh/tests/shared.test.sh" <<'SH'
+#!/usr/bin/env bash
+source "$PWD/skills/orch/scripts/lib/shared.sh"
+printf 'refresh\n' >> "$SUITE_LOG"
+SH
+printf '#!/usr/bin/env bash\nprintf "unrelated-refresh\\n" >> "$SUITE_LOG"\nexit 1\n' > "$R/refresh/tests/unrelated.test.sh"
+git -C "$R" add -A
+git -C "$R" commit -q -m libraries
+BASE="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main "$BASE"
+for row in 'shared|hooks orch refresh' 'private|orch'; do
+  IFS='|' read -r library expected <<<"$row"
+  for mode in full range; do
+    git -C "$R" reset -q --hard "$BASE"
+    printf '# changed\n' >> "$R/skills/orch/scripts/lib/$library.sh"
+    preview "$mode" true
+    selected="$(sort "$SUITE_LOG" | tr '\n' ' ' | sed 's/ $//')"
+    [ "$RC" -eq 0 ] && [ "$selected" = "$expected" ] \
+      && ok "$mode library $library selects its same-tree and external consumers only" \
+      || bad "$mode library $library selects its same-tree and external consumers only" "selected=$selected rc=$RC out=$OUT"
+  done
+done
+if [ "$(grep -c '^    for consumer in .*consumer_trees.*; do$' "$GUARD")" -eq 1 ] \
+  && mutant_guard '/^    for consumer in .*consumer_trees.*; do$/,/^    done$/d'; then
+  git -C "$R" reset -q --hard "$BASE"
+  printf '# changed\n' >> "$R/skills/orch/scripts/lib/shared.sh"
+  preview range true "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$(cat "$SUITE_LOG")" = orch ] \
+    && ok 'control: omitting cross-tree inputs loses both hooks and refresh consumers' \
+    || bad 'control: omitting cross-tree inputs loses both hooks and refresh consumers' "rc=$RC out=$OUT"
+else
+  bad 'cross-tree control changes the guard'
+fi
+
 # Reader comparisons can fail while the files remain readable. Normal runs
 # must run the whole set; scoped runs must refuse the unavailable evidence.
 git -C "$R" reset -q --hard "$BASE"
@@ -205,6 +256,18 @@ mkdir -p "$actual"
 git -C "$REPO" ls-files -z > "$TMP/aggregate-files"
 tar -C "$REPO" --null -T "$TMP/aggregate-files" -cf "$TMP/aggregate-tree.tar"
 tar -xf "$TMP/aggregate-tree.tar" -C "$actual"
+# Keep reader text and the shared runner for selection. Only the aggregate
+# assertion executes its real contract in this checkout.
+git -C "$REPO" ls-files '*/tests/*.sh' '*/tests/*.mjs' > "$TMP/replay-suites"
+while IFS= read -r suite; do
+  case "$suite" in
+    tools/* | */tests/run-all.sh | */tests/*/*) continue ;;
+    *.mjs) printf 'process.exit(0);\n' > "$TMP/replay-suite" ;;
+    *) printf 'exit 0\n' > "$TMP/replay-suite" ;;
+  esac
+  cat "$actual/$suite" >> "$TMP/replay-suite"
+  mv "$TMP/replay-suite" "$actual/$suite"
+done < "$TMP/replay-suites"
 for suite in "$actual"/tools/tests/*.sh; do
   case "${suite##*/}" in ci-aggregate.test.sh | run-all.sh) ;; *) rm -- "$suite" ;; esac
 done
@@ -225,6 +288,35 @@ OUT="$(cd "$actual" && "$GUARD" --range "$actual_base" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && [[ $OUT == *suite=ci-aggregate.test* ]] && [[ $OUT == *'fail=1'* ]] \
   && ok 'the shipped aggregate rejects a broken workflow through range selection' \
   || bad 'the shipped aggregate rejects a broken workflow through range selection' "$OUT"
+
+# PR #5200's changed orch scripts and libraries must reach the real hooks
+# and refresh readers. Preserve suite text for the mapper, but stop bodies
+# before execution: this row proves selection, not those suites' contracts.
+git -C "$actual" reset -q --hard "$actual_base"
+printf 'exit 0\n' > "$TMP/replay-suite"
+cat "$actual/tools/tests/ci-aggregate.test.sh" >> "$TMP/replay-suite"
+mv "$TMP/replay-suite" "$actual/tools/tests/ci-aggregate.test.sh"
+git -C "$actual" add tools/tests/ci-aggregate.test.sh
+git -C "$actual" commit -q -m replay
+replay_base="$(git -C "$actual" rev-parse HEAD)"
+for input in \
+  skills/orch/scripts/lib/adapters/claude.sh \
+  skills/orch/scripts/lib/lane-launch.sh \
+  skills/orch/scripts/lib/lane-model.sh \
+  skills/orch/scripts/lib/lane-relaunch.sh \
+  skills/orch/scripts/lib/overseer-launch.sh \
+  skills/orch/scripts/oversee \
+  skills/orch/scripts/oversee-succeed; do
+  printf '\n# KEN-3966 replay\n' >> "$actual/$input"
+  printf '\n# KEN-3966 replay\n' >> "$actual/.agents/$input"
+done
+RC=0
+OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+  DEV_VALIDATE_SCOPED=true "$GUARD" --selection --range "$replay_base" 2>&1)" || RC=$?
+for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-switch.test.sh refresh/tests/refresh-consumer.test.sh; do
+  [ "$RC" -eq 0 ] && grep -Fxq "=== $suite" <<<"$OUT" \
+    && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
+done
 
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

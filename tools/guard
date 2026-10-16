@@ -1563,8 +1563,9 @@ reach_join() { # ROLE PATH
     *) return 3 ;;
   esac
 }
-# The suites run for one changed path of a skill, hooks/ or tools/,
-# REL being the path inside it; this comment, with path_role's table and
+# The suites run for one changed repository path in a skill, hooks/, refresh/
+# or tools/: REL is inside the tree, or ../ followed by a repository input.
+# This comment, with path_role's table and
 # doc_readers' for a doc, is the one statement of the rule.
 #   - A changed or deleted script, lib or helper starts a scan over
 #     skill_files with its name as the first needle. A file joins the reach
@@ -1587,7 +1588,7 @@ reach_join() { # ROLE PATH
 #     A module no suite names runs nothing.
 #   - A path of no role, a changed test module, and a path whose
 #     reach holds no suite map to no suite.
-#   - tools/ also scans repository inputs outside its tree. Whole paths in
+#   - Every tree also scans repository inputs outside its tree. Whole paths in
 #     code and `# Inputs:` path patterns seed the same reader reach. Input
 #     notes name indirect reads that the text scan cannot resolve.
 # The reach is what the scan can see, not every caller: a script run through
@@ -1718,6 +1719,13 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
   # it> TAB <path>`: a render reads as the source it renders.
   tree_paths=""
+  consumer_trees=()
+  for consumer in skills/* hooks refresh; do
+    [ -d "$consumer/tests" ] || continue
+    consumer_suites=$(skill_suites "$consumer")
+    [ -n "$consumer_suites" ] || continue
+    consumer_trees+=("$consumer")
+  done
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
@@ -1752,6 +1760,11 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       tree_paths="${tree_paths}tools	../$f	$f
 "
     fi
+    for consumer in ${consumer_trees[@]+"${consumer_trees[@]}"}; do
+      [ "$consumer" != "$tree" ] || continue
+      tree_paths="${tree_paths}$consumer	../$f	$f
+"
+    done
   done <<<"$touched"
   npm_available=unchecked
   for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
@@ -1787,14 +1800,17 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       *)
         [ -d "$d/tests" ] || continue
         run=all
-        case "$d" in skills/* | hooks | tools) run="" ;; esac
+        case "$d" in skills/* | hooks | refresh | tools) run="" ;; esac
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             if [ "$scoped_only" -eq 1 ]; then
-              role=$(path_role "$d" "$rel") || continue
-              [[ $rel != ../* ]] || role=script
+              if [[ $rel == ../* ]]; then
+                role=script
+              else
+                role=$(path_role "$d" "$rel") || continue
+              fi
               case "$role" in script | lib | helper | module | suite | test-module) ;; *) continue ;; esac
             fi
             map_status=0
@@ -1804,7 +1820,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
               0) ;;
               1) if [ "$scoped_only" -eq 1 ]; then continue; fi
                  note suites "all reason=unmapped path=$f"; run=all; break ;;
-              2) if [ "$scoped_only" -eq 1 ]; then say mapped-suites "$map_status path=$f"; run=""; break; fi
+              2) if [ "$scoped_only" -eq 1 ]; then say mapped-suites "$map_status path=$f"; break 2; fi
                  note suites "all reason=unreadable path=$f"; run=all; break ;;
               *) say mapped-suites "$map_status path=$f"
                  if [ "$scoped_only" -eq 1 ]; then run=""; else run=all; fi
