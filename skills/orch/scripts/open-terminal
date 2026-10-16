@@ -217,8 +217,9 @@ if [[ -z "$LANE_HOST" ]]; then
   [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
 fi
 preference_host="$LANE_HOST"
-# Prints the record `lanes pick --json` judged the lane on; pick_record_env
-# reads the launch prefix from it.
+# Prints the `lanes pick --json` record for pick_record_env.
+# Returns the helper's status, or local status 6 when a successful API-credit
+# pick conflicts with the requested harness pool.
 pick_auto_lane() {
   local model_args=() state_env=() pick_harness="$LANE_HARNESS" record rc=0
   # An explicit auto pool cannot substitute plan room for Pi API credit.
@@ -1012,15 +1013,9 @@ pi_lane_root_apply() {
   fi
   [[ "$PI_GATE_DEFERRED" != true ]] || pi_local_gate
 }
-# The refusal for an `auto` pick `lanes` answered with RC, the fields after it
-# appended, by the account lane_pick_harness says the launch spends. Every one
-# stops the launch, and each names what answers it: 3 is no candidate with
-# room, which for the Copilot pool is every pool read at or above the
-# threshold, a pool the lane host read reopening at its binding_resets_at and a
-# stated one moving only when the owner restates it; 5 is a Pi pick where no
-# read measured any pool, a read to repair as the `fix=` line `lanes` printed
-# above says, or one on a provider nothing measures; anything else is lanes
-# failing, a failed accounts read that a retry can answer among them.
+# Prints a refusal for pick_auto_lane's RC and RECORD, appending FIELDs.
+# Statuses 3 and 5 are account refusals. Status 6 is the local API-credit
+# pool mismatch. Other statuses are helper failures. The caller stops the launch.
 auto_pick_refusal() { # RC RECORD [FIELD...]
   local rc="$1" record="$2" grant_refused
   shift 2
