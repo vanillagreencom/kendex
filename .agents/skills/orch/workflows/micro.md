@@ -128,11 +128,17 @@ Record this tier after either state route. Direct publication uses it to retain 
 
    A successful commit with escape condition 3 recorded escapes now. Any other successful commit continues to step 6. A repository-rule refusal escapes as condition 4 with the staged edit still present; § Escape transfers that exact state.
 
-6. **Write the completion summary**. **Skip if** `TRACKER` is GitHub. This tier runs no dev round, so this file is the item's only Completion Summary, and `container-close` refuses a container whose child has none. Write `[WT_PATH]/tmp/completion-summary-[ISSUE_ID].md` under a `## Completion Summary` heading: the commit `git -C [WT_PATH] log -1 --oneline` prints, one line per committed path saying what changed, and the commit chain as what checked it. The item's completion posts it at [merge-pr.md](merge-pr.md) § 5 step 2, on either route § 3 takes. Continue to § 3.
+6. **Post the completion summary**. **Skip if** `TRACKER` is GitHub. This tier runs no dev round, so this comment is the item's only Completion Summary, and `container-close` refuses a container whose child has none. Write `[WT_PATH]/tmp/completion-summary-[ISSUE_ID].md` under a `## Completion Summary` heading: the commit `git -C [WT_PATH] log -1 --oneline` prints, one line per committed path saying what changed, and the commit chain as what checked it. Post it at once, as the standard tier's dev-implement.md § 9 does, so it is on the item before any lane lands the change:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [WT_PATH]/tmp/completion-summary-[ISSUE_ID].md
+   ```
+
+   A rate-limited post is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds. Continue to § 3.
 
 ## 3. Push And Open The PR
 
-`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication) through the shared entry below, which stops an item with an open post-merge box. It runs this tier's commit hooks and final path check before the base push. A wider tier stops before transport and takes § Escape condition 3. Its Linear completion runs merge-pr.md § 5 step 2 with `[MICRO_ENTRY]` bound to `true`, which posts the § 2 step 6 summary. On successful direct delivery, restore the main checkout as below, then go to § 5. Report `[PUSHED_SHA]` and `[BASE]` in place of the PR and merge rows. Skip § 4.
+`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication) through the shared entry below, which stops an item with an open post-merge box. It runs this tier's commit hooks and final path check before the base push. A wider tier stops before transport and takes § Escape condition 3. On successful direct delivery, restore the main checkout as below, then go to § 5. Report `[PUSHED_SHA]` and `[BASE]` in place of the PR and merge rows. Skip § 4.
 
 **Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. That range owns the push and its `sha-reconcile:` routing, and the create. The body is the three lines below rather than step 3's template. No headings and no other section.
 
@@ -190,7 +196,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request. A command failure, an unreadable object, or a non-open pull request escapes (§ Escape condition 6). A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and § 5 step 1 routes that refusal.
 
-**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The class was measured over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one. Its § 5 step 2 completes the Linear item and posts the § 2 step 6 summary.
+**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The class was measured over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one.
 
 Its § 3 is skipped, so nothing waits on a reviewer before § 5 step 1, and only that step's CI wait, ahead of its direct attempt, waits on CI. § 5 step 1 then attempts the prepared head and owns the queue wait to a terminal verdict. Read `ci-classify-refusal --help` for the output and retry contract. A refusal it marks `retry: same-head` is retried on that head by re-entering the step under [merge-attempt.md § Exit routing](../references/merge-attempt.md#exit-routing)'s bound and is not an escape; its limit stop ends the run as a merge-pr verdict. Any other refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 7).
 

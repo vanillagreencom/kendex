@@ -387,12 +387,6 @@ Use the output as `MAIN_REPO_ROOT`.
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES] --evidence-file [EVIDENCE_FILE]
    ```
 
-   A `[MICRO_ENTRY]` run runs this command in place of the one above. No dev round posted the item's Completion Summary comment, and `container-close` refuses a container whose child has none, so this call posts the summary [micro.md](micro.md) § 2 step 6 wrote:
-
-   ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES] --evidence-file [EVIDENCE_FILE] --summary-file [WORKTREE_PATH]/tmp/completion-summary-[ISSUE].md
-   ```
-
    A rate-limited completion is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds, never recorded as a failed step.
 
    Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box. The text cites the recorded proof. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. Select `[MET_BOXES]` under that acceptance rule. Use `all` only when that rule accepts every box. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.

@@ -99,13 +99,13 @@ case "$resource:$action" in
         jq -cn --argjson p "$parsed" --argjson summary "$has_summary" '{all_ok: ($p.completion_state == "Done"), results: [($p | {unmet_branch_boxes,missing_evidence_boxes,missing_outcome_box}) + {id:"PARENT-1",state_type:"started",has_summary:$summary,ok:($p.completion_state == "Done")}]}'
         ;;
       # Each child's result comes from the shared validation rule, with the
-      # summary its own completion posted.
+      # summary marker read from the comments posted on it.
       children)
         source "${0%/*}/lib/issue-validation.sh"
         rows="$(build_completion_validation_result PARENT-1 'In Progress' '' "$has_summary" container started)"
         while IFS=$'\t' read -r id state type; do
           child_summary=false
-          [[ ! -e "$root/child-summary.$id" ]] || child_summary=true
+          [[ ! -e "$root/comments.$id" ]] || child_summary="$(jq -Rs 'test("Completion Summary|Bundle Complete"; "i")' "$root/comments.$id")"
           rows+=$'\n'"$(build_completion_validation_result "$id" "$state" PARENT-1 "$child_summary" container-child "$type")"
         done < <(jq -r '.[] | select(.state_type != "canceled") | [.id, .state, .state_type] | @tsv' "$root/children.json")
         jq -cs '{all_ok: all(.[]; .ok), results: .}' <<<"$rows"
@@ -123,9 +123,7 @@ case "$resource:$action" in
     ;;
   issues:complete)
     if [[ "$1" != PARENT-1 ]]; then
-      child="$1"; shift
-      while [[ $# -gt 0 ]]; do case "$1" in --summary-file) cp "$2" "$root/child-summary.$child"; shift 2 ;; *) shift ;; esac; done
-      printf '{"success":true,"identifier":"%s"}\n' "$child"
+      printf '{"success":true,"identifier":"%s"}\n' "$1"
       exit 0
     fi
     summary=""
@@ -159,6 +157,11 @@ case "$resource:$action" in
     mv "$root/children.next.$$" "$root/children.json"
     printf '{"success":true,"identifier":"PARENT-1"}\n'
     ;;
+  comments:create)
+    [[ "$#" == 3 && "$2" == --body-file ]] || exit 2
+    cat "$3" >> "$root/comments.$1"
+    printf '{"success":true}\n'
+    ;;
   *) exit 2 ;;
 esac
 SH
@@ -182,7 +185,7 @@ reset_state() {
   rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls" \
     "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$FAKE_LINEAR_ROOT/ratelimit.hold-reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
   [[ ! -d "$HELD_DIR" ]] || rmdir "$HELD_DIR"
-  rm -f -- "${FAKE_LINEAR_ROOT:?}"/child-summary.*
+  rm -f -- "${FAKE_LINEAR_ROOT:?}"/comments.*
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"; mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
 run_close() { (cd "$CALLER_ONE" && "$SCRIPT" "$SANDBOX" PARENT-1); }
@@ -388,28 +391,31 @@ assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" $'summary\nstate-only' "a h
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/summary.calls" | tr -d ' ')" "1" "a held state transition posts one summary"
 [[ ! -e "$HELD_DIR" ]] && pass "a resumed state transition releases its held inputs" || fail "a resumed state transition releases its held inputs"
 
-# A micro child completes through ../workflows/merge-pr.md § 5 step 2's micro
-# command, which posts the summary ../workflows/micro.md § 2 step 6 wrote. The
-# plain row runs the command every other entry takes, the one a micro child
-# ran before it had its own: that child carries no summary and holds its
-# container open.
-complete_commands="$(awk '/^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/linear\/scripts\/linear.sh issues complete / { sub(/^   /, ""); print }' "$REPO_ROOT/skills/orch/workflows/merge-pr.md")"
-micro_complete="$(grep -F -e '--summary-file ' <<<"$complete_commands" || true)"
-plain_complete="$(grep -vF -e '--summary-file ' <<<"$complete_commands" || true)"
-assert_eq "$(grep -c . <<<"$micro_complete" || true):$(grep -c . <<<"$plain_complete" || true)" "1:1" "merge-pr gives one micro and one plain completion command"
-micro_child_close() { # COMMAND
-  local command="$1" wt="$TMP_ROOT/micro-child"
+# A micro child's Completion Summary is the comment ../workflows/micro.md
+# § 2 step 6 posts; its later completion is the plain command in
+# ../workflows/merge-pr.md § 5 step 2 every entry runs. The plain row posts
+# nothing, as micro did before that step: its child holds the container open.
+post_command="$(awk '/^   \.agents\/skills\/linear\/scripts\/linear\.sh comments create / { sub(/^   /, ""); print }' "$REPO_ROOT/skills/orch/workflows/micro.md")"
+complete_command="$(awk '/^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/linear\/scripts\/linear.sh issues complete / { sub(/^   /, ""); print }' "$REPO_ROOT/skills/orch/workflows/merge-pr.md")"
+assert_eq "$(grep -c . <<<"$complete_command" || true)" "1" "merge-pr gives one completion command"
+micro_child_close() { # POST_COMMAND
+  local command wt="$TMP_ROOT/micro-child"
   mkdir -p "$wt/tmp"
   printf '## Completion Summary\n\nfeat(CHILD-1): one\n' > "$wt/tmp/completion-summary-CHILD-1.md"
   printf '1: fixture evidence\n' > "$wt/tmp/evidence"
-  command="${command//\[MAIN_REPO_ROOT\]\/.agents\//$SANDBOX/}"
-  command="${command//\[WORKTREE_PATH\]/$wt}"
-  command="${command//\[ISSUE\]/CHILD-1}"
-  command="${command//\[MERGED_AT\]/2026-10-16T12:00:00Z}"
-  command="${command//\[MET_BOXES\]/all}"
-  command="${command//\[EVIDENCE_FILE\]/$wt/tmp/evidence}"
-  [[ "$command" != *'['* ]] || { printf 'micro-command: placeholder-left command=%s\n' "$command" >&2; return 1; }
-  bash -c "$command" >/dev/null || return 1
+  for command in "$1" "$complete_command"; do
+    [[ -n "$command" ]] || continue
+    command="${command//\[MAIN_REPO_ROOT\]\/.agents\//$SANDBOX/}"
+    command="${command/#.agents\//$SANDBOX/}"
+    command="${command//\[WT_PATH\]/$wt}"
+    command="${command//\[ISSUE_ID\]/CHILD-1}"
+    command="${command//\[ISSUE\]/CHILD-1}"
+    command="${command//\[MERGED_AT\]/2026-10-16T12:00:00Z}"
+    command="${command//\[MET_BOXES\]/all}"
+    command="${command//\[EVIDENCE_FILE\]/$wt/tmp/evidence}"
+    [[ "$command" != *'['* ]] || { printf 'micro-command: placeholder-left command=%s\n' "$command" >&2; return 1; }
+    bash -c "$command" >/dev/null || return 1
+  done
   run_close
 }
 while IFS='|' read -r row command want; do
@@ -420,8 +426,8 @@ while IFS='|' read -r row command want; do
   refusal="$(grep -o 'completion-refused parent-id=PARENT-1' "$TMP_ROOT/micro-$row.err" || true)"
   assert_eq "$rc:$out:$refusal:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "$want" "$row completion of a micro child decides its container's close" "$TMP_ROOT/micro-$row.err"
 done <<ROWS
-micro|$micro_complete|0:closed PARENT-1::Done
-plain|$plain_complete|1::completion-refused parent-id=PARENT-1:In Progress
+micro|$post_command|0:closed PARENT-1::Done
+plain||1::completion-refused parent-id=PARENT-1:In Progress
 ROWS
 
 for validation_mode in exit false string_all_ok missing_parent duplicate_parent empty_state wrong_state_type wrong_summary_type; do
