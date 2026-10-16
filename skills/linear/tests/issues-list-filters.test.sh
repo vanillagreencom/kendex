@@ -93,6 +93,24 @@ for selection in triage owed; do
                     '.query | capture("nodes \\{(?<fields>[^}]+)\\}").fields | split("\n") | join(" ") | split(" ") | map(select(length > 0)) | sort == ["createdAt","identifier"]'
                 assert_jq 'triage: required output fields' "$out" '.[0] == {id:"KEN-1",created_at:"2026-08-15T09:00:00Z"}'
             else
+                # The fixture supplies values without projecting the request.
+                # Check the wire fields owed_read needs, including their scope.
+                assert_jq 'owed: required fields selected upstream' "$(jq -sc '[.[] | select(.query | contains("ListIssues")) | .query]' "$TMP_ROOT/calls")" '
+                    length > 0 and all(.[];
+                        (capture("nodes\\s*\\{(?<fields>.*)\\}\\s*\\}\\s*\\}\\s*$"; "s")
+                          // error("owed-selection-unread")).fields
+                        | [scan("[_A-Za-z][_0-9A-Za-z]*|[{}]")]
+                        | reduce .[] as $token ({scope: [], prior: null, paths: []};
+                            if $token == "{" then .scope += [.prior]
+                            elif $token == "}" then .scope = .scope[:-1]
+                            else .prior = $token | .paths += [(.scope + [$token] | join("."))] end)
+                        | .paths as $selected
+                        | ["id", "identifier", "title", "description", "priority", "createdAt",
+                           "state.name", "state.type", "parent.identifier",
+                           "inverseRelations.pageInfo.hasNextPage", "inverseRelations.pageInfo.endCursor",
+                           "inverseRelations.nodes.id", "inverseRelations.nodes.type",
+                           "inverseRelations.nodes.issue.identifier", "inverseRelations.nodes.issue.state.type"]
+                          - $selected | length == 0)'
                 assert_jq 'owed: unused fields omitted upstream' "$(cat "$TMP_ROOT/calls")" \
                     'select(.query | contains("ListIssues")) | .query | test("assignee|labels|project|estimate|sortOrder|updatedAt|archivedAt|trashed|url|relatedIssue") | not'
                 assert_jq 'owed: verification and container facts survive every blocker page' "$out" \

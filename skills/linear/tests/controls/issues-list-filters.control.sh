@@ -3,6 +3,10 @@ control_expect 'triage: only identity and creation selected upstream'
 control_replace scripts/commands/issues.sh 1 \
     "    triage) fields='identifier createdAt'; page=250 ;;" \
     '    triage) fields="$ISSUE_RETURN_FIELDS"; page=250 ;;'
+control_expect 'owed: required fields selected upstream'
+control_replace scripts/commands/issues.sh 1 \
+    "        fields='id identifier title description priority state { name type } parent { identifier } createdAt" \
+    "        fields='id identifier title priority state { name type } parent { identifier } createdAt"
 # Of several labels only the first filters, so an issue carrying one of them
 # passes for one carrying all.
 control_expect 'two labels by --labels: filter'
