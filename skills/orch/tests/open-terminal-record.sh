@@ -222,6 +222,8 @@ stamped() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ 
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
 # pick_claims ITEM — the claims the record's pick reading charged, none without one.
 pick_claims() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .pick.claims // "none"' | tr -d '"'; }
+cloud_access() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .cloud_repo_access // null' | jq -c .; }
+CLOUD_ACCESS='{"step":"cloud-repo-access-manual","repositories":["owner/repo"],"url":"https://claude.ai/code/session_previous"}'
 
 # A fleet launch names its harness and carries the words the fleet gate asks
 # for; a row about some other part of the launch passes that gate with this.
@@ -506,6 +508,22 @@ assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
   'true' "a native relaunch retains the first file-backed launch tier and inputs"
 
+echo "=== a replacement launch removes the previous cloud access step ==="
+ACCESS_KEEP_OT="$(mutant_scripts cloud-access-keep open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/cloud-access-keep"
+mutate_file "$ACCESS_KEEP_OT" ' | del(.cloud_repo_access)' ''
+run_ot --ghostty "${FLEET_CMD[@]}" CC-53
+touch "$EXISTS_DIR/CC-53"
+for row in "$OT|0" "$ACCESS_KEEP_OT|1"; do
+  IFS='|' read -r script want_red <<<"$row"
+  "$WS" --state-dir "$STATE" update oversee --argjson access "$CLOUD_ACCESS" \
+    '(.lanes[] | select(.item == "CC-53")) |= (.kind="claude-cloud" | .host="claude-cloud" | .session_id="session_previous" | .cloud_repo_access=$access)' >/dev/null
+  run_ot SCRIPT="$script" --relaunch --ghostty "${FLEET_CMD[@]}" CC-53
+  red="$(FAIL=0; assert_eq "$(cloud_access CC-53)" null 'replacement cloud access step' > "$TMP_ROOT/cloud-access-control.out"; printf '%s' "$FAIL")"
+  assert_eq "rc=$RC red=$red" "rc=0 red=$want_red" \
+    'a non-cloud replacement clears the session step; restoring the old merge fails that contract' "$TMP_ROOT/err"
+done
+
 echo "=== a relaunch reads the handoff record where the lane wrote it ==="
 # The lane writes its record from its own worktree, whose common root is that
 # worktree here, while --state-dir names the fleet's directory, which holds
@@ -555,8 +573,10 @@ rm -f -- "${TMP_ROOT:?}/wt/CC-1/kendex.settings.toml"
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 
 echo "=== a wake rewrites the session it resumed and nothing else ==="
-"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done" | .session_since = "'"$LAUNCHED_AT"'")' >/dev/null
+"$WS" --state-dir "$STATE" update oversee --argjson access "$CLOUD_ACCESS" '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done" | .session_since = "'"$LAUNCHED_AT"'" | .cloud_repo_access=$access)' >/dev/null
 run_ot --wake --harness claude CC-1
+assert_eq "$(cloud_access CC-1)" "$CLOUD_ACCESS" 'a wake retains the session access step'
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= del(.cloud_repo_access)' >/dev/null
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
   "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null kind=local mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=claude-opus-5-5 effort=high session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
@@ -975,17 +995,21 @@ assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 reco
 
 # A relaunch has not taken while its host prepares or after that wait fails,
 # so the pick reading of the launch that took stays beside its account.
+"$WS" --state-dir "$STATE" update oversee --argjson access "$CLOUD_ACCESS" '(.lanes[] | select(.item == "CC-73")).cloud_repo_access=$access' >/dev/null
 HAND_OFF_CMD="true --model claude-sonnet-5 --effort low" hand_off CC-73 STUB_PICK_CLAIMS=7 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-relaunch" LANE_HOST_STUB_WAIT_STATUS=1 -- --relaunch
+assert_eq "$(cloud_access CC-73)" "$CLOUD_ACCESS" 'unstarted replacement preparation retains the session access step'
 assert_eq "rc=$RC record=$(prepared CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort) pick=$(pick_claims CC-73)" \
   "rc=0 record=preparing prepare none model=claude-opus-5-5 effort=high pick=3" "a preparing relaunch keeps the prior model, effort and pick reading"
 touch "$TMP_ROOT/gate-73-relaunch"
 assert_eq "record=$(settled CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort) pick=$(pick_claims CC-73)" \
   "record=stopped prepare wait-failed model=claude-opus-5-5 effort=high pick=3" "a stopped relaunch keeps the prior model, effort and pick reading"
+assert_eq "$(cloud_access CC-73)" "$CLOUD_ACCESS" 'failed replacement preparation retains the session access step'
 # A relaunch that runs on no judged reading drops the earlier one.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
 assert_eq "rc=$RC record=$(prepared CC-73) pick=$(pick_claims CC-73)" "rc=0 record=running none none pick=none" \
   "a running relaunch on no judged reading drops the pick an earlier launch recorded"
+assert_eq "$(cloud_access CC-73)" null 'the completed hosted replacement removes the old session access step'
 # Controls, one per rule. A record that drops the pick on a relaunch that has
 # not taken shows the new reading beside the old account; one that keeps it
 # through a running relaunch on no reading shows the old reading.
