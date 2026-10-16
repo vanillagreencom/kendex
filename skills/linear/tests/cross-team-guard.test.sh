@@ -12,7 +12,8 @@
 # Fixture teams: KEN (named kendex) and VGS (named vsys), each also reachable
 # by its team UUID, and OPS, named VGS, so that a LINEAR_TEAM of VGS is one
 # team's key and another's name. KEN-1 and VGS-1 are one issue in KEN and VGS,
-# also reachable by their UUIDs.
+# also reachable by their UUIDs. OWN-7 resolves to the current team named
+# by ALIAS_TEAM, including OTHER after a move out of OWN.
 
 set -euo pipefail
 
@@ -45,15 +46,20 @@ cat >"$PROJECT/bin/curl" <<'SH'
 set -euo pipefail
 payload=$(sed -n 's/^data = //p' <<<"$(cat)" | jq -r)
 printf '%s\n' "$payload" >>"${CURL_LOG:?}"
-jq -cj '
+jq -cj --arg alias_team "${ALIAS_TEAM:?}" '
   def page($nodes): {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes};
   def teams: [
     {id: "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d", key: "KEN", name: "kendex"},
     {id: "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d", key: "VGS", name: "vsys"},
-    {id: "4e3d2c1b-0a9f-4e8d-b7c6-5a4b3c2d1e0f", key: "OPS", name: "VGS"}];
+    {id: "4e3d2c1b-0a9f-4e8d-b7c6-5a4b3c2d1e0f", key: "OPS", name: "VGS"},
+    {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", key: "OWN", name: "own"},
+    {id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", key: "OTHER", name: "other"}];
   def issue($ref):
     ($ref | ascii_upcase) as $r
-    | (if ($r | startswith("VGS")) or $r == "0B5F6C1E-2D3A-4B7C-8E9F-1A2B3C4D5E6F"
+    | (if $r == "OWN-7" then
+         {team: (teams[] | select(.key == $alias_team)), identifier: ($alias_team + "-7"),
+          id: "77777777-7777-4777-8777-777777777777"}
+       elif ($r | startswith("VGS")) or $r == "0B5F6C1E-2D3A-4B7C-8E9F-1A2B3C4D5E6F"
        then {team: teams[1], identifier: "VGS-1", id: "0b5f6c1e-2d3a-4b7c-8e9f-1a2b3c4d5e6f"}
        else {team: teams[0], identifier: "KEN-1", id: "9c8d7e6f-5a4b-4c3d-9e2f-1a0b9c8d7e6f"} end) as $i
     | {id: $i.id, identifier: $i.identifier, title: "t", description: "", url: ("https://linear.app/x/issue/" + $i.identifier),
@@ -84,7 +90,7 @@ jq -cj '
       {data: {teams: page([teams[] | select(.id == $v.name)])}}
     elif ($q | contains("teams(filter:")) then
       {data: {teams: page([teams[] | select(.key == $v.name or .name == $v.name)])}}
-    elif ($q | contains("issue(id:")) and $v.id == "ffffffff-ffff-4fff-8fff-ffffffffffff" then
+    elif ($q | contains("issue(id:")) and ($v.id == "ffffffff-ffff-4fff-8fff-ffffffffffff" or $v.id == "DEAD-7") then
       {errors: [{message: "issue service unavailable"}]}
     elif ($q | contains("issue(id:")) then {data: {issue: issue($v.id)}}
     elif ($q | contains("issueLabels(filter:")) then {data: {issueLabels: page([{id: "label-uuid"}])}}
@@ -94,12 +100,12 @@ printf '%s' '___HTTP_CODE___200'
 SH
 chmod +x "$PROJECT/bin/curl"
 
-# run TEAM CALLS ARGS... — one command in the project, rendered as one line.
+# run TEAM CALLS READS ALIAS_TEAM ARGS...: one command, rendered as one line.
 # TEAM is the LINEAR_TEAM the settings file declares, `-` for none. CALLS `-`
 # leaves the call count out of the line.
 run() {
-  local team="$1" calls="$2" rc=0 writes guard
-  shift 2
+  local team="$1" calls="$2" reads="$3" alias_team="$4" rc=0 writes guard
+  shift 4
   if [[ "$team" == - ]]; then
     rm -f "$PROJECT/kendex.settings.toml"
   else
@@ -107,54 +113,64 @@ run() {
   fi
   : >"$CURL_LOG"
   (cd -- "$PROJECT" && env -i HOME="$TMP_ROOT" PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=stub KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= CURL_LOG="$CURL_LOG" \
+    ALIAS_TEAM="$alias_team" LINEAR_API_KEY_OVERRIDE=stub KENDEX_USER_EMAIL= LINEAR_REQUIRE_REACH= CURL_LOG="$CURL_LOG" \
     "$BASH" "$LINEAR" "$@") >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
   writes=$(jq -r 'select(.query | test("^\\s*mutation")) | .query | capture("\\{\\s*(?<f>[A-Za-z]+)").f' "$CURL_LOG" | paste -sd, -)
   guard=$(grep -m1 -E '^linear: (refused=cross-team|cross-team-guard=)' "$TMP_ROOT/err" || true)
   [[ "$calls" == - ]] || calls=$(wc -l <"$CURL_LOG" | tr -d ' ')
   printf 'rc=%s calls=%s writes=%s guard=%s' "$rc" "$calls" "${writes:--}" "${guard:--}"
+  if [[ "$reads" != - ]]; then
+    reads=$(jq -r 'select(.query | startswith("query IssueTeam(")) | .variables.id' "$CURL_LOG" | paste -sd, -)
+    printf ' reads=%s' "${reads:--}"
+  fi
 }
 
 refused() { # ACTION ISSUE TEAM OWN — the keyed refusal line
   printf 'linear: refused=cross-team action=%s%s team=%s own-team=%s route=peer-mail' "$1" "${2:+ issue=$2}" "$3" "$4"
 }
 
-# label|team|calls|args|rc|writes|guard
+# label|team|calls|args|rc|writes|guard|reads|alias_team
 # calls is the expected count, or `-` where it is not asserted. A refusal
 # reads LINEAR_TEAM's key once, since the setting may name the team rather
-# than key it, and an issue named by UUID once for its team; a pass reads it
-# too, even when the prefix equals the setting. guard is
+# than key it, and each distinct issue reference once for its current team.
+# reads optionally lists the IssueTeam references sent, in order. alias_team
+# sets OWN-7's current team, OTHER by default. guard is
 # `-`, `inactive ACTION`, `unread ACTION ISSUE`, or `refused ACTION ISSUE
 # TEAM OWN` (ISSUE `-` for a create), or `error TEXT` for no guard line and
 # TEXT on stderr, the cause of a refusal before or inside the guard.
 ROWS='
-update of another team issue is refused before any write|KEN|1|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
-a lowercase identifier is judged by its team key|KEN|1|issues update vgs-1 --title t|1|-|refused update vgs-1 VGS KEN
-bulk-update with one foreign issue writes nothing|KEN|1|issues bulk-update KEN-1 VGS-1 --state Done|1|-|refused bulk-update VGS-1 VGS KEN
-activate of another team issue is refused|KEN|1|issues activate VGS-1 --agent runtime|1|-|refused activate VGS-1 VGS KEN
-block of another team issue is refused|KEN|1|issues block VGS-1 --by KEN-1|1|-|refused block VGS-1 VGS KEN
-unblock of another team issue is refused|KEN|1|issues unblock VGS-1|1|-|refused unblock VGS-1 VGS KEN
-complete of another team issue is refused|KEN|1|issues complete VGS-1|1|-|refused complete VGS-1 VGS KEN
-archive of another team issue is refused|KEN|1|issues archive VGS-1|1|-|refused archive VGS-1 VGS KEN
-trash of another team issue is refused|KEN|1|issues trash VGS-1|1|-|refused trash VGS-1 VGS KEN
-delete of another team issue is refused as trash|KEN|1|issues delete VGS-1|1|-|refused trash VGS-1 VGS KEN
+update of another team issue is refused before any write|KEN|2|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
+a lowercase identifier is judged by its team key|KEN|2|issues update vgs-1 --title t|1|-|refused update vgs-1 VGS KEN
+bulk-update with one foreign issue writes nothing|KEN|3|issues bulk-update KEN-1 VGS-1 --state Done|1|-|refused bulk-update VGS-1 VGS KEN
+activate of another team issue is refused|KEN|2|issues activate VGS-1 --agent runtime|1|-|refused activate VGS-1 VGS KEN
+block of another team issue is refused|KEN|2|issues block VGS-1 --by KEN-1|1|-|refused block VGS-1 VGS KEN
+unblock of another team issue is refused|KEN|2|issues unblock VGS-1|1|-|refused unblock VGS-1 VGS KEN
+complete of another team issue is refused|KEN|2|issues complete VGS-1|1|-|refused complete VGS-1 VGS KEN
+archive of another team issue is refused|KEN|2|issues archive VGS-1|1|-|refused archive VGS-1 VGS KEN
+trash of another team issue is refused|KEN|2|issues trash VGS-1|1|-|refused trash VGS-1 VGS KEN
+delete of another team issue is refused as trash|KEN|2|issues delete VGS-1|1|-|refused trash VGS-1 VGS KEN
 an issue named by UUID is read for its team and refused|KEN|2|issues update VGS_UUID --state Done|1|-|refused update VGS_UUID VGS KEN
 an issue whose team cannot be read is refused|KEN|1|issues update DEAD_UUID --title t|1|-|unread update DEAD_UUID
-a configured team that matches no team refuses the write|ghost|1|issues update VGS-1 --title t|1|-|error Team not found: ghost
-a configured team that is one team key and another team name refuses an update with that prefix|VGS|1|issues update VGS-1 --title t|1|-|error Ambiguous team: VGS matches
+a configured team that matches no team refuses the write|ghost|2|issues update VGS-1 --title t|1|-|error Team not found: ghost
+a configured team that is one team key and another team name refuses an update with that prefix|VGS|2|issues update VGS-1 --title t|1|-|error Ambiguous team: VGS matches
 an unreadable attach path refuses before the guard reads the team|kendex|0|issues update KEN-1 --attach /nonexistent/file.png|1|-|error --attach path not readable
 bulk-update refuses an unreadable attach path before the guard reads the team|kendex|0|issues bulk-update KEN-1 KEN-2 --attach /nonexistent/file.png|1|-|error --attach path not readable
-a team configured by name resolves to its key and refuses|kendex|1|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
+a team configured by name resolves to its key and refuses|kendex|2|issues update VGS-1 --state Done|1|-|refused update VGS-1 VGS KEN
 create in another team is refused|KEN|2|issues create --team vsys --title t|1|-|refused create - VGS KEN
 create in another team named by UUID is refused|KEN|2|issues create --team VGS_TEAM_UUID --title t|1|-|refused create - VGS KEN
-update of an own team issue resolves the configured team and writes|KEN|3|issues update KEN-1 --title t|0|issueUpdate|-
+update of an own team issue resolves the configured team and writes|KEN|4|issues update KEN-1 --title t|0|issueUpdate|-
 an own team issue named by UUID passes|KEN|-|issues update KEN_UUID --title t|0|issueUpdate|-
 an own team issue passes with the team configured by name|kendex|-|issues update KEN-1 --title t|0|issueUpdate|-
 an own team issue passes with the team configured by UUID|KEN_TEAM_UUID|-|issues update KEN-1 --title t|0|issueUpdate|-
 bulk-update of own team issues writes each|KEN|-|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
-bulk-update reads a team configured by name once|kendex|5|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
-archive of an own team issue passes|KEN|3|issues archive KEN-1|0|issueArchive|-
-trash of an own team issue passes|KEN|3|issues trash KEN-1|0|issueDelete|-
+bulk-update reads a team configured by name once|kendex|7|issues bulk-update KEN-1 KEN-2 --title t|0|issueUpdate,issueUpdate|-
+archive of a moved identifier is refused|OWN|2|issues archive OWN-7|1|-|refused archive OWN-7 OTHER OWN
+trash of a moved identifier is refused|OWN|2|issues trash OWN-7|1|-|refused trash OWN-7 OTHER OWN
+archive of an unchanged identifier passes|OWN|-|issues archive OWN-7|0|issueArchive|-|-|OWN
+an identifier whose team cannot be read is refused|OWN|1|issues archive DEAD-7|1|-|unread archive DEAD-7
+bulk-update reads each distinct identifier once|KEN|-|issues bulk-update KEN-1 KEN-2 KEN-1 --title t|0|issueUpdate,issueUpdate,issueUpdate|-|KEN-1,KEN-2
+archive of an own team issue passes|KEN|4|issues archive KEN-1|0|issueArchive|-
+trash of an own team issue passes|KEN|4|issues trash KEN-1|0|issueDelete|-
 create under the own team by another spelling passes|kendex|-|issues create --team KEN --title t|0|issueCreate|-
 block of an own team issue by another team issue passes|KEN|-|issues block KEN-1 --by VGS-1|0|issueUpdate,issueRelationCreate,commentCreate|-
 comments create on another team issue passes|KEN|-|comments create VGS-1 --body hello|0|commentCreate|-
@@ -164,9 +180,11 @@ get of another team issue passes|KEN|1|issues get VGS-1 --format raw|0|-|-
 with no team configured the guard is inactive and the update passes|-|-|issues update VGS-1 --title t|0|issueUpdate|inactive update
 '
 
-while IFS='|' read -r label team calls args rc writes guard; do
+while IFS='|' read -r label team calls args rc writes guard reads alias_team; do
   [ -n "$label" ] || continue
   cause=""
+  reads=${reads:--}
+  alias_team=${alias_team:-OTHER}
   team=${team//KEN_TEAM_UUID/$KEN_TEAM_UUID}
   args=${args//VGS_UUID/$VGS_UUID}
   args=${args//KEN_UUID/$KEN_UUID}
@@ -188,6 +206,8 @@ while IFS='|' read -r label team calls args rc writes guard; do
     ;;
   error\ *) cause="${guard#error }" guard=- ;;
   esac
-  assert_eq "$label" "$(run "$team" "$calls" "${argv[@]}")" "rc=$rc calls=$calls writes=$writes guard=$guard"
+  expected="rc=$rc calls=$calls writes=$writes guard=$guard"
+  [[ "$reads" == - ]] || expected+=" reads=$reads"
+  assert_eq "$label" "$(run "$team" "$calls" "$reads" "$alias_team" "${argv[@]}")" "$expected"
   [[ -z "$cause" ]] || assert_file_contains "$label" "$TMP_ROOT/err" "$cause"
 done <<<"$ROWS"

@@ -1236,9 +1236,9 @@ linear_cross_team_refusal() {
 LINEAR_TEAM_PASSED=" "
 
 # Refuse, before any write, a write to an issue outside this checkout's team.
-# An identifier's team is its prefix, judged with no request; any other
-# reference (a UUID) is read for its team. LINEAR_TEAM is always resolved to
-# its key, even when it equals the prefix: one team's key can be another
+# Linear keeps old identifiers resolvable after a team move, so every
+# reference is read for its current team before authorization is cached.
+# LINEAR_TEAM is always resolved to its key: one team's key can be another
 # team's name, and only resolve_team_node refuses that ambiguity.
 # Usage: linear_guard_issue_team ACTION REF... || return 1
 linear_guard_issue_team() {
@@ -1254,16 +1254,13 @@ linear_guard_issue_team() {
         return 0
     fi
     for ref in "${refs[@]}"; do
-        if [[ "$ref" =~ ^[A-Za-z0-9]+-[0-9]+$ ]]; then
-            team=$(tr '[:lower:]' '[:upper:]' <<<"${ref%-*}")
-        else
-            vars=$(jq -cn --arg id "$ref" '{id: $id}')
-            if ! result=$(graphql_query 'query IssueTeam($id: String!) { issue(id: $id) { team { key } } }' "$vars") \
-                || ! team=$(jq -er '.issue.team.key | strings | select(length > 0)' <<<"$result"); then
-                echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2
-                echo "The issue's team could not be read (see the previous error), so nothing was written." >&2
-                return 1
-            fi
+        [[ "$LINEAR_TEAM_PASSED" != *" $ref "* ]] || continue
+        vars=$(jq -cn --arg id "$ref" '{id: $id}')
+        if ! result=$(graphql_query 'query IssueTeam($id: String!) { issue(id: $id) { team { key } } }' "$vars") \
+            || ! team=$(jq -er '.issue.team.key | strings | select(length > 0)' <<<"$result"); then
+            echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2
+            echo "The issue's team could not be read (see the previous error), so nothing was written." >&2
+            return 1
         fi
         linear_own_team || return 1
         if [[ "$team" != "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]]; then

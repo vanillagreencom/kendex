@@ -92,25 +92,27 @@ control_replace scripts/lib/common.sh 1 \
     "        || query='query GetTeamById(\$name: ID!, \$after: String) { teams(filter: {id: {eq: \$name}}, after: \$after) { pageInfo { hasNextPage endCursor } nodes { id key name } } }'" \
     '        || :'
 
-control_expect "a lowercase identifier is judged by its team key"
+# An old alias must be judged by the live team, even when its prefix matches.
+control_expect "archive of a moved identifier is refused"
+control_expect "trash of a moved identifier is refused"
 control_replace scripts/lib/common.sh 1 \
-    '            team=$(tr '"'"'[:lower:]'"'"' '"'"'[:upper:]'"'"' <<<"${ref%-*}")' \
-    '            team="${ref%-*}"'
+    '        linear_own_team || return 1' \
+    '        [[ ! "$ref" =~ ^[A-Za-z0-9]+-[0-9]+$ ]] || team="${ref%-*}"; linear_own_team || return 1'
 
-control_expect "an issue named by UUID is read for its team and refused"
+control_expect "bulk-update reads each distinct identifier once"
 control_replace scripts/lib/common.sh 1 \
-    '        if [[ "$ref" =~ ^[A-Za-z0-9]+-[0-9]+$ ]]; then' \
-    '        if true; then'
+    '        [[ "$LINEAR_TEAM_PASSED" != *" $ref "* ]] || continue' \
+    '        :'
 
 control_expect "an own team issue named by UUID passes"
 control_replace scripts/lib/common.sh 1 \
-    '                || ! team=$(jq -er '"'"'.issue.team.key | strings | select(length > 0)'"'"' <<<"$result"); then' \
-    '                || ! team=$(jq -er '"'"'.issue.team.name | strings | select(length > 0)'"'"' <<<"$result"); then'
+    '            || ! team=$(jq -er '"'"'.issue.team.key | strings | select(length > 0)'"'"' <<<"$result"); then' \
+    '            || ! team=$(jq -er '"'"'.issue.team.name | strings | select(length > 0)'"'"' <<<"$result"); then'
 
 control_expect "an issue whose team cannot be read is refused"
 control_replace scripts/lib/common.sh 1 \
-    '                echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2' \
-    '                continue'
+    '            echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2' \
+    '            echo "linear: refused=cross-team-unread action=$action issue=$ref" >&2; continue'
 
 control_expect "create under the own team by another spelling passes"
 control_replace scripts/lib/common.sh 1 \
