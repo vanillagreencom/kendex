@@ -154,7 +154,9 @@ Dependencies:
   their dependencies. npm install there removes the link and installs locally,
   leaving main intact. To keep a private install, remove its node_modules path
   from WORKTREE_SYMLINKS. Otherwise setup restores the link and removes the
-  private install. Keep the link only for projects that accept it.
+  private install. Setup removes a dropped entry's recorded link only when
+  it still points at main's copy. Real paths and foreign links stay in place.
+  Keep the link only for projects that accept it.
   Limitation: linked node_modules
   resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
   a worktree's checks see main's copy of sibling packages.

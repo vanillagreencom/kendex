@@ -1077,6 +1077,7 @@ restore_unshadowed_worktree_setup() {
 
 setup_worktree_links() {
   local wt="$1" root_nm_warned=0 copy_tracked=""
+  local exclude="" path="" configured="" target="" keep=false
   validate_worktree_setup_config || return 1
 
   # Nothing to provision when the destination IS the source. `push --rebase`
@@ -1099,6 +1100,29 @@ setup_worktree_links() {
   # node_modules beside it is not warned about. Neither is push's work.
   if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
     return 0
+  fi
+
+  # Link creation records paths in the shared exclude file. Inspect those
+  # records instead of walking private dependency directories during reuse.
+  exclude="$(git -C "$wt" rev-parse --git-path info/exclude)" || return 1
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  if [[ -f "$exclude" ]]; then
+    while IFS= read -r path || [[ -n "$path" ]]; do
+      [[ "$path" == /* ]] || continue
+      path="${path#/}"
+      path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
+      keep=false
+      for configured in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+        strip_trailing_slashes "$configured" configured
+        if [[ "$path" == "$configured" || "$path" == "$configured/"* ]]; then keep=true; break; fi
+      done
+      [[ "$keep" == false && -L "$wt/$path" ]] || continue
+      target="$(readlink "$wt/$path" && printf .)" || return 1
+      target="${target%.}"; target="${target%$'\n'}"
+      [[ "$target" == "$PROJECT_ROOT/$path" ]] || continue
+      ensure_worktree_path_safe "$wt" "$path" false || return 1
+      rm -- "$wt/$path" || return 1
+    done <"$exclude"
   fi
 
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
