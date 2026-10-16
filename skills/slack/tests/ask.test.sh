@@ -100,7 +100,7 @@ sk_bin_reset
 # The tracker carries the detail. Slack posts the first question line and
 # the issue identifier, which outbound markup expands into its link.
 tracker_ask() { # NAME FAILURE
-  local root scripts phase="${2:-}" deadline ask_rc=0
+  local root scripts phase="${2:-}" deadline ask_rc=0 notice
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
   scripts="$root/.agents/skills/mailbox/scripts"
@@ -116,7 +116,8 @@ esac
 case "$1:$2" in
   users:list) echo '[{"id":"87654321-4321-4321-4321-cba987654321","name":"Riley Other","email":"other@example.test"},{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com"}]' ;;
   issues:get) echo '{"labels":["skills"]}' ;;
-  issues:update|comments:create) echo '{}' ;;
+  issues:update) echo '{}' ;;
+  comments:create) echo '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -132,7 +133,8 @@ Details on the item.')" --options approve,hold --recommend approve --wait 60 2>"
   esac
   ASK="${ASK#id=}"
   if [ -n "$phase" ]; then
-    assert_eq "$(sed -n '1p' "$root/tracker.err")" "lane-mail: tracker-unwritten issue=KEN-1 cause=$phase" \
+    notice="$(sed -n '1p' "$root/tracker.err")"
+    assert_eq "$(field "$notice" issue)|$(field "$notice" cause)" "KEN-1|$phase" \
       "$1 reaches its selected tracker failure"
   fi
   local posted=false
