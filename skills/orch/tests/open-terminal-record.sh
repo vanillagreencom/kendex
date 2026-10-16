@@ -751,20 +751,23 @@ assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == 
 
 # A dependency park has no own PR. Exercise the existing unpark and close
 # owners together: the retained dependency admits terminal close at its merge.
-mkdir -p "$TMP_ROOT/linear/scripts"
-ln -s "$SCRIPTS_DIR/../../linear/scripts/lib" "$TMP_ROOT/linear/scripts/lib"
-cat >"$TMP_ROOT/linear/scripts/linear.sh" <<'EOF'
+# This tracker belongs only to this case; later launch fixtures need the
+# neutral issue reply installed beside their own scripts.
+DEPENDENCY_SCRIPTS="$(mutant_scripts dependency-park/base)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/dependency-park/base"
+ln -s "$SCRIPTS_DIR/../../linear/scripts/lib" "$TMP_ROOT/dependency-park/linear/scripts/lib"
+cat >"$TMP_ROOT/dependency-park/linear/scripts/linear.sh" <<'EOF'
 #!/usr/bin/env bash
 printf '{"state_type":"completed","description":""}\n'
 EOF
-chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
-DEPENDENCY_OT="$(mutant_scripts dependency-unpark open-terminal)/open-terminal" || exit 1
-git -C "$TMP_ROOT/dependency-unpark" init -q
-git -C "$TMP_ROOT/dependency-unpark" config gc.auto 0
-git -C "$TMP_ROOT/dependency-unpark" config maintenance.auto false
-orch_fixture_shared_libs "$TMP_ROOT/dependency-unpark"
+chmod +x "$TMP_ROOT/dependency-park/linear/scripts/linear.sh"
+DEPENDENCY_OT="$(mutant_scripts dependency-park/control open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/dependency-park/control" init -q
+git -C "$TMP_ROOT/dependency-park/control" config gc.auto 0
+git -C "$TMP_ROOT/dependency-park/control" config maintenance.auto false
+orch_fixture_shared_libs "$TMP_ROOT/dependency-park/control"
 mutate_file "$DEPENDENCY_OT" '{until_pr: .until_pr}' '{}'
-for row in "$OT|0|done|" "$DEPENDENCY_OT|2|stopped|" "$OT|0|done|other/repo"; do
+for row in "$DEPENDENCY_SCRIPTS/open-terminal|0|done|" "$DEPENDENCY_OT|2|stopped|" "$DEPENDENCY_SCRIPTS/open-terminal|0|done|other/repo"; do
   IFS='|' read -r owner close_rc close_status until_repo <<<"$row"
   "$WS" --state-dir "$STATE" update oversee --arg at "$PARKED_AT" --arg until_repo "$until_repo" \
     '(.lanes[] | select(.item == "CC-65")) |= (.status="parked" | .parked=({until_pr:9,head:"abc",repo:"o/r",at:$at} + (if $until_repo == "" then {} else {until_repo:$until_repo} end)))' >/dev/null
@@ -778,7 +781,7 @@ for row in "$OT|0|done|" "$DEPENDENCY_OT|2|stopped|" "$OT|0|done|other/repo"; do
   "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")).status="stopped"' >/dev/null
   CLOSE_RC=0
   PATH="$BIN:$PATH" ORCH_LANE_HOST="$HOST_STUB" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" STUB_PR_STATE=MERGED \
-    "$REPO/scripts/lane-close" --state-dir "$STATE" --if-terminal CC-65 >"$TMP_ROOT/dependency-close.out" 2>"$TMP_ROOT/dependency-close.err" || CLOSE_RC=$?
+    "$DEPENDENCY_SCRIPTS/lane-close" --state-dir "$STATE" --if-terminal CC-65 >"$TMP_ROOT/dependency-close.out" 2>"$TMP_ROOT/dependency-close.err" || CLOSE_RC=$?
   assert_eq "rc=$CLOSE_RC status=$(field "$(record CC-65)" status)" "rc=$close_rc status=$close_status" \
     'dependency identity survives resume and terminal close; dropping it refuses close'
 done

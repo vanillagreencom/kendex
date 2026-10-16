@@ -17,7 +17,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
 unset ORCH_OVERSEER_SEAT_RESERVE_PCT ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_HOST ORCH_STATE_DIR
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
 PROVIDER="$TEST_DIR/fixtures/lane-host"
 
 TMP_ROOT="$(mktemp -d)" || { echo "lanes-pick-spread: scratch=mktemp-failed" >&2; exit 1; }
@@ -35,6 +34,8 @@ source "$TEST_DIR/lib/virtual-clock.sh"
 source "$TEST_DIR/lib/open-terminal-stubs.sh"
 source "$TEST_DIR/lib/question-off.sh"
 source "$TEST_DIR/lib/shared-skill-libs.sh"
+LANES="$(mutant_scripts spread-owner/orch)/lanes" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/spread-owner/orch"
 
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
@@ -207,8 +208,8 @@ table() {
       command=("${command[0]%/*}/open-terminal" --ghostty --harness claude --lane "${args#launch-fleet }" --state-dir "$FLEET" \
         --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" SPREAD-6)
     fi
-    # The launcher reads settings from its source checkout. An empty team
-    # keeps this projection test independent of tracker authentication.
+    # Every launcher alias follows the selected lanes script into its fixture
+    # tree, where fleet launches read the neutral tracker instead of Linear.
     OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" LINEAR_TEAM= GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANES_CLI="${LANES_UNDER_TEST:-$LANES}" \
       ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" OVERSEE_WATCH_STATE_DIR="$STORE" ORCH_STATE_DIR="$FLEET" \
       STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
