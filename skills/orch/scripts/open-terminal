@@ -3802,6 +3802,16 @@ launch_blockers_gate() { # ITEM
   return 1
 }
 
+# linear_team_key TEAM — prints the key of the Linear team named TEAM, or
+# refuses as item-repo-unresolved.
+linear_team_key() {
+  local record
+  record="$("$linear_cli" teams get "$1" --format raw)" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
+  jq -er '.team.key | strings | select(length > 0)' <<<"$record" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
+}
+
 repo="$(resolve_repo)"
 # The checkout, not GH_REPO or --repo, owns the fleet. GitHub names and
 # configured Linear team names are resolved by their existing tracker owners.
@@ -3812,15 +3822,23 @@ if [[ "$TRACKER" == github ]]; then
 elif [[ -n "${LINEAR_TEAM:-}" ]]; then
   linear_cli="$SKILLS_DIR/linear/scripts/linear.sh"
   [[ -x "$linear_cli" ]] || { ot_message helper-missing "path=$linear_cli" >&2; exit 1; }
-  team_record="$("$linear_cli" teams get "$LINEAR_TEAM" --format raw)" \
-    || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
-  checkout_repo="$(jq -er '.team.key | strings | select(length > 0)' <<<"$team_record")" \
-    || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
+  checkout_repo="$(linear_team_key "$LINEAR_TEAM")" || exit 1
 fi
 # A fleet launch runs in its overseer's repository, or in one the overseer's
 # checkout lists in ORCH_CONNECTED_REPOS; lib/lane-cap.sh's overseer_bind judges
 # it.
 [[ "$FLEET" != true ]] || overseer_bind || exit 1
+# A connected launch also admits the overseer checkout's own Linear team: the
+# overseer lists the repository because that team's items run there. The team
+# is read from the overseer's directory with this launcher's LINEAR_TEAM and
+# KENDEX_ENV_FILE dropped, as the caps below are, because both can be this
+# checkout's settings.
+overseer_repo=""
+if [[ -n "$checkout_repo" && "$TRACKER" == linear && "$OVERSEER_BIND" == connected ]]; then
+  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
+  overseer_team="$(cd -- "$OVERSEER_DIR" && unset LINEAR_TEAM KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" LINEAR_TEAM "")" || exit 1
+  [[ -z "$overseer_team" ]] || overseer_repo="$(linear_team_key "$overseer_team")" || exit 1
+fi
 if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   if [[ "$OVERSEER_BIND" == connected ]]; then
@@ -3884,8 +3902,8 @@ for raw in "${ITEMS[@]}"; do
   item_repo="$repo"
   [[ "$TRACKER" != linear ]] || item_repo="${item%-*}"
   if [[ -n "$checkout_repo" ]]; then
-    repo_match="$(jq -n --arg item "$item_repo" --arg checkout "$checkout_repo" \
-      '$item | ascii_downcase == ($checkout | ascii_downcase)')" \
+    repo_match="$(jq -n --arg item "$item_repo" --arg checkout "$checkout_repo" --arg overseer "$overseer_repo" \
+      '($item | ascii_downcase) as $i | [$checkout, $overseer] | map(select(length > 0) | ascii_downcase) | any(. == $i)')" \
       || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; exit 1; }
     if [[ "$repo_match" != true ]]; then
       ot_message item-foreign "repo=$item_repo" route=peer-mail >&2

@@ -117,7 +117,7 @@ ot_message() { # REASON FIELD=VALUE...
     issue-canonical-failed) text='The git-context helper could not canonicalize the issue identifier. Nothing was created.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
-    item-repo-unresolved) text='The checkout repository or configured Linear team could not be resolved. Nothing was launched.' ;;
+    item-repo-unresolved) text='The checkout repository or configured Linear team could not be resolved. Nothing was launched. team is the Linear team name whose key could not be read: this checkout'"'"'s, or for a launch into a repository the overseer lists in ORCH_CONNECTED_REPOS, the overseer checkout'"'"'s.' ;;
     item-foreign) text='This item belongs to another repository. Nothing was launched.
 fix=File a prioritized issue in that repository and send it with lane-mail peer send --repo [REPO]; with no live repository overseer, ask the live registered Jarvis session, else the owner, with a recommendation to launch its overseer.' ;;
     overseer-foreign) text='The checkout this launch runs from belongs to another repository than the fleet overseer'"'"'s and is not one that overseer lists in ORCH_CONNECTED_REPOS, so its lane would work there while this fleet records and watches it. Nothing was launched. repo is that repository and overseer the overseer'"'"'s, each its origin OWNER/REPO, or its main checkout directory where no GitHub origin reads. Where repo is an OWNER/REPO, add it to ORCH_CONNECTED_REPOS in the overseer repository'"'"'s settings in a reviewed change; or mail that repository'"'"'s overseer with lane-mail peer send --repo [REPO] (peer-mail.md § Addressing).' ;;
@@ -909,6 +909,10 @@ overseer-foreign, and one that cannot be judged as overseer-unjudged, except a
 launch or relaunch whose state does not parse, which the launch cap refuses
 first as cap-unreadable. A --state-dir below a .git entry git cannot read is
 one that cannot be judged, never one outside any checkout.
+A launch ORCH_CONNECTED_REPOS admits takes a Linear item of the team that
+LINEAR_TEAM names in the overseer directory, read the same way with this
+launcher's LINEAR_TEAM dropped, as well as one of this checkout's own team;
+an item of any other team is refused as item-foreign.
 
 Exit codes:
   0   at least one lane launched or handed to a background job and none

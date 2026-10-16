@@ -16,8 +16,8 @@
 # the harness stubbed. The overseer runs in a repository of its own with one
 # linked worktree, the shape a lane's worktree has, and a second clone; the
 # target is the clone of another repository. LINEAR_TEAM is empty on every
-# row, the configuration that leaves the item check with no checkout team to
-# compare.
+# row outside the Linear team section, the configuration that leaves the item
+# check with no checkout team to compare.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
@@ -259,6 +259,92 @@ for mutant in "$CAP_DIR" "$CAP_ENV" "$CAP_PRIVATE"; do
 done
 printf '%s\n' "$CAP_TARGET_SETTINGS" > "$TARGET/kendex.settings.toml"
 printf '%s\n' "$CAP_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
+
+echo "=== a connected launch admits the overseer's own Linear team ==="
+# The launcher's LINEAR_TEAM names the launch checkout's team, CC; the
+# overseer checkout's settings name its own. The stub tracker reads Checkout
+# team as CC and Fleet team as FLT, and fails every other name.
+TEAM_STUB="$TMP_ROOT/linear-teams.sh"
+cat > "$TEAM_STUB" <<'EOF'
+#!/bin/sh
+case "$*" in
+  'teams get Checkout team --format raw') printf '{"team":{"key":"CC"}}\n' ;;
+  'teams get Fleet team --format raw') printf '{"team":{"key":"FLT"}}\n' ;;
+  *) exit 7 ;;
+esac
+EOF
+chmod +x "$TEAM_STUB"
+# team_tracker ROOT — installs the stub as the linear CLI an open-terminal in
+# ROOT/scripts resolves.
+team_tracker() {
+  mkdir -p "$1/.agents/skills/linear/scripts"
+  cp -p -- "$TEAM_STUB" "$1/.agents/skills/linear/scripts/linear.sh"
+}
+team_tracker "$REPO"
+TEAM_PRIVATE_SETTINGS="$(cat "$OVERSEER_REPO/alt.env")"
+printf 'LINEAR_TEAM=Gone team\n' > "$OVERSEER_REPO/alt.env"
+# overseer_team VALUE — the overseer checkout's settings: the target listed in
+# ORCH_CONNECTED_REPOS, and LINEAR_TEAM set to VALUE or, for `absent`, unset.
+overseer_team() {
+  printf '[env]\nORCH_CONNECTED_REPOS = "acme/target"\n' > "$OVERSEER_REPO/kendex.settings.toml"
+  [[ "$1" == absent ]] || printf 'LINEAR_TEAM = "%s"\n' "$1" >> "$OVERSEER_REPO/kendex.settings.toml"
+}
+# team_launch [SCRIPT=PATH] TEAM CWD ITEM [ENV=NAME=VALUE] — one launch of ITEM
+# from CWD under the launcher's Checkout team, with the overseer checkout's
+# team set to TEAM; sets TEAM_RESULT.
+team_launch() {
+  local script=()
+  [[ "$1" != SCRIPT=* ]] || { script=("$1"); shift; }
+  local team="$1" cwd="$2" item="$3"
+  shift 3
+  overseer_team "$team"
+  fleet cwd "$OVERSEER_REPO"
+  run_ot ${script[@]+"${script[@]}"} CWD="$cwd" "ENV=LINEAR_TEAM=Checkout team" "$@" "$item"
+  TEAM_RESULT="rc=$RC record=$(record "$item") foreign=$(refused 'item-foreign ') unresolved=$(grep -cxF 'open-terminal: item-repo-unresolved tracker=linear team=Gone team' <<<"$ERR" || true)"
+}
+# The overseer checkout's team, the launch directory (the target clone or a
+# worktree of the overseer's repository), the item, a variable the launcher
+# already holds, and the expected result.
+while IFS='|' read -r team where item extra want label; do
+  cwd="$TARGET"
+  [[ "$where" != overseer ]] || cwd="$OVERSEER_WT"
+  extra_args=()
+  [[ -z "$extra" ]] || extra_args=("ENV=$extra")
+  team_launch "$team" "$cwd" "$item" ${extra_args[@]+"${extra_args[@]}"}
+  assert_eq "$TEAM_RESULT" "$want" "$label"
+done <<'ROWS'
+Fleet team|target|FLT-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a connected launch admits an item of the overseer checkout's team
+Fleet team|target|CC-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a connected launch still admits an item of the launch checkout's team
+Fleet team|target|OTHER-1||rc=1 record=none foreign=1 unresolved=0|a connected launch refuses an item of a third team as item-foreign
+absent|target|FLT-1||rc=1 record=none foreign=1 unresolved=0|with no team in the overseer checkout a connected launch admits the launch checkout's team alone
+Fleet team|target|FLT-1|KENDEX_ENV_FILE=alt.env|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's private-file selector does not pick the overseer's private file for its team
+Gone team|target|FLT-1||rc=1 record=none foreign=0 unresolved=1|an overseer team whose key cannot be read refuses as item-repo-unresolved
+Fleet team|overseer|FLT-1||rc=1 record=none foreign=1 unresolved=0|an own launch compares the launch checkout's team alone, as before
+Fleet team|overseer|CC-1||rc=0 record=repo=null foreign=0 unresolved=0|an own launch admits an item of the launch checkout's team
+ROWS
+# team_control NAME OLD NEW — a mutant open-terminal whose checkout holds the
+# stub tracker.
+team_control() {
+  local dir
+  dir="$(mutant_scripts "$1" open-terminal)" || exit 1
+  mutate_file "$dir/open-terminal" "$2" "$3"
+  new_repo "${dir%/scripts}"
+  team_tracker "${dir%/scripts}"
+  printf '%s\n' "$dir/open-terminal"
+}
+MUT="$(team_control item-team-old \
+  "'(\$item | ascii_downcase) as \$i | [\$checkout, \$overseer] | map(select(length > 0) | ascii_downcase) | any(. == \$i)'" \
+  "'\$item | ascii_downcase == (\$checkout | ascii_downcase)'")"
+team_launch SCRIPT="$MUT" "Fleet team" "$TARGET" FLT-1
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
+  "control: the launch checkout's team alone refuses a connected launch of the overseer team's item"
+MUT="$(team_control item-team-unread \
+  '[[ -z "$overseer_team" ]] || overseer_repo="$(linear_team_key "$overseer_team")" || exit 1' \
+  '[[ -z "$overseer_team" ]] || overseer_repo="$(linear_team_key "$overseer_team")" || true')"
+team_launch SCRIPT="$MUT" "Gone team" "$TARGET" FLT-1
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=1" \
+  "control: without the refusal an unread overseer team falls through to item-foreign"
+printf '%s\n' "$TEAM_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
 
 echo "=== a binding that cannot be judged launches nothing ==="
 connected acme/target
