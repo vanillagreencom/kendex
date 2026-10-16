@@ -452,12 +452,12 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
 
 
 class LaneHostCallersTests(unittest.TestCase):
-    """Every orch call of a provider verb runs scripts/lane-host, the one place
-    the per-home bound is taken: a site running any other command word with a
-    provider verb is a call outside the bound."""
-    # A provider verb, or the caller's own argv forwarded whole, which is how
-    # open-terminal's host_transport hands its verbs on.
-    VERB = re.compile(r"(?:capabilities|create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix|\$@)")
+    """Provider calls that read or change host state run scripts/lane-host,
+    where the per-home bound is taken. Capabilities is local metadata and
+    takes no slot."""
+    # Include the caller's own argv forwarded whole, which is how
+    # open-terminal's host_transport hands its bounded verbs on.
+    BOUNDED_VERB = re.compile(r"(?:create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix|\$@)")
     # Keywords, `!`, environment assignments and optional argv prefixes, then
     # the command word and the word after it. A prefix is an array expanded
     # whole, `${X[@]+"${X[@]}"}` or `"${X[@]}"`, such as the github skill's
@@ -478,7 +478,7 @@ class LaneHostCallersTests(unittest.TestCase):
                     continue
                 for segment in re.split(r"\$\(|&&|\|\||;|\|", line):
                     match = self.COMMAND.match(segment)
-                    if match and self.VERB.fullmatch(match.group(2).strip('"')):
+                    if match and self.BOUNDED_VERB.fullmatch(match.group(2).strip('"')):
                         found.append((path.relative_to(scripts).as_posix(), number, match.group(1), function))
         return found
 
@@ -530,7 +530,7 @@ class LaneHostCallersTests(unittest.TestCase):
         return [(path, number, word) for path, number, word, function in self.sites(scripts)
                 if self.target(scripts, path, word, function) in (None, "provider")]
 
-    def test_every_provider_call_runs_the_wrapper(self):
+    def test_every_bounded_provider_call_runs_the_wrapper(self):
         wrapper = set()
         for scripts in (PACKAGE / "scripts", PACKAGE.parent / "mailbox/scripts"):
             self.assertEqual(self.unbounded(scripts), [])
@@ -542,12 +542,20 @@ class LaneHostCallersTests(unittest.TestCase):
             self.assertIn(member, wrapper, "the site extractor no longer reaches a known wrapper call")
 
     def test_a_direct_provider_call_is_named(self):
-        # A row naming None plants a line that is no provider call.
+        # A row naming None plants a line that needs no provider slot.
         rows = [("lane-mail", '  "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
                 ("open-terminal", '  "$LANE_HOST" touch --item "$1"\n', "open-terminal"),
                 ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" cat --item "$ITEM" /remote\n', "lanes"),
                 ("oversee-watch", '  lane_host_fetch "$ORCH_LANE_HOST" "$1" /remote "$WORK_DIR/x" "$WORK_DIR/e"\n', "lib/lane-gitfile.sh"),
                 ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
+                ("lane-mail", '  "$ORCH_LANE_HOST" "$@"\n', "lane-mail"),
+                ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" "$@"\n', "lanes"),
+                ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$ORCH_LANE_HOST" "$@"\n', "lane-mail"),
+                ("lane-mail", '  "$ORCH_LANE_HOST" capabilities\n', None),
+                ("lane-mail", '  "$ORCH_LANE_HOST" capabilities --cache-key\n', None),
+                ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" capabilities\n', None),
+                ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" capabilities --cache-key\n', None),
+                ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$ORCH_LANE_HOST" capabilities --cache-key\n', None),
                 ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$@" </dev/null >/dev/null &\n', None)]
         for path, planted, named in rows:
             with self.subTest(path=path, planted=planted.strip()):
