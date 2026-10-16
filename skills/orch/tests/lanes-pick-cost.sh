@@ -249,6 +249,10 @@ assert_eq "$(world_result '.unwrapped_control')" true 'the closed PATH rejects a
 printf 'named: total=%s caller=%s lanes=%s calibration=90 calibration-share=%s\n' "$(world_result '.caller.total')" "$(world_result '.caller.stub')" "$(world_result '.caller.share')" "$(world_result '.caller.calibration_share')"
 assert_eq "$(world_result '.caller.exit')" 0 'the real named mark check succeeds'
 assert_eq "$(world_result '.caller.equal')" true 'the named mark check keeps the builtin stub answer'
+assert_eq "$(world_result '.caller.memo_equal')" true 'the named attribution measures the same caller memo work'
+rc=0
+( FAIL=0; assert_eq "$(world_result '.caller.control_memo_equal')" true 'caller memo work'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/control-caller-memo.log" || rc=$?
+assert_eq "$rc" 1 'the same memo-work assertion rejects an incomplete caller record'
 assert_le "$(world_result '.caller.share')" 49 'the lanes share of the named mark check is under 50'
 if [[ -n "${LANES_COST_BASE:-${1:-}}" ]]; then
   printf 'named-base: total=%s caller=%s lanes=%s calibration=90 calibration-share=%s\n' "$(world_result '.caller.base_total')" "$(world_result '.caller.base_stub')" "$(world_result '.caller.base_share')" "$(world_result '.caller.base_calibration_share')"

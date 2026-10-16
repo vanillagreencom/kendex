@@ -1774,13 +1774,19 @@ STUB
 chmod +x "$MEMO_CLOCK/date"
 memo_case() { # ROW SCRIPT
   local name="$1" script="$2" row="memo-$1" state="$TMP_ROOT/state-memo-$1"
-  local now age=0 current=56 first calls record stamp memo wall claims before_until second_now max_age=""
+  local now age=0 current=56 first calls record stamp memo wall claims before_until second_now max_age="" ttl_value ttl_quote
   local PATH_PREFIX="$MEMO_CLOCK" SUCCEED_BIN="$script" SUCCESSOR_ACCOUNTS=1 NO_CONTEXT=1 WALL_MINUTES=0
   local USAGE_MAX_AGE="" HEADROOM_PCT="$TRIGGER" USAGE_TTL=300
   export PATH_PREFIX SUCCEED_BIN SUCCESSOR_ACCOUNTS NO_CONTEXT WALL_MINUTES USAGE_MAX_AGE HEADROOM_PCT USAGE_TTL
   now="$("$STUB_REAL_DATE" +%s)"
   second_now="$now"
   case "$name" in
+    ttl-*)
+      USAGE_TTL=""
+      ttl_value="${name#ttl-}"; ttl_value="${ttl_value%-*}"
+      ttl_quote='"'
+      [[ "$name" != *-literal ]] || ttl_quote="'"
+      printf '[env]\nORCH_LANES_USAGE_TTL = %s300%s\n' "$ttl_quote" "$ttl_quote" > "$TMP_ROOT/work/kendex.settings.toml" ;;
     watch-hook) USAGE_MAX_AGE=480 ;;
     watch-aged) age=400; USAGE_MAX_AGE=480 ;;
     cached-rate) age=180; WALL_MINUTES=20 ;;
@@ -1837,6 +1843,10 @@ memo_case() { # ROW SCRIPT
       jq -n --arg dir "$H/.claude" --argjson at "$((now + 120))" '{config_dir: $dir, resets_at: $at}' > "$wall" ;;
     headroom-policy) HEADROOM_PCT=10 ;;
     model) caller_record claude claude-sonnet-5 ;;
+    ttl-*)
+      printf '[env]\nORCH_LANES_USAGE_TTL = %s%s%s\n' "$ttl_quote" "$ttl_value" "$ttl_quote" > "$TMP_ROOT/work/kendex.settings.toml"
+      second_now=$((now + 150))
+      claude_usage 99 20 5 Opus > "$FIXTURE_DIR/.claude.json" ;;
     served-until) second_now=$((now + 300)) ;;
     reset) second_now=$((now + 120)) ;;
     own-second)
@@ -1863,7 +1873,7 @@ memo_case() { # ROW SCRIPT
     *)
       assert_eq "$((calls > 0))" 1 "memo $name reads lanes after its input changes"
       case "$name" in
-        record-rewritten) assert_contains "$(sed -n 1p <<<"$OUT")" 'mark-reached kind=headroom value=1 ' 'the first new reading fires headroom' ;;
+        record-rewritten|ttl-*) assert_contains "$(sed -n 1p <<<"$OUT")" 'mark-reached kind=headroom value=1 ' 'the first new reading fires headroom' ;;
         failed-1|failed-5)
           [[ "$name" != failed-5 ]] || mv -- "$FIXTURE_DIR/.claude.held" "$FIXTURE_DIR/.claude.json"
           assert_eq "$([[ ! -e "$memo" ]] && printf absent || printf present)" absent "memo $name removes its standing reading"
@@ -1880,14 +1890,15 @@ memo_case() { # ROW SCRIPT
         fi
       fi ;;
   esac
+  [[ "$name" != ttl-* ]] || rm -- "$TMP_ROOT/work/kendex.settings.toml"
 }
-for memo_row in unchanged other-record other-wall watch-hook watch-aged record-rewritten record-missing claim-added claim-removed wall-written headroom-policy model served-until reset own-second context failed-1 failed-5 replay-headroom crossing-rate cached-rate replay-rate; do
+for memo_row in unchanged other-record other-wall watch-hook watch-aged record-rewritten record-missing claim-added claim-removed wall-written headroom-policy model ttl-30-basic ttl-0-basic ttl-030-literal ttl-00-literal served-until reset own-second context failed-1 failed-5 replay-headroom crossing-rate cached-rate replay-rate; do
   memo_case "$memo_row" "$PICKLOG/oversee-succeed"
 done
 
 # Each disposable mutant removes the condition its row must detect. Reuse
 # disabled is the pre-memo caller read; the rest cover unsafe reuse and rate.
-for control in base record bound expiry precision rate; do
+for control in base record bound ttl expiry precision rate; do
   MEMOCTL="$(mutant_scripts "memo-control-$control" oversee-succeed)" || exit 1
   rm -- "$MEMOCTL/lanes"
   cp -p -- "$PICKLOG/lanes" "$MEMOCTL/lanes"
@@ -1895,6 +1906,7 @@ for control in base record bound expiry precision rate; do
     base) mutate_file "$MEMOCTL/oversee-succeed" '      caller_hit=1' '      caller_hit=0'; rows=unchanged ;;
     record) mutate_file "$MEMOCTL/oversee-succeed" '&& -f "$memo_cache" && "$caller_memo" -nt "$memo_cache"' '&& -f "$memo_cache"'; rows=record-rewritten ;;
     bound) mutate_file "$MEMOCTL/oversee-succeed" 'account-mark-${ORCH_LANES_USAGE_MAX_AGE:-}.memo' 'account-mark-.memo'; rows='watch-hook watch-aged' ;;
+    ttl) mutate_file "$MEMOCTL/oversee-succeed" '&& "$memo_ttl" == "${ORCH_LANES_USAGE_TTL:-}"' ''; rows='ttl-30-basic ttl-0-basic ttl-030-literal ttl-00-literal' ;;
     expiry) mutate_file "$MEMOCTL/oversee-succeed" '&& "$caller_now" -lt "$memo_until"' ''; rows='served-until reset' ;;
     precision) mutate_file "$MEMOCTL/oversee-succeed" '&& TZ=UTC touch -t "$memo_stamp" -- "$memo_tmp"' ''; rows=own-second ;;
     rate) mutate_file "$MEMOCTL/oversee-succeed" 'if [[ "$caller_wall_at" =~ ^[0-9]+$ ]]; then' 'if false; then'; rows='crossing-rate cached-rate' ;;

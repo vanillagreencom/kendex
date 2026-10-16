@@ -1253,9 +1253,10 @@ if (( JUDGES )); then
       IFS= read -r memo_cfg && IFS= read -r memo_harness && IFS= read -r memo_model &&
       IFS= read -r memo_trigger && IFS= read -r memo_until && IFS= read -r memo_cache &&
       IFS= read -r memo_wall && IFS= read -r memo_claims && IFS= read -r caller_wall_at &&
-      IFS= read -r caller_rc && IFS= read -r caller_record
+      IFS= read -r caller_rc && IFS= read -r caller_record && IFS= read -r memo_ttl
     } < "$caller_memo" && [[ "$memo_cfg" == "$CALLER_CFG" && "$memo_harness" == "$CALLER_ACCOUNT_HARNESS"
       && "$memo_model" == "$CALLER_ACCOUNT_MODEL" && "$memo_trigger" == "$HEADROOM_TRIGGER"
+      && "$memo_ttl" == "${ORCH_LANES_USAGE_TTL:-}"
       && "$memo_until" =~ ^[0-9]+$ && "$caller_now" -lt "$memo_until"
       && -f "$memo_cache" && "$caller_memo" -nt "$memo_cache"
       && ( ! -e "$memo_wall" || "$caller_memo" -nt "$memo_wall" )
@@ -1292,7 +1293,7 @@ if (( JUDGES )); then
         # including on hosts whose -nt compares fractional timestamps.
         if ! { printf '%s\n' "$CALLER_CFG" "$CALLER_ACCOUNT_HARNESS" "$CALLER_ACCOUNT_MODEL" \
           "$HEADROOM_TRIGGER" "$memo_until" "$memo_cache" "$ACCOUNT_WALL_FILE" "$memo_claims" \
-          "$caller_wall_at" "$caller_rc" "$caller_record" > "$memo_tmp" \
+          "$caller_wall_at" "$caller_rc" "$caller_record" "${ORCH_LANES_USAGE_TTL:-}" > "$memo_tmp" \
           && TZ=UTC touch -t "$memo_stamp" -- "$memo_tmp" && mv -- "$memo_tmp" "$caller_memo"; }; then
           rm -f -- "$memo_tmp" "$caller_memo"
         fi

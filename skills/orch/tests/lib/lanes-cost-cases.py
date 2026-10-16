@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import runpy
+import shlex
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,22 @@ def mutate(name, old, new, relative="lanes", source_script=lanes):
         raise RuntimeError(f"control target {relative}: matches={before.count(old)}")
     target.write_text(before.replace(old, new))
     return str(directory / "orch" / "scripts" / "lanes")
+
+
+def caller_stub(name, record, source_script=lanes):
+    assert record["exit"] == 0
+    body = "#!/usr/bin/env bash\nprintf '%s\\n' " + shlex.quote(record["stdout"].rstrip("\n")) + "\n"
+    return mutate(name, Path(source_script).read_text(), body, source_script=source_script)
+
+
+def caller_check(script, env):
+    memo_box = world.work / "tmp/lane-mail/overseer"
+    # Both sides measure a warm usage read with no standing caller memo.
+    for memo in memo_box.glob("account-mark-*.memo"):
+        memo.unlink()
+    result = world.run(["--check-marks", "--harness", "claude"], str(Path(script).with_name("oversee-succeed")), env)
+    result["memo_written"] = any(memo_box.glob("account-mark-*.memo"))
+    return result
 
 
 for label, args in [("pick", PICK), ("list", ["list"]), ("list-json", ["list", "--json"])]:
@@ -139,20 +156,29 @@ try:
                                 "model": "claude-opus-5-5", "cwd": str(world.work)}}))
     caller_env = {"ORCH_LANE_HOST": "local", "CLAUDE_CONFIG_DIR": lane,
                   "TMUX": f"{socket},{server},0", "TMUX_PANE": pane}
-    named_args = ["pick", "--lane", lane, "--harness", "claude", "--for-overseer", "--json"]
-    world.run(named_args, overrides=caller_env)
-    actual = world.run(["--check-marks", "--harness", "claude"], str(Path(lanes).with_name("oversee-succeed")), caller_env)
-    stub = mutate("caller", Path(lanes).read_text(), '#!/usr/bin/env bash\nprintf \'%s\\n\' \'{"alias":"work","wall":20,"binding_resets_at":null,"usage_rate_state":"one-sample","projected_wall_minutes":null}\'\n')
-    caller_only = world.run(["--check-marks", "--harness", "claude"], str(Path(stub).with_name("oversee-succeed")), caller_env)
+    named_args = ["pick", "--lane", lane, "--harness", "claude", "--for-overseer",
+                  "--min-headroom-pct", "5", "--model", "claude-opus-5-5", "--json"]
+    record = world.run(named_args, overrides=caller_env)
+    actual = caller_check(lanes, caller_env)
+    stub = caller_stub("caller", record)
+    caller_only = caller_check(stub, caller_env)
+    incomplete = dict(record)
+    incomplete_payload = json.loads(record["stdout"])
+    del incomplete_payload["usage_cache"]
+    incomplete["stdout"] = json.dumps(incomplete_payload)
+    incomplete_stub = caller_stub("caller-missing-cache", incomplete)
+    incomplete_caller = caller_check(incomplete_stub, caller_env)
     results["caller"] = {"total": actual["count"], "stub": caller_only["count"],
                          "share": actual["count"] - caller_only["count"], "calibration_share": actual["count"] - 90, "equal": same(actual, caller_only),
-                         "exit": actual["exit"]}
+                         "exit": actual["exit"],
+                         "memo_equal": actual["memo_written"] == caller_only["memo_written"],
+                         "control_memo_equal": actual["memo_written"] == incomplete_caller["memo_written"]}
     if base:
         shutil.rmtree(world.state / "usage")
-        world.run(named_args, base, caller_env)
-        old = world.run(["--check-marks", "--harness", "claude"], str(Path(base).with_name("oversee-succeed")), caller_env)
-        old_stub = mutate("caller-base", Path(base).read_text(), Path(stub).read_text(), source_script=base)
-        old_caller = world.run(["--check-marks", "--harness", "claude"], str(Path(old_stub).with_name("oversee-succeed")), caller_env)
+        base_record = world.run(named_args, base, caller_env)
+        old = caller_check(base, caller_env)
+        old_stub = caller_stub("caller-base", base_record, base)
+        old_caller = caller_check(old_stub, caller_env)
         results["caller"]["base_total"] = old["count"]
         results["caller"]["base_stub"] = old_caller["count"]
         results["caller"]["base_share"] = old["count"] - old_caller["count"]
