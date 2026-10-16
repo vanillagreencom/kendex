@@ -1422,10 +1422,13 @@ mail_check() {
   # the session. For userPromptSubmitted the same reference documents only
   # `modifiedPrompt` and says a config-file hook's output is dropped.
   # tools/harness-smoke's answer rows measured session-start and prompt
-  # context on Copilot CLI 1.0.91, including an interactive prompt, against
-  # silent-hook controls. The live postToolUse lane capture remains pending.
-  # Acknowledged only once it is written, so a write that fails leaves the
-  # lines unread for the next point that delivers them.
+  # context on Copilot CLI 1.0.91, including a typed interactive prompt,
+  # against silent-hook controls. That version also fires userPromptSubmitted
+  # on a background completion and discards its additionalContext.
+  # Prompt output is therefore best effort and never
+  # acknowledges mail, even on a typed prompt. The next inbox or trusted hook
+  # can repeat it. The live postToolUse lane capture remains pending.
+  # Other context delivery acknowledges only after a successful write.
   if [ -n "$CONTEXT_EVENT" ]; then
     # A subagent left above. A caller the payload leaves unknown is handed
     # nothing: on Copilot a custom subagent's finished call hands its context
@@ -1446,6 +1449,7 @@ mail_check() {
       exit 0
     fi
     hand_over "$NOTICE"
+    [ "$HARNESS:$ARM" != copilot:prompt ] || exit 0
     ACK_LINES=$LINES
     acknowledge
     exit 0

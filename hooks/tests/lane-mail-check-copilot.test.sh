@@ -355,7 +355,7 @@ assert_eq "RC=$RC first=$(first_line) context=$(stdout_field '.additionalContext
 
 # The start and prompt arms, one row set per arm: at a Copilot session start
 # and at each prompt the unread lines are handed over under the same top-level
-# key, acknowledged only once written, and nothing is ever refused.
+# key. Only session start acknowledges it. Nothing is ever refused.
 COP_CONTEXT_N=230
 for arm in start prompt; do
   COP_CONTEXT_N=$((COP_CONTEXT_N + 1))
@@ -370,10 +370,17 @@ for arm in start prompt; do
   assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1) nested=$(stdout_field '.hookSpecificOutput') stderr=$(first_line)" \
     "RC=0 context=lane-mail-check: unread=1 nested=null stderr=-" \
     "$arm: the unread lines are handed over under the top-level additionalContext"
-  assert_eq "$(stdout_field '.additionalContext' | grep -cF 'Rebase first.') $(lane_unread "$item" 'Rebase first.')" "1 0" \
-    "$arm: that context carries the directive, which then reads as read"
+  case "$arm" in
+    start) expected_unread=0 ;;
+    prompt) expected_unread=1 ;;
+  esac
+  assert_eq "$(stdout_field '.additionalContext' | grep -cF 'Rebase first.') $(lane_unread "$item" 'Rebase first.')" "1 $expected_unread" \
+    "$arm: context carries the directive and only session start marks it read"
+  (cd "$LANE" && "$LANE_MAIL" inbox --item "$item" --root "$LANE") > "$TMP_ROOT/context-inbox"
+  assert_eq "$(jq -s 'map(select(.text == "Rebase first.")) | length' "$TMP_ROOT/context-inbox")" "$expected_unread" \
+    "$arm: plain inbox prints any directive the hook left unread"
   copilot_context "$arm"
-  assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 stdout=" "$arm: the next run hands nothing over again"
+  assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 stdout=" "$arm: after inbox the next run carries no mail"
 
   send "$item" 'Then push.'
   copilot_context_unwritable "$arm"
@@ -389,6 +396,7 @@ for arm in start prompt; do
   copilot_context "$arm"
   assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1)" "RC=0 context=lane-mail-check: unread=1" \
     "$arm: the lead's next run is handed the directive the failed write and the subagent left"
+  (cd "$LANE" && "$LANE_MAIL" inbox --item "$item" --root "$LANE") > "$TMP_ROOT/context-inbox"
 
   # A mailbox no launch recorded is no lane: its mail is handed to nobody.
   send "$item" 'Not a lane.'
@@ -727,6 +735,44 @@ copilot_context prompt
 CALL_ENV=("HOME=$COP_HOME")
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unread=$(overseer_unread 'For the named session.')" "RC=0 stdout= unread=0" \
   "and marks it read, so its next prompt is handed nothing"
+
+# Copilot CLI 1.0.91 runs userPromptSubmitted on a background-command
+# completion and can discard its response. No prompt-field discriminator is
+# trusted: drive the production prompt wrapper for both payload classes,
+# discard its context, then read the owner body through the real inbox.
+copilot_prompt_inbox() { # NAME PROMPT [JUDGE]
+  new_copilot_named "$1" "${3:-$HOOK}"
+  peer_send 'Read this owner body.'
+  local owner_id judge inbox second
+  owner_id=$(jq -r '.id' "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")
+  judge="$CASE_HOOK"
+  CASE_HOOK="$LANE/.github/hooks/lane-mail-prompt.sh"
+  CALL_ENV=("${COP_NAMED_ENV[@]}")
+  run_payload "$(jq -nc --arg prompt "$2" \
+    '{sessionId:"s1",timestamp:1,cwd:"/w"} + (if $prompt == "" then {} else {prompt:$prompt} end)')"
+  CASE_HOOK="$judge"
+  CALL_ENV=("HOME=$COP_HOME")
+  PROMPT_STATUS=$RC
+  : > "$TMP_ROOT/stdout"
+  inbox=$(cd "$LANE" && "$LANE_MAIL" inbox --item overseer --root "$LANE")
+  second=$(cd "$LANE" && "$LANE_MAIL" inbox --item overseer --root "$LANE")
+  PROMPT_INBOX=$(jq -s --arg id "$owner_id" \
+    'map(select(.id == $id and .text == "Read this owner body.")) | length' <<<"$inbox")
+  PROMPT_SECOND=$second
+}
+for prompt_case in absent typed; do
+  case "$prompt_case" in
+    absent) prompt_text="" ;;
+    typed) prompt_text='Carry on.' ;;
+  esac
+  copilot_prompt_inbox "copilot_completion_$prompt_case" "$prompt_text"
+  assert_eq "RC=$PROMPT_STATUS body=$PROMPT_INBOX second=$PROMPT_SECOND" 'RC=0 body=1 second=' \
+    "$prompt_case: discarded prompt context leaves the owner body for one real inbox read"
+done
+wake_mutant prompt-acknowledges '    [ "$HARNESS:$ARM" != copilot:prompt ] || exit 0' '    :'
+copilot_prompt_inbox control_prompt_ack '' "$MUTANT_PATH"
+assert_eq "RC=$PROMPT_STATUS body=$PROMPT_INBOX second=$PROMPT_SECOND" 'RC=0 body=0 second=' \
+  'control: acknowledging discarded prompt context loses the owner body before inbox'
 
 # The overseer's tool-call judgement requires the Copilot lead cache even
 # when the native ID matches. A missing cache leaves that caller unknown,
@@ -1216,7 +1262,7 @@ assert_eq "marks=$([ -e "$CONTROL_ENV_CALLS" ] && echo judged || echo unjudged)"
 mutant context-ack-unwritten -e 's@ || refuse notice unwritten "\$(cat -- "\$WORK_DIR/notice.err")"$@ || :@'
 new_copilot_lane control_context_ack ken-240 "$MUTANT_PATH"
 send KEN-240 'Then push.'
-copilot_context_unwritable prompt
+copilot_context_unwritable start
 assert_eq "RC=$RC unread=$(lane_unread KEN-240 'Then push.')" "RC=0 unread=0" \
   "control: without the write check an unwritten context acknowledges the directive"
 
