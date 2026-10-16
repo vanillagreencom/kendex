@@ -497,12 +497,14 @@ push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
 # <src> -> <dst> (stale info)` for a failed --force-with-lease, the
 # empty-expectation form this tool uses on a first push included, and
 # `(fetch first)` for an ordinary rejection — so the lease story is told where
-# git tells it and nowhere else.
+# git tells it and nowhere else. A base that moves after the advertisement is
+# the receiving git's word: 2.43 reports `(failed to update ref)`, 2.55
+# `(incorrect old value provided)`.
 push_output_lease_rejected() { # OUTPUT [base] -> rejected lease or base update
   local line
   while IFS= read -r line; do
     case "${2:-lease}:$line" in
-      lease:*'[rejected]'*'(stale info)'*|base:*'[rejected]'*'(fetch first)'*|base:*'[rejected]'*'(non-fast-forward)'*|base:*'[remote rejected]'*'(failed to update ref)'*) return 0 ;;
+      lease:*'[rejected]'*'(stale info)'*|base:*'[rejected]'*'(fetch first)'*|base:*'[rejected]'*'(non-fast-forward)'*|base:*'[remote rejected]'*'(failed to update ref)'*|base:*'[remote rejected]'*'(incorrect old value provided)'*) return 0 ;;
     esac
   done <<<"$1"
   return 1
