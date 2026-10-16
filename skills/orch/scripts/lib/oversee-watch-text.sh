@@ -53,6 +53,14 @@ context. The heartbeat reads the mail once more when a long pass ended after
 the last mail pass.
 
 The long pass's events, checked and reported in this order:
+  EVENT tracker-quota status=<future|elapsed|missing|invalid>
+        reset=<selected UTC deadline|unavailable> limit=<requests|complexity|endpoint|unknown>
+                             Linear refused a tracker operation. The remaining
+                             tracker operations stop for this pass. A future
+                             deadline also defers later tracker passes. Mail,
+                             available GitHub and lane checks, and report due
+                             continue. Heartbeat prints the same tracker-quota
+                             line without EVENT while the receipt stands.
   EVENT overseer-dead <pane> window=<window> passes=<N> succession=<on|off>
         source=<record|rows|process|context|pane> [record=<server>:<pane>|none]
                              the OVERSEER's own session — the $TMUX_PANE this

@@ -12,6 +12,7 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "container_close: scratch=re
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+source "$TEST_DIR/lib/growth-state.sh"
 
 SANDBOX="$TMP_ROOT/repo"
 mkdir -p "$SANDBOX/skills/linear/scripts/lib" "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$SANDBOX/skills/mailbox" "$TMP_ROOT/bin"
@@ -21,6 +22,8 @@ cp "$REPO_ROOT/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/script
 cp "$REPO_ROOT/skills/orch/scripts/git-context" "$SANDBOX/skills/orch/scripts/git-context"
 chmod +x "$SANDBOX/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/git-context"
 git init -q "$SANDBOX"
+git -C "$SANDBOX" config gc.auto 0
+git -C "$SANDBOX" config maintenance.auto false
 git -C "$SANDBOX" config user.email test@example.com
 git -C "$SANDBOX" config user.name test
 printf 'tmp/\n' > "$SANDBOX/.gitignore"
@@ -111,9 +114,12 @@ case "$resource:$action" in
     while [[ $# -gt 0 ]]; do case "$1" in --summary-file) summary="$2"; shift 2 ;; *) shift ;; esac; done
     ratelimit="$(cat "$root/ratelimit.complete.once" 2>/dev/null || true)"
     rm -f "$root/ratelimit.complete.once"
-    # The reset linear_requests_reset prints: a UTC time, or `unavailable`.
+    # The transport keeps raw requests_reset distinct from its selected reset.
     reset="$(cat "$root/ratelimit.reset" 2>/dev/null || printf '2026-10-05T16:00:00Z')"
-    rate_line="{\"error\":\"Rate limited. Requests-Reset=$reset\",\"code\":\"RATELIMITED\",\"requests_reset\":\"$reset\"}"
+    hold_reset="$(cat "$root/ratelimit.hold-reset" 2>/dev/null || printf '%s' "$reset")"
+    rate_line="$(jq -cn --arg reset "$reset" --arg hold "$hold_reset" '{error:"Rate limited",code:"RATELIMITED",requests_reset:$reset,
+      quota:{reset:$hold,status:(if $hold == "unavailable" then "missing" else "future" end),limit:"unknown",
+        reset_epoch:(if $hold == "unavailable" then null else ($hold | fromdateiso8601) end)}}')"
     if [[ "$ratelimit" == comment ]]; then
       printf 'ratelimit\n' >> "$root/complete.calls"
       printf '%s\n' "$rate_line" '{"error": "Completion summary comment failed for PARENT-1. Issue state unchanged."}' >&2
@@ -156,7 +162,7 @@ reset_state() {
   printf 'In Progress\n' > "$FAKE_LINEAR_ROOT/parent.state"
   printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
   rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls" \
-    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
+    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$FAKE_LINEAR_ROOT/ratelimit.hold-reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
   [[ ! -d "$HELD_DIR" ]] || rmdir "$HELD_DIR"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"; mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
@@ -278,12 +284,14 @@ assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "2" "parti
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+printf '2026-10-05T15:00:00Z\n' > "$FAKE_LINEAR_ROOT/ratelimit.reset"
+printf '2026-10-05T16:00:00Z\n' > "$FAKE_LINEAR_ROOT/ratelimit.hold-reset"
 rc=0; out="$(run_close 2>"$TMP_ROOT/held.err")" || rc=$?
 assert_eq "$rc:$out" "0:held PARENT-1 2026-10-05T16:00:00Z" "a rate-limited completion holds with its reset" "$TMP_ROOT/held.err"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "a held completion leaves the parent open"
 assert_eq "$(tail -n 1 "$FAKE_LINEAR_ROOT/linear.calls")" "issues:complete" "a held completion reads nothing after the rate limit"
 assert_file_contains "$TMP_ROOT/held.err" '"code":"RATELIMITED"' "a held completion forwards the rate-limit line"
-assert_file_contains "$TMP_ROOT/held.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=2026-10-05T16:00:00Z summary=$HELD_DIR/summary.md" "a held completion names its kept summary"
+assert_file_contains "$TMP_ROOT/held.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=2026-10-05T15:00:00Z hold-reset=2026-10-05T16:00:00Z summary=$HELD_DIR/summary.md" "a held completion names its kept summary"
 assert_file_contains "$HELD_DIR/summary.md" "CHILD-1 ✓ one — PR #101" "a held completion keeps the summary it built"
 printf 'exit\n' > "$FAKE_LINEAR_ROOT/gh.mode"
 rc=0; out="$(run_close 2>"$TMP_ROOT/resume.err")" || rc=$?
@@ -299,15 +307,15 @@ printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
 printf 'unavailable\n' > "$FAKE_LINEAR_ROOT/ratelimit.reset"
 rc=0; out="$(run_close 2>"$TMP_ROOT/held-unavailable.err")" || rc=$?
 assert_eq "$rc:$out" "0:held PARENT-1 unavailable" "a rate limit with no reset time holds" "$TMP_ROOT/held-unavailable.err"
-assert_file_contains "$TMP_ROOT/held-unavailable.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=unavailable summary=$HELD_DIR/summary.md" "a hold with no reset time keys its reset as unavailable"
+assert_file_contains "$TMP_ROOT/held-unavailable.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=unavailable hold-reset=unavailable summary=$HELD_DIR/summary.md" "a hold with no reset time keys its reset as unavailable"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "a hold with no reset time leaves the parent open"
 
 # Controls: the hold branch and the kept-summary reuse, each disabled in a copy.
 HOLD_MUTANT="$SANDBOX/skills/orch/scripts/container-close-hold-mutant"
 REUSE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-reuse-mutant"
-assert_eq "$(grep -Fc 'if [[ -n "$REQUESTS_RESET" ]]; then' "$SCRIPT")" "1" "hold control finds the hold branch"
+assert_eq "$(grep -Fc 'if [[ -n "$HOLD_RESET" ]]; then' "$SCRIPT")" "1" "hold control finds the hold branch"
 assert_eq "$(grep -Fc 'if [[ -f "$HELD_SUMMARY" ]] && cmp' "$SCRIPT")" "1" "reuse control finds the kept-summary reuse"
-awk 'index($0, "if [[ -n \"$REQUESTS_RESET\" ]]; then") { sub(/if /, "if false \\&\\& ") } { print }' "$SCRIPT" > "$HOLD_MUTANT"
+awk 'index($0, "if [[ -n \"$HOLD_RESET\" ]]; then") { sub(/if /, "if false \\&\\& ") } { print }' "$SCRIPT" > "$HOLD_MUTANT"
 awk 'index($0, "if [[ -f \"$HELD_SUMMARY\" ]] && cmp") { sub(/if /, "if false \\&\\& ") } { print }' "$SCRIPT" > "$REUSE_MUTANT"
 chmod +x "$HOLD_MUTANT" "$REUSE_MUTANT"
 cmp -s "$SCRIPT" "$HOLD_MUTANT" && fail "hold control changes the copy" || pass "hold control changes the copy"
@@ -325,6 +333,19 @@ printf 'exit\n' > "$FAKE_LINEAR_ROOT/gh.mode"
 rc=0; out="$(cd "$CALLER_ONE" && "$REUSE_MUTANT" "$SANDBOX" PARENT-1 2>/dev/null)" || rc=$?
 assert_eq "$rc:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "1:In Progress" "reuse control exposes a resume that looks the PRs up again"
 
+RESET_MUTANT="$SANDBOX/skills/orch/scripts/container-close-reset-mutant"
+cp "$SCRIPT" "$RESET_MUTANT"
+mutate_file "$RESET_MUTANT" '(.quota.reset // "unavailable")' '(.requests_reset // "unavailable")'
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'comment\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
+printf '2026-10-05T15:00:00Z\n' > "$FAKE_LINEAR_ROOT/ratelimit.reset"
+printf '2026-10-05T16:00:00Z\n' > "$FAKE_LINEAR_ROOT/ratelimit.hold-reset"
+rc=0; out="$(cd "$CALLER_ONE" && "$RESET_MUTANT" "$SANDBOX" PARENT-1 2>/dev/null)" || rc=$?
+control_rc=0
+( FAIL=0; assert_eq "$rc:$out" '0:held PARENT-1 2026-10-05T16:00:00Z' 'selected hold reset'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/reset-control.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control rejects the earlier raw request reset'
+
 # A kept summary lists the children it was built from; a changed set rebuilds.
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -341,7 +362,7 @@ reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 printf 'update\n' > "$FAKE_LINEAR_ROOT/ratelimit.complete.once"
 assert_eq "$(run_close 2>"$TMP_ROOT/held-update.err")" "held PARENT-1 2026-10-05T16:00:00Z" "a rate-limited state transition holds"
-assert_file_contains "$TMP_ROOT/held-update.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=2026-10-05T16:00:00Z summary=$HELD_DIR/summary.md" "a held state transition names the summary it kept"
+assert_file_contains "$TMP_ROOT/held-update.err" "container-close: completion-held parent-id=PARENT-1 requests-reset=2026-10-05T16:00:00Z hold-reset=2026-10-05T16:00:00Z summary=$HELD_DIR/summary.md" "a held state transition names the summary it kept"
 assert_eq "$(cd "$HELD_DIR" && ls -A)" $'children.tsv\nsummary.md' "a held state transition keeps the summary and its child rows"
 assert_eq "$(run_close 2>/dev/null)" "closed PARENT-1" "a held state transition resumes"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" $'summary\nstate-only' "a held state transition resumes without the summary"

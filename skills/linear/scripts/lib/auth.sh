@@ -67,6 +67,33 @@ linear_auth_unauthorized() {
           (if $kind == "app-token" then "\nApplication token is expired or revoked. Replace LINEAR_APP_TOKEN." else "" end))}' >&2
 }
 
+# Tokens and quota receipts share this per-user directory selection. A caller
+# owns the returned staging file and registers its cleanup before using it.
+linear_private_paths() {
+    local base="${XDG_CACHE_HOME:-${HOME:+$HOME/.cache}}"
+    _LINEAR_PRIVATE_PATHS=()
+    [[ -z "$base" ]] || _LINEAR_PRIVATE_PATHS+=("$base/kendex/linear-oauth")
+    _LINEAR_PRIVATE_PATHS+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")
+}
+
+linear_private_stage() {
+    local prefix="$1" candidate cause
+    _LINEAR_PRIVATE_STAGE='' _LINEAR_PRIVATE_DIR='' _LINEAR_PRIVATE_FAILURES=''
+    linear_private_paths
+    for candidate in "${_LINEAR_PRIVATE_PATHS[@]}"; do
+        if ! mkdir -p -- "$candidate" 2>/dev/null; then cause=mkdir-failed
+        elif [[ -L "$candidate" ]]; then cause=symlink
+        elif [[ ! -O "$candidate" ]]; then cause=not-owned
+        elif ! _LINEAR_PRIVATE_STAGE=$(mktemp "$candidate/.$prefix.XXXXXX" 2>/dev/null); then cause=not-writable
+        else
+            _LINEAR_PRIVATE_DIR="$candidate"
+            return 0
+        fi
+        _LINEAR_PRIVATE_FAILURES+=" dir=[$candidate] cause=$cause"
+    done
+    return 1
+}
+
 # Prints the Authorization value. Force renewal is used once after an HTTP 401.
 linear_authorization() (
     linear_check_credentials || return 1
@@ -92,30 +119,14 @@ linear_authorization() (
     # another user could make the name first, so a symlink or another user's
     # directory is never used. The file is named by the fingerprint of the pair
     # and the scope set, so a token minted under another set is never reused.
-    local base candidate candidates=() cause dir='' failed='' identity token_file now cached token staged=''
-    base=${XDG_CACHE_HOME:-${HOME:+$HOME/.cache}}
-    [[ -z "$base" ]] || candidates+=("$base/kendex/linear-oauth")
-    candidates+=("${TMPDIR:-/tmp}/kendex-linear-oauth-$UID")
+    local dir='' failed='' identity token_file now cached token staged=''
     identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE") || return 1
     umask 077
     trap '[[ -z "${staged:-}" ]] || rm -f -- "${staged:?}"' EXIT
     # The staged file is the write probe and, after a mint, the atomic
     # replacement that keeps parallel callers from reading a partial token.
-    for candidate in "${candidates[@]}"; do
-        if ! mkdir -p -- "$candidate" 2>/dev/null; then
-            cause=mkdir-failed
-        elif [[ -L "$candidate" ]]; then
-            cause=symlink
-        elif [[ ! -O "$candidate" ]]; then
-            cause=not-owned
-        elif ! staged=$(mktemp "$candidate/.token.XXXXXX" 2>/dev/null); then
-            cause=not-writable
-        else
-            dir="$candidate"
-            break
-        fi
-        failed+=" dir=[$candidate] cause=$cause"
-    done
+    linear_private_stage token || true
+    staged="$_LINEAR_PRIVATE_STAGE" dir="$_LINEAR_PRIVATE_DIR" failed="$_LINEAR_PRIVATE_FAILURES"
     token_file="$dir/$identity.json"
     now=$(date +%s) || return 1
     if [[ -n "$dir" && "${1:-}" != "renew" && -f "$token_file" ]]; then

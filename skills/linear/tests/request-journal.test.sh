@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
 assert_tmpdir TMP_ROOT
 PROJECT="$TMP_ROOT/project"
-mkdir -p "$PROJECT/bin" "$PROJECT/.agents/skills" "$TMP_ROOT/home"
+mkdir -p "$PROJECT/bin" "$PROJECT/.agents/skills"
 git -C "$PROJECT" init -q -b main
 git -C "$PROJECT" config gc.auto 0
 git -C "$PROJECT" config maintenance.auto false
@@ -96,7 +96,8 @@ chmod +x "$PROJECT/bin/date" "$PROJECT/bin/mkdir" "$PROJECT/bin/curl"
 printf 'private-file-body\n' >"$PROJECT/note.pdf"
 
 run_linear() {
-    (cd -- "${CALLER_REPOSITORY:-$PROJECT}" && env -i PATH="$PROJECT/bin:$PATH" HOME="$TMP_ROOT/home" \
+    # Independent journal worlds must not inherit another world's quota hold.
+    (cd -- "${CALLER_REPOSITORY:-$PROJECT}" && env -i PATH="$PROJECT/bin:$PATH" HOME="$LOG/home" \
         LOG="$LOG" REAL_MKDIR="$REAL_MKDIR" MODE="$MODE" \
         LINEAR_API_KEY_OVERRIDE="${KEY:-private-personal-key}" \
         LINEAR_CLIENT_ID="${CLIENT_ID:-}" LINEAR_CLIENT_SECRET="${CLIENT_SECRET:-}" \
@@ -120,7 +121,7 @@ for row in \
     'stop-expired|none|0|0|0|expired' \
     'expiry|auth|1|0|0|expired' \
     'transport|auth|3|3|1|active' \
-    'rate|auth|3|3|1|active' \
+    'rate|auth|1|1|1|active' \
     'write|write|1|1|1|active'; do
     IFS='|' read -r MODE action sends records expected_rc state sequence logical_requests <<<"$row"
     LOG="$TMP_ROOT/$MODE"

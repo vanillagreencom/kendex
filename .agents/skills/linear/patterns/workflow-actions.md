@@ -19,11 +19,17 @@ Cancel, duplicate, and absorb are all `comments create` + `issues update --state
 
 ## Quota Holds
 
-A command Linear rate-limits exits nonzero with one JSON line on stderr carrying `"code":"RATELIMITED"` and `requests_reset`, the UTC time its request quota refills, or `unavailable`. An `activate` or `complete` that answers so is held, never reported as a failed step:
+A command Linear rate-limits exits nonzero with one JSON stderr line carrying `code:"RATELIMITED"`. Its `quota` receipt contains `status` (`future`, `elapsed`, `missing`, `invalid`), `reset` (UTC deadline or `unavailable`), `reset_epoch` (whole seconds or null), and `limit` (`requests`, `complexity`, `endpoint`, `unknown`). The request code selects the reset for the limit the refusal names. With no named limit, it selects the latest usable future request, complexity or endpoint reset. It rounds fractional epochs up. `requests_reset` keeps the raw request-reset header's UTC time or `unavailable`; it can be earlier than the selected deadline.
+
+Future holds persist privately per credential binding on this host. Same-binding calls refuse before GraphQL HTTP or credential renewal. App-pair bindings survive token renewal. Personal keys and pre-minted app tokens have separate bindings. This does not coordinate other hosts, users or token aliases. A local refusal has `source:"local"` and adds no HTTP journal row. Missing storage means no learned hold. Malformed or unreadable required storage returns `code:"LINEAR_HOLD_UNAVAILABLE"`. A failed save retains the refusal with `hold_storage:"unavailable"`.
+
+A usable future deadline ends the current transport attempt without retry HTTP. Missing, invalid or elapsed resets keep the existing bounded retry.
+
+An `activate` or `complete` that answers with a quota refusal is held:
 
 1. Keep the held command and its `--summary-file` or body file under `tmp/`. The held command is the original one, except after a `complete` whose stderr also carries a `State transition to Done failed after the summary comment was posted` line: the summary is already posted, so the held command is the `issues complete` rerun that line names, without summary flags and keeping any `--done-when-met`. Rerunning the original would post the summary twice.
-2. Wait until `requests_reset` through the job runner, then run the held command once more.
-3. A second rate limit, or a reset of `unavailable`, returns the held command and its file to the caller; neither authorizes another try.
+2. For `quota.status:"future"`, wait until `quota.reset` through the job runner, then run the held command once more. An `elapsed` deadline permits that ordinary retry without a wait. A reset does not prove a full allowance.
+3. A second rate limit, or a `missing` or `invalid` reset, returns the held command and its file to the caller. None authorizes another try or an indefinite wait. A hold-storage failure also returns its diagnostic to the caller.
 
 ## Descriptions
 

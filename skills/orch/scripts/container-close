@@ -140,11 +140,11 @@ container_close_message() {
       printf '%s\n' "container-close: cannot read the completion diagnostics for $PARENT_ID"
       ;;
     completion-held)
-      printf 'container-close: completion-held parent-id=%s requests-reset=%s summary=%s\n' "$PARENT_ID" "$REQUESTS_RESET" "$HELD_SUMMARY_STATE"
-      if [[ "$REQUESTS_RESET" == unavailable ]]; then
+      printf 'container-close: completion-held parent-id=%s requests-reset=%s hold-reset=%s summary=%s\n' "$PARENT_ID" "$REQUESTS_RESET" "$HOLD_RESET" "$HELD_SUMMARY_STATE"
+      if [[ "$HOLD_RESET" == unavailable ]]; then
         printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID and gave no reset time; it stays open"
       else
-        printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID; it stays open until a run after $REQUESTS_RESET"
+        printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID; it stays open until a run after $HOLD_RESET"
       fi
       ;;
     held-release)
@@ -163,8 +163,8 @@ Derives the shared main repository and serializes closure across its containers.
 Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
 repeat. Prints `deferred` followed by pending child ids when closure
 must wait. A bare `deferred` means the 120-second lock wait expired. Prints
-`held <PARENT_ID> <REQUESTS_RESET>` when Linear rate-limited the completion,
-REQUESTS_RESET being the UTC time its quota refills or `unavailable`: the parent
+`held <PARENT_ID> <HOLD_RESET>` when Linear rate-limited the completion,
+HOLD_RESET being Linear's selected retry time or `unavailable`: the parent
 stays open, and the caller holds this command under the linear skill's
 patterns/workflow-actions.md Quota Holds. The bundle summary that run built is
 kept under tmp/container-close-held/<PARENT_ID>/ in the shared repository,
@@ -347,9 +347,11 @@ cat -- "$COMPLETE_ERR" >&2 || { container_close_message completion-diagnostics "
 if [[ $COMPLETE_RC -ne 0 ]]; then
   # The rate-limit line the linear skill's SKILL.md documents. A held parent is
   # not read again here: that read spends the quota that just ran out.
-  REQUESTS_RESET="$(jq -Rrn '[inputs | fromjson? | objects | select(.code == "RATELIMITED") | .requests_reset | strings] | last // empty' \
+  QUOTA_RESET="$(jq -Rrn '[inputs | fromjson? | objects | select(.code == "RATELIMITED") |
+    [(.requests_reset // "unavailable"),(.quota.reset // "unavailable")] | @tsv] | last // empty' \
     < "$COMPLETE_ERR")" || { container_close_message completion-diagnostics "$@" >&2; exit 1; }
-  if [[ -n "$REQUESTS_RESET" ]]; then
+  IFS=$'\t' read -r REQUESTS_RESET HOLD_RESET <<<"$QUOTA_RESET"
+  if [[ -n "$HOLD_RESET" ]]; then
     # A run without a summary has nothing to keep: its summary is posted.
     # A built summary is kept even where the limit hit the Done update after
     # the comment posted: only prose tells the two apart, and the next run's
@@ -363,7 +365,7 @@ if [[ $COMPLETE_RC -ne 0 ]]; then
         || HELD_SUMMARY_STATE=unkept
     fi
     container_close_message completion-held "$@" >&2
-    printf 'held %s %s\n' "$PARENT_ID" "$REQUESTS_RESET"
+    printf 'held %s %s\n' "$PARENT_ID" "$HOLD_RESET"
     exit 0
   fi
   # A completion another caller landed first reads as completed here.

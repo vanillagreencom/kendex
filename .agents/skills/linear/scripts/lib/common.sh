@@ -193,9 +193,8 @@ curl_config_quote() {
     printf '%s' "$1" | jq -Rs .
 }
 
-# The session directory owns the journal, its stop state and its writer lock.
-# No timer process is needed: every writer and reader checks the fixed expiry.
-linear_journal_binding() {
+# The pair binding survives token renewal. Journal and quota holds share it.
+linear_credential_binding() {
     case "$LINEAR_AUTH_KIND" in
     app) linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET:$_LINEAR_APP_SCOPE" ;;
     app-token) linear_key_fingerprint "app-token:$LINEAR_APP_TOKEN" ;;
@@ -270,7 +269,7 @@ linear_journal_record() (
         printf '%s\n' expired >"$LINEAR_JOURNAL_DIR/stopped" || linear_journal_incomplete stop-write
         return 0
     fi
-    if ! binding=$(linear_journal_binding) || ! headers=$(linear_journal_headers "$2"); then
+    if ! binding=$(linear_credential_binding) || ! headers=$(linear_journal_headers "$2"); then
         linear_journal_incomplete metadata-unavailable
         return 0
     fi
@@ -358,7 +357,7 @@ EOF
             return 1
         fi
         linear_check_credentials && linear_resolve_credentials || return 1
-        binding=$(linear_journal_binding) || return 1
+        binding=$(linear_credential_binding) || return 1
         now=$(date +%s) || return 1
         [[ "$now" =~ ^[0-9]{1,12}$ ]] || return 1
         umask 077
@@ -443,22 +442,125 @@ linear_header_value() {
     awk -v name="$1:" 'tolower($1) == name { gsub("\r", "", $2); value = $2 } END { print value }' <<<"$2"
 }
 
-# Reports a rate-limited final answer, a GraphQL request's or a download's,
-# as one JSON line on stderr naming the time the request quota refills, so a
-# caller can hold its write until then. The time is an ISO-8601 UTC instant
-# read from Linear's X-RateLimit-Requests-Reset header (epoch milliseconds),
-# or "unavailable" when the answer carried no usable value.
-# Usage: linear_rate_limited "$headers"; return 1
-linear_rate_limited() {
-    local value reset
-    value=$(linear_header_value x-ratelimit-requests-reset "$1") || return 1
-    if [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
-        reset=$(jq -rn --arg ms "$value" '$ms | tonumber / 1000 | floor | todate') || return 1
-    else
-        reset=unavailable
+linear_quota_unavailable() {
+    jq -cn --arg cause "$1" '{code:"LINEAR_HOLD_UNAVAILABLE",error:"Linear quota hold state is unavailable",cause:$cause}' >&2
+}
+
+# Read every directory the shared private-store owner can select. A token
+# cache that becomes writable again must not hide a hold saved in TMPDIR.
+linear_quota_read() {
+    local binding="$1" dir file value result=''
+    linear_private_paths
+    for dir in "${_LINEAR_PRIVATE_PATHS[@]}"; do
+        file="$dir/quota-$binding.json"
+        if [[ -d "$dir" && ( ! -r "$dir" || ! -x "$dir" ) ]]; then
+            linear_quota_unavailable "directory:$dir"; return 1
+        fi
+        [[ -e "$file" || -L "$file" ]] || continue
+        if [[ -L "$dir" || ! -O "$dir" || -L "$file" || ! -f "$file" || ! -O "$file" || ! -r "$file" ]]; then
+            linear_quota_unavailable "ownership:$file"; return 1
+        fi
+        if ! value=$(jq -ce --arg binding "$binding" '
+            select(.schema == 1 and .binding == $binding and .code == "RATELIMITED") |
+            select((.requests_reset | type) == "string" and (.error | type) == "string" and .hold_storage == "stored") |
+            select(.quota.status == "future") |
+            select(.quota.reset_epoch | type == "number" and . > 0 and . == floor) |
+            select(.quota.reset == (.quota.reset_epoch | todateiso8601)) |
+            select(.quota.limit == "requests" or .quota.limit == "complexity" or .quota.limit == "endpoint" or .quota.limit == "unknown")' "$file" 2>/dev/null); then
+            linear_quota_unavailable "read:$file"; return 1
+        fi
+        result=$(printf '%s\n%s\n' "$result" "$value" | jq -sc 'max_by(.quota.reset_epoch)') || return 1
+    done
+    [[ -z "$result" ]] || printf '%s\n' "$result"
+}
+
+# Parallel watches can learn different deadlines. Serialize the replacement
+# and keep the later receipt. A stranded lock refuses; no saved PID is killed.
+linear_quota_store() (
+    local result="$1" binding="$2" staged='' lock='' dir file old tries acquired=0
+    umask 077
+    trap '[[ -z "$staged" ]] || rm -f -- "$staged"; [[ -z "$lock" ]] || rmdir -- "$lock"' EXIT
+    if ! linear_private_stage quota; then
+        linear_quota_unavailable "store:$_LINEAR_PRIVATE_FAILURES"; return 1
     fi
-    jq -cn --arg reset "$reset" \
-        '{error: ("Rate limited. Requests-Reset=" + $reset), code: "RATELIMITED", requests_reset: $reset}' >&2
+    staged="$_LINEAR_PRIVATE_STAGE" dir="$_LINEAR_PRIVATE_DIR"
+    chmod 700 -- "$dir" || { linear_quota_unavailable "private:$dir"; return 1; }
+    file="$dir/quota-$binding.json"
+    for ((tries=0; tries<20; tries++)); do
+        if mkdir -- "$dir/.quota-$binding.lock" 2>/dev/null; then
+            lock="$dir/.quota-$binding.lock"; acquired=1; break
+        fi
+        sleep 0.05
+    done
+    [[ "$acquired" == 1 ]] || { linear_quota_unavailable "lock:$file"; return 1; }
+    old=$(linear_quota_read "$binding") || return 1
+    result=$(printf '%s\n%s\n' "$result" "$old" | jq -sc --arg binding "$binding" '
+        .[0] as $new | (.[1] // null) as $old | $new |
+        if $old != null and $old.quota.reset_epoch > .quota.reset_epoch then .quota = $old.quota else . end |
+        . + {schema:1,binding:$binding,hold_storage:"stored"}') || return 1
+    if ! { printf '%s\n' "$result" >"$staged" && mv -f -- "$staged" "$file"; }; then
+        linear_quota_unavailable "write:$file"; return 1
+    fi
+    printf '%s\n' "$result"
+)
+
+linear_quota_check() {
+    local binding record now epoch
+    binding=$(linear_credential_binding) || return 1
+    record=$(linear_quota_read "$binding") || return 1
+    [[ -n "$record" ]] || return 0
+    now=$(date +%s) || return 1
+    epoch=$(jq -r '.quota.reset_epoch' <<<"$record") || return 1
+    ((now < epoch)) || return 0
+    jq -c 'del(.schema,.binding) | .source="local"' <<<"$record" >&2
+    return 1
+}
+
+# requests_reset keeps the raw request header's meaning. quota is the selected
+# scheduling receipt consumed by the watch and held-write workflow. Linear's
+# documented endpoint-name header identifies that limit. Its refusal text can
+# name requests or complexity; otherwise the latest usable future reset wins.
+linear_quota_response() {
+    local requests complexity endpoint endpoint_name now result binding stored status
+    requests=$(linear_header_value x-ratelimit-requests-reset "$1") || return 1
+    complexity=$(linear_header_value x-ratelimit-complexity-reset "$1") || return 1
+    endpoint=$(linear_header_value x-ratelimit-endpoint-requests-reset "$1") || return 1
+    endpoint_name=$(linear_header_value x-ratelimit-endpoint-name "$1") || return 1
+    now=$(date +%s) || return 1
+    result=$(jq -Rsc --arg requests "$requests" --arg complexity "$complexity" --arg endpoint "$endpoint" \
+        --arg endpoint_name "$endpoint_name" --argjson now "$now" '
+        def epoch: if test("^[0-9]{1,15}$") then tonumber / 1000 | ceil else null end;
+        (fromjson? // {}) as $body |
+        [$body.errors[]? | select(.extensions.code == "RATELIMITED") | .message // ""] | join(" ") as $message |
+        (if $endpoint_name != "" then "endpoint"
+         elif ($message | test("\\bcomplexity\\b";"i")) then "complexity"
+         elif ($message | test("\\brequests\\b";"i")) then "requests" else "unknown" end) as $limit |
+        [{limit:"requests",raw:$requests},{limit:"complexity",raw:$complexity},{limit:"endpoint",raw:$endpoint}] |
+        map(. + {epoch:(.raw | epoch)}) |
+        (if $limit == "unknown" then . else map(select(.limit == $limit)) end) as $candidates |
+        ([$candidates[] | select(.epoch != null and .epoch > $now)] | max_by(.epoch)) as $future |
+        ([$candidates[] | select(.epoch != null)] | max_by(.epoch)) as $valid |
+        ($future // $valid) as $chosen |
+        (if $requests | test("^[0-9]{1,15}$") then ($requests | tonumber / 1000 | floor | todateiso8601) else "unavailable" end) as $raw_reset |
+        {code:"RATELIMITED",error:("Rate limited. Requests-Reset=" + $raw_reset),requests_reset:$raw_reset,source:"response",
+         quota:{limit:$limit,
+           status:(if $future != null then "future" elif $valid != null then "elapsed"
+             elif any($candidates[]; .raw != "") then "invalid" else "missing" end),
+           reset:(if $chosen == null then "unavailable" else ($chosen.epoch | todateiso8601) end),
+           reset_epoch:($chosen.epoch // null)}}' <<<"${2:-}") || return 1
+    status=$(jq -r '.quota.status' <<<"$result") || return 1
+    if [[ "$status" == future ]]; then
+        binding=$(linear_credential_binding) || return 1
+        if stored=$(linear_quota_store "$result" "$binding"); then result="$stored"
+        else result=$(jq -c '.hold_storage="unavailable"' <<<"$result") || return 1; fi
+    fi
+    jq -c 'del(.schema,.binding)' <<<"$result"
+}
+
+linear_rate_limited() {
+    local result
+    result=$(linear_quota_response "$@") || return 1
+    printf '%s\n' "$result" >&2
 }
 
 # Whether a request is sent again after an answer, every Linear request and
@@ -505,16 +607,17 @@ linear_retry_wait() {
 # One POST to Linear, sent again while linear_retry_wait says so. Linear
 # serves its RATELIMITED code under a 400 and could serve it under any
 # status, so a body carrying it is a rate-limited answer whatever the status.
-# A rate-limited final answer is reported by linear_rate_limited and
-# returns 1.
+# A usable future reset is saved and returned before another attempt. Other
+# rate refusals retain the bounded retry and return the selected receipt.
 # Otherwise prints the final status on the first line and the body after it.
 # CONFIG is the curl config lines naming the request; KIND is its
 # linear_retry_wait kind.
 # Usage: reply=$(linear_http_post "$config" read) || return 1
 linear_http_post() {
-    local config="$1" kind="$2" attempt=1 raw code body headers
+    local config="$1" kind="$2" attempt=1 raw code body headers quota
     local delimiter="___HTTP_CODE___"
     while true; do
+        linear_quota_check || return 1
         headers=''
         # Headers go to stdout ahead of the body ("-" is curl's own stdout
         # stream, so they cannot interleave), and are split off below.
@@ -533,12 +636,20 @@ linear_http_post() {
         if jq -e '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1 <<<"$body"; then
             code=429
         fi
+        quota=''
+        if [[ "$code" == 429 ]]; then
+            quota=$(linear_quota_response "$headers" "$body") || return 1
+            if jq -e '.quota.status == "future"' >/dev/null <<<"$quota"; then
+                printf '%s\n' "$quota" >&2
+                return 1
+            fi
+        fi
         if linear_retry_wait "$kind" "$code" "$attempt" "$headers"; then
             attempt=$((attempt + 1))
             continue
         fi
         if [[ "$code" == 429 ]]; then
-            linear_rate_limited "$headers"
+            printf '%s\n' "$quota" >&2
             return 1
         fi
         printf '%s\n%s' "$code" "$body"
@@ -575,6 +686,7 @@ graphql_request() {
     fi
 
     check_api_key || return 1
+    linear_quota_check || return 1
     authorization=$(linear_authorization) || return 1
     # Variables go in on stdin: one argv string is capped at 128 KiB
     # (MAX_ARG_STRLEN), which a long description or a large id filter
@@ -638,6 +750,7 @@ graphql_request() {
         401)
             if [[ "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then
                 _LJ_PHASE=1
+                linear_quota_check || return 1
                 authorization=$(linear_authorization renew) || return 1
                 auth_renewed=1
                 continue

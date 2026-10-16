@@ -294,6 +294,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
+#   tracker-quota<TAB>fleet<TAB><Linear's selected scheduling receipt as JSON>
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   directive<TAB><item>[@clone]<TAB><to-lane.cursor reported read> <last line reported unread>[:<passes since unread reported>] <first id>
@@ -1870,8 +1871,10 @@ check_triage() {
   # exact ISO floor below so the wider server query cannot mint an old event.
   days=$((age / 86400 + 1))
   out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --created-since "${days}d" --max --format=safe 2>"$errf")" || rc=$?
-  [[ "$rc" -eq 0 ]] \
-    || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+  if [[ "$rc" -ne 0 ]]; then
+    tracker_quota_refusal "$errf" && return 0
+    die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+  fi
   ids="$(jq -r --argjson since "$SINCE_EPOCH" '
     def created_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
     if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
@@ -2335,6 +2338,7 @@ read_owner_tracker_answers() {
   : >"$WORK_DIR/tracker-item-lists"
   while IFS= read -r label; do
     if ! items="$("$TRACKER" issues list --assignee "$OWNER_TRACKER_EMAIL" --label "$label" --max --format=safe 2>"$WORK_DIR/tracker.err")"; then
+      tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
       echo 'KEN-3624-unread cause=issues' >&2; return 0
     fi
     if ! jq -ce arrays <<<"$items" >>"$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err"; then
@@ -2356,8 +2360,10 @@ read_owner_tracker_answers() {
     issue="$(jq -r '.id' <<<"$repair")" || return 1
     description="$(jq -r '.description + "."' <<<"$repair")" || return 1
     description="${description%.}"
-    "$TRACKER" issues update "$issue" --description "$description" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" ||
+    if ! "$TRACKER" issues update "$issue" --description "$description" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err"; then
+      tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
       owner_tracker_unwritten "$issue" description
+    fi
   done <"$WORK_DIR/tracker-repairs"
   if ! items="$(jq -r '.[].id' <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=issues-format' >&2; return 0
@@ -2365,6 +2371,7 @@ read_owner_tracker_answers() {
   while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$items"
   [[ ${#ids[@]} -gt 0 ]] || { OWNER_TRACKER_READ=read; return 0; }
   if ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe >"$WORK_DIR/tracker-comments" 2>"$WORK_DIR/tracker.err"; then
+    tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
     echo 'KEN-3624-unread cause=comments' >&2; return 0
   fi
   if ! jq -cn --slurpfile comments "$WORK_DIR/tracker-comments" --arg email "$OWNER_TRACKER_EMAIL" \
@@ -4658,6 +4665,60 @@ OWED_ACCOUNTS=""
 OWED_ANSWERS=""
 OWED_LISTING=""
 OWED_VERDICT=""
+TRACKER_QUOTA=""
+TRACKER_STOP=0
+# This validates the transport receipt, never headers or a credential. Linear
+# owns reset selection. The watch only compares its whole-second deadline.
+TRACKER_QUOTA_JQ='select(type == "object") |
+  select(.status == "future" or .status == "elapsed" or .status == "missing" or .status == "invalid") |
+  select(.limit == "requests" or .limit == "complexity" or .limit == "endpoint" or .limit == "unknown") |
+  select(.reset | type == "string") |
+  select(if .status == "future" or .status == "elapsed" then
+    (.reset_epoch | type == "number" and . >= 0 and . == floor) and .reset == (.reset_epoch | todateiso8601)
+    else .reset_epoch == null and .reset == "unavailable" end)'
+
+tracker_quota_line() {
+  local now
+  now="$(date -u +%s)" || return 1
+  jq -r --argjson now "$now" '
+    if .status == "future" and .reset_epoch <= $now then .status="elapsed" else . end |
+    "tracker-quota status=\(.status) reset=\(.reset) limit=\(.limit)"' <<<"$1"
+}
+
+tracker_begin() {
+  local receipt now epoch next
+  TRACKER_STOP=0 TRACKER_QUOTA=""
+  OWNER_TRACKER_READ=unread
+  OWED_LINES="" VERIFYING_LINES="" VERIFYING_EVENT_LINES=""
+  receipt="$(lane_row_get tracker-quota "${PW_SEEN[0]}" fleet)" || die state-read-failed "" "row=tracker-quota"
+  [[ -n "$receipt" ]] || return 0
+  receipt="$(jq -ce "$TRACKER_QUOTA_JQ" <<<"$receipt")" || die state-read-failed "" "row=tracker-quota"
+  now="$(date -u +%s)" || die time-failed "" "clock=UTC"
+  epoch="$(jq -r '.reset_epoch // 0' <<<"$receipt")" || die state-read-failed "" "row=tracker-quota"
+  if [[ "$now" -lt "$epoch" ]]; then
+    TRACKER_STOP=1 TRACKER_QUOTA="$receipt"
+  else
+    next="$(lane_row_clear tracker-quota "${PW_SEEN[0]}" fleet)" || die state-read-failed "" "row=tracker-quota"
+    lane_row_commit "$next"
+  fi
+}
+
+tracker_quota_refusal() { # STDERR_FILE
+  local receipt next line
+  receipt="$(jq -Rrnc '[inputs | fromjson? | objects | select(.code == "RATELIMITED") | .quota | objects] | last // empty' <"$1")" || return 1
+  [[ -n "$receipt" ]] || return 1
+  receipt="$(jq -ce "$TRACKER_QUOTA_JQ" <<<"$receipt")" || return 1
+  TRACKER_STOP=1 TRACKER_QUOTA="$receipt"
+  OWNER_TRACKER_READ=unread
+  OWED_LINES="" VERIFYING_LINES="" VERIFYING_EVENT_LINES=""
+  next="$(lane_row_set tracker-quota "${PW_SEEN[0]}" fleet "$receipt")" || die state-read-failed "" "row=tracker-quota"
+  lane_row_commit "$next"
+  line="$(tracker_quota_line "$receipt")" || die state-read-failed "" "row=tracker-quota"
+  cat -- "$1" >&2
+  printf 'EVENT %s\n' "$line"
+  PASS_EVENT=1
+}
+
 owed_read() {
   OWED_LINES=""
   VERIFYING_LINES=""
@@ -4668,8 +4729,10 @@ owed_read() {
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    statuses="$("$TRACKER" statuses list --team "$LINEAR_TEAM" --format=safe 2>"$errf")" \
-      || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "read=statuses"
+    if ! statuses="$("$TRACKER" statuses list --team "$LINEAR_TEAM" --format=safe 2>"$errf")"; then
+      tracker_quota_refusal "$errf" && return 0
+      die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "read=statuses"
+    fi
     if ! open_states="$(jq -er 'if type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.type | type) == "string")
       then map(select(.type != "completed" and .type != "canceled") | .name) | join(",")
       else error("tracker-statuses-invalid") end' <<<"$statuses" 2>"$errf")"; then
@@ -4679,8 +4742,10 @@ owed_read() {
     if [[ -n "$open_states" ]]; then
       out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "$open_states" --max --format=safe 2>"$errf")" || rc=$?
     fi
-    [[ "$rc" -eq 0 ]] \
-      || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+    if [[ "$rc" -ne 0 ]]; then
+      tracker_quota_refusal "$errf" && return 0
+      die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+    fi
     # Linear's priority 0 is No priority, which ranks after Low: it prints `-`.
     items="$(jq -c '
       if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
@@ -4710,8 +4775,10 @@ owed_read() {
       || die tracker-list-invalid "" "team=$LINEAR_TEAM"
     printf '%s\n' "$out" >"$WORK_DIR/container-facts.jsonl"
     if [[ -n "$candidates" ]]; then
-      children="$("$TRACKER" issues bulk-get --stdin --format=raw <<<"$candidates" 2>"$errf")" \
-        || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "read=children"
+      if ! children="$("$TRACKER" issues bulk-get --stdin --format=raw <<<"$candidates" 2>"$errf")"; then
+        tracker_quota_refusal "$errf" && return 0
+        die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "read=children"
+      fi
       printf '%s\n' "$children" >>"$WORK_DIR/container-facts.jsonl"
     fi
     out="$(jq -sc '[.[0][], (.[1:][] | .issues.nodes[] | .identifier as $parent | .children.nodes
@@ -5017,6 +5084,13 @@ heartbeat() {
   fi
   [[ -z "$VERIFYING_LINES" ]] || printf '%s\n' "$VERIFYING_LINES"
   [[ -z "$OWED_LINES" ]] || printf '%s\n' "$OWED_LINES"
+  if [[ -z "$TRACKER_QUOTA" ]]; then
+    TRACKER_QUOTA="$(lane_row_get tracker-quota "$baseline" fleet)" || die state-read-failed "" "row=tracker-quota"
+  fi
+  if [[ -n "$TRACKER_QUOTA" ]]; then
+    TRACKER_QUOTA="$(jq -ce "$TRACKER_QUOTA_JQ" <<<"$TRACKER_QUOTA")" || die state-read-failed "" "row=tracker-quota"
+    tracker_quota_line "$TRACKER_QUOTA" || die state-read-failed "" "row=tracker-quota"
+  fi
   pr_watch_context
   exit 0
 }
@@ -5033,7 +5107,7 @@ heartbeat() {
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
 LONG_RETURNS=(LONG_EVENT LONG_FAILED OWNER_TRACKER_DELIVERED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES)
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES TRACKER_QUOTA)
 long_pass() {
   local i state_file
   PASS_EVENT=0
@@ -5050,7 +5124,8 @@ long_pass() {
   # overseer exited or walled. A later live pass or the successor receives
   # that work.
   if check_overseer; then
-    read_owner_tracker_answers
+    tracker_begin
+    [[ "$TRACKER_STOP" != 0 ]] || read_owner_tracker_answers
     # Read tracker replies before their deadline closes. An unread tracker
     # cannot establish that the person left the recommendation unanswered.
     [[ "$OWNER_TRACKER_READ" != read ]] || resolve_due_owner_asks tracker
@@ -5058,7 +5133,7 @@ long_pass() {
     check_terminal_lanes
     observe_lanes
     check_pr_watch
-    check_triage
+    [[ "$TRACKER_STOP" != 0 ]] || check_triage
     check_outside_contribution
     check_refresh
     check_main_push
@@ -5070,7 +5145,7 @@ long_pass() {
     check_lane_long
     check_lanes
     check_accounts
-    owed_read
+    if [[ "$TRACKER_STOP" == 0 || -z "${LINEAR_TEAM:-}" ]]; then owed_read; fi
     check_report
   fi
   # Under names of their own, so sourcing them cannot overwrite the news this
