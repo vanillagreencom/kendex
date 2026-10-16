@@ -18,7 +18,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account) ;;
+    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -59,7 +59,7 @@ LAUNCH
       launch:{pid:$pid,start:$start,pane:"%1",server:$server},recovery:(if $broken == "broken" then null else
       {cwd:$cwd,flags:$flags,refresh:false,session:"model-test"} end)}')
   "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
-  CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" ANTHROPIC_BASE_URL= \
+  CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" ORCH_MODEL_RECOVERY_LIMIT=3 ANTHROPIC_BASE_URL= \
     ANTHROPIC_DEFAULT_FABLE_MODEL= ANTHROPIC_DEFAULT_OPUS_MODEL= ANTHROPIC_DEFAULT_SONNET_MODEL= ANTHROPIC_DEFAULT_HAIKU_MODEL= \
     CLAUDE_CODE_USE_BEDROCK= CLAUDE_CODE_USE_VERTEX= CLAUDE_CODE_USE_FOUNDRY= CLAUDE_CODE_USE_MANTLE= \
     CLAUDE_CODE_USE_ANTHROPIC_AWS= CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST= \
@@ -431,6 +431,47 @@ for changed in launch session claimed; do
   kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 done
 
+if model_case reset; then
+echo '=== a replacement first turn resets the recovery count ==='
+while IFS='|' read -r name check prior_session stop_session wanted; do
+  model_world "reset-$name" claude-fable-5-1
+  [[ "$name" != retired-pane ]] || CALL_ENV+=(TMUX_PANE=%old)
+  "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
+    (.lanes[0] | {launch,launched_at}) as $identity
+    | .lanes[0].model_check={outcome:(if $check=="unavailable" then "unavailable" else "switched" end),
+        session_id:$prior_session,recovery_started:true,
+        launch_identity:($identity | if $check=="predecessor" then .launch.pane="%old" else . end)}
+    | .fleet_log=[range(2) | {kind:"model-switched",item:"KEN-3916",recovery:"replaced"}]
+    ' --arg check "$check" --arg prior_session "$prior_session" >/dev/null
+  run_payload "$(jq -nc --arg session "$stop_session" '{session_id:$session,stop_hook_active:false}')"
+  assert_eq "$(jq '[.fleet_log[] | select(.kind=="model-recovery-reset")]|length' "$LANE/tmp/workflow-state-oversee.json")" \
+    "$wanted" "$name first Stop reset result"
+  saved_check=$(jq -c '.lanes[0].model_check' "$LANE/tmp/workflow-state-oversee.json")
+  if [[ "$wanted" == 1 ]]; then
+    assert_eq "$(jq -r '.lanes[0].model_check.outcome' "$LANE/tmp/workflow-state-oversee.json")" passed "$name binds the completed first turn"
+  fi
+  run_payload "$(jq -nc --arg session "$stop_session" '{session_id:$session,stop_hook_active:false}')"
+  assert_eq "$(jq -c '.lanes[0].model_check' "$LANE/tmp/workflow-state-oversee.json")" "$saved_check" "$name repeated Stop keeps the check"
+  assert_eq "$(jq '[.fleet_log[] | select(.kind=="model-recovery-reset")]|length' "$LANE/tmp/workflow-state-oversee.json")" \
+    "$wanted" "$name repeated Stop adds no reset row"
+  if [[ "$name" == resumed ]]; then
+    event claude-opus-4-8
+    await_recovery
+    assert_eq "$(jq '[.fleet_log[] | select(.kind=="model-recovery-limit")]|length' "$LANE/tmp/workflow-state-oversee.json")" \
+      0 'the real first-turn reset permits a later model recovery'
+    assert_eq "$(cat "$LANE/tmp/done")" done 'the later mismatch starts its replacement'
+  fi
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+done <<'ROWS'
+fresh|predecessor|previous|s1|1
+resumed|predecessor|s1|s1|1
+current-mismatch|current|s1|s1|0
+current-unavailable|unavailable|s1|s1|0
+stale-session|predecessor|previous|previous|0
+retired-pane|predecessor|s1|s1|0
+ROWS
+fi
+
 if model_case missing-judge; then
 echo '=== missing companion judge ==='
 model_world missing-judge claude-fable-5-1
@@ -469,6 +510,7 @@ old, new = {
     "claim": ('or $current.launch != $record.launch or $current.launched_at != $record.launched_at', 'or $current.launch != $record.launch or false'),
     "roster": ('(.child_sessions // {}) as $children', '{} as $children'),
     "unavailable": ('if .model_checks[$session] != null then', 'if false then'),
+    "reset": ('    model_recovery_reset\n', '    : # model_recovery_reset\n'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -497,6 +539,7 @@ server|complete
 standing|complete
 unbound|gui-session
 notice|adapter
+reset|reset
 CONTROLS
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"
