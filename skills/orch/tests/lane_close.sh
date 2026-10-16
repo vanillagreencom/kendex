@@ -79,6 +79,8 @@ pane_write() {
     esac
     if [[ "$4:$5" == text:/exit && "$LANE_CLOSE_COPILOT_MODE" == exits ]]; then
       printf 'exited\n' >"$LANE_CLOSE_PHASE"
+      awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
+      mv -- "$LANE_CLOSE_ROWS.next" "$LANE_CLOSE_ROWS"
     fi
     return 0
   fi
