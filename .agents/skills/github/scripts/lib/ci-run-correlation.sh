@@ -25,6 +25,14 @@
 # That keeps the in-flight case — a queued newer run with no timestamps yet, which
 # must not lose to a completed older one — on the fail-closed path.
 #
+# A required workflow's bound run is kept whatever its rank. Arg 1 is
+# required_contexts' evidence: the runs it bound (`workflows[].runs[].id`, or
+# `failed_runs`) were chosen by `latest_workflow_attempt`, the ordering the
+# merge gate relies on, and the requirement matches that run's checks by link.
+# Ranking that workflow again here would drop the bound job whenever another
+# run of it executed later and report it missing. Without bound runs (the
+# default [], or pending or unreadable evidence) a workflow ranks as above.
+#
 # Custom commit statuses (for example `CI Required`) link to an Actions run but
 # have an empty `workflow`. When such a status points at a run ranking BEFORE the
 # authoritative one for its workflow, and that authoritative run has no failures,
@@ -110,7 +118,7 @@ CI_RUN_JQ_DEFS='
 '
 
 scope_current_run() {
-  jq -c "$CI_RUN_JQ_DEFS"'
+  jq -c --argjson req "${1:-[]}" "$CI_RUN_JQ_DEFS"'
     def status_target:
       ((.link // "") | test("/actions/runs/[0-9]+/?$"));
     # Go renders a missing timestamp as its zero value; treat that as unknown.
@@ -147,15 +155,20 @@ scope_current_run() {
                else map(.rank = ["", .runid])
                end)
           )) as $ranked_groups
+    | (requirement_set($req) | [.workflows[]?.runs[]?.id, .failed_runs[]?]) as $bound
     | ($ranked_groups
         | map(
-            (map(select(.substantive))) as $substantive
-            | if ($substantive | length) > 0 then
-                ($substantive | max_by(.rank))
+            (map(select(.runid | IN($bound[])))) as $bound_runs
+            | (map(select(.substantive))) as $substantive
+            | if ($bound_runs | length) > 0 then
+                $bound_runs
+              elif ($substantive | length) > 0 then
+                [$substantive | max_by(.rank)]
               else
-                max_by(.rank)
+                [max_by(.rank)]
               end
-          )) as $selected_runs
+          )
+        | add // []) as $selected_runs
     | ($ranked_groups | add // []) as $all_runs
     | ($selected_runs | map(.checks) | add // []) as $scoped_jobs
     | ($run_statuses
@@ -216,8 +229,8 @@ fetch_checks_rollup() {
 # check apps, and a newline inside one would forge a standalone entry in the
 # line-oriented output built from these strings.
 #
-# Arg 1 is required_contexts' complete evidence object. Classic names and
-# workflow check links remain separate. Red optional checks block nothing.
+# Arg 1 is required_contexts' complete evidence object; the scoping keeps the
+# workflow runs it bound. Classic names and workflow check links remain separate. Red optional checks block nothing.
 # The legacy array argument names classic contexts; [] counts every check.
 #
 # A required context the scoped rollup carries no check for is `pending` as
@@ -229,7 +242,7 @@ fetch_checks_rollup() {
 classify_checks_rollup() {
   local raw scoped required="${1:-[]}"
   raw=$(jq -c .) || return 1
-  scoped=$(echo "$raw" | scope_current_run) || return 1
+  scoped=$(echo "$raw" | scope_current_run "$required") || return 1
   jq -cn --argjson raw "$raw" --argjson scoped "$scoped" --argjson required "$required" "$CI_RUN_JQ_DEFS"'
     def clean: tostring | gsub("[\r\n\t]"; " ");
     def shown: (.name | clean) + " (" + .state + ")";

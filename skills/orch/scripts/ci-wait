@@ -654,7 +654,7 @@ REQUIREMENTS='[]'
 get_failed_run_id() {
   local pr="$1"
   gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>/dev/null | \
-    scope_current_run | \
+    scope_current_run "$REQUIREMENTS" | \
     jq -r --argjson req "$REQUIREMENTS" "$CI_RUN_JQ_DEFS"'
       .[] | select(red and required_only($req)) | .link
     ' | \
@@ -1020,7 +1020,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
 
   # Drop checks belonging to superseded workflow runs before classifying, so a
   # prior canceled run can't be reported as a current failure.
-  checks_json=$(echo "$checks_json" | scope_current_run)
+  checks_json=$(echo "$checks_json" | scope_current_run "$REQUIREMENTS")
   # Keyed on the scoped rollup, not the classified checks, which drop skipped
   # entries: a check registering late as SKIPPED is a different rollup. Under
   # --required-only only the required checks key it, skipped ones included, so
