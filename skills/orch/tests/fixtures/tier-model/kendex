@@ -25,8 +25,8 @@ unexpected() { printf 'tier-model stub: unexpected=%s\n' "$*" >&2; exit 2; }
 if [[ $# -eq 4 && "$2" == claude && "$3" =~ ^[1-9]$ && "$4" == --json ]]; then
   classes=(top standard light fast) aliases=(fable opus sonnet haiku)
   (( $3 <= ${#classes[@]} )) || { printf 'Error: rank %s is not on the class ladder (1-%s)\n' "$3" "${#classes[@]}" >&2; exit 1; }
-  printf '{"protocol":"model-resolution-v1","harness":"claude","request":{"tag":"class","class":"%s"},"resolution":{"tag":"deferred-class","class":"%s","native_selector":"%s"}}\n' \
-    "${classes[$3 - 1]}" "${classes[$3 - 1]}" "${aliases[$3 - 1]}"
+  printf '{"protocol":"model-resolution-v1","harness":"claude","request":{"tag":"class","class":"%s"},"resolution":{"tag":"deferred-class","class":"%s","native_selector":"%s","diagnostics":[{"code":"render-only"}]},"warning":"model-resolution: requested=%s selected=%s causes=render-only source="}\n' \
+    "${classes[$3 - 1]}" "${classes[$3 - 1]}" "${aliases[$3 - 1]}" "${classes[$3 - 1]}" "${aliases[$3 - 1]}"
   exit 0
 fi
 [[ $# -eq 7 && "$2" =~ ^(claude|codex|copilot)$ && "$3" == --model && -n "$4" && "$5" == --json \

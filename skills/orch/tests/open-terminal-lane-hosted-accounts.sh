@@ -220,7 +220,7 @@ rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 TOKEN_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-judge-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-judge-host/orch"
-mutate_file "$OPEN_TERMINAL" 'lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane' 'lane_record="$("$LANES_CLI" pick --lane'
+mutate_file "$OPEN_TERMINAL" 'lane_record="$(ORCH_MODEL_LINES_HELD=1 ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane' 'lane_record="$(ORCH_MODEL_LINES_HELD=1 "$LANES_CLI" pick --lane'
 run_ot "$TOKEN_ROW" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r KEN-121
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.tokclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog unreadable=lane=$H/.tokclaude,model=opus,step=windows" \

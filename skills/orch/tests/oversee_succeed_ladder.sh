@@ -189,9 +189,10 @@ launched() {
        $0 == "--model" || $0 == "-m" { want = 1 } END { printf "%s %s", lane, model }' "$TMP_ROOT/argv.$1"
 }
 caller_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$CALLER_WINDOW"* ]]; then echo yes; else echo no; fi; }
-# first_key — the key of OUT's first line, kendex's model-resolution warning
-# passed over: it precedes any refusal of a launch that classified a model.
-first_key() { sed -n '/^model-resolution: /!{p;q;}' <<<"$OUT" | awk '{print $2}'; }
+first_key() { sed -n 1p <<<"$OUT" | awk '{print $2}'; }
+# walked_key — first_key with kendex's model-resolution warning passed over:
+# it precedes a refusal that comes after the walk classified a model.
+walked_key() { sed -n '/^model-resolution: /!{p;q;}' <<<"$OUT" | awk '{print $2}'; }
 # keyed KEY — the first line OUT carries under KEY, or `none`.
 keyed() { grep -m1 "^oversee-succeed: $1 " <<<"$OUT" || echo none; }
 
@@ -394,14 +395,17 @@ cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 seat eclaude 10 10 10
 codex_seat codex 99
 codex_seat dcodex 20
+# The conversion never advises a claude exact id, which warns on the next
+# run: it names the claude default entry's class while the launch keeps the
+# session's model. A codex, copilot or pi model is a supported form.
 for row in \
-  'claude|observed|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2' \
-  'codex|observed|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1' \
-  'claude|flags|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2' \
-  'codex|flags|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1' \
-  'copilot|flags|gpt-5.3-codex|COPILOT_HOME|2copilot|--reasoning-effort|high|2' \
-  'pi|flags|pi-claude/claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--thinking|high|2'; do
-  IFS='|' read -r harness source model var successor effort_word effort_value effort_count <<<"$row"
+  'claude|observed|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|claude:standard:high' \
+  'codex|observed|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|codex:gpt-5.6-sol:high' \
+  'claude|flags|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|claude:standard:high' \
+  'codex|flags|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|codex:gpt-5.6-sol:high' \
+  'copilot|flags|gpt-5.3-codex|COPILOT_HOME|2copilot|--reasoning-effort|high|2|copilot:gpt-5.3-codex:high' \
+  'pi|flags|pi-claude/claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--thinking|high|2|pi:pi-claude/claude-fable-5-1:high'; do
+  IFS='|' read -r harness source model var successor effort_word effort_value effort_count replacement <<<"$row"
   permission=""
   [[ "$harness" == pi ]] || permission="$(launch_choice_permission_write "$harness")" || exit 1
   if [[ "$source" == observed ]]; then
@@ -438,8 +442,8 @@ for row in \
     [[ -n "$CODEX_LAUNCH_HOME" && "$CODEX_LAUNCH_HOME" != *$'\n'* ]] || { echo 'fixture: codex-home=not-single' >&2; exit 1; }
     launch_home="$CODEX_LAUNCH_HOME"
   fi
-  assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")" \
-    "0|no|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort" \
+  assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")|$(sed -n 's/^preference-deprecated-conversion .* replacement=\([^ ]*\).*/\1/p' <<<"$OUT")" \
+    "0|no|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort|$replacement" \
     "numeric $harness preference keeps the $source model and supplied effort" "$TMP_ROOT/out"
 done
 # Normalizing the observed Codex model for account measurement must not erase
@@ -487,7 +491,7 @@ SKIPCTL="$(mutant_scripts skipctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$SKIPCTL/lib/overseer-launch.sh" '      ol_entry_permitted "$permitted_entry" || continue' '      : ol_entry_permitted "$permitted_entry" || continue'
 new_caller codex
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$SKIPCTL/oversee-succeed" run_succeed skipctl unset
-assert_eq "$RC|$(first_key)|$(launched claude)|$(launched codex)" \
+assert_eq "$RC|$(walked_key)|$(launched claude)|$(launched codex)" \
   "1|launch-choice-failed|none|none" \
   "control: a walk that chooses the untransferable entry refuses and launches nothing"
 CALLER_FLAGS=("$BYPASS")
@@ -580,8 +584,8 @@ for row in 'empty|0|none' 'caller|3|model' 'restricted|3|permission'; do
 done
 TARGETCTL="$(mutant_scripts targetctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$TARGETCTL/lib/overseer-launch.sh" \
-  '          permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"' \
-  '          : permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"'
+  '        permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"' \
+  '        : permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"'
 copilot_ladder targetctl walled "$TARGETCTL/oversee-succeed" empty 'claude:1:high'
 assert_eq "$RC|$(launched claude)" "3|none" \
   "control: treating the target default as caller-derived loses the available Claude successor"

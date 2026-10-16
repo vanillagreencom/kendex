@@ -473,10 +473,14 @@
 #                    On claude, codex and copilot, `kendex tier-model`
 #                    classifies NAME (lib/overseer-launch.sh §
 #                    ol_model_class): a class is judged as claude's family
-#                    alias for it, and as no NAME on codex and copilot, whose
-#                    class runs the harness default. Any other NAME is judged
-#                    as written; a claude or codex exact id warns once as
-#                    `preference-deprecated` with `form=model-class`. A NAME
+#                    alias for it, a `[1m]` suffix kept, and as no NAME on
+#                    codex and copilot, whose class runs the harness default;
+#                    kendex's warning for that answer prints once. Any other
+#                    NAME is judged as written. A claude exact id warns once
+#                    as `preference-deprecated` with `form=model-class`; a
+#                    codex or copilot exact id is a supported form and warns
+#                    nothing. Run by an orch launcher or hook, which sets
+#                    ORCH_MODEL_LINES_HELD, pick prints neither line. A NAME
 #                    kendex cannot classify, kendex missing or refusing the
 #                    manifest, exits 1 as `model-class-unread`, kendex's
 #                    words after it.

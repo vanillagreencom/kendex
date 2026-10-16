@@ -235,7 +235,8 @@ pick_auto_lane() {
   fi
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
   [[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")
-  record="$(env ${state_env[@]+"${state_env[@]}"} ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$pick_harness" \
+  # The model lines are this launch's (lib/overseer-launch.sh § OL_LINES_HELD).
+  record="$(env ${state_env[@]+"${state_env[@]}"} ORCH_MODEL_LINES_HELD=1 ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$pick_harness" \
     ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"} "$@" --json)" || rc=$?
   printf '%s\n' "$record"
   [[ "$rc" -eq 0 ]] || return "$rc"
@@ -396,7 +397,7 @@ preference_select() {
       continue
     fi
     LANE_HOST="${OL_ENTRY_HOST:-$preference_host}"
-    LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL" LAUNCH_CLASS="$OL_ENTRY_CLASS" LAUNCH_CLASS_WARNING="$OL_CLASS_WARNING"
+    LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL" LAUNCH_CLASS="$OL_ENTRY_CLASS"
     lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || {
       ot_message host-capabilities-failed "host=$LANE_HOST" >&2; return 1;
     }
@@ -676,7 +677,6 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   if [[ -z "$LAUNCH_MODEL" ]]; then
     ot_message launch-model-missing "harness=$LAUNCH_HARNESS" "lane=$LANE" \
       "spellings=${LAUNCH_MODEL_SPELLINGS// /,}" ${LAUNCH_CLASS:+"class=$LAUNCH_CLASS"} >&2
-    [[ -z "${LAUNCH_CLASS:-}" || -z "${LAUNCH_CLASS_WARNING:-}" ]] || printf '%s\n' "$LAUNCH_CLASS_WARNING" >&2
     launch_choice_missing=true
   fi
   if [[ -n "$LAUNCH_EFFORT_SPELLINGS" && -z "$LAUNCH_EFFORT" ]]; then
@@ -1107,7 +1107,7 @@ named_lane_judge() {
   LANE_PICK_RECORD=""
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
   lane_rc=0
-  lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
+  lane_record="$(ORCH_MODEL_LINES_HELD=1 ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
     --model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
   if [[ "$lane_rc" == 3 || "$lane_rc" == 5 ]]; then
     lane_refusal="$(jq -r 'if .refusal == null then empty

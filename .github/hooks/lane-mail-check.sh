@@ -3291,8 +3291,10 @@ handoff_check() {
 
   # Bounded by BOUND_BY, for the reason stated where it is set: a read that
   # passes the ceiling exits 124 and is reported under `account=timeout`.
+  # ORCH_MODEL_LINES_HELD keeps the session's own model from printing a model
+  # line into lanes.err, which the account messages relay as their cause.
   PICK_RC=0
-  PICK=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/lanes" pick --lane "$CFG" --harness "$HARNESS" \
+  PICK=$(ORCH_MODEL_LINES_HELD=1 ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/lanes" pick --lane "$CFG" --harness "$HARNESS" \
     ${PICK_MODEL[@]+"${PICK_MODEL[@]}"} --min-headroom-pct "$PCT" --json 2>"$WORK_DIR/lanes.err") || PICK_RC=$?
   # `lanes` keeps a status-only contract where `workflow-state handoff-standing`
   # could not, and one reservation is what makes that safe here: every status

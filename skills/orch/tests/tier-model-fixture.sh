@@ -7,8 +7,9 @@
 # kendex from this checkout, so the answers are core's as this tree holds them.
 # A project `model-classes.standard` override changes neither answer: claude's
 # family alias comes from the rank form, which applies no override, and codex
-# takes the harness default (tmp/proposal-KEN-3372-core-word-answer.md tracks
-# the core answer that would apply it).
+# takes the harness default. The core word-answer follow-up proposed on
+# KEN-3372, one kendex tier-model call that returns claude's managed-launch
+# alias with model-classes overrides applied, would apply it.
 #
 # No kendex on PATH skips the suite unless ORCH_REQUIRE_KENDEX is set.
 set -euo pipefail
@@ -64,12 +65,19 @@ for dir in cwd project; do
 done
 # The ruled answers themselves, which the fixture and kendex agreeing on
 # another answer would not catch: claude's standard class runs Opus under the
-# override, codex's the native default, and an exact id stands as written.
-assert_eq "$(answers "" "$TMP_ROOT/project" claude standard claude-opus-5-5 | cut -d'|' -f1-4)" \
-  $'standard|0|standard|opus\nclaude-opus-5-5|2||claude-opus-5-5' \
+# override, `[1m]` kept; codex's runs the native default; each class's
+# warning names the model it runs; an exact id stands as written with no
+# kendex line, deprecated on claude alone.
+selected() { sed -n 's/^\([^|]*\)|.* selected=\([^ ]*\) .*/\1 \2/p'; }
+assert_eq "$(answers "" "$TMP_ROOT/project" claude standard 'opus[1m]' claude-opus-5-5 | cut -d'|' -f1-4)" \
+  $'standard|0|standard|opus\nopus[1m]|0|standard|opus[1m]\nclaude-opus-5-5|2||claude-opus-5-5' \
   "claude standard runs opus under a standard override, and an exact id stands"
-assert_eq "$(answers "" "$TMP_ROOT/project" codex standard | cut -d'|' -f1-4)" 'standard|0|standard|' \
-  "codex standard runs the native default under a standard override"
+assert_eq "$(answers "" "$TMP_ROOT/project" codex standard gpt-6.1-sol | cut -d'|' -f1-4)" \
+  $'standard|0|standard|\ngpt-6.1-sol|0||gpt-6.1-sol' \
+  "codex standard runs the native default under a standard override, and a codex exact id stands"
+assert_eq "$(answers "" "$TMP_ROOT/project" claude standard claude-opus-5-5 | selected)|$(answers "" "$TMP_ROOT/project" codex standard gpt-6.1-sol | selected)" \
+  'standard opus|standard native-default' \
+  "a class's warning names the model it runs, and an exact id prints none"
 
 # Control: a fixture copy with one alias changed must fail the comparison.
 mkdir -p "$TMP_ROOT/mutant"

@@ -363,7 +363,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # copilot or pi. On claude, codex or copilot the model is a model class, such
 # as standard or top, or the name that harness's --model takes, in lowercase
 # letters, digits, dots and hyphens, starting with a letter; `kendex
-# tier-model` classifies it at launch and its warning prints once. On claude
+# tier-model` classifies it at launch and a class's warning prints once. On claude
 # a class runs its family alias, standard as opus, and `model-classes`
 # overrides do not apply yet. On codex and copilot a class runs the harness
 # default: codex until its model list reaches the launch. On pi
@@ -373,15 +373,18 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # digit. The effort is lowercase letters, the level as that harness spells
 # it; on pi it is the thinking level. An empty model selects the harness
 # default on claude, codex or copilot. Pi requires provider/model.
-# A claude or codex exact id, such as claude-opus-5-5, still launches as
-# written and warns once per run until the next major release; replace it
-# with its class. A copilot class runs the session's default, so a copilot
-# model name launches as written with no warning.
+# A claude exact id, such as claude-opus-5-5, still launches as written and
+# warns once per run until the next major release; replace it with its
+# class. A codex or copilot exact id, such as gpt-6.1-sol, is a supported
+# form and launches as written with no warning: a class there runs the
+# harness default, which a lane launch refuses.
 # The deprecated positive account number first uses
 # the caller's model. With no caller model, the overseer uses the same-harness
 # class from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
 # uses the harness's native model default. It warns once per run until the
-# next major release and names the conversion.
+# next major release and names the conversion: the caller model's class,
+# the same-harness default class for a claude exact id, and otherwise the
+# model itself.
 # Numeric succession entries can cross harnesses only when the model comes
 # from the target harness's default preference. The permission rules in
 # oversee-succeed --help still apply.

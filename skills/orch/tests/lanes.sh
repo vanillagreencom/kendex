@@ -2372,6 +2372,18 @@ run_lanes "" $MODELPICK --model claude-opus-5
 assert_eq "$RC|$(deprecation_lines)" \
   "0|preference-deprecated harness=claude model=claude-opus-5 form=model-class" \
   "an old exact id picks and warns once"
+# A class keeps Claude's 1M window: `opus[1m]` is the standard class, judged
+# on Opus's room, and its one kendex line names the alias it runs.
+resolution_lines() { sed -n 's/^model-resolution: .* selected=\([^ ]*\) .*/\1/p' "$ERR"; }
+run_lanes "" $MODELPICK --model 'opus[1m]'
+assert_eq "$RC|$(deprecation_lines)|$(resolution_lines)" "0||opus" \
+  "a 1M class annotation picks as its class and warns as no exact id"
+# A launcher's child read prints neither line: its stderr is the launcher's
+# refusal cause.
+run_lanes "ORCH_MODEL_LINES_HELD=1" $MODELPICK --model claude-opus-5
+assert_eq "$RC|$(deprecation_lines)|$(resolution_lines)" "0||" "a held pick prints no deprecation"
+run_lanes "ORCH_MODEL_LINES_HELD=1" $MODELPICK --model standard
+assert_eq "$RC|$(deprecation_lines)|$(resolution_lines)" "0||" "a held pick prints no kendex line"
 # A model kendex cannot classify refuses before any window is judged, with
 # kendex's words after the keyed line.
 mkdir -p "$TMP_ROOT/kendex-refuses"

@@ -102,7 +102,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the shared CI change classification | empty |
 
-`ORCH_OVERSEER_PREFERENCE` reads the deprecated `harness:positive-integer:effort` form, and a claude or codex exact model id, until the next major release: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet. The refresh report lists the numeric form only.
+`ORCH_OVERSEER_PREFERENCE` reads the deprecated `harness:positive-integer:effort` form, and a claude exact model id, until the next major release; a codex or copilot exact id is a supported form: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet. The refresh report lists the numeric form only.
 
 Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 

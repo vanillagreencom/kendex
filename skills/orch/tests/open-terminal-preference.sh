@@ -188,15 +188,18 @@ while IFS='|' read -r mode flags want model entry; do
     if launch_choice_words_present '--dangerously-bypass-approvals-and-sandbox' "$OBS_CMD"; then pass 'cross-harness launch writes the authorized target bypass'
     else fail 'cross-harness launch lacks its authorized target bypass'; fi
     if launch_choice_words_present "$expected_source_bypass" "$OBS_CMD"; then fail 'source bypass was retained'; else pass 'source bypass is replaced'; fi
+    # A codex exact id is a supported lane form, not a deprecated one.
+    assert_file_not_contains "$RUN/err" 'preference-deprecated' "$mode codex exact-id entry launches with no deprecation"
   else
     assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
   fi
 done < "$TMP_ROOT/permission-rows"
 # A codex class runs no model in a lane, so the gate refuses it, naming the
-# class, with kendex's warning after the refusal.
+# class; kendex's one warning, printed when the entry was classified, names
+# the harness default that class resolved to.
 observe 'codex:standard:high' none flags '--dangerously-skip-permissions' claude
-assert_eq "${OBS%%|*}|$(sed -n 's/^open-terminal: launch-model-missing .* \(class=[^ ]*\)$/\1/p' "$RUN/err")|$(sed -n '/^open-terminal: launch-model-missing /,$p' "$RUN/err" | grep -c '^model-resolution: requested=standard ')" \
-  '1|class=standard|1' 'a codex class in a lane entry refuses as launch-model-missing with its class and kendex warning' "$RUN/err"
+assert_eq "${OBS%%|*}|$(sed -n 's/^open-terminal: launch-model-missing .* \(class=[^ ]*\)$/\1/p' "$RUN/err")|$(sed -n 's/^model-resolution: requested=standard selected=\([^ ]*\) .*/\1/p' "$RUN/err")" \
+  '1|class=standard|native-default' 'a codex class in a lane entry refuses as launch-model-missing with its class and one kendex warning' "$RUN/err"
 # A model kendex cannot classify refuses the walk under its own key, with
 # kendex's words after it, and opens nothing.
 printf '#!/bin/sh\necho "Error: invalid manifest" >&2\nexit 1\n' > "$BIN/kendex"
