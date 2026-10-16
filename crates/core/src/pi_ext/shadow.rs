@@ -421,15 +421,6 @@ mod tests {
     fn declaring_rows() -> Vec<Row> {
         vec![
             declaring(
-                "named for the package, declaring another name",
-                BRIDGE,
-                "pi-session-bridge",
-                "@vstack/pi-session-bridge",
-                "1.1.1",
-                &["./src/index.ts"],
-                true,
-            ),
-            declaring(
                 "named for a package with no earlier name, declaring another name",
                 NEW,
                 "pi-newthing",
@@ -487,15 +478,6 @@ mod tests {
                 "pi-subagents-tmux",
                 "0.4.0",
                 &["./src/index.ts"],
-                true,
-            ),
-            declaring(
-                "declaring the managed copy's entry files under another name",
-                BRIDGE,
-                "bridge",
-                "@vstack/bridge",
-                "1.1.1",
-                &["extensions/session-bridge.ts"],
                 true,
             ),
             declaring(

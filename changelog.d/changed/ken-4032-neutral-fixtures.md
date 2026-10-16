@@ -1,0 +1,1 @@
+- Pi shadow tests and CLI presentation fixtures no longer name an unrelated package source.
