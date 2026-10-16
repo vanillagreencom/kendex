@@ -25,9 +25,10 @@ orch_fixture_shared_libs() {
   dest="$(dirname -- "$fixture_root")/mailbox/scripts"
   mkdir -p "$dest"
   cp -R "$_ORCH_TEST_REPO_ROOT/skills/mailbox/scripts/." "$dest/"
-  # Launch fixtures have no live tracker. Private blocker cases replace this
-  # neutral sibling; no fixture can spend the developer's Linear credentials.
+  # A fixture can install its own tracker, including the real CLI served by
+  # a fake transport. Supply the neutral tracker only when none is installed.
   dest="$(dirname -- "$fixture_root")/linear/scripts"
+  [[ ! -e "$dest/linear.sh" && ! -L "$dest/linear.sh" ]] || return 0
   mkdir -p "$dest"
   cat > "$dest/linear.sh" <<'EOF'
 #!/usr/bin/env bash

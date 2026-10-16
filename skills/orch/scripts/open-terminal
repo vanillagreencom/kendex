@@ -3685,7 +3685,7 @@ launch_blockers_gate() { # ITEM
   fi
   while [[ -n "$next" ]]; do
     if [[ "$seen" == *" $next "* ]] || [[ ! -x "$linear" ]] \
-      || ! row="$("$linear" issues get "$next")" \
+      || ! row="$("$linear" issues get "$next" --format=safe)" \
       || ! jq -e --arg id "$next" '
           .id == $id and (.parent_id | type == "string")
           and (.blocked_by_open | type == "array" and all(.[]; type == "string" and length > 0))

@@ -36,7 +36,14 @@ printf '%s\n' "$3" >> "$FIXTURE/read.log"
 [[ -r "$FIXTURE/$3.json" ]] || exit 1
 source "$(dirname "${BASH_SOURCE[0]}")/formatters.sh"
 raw="$(cat "$FIXTURE/$3.json")" || exit 1
-format_issue_single "$raw"
+format="${LINEAR_FORMAT:-safe}"
+case "${4:-}" in --format=safe) format=safe ;; '') ;; *) exit 2 ;; esac
+case "$format" in
+  safe) format_issue_single "$raw" ;;
+  raw) printf '%s\n' "$raw" ;;
+  compact) format_issue_compact "$raw" ;;
+  *) exit 2 ;;
+esac
 TRACKER
 chmod +x "$REPO/linear/scripts/linear.sh"
 
@@ -51,8 +58,8 @@ fixture() {
         [{type:"blocks",issue:{identifier:"CC-9",state:{type:$state}}}] end)}}}
   ' > "$FIXTURE/$1.json"
 }
-run_row() { # NAME MODE LEAF_STATE PARENT_STATE RECORD [SCRIPT]
-  local name="$1" mode="$2" record="$5" script="${6:-$OT}" args=() rc=0 creates=0 key=none reads=0
+run_row() { # NAME MODE LEAF_STATE PARENT_STATE RECORD [SCRIPT] [FORMAT]
+  local name="$1" mode="$2" record="$5" script="${6:-$OT}" format="${7:-safe}" args=() rc=0 creates=0 key=none reads=0
   FIXTURE="$TMP_ROOT/$name"
   mkdir -p "$FIXTURE"
   fixture CC-1 "${4:+CC-2}" "$3"
@@ -70,7 +77,7 @@ run_row() { # NAME MODE LEAF_STATE PARENT_STATE RECORD [SCRIPT]
     cmd|relaunch) args=(--cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL"); [[ "$mode" != relaunch ]] || args+=(--relaunch) ;;
     wake) args=(--wake) ;;
   esac
-  (cd "$REPO" && env LINEAR_TEAM= ORCH_LANE_PREFERENCE= ORCH_LANE_HOST=local \
+  (cd "$REPO" && env LINEAR_TEAM= LINEAR_FORMAT="$format" ORCH_LANE_PREFERENCE= ORCH_LANE_HOST=local \
     ORCH_OVERSEER_LANES=1000 ORCH_LANE_DIRS= ORCH_LANE_ALIASES= \
     PATH="$TMP_ROOT/bin:$PATH" WORKTREE_CLI="$TMP_ROOT/bin/worktree" \
     FIXTURE="$FIXTURE" OT_WT_LOG="$FIXTURE/worktree.log" OT_CAPTURE="$FIXTURE/launch" \
@@ -87,8 +94,8 @@ run_row() { # NAME MODE LEAF_STATE PARENT_STATE RECORD [SCRIPT]
 
 # One admission contract: fresh and custom launch, ancestor traversal, tracker
 # failures, satisfied relation history, and recorded recovery.
-while IFS='|' read -r name mode leaf parent record expected; do
-  run_row "$name" "$mode" "$leaf" "$parent" "$record"
+while IFS='|' read -r name mode leaf parent record expected default_format; do
+  run_row "$name" "$mode" "$leaf" "$parent" "$record" "$OT" "${default_format:-safe}"
   assert_eq "$RESULT" "$expected" "$name"
   if [[ "$expected" == *'key=launch-blocked '* ]]; then
     assert_eq "$(sed -n 's/^open-terminal: launch-blocked item=CC-1 blockers=\([^ ]*\) fix=.*CC-9.*/\1/p' "$FIXTURE/output")" CC-9 "$name blocker and repair ids"
@@ -101,6 +108,8 @@ ancestor-open|cmd||started|no|rc=1 creates=0 key=launch-blocked reads=3
 completed|fresh|completed||no|rc=0 creates=1 key=none reads=1
 canceled|cmd|canceled||no|rc=0 creates=1 key=none reads=1
 clear|cmd|||no|rc=0 creates=1 key=none reads=1
+raw-default|cmd|||no|rc=0 creates=1 key=none reads=1|raw
+compact-default|fresh|||no|rc=0 creates=1 key=none reads=1|compact
 unread|cmd|unread||no|rc=1 creates=0 key=launch-blocked-unread reads=1
 ancestor-unread|cmd||unread|no|rc=1 creates=0 key=launch-blocked-unread reads=2
 recorded-relaunch|relaunch|unread||yes|rc=0 creates=1 key=none reads=0
@@ -110,6 +119,13 @@ ROWS
 # change admission: the recorded lane must make no tracker read.
 run_row recorded-wake wake unread '' yes
 assert_eq "${RESULT#* key=}" 'none reads=0' 'recorded wake bypasses blocker read'
+
+# LINEAR_FORMAT is a supported caller setting. Removing the explicit format
+# must reject the unblocked row because its raw result is not a safe issue.
+mutate_file "$OT" 'issues get "$next" --format=safe' 'issues get "$next"'
+run_row format-control cmd '' '' no "$OT" raw
+assert_eq "$RESULT" 'rc=1 creates=0 key=launch-blocked-unread reads=1' 'control: inherited raw output rejects an unblocked item'
+mutate_file "$OT" 'issues get "$next")' 'issues get "$next" --format=safe)'
 
 # Keep the call and its matched text. Bypassing it must admit the blocked row.
 mutate_file "$OT" 'if ! launch_blockers_gate "$item"; then' 'if false && ! launch_blockers_gate "$item"; then'
