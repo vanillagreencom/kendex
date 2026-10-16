@@ -16,18 +16,12 @@
 # names. A `cont` row is the next run over the row above it, same state.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/lib/watch-phase-profile.sh"
-watch_phase_begin oversee_watch_lanes
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
-watch_phase_ready "$TMP_ROOT"
-watch_phase_wrap fixture new_case mutate_file
-watch_phase_wrap exercise run_watch
-watch_phase_wrap assertion assert_eq assert_contains assert_not_contains assert_le assert_file_contains assert_file_not_contains
 
 HEARTBEAT1='EVENT+heartbeat+loops=1+interval=0s+since=none'
 HEARTBEAT2='EVENT+heartbeat+loops=2+interval=0s+since=none'
@@ -545,6 +539,5 @@ WATCH_BIN="$IDLE_SCRIPTS/oversee-watch" lane_table \
   "control: the old debounce misses the first long pass with a live round|new|codex_delegated|codex_live_round|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false" \
   "control: a completion line restarts that debounce and misses another long pass|cont|codex_returned|codex|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false"
 
-watch_phase_finish
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
