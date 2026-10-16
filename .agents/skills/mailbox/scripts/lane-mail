@@ -414,8 +414,9 @@ A private tracker-posted or tracker-failed record carries an immutable ask's
 outcome by its re and issue. Failure records carry the failed operation in cause.
 Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
-keeps the full chat presentation and chat deadline route. Closure still uses
-its issue to clean up partial tracker writes.
+keeps the full chat presentation and chat deadline route. Closure changes
+tracker contents only after a confirmed post. A tracker-unwritten cause=label
+notice includes error-file, the retained tracker stderr in the mailbox directory.
 Full event snapshots, including the Slack relay's imported mailbox reader,
 hold pending tracker asks for 300 seconds from at. An outcome releases the ask.
 At that bound, a missing outcome releases the full question. Cursored events,

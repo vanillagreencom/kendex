@@ -1800,6 +1800,8 @@ cat >"$TRACKER_STUB" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 jq -cn --args '$ARGS.positional' -- "$@" >>"$TRACKER_CASE_DIR/calls"
+item="$TRACKER_CASE_DIR/item"
+[[ "${3:-}" != KEN-8 ]] || item="$TRACKER_CASE_DIR/other-item"
 if [[ -f "$TRACKER_CASE_DIR/fail" ]]; then
   failure="$(cat "$TRACKER_CASE_DIR/fail")"
   case "$failure:$1:$2:${4:-}" in
@@ -1808,19 +1810,19 @@ if [[ -f "$TRACKER_CASE_DIR/fail" ]]; then
 fi
 case "$1:$2" in
   users:list) cat "$TRACKER_CASE_DIR/user" ;;
-  issues:get) cat "$TRACKER_CASE_DIR/item" ;;
+  issues:get) cat "$item" ;;
   issues:update)
     shift 3
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --description) jq --arg body "$2" '.description = $body' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
-        --labels) jq --arg labels "$2" '.labels = ($labels | split(","))' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
-        --assignee) jq -e --arg id "$2" --slurpfile user "$TRACKER_CASE_DIR/user" '.assignee = ($user[0][] | select(.id == $id) | .name)' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
-        --clear-assignee) jq '.assignee = ""' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift ;;
-        --clear-labels) jq '.labels = []' "$TRACKER_CASE_DIR/item" >"$TRACKER_CASE_DIR/next"; shift ;;
+        --description) jq --arg body "$2" '.description = $body' "$item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
+        --labels) jq --arg labels "$2" '.labels = ($labels | split(","))' "$item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
+        --assignee) jq -e --arg id "$2" --slurpfile user "$TRACKER_CASE_DIR/user" '.assignee = ($user[0][] | select(.id == $id) | .name)' "$item" >"$TRACKER_CASE_DIR/next"; shift 2 ;;
+        --clear-assignee) jq '.assignee = ""' "$item" >"$TRACKER_CASE_DIR/next"; shift ;;
+        --clear-labels) jq '.labels = []' "$item" >"$TRACKER_CASE_DIR/next"; shift ;;
         *) exit 1 ;;
       esac
-      mv -- "$TRACKER_CASE_DIR/next" "$TRACKER_CASE_DIR/item"
+      mv -- "$TRACKER_CASE_DIR/next" "$item"
     done
     echo '{}' ;;
   issues:list)
@@ -1866,6 +1868,7 @@ tracker_case() { # ROW WATCH
   # The shipped users list --max route returns all workspace users.
   jq -n --slurpfile owner "$STUB_DIR/owner" '[{id:"87654321-4321-4321-4321-cba987654321",name:"Riley Other",email:"other@example.test"},$owner[0]]' >"$STUB_DIR/user"
   jq -n --rawfile body "$STUB_DIR/old-description" '{id:"KEN-7",labels:["skills","feature"],description:$body,assignee:"",url:"https://linear.app/test/issue/KEN-7"}' >"$STUB_DIR/item"
+  jq '.id = "KEN-8"' "$STUB_DIR/item" >"$STUB_DIR/other-item"
   TRACKER_LABEL=owner-gated
   TRACKER_EMAIL=owner@example.com
   TRACKER_TEAM=KEN
@@ -2031,11 +2034,14 @@ tracker_case() { # ROW WATCH
         assert_eq "$(jq --slurpfile before "$STUB_DIR/before-close" '. == $before[0]' "$STUB_DIR/item")" true \
           "$row never guesses the missing legacy label"
       else
-        local legacy_label="$first_label"
+        local legacy_label="$first_label" keep_action=false
         [[ "$legacy_id" != "$later" ]] || legacy_label="$second_label"
-        assert_eq "$(jq --rawfile body "$STUB_DIR/old-description" --arg legacy "$legacy_label" \
-          '.description == $body and .assignee == "" and .labels == (["feature","skills",$legacy] | sort)' "$STUB_DIR/item")" true \
-          "$row still cleans the last recorded ask from its own evidence"
+        [[ "$legacy_id" != "$later" ]] || keep_action=true
+        assert_eq "$(jq --rawfile body "$STUB_DIR/old-description" --slurpfile before "$STUB_DIR/before-close" \
+          --arg legacy "$legacy_label" --argjson keep_action "$keep_action" \
+          '.description == (if $keep_action then $before[0].description else $body end)
+          and .assignee == "" and .labels == (["feature","skills",$legacy] | sort)' "$STUB_DIR/item")" true \
+          "$row clears recorded ownership and preserves unowned text"
       fi
       assert_eq "$(tracker_mail pending --item overseer --to owner | jq -s 'any(.[]; .issue == "KEN-7" and .tracker_posted == true)')" \
         false "$row closes both mixed mailbox asks"
@@ -2162,7 +2168,7 @@ tracker_case() { # ROW WATCH
     assert_eq "$(jq -s '[.[] | select((.[0] == "issues" and .[1] == "list") or .[1] == "bulk-list")] | length' "$STUB_DIR/calls")" \
       0 "$row reads no tracker answer route"
     assert_eq "$(jq -s '[.[] | select(index("--clear-assignee"))] | length' "$STUB_DIR/calls")" \
-      1 "$row still cleans up the bound item"
+      0 "$row leaves the unposted tracker item unchanged"
   fi
   if [[ "$row" == no-item ]]; then
     assert_eq "$before" 0 'no item makes no tracker write'
@@ -2376,7 +2382,7 @@ for rule in issue posted; do
   ) >"$TMP_ROOT/tracker-close-$rule-control.out" 2>&1 || close_control_rc=$?
   assert_eq "$close_control_rc" 1 "control: dropping $rule selection fails the remaining ask row"
   assert_contains "$(cat "$TMP_ROOT/tracker-close-$rule-control.out")" \
-    'FAIL  close-earlier retains the remaining owner action and ownership' \
+    'FAIL  close-earlier clears only after the last ask' \
     "control: the remaining ask assertion detects missing $rule selection"
 done
 
@@ -2518,7 +2524,7 @@ source "$CLOSE_LIB"
 OWNER_TRACKER_LABEL=owner-gated
 ROOT="$CLOSE_ROOT"
 TO_LANE="$CLOSE_ROOT/mail.jsonl"
-owner_tracker_close "$CLOSE_CLI" '{"id":"ask-id","issue":"PROJ-1"}' close-id "$CLOSE_ROOT"
+owner_tracker_close "$CLOSE_CLI" '{"id":"ask-id","issue":"PROJ-1","tracker_posted":true,"do":"Post the message. Its link closes this ask."}' close-id "$CLOSE_ROOT"
 SH
 printf '%s\n' '{"kind":"answer","re":"ask-id","text":"Approved."}' \
   '{"id":"close-id","re":"ask-id","by":"explicit"}' >"$REAL_TRACKER_ROOT/mail.jsonl"

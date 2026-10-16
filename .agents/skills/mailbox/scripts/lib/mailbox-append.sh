@@ -202,7 +202,15 @@ owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY [ASK TO CLOSE]
   [[ "$configured" -eq 1 ]]
 }
 
-owner_tracker_unwritten() { # ISSUE CAUSE
+owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]
+  local evidence=""
+  if [[ -n "${3:-}" ]]; then
+    if evidence="$(mktemp "$BOX/tracker-error.XXXXXX")" && cat -- "$3" >"$evidence"; then
+      printf 'lane-mail: tracker-unwritten issue=%s cause=%s error-file=%s\n' "$1" "$2" "$evidence" >&2
+      return 0
+    fi
+    printf 'lane-mail: tracker-error-unretained issue=%s cause=write\n' "$1" >&2
+  fi
   printf 'lane-mail: tracker-unwritten issue=%s cause=%s\n' "$1" "$2" >&2
 }
 
@@ -262,9 +270,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
     (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
   description="${description%.}"
-  "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
-  }
+  # A failed comment must leave the description untouched.
   jq -r '.text, "", ("Options: " + (.options | join(", "))),
     (if .reserved == true then "No default. This action waits for your approval. Due " + .deadline
       else "Recommendation: " + .recommend + ". At " + .deadline + " it stands unless you answer." end),
@@ -275,11 +281,17 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
     OWNER_TRACKER_CAUSE=comment; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
+  "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
+    OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
+  }
   OWNER_TRACKER_POSTED=1
 }
 
 owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
-  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description remaining closing_label
+  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description remaining closing_label posted
+  # An item reference alone does not grant ownership of its tracker contents.
+  posted="$(jq -r '.tracker_posted == true' <<<"$ask")" || return 1
+  [[ "$posted" == true ]] || return 0
   issue="$(jq -r '.issue // empty' <<<"$ask")" || return 1
   [[ -n "$issue" ]] || return 0
   closing_label="$(jq -r --arg configured "$OWNER_TRACKER_LABEL" "$OWNER_TRACKER_JQ"'
@@ -315,13 +327,18 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
   local owner_args=(--clear-assignee)
   if [[ "$remaining" != '[]' ]]; then
     owner_args=()
-    description="$(jq -r --argjson asks "$remaining" "$OWNER_ACTION_JQ"'
-      ($asks | last) as $ask |
-      .assignee as $name | (.description // "")
-      | (if ($ask.do // "") != "" then owner_action_line($name; $ask.do) else owner_action_body end) + "."' <<<"$current")" || return 1
-  else
-    description="$(jq -r "$OWNER_ACTION_JQ"' (.description // "") | owner_action_body + "."' <<<"$current")" || return 1
   fi
+  # Keep a line another ask or a later edit owns, even if its format matches.
+  description="$(jq -r --argjson closed "$ask" --argjson asks "$remaining" "$OWNER_ACTION_JQ"'
+    .assignee as $name | (.description // "")
+    | if ($closed.do // "") != "" then
+        ("" | owner_action_line($name; $closed.do)) as $prefix
+        | if startswith($prefix) then
+            ltrimstr($prefix) as $body | ($asks | last) as $next
+            | if ($next.do // "") != "" then ("" | owner_action_line($name; $next.do)) + $body else $body end
+          else . end
+      else . end
+    | . + "."' <<<"$current")" || return 1
   description="${description%.}"
   local label_args=(--clear-labels)
   [[ -z "$labels" ]] || label_args=(--labels "$labels")
