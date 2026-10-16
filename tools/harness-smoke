@@ -1827,7 +1827,7 @@ pkg_rows() { # — every row of the table, in the order it prints
   for name in $(pkg_list hook); do printf 'hook:%s\n' "$name"; done
   for name in $(pkg_list skill); do printf 'skill:%s\n' "$name"; done
   for name in $(pkg_list agent) effort; do printf 'agent:%s\n' "$name"; done
-  for name in AGENTS.md CLAUDE.md copilot-instructions.md instructions nested duplicate subagent; do
+  for name in AGENTS.md copilot-instructions.md instructions double-load nested duplicate subagent; do
     printf 'instruction:%s\n' "$name"
   done
   printf 'skill-dirs:COPILOT_HOME\n'
@@ -1901,12 +1901,9 @@ pkg_world() { # — sets PKG and PKG_RECORDER, exits 2 when kendex cannot instal
     refused verify copilot "$LOGS/copilot-packages-kendex-verify.log"
   fi
   note verified copilot "$PKG"
-  # A project-owned CLAUDE.md import can duplicate AGENTS.md instructions,
-  # which is what the duplicate row asks about.
   setup 'the package instruction directories' mkdir -p "$PKG/sub" "$PKG/.github/instructions" \
     "$PKG/smoke-payloads" "$PKG/smoke-triggers" "$PKG_RECORDER"
   printf '# Harness smoke\n\n%s\n' "$PKG_RULES" >"$PKG/AGENTS.md"
-  printf '@AGENTS.md\n' >"$PKG/CLAUDE.md"
   printf 'Harness smoke Copilot instructions.\n' >"$PKG/.github/copilot-instructions.md"
   printf -- '---\napplyTo: "**"\n---\n\nHarness smoke path instructions.\n' \
     >"$PKG/.github/instructions/smoke.instructions.md"
@@ -1965,17 +1962,16 @@ pkg_listed() { # ROW PATTERN COMMAND-TEXT — OUT and STATUS hold the listing
 pkg_sources() { # — the sourcePath of each source the listing in OUT names, one per line
   jq -r '.[].sourcePath' <<<"$OUT" 2>/dev/null
 }
-PKG_BOTH_LISTED=0
 pkg_instruction_rows() {
-  local root_sources="" sub_sources="" q
+  local root_sources="" sub_sources="" q double_load=""
   run copilot-instructions-root env COPILOT_HOME="$PKG_HOME" copilot instruction list --json
   if [ "$STATUS" -ne 0 ] || ! root_sources=$(pkg_sources); then
-    for q in AGENTS.md CLAUDE.md copilot-instructions.md instructions nested; do
+    for q in AGENTS.md copilot-instructions.md instructions double-load nested; do
       pkg_set "instruction:$q" unanswerable "copilot instruction list --json at the project root exited $STATUS or printed no JSON: $(clip "$(last_line)")"
     done
     return 0
   fi
-  for q in AGENTS.md CLAUDE.md copilot-instructions.md:.github/copilot-instructions.md \
+  for q in AGENTS.md copilot-instructions.md:.github/copilot-instructions.md \
     instructions:.github/instructions/smoke.instructions.md; do
     case "$q" in *:*) ;; *) q="$q:$q" ;; esac
     if grep -qFx -- "${q#*:}" <<<"$root_sources"; then
@@ -1984,7 +1980,21 @@ pkg_instruction_rows() {
       pkg_set "instruction:${q%%:*}" fail "copilot instruction list --json at the project root does not list ${q#*:} (sources: $(clip "$(paste -s -d , - <<<"$root_sources")"))"
     fi
   done
-  grep -qFx AGENTS.md <<<"$root_sources" && grep -qFx CLAUDE.md <<<"$root_sources" && PKG_BOTH_LISTED=1
+  # Copilot lists both files when a project retains a CLAUDE.md import of
+  # AGENTS.md. Match their directory too: unrelated instructions can coexist.
+  while IFS= read -r q; do
+    case "$q" in
+      AGENTS.md|*/AGENTS.md)
+        if grep -qFx -- "${q%AGENTS.md}CLAUDE.md" <<<"$root_sources"; then
+          double_load="${double_load}${q},${q%AGENTS.md}CLAUDE.md "
+        fi ;;
+    esac
+  done <<<"$root_sources"
+  if [ -n "$double_load" ]; then
+    pkg_set instruction:double-load fail "copilot instruction list --json lists AGENTS.md and CLAUDE.md in the same directory: ${double_load% }"
+  else
+    pkg_set instruction:double-load pass "copilot instruction list --json lists no AGENTS.md and CLAUDE.md in the same directory"
+  fi
   # A nested AGENTS.md: listed from a session started in sub/, and whether a
   # session started at the root lists it too, which Claude Code's reading of
   # a nested file as its session touches that directory has no counterpart of.
@@ -2000,15 +2010,14 @@ pkg_instruction_rows() {
   fi
 }
 pkg_duplicate_row() {
-  local answer listed="the instruction listing did not show both AGENTS.md and CLAUDE.md, and"
-  [ "$PKG_BOTH_LISTED" -eq 0 ] || listed="AGENTS.md and CLAUDE.md, which imports it, are both listed, and"
+  local answer
   pkg_ask copilot-packages-duplicate \
     "How many times does the exact line '$PKG_RULES' appear across all the instructions you were given? Reply with the number alone."
   answer=$(last_line) || answer=""
   case "$STATUS:$answer" in
-    0:1) pkg_set instruction:duplicate pass "$listed the model counts the AGENTS.md line once" ;;
-    0:2) pkg_set instruction:duplicate differs "$listed the model counts the AGENTS.md line twice: the text reaches the context twice" ;;
-    0:*) pkg_set instruction:duplicate fail "the model answered '$(clip "$answer")', not a count of 1 or 2" ;;
+    0:1) pkg_set instruction:duplicate pass "the model counts the AGENTS.md line once" ;;
+    0:2) pkg_set instruction:duplicate fail "the model counts the AGENTS.md line twice: expected one copy in its context" ;;
+    0:*) pkg_set instruction:duplicate fail "the model answered '$(clip "$answer")', not a count of 1" ;;
     *) pkg_set instruction:duplicate unanswerable "copilot -p exited $STATUS: $(clip "$answer")" ;;
   esac
 }

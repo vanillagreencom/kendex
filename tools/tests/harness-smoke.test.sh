@@ -30,8 +30,8 @@ SMOKE="$REPO/tools/harness-smoke"
 # row pins the path it then prints. macOS hands mktemp a /var path that is a
 # symlink to /private/var, so an unresolved TMP makes every such row want a
 # path the script will never say.
-mkdir -p "$REPO/tmp"
-TMP="$(mktemp -d "$REPO/tmp/harness-smoke-test.XXXXXX")" || { echo "harness-smoke.test: mktemp -d failed" >&2; exit 1; }
+TMP="$(mktemp -d)" || { echo "harness-smoke.test: mktemp -d failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "harness-smoke.test: scratch is not a directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "harness-smoke.test: resolving the scratch directory failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 # Scratch must not inherit the enclosing worktree's git repository. Fixture
@@ -734,7 +734,8 @@ rm -f -- "$STAND/hooks/zz-unlisted.sh" "$STAND/agents"
 # A Copilot stand-in answers each package question from the run's STANDIN_*
 # settings. Its skill listing names STANDIN_SKILLS and, unless COPILOT_HOME is
 # set without COPILOT_SKILLS_DIRS, the personal skill under HOME; its
-# instruction listing names the four root sources less STANDIN_OMIT, and
+# instruction listing names the fixture's root sources less STANDIN_OMIT,
+# plus STANDIN_SOURCES, and
 # sub/AGENTS.md from sub/ or, with STANDIN_NESTED_ROOT=1, from the root too,
 # or prints no JSON with STANDIN_INSTR=junk; its agent listing prints
 # the agents its task tool offers, STANDIN_TASK_AGENTS, where the turn sees the
@@ -791,9 +792,11 @@ case "$1 ${2:-}" in
   "mcp list") printf '  smoke-mcp (local)\n'; exit 0 ;;
   "instruction list")
     [ "$STANDIN_INSTR" != junk ] || { printf 'not json\n'; exit 0; }
-    for s in AGENTS.md CLAUDE.md .github/copilot-instructions.md .github/instructions/smoke.instructions.md; do
+    for s in AGENTS.md .github/copilot-instructions.md .github/instructions/smoke.instructions.md; do
       [ "$s" = "$STANDIN_OMIT" ] || printf '%s\n' "$s"
     done >standin-sources
+    [ ! -f CLAUDE.md ] || printf 'CLAUDE.md\n' >>standin-sources
+    [ -z "$STANDIN_SOURCES" ] || printf '%s\n' "$STANDIN_SOURCES" >>standin-sources
     case "$PWD" in
       */sub) printf 'sub/AGENTS.md\n' >>standin-sources ;;
       *) [ "$STANDIN_NESTED_ROOT" != 1 ] || printf 'sub/AGENTS.md\n' >>standin-sources ;;
@@ -942,7 +945,7 @@ package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out, its sta
   (cd "$ROWS_REPO" && env PATH="$PKG_BIN:$PATH" STANDIN_SKILLS="$PKG_SKILLS_ALL" STANDIN_AGENTS="$PKG_AGENTS_ALL" \
     STANDIN_TASK_AGENTS="$PKG_AGENTS_ALL" STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
     STANDIN_REFUSE=1 STANDIN_HOOKS=1 STANDIN_FEED=all STANDIN_SHAPE=good STANDIN_HOOK_CWD= STANDIN_DROP_ENV=0 \
-    STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 STANDIN_DENIAL=reason \
+    STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_SOURCES= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 STANDIN_DENIAL=reason \
     STANDIN_WRAP= STANDIN_EVENTS='start substart sub-stop subagentstop lead-stop end' STANDIN_ERRORS='start model model end' "$@" \
     "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || PKG_RC=$?
 }
@@ -983,10 +986,10 @@ a listed agent passes|agent:reviewer-doc|pass|lists it
 effort reads skipped, naming no proof|agent:effort|skipped|is not measured
 the subagent's own answer passes|instruction:subagent|pass|SMOKE-RULES-REACHED-VIA-AGENT
 a listed AGENTS.md passes|instruction:AGENTS.md|pass|lists AGENTS.md
-a listed CLAUDE.md passes|instruction:CLAUDE.md|pass|lists CLAUDE.md
 a listed copilot-instructions.md passes|instruction:copilot-instructions.md|pass|lists .github/copilot-instructions.md
 a listed instructions file passes|instruction:instructions|pass|lists .github/instructions/smoke.instructions.md
-a count of one passes the duplicate row, both files listed|instruction:duplicate|pass|are both listed, and the model counts the AGENTS.md line once
+a count of one passes the duplicate row|instruction:duplicate|pass|the model counts the AGENTS.md line once
+the AGENTS.md fixture passes the double-load row|instruction:double-load|pass|lists no AGENTS.md and CLAUDE.md in the same directory
 a nested AGENTS.md read from sub/ alone differs|instruction:nested|differs|for the working directory only
 a hidden personal skill brought back by COPILOT_SKILLS_DIRS differs|skill-dirs:COPILOT_HOME|differs|exports both
 a hook that received its trigger, refuses it on replay and held it back passes|hook:block-argv-kill|pass|was never written
@@ -1028,16 +1031,17 @@ the parent's own answer, with no subagent suffix, fails|instruction:subagent|fai
 agents on disk that the task tool does not offer fail|agent:reviewer-doc|fail|does not list it
 an instruction listing with no JSON is unanswerable|instruction:AGENTS.md|unanswerable|printed no JSON
 and so is the nested row it would compare against|instruction:nested|unanswerable|printed no JSON
+and so is the double-load row|instruction:double-load|unanswerable|printed no JSON
 a Copilot that ran no copy fails the mixed install|mixed-hook|fail|ran no copy of smoke-tool
 a tool call carrying COPILOT_PROJECT_DIR fails the environment row|helper:env|fail|a Copilot tool call carries COPILOT_PROJECT_DIR"
 PKG_SKILLS_ALL="$(grep -vx worktree <<<"$PKG_SKILLS_ALL")"
 PKG_AGENTS_ALL="$(grep -vx reviewer-doc <<<"$PKG_AGENTS_ALL")"
-package_run "$SMOKE" STANDIN_REFUSE=0 STANDIN_NESTED_ROOT=1 STANDIN_DUP=2 STANDIN_SUB=NO-RULES-VIA-AGENT STANDIN_OMIT=CLAUDE.md
+package_run "$SMOKE" STANDIN_REFUSE=0 STANDIN_NESTED_ROOT=1 STANDIN_DUP=2 STANDIN_SUB=NO-RULES-VIA-AGENT STANDIN_OMIT=AGENTS.md
 package_table "an unlisted skill fails|skill:worktree|fail|does not list it
 an unlisted agent fails|agent:reviewer-doc|fail|does not list it
 a subagent with no rules fails|instruction:subagent|fail|the subagent read no repository instructions
-an unlisted CLAUDE.md fails|instruction:CLAUDE.md|fail|does not list CLAUDE.md
-a count of two differs, and does not claim both files listed|instruction:duplicate|differs|did not show both AGENTS.md and CLAUDE.md, and the model counts the AGENTS.md line twice
+an unlisted AGENTS.md fails|instruction:AGENTS.md|fail|does not list AGENTS.md
+a count of two fails|instruction:duplicate|fail|the model counts the AGENTS.md line twice
 a nested AGENTS.md listed from the root too passes|instruction:nested|pass|from sub/ and from the project root
 a refused command that went through fails its hook|hook:block-unsafe-rm|fail|the call still ran"
 # Each run below shares settings that reach disjoint rows, so every row keeps
@@ -1178,6 +1182,23 @@ EV_BAD="STANDIN_EVENTS=start sub-start substart-id sub-stop-own subagentstop-tas
 # The disposable copy opens the fixture input instead of a terminal. The
 # interactive commands and every verdict check remain in the smoke runner.
 INTERACTIVE='s/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
+# The consumer fixture changes only in this disposable copy. The stand-in
+# discovers the added file through the same listing as the live control.
+control '/^  printf.*PKG_RULES.*PKG\/AGENTS.md/a\
+  printf "%s\\n" "@AGENTS.md" >"$PKG/CLAUDE.md"' \
+  "control: an AGENTS.md import fails the double-load row|instruction:double-load|fail|same directory: AGENTS.md,CLAUDE.md"
+control_run
+while IFS='|' read -r label sources result clause; do
+  control '' "$label|instruction:double-load|$result|$clause" \
+    "STANDIN_SOURCES=${sources//;/$'\n'}"
+  control_run
+done <<'CASES'
+a nested pair fails|sub/AGENTS.md;sub/CLAUDE.md|fail|same directory: sub/AGENTS.md,sub/CLAUDE.md
+an absolute pair fails|/project/AGENTS.md;/project/CLAUDE.md|fail|same directory: /project/AGENTS.md,/project/CLAUDE.md
+files in different directories pass|other/CLAUDE.md|pass|lists no AGENTS.md and CLAUDE.md in the same directory
+files in different nested directories pass|a/AGENTS.md;b/CLAUDE.md|pass|lists no AGENTS.md and CLAUDE.md in the same directory
+other file names pass|OTHERAGENTS.md;CLAUDE.md.backup|pass|lists no AGENTS.md and CLAUDE.md in the same directory
+CASES
 # Pin the one interactive negative check before planting it out. Enabling the
 # terminal fixture alone would change the copy even if this edit missed.
 interactive_negative='if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi'
