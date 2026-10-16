@@ -233,37 +233,57 @@ assert_not_contains "$OUT" 'EVENT tracker-quota' 'ordinary terminal failures cre
 
 # A running hosted record reaches the unqualified close after its worktree
 # disappears. The existing hosted provider fixture supplies that lifecycle.
-world indirect_hosted none future
-: >"$STUB_DIR/close.calls"
-printf 'bare\n' >"$STUB_DIR/close-mode"
-host="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-remote="$STUB_DIR/remote"
-mkdir -p "$remote/srv/lane/issue-2" "$remote/srv/clone/tmp/lane-mail/issue-2"
-git -C "$remote/srv/clone" init -q
-git -C "$remote/srv/clone" config gc.auto 0
-git -C "$remote/srv/clone" config maintenance.auto false
-printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' >"$remote/srv/lane/issue-2/.git"
-printf '{"handoff":{"written_at":"t"}}\n' >"$remote/srv/clone/tmp/workflow-state-issue-2.json"
-jq -nc --arg host "$host" '{lanes:[{item:"issue-2",tracker:"linear",window:"gh-2",host:$host,
-  mail_root:"/srv/lane/issue-2",harness:"claude",status:"running"}]}' >"$STUB_DIR/fleet.json"
-printf '[{"number":2,"headRefName":"issue-2","mergedAt":"1970-01-01T00:00:01Z"}]\n' >"$STUB_DIR/merged.json"
 hosted_watch() {
     lane_watch ORCH_LANE_HOST="$host" LANE_HOST_STUB_DIR="$remote" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
         LANE_HOST_STUB_HARNESS_STATE="$1"
 }
-hosted_watch running
-assert_eq "$RC" 0 'hosted quota fixture learns its clone before exit' "$STUB_DIR/err"
-rm -rf -- "$remote/srv/lane/issue-2"
-hosted_watch exited
-assert_eq "$RC:$(close_calls)" '0:1' 'unqualified close quota defers without failing the pass' "$STUB_DIR/err"
-assert_contains "$OUT" 'EVENT tracker-quota status=future' 'unqualified close classifies its quota refusal' "$STUB_DIR/err"
-hosted_watch exited
-assert_eq "$RC:$(close_calls)" '0:1' 'a saved hold defers unqualified close rechecks' "$STUB_DIR/err"
-printf '20000\n' >"$STUB_DIR/now.epoch"
-printf 'open\n' >"$STUB_DIR/close-mode"
-hosted_watch exited
-assert_eq "$RC:$(close_calls)" '0:2' 'deferred hosted close remains eligible after reset' "$STUB_DIR/err"
-assert_contains "$OUT" 'EVENT lane-closed issue-2' 'the reset permits the hosted close result' "$STUB_DIR/err"
+hosted_setup() {
+    world "$1" none future
+    : >"$STUB_DIR/close.calls"
+    printf 'bare\n' >"$STUB_DIR/close-mode"
+    host="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+    remote="$STUB_DIR/remote"
+    mkdir -p "$remote/srv/lane/issue-2" "$remote/srv/clone/tmp/lane-mail/issue-2"
+    git -C "$remote/srv/clone" init -q
+    git -C "$remote/srv/clone" config gc.auto 0
+    git -C "$remote/srv/clone" config maintenance.auto false
+    printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' >"$remote/srv/lane/issue-2/.git"
+    printf '{"handoff":{"written_at":"t"}}\n' >"$remote/srv/clone/tmp/workflow-state-issue-2.json"
+    jq -nc --arg host "$host" '{lanes:[{item:"issue-2",tracker:"linear",window:"gh-2",host:$host,
+      mail_root:"/srv/lane/issue-2",harness:"claude",status:"running"}]}' >"$STUB_DIR/fleet.json"
+    printf '[{"number":2,"headRefName":"issue-2","mergedAt":"1970-01-01T00:00:01Z"}]\n' >"$STUB_DIR/merged.json"
+    hosted_watch running
+    assert_eq "$RC" 0 'hosted quota fixture learns its clone before exit' "$STUB_DIR/err"
+    rm -rf -- "$remote/srv/lane/issue-2"
+}
+hosted_setup indirect_hosted
+while IFS='|' read -r phase now mode expected_calls exits event; do
+    printf '%s\n' "$now" >"$STUB_DIR/now.epoch"
+    printf '%s\n' "$mode" >"$STUB_DIR/close-mode"
+    hosted_watch exited
+    assert_eq "$RC:$(close_calls)" "0:$expected_calls" "$phase close attempts" "$STUB_DIR/err"
+    assert_eq "$(awk '/^EVENT lane-exited gh-2$/ {n++} END {print n+0}' <<<"$OUT")" "$exits" \
+        "$phase lane notification count" "$STUB_DIR/err"
+    assert_contains "$OUT" "EVENT $event" "$phase available event" "$STUB_DIR/err"
+done <<'ROWS'
+initial|10000|bare|1|1|tracker-quota status=future
+held|10001|bare|1|0|heartbeat
+reset|20000|open|2|0|lane-closed issue-2
+ROWS
+
+REPEAT_SCRIPTS="$(mutant_scripts quota-close-repeat/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/quota-close-repeat/github"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/quota-close-repeat/linear"
+mutate_file "$REPEAT_SCRIPTS/oversee-watch" \
+    '        asking_state="$(lane_row_set close-pending "$asking_state" "$1" "$2|$3")" ;;' \
+    $'        asking_state="$(lane_row_set close-pending "$asking_state" "$1" "$2|$3")"\n        asking_state="$(lane_row_set "$2" "$asking_state" "$1" "$3")" ;;'
+WATCH_BIN="$REPEAT_SCRIPTS/oversee-watch" hosted_setup close_repeat_control
+WATCH_BIN="$REPEAT_SCRIPTS/oversee-watch" hosted_watch exited
+WATCH_BIN="$REPEAT_SCRIPTS/oversee-watch" hosted_watch exited
+control_rc=0
+( FAIL=0; assert_not_contains "$OUT" 'EVENT lane-exited gh-2' 'reported lane stays quiet'; [[ "$FAIL" == 0 ]] ) \
+    >"$STUB_DIR/control.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control rejects a deferred close that resets the notification latch' "$STUB_DIR/err"
 
 # A recorded GitHub identity wins over a Linear-looking key during a hold.
 lane_world held_github stopped

@@ -320,6 +320,8 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # it carries `|` of its own.
 # The reported columns keep a re-run, which follows every event, from
 # delivering a line again for a walled, idle or exited lane or a merged --item.
+# close-pending<TAB><lane><TAB><notification row>|<key> keeps a deferred close
+# independent of the notification's reported latch.
 # Long-pass helpers take a baseline blob. Mail helpers consume the loaded
 # parent-owned rows and serialize at each item commit. `lane-exited` and
 # `lane-idle` hold a needed first pass in a row, not a global: a pass that
@@ -1414,9 +1416,16 @@ close_finished_hosted_lane() { # LANE ROW KEY; updates check_lanes' asking_state
     if ! close_hosted_lane "$LANE_ITEM"; then
       close_failed=1
     fi
-    if [[ "$CLOSE_RESULT" == failed || "$CLOSE_RESULT" == deferred ]]; then
-      asking_state="$(lane_row_set "$2" "$asking_state" "$1" "$3")"
-    fi
+    case "$CLOSE_RESULT" in
+      failed)
+        asking_state="$(lane_row_set "$2" "$asking_state" "$1" "$3")"
+        asking_state="$(lane_row_clear close-pending "$asking_state" "$1")" ;;
+      deferred)
+        asking_state="$(lane_row_set close-pending "$asking_state" "$1" "$2|$3")" ;;
+      closed|refused)
+        asking_state="$(lane_row_clear close-pending "$asking_state" "$1")"
+        PASS_EVENT=1 ;;
+    esac
     [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$asking_state"; exit 143; }
   fi
 }
@@ -1861,7 +1870,8 @@ parked_merged_line() { # ITEM KEY
 
 # The hand is level-triggered from the record: every record still reading
 # parked whose recorded `<repo>#<number>` is in its item's merged row of STATE,
-# the committed baseline the merged check writes, is handed on again. Nothing
+# the committed baseline the merged check writes, is handed on again when its
+# tracker can be read. A quota hold defers that hand without consuming it. Nothing
 # here ends the repeat; the relaunch rewriting the record stopped does, so a
 # relaunch refused, or an overseer that compacted or handed off after the
 # first hand, still has the merge named at the next heartbeat. Errexit is off
@@ -3140,6 +3150,7 @@ observe_lanes() {
   state="$(lane_row_prune model-capacity "$state" ${LANES[@]+"${LANES[@]}"})"
   state="$(lane_row_prune lane-exited "$state" ${LANES[@]+"${LANES[@]}"})"
   state="$(lane_row_prune lane-idle "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune close-pending "$state" ${LANES[@]+"${LANES[@]}"})"
   lane_row_commit "$state"
 }
 
@@ -4203,6 +4214,7 @@ check_lanes() {
   local lane pane below cmd pid state window i states="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event reported_event quiet
   local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
+  local pending_closes="${PW_SEEN[0]}" pending_close pending_row pending_key
   local banner banner_rc turn hosted_item hosted_harness wall_kind
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
@@ -4473,7 +4485,6 @@ check_lanes() {
         [[ "$prior" != pi-merged-gone'|reported' ]] || continue
         if [[ "$prior" == pi-merged-gone ]]; then
           asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" 'pi-merged-gone|reported')"
-          PASS_EVENT=1
           close_finished_hosted_lane "$lane" lane-idle pi-merged-gone
         else
           asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" pi-merged-gone)"
@@ -4528,6 +4539,21 @@ check_lanes() {
       close_finished_hosted_lane "$lane" lane-idle "$screen_key"
     else
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key")"
+    fi
+  done
+  # Retry only closes already pending at entry. Notification rows stay latched,
+  # and a new pane or state invalidates the old pending close.
+  for lane in "${LANES[@]}"; do
+    if ! pending_close="$(lane_row_get close-pending "$pending_closes" "$lane")"; then
+      die state-read-failed "" "lane=$lane" "row=close-pending"
+    fi
+    [[ -n "$pending_close" ]] || continue
+    [[ "$(lane_row_get close-pending "$asking_state" "$lane")" == "$pending_close" ]] || continue
+    pending_row="${pending_close%%|*}" pending_key="${pending_close#*|}"
+    if [[ "$(lane_row_get "$pending_row" "$asking_state" "$lane")" == "$pending_key|reported" ]]; then
+      close_finished_hosted_lane "$lane" "$pending_row" "$pending_key"
+    else
+      asking_state="$(lane_row_clear close-pending "$asking_state" "$lane")"
     fi
   done
   # Committed after every asking and idle line is out: a row written ahead of
