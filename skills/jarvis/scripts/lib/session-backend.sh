@@ -84,7 +84,13 @@ case "$verb" in
       # natively; Jarvis never answers a native security request. Copilot's
       # alone, asked before its SessionStart: lane_trust_prepare records the
       # answer for Claude Code and Codex, and Pi asks none. Read below the
-      # last turn, since a resumed session redraws its history.
+      # last turn, since a resumed session redraws its history. The pane
+      # stands in for Copilot's documented `trustedFolders` config list
+      # (`copilot help config`), which says what is listed but not how a
+      # listed folder matches HOME: unlike `allowedUrls` beside it, the help
+      # gives no rule for subfolders or path spelling, so a config read
+      # cannot tell whether the dialog will show, and a wrong guess either
+      # refuses a trusted home or launches into an untrusted one.
       slice="$(pane_below_last_turn "$screen")" || exit 1
       rc=0
       dialog="$(pane_trust_dialog "$slice")" || rc=$?
