@@ -9,6 +9,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="${LANES_UNDER_TEST:-$TEST_DIR/../scripts/lanes}"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
+source "$TEST_DIR/lib/tier-model-path.sh"
 if [[ -z "${BASHPID:-}" ]]; then
   printf '%s\n' 'lanes-pick-cost: skip=no-bashpid'
   exit 0
@@ -25,7 +26,7 @@ set -T
 command_not_found_handle() { printf '%s\n' "$1" >> "$COST_UNWRAPPED"; return 127; }
 trap 'if [[ "${_cost_pid:-}" != "${BASHPID:-$$}" ]]; then _cost_pid="${BASHPID:-$$}"; printf "%s\n" "${BASHPID:-$$}" >> "$COST_COUNTER"; fi' DEBUG
 TRACE
-for tool in bash env jq awk basename cksum date tr dirname git rm mkdir mv chmod grep cat sed sort cut wc head tail column false true timeout flock mktemp stat ps sleep realpath readlink perl hostname uname xargs tee cp python3; do
+for tool in bash env jq awk basename cksum date tr dirname git rm mkdir mv chmod grep cat sed sort cut wc head tail column false true timeout flock mktemp stat ps sleep realpath readlink perl hostname uname xargs tee cp python3 kendex; do
   real="$(command -v "$tool")" || continue
   printf '#!%s\nset -euo pipefail\nprintf "%%s\\n" "${BASHPID:-$$}" >> "$COST_COUNTER"\nprintf "%%s\\n" %q >> "$COST_TOOL_LOG"\n' "$BASH" "$tool" > "$TMP_ROOT/bin/$tool"
   if [[ "$tool" == date ]]; then

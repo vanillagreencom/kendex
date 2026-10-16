@@ -470,6 +470,15 @@
 #                    on the shared windows alone; behind a host row with no
 #                    window for NAME, a local reading with no model window, or
 #                    a stale one, stays unmeasured (see pick).
+#                    On claude, codex and copilot, a model class NAME is
+#                    judged as the model `kendex tier-model` reads for it
+#                    (lib/overseer-launch.sh § ol_model_class), and as no
+#                    NAME where the class has none on that harness. A
+#                    claude or codex NAME the class table does not name, an
+#                    old exact id, warns once as `preference-deprecated`;
+#                    a copilot NAME, which no class names, is judged as
+#                    written. A table kendex cannot
+#                    answer exits 1 as `model-class-unread`.
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
@@ -946,6 +955,10 @@ message() {
     invalid-pick-harness)
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
       printf '%s\n' "pick --harness must be claude, codex, copilot or pi"
+      ;;
+    model-class-unread)
+      printf 'lanes: model-class-unread harness=%s model=%s\n' "$1" "$2"
+      printf '%s\n' "kendex tier-model could not answer the model class table, so whether the model names a class is unknown and no window is judged on it. Install or repair kendex."
       ;;
     pick-provider-unmeasured)
       printf 'lanes: pick-provider-unmeasured harness=%s model=%s\n' "$1" "$2"
@@ -4455,6 +4468,15 @@ case "$SUB" in
 		;;
 	pick)
 		HARNESS="${HARNESS:-claude}"
+		# A class becomes its model before any window is matched to it.
+		model_rc=0
+		ol_model_class "$HARNESS" "$MODEL" || model_rc=$?
+		case "$model_rc" in
+			0) ;;
+			2) ol_deprecated "$HARNESS:$MODEL" ;;
+			*) die model-class-unread "$HARNESS" "$MODEL" ;;
+		esac
+		MODEL="$OL_CLASS_MODEL"
 		# The accounts this launch spends, which both forms judge it on: a Pi
 		# launch on a Claude seat is a claude pick in every respect.
 		PICK_HARNESS="$(lane_pick_harness "$HARNESS" "$MODEL")"

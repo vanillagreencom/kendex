@@ -352,7 +352,9 @@ for hook in lane-mail-check lane-mail-compact lane-mail-start; do
   done
 done
 printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings.json"
-printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$OT_STUB_BIN/kendex"
+# Its `tier-model` answers the model class table as the fixture does.
+printf '#!/bin/sh\n[ "$1" != tier-model ] || exec "%s" "$@"\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' \
+  "$TEST_DIR/fixtures/tier-model/kendex" > "$OT_STUB_BIN/kendex"
 chmod +x "$OT_STUB_BIN/kendex"
 CP_BATCH="HOME=$H;ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;cmd=true --model claude-sonnet-5 --reasoning-effort high"
 ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/cp-fleet-1" "$PWD" || exit 1

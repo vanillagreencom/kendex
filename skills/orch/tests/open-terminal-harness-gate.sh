@@ -191,7 +191,9 @@ for hook in lane-mail-check lane-mail-compact lane-mail-start; do
   printf '#!/bin/sh\n' > "$CP_HOME/hooks/$hook.sh"
   printf '{"version":1,"hooks":{}}\n' > "$CP_HOME/hooks/$hook.json"
 done
-printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$BIN/kendex"
+# Its `tier-model` answers the model class table as the fixture does.
+printf '#!/bin/sh\n[ "$1" != tier-model ] || exec "%s" "$@"\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' \
+  "$TEST_DIR/fixtures/tier-model/kendex" > "$BIN/kendex"
 chmod +x "$BIN/kendex"
 CP_REFUSED="open-terminal: unsupported-for-oversee harness=copilot reason=no-context-reader"
 CP_OFF_REFUSED="$CP_REFUSED file=$CP_HOME/settings.json detail=disabled"

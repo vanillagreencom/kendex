@@ -43,6 +43,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
+# A named lane's pick reads the model class table for its model.
+# shellcheck source=lib/tier-model-path.sh
+source "$TEST_DIR/lib/tier-model-path.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"

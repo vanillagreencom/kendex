@@ -28,7 +28,7 @@ class World:
         self.clock.write_text("1791540000\n")
         self.trace = self.root / "trace.env"
         self.trace.write_text('unset SECONDS; SECONDS=0\nset -T\ncommand_not_found_handle() { printf "%s\\n" "$1" >> "$COST_UNWRAPPED"; return 127; }\ntrap \'if [[ "${_cost_pid:-}" != "${BASHPID:-$$}" ]]; then _cost_pid="${BASHPID:-$$}"; printf "%s\\n" "${BASHPID:-$$}" >> "$COST_COUNTER"; fi\' DEBUG\n')
-        tools = "bash env jq awk basename cksum date tr dirname mktemp rm git grep cat sed readlink stat ps sort wc head tail cut sleep find timeout python3 realpath tmux column paste mkdir rmdir touch mv chmod hostname uname xargs tee cp perl flock false true curl".split()
+        tools = "bash env jq awk basename cksum date tr dirname mktemp rm git grep cat sed readlink stat ps sort wc head tail cut sleep find timeout python3 realpath tmux column paste mkdir rmdir touch mv chmod hostname uname xargs tee cp perl flock false true curl kendex".split()
         for name in tools:
             real = shutil.which(name)
             if real is None:

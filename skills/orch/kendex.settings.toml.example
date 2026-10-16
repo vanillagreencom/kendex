@@ -360,29 +360,37 @@ ORCH_EXTERNAL_TRIAGE = "on"
 
 # The models a new or replacement overseer tries, in order. Each entry is
 # harness:model:effort, separated by commas. The harness is claude, codex,
-# copilot or pi. The model is the name that harness's --model takes, in
-# lowercase letters, digits, dots and hyphens, starting with a letter. On pi
+# copilot or pi. On claude, codex or copilot the model is a model class, such
+# as standard or top, which the launch resolves to that harness's model
+# through `kendex tier-model`, or the name that harness's --model takes, in
+# lowercase letters, digits, dots and hyphens, starting with a letter. A
+# class with no model on its harness, as on copilot, runs the harness
+# default and warns once. On pi
 # it is provider/model, for example pi:github-copilot/claude-opus-5.5:high:
 # the provider in those same characters, the model in lowercase letters,
 # digits, dots, underscores, hyphens and slashes, starting with a letter or
 # digit. The effort is lowercase letters, the level as that harness spells
 # it; on pi it is the thinking level. An empty model selects the harness
 # default on claude, codex or copilot. Pi requires provider/model.
+# A claude or codex model the class table does not name, an old exact id
+# such as claude-opus-5-5, still launches and warns once per run until the
+# next major release; replace it with its class. The table names no copilot
+# model, so a copilot model name launches as written with no warning.
 # The deprecated positive account number first uses
 # the caller's model. With no caller model, the overseer uses the same-harness
-# model from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
+# class from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
 # uses the harness's native model default. It warns once per run until the
 # next major release and names the conversion.
 # Numeric succession entries can cross harnesses only when the model comes
 # from the target harness's default preference. The permission rules in
 # oversee-succeed --help still apply.
-# Replace it with a family alias, such as claude:opus:high, or the harness default.
-# The name is not checked
+# Replace it with a class, such as claude:standard:high, or the harness default.
+# A model name is not checked
 # before launch, so a misspelled codex, copilot or pi model opens the new
 # overseer on that name. Which entries a first launch and a succession skip is in
-# oversee --help and oversee-succeed --help. Family aliases and harness defaults
+# oversee --help and oversee-succeed --help. Classes and harness defaults
 # need no edit when model versions change. An empty setting names no entries.
-# ORCH_OVERSEER_PREFERENCE = "claude:opus:high,codex::high"
+# ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
 # provider executable path for that entry; without it, the caller's --host or
@@ -391,7 +399,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # The first eligible entry with room supplies the harness, host, model and effort.
 # Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
-# ORCH_LANE_PREFERENCE = "claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
+# ORCH_LANE_PREFERENCE = "claude@claude-cloud:standard:high,codex:standard:high"
 
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.

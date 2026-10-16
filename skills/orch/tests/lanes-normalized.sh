@@ -4,6 +4,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$TEST_DIR/lib/tier-model-path.sh"
 SUITE_TMP="${TMPDIR:-$TEST_DIR/../../../tmp}"
 mkdir -p "$SUITE_TMP"
 TMP_ROOT="$(mktemp -d "$SUITE_TMP/lanes-normalized.XXXXXX")" || { printf '%s\n' 'lanes-normalized: scratch=mktemp-failed' >&2; exit 1; }

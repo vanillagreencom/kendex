@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# `kendex tier-model HARNESS RANK --json` for suites whose launches read model
+# classes with no kendex of their own: the class table's rows, top first, as
+# TIERS (crates/core/src/harness/models.rs) held them when this was written,
+# in the fields lib/overseer-launch.sh § ol_class_ladder reads. A rank past the
+# table is refused with no answer, as kendex refuses it. tier-model-fixture.sh
+# holds a real kendex to the same rows. One process per call, as the kendex
+# binary is, for the suites that count processes. Every other call goes to the
+# next kendex on PATH, so a suite that puts this directory first keeps the
+# kendex it had for the rest.
+set -euo pipefail
+if [[ "${1:-}" != tier-model ]]; then
+  IFS=: read -r -a dirs <<<"$PATH"
+  for dir in "${dirs[@]}"; do
+    [[ "$dir/kendex" -ef "$0" || ! -x "$dir/kendex" ]] || exec "$dir/kendex" "$@"
+  done
+  printf 'kendex: command not found\n' >&2
+  exit 127
+fi
+[[ $# -eq 4 && "$3" =~ ^[1-9]$ && "$4" == --json ]] \
+  || { printf 'tier-model stub: unexpected=%s\n' "$*" >&2; exit 2; }
+classes=(top standard light fast)
+case "$2" in
+  claude) models=('"fable"' '"opus"' '"sonnet"' '"haiku"') ;;
+  codex) models=('"gpt-6-astra"' '"gpt-6.1-sol"' '"gpt-6.1-luna"' '"gpt-6.1-terra"') ;;
+  copilot) models=(null null null null) ;;
+  *) printf 'Error: unknown harness %s\n' "$2" >&2; exit 1 ;;
+esac
+(( $3 <= ${#classes[@]} )) || { printf 'Error: rank %s is not on the class ladder\n' "$3" >&2; exit 1; }
+printf '{"protocol":"model-resolution-v1","harness":"%s","request":{"tag":"class","class":"%s"},"resolution":{"tag":"deferred-class","class":"%s","native_selector":%s}}\n' \
+  "$2" "${classes[$3 - 1]}" "${classes[$3 - 1]}" "${models[$3 - 1]}"

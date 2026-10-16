@@ -39,6 +39,9 @@ LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" HOME="$FLEET_HOME" COPILOT_HOME= COPILOT_GI
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# A named lane's pick reads the model class table for its model.
+# shellcheck source=lib/tier-model-path.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/tier-model-path.sh"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"

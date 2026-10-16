@@ -522,11 +522,11 @@ jobs:
     # shard that runs those suites must be one that installed a kendex
     # whatever the roster looks like later. The macOS legs keep the skip, for
     # the reason the install step gives.
-    # ORCH_REQUIRE_KENDEX does the same for two orch suites:
+    # ORCH_REQUIRE_KENDEX does the same for three orch suites:
     # open-terminal-copilot-context.sh, whose disableAllHooks rows ask a real
     # kendex hooks-off and which the `orch-terminal` shard runs, and
-    # claude-model-classes.sh, whose core contract rows ask a real kendex
-    # tier-model and which the `orch-rest` shard runs.
+    # claude-model-classes.sh and tier-model-fixture.sh, whose rows ask a
+    # real kendex tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
       # REVISIT(D026): one profile serves every real macOS battery invocation.
       RUN_ALL_NATIVE_CONTRACTS: ${{ matrix.os == 'macos-latest' && format('{0}/tools/macos-test-contracts', github.workspace) || '' }}
@@ -708,7 +708,8 @@ jobs:
       # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
       # checkout ships, `orch-rest`, for claude-model-classes.sh, whose core
       # contract rows hold the Claude plugin's fixtures to this checkout's
-      # `tier-model`, and `refresh`, for refresh-consumer's held-render
+      # `tier-model`, and tier-model-fixture.sh, which holds the orch suites'
+      # class table fixture to it, and `refresh`, for refresh-consumer's held-render
       # rows. The macOS legs keep the binary-dependent skips. A pull request
       # restores the cache and never saves it.
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release

@@ -11,6 +11,10 @@
 # this file out of the run. The sourcing suite sets TMP_ROOT first, which only
 # `new_home` reads, so a suite that wants `settled_mutex` alone needs none.
 
+# A pick naming a model reads the model class table.
+# shellcheck source=tier-model-path.sh
+source "${BASH_SOURCE[0]%/*}/tier-model-path.sh"
+
 # Keep every write in this suite on the same quota period, including retained
 # samples. A reset within an hour keeps a live claim's session charge at one hour.
 CLAUDE_USAGE_SESSION_RESET="$(date +%s)" || exit 1

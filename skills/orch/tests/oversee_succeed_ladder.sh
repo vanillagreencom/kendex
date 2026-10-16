@@ -211,7 +211,7 @@ assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex)|$(grep -cx -e
   "a Fable-walled seat with Opus room is chosen for the default ladder's Opus entry, at high effort"
 DEFAULTCTL="$(mutant_scripts defaultctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$DEFAULTCTL/lib/overseer-launch.sh" \
-  'OL_DEFAULT_PREFERENCE="claude:opus:high,codex::high"' 'OL_DEFAULT_PREFERENCE="claude:sonnet:high,codex::high"'
+  'OL_DEFAULT_PREFERENCE="claude:standard:high,codex:standard:high"' 'OL_DEFAULT_PREFERENCE="claude:light:high,codex:standard:high"'
 new_caller
 SUCCEED_BIN="$DEFAULTCTL/oversee-succeed" run_succeed defaultctl unset
 assert_eq "$RC|$(caller_open)|$(launched claude)" "0|no|$H/.eclaude sonnet" \
@@ -256,7 +256,7 @@ mutate_file "$EXCLUDECTL/oversee-succeed" '  [[ "$MODE" != walled ]] || exclude=
 new_caller
 SUCCEED_BIN="$EXCLUDECTL/oversee-succeed" run_succeed excludectl unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(keyed successor-lane-spent | awk '{print $2, $4}')|$(caller_open)|$(launched claude)" \
-  "3|successor-lane-spent entry=claude:opus:high|yes|none" \
+  "3|successor-lane-spent entry=claude:standard:high|yes|none" \
   "control: a walled pick that keeps the walled account drops the Opus entry"
 seat claude 10 99 99
 
@@ -318,15 +318,15 @@ assert_eq "$RC|$(launched claude)" \
   "the same fleet with no claim takes the first seat"
 
 # Every claude seat walled for every model: the default reaches codex on
-# its native default, the second entry.
+# its standard class, the second entry.
 seat eclaude 99 99 10
 seat fclaude 99 99 10
 codex_seat codex 20
 new_caller
 run_succeed codex unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex | awk '{print $2}')|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-  "0|no|none||1" \
-  "every claude entry walled: the default reaches codex on its native default"
+  "0|no|none|gpt-6.1-sol|1" \
+  "every claude entry walled: the default reaches codex on its standard class"
 
 # The setting is the one list of models: a codex model no tier ladder and no
 # script names launches as the setting writes it.
@@ -460,7 +460,7 @@ for control in observed flags; do
   CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
     run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
   assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-    "0|$CODEX_LAUNCH_HOME |1" "control: dropping the $control model breaks numeric launch identity"
+    "0|$CODEX_LAUNCH_HOME gpt-6.1-sol|1" "control: dropping the $control model breaks numeric launch identity"
 done
 CALLER_FLAGS=("$BYPASS")
 seat eclaude 10 99 10
@@ -477,7 +477,7 @@ new_caller codex
 CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=high -a never)
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexcaller unset
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(launched codex | sed "s|^$H/.dcodex[^ ]* |dcodex |")|$(grep -cx never "$TMP_ROOT/argv.codex")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:opus:high source=codex target=claude|none|dcodex |1" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude|none|dcodex gpt-6.1-sol|1" \
   "a codex caller whose permission words cannot cross skips the claude entries and succeeds on codex"
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
