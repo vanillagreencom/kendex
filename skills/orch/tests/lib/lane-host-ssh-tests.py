@@ -1326,6 +1326,51 @@ touch node_modules/dep
             self.assertEqual(exposed.returncode, 91, exposed.stderr)
             self.assertFalse((Path(self.row["clone"]) / "ui/node_modules/.lane-host-install").exists())
 
+    def assert_dependency_entry(self, entry, directory, installs):
+        self.fake_npm()
+        self.seed_source("kendex.settings.toml", f'[env]\nWORKTREE_SYMLINKS = "{entry}"\n')
+        lockfile = directory / "package-lock.json"
+        if not (self.source / lockfile).exists():
+            self.seed_source(str(lockfile), '{"lockfileVersion": 3}\n')
+        self.row["clone"] = str(self.root / entry.replace("/", "-"))
+        self.inventory.write_text(json.dumps([self.row]))
+        mark = len(self.log_since(0)) if (self.root / "calls").exists() else 0
+        result = self.create()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        clone = Path(self.row["clone"])
+        blob = subprocess.check_output([self.env["REAL_GIT"], "-C", str(clone),
+                                        "rev-parse", f"HEAD:{lockfile}"], env=self.git_env).strip()
+        marker = clone / entry / ".lane-host-install"
+        actual = ([line for line in result.stderr.splitlines()
+                   if line.startswith(b"lane-host-ssh: dependency-install")],
+                  [line for line in self.log_since(mark) if line.startswith("npm ")],
+                  marker.read_bytes().strip() if marker.exists() else None)
+        expected = ([f"lane-host-ssh: dependency-install path={lockfile}".encode()],
+                    [f"npm ci --no-audit --no-fund in {clone / directory}"], blob)
+        self.assertEqual(actual, expected if installs else ([], [], None))
+
+    def test_create_normalizes_trailing_slashes_before_matching_node_modules(self):
+        rows = (("node_modules/", Path("."), True),
+                ("packages/app/node_modules/", Path("packages/app"), True),
+                ("node_modules///", Path("."), True),
+                ("packages/app/node_modules///", Path("packages/app"), True),
+                ("mynode_modules/", Path("."), False))
+        for entry, directory, installs in rows:
+            with self.subTest(entry=entry):
+                self.assert_dependency_entry(entry, directory, installs)
+
+    def test_control_raw_dependency_entry_skips_trailing_slashes(self):
+        original = self.script.read_text()
+        fragment = 'while [[ "$entry" != "/" && "$entry" == */ ]]; do'
+        self.assertEqual(original.count(fragment), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
+            self.executable(self.script, original.replace(fragment, 'while false && [[ "$entry" != "/" && "$entry" == */ ]]; do'))
+            self.assertNotEqual(self.script.read_text(), original)
+            with self.assertRaises(AssertionError):
+                self.assert_dependency_entry("node_modules/", Path("."), True)
+            self.assert_dependency_entry("mynode_modules/", Path("."), False)
+
     def private_install_cases(self):
         """Exercise files present in reused clones, including copies made by
         the first worktree setup pass before npm starts."""
