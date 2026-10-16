@@ -9,10 +9,15 @@
 # here and reports them itself.
 # shellcheck disable=SC2034
 
-# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
-# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
-# would configure the real repository.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# A suite runs with no environment but HOME, PATH and the hook it is told to
+# run, as `env -i` starts it: an orch, harness, mailbox or git variable the
+# caller carries would point the hook, `lane-mail` and `workflow-state` at the
+# caller's own records, and GIT_DIR would configure the real repository. The
+# suite restarts once in that environment, so its own setup runs there too.
+if [ "${LANE_MAIL_WORLD:-}" != started ]; then
+  exec env -i "HOME=$HOME" "PATH=$PATH" ${HOOK_UNDER_TEST+"HOOK_UNDER_TEST=$HOOK_UNDER_TEST"} LANE_MAIL_WORLD=started \
+    "$BASH" "${BASH_SOURCE[${#BASH_SOURCE[@]}-1]}" "$@"
+fi
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
@@ -205,10 +210,7 @@ run_payload() { # RAW-JSON [ENV=VAL...]
   RC=0
   : > "$ERR_FILE"
   printf '%s' "$payload" |
-    (cd "${CALL_DIR:-$LANE}" && env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROJECT_DIR -u CODEX_HOME -u COPILOT_HOME -u LANE_MAIL_ITEM \
-      -u ORCH_HANDOFF_CONTEXT_PCT -u ORCH_HANDOFF_AGENT_RESERVE_TOKENS -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
-      -u ORCH_OVERSEER_HEADROOM_PCT -u ORCH_OVERSEER_SUCCESSION -u ORCH_WAKE_PROCESS -u ORCH_WAKE_START -u TMUX -u TMUX_PANE \
-      "LANES_HOME=$OFFLINE_HOME" "PI_CODING_AGENT_DIR=$OFFLINE_HOME/.pi/agent" \
+    (cd "${CALL_DIR:-$LANE}" && env "LANES_HOME=$OFFLINE_HOME" "PI_CODING_AGENT_DIR=$OFFLINE_HOME/.pi/agent" \
       DISABLE_AUTO_COMPACT=1 DISABLE_COMPACT=0 "ORCH_COMPACTION_OVERRIDES=$CODEX_COMPACTION" "ORCH_LANES_FETCH_CMD=$NO_FETCH" ${CONTEXT_PCT_ENV:+"$CONTEXT_PCT_ENV"} \
       ${CALL_ENV[@]+"${CALL_ENV[@]}"} "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
