@@ -210,13 +210,17 @@ PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+(─
 PI_CURRENT_FOOTER_RE='^.+ / .+ [^[:space:]]+%([[:space:]].*)?$'
 PI_CURRENT_PROMPT_RE='^π[[:space:]]*$'
 
+# The compact editor can put its title in tmux's pane border, outside capture.
+pane_pi_editor_ready() {
+  grep -Eq -- "$PI_CURRENT_FOOTER_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_PROMPT_RE" <<<"$1"
+}
+
 # pane_harness_up SCREEN — the predicate over one captured pane.
 pane_harness_up() {
   pane_working "$1" || grep -Eq -- "$HARNESS_UP_RE" <<<"$1" \
     || [[ "$(pane_turn_slice "$1" framed)" == framed ]] \
     || { grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" && grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1"; } \
-    || { grep -Eq -- "$PI_CURRENT_TITLE_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_FOOTER_RE" <<<"$1" \
-      && grep -Eq -- "$PI_CURRENT_PROMPT_RE" <<<"$1"; }
+    || { grep -Eq -- "$PI_CURRENT_TITLE_RE" <<<"$1" && pane_pi_editor_ready "$1"; }
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the
@@ -1150,7 +1154,7 @@ lane_state() {
     busy) printf -v "$_ls_out" working; return 0 ;;
     *) printf -v "$_ls_out" unjudged; return 0 ;;
   esac
-  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" idle; return 0; fi
+  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice" || pane_pi_editor_ready "$_ls_slice"; then printf -v "$_ls_out" idle; return 0; fi
   # The screen settles nothing: no marker of any kind, which is what a lane
   # mid-redraw, a lane running a full-screen program over its harness, and a
   # pane whose capture failed all look like. A caller that read the harness

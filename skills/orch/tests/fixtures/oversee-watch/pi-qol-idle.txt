@@ -1,0 +1,28 @@
+
+ ▀▀█  v1.3.0
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Extensions]
+  qol.ts
+
+ This project is not trusted. Project .pi resources and packages are ignored. Use /trust to save a trust decision, then
+ restart pi.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cwd Anthropic / Sonnet 4.5 (latest) / medium 200k ───────────────────────────────────────────────────────────────── 100%
+π

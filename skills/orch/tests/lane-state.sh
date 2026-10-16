@@ -98,6 +98,8 @@ screen_for() {
     copilot_working) cat "$CODEX_PANES/copilot-working.txt" ;;
     copilot_trust) cat "$CODEX_PANES/copilot-dialog-trust.txt" ;;
     pi_working) cat "$CODEX_PANES/pi-working.txt" ;;
+    # Offline Pi 1.3.0 with only pi-qol loaded, captured in an owned tmux pane.
+    pi_qol_idle) cat "$CODEX_PANES/pi-qol-idle.txt" ;;
     # Fleet's retained Pi 1.2.0 viewer, captured 2026-10-15T01:20:55Z with
     # tmux capture-pane -pJ from fleet:gh-1326 pane %1656, after the refusals.
     # Full viewport/provenance: KEN-4109 attachment overseer215-pi-screen-capture-source.md.
@@ -177,7 +179,24 @@ a signed-out copilot capture is walled despite its idle composer|listed|node|100
 a signed-out copilot capture is walled despite its draft|listed|node|100|copilot_signed_out_draft|||walled
 a copilot footer running a command is a turn in flight|listed|node|100|copilot_working|||working
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
+a current Pi editor is input-ready|listed|pi|100|pi_current|||idle
+a compact pi-qol editor is input-ready|listed|pi|100|pi_qol_idle|||idle
+a Pi working editor stays refused|listed|pi|100|pi_working|||unjudged
+a dialog in a Pi pane stays refused|listed|pi|100|asking|||asking
+a busy Pi process outranks its editor|listed|pi|100|pi_qol_idle|busy||working
+an unreadable Pi process stays refused|listed|pi|100|pi_qol_idle|unjudged||unjudged
+a Pi editor without its footer stays unjudged|listed|pi|100|pi_current_no_footer|||unjudged
+a Pi editor without its prompt stays unjudged|listed|pi|100|pi_current_no_prompt|||unjudged
 ROWS
+
+lane_state row_state listed pi 100 "$(screen_for pi_qol_idle)" '' '' '' '' '' unreadable
+assert_eq "$row_state" unjudged 'an unreadable Pi pane stays refused'
+PI_INPUT_MUTANT="$(mutant_scripts pi-input lib/lane-state.sh)" || exit 1
+mutate_file "$PI_INPUT_MUTANT/lib/lane-state.sh" '|| pane_pi_editor_ready "$_ls_slice"' ''
+for screen in pi_current pi_qol_idle; do
+  pi_input_control="$(source "$PI_INPUT_MUTANT/lib/lane-state.sh"; lane_state row_state listed pi 100 "$(screen_for "$screen")"; printf '%s' "$row_state")"
+  assert_eq "$pi_input_control" unjudged "control: removing Pi input readiness rejects $screen"
+done
 
 # A disabled classifier leaves the signed-out capture at the composer rung.
 # Both inputs came from the no-login KEN-1985 host, not a signed-in session.
