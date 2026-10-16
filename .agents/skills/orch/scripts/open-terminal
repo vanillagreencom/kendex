@@ -1483,11 +1483,20 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
          | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}
        + (if $wake == null then {} else {wake: $wake} end)
        + (if $cloud_repo_access == null then {} else {cloud_repo_access: $cloud_repo_access} end)')" || return 1
-  # The archive reads close rows, so save a cloud predecessor before any
-  # launch or preparation replaces its session and account. A wake keeps it.
+  # lane-close stamps done before appending its close row, so status cannot
+  # prove that the archive holds this session. Save only an unlogged cloud
+  # predecessor before replacement. A wake keeps the predecessor.
   if [[ "$mode" != wake ]]; then
     previous="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
-      '.lanes // []' | jq -c --arg item "$item" '.[] | select(.item == $item and .kind == "claude-cloud")')" || return 1
+      '{lanes: (.lanes // []), fleet_log: (.fleet_log // [])}' | jq -c --arg item "$item" '
+        .fleet_log as $log
+        | .lanes[] | select(.item == $item and .kind == "claude-cloud")
+        | . as $lane
+        | {session: (.session_id // "none"), account: (.account // "none")} as $identity
+        | any($log[]; .kind == "close" and .item == $item
+            and ((.text | capture("session=(?<session>[^ ]+) account=(?<account>[^ ]+)")) == $identity)) as $logged
+        | select($logged | not)
+        | $lane')" || return 1
     if [[ -n "$previous" ]]; then
       CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$previous" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"})" \
         || { ot_message cloud-close-log-failed "item=$item" "cause=$CLOUD_CLOSE_LOG_CAUSE" >&2; return 1; }

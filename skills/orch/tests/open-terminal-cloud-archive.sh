@@ -18,20 +18,29 @@ CLOUD_ACCOUNT="$H/.9claude"
 HOST_STUB="$TMP_ROOT/lane-host-daytona"
 ln -s "$TEST_DIR/fixtures/lane-host" "$HOST_STUB"
 
-replace_lane() { # KIND MODE
+replace_lane() { # KIND MODE [STATUS [LOGGED_SESSION]]
   local args=()
   [[ "$2" != relaunch ]] || args+=(--relaunch)
   "$WS" --state-dir "$STATE" init oversee >/dev/null || exit 1
   "$WS" --state-dir "$STATE" update oversee --arg kind "$1" --arg account "$CLOUD_ACCOUNT" \
     --arg host "$HOST_STUB" --arg landing_account "$H/.eclaude" \
-    '.fleet_log = [] | .lanes = [{item: "KEN-1", tracker: "linear", harness: "claude",
+    --arg status "${3:-running}" --arg logged_session "${4:-}" \
+    '.fleet_log = (if $logged_session == "" then [] else [{kind: "close", item: "KEN-1",
+      at: "2026-10-01T00:00:00Z",
+      text: "cloud lane closed; session=\($logged_session) account=\($account) send=sent credit=unread cli=sent"}] end)
+     | .lanes = [{item: "KEN-1", tracker: "linear", harness: "claude",
       kind: $kind, host: (if $kind == "claude-cloud" then "claude-cloud" else $host end),
       session_id: (if $kind == "claude-cloud" then "session_01CLOUD" else null end),
       account: (if $kind == "claude-cloud" then $account else $landing_account end),
-      status: "running", launched_at: "2026-10-01T00:00:00Z"}]' >/dev/null || exit 1
+      status: $status, launched_at: "2026-10-01T00:00:00Z"}]' >/dev/null || exit 1
+  CLOSE_ROWS_BEFORE="$(close_rows)" || exit 1
   run_ot "$HARNESS_UP;$CHOICE;LANE_HOST_STUB_SELECTION=fresh" --state-dir "$STATE" \
     --host "$HOST_STUB" --harness claude --lane "$H/.eclaude" --repo o/r \
     ${args[@]+"${args[@]}"} KEN-1
+}
+
+close_rows() {
+  "$WS" --state-dir "$STATE" get oversee '[.fleet_log[] | select(.kind == "close" and .item == "KEN-1")] | length'
 }
 
 # This is the archive read from schemas/workflow-state.md, Recording policy.
@@ -41,27 +50,32 @@ archive_read() {
      | group_by(.account)[] | "\(.[0].account) \(map(.session) | join(" "))"'
 }
 assert_archived() {
-  assert_eq "$(archive_read)" "$CLOUD_ACCOUNT session_01CLOUD" \
+  assert_eq "$(archive_read)" "$CLOUD_ACCOUNT ${1:-session_01CLOUD}" \
     'the archive lists the replaced cloud session with its account'
 }
 
-while IFS='|' read -r kind mode rows; do
-  replace_lane "$kind" "$mode"
+while IFS='|' read -r kind mode status logged_session rows added sessions; do
+  replace_lane "$kind" "$mode" "$status" "$logged_session"
   printf '%s\n' "$OUT" > "$RUN/launch.out"
   assert_eq "$RC" 0 "$kind $mode completes the landing launch" "$RUN/launch.out"
   assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[0] | [.kind, .account] | join(" ")')" \
     "ssh $H/.eclaude" "$kind $mode replaces the cloud launch fields"
-  assert_eq "$("$WS" --state-dir "$STATE" get oversee '[.fleet_log[] | select(.kind == "close" and .item == "KEN-1")] | length')" \
-    "$rows" "$kind $mode writes only the cloud predecessor's close row"
+  CLOSE_ROWS_AFTER="$(close_rows)" || exit 1
+  assert_eq "$CLOSE_ROWS_AFTER" "$rows" "$kind $mode $status retains each cloud session's close row once"
+  assert_eq "$((CLOSE_ROWS_AFTER - CLOSE_ROWS_BEFORE))" "$added" "$kind $mode $status adds only an unlogged close row"
   if [[ "$kind" == claude-cloud ]]; then
-    assert_archived
+    assert_archived "$sessions"
   else
     assert_eq "$(archive_read)" '' 'a Daytona relaunch adds no archived cloud session'
   fi
 done <<'ROWS'
-claude-cloud|launch|1
-claude-cloud|relaunch|1
-ssh|relaunch|0
+claude-cloud|launch|running||1|1|session_01CLOUD
+claude-cloud|relaunch|running||1|1|session_01CLOUD
+claude-cloud|launch|done|session_01CLOUD|1|0|session_01CLOUD
+claude-cloud|relaunch|done|session_01CLOUD|1|0|session_01CLOUD
+claude-cloud|relaunch|done||1|1|session_01CLOUD
+claude-cloud|relaunch|done|session_00PRIOR|2|1|session_00PRIOR session_01CLOUD
+ssh|relaunch|running||0|0|
 ROWS
 
 OPEN_TERMINAL="$(mutant_scripts cloud-close-control/orch open-terminal)/open-terminal" || exit 1
@@ -72,5 +86,24 @@ assert_eq "$RC" 0 'control: the unchanged landing route still launches'
 assert_eq "$(archive_read)" '' 'control: the missing close row leaves the archive empty'
 CONTROL_FAILURES="$(FAIL=0; assert_archived > "$TMP_ROOT/archive-control.out"; printf '%s' "$FAIL")"
 assert_eq "$CONTROL_FAILURES" 1 'control: the archive assertion rejects the lost session'
+
+OPEN_TERMINAL="$(mutant_scripts duplicate-close-control/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/duplicate-close-control/orch"
+mutate_file "$OPEN_TERMINAL" '| select($logged | not)' '| select(($logged | not) or true)'
+replace_lane claude-cloud relaunch done session_01CLOUD
+assert_eq "$RC" 0 'control: duplicate logging still completes the landing launch'
+assert_eq "$(close_rows)" 2 'control: ignoring the prior close writes a duplicate'
+CONTROL_FAILURES="$(FAIL=0; assert_archived > "$TMP_ROOT/duplicate-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CONTROL_FAILURES" 1 'control: the archive assertion rejects duplicate sessions'
+
+OPEN_TERMINAL="$(mutant_scripts status-close-control/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/status-close-control/orch"
+mutate_file "$OPEN_TERMINAL" 'select(.item == $item and .kind == "claude-cloud")' \
+  'select(.item == $item and .kind == "claude-cloud" and .status != "done")'
+replace_lane claude-cloud relaunch done
+assert_eq "$RC" 0 'control: a status-only guard still completes the landing launch'
+assert_eq "$(archive_read)" '' 'control: a status-only guard loses an unlogged done session'
+CONTROL_FAILURES="$(FAIL=0; assert_archived > "$TMP_ROOT/status-control.out"; printf '%s' "$FAIL")"
+assert_eq "$CONTROL_FAILURES" 1 'control: the archive assertion rejects the status-only guard'
 
 lane_suite_end
