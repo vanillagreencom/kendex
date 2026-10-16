@@ -9,6 +9,8 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'process-count: scratch=reso
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 python3 - "$TEST_DIR/lib/process-count.py" "$TMP_ROOT" "$BASH" "${BASHPID:-}" <<'PY'
 import importlib.util
+from contextlib import redirect_stdout
+from io import StringIO
 import os
 from pathlib import Path
 import subprocess
@@ -66,9 +68,33 @@ path = Path(sys.argv[2]) / "pass-mutant.py"
 path.write_text(mutated)
 assert load(path).pass_counts(pass_trace, pass_external, {"100"}) != want_passes, "must-fail: dependency births counted as watch starts"
 
+scratch = Path(sys.argv[2])
+raw = scratch / "raw-steps"
+raw.mkdir()
+(raw / "trace").write_bytes(b"+count:100:mail_turn.check_mail: comparison \xef\\xbb\n++count:101:mail_turn.check_mail: exec git\n")
+(raw / "steps").write_text("")
+(raw / "existing").write_text("100\n")
+output = StringIO()
+with redirect_stdout(output):
+    counter.steps(raw)
+assert dict(line.split("=", 1) for line in output.getvalue().splitlines()) == {
+    "mail_turn.check_mail": "1", "mail_turn": "1", "long_pass": "0",
+}
+old = 'errors="surrogateescape"'
+assert text.count(old) == 1
+mutated = text.replace(old, 'errors="strict"')
+assert mutated != text
+path = scratch / "strict-trace.py"
+path.write_text(mutated)
+try:
+    load(path).steps(raw)
+except UnicodeDecodeError:
+    pass
+else:
+    raise AssertionError("must-fail: strict step trace decoding accepted raw bytes")
+
 # A real absolute helper starts once. Its own Bash child belongs to the
 # dependency, and the watch must not claim it.
-scratch = Path(sys.argv[2])
 target = scratch / "oversee-watch"
 helper = scratch / "helper.sh"
 target.write_text('mail_turn() { "$BASH" "$1"; }; mail_turn "$1"\n')
@@ -110,5 +136,5 @@ for old, new in [
     path = Path(sys.argv[2]) / "mutant.py"
     path.write_text(mutated)
     assert failures(load(path)), "must-fail: the planted counter defect passed"
-print(f"pass: {len(rows) + 4 + absolute_checks}   fail: 0")
+print(f"pass: {len(rows) + 6 + absolute_checks}   fail: 0")
 PY

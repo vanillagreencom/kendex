@@ -119,11 +119,15 @@ def total(trace, external, existing, direct=False, command=None):
     return len(births)
 
 
+def read_trace(root):
+    return (Path(root) / "trace").read_text(errors="surrogateescape").splitlines()
+
+
 def count(root, command=None):
     root = Path(root)
     external = (root / "external").read_text().splitlines() if (root / "external").exists() else []
     existing = set((root / "existing").read_text().splitlines()) if (root / "existing").exists() else set()
-    trace = (root / "trace").read_text(errors="surrogateescape").splitlines()
+    trace = read_trace(root)
     direct = (root / "target").exists() and bool((root / "target").read_text())
     print(total(trace, external, existing, direct, command))
 
@@ -152,7 +156,7 @@ def pass_counts(trace, external, existing):
 def steps(root):
     root = Path(root)
     counts = pass_counts(
-        (root / "trace").read_text(errors="surrogateescape").splitlines(),
+        read_trace(root),
         (root / "steps").read_text().splitlines(),
         set((root / "existing").read_text().splitlines()),
     )
