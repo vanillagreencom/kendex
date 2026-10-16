@@ -10,6 +10,8 @@ Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules rout
 | Message only | Re-delegation to a live agent | Send delegation to the running agent |
 | Self-create | No team context | Full instructions in the prompt |
 
+**Claude Code reviewer names.** For a reviewer, omit `name` from the `Agent` call or start it with the reviewer's canonical agent name, such as `reviewer-correctness`. The `reviewer-read-only` hook matches `agent_type` against `reviewer-*`; Claude Code uses the spawn name for that field. A nickname such as `rr-correctness` can bypass the protection.
+
 **Model class.** An item's class is `standard`. Use `top` only when the overseer writes `Model class: top` and its reason into the item's brief. Use `fast` only when the overseer writes `Model class: fast` for an extremely low-stakes change: a typo, a label, a config line or a doc sentence. Nothing selects `fast` by default. Never derive the class from an estimate, a workflow tier (`micro`, `small`, `standard`), complexity or a risk category. Select effort for each task; the class table holds no efforts. When the lane's brief names `Model class:`, carry that field on each dev, review or QA delegation. On Claude Code, set the `Agent` call's `model` to the class's family alias from `kendex tier-model claude [N]`, where `[N]` is the requested class's rank. On Pi, set the `subagent` call's `model` to `[CLASS]:[EFFORT]`. On other harnesses, the agent file's class stands.
 
 When the caller requests a technical implementation plan, delegate to the installed `planner`. Report a missing planner instead of planning in the primary session. Pass any TPM handoff through the caller. `roadmap-plan` consumes a finished plan; it does not launch planner.

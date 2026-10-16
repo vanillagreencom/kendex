@@ -32,7 +32,9 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/reviewer-read-only.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo "reviewer-read-only: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "reviewer-read-only: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "reviewer-read-only: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
@@ -44,6 +46,8 @@ fgit() {
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/src"
 fgit init -q "$REPO"
+fgit -C "$REPO" config gc.auto 0
+fgit -C "$REPO" config maintenance.auto false
 fgit -C "$REPO" config user.email t@example.com
 fgit -C "$REPO" config user.name t
 printf 'pub fn a() {}\n' >"$REPO/src/lib.rs"
@@ -75,16 +79,8 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
   err="$(cat "$TMP_ROOT/stderr")"
 }
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assert.sh
+. "$TEST_DIR/lib/assert.sh"
 
 assert_contains() {
   local got="$1" needle="$2" name="$3"
@@ -164,15 +160,39 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-write" "refused: $cmd"
 done
-for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'git stash' 'git stash pop' \
-  'git stash list' 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
-  run_tool reviewer-security Bash command "$cmd"
-  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-discard" "refused: $cmd"
-  for agent in dev ''; do
+discard_rows() {
+  local agent cmd other
+  while IFS='|' read -r agent cmd; do
     run_tool "$agent" Bash command "$cmd"
-    assert_eq "$rc" 0 "passes for agent '$agent': $cmd"
-  done
-done
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-discard" "refused for $agent: $cmd"
+    for other in dev ''; do
+      run_tool "$other" Bash command "$cmd"
+      assert_eq "$rc" 0 "passes for agent '$other': $cmd"
+    done
+  done <<'ROWS'
+reviewer-correctness|git checkout -- tools/ht-tools/src/main.rs
+reviewer-correctness-ken-4159|git checkout -- tools/ht-tools/src/main.rs
+reviewer-security|git checkout -- p
+reviewer-security|git checkout HEAD -- p
+reviewer-security|git -C d restore p
+reviewer-security|git stash
+reviewer-security|git stash pop
+reviewer-security|git stash list
+reviewer-security|git clean -fd
+reviewer-security|git reset --hard
+reviewer-security|git switch main
+reviewer-security|cd x && git checkout -q .
+ROWS
+}
+discard_rows
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control checkout-allowed "$HOOK" \
+    '    if printf '\''%s\n'\'' "$COMMAND" | grep -E -- "$GIT_DISCARD" >/dev/null; then' \
+    '      case "$COMMAND" in *checkout*) exit 0 ;; esac' HOOK discard_rows \
+    'refused for reviewer-correctness: git checkout -- tools/ht-tools/src/main.rs' \
+    'refused for reviewer-correctness-ken-4159: git checkout -- tools/ht-tools/src/main.rs'
+fi
 
 for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
