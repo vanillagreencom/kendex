@@ -4497,7 +4497,7 @@ check_lanes() {
     # and the row is what stops the question being re-reported once the wall
     # lifts; gone and exited clear it on their own paths.
     case "${states[$i]}" in
-      asking) ;;
+      asking|rate-limit-switch) ;;
       working|idle)
         lane_row_clear lane-asking "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
         continue ;;

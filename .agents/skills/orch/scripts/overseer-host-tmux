@@ -33,10 +33,9 @@
 #            interrupt it between opening the window and printing its line.
 #   inspect  prints one keyed line, `session=%N window=@N server=PID
 #            state=STATE`, then the pane's screen. STATE is
-#            lib/lane-state.sh's word for the pane, the one judge every
-#            reader of a lane asks: working, idle, asking, walled, exited,
-#            or unjudged where the screen settles nothing, with `cause=`
-#            naming each scan the judge could not run, comma-separated:
+#            lib/lane-state.sh's word for the pane. That shared judge defines
+#            the states. `cause=` names each scan the judge could not run,
+#            comma-separated:
 #            `limit-scan`, and `process-probe` with `probe=` its exit
 #            status. `--launch` is the first-turn reading a launcher takes
 #            of a pane it opened seconds ago, which has no earlier turn to

@@ -409,6 +409,27 @@ lane_table \
   "a stale prompt under an exited harness is not a question|new|prompt|bash|1|first=$HEARTBEAT1 out~EVENT+lane-asking=false" \
   "...and the second pass reports the lane as exited rather than starved|cont|prompt|bash|2|first=EVENT+lane-exited+gh-2"
 
+# The shared judge distinguishes the optional reminder from work questions.
+# Its watch event keeps the existing dialog delivery and persistent dedup key.
+REMINDER_EXPECT='rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+idle-after-return=false'
+lane_table \
+  "a working Codex lane on its model reminder reports the dialog|new|codex:codex-rate-limit-switch|codex|1|$REMINDER_EXPECT"
+assert_eq "$(grep -c '^EVENT lane-asking gh-2$' <<<"$OUT" || true)" 1 'the model reminder emits one dialog event'
+run 1
+assert_eq "$(watch "rc=0 first=$HEARTBEAT1 out~EVENT+lane-asking=false")" \
+  "rc=0 first=$HEARTBEAT1 out~EVENT+lane-asking=false" 'the unchanged model reminder is not reported again' "$ERR"
+
+REMINDER_WATCH="$(mutant_scripts reminder-watch/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reminder-watch/github"
+mutate_file "$REMINDER_WATCH" '      asking|rate-limit-switch) ;;' '      asking) ;;'
+WATCH_BIN="$REMINDER_WATCH" lane_table \
+  "control: the asking-only route loses the model reminder event|new|codex:codex-rate-limit-switch|codex|1|rc=0 first=$HEARTBEAT1 out~EVENT+lane-asking=false"
+if (FAIL=0; assert_eq "$(watch "$REMINDER_EXPECT")" "$REMINDER_EXPECT" 'model reminder control'; [[ "$FAIL" -eq 0 ]]) >"$TMP_ROOT/reminder-control.out"; then
+  fail 'control: the model reminder assertion accepted the asking-only route'
+else
+  pass 'control: the model reminder assertion rejects the asking-only route'
+fi
+
 echo "=== model-capacity: Codex stopped before it could return ==="
 lane_table \
   "a Codex capacity banner is its own event on the first pass, with nothing under it|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 tail=0 out~EVENT+idle-after-return=false" \
