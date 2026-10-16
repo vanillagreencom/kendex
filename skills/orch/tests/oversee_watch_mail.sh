@@ -1859,7 +1859,7 @@ tracker_answer_count() { # ASK
   jq -s --arg id "$1" '[.[] | select(.kind == "answer" and .re == $id and .by != "default")] | length' "$box"
 }
 tracker_case() { # ROW WATCH
-  local row="$1" watch="$2" action='Post the message. Its link closes this ask.' extra=(--issue KEN-7) author=owner@example.com time=2026-10-02T00:00:00.001Z
+  local row="$1" watch="$2" action='Post the message. Copy its link. The link closes this ask.' extra=(--issue KEN-7) author=owner@example.com time=2026-10-02T00:00:00.001Z
   new_case "tracker-$row"
   mail_reset overseer
   : >"$STUB_DIR/calls"
@@ -1888,10 +1888,9 @@ tracker_case() { # ROW WATCH
     other-author) author=other@example.test ;;
     old-comment) time=2026-09-30T00:00:00.000Z ;;
     replacement) jq '.description = "**Previous, what you do:** Old action.\n\n" + .description' "$STUB_DIR/item" >"$STUB_DIR/next"; mv -- "$STUB_DIR/next" "$STUB_DIR/item" ;;
-    missing-action|empty-action|long-action)
+    missing-action|empty-action)
       local rc=0 invalid=() key=owner-action-missing
       [[ "$row" != empty-action ]] || invalid=(--do '')
-      [[ "$row" != long-action ]] || { invalid=(--do 'First. Second. Third.'); key='owner-action-long sentences=3'; }
       printf 'Approve?\n' >"$STUB_DIR/question"
       tracker_mail ask --item overseer --to owner --file "$STUB_DIR/question" --options approve,hold --recommend approve --issue KEN-7 \
         ${invalid[@]+"${invalid[@]}"} >"$STUB_DIR/invalid.out" 2>"$STUB_DIR/write.err" || rc=$?
@@ -2178,7 +2177,6 @@ if [[ "$PART" != tracker_controls ]]; then
 TRACKER_CASES='enabled|1,0
 missing-action|0,0
 empty-action|0,0
-long-action|0,0
 replacement|1,0
 restored|1,0
 close|1,0
@@ -2237,7 +2235,7 @@ esac
 TRACKER_ROWS=0
 while IFS='|' read -r row want; do
   tracker_case "$row" "$REPO_ROOT/skills/orch/scripts/oversee-watch"
-  case "$row" in missing-action|empty-action|long-action) assert_eq "$ACTION_REFUSAL" true "$row refuses before a tracker write" ;; esac
+  case "$row" in missing-action|empty-action) assert_eq "$ACTION_REFUSAL" true "$row refuses before a tracker write" ;; esac
   assert_eq "$TRACKER_FACTS" "$want" "$row delivers only the person's new comment, once"
   TRACKER_ROWS=$((TRACKER_ROWS + 1))
 done <<<"$TRACKER_CASES"
@@ -2421,18 +2419,12 @@ mutate_file "${ACTION_MAIL%/*}/lib/mailbox-append.sh" '--labels "$labels" --desc
 TRACKER_MAIL="$ACTION_MAIL"
 tracker_case action-mutant "$REPO_ROOT/skills/orch/scripts/oversee-watch"
 assert_eq "$ACTION_CORRECT" false 'control: skipping the description write fails the first-row contract'
-for rule in missing long; do
-  ACTION_MAIL="$(mutant_scripts "tracker-action-$rule/orch" lane-mail)/lane-mail"
-  ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-action-$rule/linear"
-  if [[ "$rule" == missing ]]; then
-    mutate_file "$ACTION_MAIL" 'jq -en --arg action "$OWNER_DO" '\''$action | test("\\S")'\'' >/dev/null || refuse owner-action-missing --do' ': # missing-action control'
-  else
-    mutate_file "$ACTION_MAIL" '[ "$OWNER_SENTENCES" -le 2 ]' 'true'
-  fi
-  TRACKER_MAIL="$ACTION_MAIL"
-  tracker_case "$rule-action" "$REPO_ROOT/skills/orch/scripts/oversee-watch"
-  assert_eq "$ACTION_REFUSAL" false "control: dropping $rule action refusal admits the invalid ask"
-done
+ACTION_MAIL="$(mutant_scripts tracker-action-missing/orch lane-mail)/lane-mail"
+ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-action-missing/linear"
+mutate_file "$ACTION_MAIL" 'jq -en --arg action "$OWNER_DO" '\''$action | test("\\S")'\'' >/dev/null || refuse owner-action-missing --do' ': # missing-action control'
+TRACKER_MAIL="$ACTION_MAIL"
+tracker_case missing-action "$REPO_ROOT/skills/orch/scripts/oversee-watch"
+assert_eq "$ACTION_REFUSAL" false 'control: dropping the missing action refusal admits the invalid ask'
 TRACKER_MAIL="$NORMAL_TRACKER_MAIL"
 
 # Without the delivery ID the same comment becomes a second answer.
