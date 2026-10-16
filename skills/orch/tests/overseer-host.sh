@@ -110,6 +110,23 @@ wait_for() { # PANE TEXT
   return 1
 }
 
+# Hold the shell before it reads the submitted line, so its terminal echo
+# cannot be mistaken for output from the command.
+printf '#!/bin/sh\nexit 99\n' > "$BIN/gh"
+chmod +x "$BIN/gh"
+mkfifo "$TMP_ROOT/echo-release"
+ECHO_PANE="$(new_pane 1 "PATH='$BIN:$PATH'; export PATH; read release < '$TMP_ROOT/echo-release'; exec /bin/sh")"
+tm send-keys -t "$ECHO_PANE" -l "printf done > '$TMP_ROOT/echo-typed'; : 'esc to interrupt'"
+tm send-keys -t "$ECHO_PANE" Enter
+wait_for "$ECHO_PANE" 'esc to interrupt' || exit 1
+if [[ -e "$TMP_ROOT/echo-typed" ]]; then ECHO_WRITTEN=yes; else ECHO_WRITTEN=no; fi
+assert_eq "$ECHO_WRITTEN" no "control: the pane-text wait returns before the submitted command runs"
+printf 'go\n' > "$TMP_ROOT/echo-release"
+await_marker "$TMP_ROOT/echo-typed" || exit 1
+assert_eq "$(cat "$TMP_ROOT/echo-typed")" done \
+  "control: the file wait returns after the submitted command writes its output"
+tm kill-window -t "$ECHO_PANE"
+
 # create after a predecessor: the window starts at the base index, named
 # overseer, in the directory named, and runs the line typed.
 tm kill-window -a -t "$KEEP_WINDOW"
@@ -118,7 +135,7 @@ PRED="$(new_pane 3 'exec sleep 100000')"
 new_pane 5 'exec sleep 100000' >/dev/null
 run_tmux create --cwd "$TMP_ROOT/work" --after "$PRED" --line "pwd > $TMP_ROOT/typed; printf 'esc to interrupt\\n'; exec sleep 100000"
 SESSION="$(field "$OUT" session)"; WINDOW="$(field "$OUT" window)"
-wait_for "$SESSION" 'esc to interrupt' || true
+await_marker "$TMP_ROOT/typed" || exit 1
 assert_eq "$RC|$(layout)|$(field "$OUT" server)|$(cat "$TMP_ROOT/typed" 2>/dev/null)|$(tm display-message -p -t "$SESSION" '#{window_id}')" \
   "0|overseer;w3;w5;|$SERVER_PID|$TMP_ROOT/work|$WINDOW" \
   "create --after opens the window at the base index and types the line"
