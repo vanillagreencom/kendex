@@ -228,11 +228,13 @@ if [[ -n "\${OT_SLEEP_INSTANT:-}" && "\${1:-}" =~ ^[0-9]+\$ && "\$#" -eq 1 ]]; t
 exec "$real_sleep" "\$@"
 STUBEOF
 # ghostty is where open_gui ends: $OT_CAPTURE, when a row sets it, receives the
-# command it hands `bash -lc`, its last argument.
+# command it hands `bash -lc`, its last argument, which the stub then runs as
+# the terminal would, without a login profile. A fresh local fleet Claude
+# launch waits for its starting shell, so a terminal that never runs it fails.
 cat > "$1/ghostty" <<'STUBEOF'
 #!/usr/bin/env bash
 [[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" > "$OT_CAPTURE"
-exit 0
+exec "$BASH" -c "${!#}"
 STUBEOF
 chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty" "$1/sleep"
 # Synchronous handoff reads use SSH, independently of the terminal prefix.

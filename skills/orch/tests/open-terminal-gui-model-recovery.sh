@@ -9,6 +9,7 @@ source "$TEST_ROOT/skills/orch/tests/lib/assertions.sh"
 source "$TEST_ROOT/skills/orch/tests/lib/shared-skill-libs.sh"
 source "$TEST_ROOT/skills/orch/tests/lib/growth-state.sh"
 source "$TEST_ROOT/skills/orch/scripts/lib/lane-state.sh"
+source "$TEST_ROOT/skills/orch/scripts/lib/lane-launch.sh"
 
 mkdir -p "$TMP_ROOT/bin/hold"
 cp -- "$(command -v sleep)" "$TMP_ROOT/bin/hold/claude"
@@ -59,6 +60,11 @@ set -euo pipefail
 LANES
 chmod +x "$TMP_ROOT/bin/claude" "$TMP_ROOT/bin/terminal" "$TMP_ROOT/bin/worktree" "$TMP_ROOT/bin/lanes"
 
+# The launch table owns Claude's full-bypass spelling.
+GUI_BYPASS="$(launch_choice_permission_write claude)" || { echo 'open-terminal-gui-model-recovery: bypass=unread' >&2; exit 1; }
+[[ -n "$GUI_BYPASS" ]] || { echo 'open-terminal-gui-model-recovery: bypass=empty' >&2; exit 1; }
+GUI_FLAGS="$GUI_BYPASS --model claude-opus-4-8 --effort high"
+
 cleanup_gui() {
   local file
   for file in "$TMP_ROOT"/*/tmp/process.*; do
@@ -80,7 +86,7 @@ recovery_contract() { # STATE ARGUMENTS STARTS
   assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$1")" 1 'fresh GUI fallback writes one model-switched row'
   assert_eq "$(wc -l < "$3" | tr -d ' ')" 2 'the real replacement launcher starts a second harness'
   assert_eq "$(jq -r '.lanes[0] | .status=="running" and .surface=="gui" and .launch.pid!=null and .launch.start!=null' "$1")" true 'the replacement is a recorded GUI launch'
-  assert_eq "$(awk '/^--model$/{getline;model=$0} /^--effort$/{getline;effort=$0} /^--dangerously-skip-permissions$/{permissions="bypass"} END{print model "|" effort "|" permissions}' "$2")" \
+  assert_eq "$(awk -v bypass="$GUI_BYPASS" '/^--model$/{getline;model=$0} /^--effort$/{getline;effort=$0} $0==bypass{permissions="bypass"} END{print model "|" effort "|" permissions}' "$2")" \
     'claude-opus-4-8|high|bypass' 'the real replacement keeps the launched model, effort and permissions'
   startup_contract "${3%/*}" "$(tail -n 1 "$3")" 'the replacement harness'
 }
@@ -148,7 +154,7 @@ while IFS='|' read -r name control; do
   launch_rc=0
   (cd -- "$LANE" && env -u TMUX -u TMUX_PANE "${GUI_ENV[@]}" \
     "$S/open-terminal" --state-dir "$LANE/tmp" --harness claude \
-      --launch-flags '--dangerously-skip-permissions --model claude-opus-4-8 --effort high' KEN-4022) > "$LANE/tmp/launch.log" 2>&1 || launch_rc=$?
+      --launch-flags "$GUI_FLAGS" KEN-4022) > "$LANE/tmp/launch.log" 2>&1 || launch_rc=$?
   if [[ -n "$expected_failure" ]]; then
     assert_eq "$launch_rc" 1 "$name refuses the failed startup"
     assert_eq "$(awk -v key="$expected_failure" '$1=="open-terminal:" && $2==key {print $2;exit}' "$LANE/tmp/launch.log")" "$expected_failure" "$name names its failed startup operation"

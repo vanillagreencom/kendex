@@ -29,7 +29,8 @@
 # `claude` CLI.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-unset ORCH_LANE_HOST CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+# A row naming no --state-dir resolves the fixture's state, never the caller's.
+unset ORCH_LANE_HOST ORCH_STATE_DIR CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 export ORCH_OVERSEER_LANES=1000
 export ORCH_OVERSEER_CLOUD_LANES=1000
 # shellcheck source=lib/shared-skill-libs.sh

@@ -15,6 +15,8 @@
 # is one table.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# A row naming no --state-dir resolves the fixture's state, never the caller's.
+unset ORCH_STATE_DIR
 export ORCH_LANE_HOST=local
 # Every row launches into one fleet state; the fleet cap has its own suite,
 # open-terminal-cap.sh, and is out of this one's way.
@@ -39,8 +41,10 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
-# Stubs: the GUI terminal and the harness binaries exit 0 without running
-# anything, gh answers nothing, lanes clears every lane, and tmux answers the
+# Stubs: the GUI terminal runs the command it is handed without a login
+# profile, since a fresh local fleet Claude launch waits for its starting
+# shell; the harness binaries exit 0, claude after writing its arguments to
+# STUB_CLAUDE_ARGV where a row sets it; gh answers nothing, lanes clears every lane, and tmux answers the
 # few reads a --cmd launch and a wake make; a hosted row sets STUB_PANE_CMD
 # and STUB_PANE_TEXT so the pane reads as an ssh session at its prompt. The
 # launching pane's session is STUB_SESSION_NAME; with that empty the read
@@ -57,7 +61,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # otherwise.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
+printf '#!/usr/bin/env bash\nexec "$BASH" -c "${!#}"\n' > "$BIN/ghostty"
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 # The resolver's `gh repo view` rung, answered only where a row arms it.
@@ -81,7 +85,7 @@ exit 0
 LANES
 # claude holds while the file STUB_CLAUDE_HOLD names exists, a woken turn
 # still running, and exits at once where no row sets it.
-printf '#!/usr/bin/env bash\nwhile [[ -n "${STUB_CLAUDE_HOLD:-}" && -e "$STUB_CLAUDE_HOLD" ]]; do sleep 0.1; done\nexit 0\n' > "$BIN/claude"
+printf '#!/usr/bin/env bash\n[[ -z "${STUB_CLAUDE_ARGV:-}" ]] || { printf "%%s\\n" "$@" > "$STUB_CLAUDE_ARGV.part" && mv -- "$STUB_CLAUDE_ARGV.part" "$STUB_CLAUDE_ARGV"; }\nwhile [[ -n "${STUB_CLAUDE_HOLD:-}" && -e "$STUB_CLAUDE_HOLD" ]]; do sleep 0.1; done\nexit 0\n' > "$BIN/claude"
 # kendex hooks-off, which a Copilot fleet launch asks whether Copilot's settings
 # switch its hooks off: nothing does here.
 cat > "$BIN/kendex" <<'EOF'
@@ -536,26 +540,39 @@ echo "=== a relaunch reads the handoff record where the lane wrote it ==="
 # none. The relaunch asks where the lane wrote it and starts afresh.
 # retired_under SCRIPT — rc, the retirement line, the session id recorded,
 # whether session_since, first moved to the fixed past launched_at holds, was
-# renewed, and launched_at. The fresh start reads no session id, so the lane
-# readers bind its record through session_since alone, which must name this
-# relaunch and not the launch whose session it retired.
+# renewed, and launched_at. The fresh start passes Claude a new --session-id
+# and records it; the session reads `launched` when the record names the id
+# the started harness received. session_since must name this relaunch and not
+# the launch whose session it retired.
 retired_under() {
+  local argv="$TMP_ROOT/retired.argv" since session launched="" deadline
+  rm -f -- "${TMP_ROOT:?}/retired.argv"
   "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_since = "'"$LAUNCHED_AT"'")' >/dev/null
   mkdir -p "$TMP_ROOT/wt/CC-1/tmp"
   printf '%s\n' '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}' \
     > "$TMP_ROOT/wt/CC-1/tmp/workflow-state-CC-1.json"
-  run_ot SCRIPT="$1" --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
+  STUB_CLAUDE_ARGV="$argv" run_ot SCRIPT="$1" --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
   rm -f -- "${TMP_ROOT:?}/wt/CC-1/tmp/workflow-state-CC-1.json"
-  local since
+  if [[ "$RC" == 0 ]]; then
+    # The terminal starts the harness after open-terminal releases it.
+    deadline=$((SECONDS + 15))
+    while [[ ! -e "$argv" ]]; do
+      [[ "$SECONDS" -lt "$deadline" ]] || { echo 'open-terminal-record: harness-argv=missing' >&2; return 1; }
+      sleep 0.05
+    done
+    launched="$(awk 'prev == "--session-id" { print; exit } { prev = $0 }' "$argv")"
+  fi
   since="$(session_since CC-1)"
+  session="$(field "$(record CC-1)" session_id)"
+  [[ -z "$launched" || "$session" != "$launched" ]] || session=launched
   printf 'rc=%s retired=%s session=%s since=%s launched_at=%s' "$RC" "$(grep -c '^open-terminal: session-retired item=CC-1 harness=claude$' <<<"$OUT" || true)" \
-    "$(field "$(record CC-1)" session_id)" "$([[ "$since" != "$LAUNCHED_AT" ]] && stamped "$since" || echo kept)" "$(field "$(record CC-1)" launched_at)"
+    "$session" "$([[ "$since" != "$LAUNCHED_AT" ]] && stamped "$since" || echo kept)" "$(field "$(record CC-1)" launched_at)"
 }
-assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
+assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=launched since=iso launched_at=$LAUNCHED_AT" \
   "a record only the lane's worktree state holds retires its session though --state-dir names another directory, and the fresh start renews session_since while launched_at stands"
 SINCE_MUTANT="$(mutant_scripts since-mutant open-terminal)" || exit 1
 mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs)'
-assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=null since=kept launched_at=$LAUNCHED_AT" \
+assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=launched since=kept launched_at=$LAUNCHED_AT" \
   "control: a relaunch that keeps session_since leaves the fresh start bound to the launch whose session it retired"
 RETIRED_MUTANT="$(mutant_scripts retired-mutant open-terminal)" || exit 1
 mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"' \
@@ -566,7 +583,7 @@ assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 ses
 # record stands in the worktree's own tmp, where a lane whose launch forbids
 # writing elsewhere keeps it: the relaunch reads that place too.
 printf '[env]\nORCH_STATE_DIR = "state"\n' > "$TMP_ROOT/wt/CC-1/kendex.settings.toml"
-assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
+assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=launched since=iso launched_at=$LAUNCHED_AT" \
   "a record in the lane worktree's tmp retires its session where its state directory setting names another"
 PLACE_MUTANT="$(mutant_scripts place-mutant open-terminal)" || exit 1
 mutate_file "$PLACE_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"' \

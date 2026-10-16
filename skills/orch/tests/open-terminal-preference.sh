@@ -34,7 +34,8 @@ for harness in claude codex pi; do
   cat > "$BIN/$harness" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\0' "${0##*/}" "$@" > "$PREFERENCE_ARGV"
+printf '%s\0' "${0##*/}" "$@" > "$PREFERENCE_ARGV.part"
+mv -- "$PREFERENCE_ARGV.part" "$PREFERENCE_ARGV"
 STUB
   chmod +x "$BIN/$harness"
 done
@@ -60,16 +61,11 @@ printf '[env]\nORCH_LANE_PREFERENCE = "%s"\n' "$PREF" > "$REPO/kendex.settings.t
 assert_eq "$(cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT/home" scripts/orch-env ORCH_LANE_PREFERENCE '')" "$PREF" 'orch-env reads the program preference from settings'
 OT="$REPO/scripts/open-terminal"
 
-# Read the arguments from the child, after executing the captured transport.
-# NUL separates arguments; shell quoting lets the existing readers consume
-# them without losing spaces or prompt newlines.
-executed_command() { # LINE
+# The arguments the harness child received, from $RUN/argv. NUL separates
+# arguments; shell quoting lets the existing readers consume them without
+# losing spaces or prompt newlines.
+argv_command() {
   local word quoted command=""
-  : > "$RUN/argv"
-  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" \
-    PI_CODING_AGENT_DIR="$TMP_ROOT/pi" PREFERENCE_ARGV="$RUN/argv" \
-    "$BASH" -c 'clear() { :; }; eval "$1"' preference "$1" > "$RUN/replay.out" 2> "$RUN/replay.err" \
-    || { cat "$RUN/replay.err" >&2; return 1; }
   [[ -s "$RUN/argv" ]] || { echo 'open-terminal-preference: argv=missing' >&2; return 1; }
   while IFS= read -r -d '' word; do
     printf -v quoted '%q' "$word"
@@ -78,9 +74,20 @@ executed_command() { # LINE
   printf '%s\n' "$command"
 }
 
+# Read the arguments from the child, after executing the captured transport.
+executed_command() { # LINE
+  : > "$RUN/argv"
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" \
+    PI_CODING_AGENT_DIR="$TMP_ROOT/pi" PREFERENCE_ARGV="$RUN/argv" \
+    "$BASH" -c 'clear() { :; }; eval "$1"' preference "$1" > "$RUN/replay.out" 2> "$RUN/replay.err" \
+    || { cat "$RUN/replay.err" >&2; return 1; }
+  argv_command
+}
+
 # Each observation uses fresh state, an explicit child environment and a GUI
-# stub. A successful GUI dispatch is asynchronous, so wait for its capture,
-# bounded by wall time, rather than reading a log before the stub writes it.
+# stub that runs the launched command. A successful GUI dispatch is
+# asynchronous, so wait for the harness child's arguments, bounded by wall
+# time, rather than reading them before the child writes them.
 observe() { # PREFERENCE WALL MODE TEXT
   local preference="$1" wall="$2" mode="$3" text="$4" caller="${5:-pi}" rc=0 key=none record='none|none|none' cmd="" written=no end args=()
   RUN="$TMP_ROOT/run"
@@ -96,14 +103,13 @@ observe() { # PREFERENCE WALL MODE TEXT
     ORCH_LANE_PREFERENCE="$preference" ORCH_OVERSEER_LANES=3 ORCH_TMUX_SESSION= \
     OVERSEE_WATCH_STATE_DIR="$RUN/claims" WORKTREE_CLI="$BIN/worktree" LANES_CLI="$BIN/lanes" \
     PI_CODING_AGENT_DIR="$TMP_ROOT/pi" CODEX_TEST_HOME="$TMP_ROOT/codex" \
-    WALL="$wall" PICK_LOG="$RUN/picks" OT_WT_LOG="$RUN/worktrees" OT_CAPTURE="$RUN/command" TERMINAL=ghostty \
+    WALL="$wall" PICK_LOG="$RUN/picks" OT_WT_LOG="$RUN/worktrees" PREFERENCE_ARGV="$RUN/argv" TERMINAL=ghostty \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$OT" --ghostty --state-dir "$RUN/state" --harness "$caller" --lane auto \
     ${args[@]+"${args[@]}"} CC-1 > "$RUN/out" 2> "$RUN/err") || rc=$?
   if [[ "$rc" -eq 0 ]]; then
     end=$((SECONDS + 10))
-    while [[ ! -s "$RUN/command" ]] && (( SECONDS < end )); do sleep 0.01; done
-    [[ -s "$RUN/command" ]] || { echo 'open-terminal-preference: capture=missing' >&2; exit 1; }
-    cmd="$(executed_command "$(cat -- "$RUN/command")")" || exit 1
+    while [[ ! -s "$RUN/argv" ]] && (( SECONDS < end )); do sleep 0.01; done
+    cmd="$(argv_command)" || exit 1
     if { launch_choice_words_present 'pi' "$cmd" &&
          launch_choice_words_present '--model github-copilot/gpt-6.1-sol --thinking high' "$cmd"; } ||
        { launch_choice_words_present 'codex' "$cmd" &&
