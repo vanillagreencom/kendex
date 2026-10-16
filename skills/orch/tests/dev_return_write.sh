@@ -382,6 +382,52 @@ APPLE_ROWS=(
   "a FAILING mac run test needs no pass line and no labels|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=0 .validate=FAILING:+mac+run+test roundtrip=valid"
 )
 table "${APPLE_ROWS[@]}"
+# Each project is private to its row: unsupported names must not arm the
+# neutral fixture used to prove unrelated and Linux source exclusions.
+ESCAPE_ROWS=(
+  'a quoted object kind and literal Unicode name|"PBXFileReference"|path|Café.swift|App/Café.swift|path=App/Café.swift'
+  'an unsupported file path escape|PBXFileReference|path|Caf\U00e9.swift|App/Café.swift|project=App.xcodeproj/project.pbxproj'
+  'an unsupported file name escape|PBXFileReference|name|Caf\U00e9.swift|App/Café.swift|project=App.xcodeproj/project.pbxproj'
+  'an unsupported synchronized path escape|PBXFileSystemSynchronizedRootGroup|path|Caf\U00e9|Café/New.swift|project=App.xcodeproj/project.pbxproj'
+  'an unsupported synchronized name escape|PBXFileSystemSynchronizedRootGroup|name|Caf\U00e9|Café/New.swift|project=App.xcodeproj/project.pbxproj'
+  'an escaped quote reference|PBXFileReference|path|Quoted\"Name.swift|App/Quoted"Name.swift|path=App/Quoted"Name.swift'
+  'an escaped backslash reference|PBXFileReference|path|Literal\\Name.swift|App/Literal\Name.swift|path=App/Literal\Name.swift'
+  'a literal backslash before U|PBXFileReference|path|Caf\\U00e9.swift|App/Caf\U00e9.swift|path=App/Caf\U00e9.swift'
+  'an unrelated edit beside quote and backslash pairs|PBXFileReference|path|Quoted\"And\\Name.swift|notes.txt|none'
+  'an unrelated edit beside a literal backslash before U|PBXFileReference|path|Caf\\U00e9.swift|notes.txt|none'
+  'an unrelated shell script escape|PBXShellScriptBuildPhase|shellScript|printf \"done\n\"|notes.txt|none'
+  'unrelated group metadata escapes|PBXGroup|path|Caf\U00e9|notes.txt|none'
+)
+ESCAPE_CONTROL_ARGS=""
+escape_index=0
+for row in "${ESCAPE_ROWS[@]}"; do
+  IFS='|' read -r label object_kind field spelling changed_path cause <<<"$row"
+  escape_index=$((escape_index + 1))
+  EW="$(new_repo "apple-escape-$escape_index")"
+  mkdir -p "$EW/.github/workflows" "$EW/App.xcodeproj" "$EW/$(dirname "$changed_path")"
+  printf 'name: mac-run\n' > "$EW/.github/workflows/mac-run.yml"
+  printf '{ objects = { REF = { %s = "%s"; isa = %s; }; }; }\n' "$field" "$spelling" "$object_kind" \
+    > "$EW/App.xcodeproj/project.pbxproj"
+  printf 'base\n' > "$EW/$changed_path"
+  git -C "$EW" add -- .github App.xcodeproj "$changed_path"
+  git -C "$EW" commit -q -m project
+  git -C "$EW" switch -q -c work
+  printf 'changed\n' > "$EW/$changed_path"
+  git -C "$EW" add -- "$changed_path"
+  git -C "$EW" commit -q -m source
+  E_HEAD="$(git -C "$EW" rev-parse HEAD)"
+  E_ARGS="--worktree $EW --kind implement --issue issue-apple-escape --round-id 30-30 --branch b --commit $E_HEAD --no-labels --validate pass --validate-run-dir $VRUN"
+  if [[ "$cause" == none ]]; then
+    expect="rc=0 written=yes .validate_note=null"
+  else
+    expect="rc=2 written=no stderr~dev-return-write:+mac-run-missing+$cause=true"
+  fi
+  table "$label|$E_ARGS|$expect"
+  if [[ "$object_kind/$field/$spelling" == 'PBXFileReference/path/Caf\U00e9.swift' ]]; then
+    ESCAPE_CONTROL_ARGS="$E_ARGS"
+  fi
+done
+[[ -n "$ESCAPE_CONTROL_ARGS" ]] || exit 1
 # An incomplete Git object store can list a committed project without reading it.
 UW="$(new_repo apple-unreadable)"
 mkdir -p "$UW/.github/workflows" "$UW/App.xcodeproj"
@@ -461,6 +507,7 @@ APPLE_CONTROLS=(
   "Xcode source names|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] && false; then|$APN --commit $A_SOURCE|rc=0"
   "Xcode test names|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] && false; then|$APN --commit $A_TEST|rc=0"
   "Linux source exclusion|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]]; then|if [[ -n \"\$member\" && \"\$segment\" == \"\$member\" ]] \|\| [[ \"\$path\" == *.swift ]]; then|$APN --commit $A_LINUX_SOURCE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=linux-package/Sources/LinuxUtility/LinuxEntry.swift=true"
+  "unsupported input escapes|if escaped not in (chr(34), chr(92)):|if escaped not in (chr(34), chr(92)) and False:|$ESCAPE_CONTROL_ARGS|rc=0 written=yes .validate_note=null"
   "renamed paths|--name-only --no-renames -z|--name-only -z|$APN --commit $A_MOVED|rc=0"
   "manifest platforms|if LC_ALL=C grep -Eq -- \"\$APPLE_MANIFEST_PLATFORMS\" <<<\"\$manifest\"; then|if false; then|$APN --commit $A_PKG_IOS|rc=0"
   "deleted manifest|[[ -n \"\$listed\" ]] \|\| continue|[[ -n \"\$listed\" ]] \|\| true|$APN --commit $A_PKG_DELETED|rc=2"

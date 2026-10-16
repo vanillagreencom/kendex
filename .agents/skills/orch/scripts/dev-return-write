@@ -766,6 +766,13 @@ apple_trigger() {
 import re
 import sys
 
+def name_escape(match):
+    escaped = match.group(1)
+    # Other OpenStep escapes can change the name; require Mac proof.
+    if escaped not in (chr(34), chr(92)):
+        sys.exit(1)
+    return escaped
+
 tokens = re.finditer(r"/\*.*?\*/|//[^\n]*|\"(?:\\.|[^\"\\])*\"|[{}=;()]|[^\s{}=;()]+", sys.stdin.read(), re.S)
 objects = []
 statement = []
@@ -778,17 +785,18 @@ for match in tokens:
         statement = []
     elif token == "}":
         obj = objects.pop()
-        if obj.get("isa") in ("PBXFileReference", "PBXFileSystemSynchronizedRootGroup"):
+        if obj.get("isa", "").strip(chr(34)) in ("PBXFileReference", "PBXFileSystemSynchronizedRootGroup"):
             for key in ("path", "name"):
-                for part in obj.get(key, "").split("/"):
+                value = obj.get(key, "")
+                if value.startswith(chr(34)):
+                    value = re.sub(r"\\(.)", name_escape, value[1:-1], flags=re.S)
+                for part in value.split("/"):
                     if part and part not in (".", ".."):
                         print(part)
         statement = []
     elif token == ";":
         if objects and len(statement) == 3 and statement[1] == "=":
             key, _, value = statement
-            if value.startswith(chr(34)):
-                value = re.sub(r"\\(.)", r"\1", value[1:-1])
             objects[-1][key] = value
         statement = []
     else:
