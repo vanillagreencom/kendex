@@ -113,12 +113,6 @@ screen_for() {
     # child badge come from renderStatusLine and subagentStatuslineMarker.
     pi_current_idle) sed '/^● fleet /s/^● //' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_other_busy) sed '/^● fleet /s/^● /⠋ Compacting context... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_animated) sed '/^● fleet /s/^● /⠏ /' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_retry) sed '/^● fleet /s/^● /⠙ Retrying (1\/3) in 2s... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_auto_compact) sed '/^● fleet /s/^● /⠹ Context overflow detected, Auto-compacting... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_summary) sed '/^● fleet /s/^● /⠸ Summarizing branch... (esc to cancel) /' "$CODEX_PANES/pi-current.txt" ;;
-    pi_current_transcript_bullet) printf '● Finished the task.\n'; screen_for pi_current_idle ;;
-    pi_current_quoted_footer) screen_for pi_current; screen_for pi_current_idle ;;
     pi_current_idle_empty_bar_no_dashboard) screen_for pi_current_empty_bar_no_dashboard | sed '/^● fleet /s/^● //' ;;
     pi_current_unknown_context_suffix) screen_for pi_current_idle_empty_bar_no_dashboard | sed '/^fleet /s/0%/…% child-agent/' ;;
     pi_current_idle_no_title) screen_for pi_current_idle_empty_bar_no_dashboard | sed '1d' ;;
@@ -134,18 +128,18 @@ screen_for() {
 
 echo "=== lane-state § states: one row per state, over screens and process reads ==="
 
-# NAME|WINDOW|CMD|PID|SCREEN|SESSION|ACCOUNT|WANT|LOCALE
+# NAME|WINDOW|CMD|PID|SCREEN|SESSION|ACCOUNT|WANT
 #
 # Every state the judge can name has a row, and each row is the inverse of a
 # neighbour: the same screen under a different process observation or account
 # reading, or the same process under a different screen, lands elsewhere in the
 # table. WANT is the one word plus the status, so a row fails on the fact it
 # names.
-while IFS='|' read -r name window cmd pid screen session account want screen_locale; do
+while IFS='|' read -r name window cmd pid screen session account want; do
   [[ -n "$name" ]] || continue
   row_state=""
   row_rc=0
-  LC_ALL="${screen_locale:-C}" lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" "$account" || row_rc=$?
+  lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" "$account" || row_rc=$?
   assert_eq "$row_state rc=$row_rc" "$want rc=0" "$name"
 done <<'ROWS'
 no window is gone, whatever its last screen said|gone|claude|100|idle|||gone
@@ -183,41 +177,9 @@ a signed-out copilot capture is walled despite its idle composer|listed|node|100
 a signed-out copilot capture is walled despite its draft|listed|node|100|copilot_signed_out_draft|||walled
 a copilot footer running a command is a turn in flight|listed|node|100|copilot_working|||working
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
-a current idle Pi editor is input-ready|listed|pi|100|pi_current_idle|||idle
-a compact pi-qol editor is input-ready|listed|pi|100|pi_qol_idle|||idle
-a static working Pi footer refuses input|listed|pi|100|pi_current|||working
-a static working Pi footer refuses input in UTF-8 locale|listed|pi|100|pi_current|||working|C.UTF-8
-an animated working Pi footer refuses input|listed|pi|100|pi_current_animated|||working
-a compacting Pi footer refuses input|listed|pi|100|pi_current_other_busy|||working
-a compacting Pi footer refuses input in UTF-8 locale|listed|pi|100|pi_current_other_busy|||working|C.UTF-8
-an automatic compaction Pi footer refuses input|listed|pi|100|pi_current_auto_compact|||working
-a retrying Pi footer refuses input|listed|pi|100|pi_current_retry|||working
-a branch summary Pi footer refuses input|listed|pi|100|pi_current_summary|||working
-a transcript bullet does not make idle Pi busy|listed|pi|100|pi_current_transcript_bullet|||idle
-a quoted active footer does not make idle Pi busy|listed|pi|100|pi_current_quoted_footer|||idle
-a Pi working editor stays refused|listed|pi|100|pi_working|||unjudged
-a dialog in a Pi pane stays refused|listed|pi|100|asking|||asking
-a busy Pi process outranks its editor|listed|pi|100|pi_qol_idle|busy||working
-an unreadable Pi process stays refused|listed|pi|100|pi_qol_idle|unjudged||unjudged
-a Pi editor without its footer stays unjudged|listed|pi|100|pi_current_no_footer|||unjudged
-a Pi editor without its prompt stays unjudged|listed|pi|100|pi_current_idle_no_prompt|||unjudged
+a Pi pane without rows remains unjudged|listed|pi|100|pi_current_idle|||unjudged
+a pi-qol pane without rows remains unjudged|listed|pi|100|pi_qol_idle|||unjudged
 ROWS
-
-lane_state row_state listed pi 100 "$(screen_for pi_qol_idle)" '' '' '' '' '' unreadable
-assert_eq "$row_state" unjudged 'an unreadable Pi pane stays refused'
-PI_INPUT_MUTANT="$(mutant_scripts pi-input lib/lane-state.sh)" || exit 1
-mutate_file "$PI_INPUT_MUTANT/lib/lane-state.sh" '|| pane_pi_editor_ready "$_ls_slice"' ''
-for screen in pi_current_idle pi_qol_idle; do
-  pi_input_control="$(source "$PI_INPUT_MUTANT/lib/lane-state.sh"; lane_state row_state listed pi 100 "$(screen_for "$screen")"; printf '%s' "$row_state")"
-  assert_eq "$pi_input_control" unjudged "control: removing Pi input readiness rejects $screen"
-done
-
-PI_ACTIVITY_MUTANT="$(mutant_scripts pi-activity lib/lane-state.sh)" || exit 1
-mutate_file "$PI_ACTIVITY_MUTANT/lib/lane-state.sh" 'activity="$PI_CURRENT_ACTIVITY_RE"' 'activity="a^"'
-for screen in pi_current pi_current_other_busy; do
-  pi_activity_control="$(source "$PI_ACTIVITY_MUTANT/lib/lane-state.sh"; lane_state row_state listed pi 100 "$(screen_for "$screen")"; printf '%s' "$row_state")"
-  assert_eq "$pi_activity_control" idle "control: without footer activity the active $screen editor wrongly accepts input"
-done
 
 # A disabled classifier leaves the signed-out capture at the composer rung.
 # Both inputs came from the no-login KEN-1985 host, not a signed-in session.
@@ -399,6 +361,66 @@ a fragment a killed writer left is passed over for the row before it|fragment|pi
 a row no lane writer writes is unreadable, and unreadable is unjudged|foreign|pi|100|idle|unreadable|unjudged
 a bare shell with nothing under it is exited, whatever the rows say|ended|bash|101|shell|idle|exited
 ROWS
+
+echo "=== lane-state § input: trusted Pi rows and ordinary harness judgments ==="
+
+# The provider reads these existing Stop/PreToolUse rows in its sandbox and
+# passes their verdict to the input gate. '-' means it supplied no ROWS.
+# NAME|CMD|HARNESS|SCREEN|SESSION|ACCOUNT|ROW_FILE|SOURCE|WANT_STATE|WANT_RC
+while IFS='|' read -r name cmd harness screen session account rows source want_state want_rc; do
+  word=""
+  if [[ "$rows" != - ]]; then
+    pi_row_file "$rows"
+    if session_rows_lane_verdict "$PI_ROWS_FILE"; then word="$SESSION_ROWS_VERDICT"
+    else word=unreadable; fi
+  fi
+  row_state=""
+  row_rc=0
+  lane_input_ready row_state listed "$cmd" 100 "$(screen_for "$screen")" "$session" "$account" "$word" "" "$harness" "$source" || row_rc=$?
+  assert_eq "state=$row_state rc=$row_rc" "state=$want_state rc=$want_rc" "$name"
+done <<'ROWS'
+the retained idle editor accepts a Stop verdict|pi|pi|pi_current_idle|||ended|provider|idle|0
+the real pi-qol idle capture accepts a Stop verdict|pi|pi|pi_qol_idle|||ended|provider|idle|0
+the retained idle editor refuses absent ROWS|pi|pi|pi_current_idle|||-|provider|unjudged|1
+the real pi-qol idle capture refuses absent ROWS|pi|pi|pi_qol_idle|||-|provider|unjudged|1
+an empty row file cannot establish readiness|pi|pi|pi_qol_idle|||none|provider|unjudged|1
+the retained idle editor refuses unreadable ROWS|pi|pi|pi_current_idle|||foreign|provider|unjudged|1
+the real pi-qol idle capture refuses unreadable ROWS|pi|pi|pi_qol_idle|||foreign|provider|unjudged|1
+the retained editor refuses a tool call after Stop|pi|pi|pi_current_idle|||reopened|provider|working|1
+hidden activity on the same pi-qol screen refuses a tool call after Stop|pi|pi|pi_qol_idle|||reopened|provider|working|1
+the active footer refuses working ROWS|pi|pi|pi_current|||reopened|provider|working|1
+the compacting footer refuses working ROWS|pi|pi|pi_current_other_busy|||reopened|provider|working|1
+the retained idle editor refuses a usage wall|pi|pi|pi_current_idle|||limit|provider|walled|1
+the real pi-qol idle capture refuses a usage wall|pi|pi|pi_qol_idle|||limit|provider|walled|1
+account room cannot authorize input from walled ROWS|pi|pi|pi_qol_idle||room|limit|provider|unjudged|1
+SESSION idle cannot replace missing Pi ROWS|pi|pi|pi_current_idle|idle||-|provider|unjudged|1
+SESSION idle cannot replace missing pi-qol ROWS|pi|pi|pi_qol_idle|idle||-|provider|unjudged|1
+a busy SESSION still refuses an idle row|pi|pi|pi_qol_idle|busy||ended|provider|working|1
+an unreadable SESSION still refuses an idle row|pi|pi|pi_qol_idle|unjudged||ended|provider|unjudged|1
+an unreadable capture still refuses an idle row|pi|pi|pi_qol_idle|||ended|unreadable|unjudged|1
+the old working editor refuses absent ROWS|pi|pi|pi_working|||-|provider|unjudged|1
+a dialog refuses absent Pi ROWS|pi|pi|asking|||-|provider|asking|1
+a dialog cannot authorize input over working ROWS|pi|pi|asking|||reopened|provider|working|1
+the provider must name its intended harness|pi||pi_qol_idle|idle||-|provider|unjudged|1
+Claude input retains its idle answer|claude|claude|idle|||-|provider|idle|0
+Claude input retains its working refusal|claude|claude|working|||-|provider|working|1
+Claude input retains its dialog refusal|claude|claude|asking|||-|provider|asking|1
+Codex input retains its idle answer|codex|codex|codex_idle|||-|provider|idle|0
+Codex input retains its working refusal|codex|codex|codex_working|||-|provider|working|1
+Codex input retains its unreadable capture refusal|codex|codex|codex_idle|||-|unreadable|unjudged|1
+ROWS
+
+PI_INPUT_MUTANT="$(mutant_scripts pi-input lib/lane-state.sh)" || exit 1
+mutate_file "$PI_INPUT_MUTANT/lib/lane-state.sh" 'if [[ -z "$_lir_harness" || ( "$_lir_harness" == pi && "$_lir_rows" != idle ) ]]; then' 'if false && [[ -z "$_lir_harness" || ( "$_lir_harness" == pi && "$_lir_rows" != idle ) ]]; then'
+for screen in pi_current_idle pi_qol_idle; do
+  pi_input_control="$(
+    source "$PI_INPUT_MUTANT/lib/lane-state.sh"
+    control_rc=0
+    lane_input_ready row_state listed pi 100 "$(screen_for "$screen")" idle '' '' '' pi provider || control_rc=$?
+    printf 'state=%s rc=%s' "$row_state" "$control_rc"
+  )"
+  assert_eq "$pi_input_control" 'state=idle rc=0' "control: removing trusted ROWS admission wrongly accepts $screen from SESSION alone"
+done
 
 echo "=== lane-state § observe: the pane handed to the judge ==="
 

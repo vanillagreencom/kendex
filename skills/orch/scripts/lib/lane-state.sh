@@ -132,18 +132,7 @@ FRAME_RULE_RE=$'^\xe2\x94\x80'
 DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
-pane_working() {
-  local rc=0
-  grep -Eq -- "$WORKING_RE" <<<"$1" || rc=$?
-  [[ "$rc" == 1 ]] || return "$rc"
-  # QolStatusEditor embeds Pi's live indicator in renderStatusLine's model
-  # footer. Read the last footer so quoted captures and transcript bullets
-  # above an idle footer cannot turn a completed turn back into work.
-  awk -v footer="$PI_CURRENT_FOOTER_RE" -v activity="$PI_CURRENT_ACTIVITY_RE" '
-    $0 ~ footer { working = ($0 ~ activity) }
-    END { exit !working }
-  ' <<<"$1"
-}
+pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
 
 # The folder-trust question, which STOPS a harness before it reads the
 # arguments it was launched with. Claude Code asks it about a folder it holds
@@ -216,26 +205,18 @@ PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working (─)+[[:space:]]*$'
 # Group repeated glyphs so byte-oriented C locale repeats the whole character.
 PI_CURRENT_TITLE_RE=$'^──[[:space:]\xc2\xa0]+π - .+[[:space:]\xc2\xa0]+(─)+[[:space:]]*$'
 # pi-qol joins variable metadata with " / " and draws a percent display token.
-# Bar fill, context values and child badges vary independently of editor
-# readiness. pane_working owns the activity prefix's meaning.
+# Activity prefixes, bar fill, context values and child badges vary independently
+# of editor readiness; do not interpret them here.
 PI_CURRENT_FOOTER_RE='^.+ / .+ [^[:space:]]+%([[:space:]].*)?$'
-# pi-qol applyWorkingIndicatorMode emits ● in static mode. Pi's Loader emits
-# these frames for animated work, retry, compaction and branch summaries.
-# Alternation keeps whole glyphs intact in byte-oriented C locale.
-PI_CURRENT_ACTIVITY_RE='^(●|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)[[:space:]]'
 PI_CURRENT_PROMPT_RE='^π[[:space:]]*$'
-
-# The compact editor can put its title in tmux's pane border, outside capture.
-pane_pi_editor_ready() {
-  grep -Eq -- "$PI_CURRENT_FOOTER_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_PROMPT_RE" <<<"$1"
-}
 
 # pane_harness_up SCREEN — the predicate over one captured pane.
 pane_harness_up() {
   pane_working "$1" || grep -Eq -- "$HARNESS_UP_RE" <<<"$1" \
     || [[ "$(pane_turn_slice "$1" framed)" == framed ]] \
     || { grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" && grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1"; } \
-    || { grep -Eq -- "$PI_CURRENT_TITLE_RE" <<<"$1" && pane_pi_editor_ready "$1"; }
+    || { grep -Eq -- "$PI_CURRENT_TITLE_RE" <<<"$1" && grep -Eq -- "$PI_CURRENT_FOOTER_RE" <<<"$1" \
+      && grep -Eq -- "$PI_CURRENT_PROMPT_RE" <<<"$1"; }
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the
@@ -1169,7 +1150,7 @@ lane_state() {
     busy) printf -v "$_ls_out" working; return 0 ;;
     *) printf -v "$_ls_out" unjudged; return 0 ;;
   esac
-  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice" || pane_pi_editor_ready "$_ls_slice"; then printf -v "$_ls_out" idle; return 0; fi
+  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" idle; return 0; fi
   # The screen settles nothing: no marker of any kind, which is what a lane
   # mid-redraw, a lane running a full-screen program over its harness, and a
   # pane whose capture failed all look like. A caller that read the harness
@@ -1179,6 +1160,24 @@ lane_state() {
     idle) printf -v "$_ls_out" idle ;;
     *) printf -v "$_ls_out" unjudged ;;
   esac
+}
+
+# lane_input_ready takes lane_state's arguments, with HARNESS required even
+# when HOSTED_ITEM is empty. OUT_VAR retains the state for provider diagnostics.
+# Exit 0 permits input, 1 refuses, and lane_state's scan errors retain status 2.
+# Pi's pulse and hidden indicators cannot establish activity from a capture.
+# Its provider must supply session_rows_lane_verdict's idle ROWS verdict;
+# lane_state alone can also reach idle through SESSION or a lifted wall.
+lane_input_ready() {
+  local _lir_out="$1" _lir_rows="${8:-}" _lir_harness="${10:-}" _lir_state=unjudged _lir_rc=0
+  shift
+  lane_state _lir_state "$@" || _lir_rc=$?
+  if [[ -z "$_lir_harness" || ( "$_lir_harness" == pi && "$_lir_rows" != idle ) ]]; then
+    [[ "$_lir_state" != idle ]] || _lir_state=unjudged
+  fi
+  printf -v "$_lir_out" '%s' "$_lir_state"
+  [[ "$_lir_rc" -eq 0 ]] || return "$_lir_rc"
+  [[ "$_lir_state" == idle ]]
 }
 
 # ---------------------------------------------------------------------------
