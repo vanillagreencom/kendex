@@ -16,11 +16,13 @@ export WORKTREE_DEFAULT_BRANCH=main
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+unset COMMIT_GUARDS_CHANGELOG_PATHS
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
 source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+SETTINGS_LIB="$(cd "$TEST_DIR/../../commit-guards/scripts/lib" && pwd)/settings.sh"
 TMP_ROOT="$(mktemp -d)" || { echo "worktree_restack_replay: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "worktree_restack_replay: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "worktree_restack_replay: scratch=resolve-failed" >&2; exit 1; }
@@ -182,6 +184,23 @@ step() {
     # a replay genuinely conflicts.
     conflict)
       make_pair
+      commit_wt file.txt feature
+      commit_main file.txt main-side
+      ;;
+    # The conflict world, where the main checkout commits a settings key the
+    # issue branch moves.
+    settings-conflict)
+      make_repo "$MAIN"
+      printf '[env]\nCOMMIT_GUARDS_CHANGELOG_PATHS = "main-value"\n' >"$MAIN/kendex.settings.toml"
+      git -C "$MAIN" add kendex.settings.toml
+      git -C "$MAIN" commit -q -m 'main: settings'
+      git init -q --bare "$ROOT/origin.git"
+      git -C "$MAIN" remote add origin "$ROOT/origin.git"
+      git -C "$MAIN" push -q -u origin main
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
+      printf '[env]\nCOMMIT_GUARDS_CHANGELOG_PATHS = "branch-value"\n' >"$WT/kendex.settings.toml"
+      git -C "$WT" add kendex.settings.toml
+      git -C "$WT" add kendex.settings.toml
       commit_wt file.txt feature
       commit_main file.txt main-side
       ;;
@@ -541,6 +560,37 @@ keep_mutant_rc=0
 assert_eq "$keep_mutant_rc" "1" "control: the mutant fails the replay it should have kept"
 assert_eq "$(grep -c '^worktree-reuse-unrebased: ' "$ROOT/keep-mutant.err" || true)" "0" \
   "control: the mutant never reports the kept tree"
+
+echo
+echo "=== restack continue runs the commit hooks under the branch's committed settings ==="
+
+# The commit-msg hook is the commit-guards resolver, which reads an exported
+# key ahead of the tree's committed settings. The control cuts the scrub from
+# the replay continue in a private package copy.
+settings_read() { # SCRIPT WORLD
+  build "$2" settings-conflict publish restack-replay resolve
+  cat >"$MAIN/.git/hooks/commit-msg" <<HOOK
+#!/usr/bin/env bash
+set -euo pipefail
+source "$SETTINGS_LIB"
+gg_setting COMMIT_GUARDS_CHANGELOG_PATHS built-in-default >"$ROOT/hook.read"
+HOOK
+  chmod +x "$MAIN/.git/hooks/commit-msg"
+  local rc=0
+  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$1" restack continue "$ISSUE" >"$ROOT/out" 2>&1) || rc=$?
+  printf 'rc=%s read=%s' "$rc" "$(cat "$ROOT/hook.read" 2>/dev/null || printf -- -)"
+}
+assert_eq "$(settings_read "$WORKTREE_SCRIPT" settings-fixed)" "rc=0 read=branch-value" \
+  "the replay continue's commit-msg hook reads the branch's value, not the main checkout's"
+mkdir -p "$TMP_ROOT/settings-pkg"
+cp -R "$(cd "$TEST_DIR/.." && pwd)" "$TMP_ROOT/settings-pkg/worktree"
+settings_mutant="$TMP_ROOT/settings-pkg/worktree/scripts/worktree"
+sed -i.bak 's/(GIT_EDITOR=true without_committed_settings git -C "\$WT_PATH" cherry-pick --continue/(GIT_EDITOR=true git -C "$WT_PATH" cherry-pick --continue/' "$settings_mutant"
+rm -f -- "${settings_mutant:?}.bak"
+assert_eq "$(grep -c 'without_committed_settings git -C "\$WT_PATH" cherry-pick --continue' "$settings_mutant")" "0" \
+  "control cuts the scrub only in its private copy"
+assert_eq "$(settings_read "$settings_mutant" settings-mutant)" "rc=0 read=main-value" \
+  "must-fail: with the scrub cut, the hook reads the main checkout's value"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

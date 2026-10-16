@@ -2635,30 +2635,34 @@ case "${1:-}" in
     validate_worktree_setup_config || exit 1
     validate_pending_restack_remote "$WT_PATH" || exit 1
     RESTACK_BASE_OID="$(restack_state_get "$WT_PATH" baseOid)"
+    if ! read_committed_unexport; then
+      worktree_message restack-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the commit hooks; the restack stays paused." >&2
+      exit 1
+    fi
     REBASE_OUTPUT=""
     REBASE_STATUS=0
     if [[ "$RESTACK_MODE" == replay ]]; then
       if [[ "$ACTION" == continue ]]; then
-        if REBASE_OUTPUT="$(GIT_EDITOR=true git -C "$WT_PATH" cherry-pick --continue 2>&1)"; then
+        if REBASE_OUTPUT="$(GIT_EDITOR=true without_committed_settings git -C "$WT_PATH" cherry-pick --continue 2>&1)"; then
           :
         else
           REBASE_STATUS=$?
         fi
       else
-        if REBASE_OUTPUT="$(git -C "$WT_PATH" cherry-pick --skip 2>&1)"; then
+        if REBASE_OUTPUT="$(without_committed_settings git -C "$WT_PATH" cherry-pick --skip 2>&1)"; then
           :
         else
           REBASE_STATUS=$?
         fi
       fi
     elif [[ "$ACTION" == continue ]]; then
-      if REBASE_OUTPUT="$(GIT_EDITOR=true git -C "$WT_PATH" rebase --continue 2>&1)"; then
+      if REBASE_OUTPUT="$(GIT_EDITOR=true without_committed_settings git -C "$WT_PATH" rebase --continue 2>&1)"; then
         :
       else
         REBASE_STATUS=$?
       fi
     else
-      if REBASE_OUTPUT="$(git -C "$WT_PATH" rebase --skip 2>&1)"; then
+      if REBASE_OUTPUT="$(without_committed_settings git -C "$WT_PATH" rebase --skip 2>&1)"; then
         :
       else
         REBASE_STATUS=$?
@@ -2852,6 +2856,10 @@ case "${1:-}" in
       CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ -n "$CURRENT_BRANCH" ]]; then
         resolve_default_branch || exit 1
+        if ! read_committed_unexport; then
+          worktree_message reuse-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the commit hooks; refusing to move the branch." >&2
+          exit 1
+        fi
         REUSE_REMOTE="${BOT_REMOTE_NAME:-origin}"
         if ! git -C "$WT_PATH" remote get-url "$REUSE_REMOTE" >/dev/null 2>&1; then
           REUSE_REMOTE="origin"
@@ -2865,7 +2873,7 @@ case "${1:-}" in
         if [[ -n "$REUSE_EXPECTED_OID" && -z "$REUSE_STATUS" ]] \
           && [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$REUSE_EXPECTED_OID" ]] \
           && git -C "$WT_PATH" merge-base --is-ancestor HEAD "$REUSE_EXPECTED_OID" 2>/dev/null; then
-          if ! REUSE_FF_OUTPUT="$(git -C "$WT_PATH" merge --ff-only "$REUSE_EXPECTED_OID" 2>&1)"; then
+          if ! REUSE_FF_OUTPUT="$(without_committed_settings git -C "$WT_PATH" merge --ff-only "$REUSE_EXPECTED_OID" 2>&1)"; then
             worktree_message reuse-fast-forward-failed "$REUSE_REMOTE/$CURRENT_BRANCH" "Error: Could not fast-forward '$CURRENT_BRANCH' in $WT_PATH to $REUSE_EXPECTED_OID:" >&2
             sed 's/^/  git: /' <<<"$REUSE_FF_OUTPUT" >&2
             exit 1
@@ -2957,7 +2965,7 @@ case "${1:-}" in
             REPLAY_OUTPUT=""
             if [[ "$(git -C "$WT_PATH" rev-list --count "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD")" -eq 0 ]]; then
               : # branch is behind the target base; the replayed result is the base itself
-            elif REPLAY_OUTPUT="$(git -C "$WT_PATH" cherry-pick "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD" 2>&1)"; then
+            elif REPLAY_OUTPUT="$(without_committed_settings git -C "$WT_PATH" cherry-pick "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD" 2>&1)"; then
               :
             else
               REPLAY_STATUS=$?
@@ -3035,7 +3043,7 @@ case "${1:-}" in
               restore_unshadowed_worktree_setup "$WT_PATH"
               exit 1
             fi
-          elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
+          elif REBASE_OUTPUT="$(without_committed_settings git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
             if ! emit_restack_rebase_map "$WT_PATH" ||
                ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
               restore_unshadowed_worktree_setup "$WT_PATH"
@@ -3329,7 +3337,7 @@ case "${1:-}" in
       _REMOTE="${BOT_REMOTE_NAME:-origin}"
       if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$CREATED_BRANCH" &>/dev/null; then
         git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$CREATED_BRANCH" "$CREATED_BRANCH" >/dev/null 2>&1 || true
-        git -C "$WT_PATH" merge --ff-only "$_REMOTE/$CREATED_BRANCH" >/dev/null 2>&1 || true
+        { read_committed_unexport && without_committed_settings git -C "$WT_PATH" merge --ff-only "$_REMOTE/$CREATED_BRANCH"; } >/dev/null 2>&1 || true
       fi
     fi
 
@@ -3847,6 +3855,10 @@ case "${1:-}" in
       worktree_message push-branch-read-failed "$WT_PATH" "Error: could not read the current branch of $WT_PATH; refusing to push." >&2
       exit 1
     fi
+    if ! read_committed_unexport; then
+      worktree_message push-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the commit and pre-push hooks; refusing to push." >&2
+      exit 1
+    fi
     PUSH_LEASE=()
     LEASE_EXPECTED_OID=""
     REPUBLISH_REWRITE=false
@@ -3910,7 +3922,7 @@ case "${1:-}" in
             PUSH_REBASE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
             record_pending_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" "$PRE_REBASE_HEAD" "$PUSH_REBASE_BASE_OID" || exit 1
           fi
-          if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+          if ! without_committed_settings git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
             git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
             # An abort that unwound the rewrite puts the branch back on the head
             # the record names, so the record and this attempt's pending
@@ -3990,10 +4002,6 @@ case "${1:-}" in
           FOLD_TREE="$(git -C "$WT_PATH" rev-parse 'HEAD^{tree}')" || exit 1
           FOLD_COMMITS="$(git -C "$WT_PATH" rev-list --reverse "$BASE_PUSH_BEFORE..HEAD")" || exit 1
           FOLD_FIRST="${FOLD_COMMITS%%$'\n'*}"
-          if ! read_committed_unexport; then
-            worktree_message push-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the fold's commit hooks; refusing to prepare." >&2
-            exit 1
-          fi
           record_pending_rewrite "$WT_PATH" "$FOLD_HEAD" || exit 1
           git -C "$WT_PATH" reset --soft "$BASE_PUSH_BEFORE" || exit 1
           if ! without_committed_settings git -C "$WT_PATH" commit -C "$FOLD_FIRST"; then
@@ -4044,10 +4052,6 @@ case "${1:-}" in
       PUSH_LEASE=()
       BASE_PUSH_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
       PUSH_REF="$BASE_PUSH_HEAD:refs/heads/$DEFAULT_BRANCH"
-    fi
-    if ! read_committed_unexport; then
-      worktree_message push-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the pre-push hooks; refusing to push." >&2
-      exit 1
     fi
     PUSH_OUTPUT=""
     PUSH_TARGET="${CURRENT_BRANCH:-HEAD}"
