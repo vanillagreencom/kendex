@@ -746,7 +746,7 @@ MAP_CONTROLS=(
   "control: without the .md arm a changed SKILL.md runs the whole set~append~skills/mapped/SKILL.md~s/^    \*:references\/\* | \*.md) echo doc ;;$/    *:references\/*) echo doc ;;/~$MAPPED_ALL"
   "control: with no skill-root pattern for a root doc the root's globber stands down~append~skills/mapped/SKILL.md~s/^    \*) dir='.*' ;;$/    *) dir=NEVER ;;/~catalogscan skillmd walker"
   "control: with every doc's directory read as references the workflow directory's globber stands down~append~skills/mapped/workflows/flow.md~s|dir=\"/\\\${rel%%/\\*}(|dir=\"/references(|~catalogscan docscan flowread readflow refsuse walker"
-  'control: with the reference matched by its bare name the suite naming table.conf in another directory runs~append~skills/mapped/references/table.conf~s|for pattern in "/[$]rel"|for pattern in "/${rel:11}"|~catalogscan docscan refsuse tool tool_extra toolbox walker'
+  'control: with the reference matched by its bare name the suite naming table.conf in another directory runs~append~skills/mapped/references/table.conf~s|reader_patterns=("/[$]rel"|reader_patterns=("/${rel:11}"|~catalogscan docscan refsuse tool tool_extra toolbox walker'
   "control: with comment lines read as code the script citing a reference in a comment runs its suite~append~skills/plain/references/note.md~s/'^\[\[:space:\]\]\*/'^NEVER/~alpha.test.sh catalogscan"
   'control: without the whole-token match the suite reading the schema doc through a table stands down~append~skills/mapped/schemas/rec.md~s/"[$]token" "[$]dir"/"NEVER" "$dir"/~catalogscan walker'
   'control: without the directory-reader match the glob readers stand down~append~skills/mapped/references/table.conf~s/"[$]token" "[$]dir"/"$token" "NEVER"/~catalogscan tool tool_extra walker'

@@ -1439,11 +1439,14 @@ skill_files() { # DIR
 # SCAN_NAMES, each `/<name>` that code spells, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
 # and SCAN_INPUTS, the repository path patterns in its input notes.
+# SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
+# or repository input in this tree. Reader comparison phases run once per tree.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
 # `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f code read_code names lines sourced inputs
+  local role f code read_code names lines sourced inputs tree rel path i q phase pairs
+  local reader_data="" reader_patterns=() nl=$'\n'
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
@@ -1452,6 +1455,8 @@ scan_load() { # DIR
   SCAN_NAMES=()
   SCAN_SOURCED=()
   SCAN_INPUTS=()
+  SCAN_RELS=()
+  SCAN_READERS=()
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
     code=$(grep -v '^[[:space:]]*#' -- "$f") || [ $? -eq 1 ] || return 2
@@ -1503,9 +1508,62 @@ scan_load() { # DIR
     SCAN_SOURCED+=($'\n'"$sourced"$'\n')
     SCAN_INPUTS+=("$inputs")
   done <<<"$(skill_files "$1")"
+  while IFS=$'\t' read -r tree rel path; do
+    [ "$tree" = "$1" ] || continue
+    case "$rel" in
+      ../*) ;;
+      *) [ "$(path_role "$1" "$rel")" = doc ] || continue ;;
+    esac
+    q=${#SCAN_RELS[@]}
+    SCAN_RELS+=("$rel")
+    SCAN_READERS+=("")
+    doc_readers "$rel" || return 2
+    reader_data="${reader_data}Q $q$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl"
+  done <<<"$tree_paths"
+  if [ "${#SCAN_RELS[@]}" -gt 0 ]; then
+    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+      code=${SCAN_READ_CODE[i]}
+      lines=${code//$'\n'/}
+      reader_data="${reader_data}C $i $((${#code} - ${#lines} + 1))$nl$code$nl"
+    done
+    # Each phase compares every requested input against the loaded tree.
+    # Line counts keep source lines separate from scan records.
+    for phase in 0 1 2 3; do
+      pairs=$(awk -v reader_phase="$phase" '
+        $1 == "Q" {
+          q = $2
+          for (p = 0; p < 4; p++) {
+            if (getline <= 0) exit 2
+            if (p == reader_phase) reader_patterns[q] = $0
+          }
+          next
+        }
+        $1 == "C" {
+          reader = $2; count = $3
+          for (line = 0; line < count; line++) {
+            if (getline <= 0) exit 2
+            for (q in reader_patterns) {
+              if (seen[q, reader]) continue
+              if (reader_phase == 0 ? index($0, reader_patterns[q]) : $0 ~ reader_patterns[q]) {
+                print q, reader
+                seen[q, reader] = 1
+              }
+            }
+          }
+          next
+        }
+        { exit 2 }
+      ' <<<"${reader_data%$'\n'}") || return 2
+      while read -r q i; do
+        [ -n "$q" ] || continue
+        [[ ${SCAN_READERS[q]} == *"$nl$i$nl"* ]] || SCAN_READERS[q]+="$nl$i$nl"
+      done <<<"$pairs"
+    done
+  fi
   SCAN_DIR=$1
 }
-# The indexes of the scanned files that read the doc REL, one per line:
+# The comparison patterns for scanned files that read the doc REL, cached
+# by scan_load as reader indexes for all requested inputs in the tree:
 # each whose code, its comment lines dropped, names
 #   - its path after a slash, `/references/<file>` or `/SKILL.md`;
 #   - its path inside the tree as a whole token, after neither a name
@@ -1528,7 +1586,7 @@ scan_load() { # DIR
 # and skill-root walks apply only inside their own tree; a /skills walk
 # also reaches documents in another source skill.
 doc_readers() { # REL
-  local rel="$1" i code dir token pattern flag status external=0 source_rel source_tree
+  local rel="$1" dir token external=0 source_rel source_tree
   local skill_root catalog_root walk_root walk
   skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
   catalog_root='[^[:space:]"]*/skills'
@@ -1557,20 +1615,7 @@ doc_readers() { # REL
     esac
   fi
   walk='(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?('"$walk_root"')"?([[:space:]]|\)|$)'
-  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-    code=${SCAN_READ_CODE[i]}
-    flag=-qF
-    for pattern in "/$rel" "$token" "$dir" "$walk"; do
-      status=0
-      grep "$flag" -e "$pattern" <<<"$code" || status=$?
-      case "$status" in
-        0) printf '%s\n' "$i"; break ;;
-        1) ;;
-        *) return 2 ;;
-      esac
-      flag=-qE
-    done
-  done
+  reader_patterns=("/$rel" "$token" "$dir" "$walk")
 }
 # A file in the reach adds its name as a needle by its role, into the
 # caller's next_any, next_script and reach_scripts.
@@ -1646,7 +1691,13 @@ mapped_suites() { # DIR REL
     done <<<"${SCAN_INPUTS[i]}"
   done
   if [ "$role" = doc ]; then
-    readers=$(doc_readers "$rel") || return 2
+    readers=""
+    for ((i = 0; i < ${#SCAN_RELS[@]}; i++)); do
+      if [ "${SCAN_RELS[i]}" = "$rel" ]; then
+        readers=${SCAN_READERS[i]}
+        break
+      fi
+    done
     readers="$noted$readers"
     [ -n "$readers" ] || return 0
     while IFS= read -r i; do
