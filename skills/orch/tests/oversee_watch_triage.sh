@@ -84,14 +84,69 @@ check() {
 tracker_items() { printf '%s\n' "$1" > "$STUB_DIR/tracker.out"; }
 verdicts() { printf '{"triaged":%s}\n' "$1" > "$STUB_DIR/oversee-state.json"; }
 
+# The parent sends the long-pass spool to stdout. Refuse that write alone;
+# every other cat is still the host command.
+REAL_CAT="$(command -v cat)"
+cat >"$TMP_ROOT/bin/cat" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == -- && "${2:-}" == */long.out && -f "$STUB_DIR/fail-delivery" ]]; then exit 42; fi
+exec "$TRIAGE_REAL_CAT" "$@"
+STUB
+chmod +x "$TMP_ROOT/bin/cat"
+export TRIAGE_REAL_CAT="$REAL_CAT"
+
 echo "=== oversee-watch triage ==="
+
+new_case triage_progress
+printf '1786784400\n' >"$STUB_DIR/now.epoch"
+tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T08:59:59Z"},{"id":"KEN-1201","created_at":"2026-08-15T09:00:00Z"}]'
+cat >"$TMP_ROOT/bin/triage-clock.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"${0%/*}/linear-stub.sh" "$@"
+printf '1786784520\n' >"$STUB_DIR/now.epoch"
+STUB
+chmod +x "$TMP_ROOT/bin/triage-clock.sh"
+run OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/triage-clock.sh" -- --max-loops 1
+check "initial history keeps the exact since floor" \
+  "rc=0 first=EVENT+triage+KEN-1201 events=1 tracker~--created-since+$SINCE+--select+triage=true state~triage-scan%tkendex%t2026-08-15T09:00:00Z=true"
+# The next reply omits the old unresolved issue. Its creation is outside the
+# discovery window, but its unresolved record must still produce the event.
+printf '1786784520\n' >"$STUB_DIR/now.epoch"
+tracker_items '[{"id":"KEN-1202","created_at":"2026-08-15T09:01:00Z"}]'
+run -- --max-loops 1
+check "the next scan overlaps the prior start and repeats unresolved history" \
+  "rc=0 first=EVENT+triage+KEN-1201 events=2 out~EVENT+triage+KEN-1202=true tracker~--created-since+2026-08-15T09:00:00Z+--select+triage=true state~triage-scan%tkendex%t2026-08-15T09:02:00Z=true"
+verdicts '[{"issue":"KEN-1201","verdict":"kept"}]'
+tracker_items '[]'
+run -- --max-loops 1
+check "only a terminal verdict retires unresolved history" "rc=0 first=EVENT+triage+KEN-1202 events=1"
+for failure in read delivery; do
+  printf '1786784640\n' >"$STUB_DIR/now.epoch"
+  if [[ "$failure" == read ]]; then printf '2\n' >"$STUB_DIR/tracker.rc"; else touch "$STUB_DIR/fail-delivery"; fi
+  run -- --max-loops 1
+  check "$failure failure keeps the last successful scan position" \
+    "rc=2 state~triage-scan%tkendex%t2026-08-15T09:02:00Z=true state~triage-scan%tkendex%t2026-08-15T09:04:00Z=false"
+  rm -f "$STUB_DIR/tracker.rc" "$STUB_DIR/fail-delivery"
+done
+printf '1786784760\n' >"$STUB_DIR/now.epoch"
+run -- --max-loops 1
+check "the repeat after failure starts at the saved floor and repeats the unresolved event" \
+  "rc=0 first=EVENT+triage+KEN-1202 tracker~--created-since+2026-08-15T09:02:00Z+--select+triage=true state~triage-scan%tkendex%t2026-08-15T09:06:00Z=true"
+
+HISTORY_MUTANT="$(mutant_scripts historical-query-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/historical-query-mutant/github"
+mutate_file "$HISTORY_MUTANT" '  [[ -n "$floor" ]] || floor="$SINCE"' '  floor="$SINCE"'
+WATCH_BIN="$HISTORY_MUTANT" run -- --max-loops 1
+check "control: the full historical query fails the reduced window assertion" \
+  "rc=0 tracker~--created-since+2026-08-15T09:06:00Z+--select+triage=false tracker~--created-since+$SINCE+--select+triage=true"
 
 # A standing lane prompt first, so the state-file count below is taken on a
 # run that has a lane fingerprint persisted already; a second file class would
 # exist by then if lane-asking kept its own.
 new_case triage_new
 printf '1786957201\n' > "$STUB_DIR/now.epoch"
-printf '3\n' > "$STUB_DIR/tracker.want-created-since"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 tracker_items '[]'
 run -- --max-loops 1 gh-1 gh-2
@@ -104,7 +159,7 @@ check "a standing lane prompt wakes the watch before any tracker item" "first=EV
 tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"},{"id":"KEN-1202","created_at":"2026-08-15T10:30:00.000Z"},{"id":"KEN-1204","created_at":"2026-08-15T11:30:00.000Z"},{"id":"KEN-1199","created_at":"2026-08-15T08:59:59.000Z"}]'
 run -- gh-1 gh-2
 check "three items after --since are three triage events in one wake, the earlier item not among them, read from the team's created-since list, none acknowledged by printing" \
-  "rc=0 first=EVENT+triage+KEN-1200 events=3 out~EVENT+triage+KEN-1202=true out~EVENT+triage+KEN-1204=true out~KEN-1199=false tracker~issues+list+--team+kendex+--created-since+=true tracker~d+--max+--format%esafe=true state~triage%tKEN-1200=false state~lane-asking%tgh-2%t=true state_files=1"
+  "rc=0 first=EVENT+triage+KEN-1200 events=3 out~EVENT+triage+KEN-1202=true out~EVENT+triage+KEN-1204=true out~KEN-1199=false tracker~issues+list+--team+kendex+--created-since+=true tracker~--select+triage+--max+--format%esafe=true state~triage%tKEN-1200=false state~lane-asking%tgh-2%t=true state_files=1"
 run -- --max-loops 1
 check "an unacknowledged item repeats on the next run" "first=EVENT+triage+KEN-1200"
 

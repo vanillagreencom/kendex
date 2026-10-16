@@ -73,7 +73,10 @@ List Options:
   --team <ref>          Filter by team key or name (no default; omit = all teams)
   --assignee <name|me|email>  Filter by assignee; addresses match exactly, ignoring case
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
-  --created-since <Nd>  Filter by created date
+  --created-since <Nd|UTC>  Filter by created date; UTC is YYYY-MM-DDTHH:MM:SSZ
+  --select <name>      full (default), triage (identity and creation), or owed
+                        (priority, state, verification and container facts).
+                        triage and owed use safe output and pages of 250.
   --limit <n>           Max results (default: 75); a larger value spans pages,
                         and a read that leaves rows unread says so on stderr
   --max                 Fetch every page; a chain left open at the page cap
@@ -417,6 +420,7 @@ read_description_file() {
 
 list_issues() {
     local with_relations="false"
+    local selection=full page=75 fields
     linear_list_reset
     local search_pattern=""
     local search_given="false"
@@ -427,6 +431,11 @@ list_issues() {
         case "$1" in
         --with-relations)
             with_relations="true"
+            ;;
+        --select)
+            linear_require_option_value "$@" || return 1
+            selection="$2"
+            shift
             ;;
         --max)
             linear_list_option --max
@@ -486,6 +495,17 @@ list_issues() {
     fi
 
     parse_filter ${args[@]+"${args[@]}"} || return 1
+    linear_require_format "$selection" full triage owed || return 1
+    [[ "$selection" == full ]] || linear_require_format "$FORMAT" safe || return 1
+    case "$selection" in
+    triage) fields='identifier createdAt'; page=250 ;;
+    owed)
+        fields='id identifier title description priority state { name type } parent { identifier } createdAt
+'"$ISSUE_BLOCKED_BY_FIELDS"
+        page=250
+        ;;
+    full) fields="${ISSUE_RETURN_FIELDS/    team \{ name \}/}" ;;
+    esac
 
     # Server-side search: pipe-separated terms, each matched as a
     # case-insensitive substring of title or description via Linear's
@@ -509,35 +529,24 @@ list_issues() {
         issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
             pageInfo { hasNextPage endCursor }
             nodes {
-                id
-                identifier
-                title
-                description
-                state { name type }
-                assignee { name }
-                project { id name }
-                projectMilestone { id name }
-                cycle { id name number }
-                parent { id identifier title }
-                labels { pageInfo { hasNextPage endCursor } nodes { name } }
-                priority
-                estimate
-                sortOrder
-                url
-                createdAt
-                updatedAt
-                archivedAt
-                trashed
-'"$ISSUE_RELATION_FIELDS"'
+'"$fields"'
             }
         }
     }'
 
     local result variables
     variables="{\"filter\": $FILTER_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON}"
-    # Measured: this query costs 506 points at any page, so it reads 75 rows a
-    # request, one request for the default bound.
-    result=$(linear_list_read "$query" "$variables" issues 75) || return 1
+    result=$(linear_list_read "$query" "$variables" issues "$page") || return 1
+
+    if [[ "$selection" == triage ]]; then
+        jq '[.issues.nodes[] | {id: .identifier, created_at: .createdAt}]' <<<"$result"
+        return
+    elif [[ "$selection" == owed ]]; then
+        jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {id: .identifier, title, description,
+          priority, state: .state.name, state_type: .state.type, parent_id: (.parent.identifier // ""),
+          created_at: .createdAt, blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes)}]' <<<"$result"
+        return
+    fi
 
     # Apply output format
     case "$FORMAT" in

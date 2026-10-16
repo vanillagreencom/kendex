@@ -160,7 +160,7 @@ if [[ "$PART" == all || "$PART" == development ]]; then
 world owed
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --max --format=safe" \
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --select owed --max --format=safe" \
   "the owed items are one live read of the team's In Progress and In Review items" "$ERR"
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
@@ -455,7 +455,7 @@ jq 'map(if .id == "KEN-P" then .description = "## Done when\n- [ ] Read shared o
 mv -- "$STUB_DIR/outcome.json" "$STUB_DIR/tracker.out"
 
 # The server-side filter must retain Triage and exclude terminal states.
-bounded_request='issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --max --format=safe'
+bounded_request='issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --select owed --max --format=safe'
 assert_eq "$(cat "$STUB_DIR/tracker.args")" "$bounded_request" "the server requests all open names and excludes Done and Canceled" "$ERR"
 for bounded in filter terminals; do
   MUTANT_DIR="$TMP_ROOT/container-bounded-$bounded"
@@ -563,7 +563,7 @@ assert_eq "$(owed KEN-1)$(owed KEN-4)" "--" "Verifying never becomes owed develo
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(verification_events)" "rc=0 " "a standing deadline emits once" "$ERR"
 assert_eq "$(verification_lines)" "$want_lines" "the heartbeat carries the same Verifying inventory" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --max --format=safe" "verification reads only live team items" "$ERR"
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --state In Progress,In Review,Verifying,Todo,Backlog,Triage --select owed --max --format=safe" "verification reads only live team items" "$ERR"
 assert_eq "$(grep -c '^issues list ' "$STUB_DIR/tracker.args.all")" 2 "two passes use two inventory reads" "$ERR"
 verifying_world verifying_future
 jq 'map(if .state == "Verifying" then .description |= gsub("; Deadline:"; "; Trigger: 2026-10-01T12:00:00Z; Deadline:") else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/future.json"

@@ -1551,7 +1551,7 @@ long_drain() {
   [[ -n "$LONG_PID" ]] || return 0
   wait "$LONG_PID" || rc=$?
   LONG_PID=""
-  cat -- "$LONG_OUT"
+  cat -- "$LONG_OUT" || return 2
   cat -- "$LONG_ERR" >&2
   return "$rc"
 }
@@ -1905,7 +1905,7 @@ parked_merged_owed() { # STATE
 
 check_triage() {
   [[ "$TRIAGE_ENABLED" -eq 1 ]] || return 0
-  local errf="$WORK_DIR/triage.err" now age days out ids verdicts pr_keys triage_keys="" seen id new_ids="" next rc=0
+  local errf="$WORK_DIR/triage.err" floor out ids verdicts pr_keys triage_keys="" id new_ids next rc=0
   verdicts="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.triaged // [] | map(select(.verdict == "kept" or .verdict == "canceled") | .issue) | .[]' 2>"$errf")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     local count rows
@@ -1943,13 +1943,9 @@ check_triage() {
     pw_commit_state "$(pw_state_file "${REPOS[0]}")"
     PW_SEEN[0]="$next"
   fi
-  now="$(date -u +%s)" || die time-failed "" "clock=UTC"
-  age=$((now - SINCE_EPOCH))
-  [[ "$age" -ge 0 ]] || age=0
-  # Linear's live list accepts whole-day windows. Round up, then apply the
-  # exact ISO floor below so the wider server query cannot mint an old event.
-  days=$((age / 86400 + 1))
-  out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --created-since "${days}d" --max --format=safe 2>"$errf")" || rc=$?
+  floor="$(lane_row_get triage-scan "${PW_SEEN[0]}" "$LINEAR_TEAM")" || die state-read-failed "" "row=triage-scan"
+  [[ -n "$floor" ]] || floor="$SINCE"
+  out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --created-since "$floor" --select triage --max --format=safe 2>"$errf")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     tracker_quota_refusal "$errf" && return 0
     die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
@@ -1966,17 +1962,39 @@ check_triage() {
     | unique[]
   ' <<<"$out" 2>"$errf")" \
     || die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM"
-  seen="$(awk -F'\t' '$1 == "triage" && NF == 2 { print $2 }' <<<"${PW_SEEN[0]}")"
-  while IFS= read -r id; do
-    [[ -n "$id" ]] || continue
-    grep -qxF -- "$id" <<<"$seen" || new_ids+="$id"$'\n'
-  done <<<"$ids"
-  [[ -n "$new_ids" ]] || return 0
-  new_ids="${new_ids%$'\n'}"
-  while IFS= read -r id; do
-    echo "EVENT triage $id"
-  done <<<"$new_ids"
-  PASS_EVENT=1
+  # Settled verdicts and unresolved discoveries share this owner. One bulk
+  # membership pass keeps old unresolved issues after discovery advances.
+  new_ids="$(awk -F'\t' 'NR == FNR {
+      if ($1 == "triage" && NF == 2) settled[$2] = 1
+      if ($1 == "triage-pending" && NF == 2) pending[$2] = 1
+      next
+    }
+    NF { pending[$0] = 1 }
+    END { for (id in pending) if (!(id in settled)) print id }
+    ' <(printf '%s\n' "${PW_SEEN[0]}") <(printf '%s\n' "$ids") | LC_ALL=C sort)" \
+    || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+  TRIAGE_PROGRESS="$(awk -v start="$LONG_STARTED" -v team="$LINEAR_TEAM" '
+    BEGIN { print "triage-scan\t" team "\t" start }
+    NF { print "triage-pending\t" $0 }
+    ' <<<"$new_ids")" || die state-write-failed "" "row=triage-scan"
+  if [[ -n "$new_ids" ]]; then
+    while IFS= read -r id; do
+      printf 'EVENT triage %s\n' "$id" || die event-write-failed "" "item=$id"
+    done <<<"$new_ids"
+    PASS_EVENT=1
+  fi
+}
+
+# The parent commits discovery only after draining the complete event spool.
+# Failure leaves both the scan floor and unresolved discoveries for a retry.
+triage_progress_commit() {
+  [[ -n "$TRIAGE_PROGRESS" ]] || return 0
+  local state_file next=""
+  state_file="$(pw_state_file "${REPOS[0]}")"
+  [[ ! -f "$state_file" ]] || next="$(awk -F'\t' '$1 != "triage-scan" && $1 != "triage-pending" { print }' "$state_file")" \
+    || die state-read-failed "" "path=$state_file"
+  [[ -z "$next" ]] || next+=$'\n'
+  lane_row_commit "$next$TRIAGE_PROGRESS"
 }
 
 # A lane told to hand off records `.handoff` in its item's state and exits.
@@ -4848,7 +4866,7 @@ owed_read() {
     fi
     out='[]'
     if [[ -n "$open_states" ]]; then
-      out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "$open_states" --max --format=safe 2>"$errf")" || rc=$?
+      out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "$open_states" --select owed --max --format=safe 2>"$errf")" || rc=$?
     fi
     if [[ "$rc" -ne 0 ]]; then
       tracker_quota_refusal "$errf" && return 0
@@ -5220,12 +5238,15 @@ heartbeat() {
 # sets for this process belongs there. The baselines it committed are what the
 # next long pass reads, never this process's copy of them.
 LONG_PASSES=0
+TRIAGE_PROGRESS=""
+LONG_STARTED=""
 LONG_RETURNS=(LONG_EVENT LONG_FAILED OWNER_TRACKER_DELIVERED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC
-  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES TRACKER_QUOTA TRACKER_STOP)
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC OWED_LINES VERIFYING_LINES VERIFYING_EVENT_LINES TRACKER_QUOTA TRACKER_STOP TRIAGE_PROGRESS)
 long_pass() {
   local i state_file
   PASS_EVENT=0
   PASS_FAILED=0
+  TRIAGE_PROGRESS=""
   OWNER_TRACKER_DELIVERED=0
   for i in "${!REPOS[@]}"; do
     state_file="$(pw_state_file "${REPOS[$i]}")"
@@ -5280,6 +5301,7 @@ long_start() {
   mkdir -p -- "$WORK_DIR/long" || die state-directory-create-failed "" "path=$WORK_DIR/long"
   local started MAIL_ROW_MODE=1
   started="$(date -u +%s)" || die time-failed "" "clock=UTC"
+  LONG_STARTED="$(from_epoch "$started" '%Y-%m-%dT%H:%M:%SZ')" || die time-failed "" "clock=UTC"
   lane_row_set long-pass "" fleet "$started" >/dev/null
   mail_row_commit ""
   MAIL_ROW_MODE=0
@@ -5298,6 +5320,7 @@ long_collect() { # [wait]
   long_drain || rc=$?
   [[ "$rc" -eq 0 ]] || exit "$rc"
   long_status_load || die long-pass-unfinished "" "path=$LONG_STATUS"
+  triage_progress_commit
   LONG_PASSES=$((LONG_PASSES + 1))
   [[ "$LONG_EVENT" -eq 0 ]] || PASS_EVENT=1
   [[ "$LONG_FAILED" -eq 0 ]] || PASS_FAILED=1

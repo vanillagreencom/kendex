@@ -966,7 +966,14 @@ parse_filter() {
         --created-since)
             linear_require_option_value "$@" || return 1
             local created_since
-            created_since=$(linear_iso_days_ago "$1" "$2") || return 1
+            if [[ "$2" == *T* ]]; then
+                # Watch discovery persists its successful scan's UTC start.
+                created_since=$(jq -ern --arg value "$2" '$value
+                    | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+                    | select((fromdateiso8601 | todateiso8601) == .)') || return 1
+            else
+                created_since=$(linear_iso_days_ago "$1" "$2") || return 1
+            fi
             filter_parts+=("$(jq -cn --arg v "$created_since" '{createdAt: {gte: $v}}')")
             shift 2
             ;;
