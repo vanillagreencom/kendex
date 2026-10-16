@@ -9,8 +9,10 @@
 
 # Family rules avoid a new row for each model release. Unknown families use
 # 200K, the smaller family budget, so missing metadata does not block a launch.
+# Sonnet aliases can select 200K sessions, so their budget cannot assume an
+# extended window. Larger sessions hand off at this conservative budget too.
 # Readings use the same budget. Only launch callers request the notice.
-LANE_ADAPTER_CLAUDE_WINDOWS='*fable*=1000000 *opus*=1000000 *sonnet*=1000000 *haiku*=200000'
+LANE_ADAPTER_CLAUDE_WINDOWS='*fable*=1000000 *opus*=1000000 *sonnet*=200000 *haiku*=200000'
 LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=200000
 
 lane_adapter_claude_window() { # MODEL [notice]

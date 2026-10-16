@@ -100,7 +100,7 @@ done <<'ROWS'
 claude-last|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-partial|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-synthetic|claude||rc=0 700000|1000000|claude-fable-5-1
-claude-sonnet|claude||rc=0 400000|1000000|claude-sonnet-5
+claude-sonnet|claude||rc=0 400000|200000|claude-sonnet-5
 claude-haiku|claude||rc=0 150000|200000|claude-haiku-4-5-20251001
 claude-unknown|claude||rc=0 150000|200000|MyProviderModel
 claude-unread|claude||rc=0 unread
@@ -168,19 +168,19 @@ done <<'ROWS'
 fable|1000000
 opus[1m]|1000000
 claude-opus-5-5|1000000
-sonnet|1000000
-Sonnet|1000000|sonnet
-claude-sonnet-5|1000000
-claude-sonnet-5-5|1000000
+sonnet|200000
+Sonnet|200000|sonnet
+claude-sonnet-5|200000
+claude-sonnet-5-5|200000
 haiku|200000
 claude-haiku-4-5|200000
 claude-haiku-4-5-20251001|200000
 claude-haiku-5-5|200000
-claude-sonnet-9-9|1000000
-claude-sonnet-4-6|1000000
-claude-sonnet-4-5|1000000
-claude-sonnet-5-1|1000000
-sonnet[1m]|1000000
+claude-sonnet-9-9|200000
+claude-sonnet-4-6|200000
+claude-sonnet-4-5|200000
+claude-sonnet-5-1|200000
+sonnet[1m]|200000
 haiku[1m]|200000
 MyProviderModel|200000|myprovidermodel
 |200000
@@ -205,7 +205,7 @@ while IFS='|' read -r model window notices; do
     assert_eq "$(cat "$TMP_ROOT/launch.err")" "claude-window-default model=$model window=$window" "dry launch $model notice fields"
   fi
 done <<'ROWS'
-claude-sonnet-9-9|1000000|0
+claude-sonnet-9-9|200000|0
 claude-haiku-5-5|200000|0
 claude-opus-5-5|1000000|0
 claude-lyra-9-9|200000|1
@@ -246,24 +246,33 @@ pi|{"compaction":{"enabled":true}}|
 pi|{"compaction":{"enabled":false}}|200000
 ROWS
 
-# Every harness reaches the common judge through its adapter. The due row is
-# strictly before the verified point; Claude reaches the independent cap first.
-while IFS='|' read -r harness tokens expected; do
+# Every harness reaches the common judge through its adapter. Sonnet's mark
+# must fit a supported 200K session even when its alias selects a larger one.
+while IFS='|' read -r harness model tokens expected full; do
   case "$harness" in
-    claude) claude_line claude-opus-5-5 "$tokens" > "$T/before-point" ;;
-    codex) { codex_context gpt-6-astra; codex_count "$tokens" 258400; } > "$T/before-point" ;;
-    pi) pi_line m "$tokens" > "$T/before-point" ;;
+    claude) claude_line "$model" "$tokens" > "$T/before-point" ;;
+    codex) { codex_context "$model"; codex_count "$tokens" 258400; } > "$T/before-point" ;;
+    pi) pi_line "$model" "$tokens" > "$T/before-point" ;;
   esac
   answer=$(reading "$LIB" "$harness" 200000 < "$T/before-point")
   point=${answer#*|}; point=${point%%|*}
-  assert_eq "$(due "$LIB" "$tokens" "$point" 90)" "rc=0 $expected" "$harness before-point $tokens is $expected"
+  assert_eq "$(due "$LIB" "$tokens" "$point" 90)" "rc=0 $expected" "$harness $model before-point $tokens is $expected"
+  rc=0
+  "$BASH" -euo pipefail -c 'source "$1"; lane_context_window_full "$2" "$3" "$4"' _ "$LIB" "$tokens" "$point" "$harness" || rc=$?
+  assert_eq "$rc" "$full" "$harness $model full-window status at $tokens"
 done <<'ROWS'
-claude|399999|room
-claude|400000|due
-codex|232560|room
-codex|232561|due
-pi|180000|room
-pi|180001|due
+claude|claude-opus-5-5|399999|room|1
+claude|claude-opus-5-5|400000|due|1
+claude|sonnet|180000|room|1
+claude|sonnet|180001|due|1
+claude|claude-sonnet-4-5-20250929|190000|due|1
+claude|claude-sonnet-4-6|190000|due|1
+claude|claude-sonnet-9-9|190000|due|1
+claude|claude-sonnet-4-5-20250929|200000|due|0
+codex|gpt-6-astra|232560|room|1
+codex|gpt-6-astra|232561|due|1
+pi|m|180000|room|1
+pi|m|180001|due|1
 ROWS
 
 echo "=== the one judge answers at a share of the reading's own window ==="
@@ -580,8 +589,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex reads codex-last as'
   control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
     'codex configuration  gives point unresolved'
-  control claude-family adapters/claude.sh '*sonnet*=1000000' 'claude-sonnet-5=1000000 claude-sonnet-5-5=1000000' \
-    'dry launch claude-sonnet-9-9 uses its budget'
+  control claude-family adapters/claude.sh '*sonnet*=200000' '*sonnet*=1000000' \
+    'claude sonnet before-point 180001 is due'
   control claude-default adapters/claude.sh 'LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=200000' 'LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=1000000' \
     'dry launch claude-lyra-9-9 uses its budget'
   control claude-new-model-launch adapters/claude.sh '  printf '\''%s\n'\'' "$LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"' '  return 0' \
