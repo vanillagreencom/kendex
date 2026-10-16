@@ -813,10 +813,10 @@ def archive_tmp(row, item, worktree_path):
     rule in workflow-state --help. Older launches can keep it where their
     settings and private env file placed it. The archive's
     `lane-host-state` member names that file's member, or is an empty line
-    when no live state remains. With an empty marker, a reader takes the
-    requested key's saved cycle copy, if present. A resolution that fails
-    stops close, the sandbox and its state kept: an archive without the state
-    loses it."""
+    when no live state remains. With an empty marker, a reader takes only
+    the saved cycle copy of the merge it records, if present. A resolution
+    that fails stops close, the sandbox and its state kept: an archive
+    without the state loses it."""
     data = remote(row, '''paths=() names=()
 for base in "$1" "$2"; do
   candidate="$base/tmp"

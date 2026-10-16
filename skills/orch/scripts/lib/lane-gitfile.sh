@@ -187,12 +187,14 @@ lane_hosted_state_dir() {
   LANE_HOSTED_STATE_DIR="${LANE_HOSTED_STATE_DIR:-tmp}"
 }
 
-# lane_archived_state STATE_KEY ARCHIVE SCRATCH ROOT: sets LANE_ITEM_STATE to the
-# workflow state in ARCHIVE, the `kept=` archive lane-host close wrote
-# of the clone's and the worktree's tmp, empty where it holds none. Its
-# `lane-host-state` member names the state file's member, the one the lane
-# resolved, or is an empty line after merge-pr removed live state. An empty
-# marker reads only the requested saved cycle copy, never another live file.
+# lane_archived_state STATE_KEY ARCHIVE SCRATCH ROOT [SAVED_KEY]: sets
+# LANE_ITEM_STATE to the workflow state in ARCHIVE, the `kept=` archive
+# lane-host close wrote of the clone's and the worktree's tmp, empty where it
+# holds none. Its `lane-host-state` member names the state file's member, the
+# one the lane resolved, or is an empty line after merge-pr removed live
+# state. An empty marker reads only the saved cycle copy SAVED_KEY names, the
+# merge the caller records, and nothing where SAVED_KEY is empty; a copy
+# another merge of the item saved never answers.
 # An archive with no such member, written before close
 # recorded it, holds the two tmp trees alone. Either read takes the copy
 # outside the worktree at ROOT, the clone's, before the worktree's, the first
@@ -203,7 +205,7 @@ lane_hosted_state_dir() {
 # it does not hold, SCRATCH/state.err saying why.
 LANE_ARCHIVE_READER='
 import os, sys, tarfile
-path, item, root = sys.argv[1:]
+path, item, root, saved = sys.argv[1:]
 # A file tar archived twice, through a symlinked tmp or a clone path whose
 # physical spelling differs, is a hard-link entry the second time, read as
 # the file it names.
@@ -218,11 +220,11 @@ try:
         if "lane-host-state" in members:
             raw = tar.extractfile(members["lane-host-state"]).read().split(b"\n", 1)[0]
             if not raw:
-                suffix = f"/tmp/cycle-state/workflow-state-{item}.json"
-                saved = [m for m in files if m.name.endswith(suffix)]
-                if not saved:
+                suffix = f"/tmp/cycle-state/workflow-state-{saved}.json"
+                copies = [m for m in files if saved and m.name.endswith(suffix)]
+                if not copies:
                     sys.exit(0)
-                found = saved[0]
+                found = copies[0]
             else:
                 name = raw.decode(tar.encoding, "surrogateescape")
                 found = members.get(name)
@@ -242,7 +244,7 @@ except (tarfile.TarError, OSError, EOFError) as error:
 lane_archived_state() {
   LANE_ITEM_STATE=""
   [[ -f "$2" ]] || { printf 'archive-missing path=%s\n' "$2" >"$3/state.err"; return 2; }
-  LANE_ITEM_STATE="$(python3 -I -c "$LANE_ARCHIVE_READER" "$2" "$1" "${4#/}" 2>"$3/state.err" \
+  LANE_ITEM_STATE="$(python3 -I -c "$LANE_ARCHIVE_READER" "$2" "$1" "${4#/}" "${5:-}" 2>"$3/state.err" \
     | jq -c . 2>>"$3/state.err")" || { LANE_ITEM_STATE=""; return 2; }
 }
 
@@ -277,7 +279,7 @@ lane_state_rounds() { # STATE_JSON [ERRF]
   IFS=$'\t' read -r LANE_REVIEW_ROUNDS LANE_FIX_RECEIPTS LANE_VALIDATION_RUNS LANE_RESTACKS LANE_REPEATED_CLASS_ROUNDS <<<"$counts"
 }
 
-# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT] [CLONE] [CYCLE]
+# lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH [ARCHIVE] [STATE_KEY] [STRICT] [CLONE] [SAVED_KEY]
 # ITEM identifies the launched lane for every host request. STATE_KEY defaults
 # to ITEM and selects only the workflow-state file, including older archives
 # without a recorded member. A PR-key fallback keeps the host's item identity.
@@ -293,9 +295,12 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # gone, the state is read there instead. A read that fails keeps its
 # status, never answered from an archive an earlier run of the item may have
 # left. CLONE, where given, is the resolved clone address for cycle recovery.
-# CYCLE=true also reads the copy merge-pr saves in
-# CLONE/tmp/cycle-state/workflow-state-STATE_KEY.json and refuses missing state.
-# Advisory reads leave that earlier cycle copy unread. A lane whose
+# SAVED_KEY, pr-N for the merge a cycle caller records, also reads the copy
+# merge-pr saves for that merge in CLONE/tmp/cycle-state/workflow-state-SAVED_KEY.json,
+# and in an archive with an empty marker, and refuses missing state. The copy
+# is named by its merge, never by STATE_KEY, so an earlier merge of the same
+# item cannot answer. Advisory reads pass none and leave every saved copy
+# unread. A lane whose
 # host kind declares files=none, a Claude cloud session, which keeps none this
 # machine can read. 0 read, the state possibly
 # empty; 2 the read failed, SCRATCH/state.err saying why; 4 lane-host refused
@@ -321,7 +326,7 @@ lane_item_state_paths() { # ITEM SCRATCH
   done
 }
 
-lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH STATE_KEY
+lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH SAVED_KEY
   local path="$3/tmp/cycle-state/workflow-state-$5.json" rc=0
   LANE_ITEM_STATE_TRIED+=("$path")
   lane_host_fetch "$1" "$2" "$path" "$4/saved-state.json" "$4/state.err" || rc=$?
@@ -334,7 +339,7 @@ lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH STATE_KEY
 }
 
 lane_item_state() {
-  local path files clone="${11:-}" cycle="${12:-false}" rc=0 state_key="${9:-$4}"
+  local path files clone="${11:-}" saved_key="${12:-}" rc=0 state_key="${9:-$4}"
   LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON=""
   LANE_ITEM_STATE_TRIED=()
   if [[ "${10:-false}" == true && -z "$6" ]]; then
@@ -368,11 +373,11 @@ lane_item_state() {
       LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
       return 0
     fi
-    if [[ "$cycle" == true && -n "$clone" ]]; then
-      lane_item_saved_state "" "$4" "$clone" "$7" "$state_key" || return $?
+    if [[ -n "$saved_key" && -n "$clone" ]]; then
+      lane_item_saved_state "" "$4" "$clone" "$7" "$saved_key" || return $?
     fi
     [[ -n "$LANE_ITEM_STATE" ]] || lane_item_state_absent "$4" "$7"
-    [[ "$cycle" != true || -n "$LANE_ITEM_STATE" ]] || return 2
+    [[ -z "$saved_key" || -n "$LANE_ITEM_STATE" ]] || return 2
     return 0
   fi
   lane_capabilities_read "$2" "$5" 2>"$7/state.err" || return 2
@@ -383,16 +388,16 @@ lane_item_state() {
   fi
   ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" || rc=$?
   [[ "$rc" -eq 0 ]] || return "$rc"
-  if [[ "$cycle" == true && -z "$LANE_ITEM_STATE" && -n "$clone" ]]; then
-    ORCH_LANE_HOST="$5" lane_item_saved_state "$2" "$4" "$clone" "$7" "$state_key" || return $?
+  if [[ -n "$saved_key" && -z "$LANE_ITEM_STATE" && -n "$clone" ]]; then
+    ORCH_LANE_HOST="$5" lane_item_saved_state "$2" "$4" "$clone" "$7" "$saved_key" || return $?
   fi
   if [[ -z "$LANE_ITEM_STATE" && "$LANE_HOSTED_GONE" == 1 && -n "${8:-}" ]]; then
     LANE_ITEM_STATE_TRIED+=("$8")
-    lane_archived_state "$state_key" "$8" "$7" "$6" || return $?
+    lane_archived_state "$state_key" "$8" "$7" "$6" "$saved_key" || return $?
   fi
   if [[ -z "$LANE_ITEM_STATE" ]]; then
     lane_item_state_absent "$4" "$7"
-    [[ "$cycle" != true ]] || return 2
+    [[ -z "$saved_key" ]] || return 2
   fi
 }
 

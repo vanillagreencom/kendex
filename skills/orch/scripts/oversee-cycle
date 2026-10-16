@@ -11,7 +11,9 @@
 #
 # --state-dir is the fleet state's directory, as workflow-state takes it.
 # stages reads a running lane without writing a cycle. It reads the item key,
-# then pr-N from the lane record when the item has no state. Rows sort by start:
+# then pr-N for the lane's current PR, its pending_pr or parked PR, when the
+# item has no state, and the copy merge-pr saved for that PR after live state
+# removal. Rows sort by start:
 #   stage item=ITEM kind=K round_id=RID start=EPOCH end=EPOCH|-
 # Superseded rounds carry superseded=1 after end=.
 # Restack validation rows also carry reason=restack. workflow-state new-round-id
@@ -61,8 +63,11 @@
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state. A hosted lane's is read on its host
 # in the state directory the lane resolves from its own worktree's settings,
-# never this caller's ORCH_STATE_DIR. After live state removal it reads
-# clone/tmp/cycle-state/workflow-state-ITEM.json, saved by merge-pr § 5.
+# never this caller's ORCH_STATE_DIR. Live state is read under ITEM, then
+# pr-N for --pr N. After live state removal it reads
+# clone/tmp/cycle-state/workflow-state-pr-N.json, the copy merge-pr § 5 saved
+# for that merge, never a copy another merge of the item saved. --commit has
+# no saved copy to read.
 # The owning fleet repository's watch rows address a gone worktree's clone,
 # even when this command runs from a connected repository checkout.
 # A gone hosted lane can also read the archive the fleet log's last
@@ -305,20 +310,23 @@ read_item_state() {
   return "$rc"
 }
 
+# read_lane_state [PR]: PR is the merge whose saved copy alone may answer.
 read_lane_state() {
-  local pr_key key phase clone="" watch_dir rc tried=() keys=("$ITEM")
+  local saved_key="" key phase clone="" watch_dir rc tried=() keys=("$ITEM")
   LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_SINCE="$(jq -r '.session_since // .launched_at // ""' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_KEPT="$(jq -r --arg item "$ITEM" --arg since "$LANE_SINCE" '
     [.fleet_log[]? | select(.item == $item and ((.at // "") >= $since)) | .text | strings
      | capture("(^|\\s)kept=(?<p>/.*[^\\s])\\s*$") | .p] | last // empty' "$STATE_FILE" 2>"$WORK/state.err")" || return 1
-  pr_key="$(jq -r '.pending_pr.pr // .parked.pr // .cycle.pr // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
-  [[ ! "$pr_key" =~ ^[1-9][0-9]*$ ]] || keys+=("pr-$pr_key")
+  if [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; then
+    saved_key="pr-$1"
+    keys+=("$saved_key")
+  fi
   for phase in live retained; do
     if [[ "$phase" == retained ]]; then
       [[ "$LANE_ITEM_STATE_REASON" != files-none ]] || break
-      # Try both live and kept keys before any saved cycle copy.
+      # Both live keys miss before the clone holding the saved copy resolves.
       if [[ -n "$LANE_HOST_SPEC" && "$LANE_HOSTED_GONE" != 1 ]]; then
         clone="$LANE_HOSTED_CLONE"
       elif [[ -z "$LANE_HOST_SPEC" && ( -z "$LANE_ROOT" || -d "$LANE_ROOT" ) ]]; then
@@ -338,7 +346,7 @@ read_lane_state() {
     for key in "${keys[@]}"; do
       rc=0
       read_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-        "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "$key" false "$clone" true || rc=$?
+        "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK" "$LANE_KEPT" "$key" false "$clone" "$saved_key" || rc=$?
       tried+=(${LANE_ITEM_STATE_TRIED[@]+"${LANE_ITEM_STATE_TRIED[@]}"})
       LANE_ITEM_STATE_TRIED=(${tried[@]+"${tried[@]}"})
       [[ "$rc" -eq 0 ]] || return "$rc"
@@ -361,7 +369,10 @@ if [[ "$VERB" == stages ]]; then
   lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | first // empty' "$STATE_FILE" 2>"$WORK/state.err")" \
     || refuse stages-unread "$ITEM" "$WORK/state.err"
   [[ -n "$lane" ]] || refuse record-missing "$ITEM"
-  read_lane_state || refuse stages-unread "$ITEM" "$WORK/state.err"
+  # A recorded cycle's PR is an earlier run's merge, never the running one.
+  stage_pr="$(jq -r '.pending_pr.pr // .parked.pr // empty' <<<"$lane" 2>"$WORK/state.err")" \
+    || refuse stages-unread "$ITEM" "$WORK/state.err"
+  read_lane_state "$stage_pr" || refuse stages-unread "$ITEM" "$WORK/state.err"
   if [[ -z "$LANE_ITEM_STATE" ]]; then
     printf 'oversee-cycle: stages-unread item=%s cause=no-state\n' "$ITEM" >&2
     exit 1
@@ -475,7 +486,7 @@ case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 # is the rest of the row, since a fleet directory may hold spaces and the
 # provider prints it unescaped as the line's last field.
 rounds=null stages=null rounds_unread=""
-if ! read_lane_state; then
+if ! read_lane_state "$PR"; then
   lane_item_state_paths "$ITEM" "$WORK"
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
