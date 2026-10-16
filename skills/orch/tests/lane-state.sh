@@ -317,9 +317,7 @@ idle Pi with an empty bar and no footer is not ready in UTF-8 locale|pi_current_
 idle Pi with an empty bar and no prompt is not ready in C locale|pi_current_idle_no_prompt|no|C
 idle Pi with an empty bar and no prompt is not ready in UTF-8 locale|pi_current_idle_no_prompt|no|C.UTF-8
 current Pi readiness allows different title and footer content|pi_current_variable|yes
-current idle Pi without its title is not ready|pi_current_idle_no_title|no
 current Pi without its footer is not ready|pi_current_no_footer|no
-current idle Pi without its prompt is not ready|pi_current_idle_no_prompt|no
 a Pi startup interrupted before its editor is not ready|pi_header_only|no
 a Working border without Pi startup is not proof of Pi|pi_editor_only|no
 a bare shell is not the harness up|shell|no
