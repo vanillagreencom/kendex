@@ -95,7 +95,10 @@ class Presence(unittest.TestCase):
                 saved.rename(installed)
             # Tools and turn ends alternate. The existing hook is the only
             # writer of context activity; the producer alone touches holds.
-            for index, elapsed in enumerate((0, 120, 240, 360, 480)):
+            for index, (elapsed, observed) in enumerate(((0, "idle"), (120, "idle"),
+                                                        (240, "rate-limit-switch"),
+                                                        (360, "idle"), (480, "idle"))):
+                state.write_text(observed)
                 clock.write_text(str(epoch+elapsed))
                 hook("lane-mail-deliver.sh" if index % 2 == 0 else "lane-mail-check.sh")
                 row = json.loads(context.read_text())
@@ -127,9 +130,10 @@ class Presence(unittest.TestCase):
                 self.assertFalse(watch.live(epoch+480))
                 no_renew(epoch+480)
             context.write_text(json.dumps(row))
-            state.write_text("gone")
-            self.assertFalse(watch.live(epoch+480))
-            no_renew(epoch+480)
+            for observed in ("gone", "exited", "unjudged", "unknown", ""):
+                state.write_text(observed)
+                self.assertFalse(watch.live(epoch+480), observed)
+                no_renew(epoch+480)
             state.write_text("idle")
             workflow = root / ".agents/skills/orch/scripts/workflow-state"
             subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = null'],

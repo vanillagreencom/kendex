@@ -992,6 +992,16 @@ lane_pane_capture() { # OUT_VAR MODE HOST ITEM PANE [history]
 # The judge.
 # ---------------------------------------------------------------------------
 
+# Consumers ask for a property instead of copying the judge's state list.
+# Unknown or unreadable observations grant neither live nor dialog permission.
+lane_state_is() { # STATE live|dialog
+  case "$1" in
+    asking|rate-limit-switch) [[ "$2" == live || "$2" == dialog ]] ;;
+    working|idle|walled) [[ "$2" == live ]] ;;
+    *) return 1 ;;
+  esac
+}
+
 # lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] [ROWS] [HOSTED_ITEM] [HARNESS] [SOURCE]
 # SOURCE carries LANE_PANE_SOURCE from the shared capture owner. A failed
 # provider observation cannot establish exit, even when the process confirms it.

@@ -34,7 +34,7 @@ jarvis_live() {
   account="$(jq -r '.home // ""' <<<"$record")" || return 1
   jq -e '.exit == null' <<<"$record" >/dev/null || return 1
   ol_session_inspect "$pane" || return 1
-  case "$OL_INSPECT_STATE" in working|idle|asking|walled) ;; *) return 1 ;; esac
+  [[ "$OL_INSPECT_LIVE" == true ]] || return 1
   server="$OL_INSPECT_SERVER"
   start="$OL_INSPECT_START"
   [[ -n "$start" ]] || start="$(ol_session_start "$server" "$pane")" || return 1

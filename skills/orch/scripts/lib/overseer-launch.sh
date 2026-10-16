@@ -69,12 +69,16 @@
 # keyed line.
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
-# directory), DEP_ERR (a file), lib/lane-launch.sh and lib/lane-state.sh
-# sourced by the caller, the github skill installed beside orch, whose
+# directory), DEP_ERR (a file), lib/lane-launch.sh sourced by the caller,
+# the github skill installed beside orch, whose
 # lib/bounded.sh ol_checkout_sync sources, and, of a caller that opens a
 # session or writes a notice to the fleet log, `message KEY FIELD=VALUE...`
 # defined, with a `checkout-unsynced` text of its own where it opens a
 # session. Sourcing it defines names and runs nothing. Sourced, never run.
+
+# The inspection reader carries the state owner's live-session classification.
+# shellcheck source=lane-state.sh
+declare -F lane_state_is >/dev/null || source "${BASH_SOURCE[0]%/*}/lane-state.sh"
 
 # The file a session's own event rows land in, which the record names: its
 # path is lib/session-rows.sh's, named by expansion as lib/lane-context.sh
@@ -987,10 +991,14 @@ ol_session_from_out() {
 # OL_INSPECT_PROBE the child probe's exit status where one of them is
 # `process-probe`. Returns 1 with OL_REASON=inspect-failed; the provider's own
 # line is in DEP_ERR.
+# OL_INSPECT_LIVE is the shared judge's permission, false for an unknown state
+# or a failed inspection. The provider's wire format remains unchanged.
 OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_START="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_INSPECT_LINE=""
+OL_INSPECT_LIVE=false
 ol_session_inspect() { # SESSION [--launch]
   local out word record socket caller_socket caller_server server start recorded_pane args=()
   OL_INSPECT_STATE="" OL_INSPECT_WALL_KIND="" OL_INSPECT_SERVER="" OL_INSPECT_START="" OL_INSPECT_WINDOW="" OL_INSPECT_CAUSE="" OL_INSPECT_PROBE="" OL_DETAIL=""
+  OL_INSPECT_LIVE=false
   record="${OL_PRIOR:-null}"
   socket=""
   recorded_pane=""
@@ -1032,6 +1040,7 @@ ol_session_inspect() { # SESSION [--launch]
       probe=*) OL_INSPECT_PROBE="${word#probe=}" ;;
     esac
   done
+  if lane_state_is "$OL_INSPECT_STATE" live; then OL_INSPECT_LIVE=true; fi
   [[ "$out" != *$'\n'* ]] || OL_DETAIL="${out#*$'\n'}"
 }
 

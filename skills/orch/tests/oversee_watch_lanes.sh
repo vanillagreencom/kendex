@@ -419,9 +419,11 @@ run 1
 assert_eq "$(watch "rc=0 first=$HEARTBEAT1 out~EVENT+lane-asking=false")" \
   "rc=0 first=$HEARTBEAT1 out~EVENT+lane-asking=false" 'the unchanged model reminder is not reported again' "$ERR"
 
-REMINDER_WATCH="$(mutant_scripts reminder-watch/orch oversee-watch)/oversee-watch" || exit 1
+REMINDER_WATCH="$(mutant_scripts reminder-watch/orch lib/lane-state.sh)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reminder-watch/github"
-mutate_file "$REMINDER_WATCH" '      asking|rate-limit-switch) ;;' '      asking) ;;'
+mutate_file "${REMINDER_WATCH%/*}/lib/lane-state.sh" \
+  '    asking|rate-limit-switch) [[ "$2" == live || "$2" == dialog ]] ;;' \
+  '    asking) [[ "$2" == live || "$2" == dialog ]] ;;'
 WATCH_BIN="$REMINDER_WATCH" lane_table \
   "control: the asking-only route loses the model reminder event|new|codex:codex-rate-limit-switch|codex|1|rc=0 first=$HEARTBEAT1 out~EVENT+lane-asking=false"
 if (FAIL=0; assert_eq "$(watch "$REMINDER_EXPECT")" "$REMINDER_EXPECT" 'model reminder control'; [[ "$FAIL" -eq 0 ]]) >"$TMP_ROOT/reminder-control.out"; then

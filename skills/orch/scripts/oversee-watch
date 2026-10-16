@@ -4496,13 +4496,12 @@ check_lanes() {
     # exited or unjudged keeps it. A wall can sit above a standing question,
     # and the row is what stops the question being re-reported once the wall
     # lifts; gone and exited clear it on their own paths.
-    case "${states[$i]}" in
-      asking|rate-limit-switch) ;;
-      working|idle)
+    if ! lane_state_is "${states[$i]}" dialog; then
+      if lane_state_is "${states[$i]}" live && [[ "${states[$i]}" != walled ]]; then
         lane_row_clear lane-asking "$asking_state" "$lane" >/dev/null; asking_state="$LANE_ROW"
-        continue ;;
-      *) continue ;;
-    esac
+      fi
+      continue
+    fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     below="$(pane_below_last_turn "$pane")"
     pane_key="${obs_key[$i]}"
