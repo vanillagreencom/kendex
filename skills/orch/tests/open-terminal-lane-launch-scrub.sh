@@ -68,11 +68,12 @@ source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/shared-skill-libs.sh"
 
-# The shipped list, with the names KEN-3859 requires as its floor. Read from
+# The shipped list, with required identity names as its floor. Read from
 # the shipped library even under the control, whose library lists none of it.
 NAMES="$(env -i PATH="$PATH" "$BASH" -c 'source "$1/lane-launch.sh" && printf "%s " "${LANE_LAUNCH_SCRUB[@]}"' _ "$TEST_DIR/../scripts/lib")" \
   || { echo "lane-launch-scrub: list=unread" >&2; exit 1; }
-for name in CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID JARVIS_RECORD JARVIS_GENERATION; do
+for name in CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID JARVIS_RECORD JARVIS_GENERATION \
+  PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID; do
   assert_contains " $NAMES" " $name " "the scrub list names $name"
 done
 
@@ -126,7 +127,7 @@ printf '%s\n' \
   'prefix|claude|CLAUDE_CONFIG_DIR||Claude lane under the prefix' \
   'launcher|codex|CODEX_HOME||Codex lane through its launcher' \
   'prefix|copilot|COPILOT_HOME||Copilot lane' \
-  'unchecked|pi|-||no lane picked' \
+  'unchecked|pi|-||independent Pi lane from a subagent' \
   'custom|claude|CLAUDE_CONFIG_DIR||custom command under an account' \
   'custom|claude|-|--permission-mode=bypassPermissions|custom command under launch env words' \
   'prefix|claude|CLAUDE_CONFIG_DIR||explicit Jarvis child identity|explicit' \
@@ -185,9 +186,21 @@ if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
     'control: the raw custom function receives every parent identity name'
 fi
 
-# Must-fail control: a scrub list naming none of the shipped names leaves every
-# one of them in the child. Copy all library dependencies.
+# Must-fail controls retain the Pi role, drop explicit child assignments, or
+# omit the scrub. Copy all library dependencies.
 if [[ -z "${LAUNCH_LIB_UNDER_TEST:-}" ]]; then
+  cp -R "$LIB" "$TMP_ROOT/pi-role-mutant-lib"
+  mutate_file "$TMP_ROOT/pi-role-mutant-lib/lane-launch.sh" \
+    '  PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID' \
+    '  PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID'
+  rc=0
+  env LAUNCH_LIB_UNDER_TEST="$TMP_ROOT/pi-role-mutant-lib" "$BASH" "$TEST_DIR/open-terminal-lane-launch-scrub.sh" > "$TMP_ROOT/pi-role-control.out" 2>&1 || rc=$?
+  assert_eq "$rc" 1 'control: retaining the inherited Pi child role fails the suite'
+  control="$(cat "$TMP_ROOT/pi-role-control.out")"
+  assert_contains "$control" '  FAIL  independent Pi lane from a subagent: child environment' \
+    'control: the independent Pi lane row rejects the inherited child role'
+  assert_contains "$control" 'held=PI_SUBAGENT_CHILD_AGENT,|account=' \
+    'control: the child retains its role after both parent ids are cleared'
   cp -R "$LIB" "$TMP_ROOT/child-mutant-lib"
   python3 - "$TMP_ROOT/child-mutant-lib/lane-launch.sh" <<'PYCONTROL'
 import pathlib

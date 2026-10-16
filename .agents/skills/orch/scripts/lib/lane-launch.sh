@@ -1432,7 +1432,8 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 #   Codex        CODEX_THREAD_ID, the session it exports to its tools;
 #                CODEX_SANDBOX and CODEX_SANDBOX_NETWORK_DISABLED, which
 #                second-opinion reads as running inside Codex.
-#   Pi           PI_SUBAGENT_PARENT_SESSION_ID and PI_BRIDGE_PARENT_SESSION_ID,
+#   Pi           PI_SUBAGENT_CHILD_AGENT, the delegated child role;
+#                PI_SUBAGENT_PARENT_SESSION_ID and PI_BRIDGE_PARENT_SESSION_ID,
 #                pi-agents-tmux's parent session for a subagent.
 #   Jarvis       JARVIS_RECORD and JARVIS_GENERATION, the runtime record a
 #                SessionStart writes its native identity into
@@ -1442,7 +1443,7 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 LANE_LAUNCH_SCRUB=(
   CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_PROJECT_DIR
   CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
-  PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
+  PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
   JARVIS_RECORD JARVIS_GENERATION
 )
 
