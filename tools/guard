@@ -1540,19 +1540,28 @@ scan_load() { # DIR
         }
         $1 == "C" {
           reader = $2; count = $3
+          reader_counts[reader] = count
           for (line = 0; line < count; line++) {
             if (getline <= 0) exit 2
-            for (q in reader_patterns) {
-              if (seen[q, reader]) continue
-              if (reader_phase == 0 ? index($0, reader_patterns[q]) : $0 ~ reader_patterns[q]) {
-                print q, reader
-                seen[q, reader] = 1
-              }
-            }
+            reader_lines[reader, line] = $0
           }
           next
         }
         { exit 2 }
+        END {
+          # GNU Awk caches the last dynamic regex at each match site.
+          for (q in reader_patterns) {
+            pattern = reader_patterns[q]
+            for (reader in reader_counts) {
+              for (line = 0; line < reader_counts[reader]; line++) {
+                if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
+                  print q, reader
+                  break
+                }
+              }
+            }
+          }
+        }
       ' <<<"${reader_data%$'\n'}") || return 2
       while read -r q i; do
         [ -n "$q" ] || continue
