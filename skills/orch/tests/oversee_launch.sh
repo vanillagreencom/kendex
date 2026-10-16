@@ -361,6 +361,9 @@ run_oversee() {
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 recorded() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 keyed() { awk -v k="oversee: $1" 'index($0, k) == 1 { found = 1 } found' <<<"$2"; }
+# first_line — OUT's first line, kendex's model-resolution warning passed
+# over: it precedes any refusal of a launch that classified a model.
+first_line() { sed -n '/^model-resolution: /!{p;q;}' <<<"$OUT"; }
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$(sed -n 1p <<<"$1")"; }
 layout() { tm list-windows -t fleet -F '#{window_id} #{window_index} #{window_name}' | awk -v keep="$KEEP_WINDOW" '$1 != keep { print $2, $3 }' | tr '\n' ';'; }
 overseers() { tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer"' | wc -l | tr -d ' '; }
@@ -394,7 +397,7 @@ assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/s
 # A second launch while that overseer is live is refused: two overseers never
 # act at once, and the record tells them apart.
 run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
+assert_eq "$RC|$(first_line)|$(overseers)|$(recorded generation)" \
   "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
   "a launch beside a live recorded overseer refuses naming it and opens nothing"
 # A record carrying no server start, the shape a writer that recorded none
@@ -403,14 +406,14 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
 cp -- "$FLEET_STATE" "$TMP_ROOT/state.live"
 jq 'del(.overseer.server_start)' "$TMP_ROOT/state.live" > "$FLEET_STATE" || exit 1
 run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
+assert_eq "$RC|$(first_line)|$(overseers)|$(recorded generation)" \
   "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
   "a launch beside a live pane a record with no server start names refuses and opens nothing"
 # Yet that record names no predecessor: its pane may be one a later server
 # handed the same pid and pane id, so --predecessor on it refuses and the
 # succession stops nothing.
 run_oversee -- launch --predecessor "$SESSION" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$SESSION")|$(recorded generation)" \
+assert_eq "$RC|$(first_line)|$(overseers)|$(listed "$SESSION")|$(recorded generation)" \
   "1|oversee: predecessor-not-live session=$SESSION live=none server=$SOCKET|1|1|1" \
   "a --predecessor naming the live pane a record with no server start names is refused and left running"
 mv -- "$TMP_ROOT/state.live" "$FLEET_STATE"
@@ -437,7 +440,7 @@ printf '%s\n' "$SESSION" > "$TMP_ROOT/nostart-pane"
 # A live recorded pane whose server start cannot be read may be that
 # overseer, so the launch refuses rather than open a second one beside it.
 run_oversee PATH="$NOSTART_PATH" -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
+assert_eq "$RC|$(first_line)|$(overseers)|$(recorded generation)" \
   "1|oversee: launch-failed step=server-start session=$SESSION server=$SOCKET|1|1" \
   "a launch beside a live recorded pane whose server start cannot be read refuses and opens nothing"
 # The overseer stopped: the next launch takes the next generation.
@@ -492,15 +495,25 @@ for row in \
   ; do
   IFS='|' read -r row_env row_want row_what <<<"$row"
   run_oversee "$row_env" -- launch --wait-secs 5
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  assert_eq "$RC|$(first_line)|$(overseers)" \
     "1|oversee: $row_want|0" \
     "$row_what: refused, nothing opened"
 done
+# A model kendex cannot classify refuses before anything opens, kendex's
+# words after the keyed line.
+mv -- "${BIN:?}/kendex-tier-model" "$BIN/kendex-tier-model.real"
+printf '#!/bin/sh\necho "Error: invalid manifest" >&2\nexit 1\n' >"$BIN/kendex-tier-model"
+chmod +x "$BIN/kendex-tier-model"
+LAUNCH_PREF=claude:standard:high run_oversee -- launch --wait-secs 5
+assert_eq "$RC|$(first_line)|$(tail -n 1 <<<"$OUT")|$(overseers)" \
+  "1|oversee: preference-class-unread entry=claude:standard:high|Error: invalid manifest|0" \
+  "a model kendex cannot classify: refused with kendex's words, nothing opened"
+mv -f -- "${BIN:?}/kendex-tier-model.real" "$BIN/kendex-tier-model"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_oversee -- launch --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
-  "no lane above the trigger: refused at 3 with the walk's counts"
+assert_eq "$RC|$(first_line)|$(overseers)|$(grep -c 'class ladder' <<<"$OUT" || :)" \
+  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0|0" \
+  "no lane above the trigger: refused at 3 with the walk's counts and no kendex words beside them"
 # An overseer opens through overseer-host on this machine, under this machine's
 # copy of the account, so the walk reads that copy even on a fleet whose
 # provider reports the same account with room. Run from a repository of its
@@ -511,7 +524,7 @@ git -C "$HOSTED_WORK" init -q -b main
 printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Fable 5.1\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
 HOSTED_ENV=(ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log")
 RUN_DIR="$HOSTED_WORK" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+assert_eq "$RC|$(first_line)|$(overseers)" \
   "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
   "a provider row with room for an account this machine reads walled opens no overseer on it"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -524,7 +537,7 @@ EMPTY_TMUX="$TMP_ROOT/empty-tmux"
 mkdir -p "$EMPTY_TMUX"
 EMPTY_SOCKET="$EMPTY_TMUX/tmux-$(id -u)/default"
 run_oversee TMUX_TMPDIR="$EMPTY_TMUX" -- launch --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+assert_eq "$RC|$(first_line)|$(overseers)" \
   "1|oversee: tmux-failed operation=has-session server=$EMPTY_SOCKET|0" \
   "launch against a socket with no server refuses tmux-failed, not a missing session"
 
@@ -532,7 +545,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 # record's, kept where the record already names that pane.
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)|$(recorded server_start)" \
+assert_eq "$RC|$(first_line)|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)|$(recorded server_start)" \
   "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=3 account=$H/.eclaude retained=none fresh=account,cwd,generation,harness,home,pane,runtime,server,server_socket,server_start,session_rows,window|tmux|$H/.eclaude|none|$SERVER_START" \
   "register with no SessionStart row reads the pane as the named fallback, says so, writes the record one generation past it with its server's start, and drops the launch line the record held"
 HAND_IDENTITY="claude|$H/.eclaude|$H/.eclaude|none|none|$(tm display-message -p -t "$HAND" '#{pane_current_path}')|"
@@ -580,7 +593,7 @@ assert_eq "$RC|$(recorded generation)|$(recorded account)" \
   "0|3|$H/.claude" \
   "registering the same pane again keeps its generation and takes --account"
 run_oversee -- register
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+assert_eq "$RC|$(first_line)" \
   "1|oversee: tmux-missing var=TMUX_PANE" \
   "register outside a pane refuses"
 
@@ -876,17 +889,17 @@ assert_eq "$RC|$(sed 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/
 # the fleet never recorded, which the succession would otherwise stop.
 OTHER="$(tm new-window -d -t fleet -n other -P -F '#{pane_id}' 'exec sleep 100000')"
 run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+assert_eq "$RC|$(first_line)|$(overseers)" \
   "1|oversee: predecessor-not-live session=$OTHER live=$SUCC server=$SOCKET|1" \
   "a predecessor beside a live recorded overseer is refused naming the live one"
 tm kill-window -t "$(recorded window)"
 run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$OTHER")" \
+assert_eq "$RC|$(first_line)|$(overseers)|$(listed "$OTHER")" \
   "1|oversee: predecessor-not-live session=$OTHER live=none server=$SOCKET|0|1" \
   "a predecessor the fleet does not record as its live overseer is refused and left running"
 tm kill-window -t "$OTHER"
 run_oversee -- launch --session fleet --predecessor "$SUCC" --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+assert_eq "$RC|$(first_line)|$(overseers)" \
   "2|oversee: option-conflict command=launch session=fleet predecessor=$SUCC|0" \
   "--session beside --predecessor is refused, nothing opened"
 
@@ -965,7 +978,7 @@ pending_refused() { # OVERSEE_BIN
 PENDFAIL="$(mutant_scripts pendfail workflow-state)" || exit 1
 pendfail_stub "$PENDFAIL"
 pending_refused "$PENDFAIL/oversee"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)" \
+assert_eq "$RC|$(first_line)|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)" \
   "1|oversee: record-unwritten field=overseer step=pending|1|1|$PRED|$PRED_GEN" \
   "a pending write the state refuses stops the succession, the predecessor running and recorded"
 # A session record write the state refuses refuses the launch too: the stub
@@ -1018,7 +1031,7 @@ for row in "1|$SERVER_START|another server pid" "$SERVER_PID|$EARLIER_START|this
   stale_record "$row_server" "$row_start"
   STALE_GEN="$(recorded generation)"
   run_oversee -- launch --predecessor "$STALE" --wait-secs 20
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$STALE")" \
+  assert_eq "$RC|$(first_line)|$(overseers)|$(listed "$STALE")" \
     "1|oversee: predecessor-not-live session=$STALE live=none server=$SOCKET|0|1" \
     "a --predecessor naming a pane an earlier server's record names by $row_what is refused and left running"
   run_oversee -- launch --wait-secs 20

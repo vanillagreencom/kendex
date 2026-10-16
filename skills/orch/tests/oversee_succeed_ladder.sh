@@ -189,7 +189,9 @@ launched() {
        $0 == "--model" || $0 == "-m" { want = 1 } END { printf "%s %s", lane, model }' "$TMP_ROOT/argv.$1"
 }
 caller_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$CALLER_WINDOW"* ]]; then echo yes; else echo no; fi; }
-first_key() { sed -n 1p <<<"$OUT" | awk '{print $2}'; }
+# first_key — the key of OUT's first line, kendex's model-resolution warning
+# passed over: it precedes any refusal of a launch that classified a model.
+first_key() { sed -n '/^model-resolution: /!{p;q;}' <<<"$OUT" | awk '{print $2}'; }
 # keyed KEY — the first line OUT carries under KEY, or `none`.
 keyed() { grep -m1 "^oversee-succeed: $1 " <<<"$OUT" || echo none; }
 
@@ -317,16 +319,16 @@ assert_eq "$RC|$(launched claude)" \
   "0|$H/.eclaude opus" \
   "the same fleet with no claim takes the first seat"
 
-# Every claude seat walled for every model: the default reaches codex on
-# its standard class, the second entry.
+# Every claude seat walled for every model: the default reaches codex's
+# standard class, the second entry, which runs codex's native default.
 seat eclaude 99 99 10
 seat fclaude 99 99 10
 codex_seat codex 20
 new_caller
 run_succeed codex unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex | awk '{print $2}')|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-  "0|no|none|gpt-6.1-sol|1" \
-  "every claude entry walled: the default reaches codex on its standard class"
+  "0|no|none||1" \
+  "every claude entry walled: the default reaches codex's standard class on its native default"
 
 # The setting is the one list of models: a codex model no tier ladder and no
 # script names launches as the setting writes it.
@@ -460,7 +462,7 @@ for control in observed flags; do
   CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
     run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
   assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-    "0|$CODEX_LAUNCH_HOME gpt-6.1-sol|1" "control: dropping the $control model breaks numeric launch identity"
+    "0|$CODEX_LAUNCH_HOME |1" "control: dropping the $control model breaks numeric launch identity"
 done
 CALLER_FLAGS=("$BYPASS")
 seat eclaude 10 99 10
@@ -477,7 +479,7 @@ new_caller codex
 CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=high -a never)
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexcaller unset
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(launched codex | sed "s|^$H/.dcodex[^ ]* |dcodex |")|$(grep -cx never "$TMP_ROOT/argv.codex")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude|none|dcodex gpt-6.1-sol|1" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude|none|dcodex |1" \
   "a codex caller whose permission words cannot cross skips the claude entries and succeeds on codex"
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.

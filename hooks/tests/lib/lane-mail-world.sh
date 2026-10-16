@@ -23,6 +23,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
+# The hook's `lanes pick --model` has kendex classify the model; the orch
+# fixture answers that read whether or not a kendex is installed.
+# shellcheck source=../../../skills/orch/tests/lib/tier-model-path.sh
+. "$REPO_ROOT/skills/orch/tests/lib/tier-model-path.sh"
 # Canonical from the start: the hook resolves its own directory with pwd -P,
 # and on a host whose temp root is a symlink — every macOS one, /var pointing
 # at /private/var — a path this suite composed would name the link where the

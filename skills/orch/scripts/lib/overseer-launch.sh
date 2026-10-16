@@ -13,7 +13,8 @@
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
 #                          where the setting is unset
 #   ol_preference_entries  the shared overseer and lane preference parse
-#   ol_model_class         a model word read against the class table
+#   ol_model_class         a model word classified by kendex, a class
+#                          resolved to the model a launch runs
 #   ol_account             the account a session spends, as `lanes` judges it
 #   ol_pi_model            a pi session's model, out of the sources naming it
 #   ol_entry_model         one entry's harness, model, class and effort, a
@@ -65,7 +66,7 @@
 # refusal the caller prints, with the reason in OL_REASON and its fields in
 # the OL_* variables each function documents; none of them prints a keyed
 # line of its own, save the preference deprecation warning and conversion and
-# the class default warning (ol_model_class), because
+# kendex's model-resolution warning (ol_model_class), because
 # the caller owns its own refusal prefix and words: ol_checkout_notice and
 # ol_fleet_log_notice print theirs through the caller's `message`. Every
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
@@ -112,9 +113,9 @@ ol_runtime_supported() {
   [[ "$OL_RUNTIME" == tmux ]] || { OL_REASON=runtime-unsupported; return 1; }
 }
 
-# The standard class on each harness, which ol_model_class resolves at launch,
-# so a model release moves the overseer with no orch release. An empty setting
-# names no entries.
+# The standard class on each harness, which ol_model_class resolves at launch:
+# claude's family alias for it, so a model release moves the overseer with no
+# orch release, and codex's native default. An empty setting names no entries.
 OL_DEFAULT_PREFERENCE="claude:standard:high,codex:standard:high"
 ol_preference() {
   printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"
@@ -132,8 +133,8 @@ ol_preference() {
 # retain that number, which ol_entry_model resolves on the caller's model.
 # An overseer walk without that model uses the same-harness default entry.
 # OL_DEPRECATED_ENTRIES keeps their original spelling for the refresh report,
-# beside the old exact ids ol_entry_model finds, and ol_deprecated warns once
-# per process.
+# the numeric form alone: an old exact id is found by ol_entry_model, which
+# this parse does not run. ol_deprecated warns once per process.
 # OL_REFUSED_ENTRIES holds every refused entry; a refusal returns 1 and keeps
 # the first in OL_BAD_ENTRY for launchers. Empty VALUE is no entries.
 OL_ENTRIES=()
@@ -167,7 +168,8 @@ ol_preference_entries() { # VALUE [lane]
       parsed_entry="${head%%@*}:${entry#*:}"
     fi
     if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then
-      ol_deprecated "$entry"
+      OL_DEPRECATED_ENTRIES+=("$entry")
+      ol_deprecated "entry=$entry" form=harness:model:effort
     elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):([a-z][a-z0-9.-]*)?:[a-z]+$ \
        || "$parsed_entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]; then
       (( status != 0 )) || OL_BAD_ENTRY="$entry"
@@ -181,84 +183,92 @@ ol_preference_entries() { # VALUE [lane]
   return "$status"
 }
 
-# ol_deprecated ENTRY — ENTRY, a preference entry or a `lanes pick` harness and
-# model, kept once in OL_DEPRECATED_ENTRIES; the one stderr warning per
-# process names the first.
-ol_deprecated() { # ENTRY
-  local kept
-  for kept in ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"}; do
-    [[ "$kept" != "$1" ]] || return 0
-  done
-  OL_DEPRECATED_ENTRIES+=("$1")
+# ol_deprecated FIELD... — the one stderr warning per process for a retired
+# model spelling, `preference-deprecated FIELD...`: FIELD... names what was
+# written and `form=` the form that replaces it, harness:model:effort for a
+# numeric entry and model-class for an old exact id.
+ol_deprecated() { # FIELD...
   (( ! OL_DEPRECATION_WARNED )) || return 0
-  printf 'preference-deprecated entry=%s form=harness:model:effort\n' "$1" >&2
+  printf 'preference-deprecated %s\n' "$*" >&2
   OL_DEPRECATION_WARNED=1
 }
 
-# ol_class_ladder HARNESS — the class table's rows for HARNESS, top first, one
-# `CLASS<tab>MODEL` line each, into OL_LADDER: what `kendex tier-model HARNESS
-# RANK --json` answers for each rank, read from TIERS
-# (crates/core/src/harness/models.rs), the one class table, and project
-# overrides. MODEL is empty where the class has none on HARNESS, as Copilot
-# keeps its session's. Read once per harness per process. Returns 1 where
-# kendex could not answer, with its words in DEP_ERR where the caller set one.
-OL_LADDER=""
-ol_class_ladder() { # HARNESS
-  local cache="OL_LADDER_$1"
-  if [[ -n "${!cache:-}" ]]; then
-    OL_LADDER="${!cache}"
+# ol_model_class HARNESS MODEL — MODEL, as a preference entry or `lanes pick
+# --model` names it, classified by kendex: `kendex tier-model HARNESS --model
+# MODEL --json` under a runtime context with `unsupported` list evidence, core's
+# ModelRequest::parse the one judge of what is a class. Into OL_CLASS the
+# class MODEL names, a class or a legacy family alias such as opus, else
+# empty, and into OL_CLASS_MODEL the model a launch runs: for a class,
+# claude's family alias for it (ol_claude_alias) and, on codex and copilot,
+# the runtime answer, which with no list evidence is the harness default, an
+# empty model; any other MODEL as written. kendex's warning prints once per
+# process, OL_CLASS_WARNING keeping the last. A pi model is `provider/id` and
+# an empty MODEL the native default, so neither is read. Returns 2 for an old
+# exact id on claude or codex, which the caller warns on (ol_deprecated); on
+# copilot a class runs the session's default, so no class can replace a named
+# model. Returns 1 where kendex refused or its answer could not be read, with
+# kendex's and jq's words in OL_CLASS_ERR, which the caller relays.
+OL_CLASS="" OL_CLASS_MODEL="" OL_CLASS_WARNING="" OL_CLASS_ERR="" OL_CLASS_WARNED=0
+ol_model_class() { # HARNESS MODEL
+  local context answer fields tag old_id
+  OL_CLASS="" OL_CLASS_MODEL="$2" OL_CLASS_WARNING="" OL_CLASS_ERR=""
+  [[ -n "$2" && "$1" =~ ^(claude|codex|copilot)$ ]] || return 0
+  # Claude Code has no model list interface and codex's list does not reach
+  # a launch yet, hence `unsupported`. The read comes before `lanes pick`
+  # names an account or a host, and that evidence binds neither.
+  printf -v context '{"protocol":"model-resolution-v1","harness":"%s","account":"unpicked","host":"unpicked","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"orch-launch"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}' "$1"
+  # kendex's stderr shares the capture: with --json a read that succeeds
+  # writes none, and a refusal's words are what the caller relays.
+  answer="$(kendex tier-model "$1" --model "$2" --json --runtime-context-json "$context" 2>&1)" \
+    || { OL_CLASS_ERR="$answer"; return 1; }
+  fields="$(jq -r 'if .protocol == "model-resolution-v1" and (.request.tag | type) == "string"
+      then [.request.tag, .request.class // "", any(.resolution.diagnostics[]?; .code == "old-id"), .warning // ""]
+        | map(tostring) | join("\u001f")
+      else error("no model-resolution answer") end' <<<"$answer" 2>&1)" \
+    || { OL_CLASS_ERR="$answer"$'\n'"$fields"; return 1; }
+  # A unit separator, not a tab, which read would fold with an empty class.
+  IFS=$'\x1f' read -r tag OL_CLASS old_id OL_CLASS_WARNING <<<"$fields"
+  if [[ -n "$OL_CLASS_WARNING" ]] && (( ! OL_CLASS_WARNED )); then
+    printf '%s\n' "$OL_CLASS_WARNING" >&2
+    OL_CLASS_WARNED=1
+  fi
+  if [[ "$tag" == class ]]; then
+    OL_CLASS_MODEL=""
+    [[ "$1" != claude ]] || ol_claude_alias "$OL_CLASS" || return 1
     return 0
   fi
-  # The ranks run until kendex refuses the first one past the table, and one
-  # jq, exec'd in place of the substitution's own shell, reads every answer:
-  # an account mark check's `lanes pick --model` reads the whole ladder for an
-  # old exact id, and lanes-pick-cost.sh bounds the processes it spends. The
-  # table has a first rank, so no answer at all is kendex failing.
-  OL_LADDER="$(rank=1
-    exec jq -rs 'if length > 0 and all(.[]; .request.class | type == "string")
-        then .[] | [.request.class, .resolution.native_selector // ""] | @tsv
-        else error("no class ladder") end' \
-      < <(while kendex tier-model "$1" "$rank" --json; do rank=$((rank + 1)); done 2>"${DEP_ERR:-/dev/null}"))" || return 1
-  printf -v "$cache" '%s' "$OL_LADDER"
+  OL_CLASS=""
+  [[ "$old_id" != true || "$1" == copilot ]] || return 2
 }
 
-# ol_model_class HARNESS MODEL — MODEL, as a preference entry or `lanes pick
-# --model` names it, read against the class table (ol_class_ladder): into
-# OL_CLASS the class MODEL names, or the class whose model MODEL is, else
-# empty, and into OL_CLASS_MODEL the model a launch runs, the class's model
-# for HARNESS or MODEL as given. A class with no model on HARNESS leaves
-# OL_CLASS_MODEL empty, the harness default, and one stderr line per process
-# names it. A pi model is `provider/id` and an empty MODEL the native default,
-# so neither is read. MODEL is compared in lower case and without Claude's
-# `[1m]` capacity annotation, which names no other model. Returns 2 for a
-# model the table does not name on a harness it names models for, an old
-# exact id the caller warns on (ol_deprecated), and 1 where the table could
-# not be read. On a harness the table names no model for, as Copilot, a named
-# model is no old id: no class could replace it but with the session's own.
-OL_CLASS="" OL_CLASS_MODEL="" OL_CLASS_DEFAULT_WARNED=0
-ol_model_class() { # HARNESS MODEL
-  local word class model named=0
-  OL_CLASS="" OL_CLASS_MODEL="$2"
-  [[ -n "$2" && "$1" =~ ^(claude|codex|copilot)$ ]] || return 0
-  ol_class_ladder "$1" || return 1
-  word="$2"
-  [[ "$word" != *[[:upper:]]* ]] || word="$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')"
-  word="${word%\[1m\]}"
-  while IFS=$'\t' read -r class model; do
-    [[ -z "$model" ]] || named=1
-    if [[ "$word" == "$model" ]]; then
-      OL_CLASS="$class"
+# ol_claude_alias CLASS — claude's family alias for CLASS into OL_CLASS_MODEL,
+# a managed launch's selector, since Claude Code takes family aliases and
+# never a versioned pin: what `kendex tier-model claude RANK --json`
+# answers for the rank whose class is CLASS, walked from the first rank until
+# it names CLASS, and read once per class per process. This walk stands in for
+# a core answer to one word with the alias and `model-classes` overrides
+# applied (tmp/proposal-KEN-3372-core-word-answer.md); the rank form applies
+# no override, so none applies on claude yet. Returns 1 with kendex's and
+# jq's words in OL_CLASS_ERR where no rank answers CLASS with an alias.
+ol_claude_alias() { # CLASS
+  local cache="OL_CLAUDE_ALIAS_$1" rank=1 answer fields
+  if [[ -n "${!cache:-}" ]]; then
+    OL_CLASS_MODEL="${!cache}"
+    return 0
+  fi
+  while answer="$(kendex tier-model claude "$rank" --json 2>&1)"; do
+    fields="$(jq -r '[.request.class, .resolution.native_selector // empty] | @tsv' <<<"$answer" 2>&1)" \
+      || { OL_CLASS_ERR="$answer"$'\n'"$fields"; return 1; }
+    if [[ "${fields%%$'\t'*}" == "$1" ]]; then
+      [[ "$fields" == *$'\t'?* ]] || break
+      OL_CLASS_MODEL="${fields#*$'\t'}"
+      printf -v "$cache" '%s' "$OL_CLASS_MODEL"
       return 0
     fi
-    [[ "$word" == "$class" ]] || continue
-    OL_CLASS="$class" OL_CLASS_MODEL="$model"
-    if [[ -z "$model" ]] && (( ! OL_CLASS_DEFAULT_WARNED )); then
-      printf 'model-class-default harness=%s class=%s model=harness-default\n' "$1" "$class" >&2
-      OL_CLASS_DEFAULT_WARNED=1
-    fi
-    return 0
-  done <<<"$OL_LADDER"
-  (( ! named )) || return 2
+    rank=$((rank + 1))
+  done
+  OL_CLASS_ERR="$answer"
+  return 1
 }
 
 # ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,
@@ -305,13 +315,17 @@ ol_pi_model() { # MODEL...
 
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
 # OL_ENTRY_HARNESS, OL_ENTRY_HOST, OL_ENTRY_MODEL, OL_ENTRY_CLASS and
-# OL_ENTRY_EFFORT, a class resolved to its model (ol_model_class). An entry
-# naming a model the class table does not, an old exact id, keeps that model
-# and is deprecated (ol_deprecated). Returns 1 where the class table could
-# not be read, which leaves the entry's model unresolved. A numeric
+# OL_ENTRY_EFFORT, its model classified and a class resolved to the model a
+# launch runs (ol_model_class). An entry naming an old exact id keeps that
+# model and is deprecated (ol_deprecated). Returns 1 where kendex could not
+# classify the model, which leaves it unresolved, OL_CLASS_ERR holding
+# kendex's words. A numeric
 # entry uses the caller's launch or observed model, which
 # is spelled for the caller's harness: ol_entry_permitted skips such an entry
-# naming another harness rather than hand that spelling to its CLI. The
+# naming another harness rather than hand that spelling to its CLI. That model
+# is classified for its class alone, which the conversion names where it has
+# one: the launch keeps the session's own model, and the numeric form's own
+# warning stands for an old id. The
 # setting is the one source of which models the walk tries and in what order,
 # so nothing here holds a model list to check a name against: the launch line
 # carries the model the entry names, and a name its harness does not know is
@@ -332,21 +346,33 @@ ol_entry_model() { # ENTRY
   if [[ "$OL_ENTRY_MODEL" =~ ^[1-9][0-9]*$ ]]; then
     OL_ENTRY_DEPRECATED=true
     OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"
+    OL_ENTRY_CLASS_RC=0
+    ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" || OL_ENTRY_CLASS_RC=$?
+    (( OL_ENTRY_CLASS_RC != 1 )) || return 1
+    OL_ENTRY_CLASS="$OL_CLASS"
     return 0
   fi
   ol_entry_class || return 1
-  (( OL_ENTRY_CLASS_RC != 2 )) || ol_deprecated "$1"
+  (( OL_ENTRY_CLASS_RC != 2 )) || ol_deprecated "entry=$1" form=model-class
 }
 
-# ol_entry_class — OL_ENTRY_MODEL read against the class table into
+# ol_entry_class — OL_ENTRY_MODEL classified (ol_model_class) into
 # OL_ENTRY_CLASS and the model it resolves to, ol_model_class's status in
-# OL_ENTRY_CLASS_RC; 1 where the table could not be read.
+# OL_ENTRY_CLASS_RC; 1 where kendex could not classify it.
 OL_ENTRY_CLASS_RC=0
 ol_entry_class() {
   OL_ENTRY_CLASS_RC=0
   ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" || OL_ENTRY_CLASS_RC=$?
   (( OL_ENTRY_CLASS_RC != 1 )) || return 1
   OL_ENTRY_CLASS="$OL_CLASS" OL_ENTRY_MODEL="$OL_CLASS_MODEL"
+}
+
+# ol_class_unread ENTRY — ol_walk's refusal for an entry whose model kendex
+# could not classify: OL_REASON and OL_FIELDS, and kendex's words in DEP_ERR,
+# the one place a class read writes there.
+ol_class_unread() { # ENTRY
+  OL_REASON=preference-class-unread OL_FIELDS=("entry=$1")
+  printf '%s\n' "$OL_CLASS_ERR" >"$DEP_ERR"
 }
 
 # ol_lanes ARGS... — `lanes` as every overseer read of an account asks it,
@@ -519,7 +545,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
         return 0
       fi
     else
-      ol_entry_model "$entry" || { OL_REASON=preference-class-unread OL_FIELDS=("entry=$entry"); return 1; }
+      ol_entry_model "$entry" || { ol_class_unread "$entry"; return 1; }
       permitted_entry="$entry"
       if [[ -z "$OL_ENTRY_MODEL" && "$OL_ENTRY_DEPRECATED" == true ]]; then
         defaults="$OL_DEFAULT_PREFERENCE,"
@@ -527,7 +553,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
           default_entry="${defaults%%,*}" defaults="${defaults#*,}"
           [[ "${default_entry%%:*}" == "$OL_ENTRY_HARNESS" ]] || continue
           OL_ENTRY_MODEL="${default_entry#*:}" OL_ENTRY_MODEL="${OL_ENTRY_MODEL%%:*}"
-          ol_entry_class || { OL_REASON=preference-class-unread OL_FIELDS=("entry=$default_entry"); return 1; }
+          ol_entry_class || { ol_class_unread "$default_entry"; return 1; }
           # This model belongs to the target harness, not the caller's harness.
           permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"
           break

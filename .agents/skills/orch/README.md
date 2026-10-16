@@ -67,7 +67,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Nonnegative whole token reserve before the context mark for attached agent returns. Attached launches and overseer succession use the same inclusive boundary. A reserve larger than the available budget refuses every attached launch. | `150000` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and `lane-mail-check` refuses its turn end, Codex credits exempt: `lanes --help` | `3` |
 | `ORCH_WALL_RELAUNCH` | `auto` has `oversee-watch` relaunch a walled lane on an account `lanes pick` qualifies for its model, as `lane-relaunched`; `ask` reports `usage-limit` with the pick's answer: [oversee-events.md](references/oversee-events.md#event-kinds) | `auto` |
-| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order, a model class resolved at launch through `kendex tier-model`; grammar: [guide](kendex.settings.toml.example) § Fleet. An empty setting names none | `claude:standard:high,codex:standard:high` |
+| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order. `kendex tier-model` classifies each model at launch: a class runs claude's family alias for it, where `model-classes` overrides do not apply yet, and codex's native default until codex list evidence reaches the launch; grammar: [guide](kendex.settings.toml.example) § Fleet. An empty setting names none | `claude:standard:high,codex:standard:high` |
 | `ORCH_PR_ORDER` | Publication order: `review-first`, `open-first` or `push-first`. A set value overrides visibility. [`pr-order --help`](scripts/pr-order) owns the defaults, validation and draft rules | unset |
 | `ORCH_DELIVERY` | `pr` uses pull requests. `push-base` keeps the tier's local checks and review, then fast-forward pushes the resolved base branch. The lane reports the pushed commit for the existing direct-push cycle record. An item with an open post-merge box stops for the PR route: [submit-pr.md § 2.1](workflows/submit-pr.md#21-base-publication) | `pr`, also when unset |
 | `ORCH_LANE_PREFERENCE` | `harness[@host]:model:effort` entries in default-model order. Each named host applies to its entry; an omitted host keeps the caller's route. Explicit models keep that route. [Lane preference](references/lane-directive.md#lane-preference) | unset |
@@ -102,7 +102,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the shared CI change classification | empty |
 
-`ORCH_OVERSEER_PREFERENCE` reads the deprecated `harness:positive-integer:effort` form, and a model the class table does not name, until the next major release: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet.
+`ORCH_OVERSEER_PREFERENCE` reads the deprecated `harness:positive-integer:effort` form, and a claude or codex exact model id, until the next major release: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet. The refresh report lists the numeric form only.
 
 Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 

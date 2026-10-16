@@ -175,10 +175,11 @@
 #        `pi-account-unknown`. No permission posture crosses to or from pi,
 #        whose row names no permission word. Unset, the setting is
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE, the default README.md
-#        § Setup states; set to empty, it names no entry. A model class
-#        resolves to its model through `kendex tier-model`
-#        (lib/overseer-launch.sh § ol_model_class), and a class table kendex
-#        cannot answer refuses `preference-class-unread`. Every launch on a measured account but one goes
+#        § Setup states; set to empty, it names no entry. `kendex tier-model`
+#        classifies each model (lib/overseer-launch.sh § ol_model_class): a
+#        class runs claude's family alias for it and codex's or copilot's
+#        native default, and a model kendex cannot classify refuses
+#        `preference-class-unread`. Every launch on a measured account but one goes
 #        through `lanes pick
 #        --harness --model --min-headroom-pct`, the headroom trigger itself,
 #        so every successor's account clears it by step 2's rule, and among
@@ -544,7 +545,7 @@ message() { # KEY FIELD=VALUE...
     mark-unmeasured) text='One trigger could not be measured this time, and no other trigger fired. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An empty model selects the native default on claude, codex or copilot; pi requires provider/id.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
-    preference-class-unread) text='kendex tier-model could not answer the model class table, so the class this entry names resolves to no model. Nothing was launched. Its words follow; install or repair kendex.' ;;
+    preference-class-unread) text='kendex tier-model could not classify the model this entry names, so the model its launch would run is unknown. Nothing was launched. kendex is missing, or it refused this project'"'"'s manifest or personal settings; its words follow. Install or repair kendex, or fix the setting they name.' ;;
     walled-lane-unknown) text='The caller account for this recovery request could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, and a pi session on a model no lane measures or naming no provider, are the shapes that reach this.' ;;
     model-window-unknown) text='The Claude adapter could not read the family or default handoff budget. Nothing was launched. Check the adapter error before this message.' ;;
     pi-account-unknown) text='This pi overseer names its model with no provider, in its launch record, the --model word after -- and its context reading alike, so the account its successor would spend is unknown and nothing was launched. Pass --model as provider/id after --, pi-claude/<id> for a claude account.' ;;

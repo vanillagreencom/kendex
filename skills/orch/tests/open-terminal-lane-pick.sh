@@ -352,7 +352,7 @@ for hook in lane-mail-check lane-mail-compact lane-mail-start; do
   done
 done
 printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings.json"
-# Its `tier-model` answers the model class table as the fixture does.
+# Its `tier-model` answers model words as the fixture does.
 printf '#!/bin/sh\n[ "$1" != tier-model ] || exec "%s" "$@"\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' \
   "$TEST_DIR/fixtures/tier-model/kendex" > "$OT_STUB_BIN/kendex"
 chmod +x "$OT_STUB_BIN/kendex"

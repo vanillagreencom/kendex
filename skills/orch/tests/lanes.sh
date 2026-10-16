@@ -2361,8 +2361,8 @@ table \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
   "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2099-08-01T06:00:00Z haswall=false"
 
-# A model class is judged as the model the class table names for it on that
-# harness, so `top` meets Fable's spent window and `standard` Opus's room.
+# A claude class is judged as its family alias, so `top` meets Fable's spent
+# window and `standard` Opus's room.
 table \
   "a class is judged on the window that walls its model||$MODELPICK --model top|rc=3" \
   "a class whose model has room picks the lane||$MODELPICK --model standard|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
@@ -2370,14 +2370,23 @@ table \
 deprecation_lines() { grep '^preference-deprecated ' "$ERR" || true; }
 run_lanes "" $MODELPICK --model claude-opus-5
 assert_eq "$RC|$(deprecation_lines)" \
-  "0|preference-deprecated entry=claude:claude-opus-5 form=harness:model:effort" \
+  "0|preference-deprecated harness=claude model=claude-opus-5 form=model-class" \
   "an old exact id picks and warns once"
+# A model kendex cannot classify refuses before any window is judged, with
+# kendex's words after the keyed line.
+mkdir -p "$TMP_ROOT/kendex-refuses"
+printf '#!/bin/sh\necho "Error: invalid manifest" >&2\nexit 1\n' >"$TMP_ROOT/kendex-refuses/kendex"
+chmod +x "$TMP_ROOT/kendex-refuses/kendex"
+run_lanes "PATH=$TMP_ROOT/kendex-refuses:$CLAIM_BIN:$PATH" $MODELPICK --model top
+assert_eq "$RC|$(head -n 1 "$ERR")|$(tail -n 1 "$ERR")" \
+  "1|lanes: model-class-unread harness=claude model=top|Error: invalid manifest" \
+  "a model kendex cannot classify refuses with kendex's words"
 class_scripts="$(mutant_scripts model-class lanes)" || exit 1
 mutate_file "$class_scripts/lanes" '		MODEL="$OL_CLASS_MODEL"' '		:'
 LANES="$class_scripts/lanes" run_lanes "" $MODELPICK --model top
 assert_eq "$(observe rc=3)" rc=0 'control: a class judged as its own word misses its model wall'
 deprecated_scripts="$(mutant_scripts model-deprecated lanes)" || exit 1
-mutate_file "$deprecated_scripts/lanes" '			2) ol_deprecated "$HARNESS:$MODEL" ;;' '			2) ;;'
+mutate_file "$deprecated_scripts/lanes" '			2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;' '			2) ;;'
 LANES="$deprecated_scripts/lanes" run_lanes "" $MODELPICK --model claude-opus-5
 assert_eq "$RC|$(deprecation_lines)" '0|' 'control: without the deprecation an old exact id warns nothing'
 

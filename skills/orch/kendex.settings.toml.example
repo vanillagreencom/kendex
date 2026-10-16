@@ -361,21 +361,22 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # The models a new or replacement overseer tries, in order. Each entry is
 # harness:model:effort, separated by commas. The harness is claude, codex,
 # copilot or pi. On claude, codex or copilot the model is a model class, such
-# as standard or top, which the launch resolves to that harness's model
-# through `kendex tier-model`, or the name that harness's --model takes, in
-# lowercase letters, digits, dots and hyphens, starting with a letter. A
-# class with no model on its harness, as on copilot, runs the harness
-# default and warns once. On pi
+# as standard or top, or the name that harness's --model takes, in lowercase
+# letters, digits, dots and hyphens, starting with a letter; `kendex
+# tier-model` classifies it at launch and its warning prints once. On claude
+# a class runs its family alias, standard as opus, and `model-classes`
+# overrides do not apply yet. On codex and copilot a class runs the harness
+# default: codex until its model list reaches the launch. On pi
 # it is provider/model, for example pi:github-copilot/claude-opus-5.5:high:
 # the provider in those same characters, the model in lowercase letters,
 # digits, dots, underscores, hyphens and slashes, starting with a letter or
 # digit. The effort is lowercase letters, the level as that harness spells
 # it; on pi it is the thinking level. An empty model selects the harness
 # default on claude, codex or copilot. Pi requires provider/model.
-# A claude or codex model the class table does not name, an old exact id
-# such as claude-opus-5-5, still launches and warns once per run until the
-# next major release; replace it with its class. The table names no copilot
-# model, so a copilot model name launches as written with no warning.
+# A claude or codex exact id, such as claude-opus-5-5, still launches as
+# written and warns once per run until the next major release; replace it
+# with its class. A copilot class runs the session's default, so a copilot
+# model name launches as written with no warning.
 # The deprecated positive account number first uses
 # the caller's model. With no caller model, the overseer uses the same-harness
 # class from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
@@ -399,7 +400,10 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # The first eligible entry with room supplies the harness, host, model and effort.
 # Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
-# ORCH_LANE_PREFERENCE = "claude@claude-cloud:standard:high,codex:standard:high"
+# A lane launch names its model, so a lane entry names an exact id or a claude
+# class: a codex or copilot class runs no model and refuses as
+# launch-model-missing until codex list evidence reaches the launch.
+# ORCH_LANE_PREFERENCE = "claude@claude-cloud:standard:high,codex:gpt-6.1-sol:high"
 
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.

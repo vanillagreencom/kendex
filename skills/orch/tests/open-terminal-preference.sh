@@ -192,6 +192,19 @@ while IFS='|' read -r mode flags want model entry; do
     assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
   fi
 done < "$TMP_ROOT/permission-rows"
+# A codex class runs no model in a lane, so the gate refuses it, naming the
+# class, with kendex's warning after the refusal.
+observe 'codex:standard:high' none flags '--dangerously-skip-permissions' claude
+assert_eq "${OBS%%|*}|$(sed -n 's/^open-terminal: launch-model-missing .* \(class=[^ ]*\)$/\1/p' "$RUN/err")|$(sed -n '/^open-terminal: launch-model-missing /,$p' "$RUN/err" | grep -c '^model-resolution: requested=standard ')" \
+  '1|class=standard|1' 'a codex class in a lane entry refuses as launch-model-missing with its class and kendex warning' "$RUN/err"
+# A model kendex cannot classify refuses the walk under its own key, with
+# kendex's words after it, and opens nothing.
+printf '#!/bin/sh\necho "Error: invalid manifest" >&2\nexit 1\n' > "$BIN/kendex"
+chmod +x "$BIN/kendex"
+observe 'claude:standard:high' none flags '--dangerously-skip-permissions' claude
+assert_eq "$OBS|$(tail -n 1 "$RUN/err")" '1|preference-class-unread|none|none|none|no|none|Error: invalid manifest' \
+  'a model kendex cannot classify refuses the walk with its words' "$RUN/err"
+rm -f -- "${BIN:?}/kendex"
 
 # One control for routing, each refusal rule and saved argument delivery. Each mutation
 # keeps the tested call or comparison, but removes its effect in a private copy.

@@ -191,7 +191,7 @@ for hook in lane-mail-check lane-mail-compact lane-mail-start; do
   printf '#!/bin/sh\n' > "$CP_HOME/hooks/$hook.sh"
   printf '{"version":1,"hooks":{}}\n' > "$CP_HOME/hooks/$hook.json"
 done
-# Its `tier-model` answers the model class table as the fixture does.
+# Its `tier-model` answers model words as the fixture does.
 printf '#!/bin/sh\n[ "$1" != tier-model ] || exec "%s" "$@"\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' \
   "$TEST_DIR/fixtures/tier-model/kendex" > "$BIN/kendex"
 chmod +x "$BIN/kendex"

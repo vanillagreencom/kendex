@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# `kendex tier-model HARNESS RANK --json` for suites whose launches read model
-# classes with no kendex of their own: the class table's rows, top first, as
-# TIERS (crates/core/src/harness/models.rs) held them when this was written,
-# in the fields lib/overseer-launch.sh § ol_class_ladder reads. A rank past the
-# table is refused with no answer, as kendex refuses it. tier-model-fixture.sh
-# holds a real kendex to the same rows. One process per call, as the kendex
-# binary is, for the suites that count processes. Every other call goes to the
-# next kendex on PATH, so a suite that puts this directory first keeps the
-# kendex it had for the rest.
+# `kendex tier-model` for suites whose launches classify model words with no
+# kendex of their own, answering the two forms lib/overseer-launch.sh asks:
+# the runtime form, `tier-model HARNESS --model WORD --json
+# --runtime-context-json CTX`, for the context orch sends, with `unsupported`
+# list evidence, so every word resolves to the harness default; and claude's
+# rank form, `tier-model claude RANK --json`, for its family aliases. Both as
+# kendex answered them when this was written, in the fields ol_model_class
+# and ol_claude_alias read; tier-model-fixture.sh holds a real kendex to the
+# same answers. A word is a class where it is a class name or a legacy alias,
+# in any case, as ModelRequest::parse reads it, and an exact id otherwise. One
+# process per call, as the kendex binary is, for the suites that count
+# processes. Every other call goes to the next kendex on PATH, so a suite that
+# puts this directory first keeps the kendex it had for the rest.
 set -euo pipefail
 if [[ "${1:-}" != tier-model ]]; then
   IFS=: read -r -a dirs <<<"$PATH"
@@ -17,15 +21,30 @@ if [[ "${1:-}" != tier-model ]]; then
   printf 'kendex: command not found\n' >&2
   exit 127
 fi
-[[ $# -eq 4 && "$3" =~ ^[1-9]$ && "$4" == --json ]] \
-  || { printf 'tier-model stub: unexpected=%s\n' "$*" >&2; exit 2; }
-classes=(top standard light fast)
-case "$2" in
-  claude) models=('"fable"' '"opus"' '"sonnet"' '"haiku"') ;;
-  codex) models=('"gpt-6-astra"' '"gpt-6.1-sol"' '"gpt-6.1-luna"' '"gpt-6.1-terra"') ;;
-  copilot) models=(null null null null) ;;
-  *) printf 'Error: unknown harness %s\n' "$2" >&2; exit 1 ;;
+unexpected() { printf 'tier-model stub: unexpected=%s\n' "$*" >&2; exit 2; }
+if [[ $# -eq 4 && "$2" == claude && "$3" =~ ^[1-9]$ && "$4" == --json ]]; then
+  classes=(top standard light fast) aliases=(fable opus sonnet haiku)
+  (( $3 <= ${#classes[@]} )) || { printf 'Error: rank %s is not on the class ladder (1-%s)\n' "$3" "${#classes[@]}" >&2; exit 1; }
+  printf '{"protocol":"model-resolution-v1","harness":"claude","request":{"tag":"class","class":"%s"},"resolution":{"tag":"deferred-class","class":"%s","native_selector":"%s"}}\n' \
+    "${classes[$3 - 1]}" "${classes[$3 - 1]}" "${aliases[$3 - 1]}"
+  exit 0
+fi
+[[ $# -eq 7 && "$2" =~ ^(claude|codex|copilot)$ && "$3" == --model && -n "$4" && "$5" == --json \
+  && "$6" == --runtime-context-json && "$7" == *'"harness":"'"$2"'"'* \
+  && "$7" == *'"models":{"tag":"unsupported","source":"orch-launch"}'* ]] || unexpected "$*"
+shopt -s nocasematch
+case "$4" in
+  top|fable) class=top ;;
+  standard|opus) class=standard ;;
+  light|sonnet) class=light ;;
+  fast|haiku) class=fast ;;
+  *) class="" ;;
 esac
-(( $3 <= ${#classes[@]} )) || { printf 'Error: rank %s is not on the class ladder\n' "$3" >&2; exit 1; }
-printf '{"protocol":"model-resolution-v1","harness":"%s","request":{"tag":"class","class":"%s"},"resolution":{"tag":"deferred-class","class":"%s","native_selector":%s}}\n' \
-  "$2" "${classes[$3 - 1]}" "${classes[$3 - 1]}" "${models[$3 - 1]}"
+shopt -u nocasematch
+if [[ -n "$class" ]]; then
+  request='{"tag":"class","class":"'"$class"'"}' requested="$class" old_id="" causes=""
+else
+  request='{"tag":"exact","selector":"'"$4"'"}' requested="$4" old_id='{"code":"old-id"},' causes=old-id,
+fi
+printf '{"protocol":"model-resolution-v1","harness":"%s","request":%s,"resolution":{"tag":"harness-default","request":%s,"path":{"tag":"native-default"},"diagnostics":[%s{"code":"model-availability-unknown","source":"orch-launch","cause":"model list interface is unavailable"}]},"warning":"model-resolution: requested=%s selected=native-default causes=%smodel-availability-unknown source=orch-launch detail=model list interface is unavailable"}\n' \
+  "$2" "$request" "$request" "$old_id" "$requested" "$causes"

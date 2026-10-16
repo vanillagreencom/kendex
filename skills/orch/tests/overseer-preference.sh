@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Consumer settings are the producer of deprecated numeric preference entries,
-# of old exact model ids and of model classes. A class reads the class table
-# through fixtures/tier-model/kendex, the table's rows as kendex answers them;
+# of old exact model ids and of model classes. Each model is classified
+# through fixtures/tier-model/kendex, kendex's answers as it gives them;
 # tier-model-fixture.sh holds a real kendex to that fixture.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -22,65 +22,74 @@ rc=0
 ol_preference_entries "$2" "${4:-}" || rc=$?
 models=()
 for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do
-  ol_entry_model "$entry" || { models+=(unread); continue; }
+  ol_entry_model "$entry" || { models+=("unread=$OL_CLASS_ERR"); continue; }
   models+=("$OL_ENTRY_HARNESS${OL_ENTRY_HOST:+@$OL_ENTRY_HOST}:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT${OL_ENTRY_CLASS:+#$OL_ENTRY_CLASS}")
 done
 printf '%s|%s|%s|%s|%s|%s\n' "$rc" "$OL_NAMED" "${models[*]-}" "${OL_DEPRECATED_ENTRIES[*]-}" "${OL_REFUSED_ENTRIES[*]-}" "$OL_BAD_ENTRY"
-# A second parse in the same process must not repeat the warning.
+# A second parse and read in the same process must not repeat a warning.
 ol_preference_entries "$2" "${4:-}" || :
+for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do ol_entry_model "$entry" || :; done
 SH
-# A model is written `harness:model:effort#class` where the table names its class.
-for row in \
-  'claude:1:high|fable|0|1|claude:fable:high|claude:1:high|||1' \
-  'codex:12:medium|gpt-6-astra|0|1|codex:gpt-6-astra:medium|codex:12:medium|||1' \
-  'copilot:2:high|fable|0|1|copilot:fable:high|copilot:2:high|||1' \
-  'pi:1:high|pi-claude/fable|0|1|pi:pi-claude/fable:high|pi:1:high|||1' \
-  'claude:1:high,codex:2:low|fable|0|2|claude:fable:high codex:fable:low|claude:1:high codex:2:low|||1' \
-  'claude:fable:high|other|0|1|claude:fable:high#top||||0' \
-  'pi:pi-claude/fable:high|other|0|1|pi:pi-claude/fable:high||||0' \
-  '|fable|0|0|||||0' \
-  'claude:0:high|fable|1|0|||claude:0:high|claude:0:high|0' \
-  'claude::high|fable|0|1|claude::high||||0' \
-  'codex::high|fable|0|1|codex::high||||0' \
-  'claude:1:high,claude::high|fable|0|2|claude:fable:high claude::high|claude:1:high|||1' \
-  'claude:-1:high|fable|1|0|||claude:-1:high|claude:-1:high|0' \
-  'claude:1x:high|fable|1|0|||claude:1x:high|claude:1x:high|0' \
-  'claude:1:HIGH|fable|1|0|||claude:1:HIGH|claude:1:HIGH|0' \
-  'bad,claude:1:high,codex::low|fable|1|2|claude:fable:high codex::low|claude:1:high|bad|bad|1' \
-  'claude:standard:high,codex:standard:high|other|0|2|claude:opus:high#standard codex:gpt-6.1-sol:high#standard||||0' \
-  'codex:top:low,claude:fast:high|other|0|2|codex:gpt-6-astra:low#top claude:haiku:high#fast||||0' \
-  'claude:opus:high,codex:gpt-6.1-sol:high|other|0|2|claude:opus:high#standard codex:gpt-6.1-sol:high#standard||||0' \
-  'claude:claude-opus-5-5:high|other|0|1|claude:claude-opus-5-5:high|claude:claude-opus-5-5:high|||1' \
-  'claude:claude-opus-5-5:high,codex:gpt-5.5:high|other|0|2|claude:claude-opus-5-5:high codex:gpt-5.5:high|claude:claude-opus-5-5:high codex:gpt-5.5:high|||1' \
-  'copilot:claude-opus-5.5:high|other|0|1|copilot:claude-opus-5.5:high||||0'; do
-  IFS='|' read -r preference caller rc named models deprecated refused first warnings <<<"$row"
-  OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" bash "$TMP_ROOT/read" "$LIB" "$preference" "$caller" 2>"$TMP_ROOT/err")"
-  warning_count="$(wc -l <"$TMP_ROOT/err" | tr -d ' ')"
-  assert_eq "$OUT|$warning_count" "$rc|$named|$models|$deprecated|$refused|$first|$warnings" "parse $preference on caller $caller"
-  if [[ "$warnings" == 1 ]]; then
-    assert_eq "$(cat "$TMP_ROOT/err")" "preference-deprecated entry=${deprecated%% *} form=harness:model:effort" "warning names the original entry and replacement form"
-  fi
-done
-# A class with no model on its harness runs the harness default, and one line
-# per process says so, however many entries name such a class.
-OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" bash "$TMP_ROOT/read" "$LIB" 'copilot:standard:high,copilot:top:low' other 2>"$TMP_ROOT/err")"
-assert_eq "$OUT|$(cat "$TMP_ROOT/err")" \
-  "0|2|copilot::high#standard copilot::low#top||||model-class-default harness=copilot class=standard model=harness-default" \
-  "a class with no model on its harness runs the harness default with one warning"
-# A class table kendex cannot answer leaves the entry that needed it
-# unresolved, distinct from an invalid entry, and one that needs none stands.
+# observe PREFERENCE CALLER [LIB] — the read's answer, then the one
+# preference-deprecated line's fields and the count of kendex's
+# model-resolution lines, each warning printed once per process.
+observe() {
+  local out deprecation
+  out="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" bash "$TMP_ROOT/read" "${3:-$LIB}" "$1" "$2" 2>"$TMP_ROOT/err")" || :
+  deprecation="$(sed -n 's/^preference-deprecated //p' "$TMP_ROOT/err")"
+  printf '%s|%s|%s\n' "$out" "$deprecation" "$(grep -c '^model-resolution: ' "$TMP_ROOT/err" || :)"
+}
+# A model is written `harness:model:effort#class` where kendex names its class.
+NUMERIC='entry=claude:1:high form=harness:model:effort'
+while IFS= read -r row; do
+  IFS='|' read -r preference caller expected <<<"$row"
+  assert_eq "$(observe "$preference" "$caller")" "$expected" "parse $preference on caller $caller"
+done <<ROWS
+claude:1:high|fable|0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|1
+claude:1:high|opus|0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|1
+claude:1:high|claude-opus-5-5|0|1|claude:claude-opus-5-5:high|claude:1:high|||$NUMERIC|1
+codex:12:medium|gpt-6-astra|0|1|codex:gpt-6-astra:medium|codex:12:medium|||entry=codex:12:medium form=harness:model:effort|1
+copilot:2:high|fable|0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|1
+pi:1:high|pi-claude/fable|0|1|pi:pi-claude/fable:high|pi:1:high|||entry=pi:1:high form=harness:model:effort|0
+claude:1:high,codex:2:low|fable|0|2|claude:fable:high#top codex:fable:low#top|claude:1:high codex:2:low|||$NUMERIC|1
+claude:fable:high|other|0|1|claude:fable:high#top|||||1
+pi:pi-claude/fable:high|other|0|1|pi:pi-claude/fable:high|||||0
+|fable|0|0||||||0
+claude:0:high|fable|1|0|||claude:0:high|claude:0:high||0
+claude::high|fable|0|1|claude::high|||||0
+codex::high|fable|0|1|codex::high|||||0
+claude:1:high,claude::high|fable|0|2|claude:fable:high#top claude::high|claude:1:high|||$NUMERIC|1
+claude:-1:high|fable|1|0|||claude:-1:high|claude:-1:high||0
+claude:1x:high|fable|1|0|||claude:1x:high|claude:1x:high||0
+claude:1:HIGH|fable|1|0|||claude:1:HIGH|claude:1:HIGH||0
+bad,claude:1:high,codex::low|fable|1|2|claude:fable:high#top codex::low|claude:1:high|bad|bad|$NUMERIC|1
+claude:standard:high,codex:standard:high|other|0|2|claude:opus:high#standard codex::high#standard|||||1
+codex:top:low,claude:fast:high|other|0|2|codex::low#top claude:haiku:high#fast|||||1
+copilot:standard:high,copilot:top:low|other|0|2|copilot::high#standard copilot::low#top|||||1
+claude:opus:high,codex:gpt-6.1-sol:high|other|0|2|claude:opus:high#standard codex:gpt-6.1-sol:high||||entry=codex:gpt-6.1-sol:high form=model-class|1
+claude:claude-opus-5-5:high,codex:gpt-5.5:high|other|0|2|claude:claude-opus-5-5:high codex:gpt-5.5:high||||entry=claude:claude-opus-5-5:high form=model-class|1
+copilot:claude-opus-5.5:high|other|0|1|copilot:claude-opus-5.5:high|||||1
+ROWS
+# A model kendex cannot classify leaves its entry unresolved with kendex's
+# words, distinct from an invalid entry, and one that needs no read stands.
 mkdir -p "$TMP_ROOT/broken"
 printf '#!/bin/sh\necho "kendex: broken" >&2\nexit 1\n' >"$TMP_ROOT/broken/kendex"
 chmod +x "$TMP_ROOT/broken/kendex"
 OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/broken:$PATH" bash "$TMP_ROOT/read" "$LIB" 'codex::high,claude:standard:high' other 2>"$TMP_ROOT/err")"
-assert_eq "$OUT" "0|2|codex::high unread|||" "an unread class table refuses the entry that needed it"
+assert_eq "$OUT" "0|2|codex::high unread=kendex: broken|||" "an unclassified model refuses its entry with kendex's words"
+# A read that succeeds writes nothing to DEP_ERR, which a later refusal
+# relays as its cause.
+: >"$TMP_ROOT/dep"
+env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" DEP_ERR="$TMP_ROOT/dep" bash -c \
+  'set -euo pipefail; source "$1"; ol_entry_model claude:fast:high; ol_entry_model codex:standard:high' _ "$LIB" 2>/dev/null
+assert_eq "$(cat "$TMP_ROOT/dep")" "" "a successful read leaves DEP_ERR empty"
 # Lane settings may name a host. Overseer settings keep their local route.
 while IFS='|' read -r preference mode expected; do
   OUT="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
   assert_eq "$OUT" "$expected" "host grammar: $preference mode=$mode"
 done <<'ROWS'
 claude@claude-cloud:standard:high|lane|0|1|claude@claude-cloud:opus:high#standard|||
-claude@claude-cloud:claude-opus-5-5:high|lane|0|1|claude@claude-cloud:claude-opus-5-5:high|claude@claude-cloud:claude-opus-5-5:high||
+claude@claude-cloud:claude-opus-5-5:high|lane|0|1|claude@claude-cloud:claude-opus-5-5:high|||
 pi@/opt/daytona:github-copilot/gpt-6.1-sol:high|lane|0|1|pi@/opt/daytona:github-copilot/gpt-6.1-sol:high|||
 claude@claude-cloud:claude-opus-5-5:high||1|0|||claude@claude-cloud:claude-opus-5-5:high|claude@claude-cloud:claude-opus-5-5:high
 claude@:opus:high|lane|1|0|||claude@:opus:high|claude@:opus:high
@@ -103,7 +112,7 @@ ROWS
 # Each control turns one row above red: its preference parsed by a copy of
 # the lib with one line replaced must no longer give that row's answer.
 control() { # MUTATION PREFERENCE CALLER GREEN OLD NEW
-  local mutant out warnings
+  local mutant
   mutant="$(mutant_scripts "$1" lib/overseer-launch.sh)"
   python3 - "$mutant/lib/overseer-launch.sh" "$5" "$6" <<'PY'
 from pathlib import Path
@@ -116,26 +125,32 @@ changed = text.replace(old, '# ' + old + '\n' + new)
 assert changed != text
 path.write_text(changed)
 PY
-  out="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" bash "$TMP_ROOT/read" "$mutant/lib/overseer-launch.sh" "$2" "$3" 2>"$TMP_ROOT/err")" || :
-  warnings="$(wc -l <"$TMP_ROOT/err" | tr -d ' ')"
-  if [[ "$out|$warnings" != "$4" ]]; then
+  if [[ "$(observe "$2" "$3" "$mutant/lib/overseer-launch.sh")" != "$4" ]]; then
     pass "control: $1 turns the $2 assertion red"
   else
     fail "control: $1 did not turn the $2 assertion red"
   fi
 }
-NUMERIC_GREEN='0|1|claude:fable:high|claude:1:high|||1'
+NUMERIC_GREEN="0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|1"
+CLASSES='claude:standard:high,codex:standard:high'
+CLASSES_GREEN='0|2|claude:opus:high#standard codex::high#standard|||||1'
 control refusal claude:1:high fable "$NUMERIC_GREEN" \
   '    if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then' \
   '    if false && [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then'
 control model claude:1:high fable "$NUMERIC_GREEN" \
   '    OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"' '  : # caller model is dropped'
 control warning claude:1:high fable "$NUMERIC_GREEN" '  (( ! OL_DEPRECATION_WARNED )) || return 0' '  :'
-control class claude:standard:high other '0|1|claude:opus:high#standard||||0' \
-  '    OL_CLASS="$class" OL_CLASS_MODEL="$model"' '    OL_CLASS="$class"'
-control old-id claude:claude-opus-5-5:high other '0|1|claude:claude-opus-5-5:high|claude:claude-opus-5-5:high|||1' \
-  '  (( OL_ENTRY_CLASS_RC != 2 )) || ol_deprecated "$1"' '  :'
-control copilot-id copilot:claude-opus-5.5:high other '0|1|copilot:claude-opus-5.5:high||||0' \
-  '  (( ! named )) || return 2' '  return 2'
+control numeric-class claude:1:high opus "0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|1" \
+  '    OL_ENTRY_CLASS="$OL_CLASS"
+    return 0' '    return 0'
+control alias "$CLASSES" other "$CLASSES_GREEN" \
+  '    [[ "$1" != claude ]] || ol_claude_alias "$OL_CLASS" || return 1' '    :'
+control resolution-warning "$CLASSES" other "$CLASSES_GREEN" \
+  '  if [[ -n "$OL_CLASS_WARNING" ]] && (( ! OL_CLASS_WARNED )); then' '  if [[ -n "$OL_CLASS_WARNING" ]]; then'
+control old-id claude:claude-opus-5-5:high,codex:gpt-5.5:high other \
+  '0|2|claude:claude-opus-5-5:high codex:gpt-5.5:high||||entry=claude:claude-opus-5-5:high form=model-class|1' \
+  '  (( OL_ENTRY_CLASS_RC != 2 )) || ol_deprecated "entry=$1" form=model-class' '  :'
+control copilot-id copilot:claude-opus-5.5:high other '0|1|copilot:claude-opus-5.5:high|||||1' \
+  '  [[ "$old_id" != true || "$1" == copilot ]] || return 2' '  [[ "$old_id" != true ]] || return 2'
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

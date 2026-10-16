@@ -470,15 +470,16 @@
 #                    on the shared windows alone; behind a host row with no
 #                    window for NAME, a local reading with no model window, or
 #                    a stale one, stays unmeasured (see pick).
-#                    On claude, codex and copilot, a model class NAME is
-#                    judged as the model `kendex tier-model` reads for it
-#                    (lib/overseer-launch.sh § ol_model_class), and as no
-#                    NAME where the class has none on that harness. A
-#                    claude or codex NAME the class table does not name, an
-#                    old exact id, warns once as `preference-deprecated`;
-#                    a copilot NAME, which no class names, is judged as
-#                    written. A table kendex cannot
-#                    answer exits 1 as `model-class-unread`.
+#                    On claude, codex and copilot, `kendex tier-model`
+#                    classifies NAME (lib/overseer-launch.sh §
+#                    ol_model_class): a class is judged as claude's family
+#                    alias for it, and as no NAME on codex and copilot, whose
+#                    class runs the harness default. Any other NAME is judged
+#                    as written; a claude or codex exact id warns once as
+#                    `preference-deprecated` with `form=model-class`. A NAME
+#                    kendex cannot classify, kendex missing or refusing the
+#                    manifest, exits 1 as `model-class-unread`, kendex's
+#                    words after it.
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
@@ -958,7 +959,8 @@ message() {
       ;;
     model-class-unread)
       printf 'lanes: model-class-unread harness=%s model=%s\n' "$1" "$2"
-      printf '%s\n' "kendex tier-model could not answer the model class table, so whether the model names a class is unknown and no window is judged on it. Install or repair kendex."
+      printf '%s\n' "kendex tier-model could not classify the model, so whether it names a class is unknown and no window is judged on it. kendex is missing, or it refused this project's manifest or personal settings; its words follow. Install or repair kendex, or fix the setting they name."
+      printf '%s\n' "$3"
       ;;
     pick-provider-unmeasured)
       printf 'lanes: pick-provider-unmeasured harness=%s model=%s\n' "$1" "$2"
@@ -4473,8 +4475,8 @@ case "$SUB" in
 		ol_model_class "$HARNESS" "$MODEL" || model_rc=$?
 		case "$model_rc" in
 			0) ;;
-			2) ol_deprecated "$HARNESS:$MODEL" ;;
-			*) die model-class-unread "$HARNESS" "$MODEL" ;;
+			2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;
+			*) die model-class-unread "$HARNESS" "$MODEL" "$OL_CLASS_ERR" ;;
 		esac
 		MODEL="$OL_CLASS_MODEL"
 		# The accounts this launch spends, which both forms judge it on: a Pi

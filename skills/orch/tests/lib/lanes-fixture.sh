@@ -11,7 +11,7 @@
 # this file out of the run. The sourcing suite sets TMP_ROOT first, which only
 # `new_home` reads, so a suite that wants `settled_mutex` alone needs none.
 
-# A pick naming a model reads the model class table.
+# A pick naming a model has kendex classify it.
 # shellcheck source=tier-model-path.sh
 source "${BASH_SOURCE[0]%/*}/tier-model-path.sh"
 
