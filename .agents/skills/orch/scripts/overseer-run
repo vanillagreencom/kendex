@@ -6,7 +6,9 @@
 #
 # Usage: overseer-run COMMAND [ARG]...
 #
-# COMMAND inherits stdin and the launch environment. The foreground Bash
+# COMMAND inherits stdin and the launch environment, less the model-line hold
+# the orch library exports to the processes it starts, since COMMAND is a
+# session whose own launches print their model lines. The foreground Bash
 # child records its own PID and start before exec COMMAND. The parent writes
 # COMMAND status only against that exact run. Failed record operations report
 # their cause and COMMAND still runs. Outside tmux no record is read or written.
@@ -69,11 +71,12 @@ if [[ -n "$KEY" ]]; then
       printf "overseer-run: start-unrecorded=pending\n" >&2
       cat -- "$DEP_ERR" >&2
     fi
+    unset ORCH_MODEL_LINES_HELD
     exec "$@"
   ' overseer-run "$KEY" "$DEP_ERR" "$RUN_FILE" "$@" || rc=$?
 else
   [[ -z "${TMUX:-}" || -z "${TMUX_PANE:-}" ]] || message start-unrecorded pending "$CAUSE"
-  "$@" || rc=$?
+  env -u ORCH_MODEL_LINES_HELD "$@" || rc=$?
 fi
 
 [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] || exit "$rc"

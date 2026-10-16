@@ -134,7 +134,7 @@ ol_preference() {
 # An overseer walk without that model uses the same-harness default entry.
 # OL_DEPRECATED_ENTRIES keeps their original spelling for the refresh report,
 # the numeric form alone: a claude old exact id is found by ol_entry_model,
-# which this parse does not run. ol_deprecated warns once per process tree.
+# which this parse does not run. ol_deprecated warns once per launch.
 # OL_REFUSED_ENTRIES holds every refused entry; a refusal returns 1 and keeps
 # the first in OL_BAD_ENTRY for launchers. Empty VALUE is no entries.
 OL_ENTRIES=()
@@ -143,14 +143,20 @@ OL_BAD_ENTRY=""
 OL_REFUSED_ENTRIES=()
 OL_DEPRECATED_ENTRIES=()
 # The once-per-process model lines, preference-deprecated (ol_deprecated) and
-# kendex's model-resolution line (ol_model_class), have one owner per process
-# tree. A launcher or hook runs each child `lanes` read under
-# ORCH_MODEL_LINES_HELD=1, so the lines print from the caller's own model read
-# or not at all: the child's stderr is the caller's DEP_ERR, which a refusal
-# relays as its cause. A process started under it prints neither line; a
-# `lanes pick` a person runs holds no latch and warns.
+# kendex's model-resolution line (ol_model_class), print only in the first
+# process of a launch to source this file. It reads ORCH_MODEL_LINES_HELD
+# unset, then exports it, so every process it starts inherits the hold and
+# prints neither line: a child `lanes` read's stderr is the caller's DEP_ERR
+# or a relayed refusal's cause, never a second copy. A script that starts
+# `lanes` before or without sourcing this file exports the hold itself
+# (lane-close, open-terminal, the lane-mail-check hook). Two kinds of child
+# drop it: a session launch (lib/lane-launch.sh LANE_LAUNCH_SCRUB,
+# overseer-run), whose own launches print theirs, and oversee-watch's walled
+# succession, whose preference walk no other process prints. A `lanes pick` a
+# person runs holds no latch and warns.
 OL_LINES_HELD=0
 [[ -z "${ORCH_MODEL_LINES_HELD:-}" ]] || OL_LINES_HELD=1
+export ORCH_MODEL_LINES_HELD=1
 OL_DEPRECATION_WARNED=$OL_LINES_HELD
 OL_DEPRECATION_CONVERTED=0
 ol_preference_entries() { # VALUE [lane]
@@ -192,7 +198,7 @@ ol_preference_entries() { # VALUE [lane]
   return "$status"
 }
 
-# ol_deprecated FIELD... — the one stderr warning per process tree
+# ol_deprecated FIELD... — the one stderr warning per launch
 # (OL_LINES_HELD) for a retired model spelling, `preference-deprecated
 # FIELD...`: FIELD... names what was written and `form=` the form that
 # replaces it, harness:model:effort for a numeric entry and model-class for a
@@ -210,7 +216,7 @@ ol_deprecated() { # FIELD...
 # class MODEL names, a class or a legacy family alias such as opus, else
 # empty; into OL_CLASS_MODEL the model a launch runs; and into
 # OL_CLASS_WARNING the warning of the kendex answer that names that model,
-# printed once per process tree (OL_LINES_HELD). A claude class runs claude's
+# printed once per launch (OL_LINES_HELD). A claude class runs claude's
 # family alias for it, with the rank answer's warning (ol_claude_alias). A
 # codex or copilot class runs the runtime answer, which with no list evidence
 # is the harness default, an empty model, with that answer's warning. Any
@@ -371,8 +377,8 @@ ol_default_entry() { # HARNESS
 # is classified for its class alone, which the conversion names and the
 # record carries: the launch keeps the session's own model, and the numeric
 # form's own warning stands for an old id. A claude old exact id names no
-# class, so its class is the same-harness default entry's (ol_default_entry),
-# and the conversion never advises an id the next run warns on. The
+# class, so the record carries none and the conversion names no replacement,
+# OL_ENTRY_CLASS_RC 2 telling ol_walk so. The
 # setting is the one source of which models the walk tries and in what order,
 # so nothing here holds a model list to check a name against: the launch line
 # carries the model the entry names, and a name its harness does not know is
@@ -397,9 +403,6 @@ ol_entry_model() { # ENTRY
     ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" || OL_ENTRY_CLASS_RC=$?
     (( OL_ENTRY_CLASS_RC != 1 )) || return 1
     OL_ENTRY_CLASS="$OL_CLASS"
-    if (( OL_ENTRY_CLASS_RC == 2 )) && ol_default_entry "$OL_ENTRY_HARNESS"; then
-      OL_ENTRY_CLASS="$OL_DEFAULT_MODEL"
-    fi
     return 0
   fi
   ol_entry_class || return 1
@@ -430,10 +433,9 @@ ol_class_unread() { # ENTRY
 # machine, under this machine's copy of the account, so a provider's reading
 # of that account is not the one its session spends. The successor walk and
 # the caller's own headroom mark both read through here, so the two never
-# judge one account on two copies. The model lines are the caller's
-# (OL_LINES_HELD).
+# judge one account on two copies.
 ol_lanes() { # ARGS...
-  ORCH_MODEL_LINES_HELD=1 ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
+  ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
 }
 
 # ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]: the one `lanes pick
@@ -609,7 +611,9 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       if [[ "$OL_ENTRY_DEPRECATED" == true ]] && (( ! OL_DEPRECATION_CONVERTED )); then
         for deprecated_entry in ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"}; do
           [[ "$entry" == "$deprecated_entry" ]] || continue
-          if [[ -n "$OL_MODEL" ]]; then
+          if [[ -n "$OL_MODEL" ]] && (( OL_ENTRY_CLASS_RC == 2 )); then
+            printf 'preference-deprecated-conversion entry=%s harness=%s model=%s (no class names this model, so no entry replaces it)\n' "$deprecated_entry" "$OL_HARNESS" "$OL_MODEL" >&2
+          elif [[ -n "$OL_MODEL" ]]; then
             printf 'preference-deprecated-conversion entry=%s replacement=%s:%s:%s\n' "$deprecated_entry" "$OL_HARNESS" "${OL_MODEL_CLASS:-$OL_MODEL}" "$OL_EFFORT" >&2
           else
             printf 'preference-deprecated-conversion entry=%s harness=%s model=harness-default (the harness default model runs)\n' "$deprecated_entry" "$OL_HARNESS" >&2

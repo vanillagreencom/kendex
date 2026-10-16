@@ -1442,6 +1442,9 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 #   Jarvis       JARVIS_RECORD and JARVIS_GENERATION, the runtime record a
 #                SessionStart writes its native identity into
 #                (lib/session-rows.sh session_rows_jarvis_write).
+#   Orch         ORCH_MODEL_LINES_HELD, the model-line hold a launcher
+#                exports to its own children (lib/overseer-launch.sh §
+#                OL_LINES_HELD); a lane prints its own launches' lines.
 # Copilot is not listed: kendex reads a Copilot session's id from its hook
 # payload alone.
 #   Live session WAYLAND_DISPLAY, DISPLAY and HYPRLAND_INSTANCE_SIGNATURE: a
@@ -1467,6 +1470,7 @@ LANE_LAUNCH_SCRUB=(
   PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
   JARVIS_RECORD JARVIS_GENERATION
   "${LANE_LAUNCH_LIVE_SESSION[@]}"
+  ORCH_MODEL_LINES_HELD
 )
 
 # Drop the live-session names from LANE_LAUNCH_SCRUB for every launch this

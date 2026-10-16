@@ -1263,6 +1263,22 @@ write_state running claude /host; write_panes python; walled_screen 21:00; : >"$
 ORCH_LANE_HOST=/other run_close "$MUTANT" </dev/null
 assert_eq "host=$(cat "$LANE_CLOSE_LANES_CALLS.host")" "host=/other" \
   "control: without the record's host the wall is read under the caller's setting"
+# The wall read's stderr is the cause the help points at, never a model line:
+# the record's model printed its kendex lines at the lane's launch. The read
+# is the real `lanes` here, the tier-model fixture classifying `opus` on an
+# account that does not exist; the control drops lane-close's hold.
+cp -- "$SCRIPTS/lanes" "$TMP_ROOT/lanes.stub"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$TEST_DIR/../scripts/lanes" >"$SCRIPTS/lanes"
+MODEL_LINES=""
+for script in "$SCRIPT" "$(mutant lane-close-unheld 'export ORCH_MODEL_LINES_HELD=1' ':')"; do
+  write_state running claude ""; write_panes python; walled_screen 21:00
+  jq '.lanes[0].model = "opus"' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
+  PATH="$TEST_DIR/fixtures/tier-model:$PATH" ORCH_LANE_DIRS="$TMP_ROOT/no-account" run_close "$script" </dev/null
+  MODEL_LINES="$MODEL_LINES rc=$RC lines=$(grep -c -e '^model-resolution: ' -e '^preference-deprecated ' <<<"$ERR" || true)"
+done
+cp -- "$TMP_ROOT/lanes.stub" "$SCRIPTS/lanes"
+assert_eq "$MODEL_LINES" " rc=1 lines=0 rc=1 lines=1" \
+  "the wall read's refusal carries no model line, and without lane-close's hold it carries the model's"
 # Each reading the wall stands on refuses, naming it.
 while IFS='|' read -r lanes_status reset want name; do
   write_state running claude /host; write_panes python; walled_screen "$reset"

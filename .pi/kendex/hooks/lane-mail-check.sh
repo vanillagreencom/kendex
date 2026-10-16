@@ -36,6 +36,10 @@ AGENT_EMIT_SECONDS=3
 
 # Names are matched by byte ranges below, so the locale decides the match.
 export LC_ALL=C
+# No orch read this hook starts prints a model line into the stderr it relays
+# as a cause: the session's own launch printed them (orch
+# lib/overseer-launch.sh § OL_LINES_HELD).
+export ORCH_MODEL_LINES_HELD=1
 
 # What the refusal names, empty until it is known: the lane's unread lines,
 # a halt's directive with the one command that reads it, and the one command
@@ -3291,10 +3295,8 @@ handoff_check() {
 
   # Bounded by BOUND_BY, for the reason stated where it is set: a read that
   # passes the ceiling exits 124 and is reported under `account=timeout`.
-  # ORCH_MODEL_LINES_HELD keeps the session's own model from printing a model
-  # line into lanes.err, which the account messages relay as their cause.
   PICK_RC=0
-  PICK=$(ORCH_MODEL_LINES_HELD=1 ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/lanes" pick --lane "$CFG" --harness "$HARNESS" \
+  PICK=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/lanes" pick --lane "$CFG" --harness "$HARNESS" \
     ${PICK_MODEL[@]+"${PICK_MODEL[@]}"} --min-headroom-pct "$PCT" --json 2>"$WORK_DIR/lanes.err") || PICK_RC=$?
   # `lanes` keeps a status-only contract where `workflow-state handoff-standing`
   # could not, and one reservation is what makes that safe here: every status

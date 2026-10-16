@@ -4111,10 +4111,13 @@ check_overseer() {
   # oversee-succeed's own keyed lines are the detail under the event, not
   # records of their own. The walled recovery's stdout carries the command it
   # built as well, so the pass output says which line it sent.
+  # The walled succession walks ORCH_OVERSEER_PREFERENCE, a walk no other
+  # process prints, so it runs without this watch's model-line hold
+  # (lib/overseer-launch.sh § OL_LINES_HELD); the dead one replays a line.
   succeed_rc=0
   if [[ "$ov_case" == walled || "$ov_case" == reserve ]]; then
     overseer_launch_args
-    "$SUCCEED" --walled-pane "$pane" "${OVERSEER_LAUNCH_ARGS[@]}" >&2 || succeed_rc=$?
+    env -u ORCH_MODEL_LINES_HELD "$SUCCEED" --walled-pane "$pane" "${OVERSEER_LAUNCH_ARGS[@]}" >&2 || succeed_rc=$?
   else
     printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
       || { overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" line-file "$ov_case"; return 1; }
@@ -4208,9 +4211,7 @@ wall_route() { # LANE OBS_STATE SPENT PANE_KEY
     || { ow_message wall-relaunch-refused "lane=$lane" reason=record-unnamed >&2; return 1; }
   spent="${spent:-$account}"
   [[ -n "$spent" ]] || { ow_message wall-relaunch-refused "lane=$lane" reason=account-unknown >&2; return 1; }
-  # The recorded model's lines printed at its launch (lib/overseer-launch.sh §
-  # OL_LINES_HELD); errf is this refusal's cause.
-  bounded_account_read "" "$errf" env ORCH_MODEL_LINES_HELD=1 ORCH_LANE_HOST="$host" "$LANES_CLI" \
+  bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" \
     pick --harness "$harness" --model "$model" --exclude-lane "$spent" --json || rc=$?
   if [[ "$rc" -eq 0 ]] && to="$(jq -er '.config_dir | strings' <<<"$BOUNDED_OUT" 2>/dev/null)"; then
     WALL_PICK="pick lane=$to"

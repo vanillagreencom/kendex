@@ -271,6 +271,29 @@ unmeasured|3|{"walled":0,"unmeasured":2}|0
 failure|1||1
 ROWS
 
+# A failed wall read relays the pick's own words, never a model line: the
+# record's model printed its kendex lines at the lane's launch, and the watch
+# starts its reads under the orch library's hold. The pick is the real `lanes`,
+# the tier-model fixture classifying `opus`, with its exit failed after it ran;
+# the control drops the library's export.
+HOLDCTL="$(mutant_scripts owed-holdctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$HOLDCTL/lib/overseer-launch.sh" 'export ORCH_MODEL_LINES_HELD=1' ':'
+OWED_LINES=""
+for bin in "" "$HOLDCTL/oversee-watch"; do
+  new_case owed_pick_model_lines
+  fleet '[]' "$(record KEN-14 stopped claude '{"model":"opus"}')"
+  printf '%s\n' "$(issue KEN-14 'In Progress' 1)" | jq -sc . > "$STUB_DIR/tracker.out"
+  printf '%s\n' "$(account claude claude room 2026-10-01T00:00:00Z)" | jq -sc . > "$STUB_DIR/lanes.json"
+  printf '#!/usr/bin/env bash\n[[ "$1" == pick ]] || exec %q "$@"\n%q "$@"\nexit 1\n' \
+    "$TMP_ROOT/bin/lanes-stub.sh" "$REPO_ROOT/skills/orch/scripts/lanes" > "$STUB_DIR/lanes"
+  chmod +x "$STUB_DIR/lanes"
+  WATCH_BIN="$bin" watch_pass "PATH=$REPO_ROOT/skills/orch/tests/fixtures/tier-model:$TMP_ROOT/bin:$PATH" \
+    OVERSEE_WATCH_LANES="$STUB_DIR/lanes" ORCH_LANE_DIRS="$STUB_DIR/no-account" -- --state "$STUB_DIR/state.json"
+  OWED_LINES+="$(grep -c '^oversee-watch: owed-wall-unjudged host=local harness=claude model=opus exit=1' "$ERR" || true)|$(grep -c -e '^model-resolution: ' -e '^preference-deprecated ' "$ERR" || true) "
+done
+assert_eq "$OWED_LINES" "1|0 1|1 " \
+  "a failed wall read relays the pick's words with no model line, and without the library's hold with the model's"
+
 # A fleet with no tracker team owes the item repository's open PRs on a GitHub
 # item's branch, and no other repository's, and reads no tracker.
 new_case owed_github

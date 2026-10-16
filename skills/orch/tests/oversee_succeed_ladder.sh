@@ -396,16 +396,17 @@ seat eclaude 10 10 10
 codex_seat codex 99
 codex_seat dcodex 20
 # The conversion never advises a claude exact id, which warns on the next
-# run: it names the claude default entry's class while the launch keeps the
-# session's model. A codex, copilot or pi model is a supported form.
+# run, nor a class the session's model has none of: it names that model and
+# no replacement, while the launch keeps it and the record carries no class.
+# A codex, copilot or pi model is a supported form, which it advises.
 for row in \
-  'claude|observed|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|claude:standard:high' \
-  'codex|observed|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|codex:gpt-5.6-sol:high' \
-  'claude|flags|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|claude:standard:high' \
-  'codex|flags|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|codex:gpt-5.6-sol:high' \
-  'copilot|flags|gpt-5.3-codex|COPILOT_HOME|2copilot|--reasoning-effort|high|2|copilot:gpt-5.3-codex:high' \
-  'pi|flags|pi-claude/claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--thinking|high|2|pi:pi-claude/claude-fable-5-1:high'; do
-  IFS='|' read -r harness source model var successor effort_word effort_value effort_count replacement <<<"$row"
+  'claude|observed|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|model=claude-fable-5-1' \
+  'codex|observed|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|replacement=codex:gpt-5.6-sol:high' \
+  'claude|flags|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|model=claude-fable-5-1' \
+  'codex|flags|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|replacement=codex:gpt-5.6-sol:high' \
+  'copilot|flags|gpt-5.3-codex|COPILOT_HOME|2copilot|--reasoning-effort|high|2|replacement=copilot:gpt-5.3-codex:high' \
+  'pi|flags|pi-claude/claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--thinking|high|2|replacement=pi:pi-claude/claude-fable-5-1:high'; do
+  IFS='|' read -r harness source model var successor effort_word effort_value effort_count conversion <<<"$row"
   permission=""
   [[ "$harness" == pi ]] || permission="$(launch_choice_permission_write "$harness")" || exit 1
   if [[ "$source" == observed ]]; then
@@ -442,8 +443,8 @@ for row in \
     [[ -n "$CODEX_LAUNCH_HOME" && "$CODEX_LAUNCH_HOME" != *$'\n'* ]] || { echo 'fixture: codex-home=not-single' >&2; exit 1; }
     launch_home="$CODEX_LAUNCH_HOME"
   fi
-  assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")|$(sed -n 's/^preference-deprecated-conversion .* replacement=\([^ ]*\).*/\1/p' <<<"$OUT")" \
-    "0|no|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort|$replacement" \
+  assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")|$(sed -n -e 's/^preference-deprecated-conversion .* replacement=\([^ ]*\).*/replacement=\1/p' -e 's/^preference-deprecated-conversion .* model=\([^ ]*\).*/model=\1/p' <<<"$OUT")|$(jq -r '.overseer.class // "none"' "$TMP_ROOT/work/tmp/workflow-state-oversee.json")" \
+    "0|no|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort|$conversion|none" \
     "numeric $harness preference keeps the $source model and supplied effort" "$TMP_ROOT/out"
 done
 # Normalizing the observed Codex model for account measurement must not erase

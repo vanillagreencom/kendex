@@ -12,6 +12,9 @@ DEV_VALIDATE_RUN="$SCRIPT_DIR/dev-validate-run"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
 LANES="$SCRIPT_DIR/lanes"
+# The wall read's model lines printed at the lane's launch; its stderr carries
+# only the causes the help points at (lib/overseer-launch.sh § OL_LINES_HELD).
+export ORCH_MODEL_LINES_HELD=1
 source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 source "$SCRIPT_DIR/lib/date-ladder.sh"

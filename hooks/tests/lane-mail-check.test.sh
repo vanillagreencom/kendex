@@ -714,12 +714,24 @@ assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects t
 # An account nothing could measure is a gap the lane cannot act on: it is
 # reported and the turn ends, never refused, so a setup with no usage endpoint
 # is not stopped by a mark it can never reach.
+# The cause it relays is `lanes`' own words: the lane's launch printed its
+# model's lines, so no preference-deprecated or model-resolution line joins
+# them. The control drops the hook's hold.
 new_handoff_lane handoff_unmeasured KEN-55
 write_transcript "$TRANSCRIPT" 1000
+# model_lines — the hook's first line, then the model lines ERR_FILE carries.
+model_lines() { printf '%s|%s' "$(first_line)" "$(grep -c -e '^preference-deprecated ' -e '^model-resolution: ' "$ERR_FILE" || true)"; }
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .openclaude)
-expect 0 "lane-mail-check: account=unmeasured" \
-  "an account with an inventory entry and no usable credential is reported, never read as room"
+assert_eq "RC=$RC $(model_lines)" "RC=0 lane-mail-check: account=unmeasured|0" \
+  "an account with an inventory entry and no usable credential is reported, never read as room, with no model line in its cause"
+variant unheld -e 's/^export ORCH_MODEL_LINES_HELD=1$/:/'
+install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .openclaude)
+assert_eq "$(model_lines)" "lane-mail-check: account=unmeasured|1" \
+  "control: without the hook's hold the cause carries the model's preference-deprecated line"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # `lanes pick --lane` keeps a status-only contract where `handoff-standing`
 # could not, and one reservation is what makes that safe: every status with an

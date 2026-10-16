@@ -51,7 +51,7 @@ while IFS= read -r row; do
 done <<ROWS
 claude:1:high|fable|0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|fable
 claude:1:high|opus|0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus
-claude:1:high|claude-opus-5-5|0|1|claude:claude-opus-5-5:high#standard|claude:1:high|||$NUMERIC|
+claude:1:high|claude-opus-5-5|0|1|claude:claude-opus-5-5:high|claude:1:high|||$NUMERIC|
 codex:12:medium|gpt-6-astra|0|1|codex:gpt-6-astra:medium|codex:12:medium|||entry=codex:12:medium form=harness:model:effort|
 copilot:2:high|fable|0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|native-default
 pi:1:high|pi-claude/fable|0|1|pi:pi-claude/fable:high|pi:1:high|||entry=pi:1:high form=harness:model:effort|
@@ -151,8 +151,6 @@ control model claude:1:high fable "$NUMERIC_GREEN" \
 control warning claude:1:high fable "$NUMERIC_GREEN" '  (( ! OL_DEPRECATION_WARNED )) || return 0' '  :'
 control numeric-class claude:1:high opus "0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus" \
   '    OL_ENTRY_CLASS="$OL_CLASS"' '    :'
-control numeric-default-class claude:1:high claude-opus-5-5 "0|1|claude:claude-opus-5-5:high#standard|claude:1:high|||$NUMERIC|" \
-  '      OL_ENTRY_CLASS="$OL_DEFAULT_MODEL"' '      :'
 control alias "$CLASSES" other "$CLASSES_GREEN" \
   '    ol_claude_alias "$OL_CLASS" || return 1' '    :'
 # The runtime answer's warning in place of the rank answer's names the
