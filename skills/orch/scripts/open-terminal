@@ -1498,7 +1498,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
         | select($logged | not)
         | $lane')" || return 1
     if [[ -n "$previous" ]]; then
-      CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$previous" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"})" \
+      CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$previous" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"})" \
         || { ot_message cloud-close-log-failed "item=$item" "cause=$CLOUD_CLOSE_LOG_CAUSE" >&2; return 1; }
     fi
   fi

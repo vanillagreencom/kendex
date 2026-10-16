@@ -2467,7 +2467,7 @@ assert_eq "$(cloud_send_logged)" 'rc=0 status=done rows=[]' 'control: the old di
 LANE_CLOSE_APPEND_FAIL=1 cloud_send_close "$SCRIPT" '{"at":1,"result":"sent","text":"","credit":"unread"}'
 assert_eq "rc=$RC refused=$(grep -c '^lane-close: fleet-log-failed item=KEN-1 cause=append$' "$TMP_ROOT/err" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 refused=1 status=done' 'a fleet-log row that cannot be written refuses with the record done'
-MUTANT="$(mutant cloud-send-log '    if ! CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$record" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})"; then' '    if false; then')"
+MUTANT="$(mutant cloud-send-log '    if ! CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$record" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})"; then' '    if false; then')"
 cloud_send_close "$MUTANT" '{"at":1,"result":"failed","text":"x","credit":"unread"}'
 assert_eq "$(cloud_send_logged)" 'rc=0 status=done rows=[]' \
   'control: a stop=none close that skips the send cause fails the logged row'

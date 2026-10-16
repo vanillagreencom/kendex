@@ -1160,7 +1160,7 @@ case "$host_stop" in
     [[ -x "$WORKTREE" ]] || { message helper-missing "item=$ITEM" "path=$WORKTREE" >&2; exit 1; }
     "$WORKTREE" remove "$mail_root" >&2 || { message worktree-remove-failed "item=$ITEM" "path=$mail_root" >&2; exit 1; }
     update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }
-    if ! CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$WORKFLOW_STATE" "$record" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})"; then
+    if ! CLOUD_CLOSE_LOG_CAUSE="$(cloud_close_log "$record" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"})"; then
       if [[ "$CLOUD_CLOSE_LOG_CAUSE" == record-invalid ]]; then
         message record-invalid "item=$ITEM" "field=directive_send" >&2
       else
