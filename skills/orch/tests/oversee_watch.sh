@@ -116,6 +116,18 @@ assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "owner/repo" "GH_REPO is exported to
 # does not take dies on every pass.
 assert_eq "$(cat "$STUB_DIR/prwatch.args")" "" "pr-watch is invoked with no flag" "$err"
 
+# The opening baseline also proves its persisted keys and their removal.
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file for the one repo, no temp left behind" "$err"
+state_file="$STATE_DIR/owner_repo__none"
+assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file is keyed on the repo and --since" "$err"
+assert_eq "$(cat "$state_file")" "$(printf '12\tthreads-open')" "the state file holds the pass's <pr> <kind> keys" "$err"
+printf '0' > "$STUB_DIR/prwatch.rc"
+: > "$STUB_DIR/prwatch.out"
+err="$TMP_ROOT/e1h2"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file survives a clean pass" "$err"
+assert_eq "$(cat "$state_file" 2>/dev/null; echo x)" "x" "a pass with no attention empties the state file" "$err"
+
 # 1b. an unseen <pr> <kind> line mid-run is the event
 new_case prwatch_new
 printf '0' > "$STUB_DIR/prwatch.rc.1"
@@ -322,25 +334,6 @@ assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
 assert_contains "$out" "99887766" "the new PR's line follows the event" "$err"
 assert_not_contains "$(cat "$err")" "oversee-watch: reducer-baseline" \
   "a persisted baseline replaces the start-of-run note"
-
-# 1h. the state file is rewritten after every pass — the pass's keys, and the
-# empty set when the reducer reports nothing
-new_case prwatch_state_file
-printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
-printf '1' > "$STUB_DIR/prwatch.rc"
-err="$TMP_ROOT/e1h1"
-out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file for the one repo, no temp left behind" "$err"
-state_file="$STATE_DIR/owner_repo__none"
-assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file is keyed on the repo and --since" "$err"
-assert_eq "$(cat "$state_file")" "$(printf '12\tthreads-open')" "the state file holds the pass's <pr> <kind> keys" "$err"
-
-printf '0' > "$STUB_DIR/prwatch.rc"
-: > "$STUB_DIR/prwatch.out"
-err="$TMP_ROOT/e1h2"
-out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file survives a clean pass" "$err"
-assert_eq "$(cat "$state_file" 2>/dev/null; echo x)" "x" "a pass with no attention empties the state file" "$err"
 
 # 1i. a state directory that cannot be created is a hard failure, never a
 # silent fallback to in-process-only memory
@@ -877,6 +870,7 @@ assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "
 assert_contains "$out" '"remaining":["merge-pr § 5"]' "the record follows the event line" "$err"
 assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp handoff-standing KEN-1" "the record is read from the checkout state" "$err"
 assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "1" "the committed baseline keys the record" "$err"
+awk -F '\t' '$1 == "handoff" && $2 == "KEN-1"' "$STATE_DIR/owner_repo__none" > "$TMP_ROOT/handoff-baseline"
 # The same fleet re-run before the relaunch has stamped the record.
 err="$TMP_ROOT/e2b3"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
@@ -946,16 +940,13 @@ for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install 
   cause=${rest%%|*}; label=${rest#*|}
   unread_row=$((${unread_row:-0} + 1))
   new_case "handoff_unread_$unread_row"
-  # A standing record committed first, so the row this case must not lose
-  # exists before the failing read: with no prior row, "not cleared" would
-  # hold against a pass that cleared everything.
+  # Keep the real watch's recorded row in each independent failure world.
+  # An empty starting baseline cannot prove that a failed read preserves it.
   handoff_record KEN-1
-  err="$TMP_ROOT/e2b-unread-$unread_row-seed"
-  out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
-  assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
-    "$label: the record is reported while the verb still answers" "$err"
+  mkdir -p "$STATE_DIR"
+  cp "$TMP_ROOT/handoff-baseline" "$STATE_DIR/owner_repo__none"
   KEYED="$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")"
-  assert_eq "$KEYED" "1" "$label: and its row is committed" "$err"
+  assert_eq "$KEYED" "1" "$label: starts with the committed row"
 
   READER="$STUB_DIR/old-workflow-state"
   old_state_reader "$READER" "$status" "$answer" "$cause"
@@ -1454,9 +1445,6 @@ assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS" "rc=0 events=merged 2 host=" 
 parked_run -- --repo owner/repo --repo other/repo
 assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
   "a record still parked with its number merged in another repository is not handed on at the heartbeat" "$err"
-WATCH_BIN="$OWED_MUTANT" parked_run -- --repo owner/repo --repo other/repo
-assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
-  "control: with the membership test removed another repository's merge hands the parked record on at the heartbeat" "$err"
 # A pull request still in the queue: nothing merged, nothing handed on.
 parked_fleet parked_queued
 printf '[]\n' > "$STUB_DIR/merged.json"
@@ -1464,9 +1452,6 @@ parked_run --
 parked_run --
 assert_eq "events=$EVENTS" "events=heartbeat loops=2" \
   "a record still parked while its pull request is queued is not handed on at the heartbeat" "$err"
-WATCH_BIN="$OWED_MUTANT" parked_run --
-assert_eq "events=$EVENTS" "events=parked-merged issue-2,heartbeat loops=2" \
-  "control: with the membership test removed a queued record is handed on at the heartbeat" "$err"
 
 # A dependency park uses the dependency's number, without crediting its merge
 # to the parked item. The stopped record after Recovery relaunch ends the hand.

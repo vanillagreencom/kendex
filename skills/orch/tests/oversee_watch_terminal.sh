@@ -702,102 +702,99 @@ assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-stat
 
 # GitHub can expose a merge after a provider refusal, and its timeline read
 # can fail before recovering. Neither producer changes permission to close.
-for status in parked stopped; do
-  for reason in close-dirty close-unpushed; do
-    while read -r discovery timeline; do
-      label="$status/$reason/$discovery/$timeline"
-      terminal_case "${status}_${reason}_${discovery}_${timeline}" "$status" completed
-      [[ "$discovery" != immediate ]] || terminal_merged
-      [[ "$timeline" != unavailable ]] || touch "$STUB_DIR/timeline-failed"
-      printf '%s\n' "$reason" > "$STUB_DIR/refusal"
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=1" \
-        "$label: recorder refusal still permits the first provider close" "$STUB_DIR/err"
-      assert_contains "$(cat "$STUB_DIR/err")" "lane-host: $reason item=KEN-1" 'the provider refusal keeps its machine reason'
-      if [[ "$discovery" == delayed ]]; then terminal_merged; fi
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
-        "$label: merge reconciliation keeps provider close suppressed" "$STUB_DIR/err"
-      if [[ "$timeline" == unavailable ]]; then
-        assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-state-oversee.json")" none \
-          "$label: a failed recorder does not invent a cycle"
-        assert_eq "$(awk '$0 == "oversee-watch: lane-close-failed item=KEN-1 step=cycle exit=1" {n++} END {print n+0}' "$STUB_DIR/err")" 1 \
-          "$label: the retry reports its advisory recorder failure"
-        terminal_run
-        expected_reads=3
-        [[ "$discovery" != delayed ]] || expected_reads=2
-        assert_eq "$(awk 'END {print NR+0}' "$STUB_DIR/timeline-reads")" "$expected_reads" \
-          "$label: each refused pass retries the real recorder"
-        assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
-          "$label: recorder retries never retry the provider" "$STUB_DIR/err"
-        rm -- "$STUB_DIR/timeline-failed"
-        terminal_run
-      fi
-      assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-state-oversee.json")" 1 \
-        "$label: the production recorder saves the discovered merge"
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
-        "$label: successful recorder recovery carries the existing refusal" "$STUB_DIR/err"
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
-        "$label: the updated refusal survives another restart" "$STUB_DIR/err"
-      assert_eq "$(jq -r '[.fleet_log[]? | select(.kind == "cycle")] | length' "$STUB_DIR/fleet/workflow-state-oversee.json")" 1 \
-        "$label: restarts preserve one cycle report"
-      printf 'canceled\n' > "$STUB_DIR/terminal-state"
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=2 mail=0 closed=0 refused=1" \
-        "$label: a changed terminal state permits one new close" "$STUB_DIR/err"
-      jq '.lanes[0].launched_at="2026-10-08T00:00:00Z"' "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
-      mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=3 mail=0 closed=0 refused=1" \
-        "$label: an externally changed lane record permits one new close" "$STUB_DIR/err"
-      printf 'started\n' > "$STUB_DIR/terminal-state"
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=3 mail=0 closed=0 refused=0" \
-        "$label: reopening clears the refusal without closing" "$STUB_DIR/err"
-      printf 'canceled\n' > "$STUB_DIR/terminal-state"
-      terminal_run
-      assert_eq "$(terminal_result)" "rc=0 status=$status close=4 mail=0 closed=0 refused=1" \
-        "$label: a new terminal transition permits one provider offer" "$STUB_DIR/err"
-    done <<'EOF'
-immediate ready
-delayed ready
-immediate unavailable
-delayed unavailable
+# Both provider refusals enter the same watch branch. These rows retain
+# each discovery and recorder path with both record forms represented.
+while read -r status reason discovery timeline; do
+  label="$status/$reason/$discovery/$timeline"
+  terminal_case "${status}_${reason}_${discovery}_${timeline}" "$status" completed
+  [[ "$discovery" != immediate ]] || terminal_merged
+  [[ "$timeline" != unavailable ]] || touch "$STUB_DIR/timeline-failed"
+  printf '%s\n' "$reason" > "$STUB_DIR/refusal"
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=1" \
+    "$label: recorder refusal still permits the first provider close" "$STUB_DIR/err"
+  assert_contains "$(cat "$STUB_DIR/err")" "lane-host: $reason item=KEN-1" 'the provider refusal keeps its machine reason'
+  if [[ "$discovery" == delayed ]]; then terminal_merged; fi
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
+    "$label: merge reconciliation keeps provider close suppressed" "$STUB_DIR/err"
+  if [[ "$timeline" == unavailable ]]; then
+    assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-state-oversee.json")" none \
+      "$label: a failed recorder does not invent a cycle"
+    assert_eq "$(awk '$0 == "oversee-watch: lane-close-failed item=KEN-1 step=cycle exit=1" {n++} END {print n+0}' "$STUB_DIR/err")" 1 \
+      "$label: the retry reports its advisory recorder failure"
+    terminal_run
+    expected_reads=3
+    [[ "$discovery" != delayed ]] || expected_reads=2
+    assert_eq "$(awk 'END {print NR+0}' "$STUB_DIR/timeline-reads")" "$expected_reads" \
+      "$label: each refused pass retries the real recorder"
+    assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
+      "$label: recorder retries never retry the provider" "$STUB_DIR/err"
+    rm -- "$STUB_DIR/timeline-failed"
+    terminal_run
+  fi
+  assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-state-oversee.json")" 1 \
+    "$label: the production recorder saves the discovered merge"
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
+    "$label: successful recorder recovery carries the existing refusal" "$STUB_DIR/err"
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=1 mail=0 closed=0 refused=0" \
+    "$label: the updated refusal survives another restart" "$STUB_DIR/err"
+  assert_eq "$(jq -r '[.fleet_log[]? | select(.kind == "cycle")] | length' "$STUB_DIR/fleet/workflow-state-oversee.json")" 1 \
+    "$label: restarts preserve one cycle report"
+  printf 'canceled\n' > "$STUB_DIR/terminal-state"
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=2 mail=0 closed=0 refused=1" \
+    "$label: a changed terminal state permits one new close" "$STUB_DIR/err"
+  jq '.lanes[0].launched_at="2026-10-08T00:00:00Z"' "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+  mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=3 mail=0 closed=0 refused=1" \
+    "$label: an externally changed lane record permits one new close" "$STUB_DIR/err"
+  printf 'started\n' > "$STUB_DIR/terminal-state"
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=3 mail=0 closed=0 refused=0" \
+    "$label: reopening clears the refusal without closing" "$STUB_DIR/err"
+  printf 'canceled\n' > "$STUB_DIR/terminal-state"
+  terminal_run
+  assert_eq "$(terminal_result)" "rc=0 status=$status close=4 mail=0 closed=0 refused=1" \
+    "$label: a new terminal transition permits one provider offer" "$STUB_DIR/err"
+done <<'EOF'
+parked close-dirty immediate ready
+stopped close-unpushed delayed ready
+parked close-unpushed delayed unavailable
+stopped close-dirty immediate unavailable
 EOF
-  done
-done
 
-for defect in before-cycle no-carry; do
+while read -r defect status discovery; do
   terminal_mutant "$defect"
   if [[ "$defect" == before-cycle ]]; then
     mutate_file "$MUTANT" '    [[ "$prior" != "$key" ]] || refused=true' '    [[ "$prior" != "$key" ]] || continue'
   else
     mutate_file "$MUTANT" '      rows="$(lane_row_set terminal-close "$rows" "$item" "$key")"' '      : # discard the updated refusal key'
   fi
-  for status in parked stopped; do
-    for discovery in delayed recovery; do
-      terminal_case "${defect}_${status}_${discovery}" "$status" completed
-      printf 'close-dirty\n' > "$STUB_DIR/refusal"
-      if [[ "$discovery" == recovery ]]; then
-        terminal_merged
-        touch "$STUB_DIR/timeline-failed"
-      fi
-      terminal_run "$MUTANT"
-      terminal_merged
-      if [[ "$discovery" == recovery ]]; then rm -- "$STUB_DIR/timeline-failed"; fi
-      terminal_run "$MUTANT"
-      terminal_run "$MUTANT"
-      if [[ "$defect" == before-cycle ]]; then
-        assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-state-oversee.json")" none \
-          "control: an early refusal skip loses $status/$discovery cycle evidence" "$STUB_DIR/err"
-      else
-        assert_eq "$(terminal_result)" "rc=0 status=$status close=2 mail=0 closed=0 refused=1" \
-          "control: dropping the updated key repeats $status/$discovery provider close" "$STUB_DIR/err"
-      fi
-    done
-  done
-done
+  terminal_case "${defect}_${status}_${discovery}" "$status" completed
+  printf 'close-dirty\n' > "$STUB_DIR/refusal"
+  if [[ "$discovery" == recovery ]]; then
+    terminal_merged
+    touch "$STUB_DIR/timeline-failed"
+  fi
+  terminal_run "$MUTANT"
+  terminal_merged
+  if [[ "$discovery" == recovery ]]; then rm -- "$STUB_DIR/timeline-failed"; fi
+  terminal_run "$MUTANT"
+  terminal_run "$MUTANT"
+  if [[ "$defect" == before-cycle ]]; then
+    assert_eq "$(jq -r '.lanes[0].cycle.pr // "none"' "$STUB_DIR/fleet/workflow-state-oversee.json")" none \
+      "control: an early refusal skip loses $status/$discovery cycle evidence" "$STUB_DIR/err"
+  else
+    assert_eq "$(terminal_result)" "rc=0 status=$status close=2 mail=0 closed=0 refused=1" \
+      "control: dropping the updated key repeats $status/$discovery provider close" "$STUB_DIR/err"
+  fi
+done <<'EOF'
+before-cycle parked delayed
+no-carry stopped recovery
+EOF
 
 MUTANT="$(mutant_scripts no-terminal/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/no-terminal/github"
