@@ -45,6 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+OUT_FILE="$TMP_ROOT/stdout"
 BASH_BIN="$(command -v bash)"
 # shellcheck source=lib/assert.sh
 . "$TEST_DIR/lib/assert.sh"
@@ -138,6 +139,34 @@ transcript live-then-done "$(claude_call "$WT_LIVE"; claude_call "$WT_DONE")"
 # a path.
 transcript none '{"type":"user","message":{"content":[{"type":"tool_result","content":"Run the BARE command .agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] in the foreground"}]}}'
 
+# Read tools and hook feedback can quote a real command and live path.
+# Only the shell calls recorded() emits establish an executed start or wait.
+READ_COMMAND=".agents/skills/orch/scripts/dev-validate-run --worktree $WT_LIVE"
+READ_WAIT=".agents/skills/orch/scripts/dev-validate-run --wait --run-dir $RUN_LIVE"
+for harness in claude codex; do
+  case "$harness" in
+    claude)
+      READ_RECORDS=$(jq -cn --arg c "$READ_COMMAND" '
+        {type: "assistant", message: {content: [{type: "tool_use", name: "Read", input: {file_path: "/source.txt"}}]}},
+        {type: "user", message: {content: [{type: "tool_result", content: $c}]}}')
+      READ_WAIT_RECORD=$(jq -cn --arg c "$READ_WAIT" '
+        {type: "user", message: {content: [{type: "tool_result", content: $c}]}}')
+      ;;
+    codex)
+      READ_RECORDS=$(jq -cn --arg c "$READ_COMMAND" '
+        {type: "response_item", payload: {type: "function_call", name: "read_file", arguments: ({cmd: $c} | tojson)}},
+        {type: "response_item", payload: {type: "function_call_output", output: $c}}')
+      READ_WAIT_RECORD=$(jq -cn --arg c "$READ_WAIT" '
+        {type: "response_item", payload: {type: "function_call_output", output: $c}}')
+      ;;
+  esac
+  transcript "read-$harness" "$READ_RECORDS"
+  transcript "held-read-wait-$harness" "$(recorded "$harness" "$READ_COMMAND"; "${harness}_hold" "$RUN_LIVE")
+$READ_WAIT_RECORD"
+done
+transcript prose "$(jq -cn --arg c "$READ_COMMAND" '{type: "assistant", message: {content: $c}}')"
+transcript hold-only "$(claude_hold "$RUN_LIVE")"
+
 # --- The installs ------------------------------------------------------------
 # `orch` lays the hook beside the real orch skill, `bare` installs the hook
 # alone, and `failing` beside a dev-validate-run that cannot answer, each
@@ -230,10 +259,10 @@ run_hook() { # WORLD PAYLOAD [PATH]
   set +e
   if [ -n "${3:-}" ]; then
     (cd "$cwd" && env -i HOME="$home" PWD="$cwd" PATH="$3" \
-      GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH_BIN" "$hook" <<<"$2") >/dev/null 2>"$ERR_FILE"
+      GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH_BIN" "$hook" <<<"$2") >"$OUT_FILE" 2>"$ERR_FILE"
   else
     (cd "$cwd" && env HOME="$home" GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
-      "$BASH_BIN" "$hook" <<<"$2") >/dev/null 2>"$ERR_FILE"
+      "$BASH_BIN" "$hook" <<<"$2") >"$OUT_FILE" 2>"$ERR_FILE"
   fi
   rc=$?
   set -e
@@ -285,6 +314,9 @@ stop_rows() {
       wait) grep -Fxq -- "$(world_reader "$world") --wait --run-dir $RUN_LIVE" "$ERR_FILE" && extra=" under=wait" || extra=" under=none" ;;
       cause) grep -Fxq -- "dev-validate-run: stub cannot read" "$ERR_FILE" && extra=" under=cause" || extra=" under=none" ;;
     esac
+    if [ "$first_want" = - ] && { [ -s "$OUT_FILE" ] || [ -s "$ERR_FILE" ]; }; then
+      extra="$extra output=present"
+    fi
     got="rc=$rc first=$(first_line)$extra"
     want="rc=$rc_want first=$first_want"
     [ "$under" = - ] || want="$want under=$under"
@@ -292,6 +324,12 @@ stop_rows() {
   done <<ROWS
 a live run named by a Claude Code call that outlasted its timeout is refused|orch|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a live run named by a Codex exec_command call is refused|orch|-|agent:live-codex|2|dev-stop-check: running=$RUN_LIVE|wait
+Claude Read output naming a live worktree passes silently|orch|-|agent:read-claude|0|-|-
+Codex read output naming a live worktree passes silently|orch|-|agent:read-codex|0|-|-
+prose naming a live worktree passes silently|orch|-|agent:prose|0|-|-
+hold feedback alone is not a command|orch|-|agent:hold-only|0|-|-
+Claude output naming a wait after a hold is not an executed wait|orch|-|active:held-read-wait-claude|0|dev-stop-check: abandoned=$RUN_LIVE|-
+Codex output naming a wait after a hold is not an executed wait|orch|-|active:held-read-wait-codex|0|dev-stop-check: abandoned=$RUN_LIVE|-
 a live run is found past a newer worktree whose run has finished|orch|-|agent:live-then-done|2|dev-stop-check: running=$RUN_LIVE|wait
 a payload without agent_transcript_path reads transcript_path|orch|-|bare:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 the parent's transcript is not the subagent's|orch|-|parent:live-claude|0|-|-
@@ -447,6 +485,14 @@ form_rows
 # --- Must-fail controls, one per rule ----------------------------------------
 stop_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_rows \
   "${LIVE_STOP_LABELS[@]}"
+stop_control command-records "$HOOK" '  found=$(printf '"'"'%s\n'"'"' "$records" | grep -noE -- "$1$VALUE_RE" 2>&1) || rc=$?' \
+  'rc=0
+  found=$(grep -noE -- "$1$VALUE_RE" "$TRANSCRIPT" 2>&1) || rc=$?' HOOK stop_rows \
+  'Claude Read output naming a live worktree passes silently' \
+  'Codex read output naming a live worktree passes silently' \
+  'prose naming a live worktree passes silently' \
+  'Claude output naming a wait after a hold is not an executed wait' \
+  'Codex output naming a wait after a hold is not an executed wait'
 stop_control continued-stop "$HOOK" 'ACTIVE=${REST#*"$TAB"}' 'ACTIVE=false' HOOK stop_rows \
   'a continued stop with no wait since the hold lets the live run go'
 stop_control hold-again "$HOOK" '[ "$ACTIVE" = true ] || refuse running "$RUN_DIR"' \

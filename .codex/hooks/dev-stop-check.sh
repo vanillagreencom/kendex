@@ -125,8 +125,23 @@ WORDS_RE="([^\"'\\\\&;|]|$REDIRECT_RE|${DQUOTE}[^\"\\\\]*$DQUOTE|${SQUOTE}[^'\\\
 # the `=` the value follows, as `<line> <path>` in transcript order, or exit 1
 # for none.
 transcript_paths() { # PREFIX
-  local found rc=0
-  found=$(grep -noE -- "$1$VALUE_RE" "$TRANSCRIPT" 2>&1) || rc=$?
+  local records found rc=0
+  # Keep one output line per record so holds and executed waits share the
+  # transcript's order. Hold feedback is evidence of a hold, never a command.
+  # This field selection is local to the reader; it changes no hook policy.
+  records=$(jq -r --arg prefix "$1" '
+    if $prefix == "dev-stop-check: running=" then tojson
+    else [
+      (.message.content | arrays | .[] |
+        select(.type == "tool_use" and .name == "Bash") |
+        .input.command | strings | tojson),
+      (.payload | select(.type == "function_call" and .name == "exec_command") |
+        .arguments | strings | fromjson? | .cmd | strings | tojson | tojson)
+    ] | join("\\n") end' "$TRANSCRIPT" 2>&1) || {
+      printf '%s\n' "$records"
+      return 2
+    }
+  found=$(printf '%s\n' "$records" | grep -noE -- "$1$VALUE_RE" 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || {
     printf '%s\n' "$found"
     return "$rc"
