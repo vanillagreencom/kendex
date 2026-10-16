@@ -635,14 +635,24 @@ JARVISMISMATCH
 
 # The brief-taken stamp: a Jarvis launch whose identity started under the
 # session's id and whose Start brief the worker delivered takes the stamp
-# once, at the lead's first tool call (lane-mail-halt) or turn end
+# once, at the lead's first tool call (lane-mail-halt) or Claude Code turn end
 # (lane-mail-check's own Stop run), and every other record stays as it stands.
-# Payloads are Claude Code's PreToolUse and Stop and the pi-hooks carrier's.
+# Payloads are Claude Code's PreToolUse and Stop, Codex's, Copilot's
+# preToolUse and agentStop, and the pi-hooks carrier's.
 TOOL="{\"hook_event_name\":\"PreToolUse\",$BASE,\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"/work/SKILL.md\"}}"
 SUB_TOOL="{\"hook_event_name\":\"PreToolUse\",$BASE,\"agent_id\":\"a1\",\"tool_name\":\"Read\",\"tool_input\":{}}"
 PI_BASE='"session_id":"p1","transcript_path":"/p/p1.jsonl"'
 PI_TOOL="{\"hook_event_name\":\"PreToolUse\",$PI_BASE,\"tool_name\":\"read\",\"tool_input\":{\"path\":\"SKILL.md\"}}"
 PI_STOP="{\"hook_event_name\":\"Stop\",\"stop_hook_active\":false,\"working_agents\":0,$PI_BASE}"
+CODEX_BASE='"session_id":"019a","transcript_path":"/r/rollout-019a.jsonl","cwd":"/work","permission_mode":"default"'
+CODEX_TOOL="{$CODEX_BASE,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}"
+CODEX_STOP="{$CODEX_BASE,\"hook_event_name\":\"Stop\",\"stop_hook_active\":false,\"last_assistant_message\":\"ok\"}"
+COP_TOOL="{$COP_BASE,\"toolName\":\"view\",\"toolArgs\":\"{}\"}"
+COP_STOP="{$COP_BASE,\"stopReason\":\"end_turn\"}"
+# A Copilot preToolUse is the lead's only for a session recorded as one, the
+# record its session start writes.
+mkdir -p -- "$COP_HOME_DIR/.cache/lane-mail/copilot-leads"
+touch -- "$COP_HOME_DIR/.cache/lane-mail/copilot-leads/l1"
 jarvis_delivered() { # PATCH
   jq -c "{state: \"starting\", brief_delivered: true} + . | .pending += {started_at: 1790000001} | $1" "$RECORD" >"$RECORD.next"
   mv "$RECORD.next" "$RECORD"
@@ -662,6 +672,10 @@ claude-tool|.claude/hooks|5f0c|lane-mail-halt|$TOOL|.|true|JARVIS_GENERATION=3
 claude-stop|.claude/hooks|5f0c|lane-mail-check|$STOP|.|true|JARVIS_GENERATION=3
 pi-tool|.pi/kendex/hooks|p1|lane-mail-halt|$PI_TOOL|.|true|JARVIS_GENERATION=3
 pi-stop|.pi/kendex/hooks|p1|lane-mail-check|$PI_STOP|.|none|JARVIS_GENERATION=3
+codex-tool|.codex/hooks|019a|lane-mail-halt|$CODEX_TOOL|.|true|JARVIS_GENERATION=3
+codex-stop|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.|none|JARVIS_GENERATION=3
+copilot-tool|.github/hooks|l1|lane-mail-halt|$COP_TOOL|.|true|JARVIS_GENERATION=3 ${COP_ENV[*]}
+copilot-stop|.github/hooks|l1|lane-mail-check|$COP_STOP|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
 undelivered|.claude/hooks|5f0c|lane-mail-halt|$TOOL|.brief_delivered = false|none|JARVIS_GENERATION=3
 running|.claude/hooks|5f0c|lane-mail-check|$STOP|.state = "running"|none|JARVIS_GENERATION=3
 unstarted|.claude/hooks|5f0c|lane-mail-halt|$TOOL|.pending.started_at = null|none|JARVIS_GENERATION=3
@@ -677,6 +691,19 @@ printf 'not json\n' >"$RECORD"
 run lane-mail-halt "$TOOL" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: jarvis-rows-unwritten=$RECORD" \
   "an unreadable launch record is reported and the tool call passes"
+# Only a launch due its stamp opens the record's lock: a lock that cannot be
+# opened is reported for a starting launch and never met by a running one.
+while IFS='|' read -r label patch want; do
+  jarvis_checkout "jarvis_taken_lock_$label" .claude/hooks 5f0c
+  jarvis_delivered "$patch"
+  mkdir -- "$RECORD.lock"
+  run lane-mail-halt "$TOOL" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
+  assert_eq "RC=$RC first=$(first_line) taken=$(taken)" "RC=0 first=$want taken=none" \
+    "an unopenable record lock and a $label launch"
+done <<JARVISLOCK
+starting|.|lane-mail-check: jarvis-rows-unwritten=$TMP_ROOT/jarvis_taken_lock_starting-record.json
+running|.state = "running"|-
+JARVISLOCK
 
 # --- control ------------------------------------------------------------------
 # Each rule removed from a copy of the orch scripts reddens its row: the call,
@@ -708,8 +735,8 @@ session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" "$2" 
 JARVISCONTROL
 
 # Each brief-taken rule removed from a copy reddens its row: the hook's own
-# dispatch, the Pi Stop exclusion, and the started, session, delivery, launch
-# state and write-once tests.
+# dispatch, the Claude Code turn-end allowlist, and the started, session,
+# delivery, launch state and write-once tests.
 while IFS='@' read -r label file old new home id wrapper payload patch want; do
   jarvis_checkout "jarvis_taken_control_$label" "$home" "$id"
   jarvis_delivered "$patch"
@@ -722,7 +749,7 @@ while IFS='@' read -r label file old new home id wrapper payload patch want; do
   assert_eq "taken=$(taken)" "taken=$want" "control: brief-taken $label"
 done <<JARVISTAKENCONTROL
 dispatch@hook@{ [ "\$CALLER" = lead ] && [ -z "\$ITEM" ] && [ -n "\${JARVIS_RECORD:-}" ]; } || return 0@return 0@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.@none
-pi-stop@lib@[ "\$4:\$5" != pi:Stop ] || return 0@:@.pi/kendex/hooks@p1@lane-mail-check@$PI_STOP@.@true
+turn-end@lib@[ "\$5" = PreToolUse ] || [ "\$4" = claude ] || return 0@:@.pi/kendex/hooks@p1@lane-mail-check@$PI_STOP@.@true
 started@lib@ and .pending.started_at != null@@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.pending.started_at = null@true
 session@lib@.pending.native_session_id == \$session and @@.claude/hooks@6a1d@lane-mail-halt@$TOOL@.@true
 delivered@lib@.brief_delivered == true@true@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.brief_delivered = false@true

@@ -217,6 +217,18 @@ class SessionContract(unittest.TestCase):
         wrapper.chmod(0o755)
         return flag
 
+    def hold_inspection_until_taken(self):
+        # A barrier, not a clock: once the brief is delivered, every pane read
+        # waits for the native hook's stamp.
+        real = shutil.which("tmux")
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + os.environ["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + "for arg in \"$@\"; do if [[ $arg == capture-pane ]]; then until jq -e "
+            + shlex.quote('.state != "starting" or .brief_delivered != true or .pending.brief_taken == true')
+            + " " + shlex.quote(str(self.record)) + " >/dev/null 2>&1; do sleep 0.05; done; fi; done\nexec "
+            + shlex.quote(real) + ' "$@"\n')
+        wrapper.chmod(0o755)
+
     def await_worker_result(self):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -505,6 +517,47 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"],
                                         capture_output=True, env=self.env).returncode, 1)
         self.assertFalse(any("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()))
+
+    def test_resumed_history_is_no_trust_dialog(self):
+        # A resumed Copilot session redraws its conversation; the folder-trust
+        # question quoted there, before its start or after it, is no dialog.
+        fixture = self.home / ".fixture.json"
+        self.call("start", "copilot")
+        self.wait()
+        self.call("stop")
+        self.wait("stopped")
+        events = self.observe_inspection()
+        os.mkfifo(self.gate)
+        for drawn in ("pending", "confirmed"):
+            with self.subTest(drawn=drawn):
+                fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"history": drawn}))
+                inspections = len(events.read_text().splitlines()) if events.exists() else 0
+                self.call("start", "copilot")
+                # Two reads of the held, unstarted pane complete before its start.
+                self.await_rows(events, inspections + 2)
+                with self.gate.open("w") as stream:
+                    stream.write("1")
+                answer = self.wait(reason="resumed")
+                self.assertIsNotNone(answer["terminal"])
+                self.call("stop")
+                self.wait("stopped")
+
+    def test_sign_in_wall_after_the_stamp(self):
+        # A tool call stamps the brief taken and the turn then meets the
+        # sign-in wall: the pane read with the stamp standing still refuses.
+        # The stamp lands in the worker's poll pause after the delivery, and
+        # every later pane read waits for it.
+        self.hold_inspection_until_taken()
+        fixture = self.home / ".fixture.json"
+        fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": "current", "auth_event": "PreToolUse"}))
+        for harness in AUTH_MESSAGES:
+            with self.subTest(harness=harness):
+                self.call("start", harness)
+                answer = self.wait("blocked", "sign-in-required")
+                self.assertIsNone(answer["terminal"])
+                self.assertIs(json.loads(self.record.read_text())["history"]["pending"]["brief_taken"], True)
+                self.call("stop")
+                self.wait("stopped")
 
     def test_sign_in_failure(self):
         fixture = self.home / ".fixture.json"

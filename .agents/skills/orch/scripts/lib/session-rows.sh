@@ -48,9 +48,9 @@
 # A session the Jarvis runtime launched writes no file here of its own: its
 # SessionStart fills the launch's pending row in the runtime record its
 # environment names, with no fleet and no mailbox (session_rows_jarvis_write),
-# and the lane-mail-check hook's own run at its first tool call or turn end
-# after the Start brief stamps that row once as the brief taken
-# (session_rows_jarvis_taken), the fact the Jarvis launch worker reads.
+# and the lane-mail-check hook's own run at its first tool call, or on Claude
+# Code its turn end, after the Start brief stamps that row once as the brief
+# taken (session_rows_jarvis_taken), the fact the Jarvis launch worker reads.
 #
 # The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
 # lib/lane-context.sh and lib/lane-state.sh sourced by its caller, the lane
@@ -422,35 +422,48 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
 # says the brief was delivered and the launch is still `starting`, and no stamp
 # stands. The worker writes `brief_delivered` under the same lock in the hold
 # that pastes the brief, so a stamp is ordered after the delivery with no
-# clock; a hook that met the lock held retries at the session's next tool call
-# or turn end. Every other record is left as it stands, with exit 0: a running
-# session's later calls write nothing.
+# clock; a hook that met the lock held retries at the session's next call
+# that stamps. Every other record is left as it stands, with exit 0. That
+# verdict is read first without the lock, since every writer renames a whole
+# record into place, so a running session's later calls take no lock and
+# write nothing. Only a launch the stamp is due on, or would be once the
+# worker's hold records the delivery, takes the lock and reads it again.
 #
-# A Pi Stop is no stamp: Pi's carrier dispatches Stop on a run that ended on
-# an error as well as on a completed one, ahead of the StopFailure that tells
-# them apart, so only its tool call says it took the brief. Claude Code fires
-# StopFailure in place of Stop.
+# A turn end stamps on Claude Code alone, which fires StopFailure in place of
+# Stop on a turn that ended on an error (docs/adapters/pi.md). Pi's carrier
+# dispatches Stop on an errored run as well, and Codex and Copilot have no
+# turn-failure event to tell one apart (hooks/stop-failure-row.sh), so there
+# only a tool call says the session took the brief.
 #
 # Exit 1 where the payload or RECORD could not be read, 2 where RECORD could
 # not be written, 3 where its lock was not taken. The cause is on stderr.
 session_rows_jarvis_taken() { # RECORD GENERATION KEY HARNESS EVENT
-  local session
-  [ "$4:$5" != pi:Stop ] || return 0
+  local session verdict
+  [ "$5" = PreToolUse ] || [ "$4" = claude ] || return 0
   session="$(jq -r '(.session_id // .sessionId) | strings')" || return 1
   [ -n "$session" ] || return 0
+  verdict="$(session_rows_jarvis_due "$1" "$2" "$3" "$4" "$session")" || return 1
+  [ "$verdict" != other ] || return 0
   (
     exec 200>>"$1.lock" || exit 2
     orch_take_lock 200 "$1.lock" "$SESSION_ROWS_WAIT" || exit 3
-    verdict="$(jq -r --arg generation "$2" --arg server "${3%% *}" --arg pane "${3#* }" \
-      --arg harness "$4" --arg session "$session" "$SESSION_ROWS_JARVIS_BOUND"'
-      if bound($generation; $server; $pane; $harness) and .pending.started_at != null
-        and .pending.native_session_id == $session and .brief_delivered == true
-        and .state == "starting" and .pending.brief_taken == null
-      then "own" else "other" end' -- "$1")" || exit 1
+    verdict="$(session_rows_jarvis_due "$1" "$2" "$3" "$4" "$session")" || exit 1
     [ "$verdict" = own ] || exit 0
     jq -c '.pending.brief_taken = true' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
     mv -f -- "$1.$$" "$1" || { rm -f -- "$1.$$"; exit 2; }
   )
+}
+
+# session_rows_jarvis_due RECORD GENERATION KEY HARNESS SESSION: `own` where
+# RECORD's launch takes session_rows_jarvis_taken's stamp, `undelivered` where
+# it would but for the brief's delivery, `other` where it does not.
+session_rows_jarvis_due() { # RECORD GENERATION KEY HARNESS SESSION
+  jq -r --arg generation "$2" --arg server "${3%% *}" --arg pane "${3#* }" \
+    --arg harness "$4" --arg session "$5" "$SESSION_ROWS_JARVIS_BOUND"'
+    if (bound($generation; $server; $pane; $harness) and .pending.started_at != null
+      and .pending.native_session_id == $session and .state == "starting"
+      and .pending.brief_taken == null) | not then "other"
+    elif .brief_delivered == true then "own" else "undelivered" end' -- "$1"
 }
 
 # ---------------------------------------------------------------------------

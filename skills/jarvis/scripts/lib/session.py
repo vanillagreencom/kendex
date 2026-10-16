@@ -482,10 +482,12 @@ class Session:
                 if not self.terminal(record):
                     raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
                 identity = record.get("pending") or {}
-                # The native hook's stamp at the first tool call or turn end
-                # after the brief, the session's own word that it took it.
+                # The native hook's stamp at the first tool call, or Claude
+                # Code turn end, after the brief: the session's own word that
+                # it took it. The pane is still read, so a sign-in wall or
+                # another account refuses the Start before the stamp counts.
                 taken = record.get("brief_delivered") and identity.get("brief_taken")
-                observed = "" if taken else self.backend(
+                observed = self.backend(
                     "inspect", socket, pane, record["harness"], prepared["var"], record["account"],
                     "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", ""),
                     "delivered" if record.get("brief_delivered") else "undelivered").stdout

@@ -79,11 +79,15 @@ case "$verb" in
       lane_state state listed "$cmd" "$pid" "$screen" || exit 1
     fi
     if [[ "$LANE_WALL_KIND" == auth ]]; then printf 'auth\n'; exit; fi
-    if [[ "$brief" == undelivered ]]; then
+    if [[ "$harness" == copilot && "$6" == pending ]]; then
       # A folder-trust question holds the harness until its owner answers it
-      # natively; Jarvis never answers a native security request.
+      # natively; Jarvis never answers a native security request. Copilot's
+      # alone, asked before its SessionStart: lane_trust_prepare records the
+      # answer for Claude Code and Codex, and Pi asks none. Read below the
+      # last turn, since a resumed session redraws its history.
+      slice="$(pane_below_last_turn "$screen")" || exit 1
       rc=0
-      dialog="$(pane_trust_dialog "$screen")" || rc=$?
+      dialog="$(pane_trust_dialog "$slice")" || rc=$?
       case "$rc" in
         0) printf 'trust\n%s\n' "$dialog"; exit ;;
         1) ;;
