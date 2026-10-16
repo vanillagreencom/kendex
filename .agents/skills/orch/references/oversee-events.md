@@ -65,6 +65,8 @@ Use `--tier [TIER]` only for an old lane record without a launch tier. Add `--re
 
 ## Event kinds
 
+`watch-step-failed step=triage count=N` means the fleet state's `triaged` read failed. The watch prints it on the first failure and every `ORCH_OVERSEER_MARK_REPEAT` failed reads. The count persists in the watch baseline across restarts and resets after a successful read. The pass still exits 2. Read the `triage-state-failed` diagnostic and retained cause on stderr. Correct a malformed record against the [triaged schema](../schemas/workflow-state.md#oversee-state) before retrying. For another read failure, correct the cause stderr names.
+
 `tracker-quota` means this pass could not finish its tracker reads. Keep owner answers unread. An absent owed or Verifying line during this hold is unavailable evidence, not proof that no work remains. Follow the linear skill's quota contract and its `patterns/workflow-actions.md` for held writes. Mail, available GitHub and lane checks, and report-due checks continue. The heartbeat repeats the scheduling receipt while it stands.
 
 A lane's successful direct-push completion takes [§ Direct-push cycle records](#direct-push-cycle-records) before lane close.

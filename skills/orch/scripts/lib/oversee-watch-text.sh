@@ -262,6 +262,15 @@ The long pass's events, checked and reported in this order:
                              judge can close the lane later in the same pass.
                              Recovery instructions are in
                              references/oversee-events.md
+  EVENT watch-step-failed step=triage count=<N>
+                             the fleet state's triaged read failed. Reported
+                             on the first failure and every
+                             ORCH_OVERSEER_MARK_REPEAT failed reads. The count
+                             persists in the watch baseline across restarts
+                             and resets after a successful triaged read.
+                             Stderr retains triage-state-failed and the read's
+                             detail. The pass exits 2. Inspect that cause and
+                             correct a malformed triaged record before retrying
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT outside-contribution <repo>#<N> kind=<pr|issue> author=<login> [head=<sha>]
