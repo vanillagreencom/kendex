@@ -45,10 +45,12 @@ assert_eq "$(jq '.notice' <<<"$CLOSE_FACTS")" true 'failed tracker writes retain
 assert_eq "$(jq '.posted' <<<"$CLOSE_FACTS")" true 'posted tracker asks release only their description and labels'
 assert_eq "$(jq '.edited' <<<"$CLOSE_FACTS")" true 'close preserves an action line changed after posting'
 assert_eq "$(jq '.retained_error' <<<"$CLOSE_FACTS")" true 'a refused label retains tracker error bytes after close'
-assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'failed posts cancel only their question and posted questions stay active'
-assert_eq "$(jq '.cancel_notice' <<<"$CLOSE_FACTS")" true 'failed question cancellation reports its cause and retains the primary error'
+assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'only successful tracker posts leave a question comment'
+assert_eq "$(jq '.rollback_owned' <<<"$CLOSE_FACTS")" true 'failed comments restore the exact description the ask replaced'
+assert_eq "$(jq '.rollback_unowned' <<<"$CLOSE_FACTS")" true 'rollback preserves a later description and reports lost ownership'
+assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback reports its cause and retains the comment error'
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed unposted exact-action retained-error comment-cancel; do
+  for rule in pending failed bound private-failed unposted exact-action retained-error rollback-owner; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -85,8 +87,8 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       assertion='a refused label retains tracker error bytes after close'
     else
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'if "$tracker" comments delete "$comment_id"' 'if : "$tracker" comments delete "$comment_id"'
-      assertion='failed posts cancel only their question and posted questions stay active'
+        '[[ "$owns_description" == true ]] || {' '[[ "$owns_description" == true ]] || true || {'
+      assertion='rollback preserves a later description and reports lost ownership'
     fi
     control_rc=0
     MAILBOX_UNDER_TEST="$TMP_ROOT/control-$rule" "$BASH" "$ROOT/skills/mailbox/tests/owner-tracker.sh" \

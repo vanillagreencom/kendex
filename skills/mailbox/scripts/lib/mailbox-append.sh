@@ -251,7 +251,7 @@ owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTE
 }
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
-  local tracker="$1" envelope="$2" work="$3" issue labels current owner description comment_id cancel_error
+  local tracker="$1" envelope="$2" work="$3" issue labels current owner description latest owns_description original_description
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
@@ -270,7 +270,6 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
   description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
     (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
   description="${description%.}"
-  # A failed comment must leave the description untouched.
   jq -r '.text, "", ("Options: " + (.options | join(", "))),
     (if .reserved == true then "No default. This action waits for your approval. Due " + .deadline
       else "Recommendation: " + .recommend + ". At " + .deadline + " it stands unless you answer." end),
@@ -278,23 +277,28 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY
     ("ask=" + .id),
     "Reply with one comment: ok, yes or done to approve; anything else is a change request."' \
     <<<"$envelope" >"$work/tracker-comment" || return 1
-  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    OWNER_TRACKER_CAUSE=comment; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
-  }
-  # The Linear comments interface returns this identity for cancellation.
-  comment_id="$(jq -er '.data.comment.id | strings | select(length > 0)' "$work/tracker.out" 2>"$work/tracker.err")" || {
-    OWNER_TRACKER_CAUSE=comment-id; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
-  }
   "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    OWNER_TRACKER_CAUSE=label
-    owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"
-    # Unposted asks use chat. Do not leave a question whose replies are ignored.
-    cancel_error="$work/tracker-cancel.err"
-    if "$tracker" comments delete "$comment_id" >"$work/tracker-cancel.out" 2>"$work/tracker-cancel.err"; then
-      if jq -e '.success == true' "$work/tracker-cancel.out" >/dev/null 2>"$work/tracker-cancel.err"; then return 0; fi
-      cancel_error="$work/tracker-cancel.out"
-    fi
-    owner_tracker_unwritten "$issue" comment-cancel "$cancel_error"
+    OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
+  }
+  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err" || {
+    OWNER_TRACKER_CAUSE=comment
+    owner_tracker_unwritten "$issue" comment "$work/tracker-comment.err"
+    latest="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker-rollback.err")" || {
+      owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
+    }
+    # Restore only while the fresh read still contains this ask's exact write.
+    owns_description="$(jq -r --arg written "$description" '(.description // "") == $written' \
+      <<<"$latest" 2>"$work/tracker-rollback.err")" || {
+      owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
+    }
+    [[ "$owns_description" == true ]] || {
+      owner_tracker_unwritten "$issue" rollback-unowned; return 0;
+    }
+    original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
+    original_description="${original_description%.}"
+    "$tracker" issues update "$issue" --description "$original_description" \
+      >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
+      owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
     return 0
   }
   OWNER_TRACKER_POSTED=1

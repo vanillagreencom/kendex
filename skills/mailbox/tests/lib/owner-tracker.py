@@ -44,9 +44,7 @@ case "$1:$2" in
   issues:get)
     if [[ "$TRACKER_ROW" == prepare ]]; then printf '{"labels":"invalid"}\n'
     else printf '{"labels":["skills"],"description":"Item body"}\n'; fi ;;
-  comments:create) printf '{"success":true,"data":{"comment":{"id":"question-id"}}}\n' ;;
-  comments:delete) printf '{"success":true}\n' ;;
-  issues:update) printf '{}\n' ;;
+  issues:update|comments:create) printf '{}\n' ;;
   *) exit 1 ;;
 esac
 '''

@@ -1837,8 +1837,7 @@ case "$1:$2" in
       esac
     done
     jq --arg label "$label" '[select(.labels | index($label) != null)]' "$TRACKER_CASE_DIR/item" ;;
-  comments:create) cp -- "$5" "$TRACKER_CASE_DIR/posted"; echo '{"success":true,"data":{"comment":{"id":"question-id"}}}' ;;
-  comments:delete) echo '{"success":true}' ;;
+  comments:create) cp -- "$5" "$TRACKER_CASE_DIR/posted"; echo '{}' ;;
   comments:bulk-list) cat "$TRACKER_CASE_DIR/comments" ;;
   *) exit 1 ;;
 esac
