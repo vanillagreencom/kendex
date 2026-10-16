@@ -49,6 +49,7 @@ MAILBOX_COMMAND=""
 # is known.
 MARK=""
 PCT=""
+BINDING_BUCKET=""
 # The overseer's own account headroom as the judgement's line reads it: a
 # number, or none or unreadable where nothing measured it.
 MARK_HEADROOM=""
@@ -209,7 +210,11 @@ message() { # KEY VALUE [CAUSE]
     *) passed="this turn end is passed" ;;
   esac
   {
-    printf 'lane-mail-check: %s=%s\n' "$1" "$2"
+    if [ "$1" = headroom ] && [ "$ROLE" = lane ]; then
+      printf 'lane-mail-check: headroom=%s bucket=%s mark=%s\n' "$2" "$BINDING_BUCKET" "$PCT"
+    else
+      printf 'lane-mail-check: %s=%s\n' "$1" "$2"
+    fi
     case "$1=$2" in
       model-unavailable=reset-*)
         echo "the replacement's first-turn completion could not be recorded, so the recovery count is unchanged; the remaining turn-end checks continue"
@@ -432,8 +437,8 @@ message() { # KEY VALUE [CAUSE]
           printf 'oversee-succeed reads the account this overseer runs its credential out of as having %s percent headroom left, at or below the ORCH_OVERSEER_HEADROOM_PCT mark of %s. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n%s\n' \
             "$2" "$PCT" "$HANDOFF_INSTRUCTION"
         else
-          printf 'the account this lane runs its credential out of has %s percent headroom left, at or below the ORCH_HANDOFF_HEADROOM_PCT mark of %s, and no handoff record stands. Hand this lane off yourself: the account walls mid-round otherwise.\n%s\n' \
-            "$2" "$PCT" "$HANDOFF_INSTRUCTION"
+          printf 'The binding bucket %s has %s percent headroom left. This is at or below the ORCH_HANDOFF_HEADROOM_PCT mark of %s. No handoff record stands. Hand this lane off at the next safe point before the account reaches its limit.\n%s\n' \
+            "$BINDING_BUCKET" "$2" "$PCT" "$HANDOFF_INSTRUCTION"
         fi
         ;;
       rate=*)
@@ -3301,8 +3306,12 @@ handoff_check() {
   case "$PICK_RC" in
     0) ;;
     3)
-      HEADROOM=$(printf '%s' "$PICK" | jq -r '.headroom_pct // "unknown"' 2>/dev/null) ||
-        HEADROOM=unknown
+      # pick's wall is the binding bucket's used percent, including a scoped
+      # model window. Account-wide headroom can still show room at that wall.
+      BINDING=$(jq -r '[.binding_bucket // "unknown",
+        (if .wall == null then "unknown" else 100 - .wall end)] | @tsv' <<<"$PICK" 2>/dev/null) ||
+        BINDING=$'unknown\tunknown'
+      IFS=$'\t' read -r BINDING_BUCKET HEADROOM <<<"$BINDING"
       refuse_handoff headroom "$HEADROOM"
       ;;
     4) message account unlisted "$(cat -- "$WORK_DIR/lanes.err")" ;;

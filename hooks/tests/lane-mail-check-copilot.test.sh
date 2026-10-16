@@ -579,7 +579,7 @@ COP_SPENT='{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remai
 COP_ROOM='{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}'
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_SPENT"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: headroom=0 decision=block" \
+  "RC=0 first=lane-mail-check: headroom=0 bucket=monthly mark=3 decision=block" \
   "a Copilot account whose pool is at zero holds the turn end, overage permitted or not"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_ROOM" "ORCH_LANES_USAGE_TTL=0"
 assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed= stdout=" \

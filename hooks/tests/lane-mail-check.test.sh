@@ -607,9 +607,9 @@ make_lane "$H" weekclaude 3600
 claude_usage 0 100 100 Fable > "$FIXTURE_DIR/.weekclaude.json"
 # MODEL|ACCOUNT|RC|FIRST LINE
 CLAUDE_ACCOUNT_ROWS='claude-opus-5-5|.fableclaude|0|-
-claude-fable-5-1|.fableclaude|2|lane-mail-check: headroom=0
-claude-opus-5-5|.weekclaude|2|lane-mail-check: headroom=0
-|.fableclaude|2|lane-mail-check: headroom=0'
+claude-fable-5-1|.fableclaude|2|lane-mail-check: headroom=0 bucket=model mark=3
+claude-opus-5-5|.weekclaude|2|lane-mail-check: headroom=0 bucket=weekly mark=3
+|.fableclaude|2|lane-mail-check: headroom=0 bucket=model mark=3'
 new_handoff_lane handoff_claude_model KEN-54
 while IFS='|' read -r model account status first; do
   if [ -n "$model" ]; then
@@ -632,7 +632,7 @@ install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .fableclaude)
-expect 2 "lane-mail-check: headroom=0" "control: the unassigned model reads the full Fable window"
+expect 2 "lane-mail-check: headroom=0 bucket=model mark=3" "control: the unassigned model reads the full Fable window"
 control_status=0
 (
   FAIL=0
@@ -648,7 +648,7 @@ stop_at "$TRANSCRIPT" false $(account_env .claude)
 expect 0 - "a lane on an account with room ends its turn"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
-expect 2 "lane-mail-check: headroom=3" "a lane at its account's handoff mark is refused with the headroom left"
+expect 2 "lane-mail-check: headroom=3 bucket=weekly mark=3" "a lane at its account's handoff mark is refused with the headroom left"
 assert_eq "$(grep -cF -- " set KEN-54 handoff " "$ERR_FILE")" "1" \
   "the account refusal carries the same instruction as the context refusal"
 # shellcheck disable=SC2046
@@ -677,6 +677,39 @@ record_handoff KEN-54
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 0 - "a lane whose handoff record stands ends its turn at its account's mark"
+
+# lanes pick publishes wall as used percent for binding_bucket. Its exit-3
+# record can carry a different account-wide headroom. The same assertion
+# rejects a copy that restores the account field read.
+new_handoff_lane handoff_binding KEN-54
+write_transcript "$TRANSCRIPT" 1000
+plant_install lanes
+cat > "$LANE/.claude/skills/orch/scripts/lanes" <<'PICK'
+#!/bin/sh
+printf '%s\n' '{"binding_bucket":"five_hour","wall":98,"headroom_pct":50}'
+exit 3
+PICK
+chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
+binding_refusal() {
+  expect 2 "lane-mail-check: headroom=2 bucket=five_hour mark=3" \
+    "the refusal names the binding bucket's headroom against its mark"
+}
+stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
+binding_refusal
+wake_mutant account-headroom \
+  '        (if .wall == null then "unknown" else 100 - .wall end)] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||' \
+  '        (.headroom_pct // "unknown")] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
+expect 2 "lane-mail-check: headroom=50 bucket=five_hour mark=3" \
+  "control: the old account field reports 50 for the binding bucket at 2"
+control_status=0
+(
+  FAIL=0
+  binding_refusal
+  [ "$FAIL" -eq 0 ]
+) > "$TMP_ROOT/binding-headroom.control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects the old field read"
 
 # An account nothing could measure is a gap the lane cannot act on: it is
 # reported and the turn ends, never refused, so a setup with no usage endpoint
@@ -717,8 +750,8 @@ done
 #
 #   PROVIDER|ACCOUNT DIR|POOL READING|RC|FIRST LINE
 PI_ACCOUNT_ROWS='pi-claude|.claude||0|-
-pi-claude|.neutralclaude||2|lane-mail-check: headroom=3
-github-copilot|.neutralclaude|97/100|2|lane-mail-check: headroom=3
+pi-claude|.neutralclaude||2|lane-mail-check: headroom=3 bucket=weekly mark=3
+github-copilot|.neutralclaude|97/100|2|lane-mail-check: headroom=3 bucket=monthly mark=3
 github-copilot|.neutralclaude|50/100|0|-
 openai|.claude||0|lane-mail-check: account=unmeasured'
 new_handoff_lane handoff_pi_account KEN-79
