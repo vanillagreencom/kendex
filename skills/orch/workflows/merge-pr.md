@@ -237,6 +237,8 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
    ```
 
+   Save that output as `[MERGE_REPO_SLUG]`. Split it at `/` into `[MERGE_REPO_OWNER]` and `[MERGE_REPO_NAME]`. Use these bound values for the repository arguments below.
+
    `[ALREADY_MERGED]=true` keeps the recorded merge decision in status and the PR body, then skips to step 2 before every read below. A merged head may be unavailable; cleanup needs no fresh attempt or route.
 
    **Thread read.** Run § 3.3 first, on every entry to this step and every return from the cycles below. Then read the endpoints:
@@ -322,13 +324,13 @@ Use the output as `MAIN_REPO_ROOT`.
    **Entry-ahead wait**: save `queue_ahead_pr` as `[AHEAD_PR]`. Repeat the same `queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]` command above through Waiter launch. Route `merged`, `closed`, `dequeued` and `status: error` immediately through the table. For every other result, read whether the saved entry is still in the queue:
 
    ```bash
-   gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }' -F owner=[OWNER] -F repo=[REPO] -F number=[AHEAD_PR]
+   env -u GH_REPO -u GITHUB_REPOSITORY gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }' -F owner=[MERGE_REPO_OWNER] -F repo=[MERGE_REPO_NAME] -F number=[AHEAD_PR]
    ```
 
    A failed or unreadable response proves no departure: follow § 1 before handing back with that read failure. While `isInMergeQueue` is true or `mergeQueueEntry` is non-null, repeat the wait and this membership read. Do not route these intermediate results to Recovery. Once both show the saved entry has left, read this PR:
 
    ```bash
-   gh pr view [PR_NUMBER] --repo [OWNER]/[REPO] --json state,mergeable
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --repo [MERGE_REPO_SLUG] --json state,mergeable
    ```
 
    Read `state` first: `MERGED` continues to step 2; `CLOSED` hands back. On an open PR, `mergeable: CONFLICTING` takes the guarded Restack cycle. Every other mergeable value repeats the original wait and routes its fresh verdict through the table. This cause never enters the Recovery cycle.

@@ -90,7 +90,13 @@ _emit_fixture() {
     exit 1
   fi
   [[ -f "${f%.json}.err" ]] && cat "${f%.json}.err" >&2
-  cat "$f"
+  # GitHub omits unselected fields. A fixture must not supply the group
+  # evidence when this caller's request does not select that subtree.
+  if [[ "$prefix" == queue && "${queue_group_selection:-false}" != true ]]; then
+    jq 'del(.data.repository.pullRequest.mergeQueueEntry.mergeQueue)' "$f"
+  else
+    cat "$f"
+  fi
   if [[ -f "${f%.json}.exit" ]]; then
     exit "$(cat "${f%.json}.exit")"
   fi
@@ -143,6 +149,13 @@ case "${1:-}" in
         printf 'disablePullRequestAutoMerge %s\n' "$*" >> "$STUB_SEQ_DIR/mutations.log"
         _emit_fixture dequeue "$(_next dequeue)"
       fi
+      queue_group_selection=false
+      for arg in "$@"; do
+        compact="${arg//[[:space:]]/}"
+        if [[ "$compact" == *'mergeQueue{entries('*'){nodes{positionheadCommit{oid}pullRequest{number}}}}'* ]]; then
+          queue_group_selection=true
+        fi
+      done
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then
@@ -689,6 +702,25 @@ set +e
 CONTROL_RC=$?
 set -e
 assert_eq "$CONTROL_RC" 1 'the held-entry row rejects the disabled-cause control'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+
+CONTROL_SCRIPTS="$(mutant_scripts no-group-selection/orch queue-wait)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/no-group-selection/github"
+mutate_file "$CONTROL_SCRIPTS/queue-wait" \
+  'mergeQueue { entries(first: 100)' \
+  'mergeQueue @skip(if: true) { entries(first: 100)'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$TMP_ROOT/no-group-selection/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+stage 'state:last=open,queue:last=held_ahead'
+run_wait '' 1 1 4 --json --no-check-probe
+assert_eq "$(json '.cause')" progress_unobservable 'control omits group evidence at the request boundary' "$ERR"
+set +e
+( FAIL=0; assert_eq "$(observe "$HELD_EXPECT")" "$HELD_EXPECT" \
+  'group subtree skipped'; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/no-group-selection/assertion.log"
+CONTROL_RC=$?
+set -e
+assert_eq "$CONTROL_RC" 1 'the held-entry row rejects a request that omits the group subtree'
 rm "$TMP_ROOT/repo/.agents/skills/orch"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
