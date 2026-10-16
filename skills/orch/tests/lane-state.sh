@@ -100,10 +100,36 @@ screen_for() {
     pi_working) cat "$CODEX_PANES/pi-working.txt" ;;
     # Offline Pi 1.3.0 with only pi-qol loaded, captured in an owned tmux pane.
     pi_qol_idle) cat "$CODEX_PANES/pi-qol-idle.txt" ;;
-    # SettingsSelectorComponent's SettingsList renders this footer while its
-    # search input handles bracketed paste, without writing a new Pi turn row.
-    pi_settings) printf '%s\n' '  Type to search · Enter/Space to change · Esc to cancel' ;;
-    pi_settings_before_turn) screen_for pi_settings; printf '%s\n' '❯ another turn'; screen_for pi_qol_idle ;;
+    # Pi 1.3.0 SettingsSelectorComponent, dark theme, rendered at width 120.
+    # Terminal focus metadata and right padding are omitted from plain capture.
+    pi_settings) cat <<'SCREEN'
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+
+→ Auto-compact                      false
+  Auto-resize images                true
+  Block images                      false
+  Skill commands                    true
+  Show hardware cursor              false
+  Editor padding                    0
+  Output padding                    0
+  Autocomplete max items            10
+  Clear on shrink                   true
+  Terminal progress                 false
+  (1/33)
+
+  Automatically compact context when it gets too large
+
+  Type to search · Enter/Space to change · Esc to cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SCREEN
+      ;;
+    # Pi 1.3.0 ExtensionSelectorComponent; render-only captures, no selection.
+    pi_import) cat "$CODEX_PANES/pi-import-confirm.txt" ;;
+    pi_tree) cat "$CODEX_PANES/pi-tree-confirm.txt" ;;
+    pi_historical_settings | pi_historical_import | pi_historical_tree) screen_for pi_current_idle; screen_for "pi_${1#pi_historical_}" ;;
+    pi_settings_then_idle) screen_for pi_settings; screen_for pi_qol_idle ;;
+    pi_draft) screen_for pi_qol_idle | sed '/^π[[:space:]]*$/s/$/ drafted input/' ;;
     # Fleet's retained Pi 1.2.0 viewer, captured 2026-10-15T01:20:55Z with
     # tmux capture-pane -pJ from fleet:gh-1326 pane %1656, after the refusals.
     # Full viewport/provenance: KEN-4109 attachment overseer215-pi-screen-capture-source.md.
@@ -316,12 +342,25 @@ scan_state=""
 LANE_STATE_GREP_FAIL=1 lane_state scan_state listed claude 100 "$(screen_for idle)" idle || scan_rc=$?
 assert_eq "$scan_state rc=$scan_rc" "unjudged rc=2" \
   "a failed scan is exit 2 and unjudged, never the idle its session read claimed"
-scan_rc=0
-LANE_STATE_GREP_FAIL=1 lane_input_ready scan_state listed pi 100 "$(screen_for pi_settings)" '' '' idle '' pi provider || scan_rc=$?
-assert_eq "$scan_state rc=$scan_rc" "unjudged rc=2" \
-  "an unreadable dialog scan cannot turn idle ROWS into input readiness"
 rm -f -- "${TMP_ROOT:?}/bin/grep"
 hash -r
+
+LANE_STATE_TEST_AWK="$(command -v awk)" || exit 1
+export LANE_STATE_TEST_AWK
+cat > "$TMP_ROOT/bin/awk" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${LANE_STATE_AWK_FAIL:-}" ]] || exit 2
+exec "$LANE_STATE_TEST_AWK" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/awk"
+hash -r
+scan_rc=0
+LANE_STATE_AWK_FAIL=1 lane_input_ready scan_state listed pi 100 "$(screen_for pi_qol_idle)" '' '' idle '' pi provider || scan_rc=$?
+assert_eq "$scan_state rc=$scan_rc" "unjudged rc=2" \
+  "an unreadable editor scan cannot turn idle ROWS into input readiness"
+rm -f -- "${TMP_ROOT:?}/bin/awk"
+hash -r
+unset LANE_STATE_TEST_AWK
 
 echo "=== lane-state § pi rows: a Pi lane judged from what Pi emits ==="
 
@@ -410,8 +449,18 @@ an unreadable capture still refuses an idle row|pi|pi|pi_qol_idle|||ended|unread
 the old working editor refuses absent ROWS|pi|pi|pi_working|||-|provider|unjudged|1
 a dialog refuses absent Pi ROWS|pi|pi|asking|||-|provider|asking|1
 a dialog cannot authorize input over working ROWS|pi|pi|asking|||reopened|provider|working|1
-an idle Stop row cannot authorize a paste into Pi settings|pi|pi|pi_settings|||ended|provider|asking|1
-dialog text before the shared turn boundary does not block an idle editor|pi|pi|pi_settings_before_turn|||ended|provider|idle|0
+an idle Stop row cannot authorize a paste into Pi settings|pi|pi|pi_settings|||ended|provider|unjudged|1
+an idle Stop row cannot authorize a paste into Pi import|pi|pi|pi_import|||ended|provider|unjudged|1
+an idle Stop row cannot authorize a paste into Pi tree|pi|pi|pi_tree|||ended|provider|unjudged|1
+a historical editor cannot authorize the settings selector|pi|pi|pi_historical_settings|||ended|provider|unjudged|1
+a historical editor cannot authorize the import selector|pi|pi|pi_historical_import|||ended|provider|unjudged|1
+a historical editor cannot authorize the tree selector|pi|pi|pi_historical_tree|||ended|provider|unjudged|1
+old settings output does not block the final idle editor|pi|pi|pi_settings_then_idle|||ended|provider|idle|0
+an uncaptured title does not block the final idle editor|pi|pi|pi_current_idle_no_title|||ended|provider|idle|0
+an absent model footer cannot prove the editor|pi|pi|pi_current_idle_no_footer|||ended|provider|unjudged|1
+an absent final prompt cannot prove the editor|pi|pi|pi_current_idle_no_prompt|||ended|provider|unjudged|1
+a draft is not an empty editor|pi|pi|pi_draft|||ended|provider|unjudged|1
+the older working editor cannot prove empty input|pi|pi|pi_working|||ended|provider|unjudged|1
 an unreadable settings capture stays unjudged|pi|pi|pi_settings|||ended|unreadable|unjudged|1
 a busy SESSION still refuses the settings capture|pi|pi|pi_settings|busy||ended|provider|working|1
 the provider must name its intended harness|pi||pi_qol_idle|idle||-|provider|unjudged|1
@@ -435,15 +484,19 @@ for screen in pi_current_idle pi_qol_idle; do
   assert_eq "$pi_input_control" 'state=idle rc=0' "control: removing trusted ROWS admission wrongly accepts $screen from SESSION alone"
 done
 
-PI_DIALOG_MUTANT="$(mutant_scripts pi-dialog lib/lane-state.sh)" || exit 1
-mutate_file "$PI_DIALOG_MUTANT/lib/lane-state.sh" 'if [[ "$_lir_state" == idle && "$_lir_harness" == pi ]]; then' 'if false && [[ "$_lir_state" == idle && "$_lir_harness" == pi ]]; then'
-pi_dialog_control="$(
-  source "$PI_DIALOG_MUTANT/lib/lane-state.sh"
-  control_rc=0
-  lane_input_ready row_state listed pi 100 "$(screen_for pi_settings)" '' '' idle '' pi provider || control_rc=$?
-  printf 'state=%s rc=%s' "$row_state" "$control_rc"
-)"
-assert_eq "$pi_dialog_control" 'state=idle rc=0' 'control: removing dialog admission wrongly permits a paste into the settings selector'
+PI_EDITOR_MUTANT="$(mutant_scripts pi-editor lib/lane-state.sh)" || exit 1
+mutate_file "$PI_EDITOR_MUTANT/lib/lane-state.sh" '$0 ~ footer { footer_seen = 1 }' '$0 ~ footer { footer_seen = 1 }
+    $0 ~ prompt { prompt_seen = 1 }'
+mutate_file "$PI_EDITOR_MUTANT/lib/lane-state.sh" 'final ~ prompt' '(prompt_seen || final ~ prompt)'
+for screen in pi_historical_settings pi_historical_import pi_historical_tree; do
+  pi_editor_control="$(
+    source "$PI_EDITOR_MUTANT/lib/lane-state.sh"
+    control_rc=0
+    lane_input_ready row_state listed pi 100 "$(screen_for "$screen")" '' '' idle '' pi provider || control_rc=$?
+    printf 'state=%s rc=%s' "$row_state" "$control_rc"
+  )"
+  assert_eq "$pi_editor_control" 'state=idle rc=0' "control: accepting a historical prompt wrongly admits $screen"
+done
 
 echo "=== lane-state § observe: the pane handed to the judge ==="
 
