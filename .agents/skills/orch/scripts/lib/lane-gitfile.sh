@@ -194,9 +194,9 @@ lane_hosted_state_dir() {
 # resolved, or is an empty line after merge-pr removed live state. An empty
 # marker reads only the requested saved cycle copy, never another live file.
 # An archive with no such member, written before close
-# recorded it, holds the two tmp trees alone, and its copy outside the
-# worktree at ROOT, the clone's, is read before the worktree's, the first in
-# name order where several are. LANE_ARCHIVE_READER reads the archive as a
+# recorded it, holds the two tmp trees alone. Either read takes the copy
+# outside the worktree at ROOT, the clone's, before the worktree's, the first
+# in name order where several are. LANE_ARCHIVE_READER reads the archive as a
 # stream and writes none of it to disk, since this runs on the control host,
 # and reads member names raw, never from `tar -t`, which escapes a name the
 # locale cannot print. 0 read; 2 the archive did not read, or names a member
@@ -211,16 +211,17 @@ readable = lambda m: m.isfile() or m.islnk()
 try:
     with tarfile.open(path, "r:gz") as tar:
         members = {m.name: m for m in tar.getmembers()}
+        # A worktree tmp linked to the clone tmp archives one saved file
+        # under both paths, so several paths are not several states.
+        files = sorted((m for m in members.values() if readable(m)),
+                       key=lambda m: (m.name.startswith(root + "/"), m.name))
         if "lane-host-state" in members:
             raw = tar.extractfile(members["lane-host-state"]).read().split(b"\n", 1)[0]
             if not raw:
                 suffix = f"/tmp/cycle-state/workflow-state-{item}.json"
-                saved = [m for m in members.values() if readable(m) and m.name.endswith(suffix)]
+                saved = [m for m in files if m.name.endswith(suffix)]
                 if not saved:
                     sys.exit(0)
-                if len(saved) != 1:
-                    print(f"archive-saved-ambiguous path={path} item={item}", file=sys.stderr)
-                    sys.exit(2)
                 found = saved[0]
             else:
                 name = raw.decode(tar.encoding, "surrogateescape")
@@ -229,12 +230,10 @@ try:
                     print(f"archive-member-missing path={path} member={name}", file=sys.stderr)
                     sys.exit(2)
         else:
-            files = sorted((m for m in members.values()
-                            if readable(m) and os.path.basename(m.name) == f"workflow-state-{item}.json"),
-                           key=lambda m: (m.name.startswith(root + "/"), m.name))
-            if not files:
+            states = [m for m in files if os.path.basename(m.name) == f"workflow-state-{item}.json"]
+            if not states:
                 sys.exit(0)
-            found = files[0]
+            found = states[0]
         sys.stdout.buffer.write(tar.extractfile(found).read())
 except (tarfile.TarError, OSError, EOFError) as error:
     print(f"archive-unread path={path} cause={type(error).__name__}", file=sys.stderr)

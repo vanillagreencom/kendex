@@ -265,7 +265,7 @@ case "$WORKFLOW_STATE_DIR" in
   /*) ;;
   *) WORKFLOW_STATE_DIR="$PROJECT_ROOT/$WORKFLOW_STATE_DIR" ;;
 esac
-PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
+PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 # Two state files per fleet: the first repository's baseline, which the long
 # pass writes, and the mail pass's file beside it, which only the mail pass and
 # the scheduler around it write. The long pass runs while mail passes go on,

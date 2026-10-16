@@ -306,7 +306,7 @@ read_item_state() {
 }
 
 read_lane_state() {
-  local pr_key key phase clone="" watch_dir root rc tried=() keys=("$ITEM")
+  local pr_key key phase clone="" watch_dir rc tried=() keys=("$ITEM")
   LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane" 2>"$WORK/state.err")" || return 1
   LANE_SINCE="$(jq -r '.session_since // .launched_at // ""' <<<"$lane" 2>"$WORK/state.err")" || return 1
@@ -324,15 +324,7 @@ read_lane_state() {
       elif [[ -z "$LANE_HOST_SPEC" && ( -z "$LANE_ROOT" || -d "$LANE_ROOT" ) ]]; then
         clone="$("$SCRIPT_DIR/git-context" common-root "${LANE_ROOT:-.}" 2>"$WORK/state.err")" || return 1
       else
-        watch_dir="${OVERSEE_WATCH_STATE_DIR:-}"
-        if [[ -z "$watch_dir" ]]; then
-          # The fleet records its owner in overseer.cwd. Older state lives in
-          # that repository's state directory, as overseer_bind resolves it.
-          root="$(jq -r '.overseer.cwd // empty' "$STATE_FILE" 2>"$WORK/state.err")" || return 1
-          root="${root:-${STATE_FILE%/*}}"
-          root="$("$SCRIPT_DIR/git-context" common-root "$root" 2>"$WORK/state.err")" || return 1
-          watch_dir="$root/tmp/oversee-watch"
-        fi
+        watch_dir="$(lane_watch_state_dir "$PWD" "$STATE_FILE" 2>"$WORK/state.err")" || return $?
         lane_retained_clone "$ITEM" "$watch_dir" 2>"$WORK/state.err" || return $?
         clone="$LANE_RETAINED_CLONE"
         # A local gone-root read already uses the caller's checkout for its

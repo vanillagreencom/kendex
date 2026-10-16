@@ -12,6 +12,31 @@
 # lib/lane-gitfile.sh and lib/lane-capabilities.sh, which that script sources
 # before this file.
 
+# The writer supplies its checkout. A recorder in a connected repository uses
+# the fleet's registered cwd, then its state directory, to find that checkout.
+# Keep linked-worktree roots: the watch stores its rows there, not in the clone.
+# A fleet with no checkout address uses the caller, as a watch without state does.
+lane_watch_state_dir() { # CALLER_ROOT [FLEET_STATE_FILE]
+  local owner="" dir="" root candidate git_context="${BASH_SOURCE[0]%/*}/../git-context"
+  if [[ -n "${OVERSEE_WATCH_STATE_DIR:-}" ]]; then
+    printf '%s\n' "$OVERSEE_WATCH_STATE_DIR"
+    return 0
+  fi
+  if [[ -n "${2:-}" ]]; then
+    owner="$(jq -r '.overseer.cwd // empty' "$2")" || return 2
+    dir="${2%/*}"
+    [[ "$dir" != "$2" ]] || dir=.
+  fi
+  for candidate in "$owner" "$dir" "$1"; do
+    [[ -n "$candidate" ]] || continue
+    if root="$("$git_context" repo-root "$candidate" 2>/dev/null)"; then
+      printf '%s/tmp/oversee-watch\n' "$root"
+      return 0
+    fi
+  done
+  printf '%s/tmp/oversee-watch\n' "$1"
+}
+
 # Shared row reads also serve the cycle recorder after worktree disposal.
 lane_row_value() { # ROW PREFIX
   LANE_ROW_VALUE="${1#"$2"}"
