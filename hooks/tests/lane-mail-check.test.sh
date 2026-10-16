@@ -1569,6 +1569,41 @@ overseer_transcript
 overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
 overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
 
+# The refusal must explain the cap even on a window whose percentage leaves room.
+context_rule_row() { # ROLE NAME [HOOK]
+  local role="$1" text CONTEXT_PCT_ENV=''
+  if [ "$role" = overseer ]; then
+    new_overseer "$2"
+    judge_says 'oversee-succeed: mark-reached kind=context value=405000 mark=90 succession=on headroom=80'
+  else
+    new_handoff_lane "$2" KEN-3920
+  fi
+  [ -z "${3:-}" ] || install_hook "$3" "$LANE/.claude/hooks/lane-mail-check.sh"
+  write_transcript "$TRANSCRIPT" 405000
+  if [ "$role" = overseer ]; then
+    # shellcheck disable=SC2046
+    stop_at "$TRANSCRIPT" false $(overseer_env)
+  else
+    stop_at "$TRANSCRIPT" false
+  fi
+  text="$(sed -n "/^this $role requires handoff under the shared context rule/p" "$ERR_FILE")"
+  assert_eq "RC=$RC first=$(first_line) cap=$(grep -cF '400000 tokens used' <<<"$text" || true) percent=$(grep -cF 'strictly past 90 percent of the printed window' <<<"$text" || true) window=$(grep -cF '1000000' <<<"$text" || true)" \
+    'RC=2 first=lane-mail-check: context=405000 cap=1 percent=1 window=1' \
+    "$role at 405000 tokens names both context limits on a 1000000-token window"
+}
+for context_role in overseer lane; do
+  context_rule_row "$context_role" "${context_role}_context_rule"
+done
+# Restore main's overseer explanation while retaining the same refusal and reading.
+mutant context-percentage-only \
+  -e 's@tokens used: handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). Succeed@tokens used, with an effective percentage setting of %s. Succeed@' \
+  -e '/^            "\$2" "\$MARK" "\$WINDOW" "\$HANDOFF_INSTRUCTION"$/s@ "\$WINDOW"@@'
+CONTEXT_RULE_CONTROL_LOG="$(PASS=0 FAIL=0; context_rule_row overseer control_context_rule "$MUTANT_PATH"; [ "$FAIL" -eq 0 ])" && CONTEXT_RULE_CONTROL_RC=0 || CONTEXT_RULE_CONTROL_RC=$?
+assert_eq "$CONTEXT_RULE_CONTROL_RC" 1 'control: main context text fails the overseer context-limit assertion'
+assert_eq "$(grep -Fxc '        got:  RC=2 first=lane-mail-check: context=405000 cap=0 percent=0 window=0' <<<"$CONTEXT_RULE_CONTROL_LOG" || true)" 1 \
+  'control: main text still refuses at 405000 tokens but omits the cap and printed-window limit'
+write_transcript "$TRANSCRIPT" "${OVERSEER_CONTEXT%%:*}"
+
 new_overseer overseer_context
 judge_says "$BELOW_MARK_LINE"
 # shellcheck disable=SC2046
