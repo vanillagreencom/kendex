@@ -150,17 +150,15 @@ def keepalive_seconds():
 
 
 def keep_session(op, env):
-    """Renew the session; return whether the keepalive stays armed."""
+    """Renew the session and log a failed renewal; the keepalive stays armed either way."""
+    # op whoami contacts the server, so a failed run, an unreachable server included, says nothing about the session.
     try:
         status = call_op([op, "whoami"], env).returncode
     except (OSError, subprocess.TimeoutExpired):
-        # op whoami contacts the server, so a failed run says nothing about the session.
         print("op-broker: keepalive=failed", file=sys.stderr, flush=True)
-        return True
+        return
     if status:
-        print("op-broker: session=expired", file=sys.stderr, flush=True)
-        return False
-    return True
+        print("op-broker: keepalive=failed exit=%d" % status, file=sys.stderr, flush=True)
 
 
 def call_op(argv, env, interactive=False):
@@ -302,7 +300,8 @@ def broker(args):
     except FileExistsError:
         # On macOS an inherited ACL can open a mode-700 directory to another user.
         if sys.platform != "linux":
-            raise Refusal("platform=unsupported")
+            raise Refusal("directory=exists\nOn macOS the broker never reuses a directory. "
+                          "Remove the leftover directory or choose a new path.")
         reused = True  # A restart reuses its own private directory behind the lock.
     directory = None
     lock = None
@@ -323,17 +322,17 @@ def broker(args):
         fifo = open_fifo(directory, "requests", os.O_RDWR)
         print("op-broker: state=ready", flush=True)
         pending = bytearray()
-        alive = False
+        renewing = False
         while True:
             # After a successful call, an idle broker renews the session before it expires.
-            if not select.select([fifo], [], [], keepalive if alive else None)[0]:
-                alive = keep_session(op, env)
+            if not select.select([fifo], [], [], keepalive if renewing else None)[0]:
+                keep_session(op, env)
                 continue
             pending.extend(os.read(fifo, 4096))
             while b"\n" in pending:
                 line, _, rest = pending.partition(b"\n")
                 pending = bytearray(rest)
-                alive = answer(directory, line, op, env) or alive
+                renewing = answer(directory, line, op, env) or renewing
             # opq writes at most PIPE_BUF bytes atomically, including the newline.
             if len(pending) >= os.fpathconf(fifo, "PC_PIPE_BUF"):
                 pending.clear()

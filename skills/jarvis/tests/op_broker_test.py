@@ -485,8 +485,9 @@ elif sys.argv[1]=='read':
         configured, reused = self.root / "broker", self.root / "existing"
         reused.mkdir(mode=0o700)
         # Each condition that makes a broker Linux only, met on macOS: nothing is created and no session starts.
-        for form, argv, env in (("configured-directory", ["op-broker"], {"JARVIS_OP_DIRECTORY": str(configured)}),
-                                ("reused-directory", ["op-broker", "--directory", str(reused)], {})):
+        for form, argv, env, key in (("configured-directory", ["op-broker"], {"JARVIS_OP_DIRECTORY": str(configured)},
+                                      "platform=unsupported"),
+                                     ("reused-directory", ["op-broker", "--directory", str(reused)], {}, "directory=exists")):
             with self.subTest(form=form):
                 with patch.object(module, "sys", SimpleNamespace(platform="darwin")), \
                      patch.object(sys, "argv", argv), patch.dict(os.environ, env), \
@@ -495,22 +496,22 @@ elif sys.argv[1]=='read':
                      redirect_stderr(io.StringIO()) as stderr:
                     with self.assertRaises(SystemExit) as refused:
                         module.main("broker")
-                self.assertEqual((refused.exception.code, stderr.getvalue()), (2, "op-broker: platform=unsupported\n"))
+                self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]), (2, "op-broker: " + key))
                 self.assertFalse(configured.exists())
                 self.assertEqual(list(reused.iterdir()), [])
 
     def test_keep_session(self):
         module = load("lib/op_fifo.py")
-        # Every way op whoami can end, and whether the keepalive stays armed.
-        rows = (("renewed", subprocess.CompletedProcess([], 0, b""), True, ""),
-                ("expired", subprocess.CompletedProcess([], 1, b""), False, "op-broker: session=expired\n"),
-                ("not-run", FileNotFoundError("op"), True, "op-broker: keepalive=failed\n"),
-                ("deadline", subprocess.TimeoutExpired(["op", "whoami"], 30), True, "op-broker: keepalive=failed\n"))
-        for state, outcome, armed, diagnostic in rows:
+        # Every way op whoami can end, and the line the broker's journal carries for it.
+        rows = (("renewed", subprocess.CompletedProcess([], 0, b""), ""),
+                ("unreachable", subprocess.CompletedProcess([], 1, b""), "op-broker: keepalive=failed exit=1\n"),
+                ("not-run", FileNotFoundError("op"), "op-broker: keepalive=failed\n"),
+                ("deadline", subprocess.TimeoutExpired(["op", "whoami"], 30), "op-broker: keepalive=failed\n"))
+        for state, outcome, diagnostic in rows:
             with self.subTest(state=state):
                 effect = outcome if isinstance(outcome, BaseException) else (lambda *_: outcome)
                 with patch.object(module, "call_op", side_effect=effect) as call, redirect_stderr(io.StringIO()) as stderr:
-                    self.assertEqual(module.keep_session("op", {}), armed)
+                    module.keep_session("op", {})
                 self.assertEqual(stderr.getvalue(), diagnostic)
                 call.assert_called_once_with(["op", "whoami"], {})
 
@@ -541,12 +542,22 @@ elif sys.argv[1]=='read':
         self.assertFalse(whoami(2.5), "keepalive ran before a successful call")
         self.assertEqual(self.record(self.opq("op", "--", "vault", "list", output=output), output)[0], 0)
         self.assertTrue(whoami(10), "keepalive did not renew the idle session")
+        # A failed renewal, then a failed call, leave the keepalive armed until op answers again.
         (self.root / "expired").touch()
-        self.assertTrue(whoami(10), "keepalive did not meet the expired session")
-        self.assertTrue(select.select([process.stderr], [], [], 10)[0])
-        self.assertEqual(process.stderr.readline(), b"op-broker: session=expired\n")
+        failed = b"op-broker: keepalive=failed exit=1\n"
+        self.assertTrue(select.select([process.stderr], [], [], 10)[0], "keepalive did not meet the failure")
+        self.assertEqual(process.stderr.readline(), failed)
         self.assertEqual(self.record(self.opq("op", "--", "vault", "list", output=output), output)[0], 1)
-        self.assertFalse(whoami(3.5), "keepalive continued after the session expired")
+        self.assertTrue(select.select([process.stderr], [], [], 10)[0], "keepalive stopped after a failed renewal")
+        self.assertEqual(process.stderr.readline(), failed)
+        # That whoami has exited, and the next starts one interval later, after the failure ends.
+        try:
+            os.read(ack, 4096)
+        except BlockingIOError:
+            pass
+        (self.root / "expired").unlink()
+        self.assertTrue(whoami(10), "keepalive did not renew after the failure ended")
+        self.assertTrue(whoami(10), "keepalive did not continue after the failure ended")
         self.assertIsNone(process.poll())
         process.terminate()
         _, stderr = process.communicate(timeout=10)
