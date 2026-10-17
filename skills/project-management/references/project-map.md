@@ -88,7 +88,7 @@ A child takes its parent's project ([SKILL.md](../SKILL.md) § Hierarchy): the p
 
 It reads the team's open issues, the map projects, and the team and workspace labels, and prints `{team, map, projects, findings}`: `projects[]` lists each map project's `name`, `kind`, Linear `id` and `state`. A map project with no Linear project in the team, or with two live ones, refuses the audit, as it refuses a write. A map project Linear holds only as canceled, which a write also refuses, is a finding instead: `deliverable-canceled` or `standing-closed`, with each open item in it a `closed-project-item`. A non-zero exit is reported with its error output and never read as clean.
 
-Each finding maps to one action. tpm-audit § 3 maps every finding the audit returns, map or no map; audit-issues § 7.1 applies a `wrong_project` whose `to` is a map project as its own-authority correction and reports the rest.
+Each finding maps to one action. tpm-audit § 3 maps every finding its mode keeps, map or no map; audit-issues § 7.1 applies a `wrong_project` whose `to` is a map project as its own-authority correction and reports the rest.
 
 | `kind` | Fields | Action |
 |---|---|---|
@@ -103,4 +103,4 @@ Each finding maps to one action. tpm-audit § 3 maps every finding the audit ret
 | `deliverable-no-ends-when` | `project` | `map_findings[]`: the owner states `ends_when` in the map |
 | `map-absent` | `map` | `map_findings[]`: the repository declares no map |
 
-The audit is team-wide. A `team` audit keeps every finding. A `project` audit keeps the item findings whose `issue` is in its input set, the findings whose `project` or `map.name` is its project, and `map-absent`. An `issues` or `single` audit runs no tpm-audit § 3 and keeps no finding, as its output has no `map_findings[]`: in a map repository, tpm-audit § 6.3 or § 14 places each input item by § Routing.
+The audit is team-wide, and it reads every issue whose state is not completed or canceled, Triage and Duplicate included. A finding that carries `issue` is kept only when that issue is in the run's input set (tpm-audit § Inputs). Of the findings without `issue`, a `team` audit keeps every one, and a `project` audit keeps `map-absent` and those whose `project` or `map.name` is its project. An `issues` or `single` audit runs no tpm-audit § 3 and keeps no finding, as its output has no `map_findings[]`: in a map repository, tpm-audit § 6.3 or § 14 places each input item by § Routing.
