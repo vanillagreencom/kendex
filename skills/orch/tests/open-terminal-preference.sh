@@ -380,6 +380,7 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
   case "$row" in
     missing-credit | unread-credit) cloud_account=aclaude; repos='aclaude=owner/repo' ;;
     relaunch) shape_args=(--relaunch) ;;
+    refresh) shape_args=(--lane-refresh) ;;
     batch) items+=(CC-22) ;;
     gui) terminal_args=(--ghostty); tmux_session='' ;;
     implicit-gui) terminal_args=(); tmux_session='' ;;
@@ -420,11 +421,15 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
 }
 CLOUD_WANT="0|none|claude|claude-cloud|claude-cloud|claude-opus-5-5|claude@claude-cloud:claude-opus-5-5:high|session_01PREFERENCE"
 SSH_WANT="0|none|codex|ssh|$REPO/daytona|gpt-6.1-sol|codex:gpt-6.1-sol:high|none"
-for row in room floor locked expired no-repo missing-credit unread-credit no-brief; do
+for row in room floor locked expired no-repo missing-credit unread-credit no-brief refresh; do
   cloud_observe "$row"
   want="$SSH_WANT"
-  case "$row" in room) want="$CLOUD_WANT" ;; no-brief) want='1|cloud-brief-missing|' ;; esac
+  case "$row" in room) want="$CLOUD_WANT" ;; no-brief) want='1|cloud-brief-missing|' ;; refresh) want='1|cloud-refresh-unsupported|' ;; esac
   assert_eq "$CLOUD_OBS" "$want" "hosted preference: $row" "$RUN/err"
+  if [[ "$row" == refresh ]]; then
+    assert_eq "$([[ -e "$RUN/worktrees" ]] && echo called || echo none)" none \
+      'a cloud refresh preference refuses before worktree creation or push' "$RUN/err"
+  fi
   if [[ "$row" == room ]]; then
     command="$(sed -n '/^clear; /p' "$RUN/tmux")"
     assert_eq "$(launch_choice_launch_model claude "$command"):$(launch_choice_effort claude "$command")" \
@@ -451,9 +456,9 @@ assert_eq "$CLOUD_OBS" '0|none|codex|local||gpt-6.1-sol|codex@local:gpt-6.1-sol:
 
 # Each control removes one independent grant condition or host selection in a
 # disposable copy. The same launch observation must then differ from its row.
-for control in host floor locked expired no-repo credit-only grammar; do
+for control in host floor locked expired no-repo credit-only grammar refresh; do
   file=lib/lane-model.sh
-  case "$control" in host) file=open-terminal ;; grammar) file=lib/overseer-launch.sh ;; esac
+  case "$control" in host | refresh) file=open-terminal ;; grammar) file=lib/overseer-launch.sh ;; esac
   root="$(mutant_scripts "cloud-control-$control" "$file")"
   orch_fixture_shared_libs "$TMP_ROOT/cloud-control-$control"
   git -C "$TMP_ROOT/cloud-control-$control" init -q
@@ -468,6 +473,7 @@ for control in host floor locked expired no-repo credit-only grammar; do
     no-repo) mutate_file "$root/$file" 'else . + {verdict: "cloud-repo-unset"} end;' 'else . end;'; row=no-repo; want="$SSH_WANT" ;;
     credit-only) mutate_file "$root/$file" 'elif $credit_pool then' 'elif false then'; row=floor; want="$SSH_WANT" ;;
     grammar) mutate_file "$root/$file" '"${2:-}" != lane ||' 'true ||'; row=room; want="$CLOUD_WANT" ;;
+    refresh) mutate_file "$root/$file" '[[ "$LANE_REFRESH" != true ]] || { ot_message cloud-refresh-unsupported' '[[ "$LANE_REFRESH" == true ]] || { ot_message cloud-refresh-unsupported'; row=refresh; want='1|cloud-refresh-unsupported|' ;;
   esac
   cloud_observe "$row" "$root"
   if [[ "$CLOUD_OBS" != "$want" ]]; then pass "control: $control changes the hosted preference result"

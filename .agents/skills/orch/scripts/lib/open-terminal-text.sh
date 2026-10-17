@@ -136,6 +136,7 @@ fix=File a prioritized issue in that repository and send it with lane-mail peer 
     host-capabilities-failed) text='lane-host could not declare the host kind'"'"'s capability line, or declared a launch this launcher has no arm for, so nothing says how to launch on it; its own words are above this line. Nothing was launched.' ;;
     kind-unbuilt) text='The host kind declares a launch this build does not make. Nothing was launched. Launch the item on another host kind.' ;;
     cloud-session-invalid) text='A cloud-session launch runs Claude Code'"'"'s own cloud, so it takes --harness claude and no --cmd, and its relaunch is a fresh session this build does not make. It takes one item: its --brief-file is one item'"'"'s whole task, which a second item'"'"'s session would do on its own branch. Nothing was launched.' ;;
+    cloud-refresh-unsupported) text='A cloud session cannot write the refresh lane record. Select a local or SSH host for this refresh lane. Nothing was created or pushed.' ;;
     cloud-brief-missing) text='A cloud session reaches no tracker, so its task is the item'"'"'s whole brief, which no --brief-file names. Write the issue text to a file and pass it as --brief-file PATH. Nothing was launched.' ;;
     cloud-bundle-risk) text='Claude Code would send this checkout to the cloud as a bundle with no git remote, so the session could push nothing. The launch line clears CCR_FORCE_BUNDLE from the environment the CLI starts with, so only these two causes refuse: cause=settings is CCR_FORCE_BUNDLE=1 in the env block of the settings file path= names, or a file that could not be read; cause=remote is an origin that is no github.com URL. Nothing was created.' ;;
     cloud-branch-unread) text='The item worktree names no branch git could read, so claude --cloud, which clones the checkout'"'"'s current branch, would have none to clone; git'"'"'s own words are above this line. Nothing was pushed or launched. The worktree stands as the item'"'"'s claim; remove it with worktree remove ID before a second launch.' ;;
@@ -621,6 +622,8 @@ Options:
                     record, or for a hosted lane empties it, so a refresh
                     lane's relaunch passes it again. A --wake writes no
                     launch record and keeps the one the launch wrote.
+                    A cloud session refuses as cloud-refresh-unsupported
+                    before creating or pushing a worktree.
   --continue-resume Deliver the standard continuation after a hosted Codex
                     relaunch confirms that it resumed a session. The watch
                     uses this option for automatic account recovery. A

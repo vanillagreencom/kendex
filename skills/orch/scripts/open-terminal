@@ -500,6 +500,9 @@ host_launch_judge() {
 case "$HOST_LAUNCH" in
   window | ssh) ;;
   cloud-session)
+    # Model-free refresh launches can select this route through the preference walk.
+    # Cloud launch claims do not carry lane-marker's refresh record into the cloud.
+    [[ "$LANE_REFRESH" != true ]] || { ot_message cloud-refresh-unsupported "host=$LANE_HOST" "option=--lane-refresh" >&2; return 1; }
     [[ "$HARNESS" == claude && -z "$CMD_TEMPLATE" && "$RELAUNCH" != true && ${#ITEMS[@]} -eq 1 ]] \
       || { ot_message cloud-session-invalid "host=$LANE_HOST" "harness=$HARNESS" "relaunch=$RELAUNCH" "items=${#ITEMS[@]}" >&2; return 1; }
     [[ -n "$BRIEF_FILE" ]] || { ot_message cloud-brief-missing "host=$LANE_HOST" >&2; return 1; } ;;
