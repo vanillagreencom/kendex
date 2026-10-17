@@ -473,8 +473,8 @@ oversee_watch_owed_release|orch-dev|orch-state
 oversee_watch_owed_shared|orch-dev|orch-state
 oversee_watch_owed_future|orch-dev|orch-state'
 orch_profiles=(orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest)
-printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_launch_future.sh"
-printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_watch_owed_future.sh"
+stub_suite "$SANDBOX/oversee_launch_future.sh"
+stub_suite "$SANDBOX/oversee_watch_owed_future.sh"
 moved_owners() { # OS ; `name|shard` for every shard that runs a moved row's suite
   local profile
   for profile in "${orch_profiles[@]}"; do
