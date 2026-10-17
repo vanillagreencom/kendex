@@ -477,7 +477,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    What it takes, archives and keeps is [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out). Its `removed kept=` line names the archive holding the item's state and the worktree's `tmp/` records, and goes on § 6's `tmp/ close-out` line. A refusal keeps the worktree, since the worktree's records may be in no archive: the refusal's first line goes on that line instead, and the worktree line reads `standing — close-out refused`.
 
-   With the project verification passed and the close-out done, re-run step 4's disposal predicate whole. Step 4 read it two steps ago, and step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so it refuses nothing itself: uncommitted content, untracked content and a worktree that has moved to another branch all go with the directory, and the predicate is the only thing between them and that.
+   With the project verification passed and the close-out done, re-run step 4's disposal predicate whole. Step 4 read it two steps ago, and step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so it refuses nothing itself: uncommitted content, untracked content and a worktree that has moved to another branch all go with the directory, the lane mailbox alone moving to `[MAIN_REPO_ROOT]`, and the predicate is the only thing between them and that.
 
    Every part holding removes it, run from `[MAIN_REPO_ROOT]` so the lane is not deleting its own cwd:
 

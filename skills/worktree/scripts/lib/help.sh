@@ -422,6 +422,16 @@ Failure semantics:
 Session leases:
   remove releases its own lease before removing. A foreign lease is left
   alone and refuses the removal, naming the owner.
+
+Lane mailboxes:
+  Just before Git runs, each lane mailbox under the worktree's tmp/lane-mail
+  moves to the main checkout's tmp/lane-mail, where the overseer's watch reads
+  a removed lane's mail, and its to-lane.watch record is dropped. One meeting a
+  mailbox already there adds its to-overseer.jsonl lines after that one's.
+  A refusal from Git puts each mailbox back. A mailbox that cannot be moved
+  refuses the removal as worktree-lane-mail-move-failed with nothing removed;
+  one that cannot join the main checkout's is kept beside it, named by
+  worktree-lane-mail-kept, and the exit is non-zero. cleanup does the same.
 EOF
 }
 

@@ -710,6 +710,58 @@ assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=0; pass=3 rc=0 notic
 WATCH_BIN="$LOCAL_MAIL_WATCH" local_removed_mail mail_local_unknown_control absent
 assert_eq "$LOCAL_MAIL_FACTS" 'pass=2 rc=0 notice=0 unknown=0; pass=3 rc=0 notice=0 unknown=0; ' "control: today's local route omits the unknown-checkout failure" "$STUB_DIR/run2.err"
 
+# A lane writes its close-out notice to its own mailbox and its worktree goes
+# before any pass reads it, as a Copilot lane's must (it loses its tools once
+# its cwd is gone). REMOVAL `worktree` runs the worktree skill's remove, which
+# moves the mailbox to the main checkout; `hand` moves it there itself and lets
+# git remove the tree, which isolates the watch's half. Either way the next pass
+# reports the notice once and never the line the first pass drained.
+# WORKTREE_BIN names the worktree script, a mutant copy for a control.
+moved_removed_mail() { # CASE REMOVAL
+  local root box pass out rc=0
+  new_case "$1"
+  root="$STUB_DIR/lane"
+  box="$root/tmp/lane-mail/KEN-94"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  git -C "$CASE_REPO_ROOT" worktree add -q --detach "$root"
+  mkdir -p "$box"
+  printf '{"id":"early-1","kind":"notice","at":"t","text":"Working."}\n' > "$box/to-overseer.jsonl"
+  jq -nc --arg root "$root" '{lanes:[{item:"KEN-94",status:"running",host:"local",mail_root:$root,harness:"claude"}]}' > "$STUB_DIR/local-state.json"
+  run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" > "$STUB_DIR/run1.out" 2> "$STUB_DIR/run1.err"
+  MOVED_MAIL_FACTS="pass=1 early=$(grep -cx 'EVENT lane-notice KEN-94 early-1' "$STUB_DIR/run1.out" || :); "
+  printf '{"id":"closing-1","kind":"notice","at":"t","text":"Merged."}\n' >> "$box/to-overseer.jsonl"
+  if [[ "$2" == worktree ]]; then
+    (cd "$CASE_REPO_ROOT" && "${WORKTREE_BIN:-$REPO_ROOT/skills/worktree/scripts/worktree}" remove "$root") \
+      > "$STUB_DIR/remove.out" 2> "$STUB_DIR/remove.err" || rc=$?
+    MOVED_MAIL_FACTS+="remove=$rc; "
+  else
+    mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail"
+    mv -- "$box" "$CASE_REPO_ROOT/tmp/lane-mail/KEN-94"
+    git -C "$CASE_REPO_ROOT" worktree remove --force "$root"
+  fi
+  for pass in 2 3; do
+    rc=0
+    out="$(run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" 2> "$STUB_DIR/run$pass.err")" || rc=$?
+    MOVED_MAIL_FACTS+="pass=$pass rc=$rc early=$(grep -cx 'EVENT lane-notice KEN-94 early-1' <<<"$out" || :) closing=$(grep -cx 'EVENT lane-notice KEN-94 closing-1' <<<"$out" || :); "
+  done
+}
+MOVED_MAIL_OK='pass=1 early=1; remove=0; pass=2 rc=0 early=0 closing=1; pass=3 rc=0 early=0 closing=0; '
+moved_removed_mail mail_local_moved_remove worktree
+assert_eq "$MOVED_MAIL_FACTS" "$MOVED_MAIL_OK" "a close-out notice written before worktree remove is reported once from the main checkout" "$STUB_DIR/remove.err"
+moved_removed_mail mail_local_moved_hand hand
+assert_eq "$MOVED_MAIL_FACTS" "${MOVED_MAIL_OK/remove=0; /}" "a mailbox moved to the main checkout keeps its drained lines drained" "$STUB_DIR/run2.err"
+MOVED_WORKTREE_ROOT="$TMP_ROOT/moved-mail-worktree"
+mkdir -p "$MOVED_WORKTREE_ROOT"
+cp -R "$REPO_ROOT/skills/worktree/scripts" "$MOVED_WORKTREE_ROOT/scripts"
+mutate_file "$MOVED_WORKTREE_ROOT/scripts/worktree" 'if ! lane_mail_move_out "$1"; then' 'if false && ! lane_mail_move_out "$1"; then'
+WORKTREE_BIN="$MOVED_WORKTREE_ROOT/scripts/worktree" moved_removed_mail mail_local_moved_remove_control worktree
+assert_eq "$MOVED_MAIL_FACTS" 'pass=1 early=1; remove=0; pass=2 rc=0 early=0 closing=0; pass=3 rc=0 early=0 closing=0; ' "control: a removal that deletes the mailbox loses the close-out notice" "$STUB_DIR/run2.err"
+MOVED_MAIL_WATCH="$(mutant_scripts moved-mail/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/moved-mail/github"
+mutate_file "$MOVED_MAIL_WATCH" 'if [[ "$cursor" == "$item@clone" ]]; then' 'if false; then'
+WATCH_BIN="$MOVED_MAIL_WATCH" moved_removed_mail mail_local_moved_hand_control hand
+assert_eq "$MOVED_MAIL_FACTS" 'pass=1 early=1; pass=2 rc=0 early=1 closing=1; pass=3 rc=0 early=0 closing=0; ' "control: a clone cursor that starts at zero reports the drained line again" "$STUB_DIR/run2.err"
+
 # An explicit local mailbox can stand before its directory becomes a Git
 # checkout. Discovery is advisory then, and the next pass must learn it.
 local_learning_mail() { # CASE
@@ -1032,7 +1084,10 @@ assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
 # keep leaves them standing; absent never has one. HOSTED_RECORD=lane writes
 # the first record in the lane root's own tmp instead, the clone's state
 # carrying none, as a lane whose launch forbids writing the clone keeps it;
-# HOSTED_RECORD=torn leaves a killed write there.
+# HOSTED_RECORD=torn leaves a killed write there. HOSTED_MAIL=moved starts
+# each lane's mailbox in its worktree holding early-N, which the first run
+# drains, and at the removal adds closing-N there and moves the mailbox into
+# the clone, as the worktree skill's remove does on the lane's host.
 hosted_runs() { # CASE LANES KEEP RUNS [ENV...]
   local lanes="$2" keep="$3" runs="$4" n run harness_state record args=()
   new_case "$1"
@@ -1047,7 +1102,13 @@ hosted_runs() { # CASE LANES KEEP RUNS [ENV...]
   git -C "$HOSTED_DISK/srv/clone" config gc.auto 0
   git -C "$HOSTED_DISK/srv/clone" config maintenance.auto false
   for n in $lanes; do
-    mkdir -p "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
+    if [[ "${HOSTED_MAIL:-}" == moved ]]; then
+      mkdir -p "$HOSTED_DISK/srv/clone/tmp" "$HOSTED_DISK/srv/lane/issue-$n/tmp/lane-mail/issue-$n"
+      printf '{"id":"early-%s","kind":"notice","at":"t","text":"Working."}\n' "$n" \
+        > "$HOSTED_DISK/srv/lane/issue-$n/tmp/lane-mail/issue-$n/to-overseer.jsonl"
+    else
+      mkdir -p "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
+    fi
     if [[ "$keep" != absent ]]; then
       mkdir -p "$HOSTED_DISK/srv/lane/issue-$n"
       printf 'gitdir: /srv/clone/.git/worktrees/issue-%s\n' "$n" > "$HOSTED_DISK/srv/lane/issue-$n/.git"
@@ -1080,6 +1141,16 @@ hosted_runs() { # CASE LANES KEEP RUNS [ENV...]
     [[ ! -d "$STATE_DIR" ]] || chmod u+w "$STATE_DIR"
     [[ "$run" -eq 1 && "$keep" == gone ]] || continue
     for n in $lanes; do
+      if [[ "${HOSTED_MAIL:-}" == moved ]]; then
+        printf '{"id":"closing-%s","kind":"notice","at":"t","text":"Merged."}\n' "$n" \
+          >> "$HOSTED_DISK/srv/lane/issue-$n/tmp/lane-mail/issue-$n/to-overseer.jsonl"
+        mkdir -p "$HOSTED_DISK/srv/clone/tmp/lane-mail"
+        mv -- "$HOSTED_DISK/srv/lane/issue-$n/tmp/lane-mail/issue-$n" "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
+        rm -rf -- "${HOSTED_DISK:?}/srv/lane/issue-$n"
+        HOSTED_NOTICE_IDS[n]="closing-$n"
+        printf '{"handoff":{"written_at":"t2"}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
+        continue
+      fi
       rm -rf -- "${HOSTED_DISK:?}/srv/lane/issue-$n"
       printf 'Merged.\n' > "$STUB_DIR/closing.txt"
       HOSTED_NOTICE_IDS[n]="$(cd "$HOSTED_DISK/srv/clone" && env -u ORCH_LANE_HOST -u ORCH_STATE_DIR \
@@ -1148,6 +1219,23 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/clone-mail/github"
 mutate_file "$CLONE_MAIL_WATCH" '        root="$HOSTED_CLONE"; cursor="$item@clone"' '        : # root="$HOSTED_CLONE"; cursor="$item@clone"'
 WATCH_BIN="$CLONE_MAIL_WATCH" hosted_runs hosted_clone_mail_control 2 gone 3
 assert_eq "$(hosted_facts 2)" 'issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1 none=0' "control: without the hosted clone root switch the real closing notice is lost" "$STUB_DIR/run2.err"
+
+# A hosted lane's mailbox moved into its clone at the removal: the closing
+# notice is reported once and the line the first run drained never again. The
+# control is a watch whose clone cursor starts at zero.
+hosted_moved() { # CASE [WATCH_BIN]
+  local later
+  HOSTED_MAIL=moved WATCH_BIN="${2:-}" hosted_runs "$1" 2 gone 3
+  later="$(printf '%s\n%s\n' "${HOSTED_OUT[2]}" "${HOSTED_OUT[3]}")"
+  HOSTED_MOVED="$(hosted_facts 2) early=$(grep -cx 'EVENT lane-notice issue-2 early-2' <<<"$later" || :)"
+}
+hosted_moved hosted_moved_mail
+assert_eq "$HOSTED_MOVED" "$ONE closed=1 refused=0 closes=1 none=0 early=0" "a hosted lane's mailbox moved into its clone reports the closing notice once and no drained line" "$STUB_DIR/run2.err"
+HOSTED_MOVED_WATCH="$(mutant_scripts hosted-moved/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/hosted-moved/github"
+mutate_file "$HOSTED_MOVED_WATCH" 'if [[ "$cursor" == "$item@clone" ]]; then' 'if false; then'
+hosted_moved hosted_moved_mail_control "$HOSTED_MOVED_WATCH"
+assert_eq "$HOSTED_MOVED" "$ONE closed=1 refused=0 closes=1 none=0 early=1" "control: a hosted clone cursor that starts at zero reports the drained line again" "$STUB_DIR/run2.err"
 
 # A host that no longer held the item: the watch relays lane-close's
 # closed=absent line under lane-closed, never a kept=none it did not give. The

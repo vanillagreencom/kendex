@@ -120,6 +120,26 @@ step() {
       cp "$LOCK_FILE" "$ROOT/lock-copy"
       ;;
     unlock) git -C "$MAIN" worktree unlock "$WT" ;;
+    # A lane's own mailbox in the worktree, as orch's lane-marker places it,
+    # with the liveness record its standing monitor writes.
+    mail)
+      MAIL_ITEM=KEN-1
+      mkdir -p "$WT/tmp/lane-mail/KEN-1"
+      printf '{"id":"wt-1"}\n{"id":"wt-2"}\n' >"$WT/tmp/lane-mail/KEN-1/to-overseer.jsonl"
+      printf 'live\n' >"$WT/tmp/lane-mail/KEN-1/to-lane.watch"
+      ;;
+    # The main checkout already holds a mailbox for the item: a relaunch after
+    # an earlier removal, or a send that fell back there.
+    main-mail)
+      mkdir -p "$MAIN/tmp/lane-mail/KEN-1"
+      printf '{"id":"main-1"}\n' >"$MAIN/tmp/lane-mail/KEN-1/to-overseer.jsonl"
+      ;;
+    # The worktree's tmp links to the main checkout's, so its mailbox is
+    # already the one the watch reads.
+    shared-tmp)
+      mkdir -p "$MAIN/tmp"
+      ln -s "$MAIN/tmp" "$WT/tmp"
+      ;;
     # git itself refuses the removal after every precheck passed: the lock
     # precheck is a racy diagnostic, and only "nothing is stripped before git
     # runs" keeps the links whole here, so this row and the locked one are
@@ -154,6 +174,7 @@ build() {
   MAP_FILE=""
   SIBLING_GIT_DIR=""
   LOCK_FILE=""
+  MAIL_ITEM=""
   for word in "$@"; do step "$word"; done
 }
 
@@ -191,6 +212,21 @@ remove_state() {
     cmp -s "$ROOT/lock-copy" "$LOCK_FILE" && lock=intact
     printf ' lock=%s' "$lock"
   fi
+  if [[ -n "$MAIL_ITEM" ]]; then
+    local staged
+    staged="$(find "$MAIN/tmp/lane-mail" -mindepth 1 -maxdepth 1 -name ".$MAIL_ITEM.*" 2>/dev/null | wc -l | tr -d ' ')"
+    printf ' mail=main:%s wt:%s staged=%s' "$(mail_box "$MAIN")" "$(mail_box "$WT")" "${staged:-0}"
+  fi
+}
+
+# A mailbox as the ids its to-overseer.jsonl holds, in order, and +watch where
+# its liveness record stands.
+mail_box() { # ROOT
+  local box="$1/tmp/lane-mail/$MAIL_ITEM" ids
+  [[ -d "$box" ]] || { printf 'absent'; return 0; }
+  ids="$(jq -r '.id' "$box/to-overseer.jsonl" 2>/dev/null | paste -s -d ',' -)"
+  printf '%s' "${ids:--}"
+  [[ ! -e "$box/to-lane.watch" ]] || printf '+watch'
 }
 
 REAL_GIT_BIN="$(command -v git)"
@@ -276,6 +312,11 @@ an absent locked worktree keeps its registration, branch and lock|tree lock lock
 an absent worktree with an empty native lock stays registered|tree empty-lock lock-record vanished|TOPIC|1|-|locked|worktree=registered/no branch=present dirs=- links=- lock=intact
 an absent worktree with a foreign lease keeps its registration, branch and lease|tree foreign-lease lock-record vanished|TOPIC|1|-|locked|worktree=registered/no branch=present dirs=- links=- lock=intact
 an absent worktree releases its own lease and is removed|tree own-lease vanished|TOPIC|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
+the lane mailbox moves to the main checkout, its stale monitor record dropped|tree mail|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:wt-1,wt-2 wt:absent staged=0
+a removal git refuses puts the lane mailbox back in the worktree whole|tree mail git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=- mail=main:absent wt:wt-1,wt-2+watch staged=0
+a lane mailbox meeting one in the main checkout adds its lines after the lines there|tree mail main-mail|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:main-1,wt-1,wt-2 wt:absent staged=0
+the same meeting refused by git leaves both mailboxes as they were|tree mail main-mail git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=- mail=main:main-1 wt:wt-1,wt-2+watch staged=0
+a worktree tmp linked to the tmp of the main checkout leaves its mailbox where it is|tree shared-tmp mail|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:wt-1,wt-2+watch wt:absent staged=0
 '
 
 echo "=== worktree remove ==="
@@ -288,6 +329,20 @@ while IFS='|' read -r label fixture args rc out err want_state; do
   want_state="${want_state//LINKS/$LINKS}"
   assert_eq "$(run_remove "$args")" "rc=$rc out=$(remove_out "$out") err=$(remove_err "$err") $want_state" "$label"
 done <<<"$REMOVE_ROWS"
+
+# Control: a remove that leaves the mailbox to git's deletion. The mailbox
+# state above must tell it apart, or no row there proves the move.
+MUTANT_DIR="$TMP_ROOT/mutant-scripts"
+cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$MUTANT_DIR"
+MOVE_CALL='if ! lane_mail_move_out "$1"; then'
+[[ "$(grep -cF -- "$MOVE_CALL" "$MUTANT_DIR/worktree")" == 1 ]] || { echo "worktree_remove: control=target-count" >&2; exit 1; }
+MUTANT_TEXT="$(<"$MUTANT_DIR/worktree")"
+printf '%s\n' "${MUTANT_TEXT/"$MOVE_CALL"/if false; then}" >"$MUTANT_DIR/worktree"
+! cmp -s "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$MUTANT_DIR/worktree" || { echo "worktree_remove: control=unchanged" >&2; exit 1; }
+build remove-control tree mail
+assert_eq "$(WORKTREE_SCRIPT="$MUTANT_DIR/worktree" run_remove TOPIC)" \
+  "rc=0 out=$(remove_out removed) err=$(remove_err deleted) worktree=absent/no branch=absent dirs=- links=- mail=main:absent wt:absent staged=0" \
+  "control: a remove that does not move the lane mailbox deletes it with the worktree"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

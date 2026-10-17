@@ -2433,6 +2433,105 @@ cleanup_enumerate_worktrees() {
 # shellcheck source=lib/output-prune.sh
 source "$SCRIPT_DIR/lib/output-prune.sh"
 
+# A lane's own mailbox is <worktree>/tmp/lane-mail/<ITEM> (orch's
+# lane-marker), and a lane whose harness loses its tools once its cwd is gone
+# sends its close-out notice before it removes its worktree. The overseer's
+# watch reads <main checkout>/tmp/lane-mail/<ITEM> once the worktree is gone,
+# so each lane mailbox moves there before git deletes the tree: mail a lane
+# wrote is never deleted before its reader took it. The overseer mailbox always
+# resolves to the main checkout, so a worktree holds none to move.
+# LANE_MAIL_HELD holds three entries per moved mailbox: where it stood, where
+# it is now, and the main checkout's mailbox it still has to join, empty when
+# it moved into that place itself.
+LANE_MAIL_HELD=()
+lane_mail_move_out() { # WT
+  local from="$1/tmp/lane-mail" to="$PROJECT_ROOT/tmp/lane-mail" box name dest into
+  LANE_MAIL_HELD=()
+  [[ -d "$from" && ! -L "$from" ]] || return 0
+  # A worktree whose tmp links to the main checkout's already writes there.
+  ! same_canonical_dir "$from" "$to" || return 0
+  for box in "$from"/*; do
+    name="${box##*/}"
+    [[ -d "$box" && ! -L "$box" && "$name" != overseer ]] || continue
+    mkdir -p -- "$to" || return 1
+    dest="$to/$name"
+    into=""
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      into="$dest"
+      dest="$(mktemp -d "$to/.$name.XXXXXX")" || return 1
+      dest="$dest/$name"
+    fi
+    if ! mv -- "$box" "$dest"; then
+      [[ -z "$into" ]] || rmdir -- "${dest%/*}" || true
+      return 1
+    fi
+    LANE_MAIL_HELD+=("$box" "$dest" "$into")
+  done
+}
+
+# A mailbox that met one already in the main checkout (a relaunch after an
+# earlier removal, or a send that fell back there) adds its to-overseer.jsonl
+# lines to that one as a single block; the watch may report lines it already
+# drained once more, and no line is lost. A plain append is safe here: the only
+# writer of a lane's to-overseer.jsonl is that lane, which has finished by its
+# removal, and compaction rewrites the overseer mailbox alone.
+lane_mail_settle() { # DEST INTO
+  if [[ -z "$2" ]]; then
+    # A watcher record left behind would make a later send's receipt claim a
+    # monitor that died with the worktree.
+    rm -f -- "$1/to-lane.watch"
+    return 0
+  fi
+  if [[ -f "$1/to-overseer.jsonl" ]]; then
+    if [[ ! -d "$2" || -L "$2" || -L "$2/to-overseer.jsonl" ]] ||
+      ! cat -- "$1/to-overseer.jsonl" >>"$2/to-overseer.jsonl"; then
+      worktree_message lane-mail-kept "${1%/*}" "Error: a lane mailbox could not join $2; its mail is kept at ${1%/*}" >&2
+      return 1
+    fi
+  fi
+  rm -rf -- "${1%/*}"
+}
+
+# Git refused the removal: each mailbox goes back where the lane reads it, or,
+# where git already deleted that directory, settles in the main checkout.
+lane_mail_move_back() {
+  local i box dest into rc=0
+  for ((i = 0; i < ${#LANE_MAIL_HELD[@]}; i += 3)); do
+    box="${LANE_MAIL_HELD[i]}" dest="${LANE_MAIL_HELD[i + 1]}" into="${LANE_MAIL_HELD[i + 2]}"
+    if [[ -d "${box%/*}" ]] && mv -- "$dest" "$box"; then
+      [[ -z "$into" ]] || rmdir -- "${dest%/*}" || rc=1
+    else
+      lane_mail_settle "$dest" "$into" || rc=1
+    fi
+  done
+  return "$rc"
+}
+
+# Every removal of a worktree directory, by `remove` and by `cleanup`: git's
+# own removal of the intact tree, with the lane mailboxes moved out first.
+# GIT_REMOVE_OUTPUT holds git's words. Returns 0 removed; 1 git refused, the
+# mailboxes back in place; 2 a mailbox could not be moved, so nothing was
+# removed; 3 removed, with a mailbox kept beside the main checkout's (the
+# lane-mail-kept notice names it).
+GIT_REMOVE_OUTPUT=""
+git_remove_worktree() { # WT
+  local i rc=0
+  GIT_REMOVE_OUTPUT=""
+  if ! lane_mail_move_out "$1"; then
+    lane_mail_move_back || true
+    worktree_message lane-mail-move-failed "$1" "Error: a lane mailbox in $1 could not be moved to $PROJECT_ROOT/tmp/lane-mail; nothing was removed." >&2
+    return 2
+  fi
+  if ! GIT_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$1" 2>&1)"; then
+    lane_mail_move_back || true
+    return 1
+  fi
+  for ((i = 0; i < ${#LANE_MAIL_HELD[@]}; i += 3)); do
+    lane_mail_settle "${LANE_MAIL_HELD[i + 1]}" "${LANE_MAIL_HELD[i + 2]}" || rc=3
+  done
+  return "$rc"
+}
+
 # Refuse to act on a worktree that carries a native `git worktree lock`.
 refuse_locked_worktree() {
   local wt="$1" action="$2"
@@ -3400,6 +3499,7 @@ case "${1:-}" in
     fi
     REMOVE_MAP_FILE=""
     REMOVE_GIT_DIR=""
+    REMOVE_MAIL_KEPT=false
     if REMOVE_GIT_DIR="$(registered_worktree_git_dir "$WT_PATH")"; then
       REMOVE_MAP_FILE="$REMOVE_GIT_DIR/kendex-rebase-map"
     elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
@@ -3460,16 +3560,19 @@ case "${1:-}" in
       # would leave a live session's worktree without `.agents`, `.claude`, or `.env.local`
       # whenever git then refuses the removal, and no precheck can close that
       # window: a lock acquired between the check and the strip lands right back
-      # in that failure mode. Because nothing is mutated before git runs, a
-      # refusal issued BEFORE deletion begins — raced lock included — leaves the
-      # tree whole. Git's deletion is not transactional, so a failure partway
-      # through can still leave it partially removed; that is git's own window,
-      # not one this script widens. `cleanup` uses the same ordering, for the
-      # same reason.
-      REMOVE_OUTPUT=""
-      if ! REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$WT_PATH" 2>&1)"; then
+      # in that failure mode. Because nothing is mutated before git runs but
+      # the lane mailboxes, which a refusal puts back, a refusal issued BEFORE
+      # deletion begins — raced lock included — leaves the tree whole. Git's
+      # deletion is not transactional, so a failure partway through can still
+      # leave it partially removed; that is git's own window, not one this
+      # script widens. `cleanup` uses the same ordering, for the same reason.
+      REMOVE_RC=0
+      git_remove_worktree "$WT_PATH" || REMOVE_RC=$?
+      [[ "$REMOVE_RC" != 2 ]] || exit 1
+      [[ "$REMOVE_RC" != 3 ]] || REMOVE_MAIL_KEPT=true
+      if [[ "$REMOVE_RC" == 1 ]]; then
         worktree_message remove-failed "$WT_PATH" "Error: Git could not remove the worktree; preserving it for manual recovery: $WT_PATH" >&2
-        [[ -n "$REMOVE_OUTPUT" ]] && printf '%s\n' "$REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+        [[ -n "$GIT_REMOVE_OUTPUT" ]] && printf '%s\n' "$GIT_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
         echo "  Branch: ${BRANCH:-unknown} (not deleted)" >&2
         echo "Nothing was removed before Git ran, so a refusal made before deletion started (a lock, for example) leaves the worktree exactly as it was." >&2
         echo "Git's deletion is not atomic: if it failed partway through, the worktree may be partially removed — inspect its contents before retrying, and restore links with: $0 fix-links \"$WT_PATH\"" >&2
@@ -3529,7 +3632,7 @@ case "${1:-}" in
       worktree_message cwd-removed "$PROJECT_ROOT" "Warning: Session cwd was inside deleted worktree. Start a new session from:" >&2
       echo "  $PROJECT_ROOT" >&2
     fi
-    if [[ "$BRANCH_DELETE_FAILED" == true ]]; then
+    if [[ "$BRANCH_DELETE_FAILED" == true || "$REMOVE_MAIL_KEPT" == true ]]; then
       exit 1
     fi
     ;;
@@ -3666,13 +3769,18 @@ case "${1:-}" in
       if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then
         continue
       fi
-      CLEANUP_REMOVE_OUTPUT=""
-      if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
-        CLEANUP_FAILED=true
-        worktree_message cleanup-remove-failed "$wt" "Error: Git could not remove merged worktree; preserving it for manual recovery: $wt" >&2
-        [[ -n "$CLEANUP_REMOVE_OUTPUT" ]] && printf '%s\n' "$CLEANUP_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
-        continue
-      fi
+      CLEANUP_REMOVE_RC=0
+      git_remove_worktree "$wt" || CLEANUP_REMOVE_RC=$?
+      case "$CLEANUP_REMOVE_RC" in
+        1)
+          CLEANUP_FAILED=true
+          worktree_message cleanup-remove-failed "$wt" "Error: Git could not remove merged worktree; preserving it for manual recovery: $wt" >&2
+          [[ -n "$GIT_REMOVE_OUTPUT" ]] && printf '%s\n' "$GIT_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+          continue
+          ;;
+        2) CLEANUP_FAILED=true; continue ;;
+        3) CLEANUP_FAILED=true ;;
+      esac
       if [[ -e "$wt" || -L "$wt" ]]; then
         CLEANUP_FAILED=true
         worktree_message cleanup-path-remains "$wt" "Error: Git reported successful worktree removal but the path remains; preserving it for manual recovery: $wt" >&2

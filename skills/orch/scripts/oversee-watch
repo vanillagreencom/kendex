@@ -2763,7 +2763,7 @@ check_mail() { # [overseer]
   local MAIL_ROW_MODE=1
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at unread_passes repeat standing reported at
-  local mail_items host_flag args state="$MAIL_SEEN"
+  local mail_items host_flag args row_kind row_fields state="$MAIL_SEEN"
   mail_items=()
   if [[ "${1:-}" != overseer ]]; then
     HOSTED_GONE_ITEMS=""
@@ -2798,8 +2798,8 @@ check_mail() { # [overseer]
       fi
       lane_row_set clone-root "$state" "$item" "$HOSTED_CLONE" >/dev/null
       state="$LANE_ROW"
-      # With the worktree removed, the lane's closing notice lands in the
-      # clone's mailbox: another file, so another cursor.
+      # With the worktree removed, the lane's mailbox is read in the clone,
+      # under its own cursor.
       if [[ "$HOSTED_GONE" -eq 1 ]]; then
         HOSTED_GONE_ITEMS+="$item"$'\n'
         root="$HOSTED_CLONE"; cursor="$item@clone"
@@ -2815,6 +2815,24 @@ check_mail() { # [overseer]
       if [[ "$LOCAL_GONE" -eq 1 ]]; then
         root="$LOCAL_CLONE"; cursor="$item@clone"
       fi
+    fi
+    # The worktree skill's remove moves the lane's mailbox into the clone, so
+    # on the first pass that finds the worktree gone the clone's mailbox is the
+    # file the worktree's cursor counted. A worktree row with a first id seeds
+    # the clone's; the first-id check below still reads a different mailbox
+    # whole, once.
+    if [[ "$cursor" == "$item@clone" ]]; then
+      for row_kind in lane-mail directive; do
+        lane_row_get "$row_kind" "$state" "$cursor" >/dev/null || die state-read-failed "" "item=$item" "row=$row_kind"
+        [[ -z "$LANE_ROW" ]] || continue
+        lane_row_get "$row_kind" "$state" "$item" >/dev/null || die state-read-failed "" "item=$item" "row=$row_kind"
+        read -r -a row_fields <<<"$LANE_ROW"
+        # `<count> <first>` and `<read> <unread> <first>`: a row short of its
+        # first id recorded an empty one.
+        [[ "$row_kind:${#row_fields[@]}" == lane-mail:2 || "$row_kind:${#row_fields[@]}" == directive:3 ]] || continue
+        lane_row_set "$row_kind" "$state" "$cursor" "${LANE_ROW%%$'\n'*}" >/dev/null
+        state="$LANE_ROW"
+      done
     fi
     args=(--item "$item")
     [[ -z "$root" ]] || args+=(--root "$root" ${host_flag[@]+"${host_flag[@]}"})
