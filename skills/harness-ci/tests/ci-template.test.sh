@@ -40,6 +40,10 @@
 #      merge-group and default-branch runs each keep their own group.
 #   8. action pins: every GitHub-owned or third-party action in a source or
 #      rendered consumer template uses a full SHA and release-version comment.
+#   9. the endpoints: a pull request's base end is the base its merge ref
+#      was built on, so a lane its base marked `:queue` after it opened is
+#      read by the shipped change-class; merge_group and push keep their
+#      payload's base. Its control plants the pull request's recorded base.
 # Must-fail arms plant a lane condition without its status function, one
 # running only on a true verdict, one without its `lanes` term, CI without
 # the waiver, a lane output forwarding the action's `lanes` in place of the
@@ -642,6 +646,70 @@ assert_eq "the classify step asks for the queue-only default" "true" \
 plant "$TEMPLATE" "queue-only-default: true" "queue-only-default: false" "$SANDBOX/no-default.yml"
 assert_eq "must-fail: a template not asking is named" "false" \
   "$(step_key "$SANDBOX/no-default.yml" classify queue-only-default)"
+
+# --- 4b. The endpoints ------------------------------------------------------
+# A pull request opened before its base marked a lane `:queue`, and run after
+# the mark landed: its merge ref is built on the marked base, while GitHub
+# still records the base it opened on. The template's endpoints, evaluated
+# on that event, are handed to the shipped change-class, which reads the
+# lane mark off the base end. The base opts back to per-push runs and
+# declares an empty queue list, so the mark alone decides the queue-only
+# class.
+endpoint_expr() { # TEMPLATE KEY -> the changes job's env expression
+  awk -v key="$2" '
+    /^  changes:/ { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && index($0, "      " key ": ${{ ") == 1 {
+      sub(/^ +[A-Z]+: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
+    }
+  ' "$1"
+}
+endpoint_repo="$(new_repo endpoints)"
+mkdir -p "$endpoint_repo/.github"
+printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "ci-template suite"\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$endpoint_repo/kendex.settings.toml"
+printf 'check src/*\n' >"$endpoint_repo/.github/ci-lanes.conf"
+git -C "$endpoint_repo" add -A
+git -C "$endpoint_repo" commit -q -m opened
+opened_base="$(git -C "$endpoint_repo" rev-parse HEAD)"
+git -C "$endpoint_repo" checkout -q -b pr
+commit_paths "$endpoint_repo" head src/app.rs
+pr_head="$(git -C "$endpoint_repo" rev-parse HEAD)"
+git -C "$endpoint_repo" checkout -q main
+printf 'check:queue src/*\n' >"$endpoint_repo/.github/ci-lanes.conf"
+git -C "$endpoint_repo" commit -q -am mark
+git -C "$endpoint_repo" merge -q --no-ff --no-edit pr
+merge_ref="$(git -C "$endpoint_repo" rev-parse HEAD)"
+# The queue-only line change-class prints on a pull request, judged between
+# the endpoints TEMPLATE's expressions evaluate to under CONTEXT.
+endpoint_queue() { # TEMPLATE CONTEXT
+  local base head
+  base="$(gh_eval value "$2" "$(endpoint_expr "$1" BASE)" | jq -r .)"
+  head="$(gh_eval value "$2" "$(endpoint_expr "$1" HEAD)" | jq -r .)"
+  "$CHANGE_CLASS" --event pull_request --base "$base" --head "$head" --repo "$endpoint_repo" 2>&1 >/dev/null |
+    sed -n 's/^queue-only: //p'
+}
+pr_context="$(jq -cn --arg sha "$merge_ref" --arg base "$opened_base" --arg head "$pr_head" \
+  '{github: {event_name: "pull_request", sha: $sha, event: {pull_request: {base: {sha: $base}, head: {sha: $head}}}}}')"
+assert_eq "a pull request opened before its base marked a lane reads the mark" \
+  "queue_only=true cause=queue-lane lane=check path=src/app.rs glob=src/*" \
+  "$(endpoint_queue "$TEMPLATE" "$pr_context")"
+plant "$TEMPLATE" "github.event_name == 'pull_request' && format('{0}^1', github.sha)" \
+  "github.event.pull_request.base.sha" "$SANDBOX/opened-base.yml"
+assert_eq "must-fail: the pull request's recorded base misses the mark" \
+  "queue_only=false cause=no-queue-path" "$(endpoint_queue "$SANDBOX/opened-base.yml" "$pr_context")"
+# The other events keep the base their payload names.
+# EVENT|PAYLOAD|BASE
+endpoint_rows=0
+while IFS='|' read -r event payload expected; do
+  endpoint_rows=$((endpoint_rows + 1))
+  assert_eq "the $event base end is $expected" "\"$expected\"" \
+    "$(gh_eval value "$(jq -cn --arg e "$event" --argjson p "$payload" '{github: {event_name: $e, sha: "run-sha", event: $p}}')" \
+      "$(endpoint_expr "$TEMPLATE" BASE)")"
+done <<'ROWS'
+merge_group|{"merge_group":{"base_sha":"group-base"}}|group-base
+push|{"before":"push-before"}|push-before
+ROWS
+require_rows endpoint "$endpoint_rows"
 
 # --- 5. The steps the classifier can live without -------------------------
 

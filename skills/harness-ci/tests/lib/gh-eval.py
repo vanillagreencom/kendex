@@ -13,7 +13,7 @@ CONTEXT_JSON is the object the expressions read, `github`, `needs`, `steps` or
 any other context, with `needs.<job>.result` set for every job a condition's
 status function reads. The evaluator covers string, number and boolean
 literals, context paths, `!`, `==`, `!=`, `&&`, `||`, parentheses, and the
-functions fromJSON, always, cancelled and success. Anything else is a refusal,
+functions fromJSON, format, always, cancelled and success. Anything else is a refusal,
 not a guess: every refusal starts `gh-eval: cause=` and exits 2. `==` compares
 strings without regard to case, `&&` and `||` return an operand, and a path
 that names no value is null, as GitHub evaluates them.
@@ -25,6 +25,34 @@ import sys
 TOKEN = re.compile(r"\s*(?:(\|\||&&|==|!=|!|\(|\)|,)|'((?:[^']|'')*)'"
                    r"|([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)|(\d+))")
 STATUS = ("always", "cancelled", "success", "failure")
+PLACEHOLDER = re.compile(r"\{\{|\}\}|\{(\d+)\}")
+
+
+def as_string(v):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, str)):
+        return str(v)
+    refuse("cause=format-argument type=%s" % type(v).__name__)
+
+
+# format(): `{N}` is the Nth argument as a string, `{{` and `}}` a literal
+# brace, as GitHub expands them.
+def format_string(template, args):
+    def expand(m):
+        if m.group(0) == "{{":
+            return "{"
+        if m.group(0) == "}}":
+            return "}"
+        index = int(m.group(1))
+        if index >= len(args):
+            refuse("cause=format-index index=%d" % index)
+        return as_string(args[index])
+    if not isinstance(template, str):
+        refuse("cause=format-template")
+    return PLACEHOLDER.sub(expand, template)
 
 
 def refuse(msg):
@@ -144,6 +172,8 @@ class Parser:
     def call(self, name, args):
         if name == "fromJSON":
             return json.loads(args[0])
+        if name == "format" and args:
+            return format_string(args[0], args[1:])
         if name == "always":
             return True
         if name == "cancelled":

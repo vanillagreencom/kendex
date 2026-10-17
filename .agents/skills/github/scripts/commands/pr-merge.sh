@@ -194,8 +194,12 @@ Merge route:
 
   The queue-only class is read only once everything else allows the admin
   route, from <skills>/harness-ci/scripts/change-class, else change-class on
-  PATH, over the PR's base and head. The classifier takes a merge-base diff, so both commits AND an ancestor they share must be in this
-  checkout, and baseRefOid is the base branch's current tip: the two SHAs
+  PATH, over the PR's base and head. The base is the base branch's current
+  tip, read from the branch, never the PR's baseRefOid: GitHub moves that
+  only when the PR itself is updated, so it can predate a lane mark or a
+  setting the base branch has since gained. The classifier takes a
+  merge-base diff, so both commits AND an ancestor they share must be in this
+  checkout: the two SHAs
   are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
   not readable, and it is checked again. Its stderr
   `queue-only: queue_only=true|false` line is the class, and change-class
@@ -398,13 +402,22 @@ checkout_root() {
 # The pull request's range as GitHub reports it: the base branch's current
 # tip and the head, blank-separated. Non-zero where it cannot be read, with
 # gh's own words, or the missing end, on stderr for the caller to keep.
+# The tip is read off the branch: the PR's baseRefOid is the base it was
+# last updated against, and a base declaration newer than that, a `:queue`
+# lane mark among them, is the one the merge lands on.
 pr_range() { # PR
-    local range_json base_sha head_sha
-    range_json=$(gh pr view "$1" --json baseRefOid,headRefOid) || return 1
-    base_sha=$(jq -r '.baseRefOid // ""' <<<"$range_json") || return 1
+    local range_json branch encoded base_sha head_sha
+    range_json=$(gh pr view "$1" --json baseRefName,headRefOid) || return 1
+    branch=$(jq -r '.baseRefName // ""' <<<"$range_json") || return 1
     head_sha=$(jq -r '.headRefOid // ""' <<<"$range_json") || return 1
-    if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
-        echo "pr-merge: pull request #$1 reports no base or head commit" >&2
+    if [ -z "$branch" ] || [ -z "$head_sha" ]; then
+        echo "pr-merge: pull request #$1 reports no base branch or head commit" >&2
+        return 1
+    fi
+    encoded=$(jq -nr --arg v "$branch" '$v | @uri') || return 1
+    base_sha=$(gh api "repos/{owner}/{repo}/branches/$encoded" --jq '.commit.sha // ""') || return 1
+    if [ -z "$base_sha" ]; then
+        echo "pr-merge: base branch $branch reports no tip commit" >&2
         return 1
     fi
     printf '%s %s' "$base_sha" "$head_sha"
@@ -420,7 +433,7 @@ pr_range_present() { # ROOT BASE HEAD
         git -C "$1" merge-base "$2" "$3" >/dev/null 2>&1
 }
 
-# Make the range readable here, or say why it is not. baseRefOid is the base
+# Make the range readable here, or say why it is not. The base is the base
 # branch's CURRENT tip, which a checkout that has not fetched since another
 # pull request merged does not hold, and no classifier can read a diff to a
 # commit that is not here. Fetch the TWO SHAs, never every ref, without tags

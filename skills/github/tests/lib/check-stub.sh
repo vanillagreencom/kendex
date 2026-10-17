@@ -11,10 +11,11 @@
 # STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON_<id>,
 # per ruleset id, and its failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
 # post-merge read a GraphQL 200 carrying an errors array beside data, and
-# STUB_POST_VIEW_FAIL fails its pr-view fallback. STUB_BASE_OID is the base end of the pull
-# request's range, whose head end is STUB_RANGE_HEAD where set, else
-# STUB_HEAD, and STUB_RANGE_FAIL fails that
-# read. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
+# STUB_POST_VIEW_FAIL fails its pr-view fallback. STUB_BASE_TIP is the base end of the pull
+# request's range, the base branch's tip its branch read answers, whose head
+# end is STUB_RANGE_HEAD where set, else STUB_HEAD, and STUB_RANGE_FAIL fails
+# the pull request's half of that read. STUB_BASE_OID is the base GitHub
+# recorded on the pull request, its baseRefOid. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
 # reviewDecision and latestReviews, and STUB_REQUIRE_TOKEN refuses a
 # merge-path call without the bot token. The repository read answers
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
@@ -128,6 +129,7 @@ case "${1:-}" in
         [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
         classic='{"protection":{"enabled":false,"required_status_checks":{"contexts":[],"checks":[]}}}'
         [[ -z "${STUB_CLASSIC_JSON:-}" ]] || classic="$STUB_CLASSIC_JSON"
+        classic=$(jq -c --arg tip "${STUB_BASE_TIP:-base-oid}" '. + {commit: {sha: $tip}}' <<<"$classic")
         jq_filter=""
         prev=""
         for a in "$@"; do
@@ -367,16 +369,20 @@ case "${1:-}" in
                         '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
                     exit 0
                 fi
-                # The pull request's range, read only by the merge route.
-                # Matched before the headRefOid handler, whose pattern this
-                # one contains.
-                if [[ "$*" == *"--json baseRefOid,headRefOid"* ]]; then
+                # The pull request's half of the range, read only by the
+                # merge route. Matched before the baseRefName and headRefOid
+                # handlers, whose patterns this one contains.
+                if [[ "$*" == *"--json baseRefName,headRefOid"* ]]; then
                     if [[ "${STUB_RANGE_FAIL:-false}" == "true" ]]; then
                         echo "could not read the pull request endpoints" >&2
                         exit 1
                     fi
-                    jq -cn --arg b "${STUB_BASE_OID-base-oid}" --arg h "${STUB_RANGE_HEAD:-${STUB_HEAD:-test-head}}" \
-                        '{baseRefOid:(if $b == "" then null else $b end),headRefOid:$h}'
+                    jq -cn --arg b "${STUB_BASE:-main}" --arg h "${STUB_RANGE_HEAD:-${STUB_HEAD:-test-head}}" \
+                        '{baseRefName:$b,headRefOid:$h}'
+                    exit 0
+                fi
+                if [[ "$*" == *"--json baseRefOid"* ]]; then
+                    echo "${STUB_BASE_OID:-base-oid}"
                     exit 0
                 fi
                 if [[ "$*" == *"--json baseRefName"* ]]; then

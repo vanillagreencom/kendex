@@ -35,11 +35,13 @@ The kendex refresh route owns kendex's workflow and action refs.
 ```yaml
 env:
   EVENT: ${{ github.event_name }}
-  BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+  BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.merge_group.base_sha || github.event.before }}
   HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
 ```
 
 An event outside the three answers `false` on its own — an unset `BASE` needs no guard of yours.
+
+A pull request's base end is `github.sha^1`, the first parent of the merge ref the run checked out: the base that merge commit was built on. Never `github.event.pull_request.base.sha`. GitHub moves that field only when the pull request itself is updated, so a pull request opened before its base gained a `:queue` mark or a setting is otherwise classified against the base without it. `change-class` reads those settings and that declaration off `--base`. Git resolves the expression in the checkout, so the checkout holds the merge ref with its history, as every shape's `fetch-depth: 0` checkout does.
 
 A merge group's `base_sha` is the base its queue built it on: the default branch's tip for the first entry, and the head of the group ahead of it for an entry queued behind another, which holds that entry's changes before they land. The range is then the entry's own change, and the change-class settings and every other read of `--base` come from a tree that lands with it. The changes ahead of it are classified by their own groups, and the queue merges this group only after theirs pass, rebuilding it without any entry ahead that leaves the queue.
 
@@ -78,7 +80,7 @@ jobs:
       - id: classify
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.merge_group.base_sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
           .agents/skills/harness-ci/scripts/harness-only
@@ -130,7 +132,7 @@ jobs:
       - id: classify
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.merge_group.base_sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
           .agents/skills/harness-ci/scripts/harness-only
@@ -210,7 +212,7 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
       # The event and its endpoints, spelled once for every step that reads
       # the range, so no two steps can judge different ones.
       EVENT: ${{ github.event_name }}
-      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.merge_group.base_sha || github.event.before }}
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
     steps:
       - name: the classifier, from the default branch

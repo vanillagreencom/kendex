@@ -15,7 +15,8 @@
 # Environment, from the action's inputs, all required but BASE, CLASSIFIER,
 # LANES_FROM, QUEUE_ONLY_DEFAULT and COVERS_ALL_LANES:
 #   EVENT  github.event_name
-#   BASE   the base endpoint sha; empty where the event carries none
+#   BASE   the base endpoint, the action's `base` input; empty where the
+#          event carries none
 #   HEAD   the head endpoint sha
 #   REPO   the checkout to judge; on a pull request with a `:queue` lane to
 #          defer, its HEAD commit is read for the harness-ci render, below

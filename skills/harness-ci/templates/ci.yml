@@ -65,7 +65,10 @@ jobs:
       lane_test: ${{ steps.lanes.outputs.lane_test }}
     env:
       EVENT: ${{ github.event_name }}
-      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      # On pull_request the merge ref's first parent, never the pull
+      # request's base.sha: .agents/skills/harness-ci/references/wiring.md
+      # § The endpoint expressions.
+      BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.merge_group.base_sha || github.event.before }}
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
     steps:
       - name: the classifier, from the default branch

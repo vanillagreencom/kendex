@@ -43,7 +43,10 @@ inputs:
       pull_request or merge_group; any other event answers render or standard.
     required: true
   base:
-    description: The base endpoint sha. Empty where the event carries none.
+    description: >-
+      The base endpoint, a revision git resolves in `repo`, per event as
+      skills/harness-ci/references/wiring.md § The endpoint expressions
+      names it. Empty where the event carries none.
     required: false
     default: ''
   head:
