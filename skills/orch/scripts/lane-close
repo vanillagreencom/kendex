@@ -172,9 +172,10 @@ a hosted lane's .git through lane-host cat, as oversee-watch reads it before
 its own close of a merged hosted lane, and a read that fails refuses as
 worktree-read-failed.
 A Pi lane read unjudged also closes when its record carries the merge cycle
-and its worktree is gone, on a host whose capture verb reads its pane too.
-Every other unjudged lane refuses as lane-live, or as pane-read-failed where
-that capture verb read it.
+and its worktree is gone, on a host whose capture verb reads its pane too
+where that read and the harness status read both succeed. Every other
+unjudged lane refuses as lane-live, or as pane-read-failed where that
+capture verb read it.
 A limit banner below the lane's last turn is passed over only where
 `lanes pick --lane`, run under the record's host, so a hosted lane is read
 through the provider's copy, reads the account the record names as room, for
@@ -1252,9 +1253,10 @@ if [[ -n "$pane_id" ]]; then
   # from a detached session that may already have disappeared.
   ORCH_LANE_HOST="${host:-local}" lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" "" "" "$hosted_item" "$harness" "$hosted_source" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
-  # A Pi pane with no idle marker reads unjudged; the state switch below
-  # closes it only on the record's merge with its worktree gone.
-  [[ "$host_pane" != verb || "$state" != unjudged || "$harness" == pi ]] || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  # A Pi pane with no idle marker reads unjudged off a capture that worked;
+  # the state switch below closes it only on the record's merge with its
+  # worktree gone. A failed status or capture read is no observation at all.
+  [[ "$host_pane" != verb || "$state" != unjudged || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]] || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
   pane_screen="$LANE_PANE_SCREEN" hosted_source="$LANE_PANE_SOURCE"
 else
   # A window gone with its work finished, a tmux restart or a reboot among the

@@ -159,6 +159,7 @@ if [[ "$1" == capture ]]; then
   cat "$LANE_CLOSE_PROVIDER_SCREEN"; exit 0
 fi
 if [[ "$1" == status ]]; then
+  [[ "${LANE_CLOSE_STATUS_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_STATUS_FAIL"
   [[ "${LANE_CLOSE_HARNESS_STATE:-running}" == exited || "$(cat "$LANE_CLOSE_PHASE")" == exited ]] && echo exited || echo running
   exit 0
 fi
@@ -1349,35 +1350,46 @@ assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=
 
 # MODE is the host's pane reading: local captures the tmux window, verb the
 # provider's capture verb, where every hosted Pi lane is read.
-pi_unjudged_row() { # SCRIPT HARNESS CYCLE WHERE MODE
+# READ fails one provider read on a verb host: status, capture, or - for none.
+pi_unjudged_row() { # SCRIPT HARNESS CYCLE WHERE MODE [READ]
   write_state running "$2" /host; write_panes "$2"
   printf 'Pi session\n' > "$SCREEN"
   if [[ "$3" != - ]]; then
     jq --argjson pr "$3" '.lanes[0].cycle = {pr: $pr}' "$STATE" > "$STATE.next" && mv -- "$STATE.next" "$STATE"
   fi
-  LANE_CLOSE_HOST_PANE="$5" LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_HOST_GITFILE="$4" run_close "$1"
+  local status_fail=0 capture_fail=0
+  case "${6:--}" in status) status_fail=3 ;; capture) capture_fail=7 ;; esac
+  LANE_CLOSE_STATUS_FAIL="$status_fail" LANE_CLOSE_CAPTURE_STATUS="$capture_fail" \
+    LANE_CLOSE_HOST_PANE="$5" LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_HOST_GITFILE="$4" run_close "$1"
   PI_UNJUDGED="rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=unjudged pane=%7$' <<<"$ERR" || true) read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) close=$(close_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
 }
 for row in \
-  'local|pi|7|gone|rc=0 live=0 read=0 close=1 kill=1 status=done' \
-  'local|pi|7|standing|rc=1 live=1 read=0 close=0 kill=0 status=running' \
-  'local|pi|-|gone|rc=1 live=1 read=0 close=0 kill=0 status=running' \
-  'local|codex|7|gone|rc=1 live=1 read=0 close=0 kill=0 status=running' \
-  'verb|pi|7|gone|rc=0 live=0 read=0 close=1 kill=1 status=done' \
-  'verb|pi|7|standing|rc=1 live=1 read=0 close=0 kill=0 status=running' \
-  'verb|pi|-|gone|rc=1 live=1 read=0 close=0 kill=0 status=running' \
-  'verb|codex|7|gone|rc=1 live=0 read=1 close=0 kill=0 status=running' \
-  'verb|claude|7|gone|rc=1 live=0 read=1 close=0 kill=0 status=running'; do
-  IFS='|' read -r mode harness cycle where want <<<"$row"
-  pi_unjudged_row "$SCRIPT" "$harness" "$cycle" "$where" "$mode"
-  assert_eq "$PI_UNJUDGED" "$want" "unjudged $mode $harness cycle=$cycle worktree=$where: merged-and-gone close"
+  'local|pi|7|gone|-|rc=0 live=0 read=0 close=1 kill=1 status=done' \
+  'local|pi|7|standing|-|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'local|pi|-|gone|-|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'local|codex|7|gone|-|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'verb|pi|7|gone|-|rc=0 live=0 read=0 close=1 kill=1 status=done' \
+  'verb|pi|7|standing|-|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'verb|pi|-|gone|-|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'verb|pi|7|gone|status|rc=1 live=0 read=1 close=0 kill=0 status=running' \
+  'verb|pi|7|gone|capture|rc=1 live=0 read=1 close=0 kill=0 status=running' \
+  'verb|codex|7|gone|-|rc=1 live=0 read=1 close=0 kill=0 status=running' \
+  'verb|claude|7|gone|-|rc=1 live=0 read=1 close=0 kill=0 status=running'; do
+  IFS='|' read -r mode harness cycle where failed want <<<"$row"
+  pi_unjudged_row "$SCRIPT" "$harness" "$cycle" "$where" "$mode" "$failed"
+  assert_eq "$PI_UNJUDGED" "$want" "unjudged $mode $harness cycle=$cycle worktree=$where failed-read=$failed: merged-and-gone close"
 done
 MUTANT="$(mutant lane-close-pi-unjudged '    state=idle ;;' '    message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;')"
 pi_unjudged_row "$MUTANT" pi 7 gone local
 assert_eq "$PI_UNJUDGED" 'rc=1 live=1 read=0 close=0 kill=0 status=running' 'control: without Pi acceptance the merged-and-gone lane refuses as unjudged'
-MUTANT="$(mutant lane-close-pi-verb-unjudged ' || "$harness" == pi ]] || { message pane-read-failed' ' ]] || { message pane-read-failed')"
+MUTANT="$(mutant lane-close-pi-verb-unjudged ' || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]] || { message pane-read-failed' ' ]] || { message pane-read-failed')"
 pi_unjudged_row "$MUTANT" pi 7 gone verb
 assert_eq "$PI_UNJUDGED" 'rc=1 live=0 read=1 close=0 kill=0 status=running' 'control: the hosted unjudged refusal ahead of the switch strands a merged-and-gone Pi lane'
+MUTANT="$(mutant lane-close-pi-verb-unread ' && "$LANE_PANE_SOURCE" == provider ) ]]' ' ) ]]')"
+for failed in status capture; do
+  pi_unjudged_row "$MUTANT" pi 7 gone verb "$failed"
+  assert_eq "$PI_UNJUDGED" 'rc=0 live=0 read=0 close=1 kill=1 status=done' "control: without the provider-read check a failed $failed read closes a merged-and-gone Pi lane"
+done
 
 echo '=== an idle lane whose merge cycle is recorded closes while its item stays open ==='
 # A merged lane whose item has been reopened after a later failed check.
