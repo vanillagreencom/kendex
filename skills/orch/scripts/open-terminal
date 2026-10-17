@@ -2869,8 +2869,9 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # relaunch starts fresh. Or the lane's handoff record stands,
 # by the one judge `workflow-state handoff-standing` owns, read through
 # lib/lane-state.sh: the lane handed its work to the record, so its session is
-# retired. Only a fresh start carries the record on, since ../workflows/start.md § 0
-# reads it and a resumed session never runs that step.
+# retired. Only a fresh start carries the record on: ../workflows/start.md § 0
+# reads it from the main checkout, and ../workflows/start-worktree.md § 1 step 3
+# runs that § 0 from a lane's worktree cwd. A resumed session runs neither.
 #
 # The handoff record is asked from the lane's worktree with no --state-dir and
 # that worktree named, the places the fresh start's § 0 reads it too: the

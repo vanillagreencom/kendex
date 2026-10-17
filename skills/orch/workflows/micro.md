@@ -63,7 +63,7 @@ A container, a blocked child, or a bundle escapes here (§ Escape condition 1).
 git -C [MAIN_REPO_ROOT] checkout -b [BRANCH]
 ```
 
-In a lane worktree the branch already exists: gate on base freshness through [start-worktree.md](start-worktree.md) § 1 step 6 instead, and stop on its failure.
+In a lane worktree the branch already exists: gate on base freshness through [start-worktree.md](start-worktree.md) § 1 step 7 instead, and stop on its failure.
 
 Read the branch both routes now stand on and initialize the item's workflow state with it. Its output binds `[BRANCH]` on the lane route, where nothing has named the branch yet, and confirms it on the other. `[BRANCH]` is the only name this workflow gives that branch, including § 4's `[PR_BRANCH]`:
 

@@ -19,7 +19,9 @@ The full session from inside a worktree: implement → publication and review in
 
    Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to `git-context repo-root .`.
 
-3. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
+3. **Resume from a handoff.** Run [start.md](start.md) § 0 for `[ISSUE_ID]`: its `handoff-standing` read, its stop-and-report rule, and its `handoff-resume` stamp. A `none` verdict → step 4. A stamped record replaces the rest of this file: take step 6's existing-state branch, then continue from the first entry of the record's `remaining` list.
+
+4. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
 
    ```bash
    .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
@@ -27,7 +29,7 @@ The full session from inside a worktree: implement → publication and review in
 
    A Verifying item stops development preparation here. Its live readings belong to the overseer. A container, a blocked item, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked item: name the live blockers.
 
-4. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
+5. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 
    ```bash
    .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID] --adopt
@@ -35,7 +37,7 @@ The full session from inside a worktree: implement → publication and review in
 
    `--adopt` takes over the lease the session-start hook took under this session's environment owner. Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. A flock-less host still serializes through the guard's mkdir mutex; exit 1 means the guard itself failed — stop and read its message, never continue unguarded.
 
-5. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
+6. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
@@ -63,7 +65,7 @@ The full session from inside a worktree: implement → publication and review in
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier standard
    ```
 
-6. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused:
+7. **Gate on base freshness.** Every route into a worktree lands here, fresh or reused, except a handoff resume (step 3):
 
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
