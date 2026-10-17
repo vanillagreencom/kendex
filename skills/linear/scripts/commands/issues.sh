@@ -234,11 +234,12 @@ Complete Options:
                         merge, Trigger and Deadline on one line. A missing
                         Trigger means merge. Trigger accepts merge, a UTC time
                         at or after merge, or release OWNER/REPO TAG-GLOB.
-                        Deadlines follow the trigger by at most 72 hours.
-                        Release deadlines use +Nh after the first matching
-                        publication after merge. In a repository where the
-                        item merged, that release must contain its latest
-                        merge commit. Other deadlines use UTC.
+                        Deadline is +Nh, N from 1 through 72, counted from
+                        the trigger: mergedAt, the stated time, or the first
+                        matching publication after merge. In a repository
+                        where the item merged, that release must contain its
+                        latest merge commit. A merge or time trigger also
+                        takes a UTC deadline at most 72 hours after it.
                         Every completion reads the checklist, with or without
                         this option. Open branch boxes refuse. Post-merge boxes
                         follow the phase above. Ticked boxes require a

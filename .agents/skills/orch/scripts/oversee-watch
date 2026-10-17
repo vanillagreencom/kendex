@@ -5116,8 +5116,8 @@ verifying_read() { # SAFE_ITEMS
     merged=null
     merged_repos='{}'
     # verifying_parse prints compact JSON, where this text can only be a
-    # box's own trigger field: a quote inside a value is escaped.
-    if [[ "$boxes" == *'"trigger_kind":"release"'* ]]; then
+    # box's own field: a quote inside a value is escaped.
+    if [[ "$boxes" == *'"needs_merge":true'* ]]; then
       merged_rows=""
       for repo in "${REPOS[@]}"; do
         merged_item_read "$id" "$repo" null null "$floor" "$read_dir" "$search" "$items"

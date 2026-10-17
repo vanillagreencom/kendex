@@ -52,9 +52,11 @@ verifying_parse() { # SAFE_ROW
          else [.boxes[] | select((.checked | not) or ((.number as $n | $missing | index($n)) != null))] end)
       | map(
         . + {trigger: "outcome", trigger_kind: "outcome", trigger_epoch: null,
-               deadline_epoch: null, deadline: null, reading: .text, where: "-", why: "-"})
+               deadline_epoch: null, deadline_hours: null, deadline: null, reading: .text, where: "-", why: "-"})
     else if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)
-    then [.boxes[] | select(.post_merge and (.checked | not))] else empty end end' <<<"$parsed")" || boxes=""
+    then [.boxes[] | select(.post_merge and (.checked | not))] else empty end end
+    # A release box and a merge box with +Nh read the deadline from the merge.
+    | map(. + {needs_merge: (.trigger_kind == "release" or (.trigger_kind == "merge" and .deadline_hours != null))})' <<<"$parsed")" || boxes=""
   if [[ -z "$boxes" ]]; then
     verifying_error verifying-invalid "issue=$id"
     printf '%s\n' "$parsed" >&2
@@ -66,18 +68,21 @@ verifying_parse() { # SAFE_ROW
 verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT GH_CLI [PASS_READ_DIR]
   # GH_CLI follows reconciliation's existing command-word contract.
   local row="$1" merged="$2" merged_repos="$3" now="$4" boxes="$5" errf="$6" release_limit="$7" gh_cli="$8"
-  local records id number repo oid glob releases resolved at compare_tag tag comparison read_file fired_at=""
-  # The issue ID, then one record per release box. The glob comes last, so
-  # read keeps any separator it holds; an oid of `invalid` is a merge row
-  # whose commit is not a full hexadecimal object name.
+  local records id needs_merge number repo oid glob releases resolved at compare_tag tag comparison read_file fired_at=""
+  # The issue ID and whether any box needs the merge, then one record per
+  # release box. The glob comes last, so read keeps any separator it holds;
+  # an oid of `invalid` is a merge row whose commit is not a full
+  # hexadecimal object name.
   records="$(jq -r --argjson row "$row" --argjson repos "$merged_repos" '
-    $row.id, (.[] | select(.trigger_kind == "release")
+    "\($row.id)\u001f\(any(.[]; .needs_merge))", (.[] | select(.trigger_kind == "release")
       | ($repos[.release_repo | ascii_downcase]
           | if . == null then "" else (try (.mergeCommit.oid | select(type == "string") | select(test("^[0-9a-fA-F]{40}$"))) catch null) // "invalid" end) as $oid
       | "\(.number)\u001f\(.release_repo)\u001f\($oid)\u001f\(.release_glob)")' <<<"$boxes")" || return 1
   id="${records%%$'\n'*}"
+  needs_merge="${id##*$'\037'}"
+  id="${id%$'\037'*}"
+  [[ "$needs_merge" == false || "$merged" != null ]] || { verifying_error verifying-merge-unread "issue=$id"; return 2; }
   if [[ "$records" == *$'\n'* ]]; then
-    [[ "$merged" != null ]] || { verifying_error verifying-merge-unread "issue=$id"; return 2; }
     while IFS=$'\037' read -r number repo oid glob; do
       [[ "$oid" != invalid ]] || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
       read_file=""
@@ -127,12 +132,16 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
     done <<<"${records#*$'\n'}"
   fi
   # Every box result in one pass: release boxes take their resolved
-  # publication, then each box takes its status on this pass's clock.
+  # publication, a +Nh deadline counts from its trigger, then each box takes
+  # its status on this pass's clock.
   boxes="$(jq -c --argjson row "$row" --argjson now "$now" --argjson merged "$merged" --argjson fired_at "{$fired_at}" '
     (($row.blocked_by_open // []) | length > 0) as $blocked
     | map((.number | tostring) as $number
       | if $fired_at | has($number) then $fired_at[$number] as $fired
           | .trigger_epoch = $fired | .merged = ($merged | todateiso8601)
+        else . end
+      | if .deadline_hours != null then
+          (if .trigger_kind == "merge" then $merged else .trigger_epoch end) as $fired
           | .deadline_epoch = (if $fired == null then null else $fired + (.deadline_hours * 3600) end)
           | .deadline = (if .deadline_epoch == null then null else .deadline_epoch | todateiso8601 end)
         else . end

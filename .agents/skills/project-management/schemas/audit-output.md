@@ -159,6 +159,8 @@ In a map repository a `create` whose item routes to no map project has `project.
 
 `approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval, and `reapprove: true` marks an entry changed since; a normalizer that drops one must drop both. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
 
+A `Post-merge:` box in `create_fields.description` follows [SKILL.md](../SKILL.md) § Disposition and writes its deadline as `Deadline: +Nh`, the form both `issues create` and `issues complete` accept.
+
 ### Hierarchy Field
 
 | `hierarchy.action` | `hierarchy.parent` | Meaning |

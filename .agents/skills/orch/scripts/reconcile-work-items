@@ -23,8 +23,9 @@
 #   verifying-empty   a Verifying issue or container with no unproved box
 #   verifying-invalid a Verifying description missing required box metadata or
 #                     still holding open branch-provable work
-#   verifying-merge-unread a release item with no merged PR on its local branch;
-#                     its boxes are skipped, and the sweep continues
+#   verifying-merge-unread an item whose release or +Nh merge box finds no
+#                     merged PR on its local branch; its boxes are skipped,
+#                     and the sweep continues
 #
 # Exit codes: 0 nothing to reconcile; 1 findings; 2 config/collection error.
 #
@@ -32,7 +33,7 @@
 # RECONCILE_GH_CLI        PR-probe command (default gh). A started-item read
 #                         failure reports pr-probe-failed; stale items retain
 #                         started-stale with PR state unverified. A Verifying
-#                         release-item read failure exits 2. A successful read
+#                         item's merge read failure exits 2. A successful read
 #                         with no local branch merge reports verifying-merge-unread
 #                         and continues without reading that item's boxes.
 #                         The watch reads such items through its own connected-
@@ -260,7 +261,7 @@ while IFS= read -r row; do
   fi
   merge_epoch=null
   merged_repos='{}'
-  if jq -e 'any(.[]; .trigger_kind == "release")' <<<"$boxes" >/dev/null; then
+  if jq -e 'any(.[]; .needs_merge)' <<<"$boxes" >/dev/null; then
     branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
     prs="$(probe_prs "$branch" verifying 2>"$TMPD/pr-probe-error")" || {
       cat -- "$TMPD/pr-probe-error" >&2

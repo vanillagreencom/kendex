@@ -277,8 +277,8 @@ require_issue_header_shape() {
 		| ([$parsed.boxes[] | select(.post_merge)
 			| if (.trigger | test("^release(?: |$)")) and .trigger_kind != "release" then
 				{rule: "post-merge-release-repository", box: .number, fix: "Use Trigger: release OWNER/REPO TAG-GLOB."}
-			  elif .deadline_epoch == null and ((.deadline // "") | test("^\\+[0-9]+h$") | not) then
-				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh or a real UTC time in YYYY-MM-DDTHH:MM:SSZ form."}
+			  elif .deadline_rule != null then
+				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh with N from 1 through 72, or after a merge or time trigger a real UTC time in YYYY-MM-DDTHH:MM:SSZ form at most 72 hours after it."}
 			  else empty end] | first) as $post
 		| if $first != null and ($first.text | header) then
 			{error: "issue-header-opening line=\($first.line) length=\($first.length)\nRefusing an issue body that opens with a header line. Open with the outcome sentence; the **Key**: and Reached by: headers follow it.",
@@ -338,11 +338,19 @@ done_when_parse() {
                         | if has("release_repo") then . + {trigger_kind: "release", trigger_epoch: null} else {} end
                    end) as $trigger_fields
                 | ($fields.deadline // "" | utc_epoch) as $deadline_epoch
-                | (if $trigger_fields.trigger_kind == "release" then
-                      (try ($fields.deadline | capture("^\\+(?<hours>[0-9]+)h$").hours | tonumber) catch null) // null
-                   else null end) as $deadline_hours
+                | ((try ($fields.deadline | capture("^\\+(?<hours>[0-9]+)h$").hours | tonumber) catch null) // null) as $deadline_hours
+                # The one Deadline rule filing and completion both read: +Nh
+                # counts from any trigger; an absolute time follows a merge or
+                # time trigger by at most 72 hours, judged once its epoch is known.
+                | (if $deadline_hours != null then
+                      (if $deadline_hours < 1 or $deadline_hours > 72 then "post-merge-window" else null end)
+                   elif $deadline_epoch == null or $trigger_fields.trigger_kind == "release" then "post-merge-fields"
+                   elif $trigger_fields.trigger_epoch != null
+                        and ($deadline_epoch <= $trigger_fields.trigger_epoch or $deadline_epoch > ($trigger_fields.trigger_epoch + 259200)) then "post-merge-window"
+                   else null end) as $deadline_rule
                 | .boxes += [({number: $n, checked: (($open | not) or $tick), post_merge: $post,
-                               text: $body, evidence: $proof, deadline_epoch: $deadline_epoch, deadline_hours: $deadline_hours} + $fields + {trigger: $trigger} + $trigger_fields)]
+                               text: $body, evidence: $proof, deadline_epoch: $deadline_epoch, deadline_hours: $deadline_hours,
+                               deadline_rule: $deadline_rule} + $fields + {trigger: $trigger} + $trigger_fields)]
                 | if $tick then .out += [$line | sub("\\[ \\]"; "[x]")] | .ticked += 1
                   else .out += [$line] end
                 | if $selected and ($evidence | has($n | tostring)) then
@@ -357,11 +365,10 @@ done_when_parse() {
            missing: (if $met == "all" then [] else [$met[] | select(. > ($r.boxes | length))] | unique end),
            errors: [$r.boxes[] | select(.post_merge)
                 | if .trigger_kind == null or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)
-                     or (if .trigger_kind == "release" then .deadline_hours == null else .deadline_epoch == null end)
+                     or .deadline_rule == "post-merge-fields"
                     then {box: .number, rule: "post-merge-fields"}
-                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or .deadline_hours > 72)
-                        else ($merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))
-                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)
+                  elif .deadline_rule != null
+                       or (.trigger_kind != "release" and $merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))
                     then {box: .number, rule: "post-merge-window"}
                   else empty end]}
         | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))

@@ -45,7 +45,7 @@
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[OWNER]` | Caller: the person or request that authorizes the work | Omit when absent |
 | `[OUTCOME]` | `items[].description`, or `create_fields.description` in analyzed mode | State the change and its impact in plain words |
-| `[DONE]` / `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | Summarize completion in one sentence; list its observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives, only when it needs a deployment or installation, live use over time, or a person's screen or hands |
+| `[DONE]` / `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | Summarize completion in one sentence; list its observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives with `Deadline: +Nh`, only when it needs a deployment or installation, live use over time, or a person's screen or hands |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
 | `--project` (create flag, not body text) | `project.recommended` in the audit output, or the caller | Under a declared project map, the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included, or none: the item is `project_needed` and is not created |

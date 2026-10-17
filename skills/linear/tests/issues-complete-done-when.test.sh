@@ -282,17 +282,42 @@ assert_jq "a missing Trigger parses as merge" "$parsed" '.boxes[0].trigger == "m
 parsed="$(done_when_parse "## Done when"$'\n'"- [ ] ${post/merged release/merged release; live evidence}" '[]' "$merged")"
 assert_jq "a semicolon in Why preserves the legacy form" "$parsed" '(.errors | length) == 0 and .boxes[0].trigger == "merge"'
 
-while IFS='|' read -r name trigger deadline; do
+# Filing and completion read one Deadline rule: a box that files completes,
+# and a box completion refuses refuses at filing too. Columns: name | trigger
+# | deadline | the completion rule, or valid.
+while IFS='|' read -r name trigger deadline rule; do
   printf '%s\n' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
   log="$TMP_ROOT/trigger-$name.jsonl"
+  filed=0
+  require_issue_header_shape "$(cat "$TMP_ROOT/trigger.md")" 2>"$TMP_ROOT/filing.err" || filed=$?
   rc=0
   run_complete "$TMP_ROOT/trigger.md" "$log" CC-720 --post-merge-at "$merged" >"$TMP_ROOT/trigger.out" 2>"$TMP_ROOT/trigger.err" || rc=$?
-  assert_eq "post-merge $name trigger completes successfully" "$rc" 0
-  assert_jq "post-merge $name trigger keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
+  if [[ "$rule" == valid ]]; then
+    assert_eq "post-merge $name files" "$filed" 0
+    assert_eq "post-merge $name trigger completes successfully" "$rc" 0
+    assert_jq "post-merge $name trigger keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
+  else
+    assert_eq "post-merge $name refuses at filing" "$filed" 1
+    assert_jq "post-merge $name names the filing rule" "$(cat "$TMP_ROOT/filing.err")" '.rule == "post-merge-deadline" and .box == 2'
+    assert_ne "post-merge $name refuses at completion" "$rc" 0
+    assert_jq "post-merge $name names the completion rule" "$(cat "$TMP_ROOT/trigger.err")" ".errors == [{box: 2, rule: \"$rule\"}]"
+    assert_not "post-merge $name writes nothing" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
+  fi
 done <<'ROWS'
-merge|merge|2026-10-04T00:00:00Z
-time|2026-10-05T00:00:00Z|2026-10-08T00:00:00Z
-release|release owner/repo v*|+72h
+merge|merge|2026-10-04T00:00:00Z|valid
+time|2026-10-05T00:00:00Z|2026-10-08T00:00:00Z|valid
+release|release owner/repo v*|+72h|valid
+merge-relative|merge|+72h|valid
+time-relative|2026-10-05T00:00:00Z|+24h|valid
+merge-early|merge|+0h|post-merge-window
+merge-late|merge|+73h|post-merge-window
+time-relative-early|2026-10-05T00:00:00Z|+0h|post-merge-window
+time-relative-late|2026-10-05T00:00:00Z|+73h|post-merge-window
+time-early|2026-10-05T00:00:00Z|2026-10-05T00:00:00Z|post-merge-window
+time-late|2026-10-05T00:00:00Z|2026-10-08T00:00:01Z|post-merge-window
+release-early|release owner/repo v*|+0h|post-merge-window
+release-late|release owner/repo v*|+73h|post-merge-window
+release-deadline|release owner/repo v*|2026-10-02T00:00:00Z|post-merge-fields
 ROWS
 
 # The validator and watch consume these normalized fields from one parser.
@@ -328,11 +353,6 @@ date|Post-merge: Read health; Where: service; Why after merge: live release; Dea
 trigger|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: someday; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
 trigger-empty|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: ; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
 trigger-before-merge|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-09-30T00:00:00Z; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-window"
-time-early|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-10-05T00:00:00Z; Deadline: 2026-10-05T00:00:00Z|x|.errors[0].rule == "post-merge-window"
-time-late|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-10-05T00:00:00Z; Deadline: 2026-10-08T00:00:01Z|x|.errors[0].rule == "post-merge-window"
-release-late|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +73h|x|.errors[0].rule == "post-merge-window"
-release-early|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: +0h|x|.errors[0].rule == "post-merge-window"
-release-deadline|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: release owner/repo v*; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
 ROWS
 # An invalid merge timestamp refuses before any API request.
 log="$TMP_ROOT/merge-timestamp.jsonl"

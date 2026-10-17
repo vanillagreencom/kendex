@@ -229,6 +229,8 @@ while IFS='|' read -r name trigger deadline releases status due_at control; do
     fired) mutate_file "$mutant_lib" '$fired + (.deadline_hours * 3600)' '$merged + 259200' ;;
     merge) mutate_file "$mutant_lib" '.deadline_epoch <= $now' 'false' ;;
     null) mutate_file "$mutant_lib" '.deadline_epoch != null and ' '' ;;
+    merge-hours) mutate_file "$mutant_lib" 'then $merged else .trigger_epoch end' 'then null else .trigger_epoch end' ;;
+    hours) mutate_file "$mutant_lib" 'if .deadline_hours != null then' 'if false then' ;;
   esac
   CONTROL_OUT="$(cd "$R" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" LINEAR_API_KEY_OVERRIDE=test-token REAL_DATE="$REAL_DATE" VERIFY_NOW=2026-10-04T01:00:00Z RELEASES="$TMP_ROOT/releases.json" STATE="$TMP_ROOT/release-state" "$MUTANT_RW" 2>&1)" || true
   assert_not_contains "$CONTROL_OUT" 'scan-failed' "control: $name reaches a complete judgement"
@@ -238,6 +240,8 @@ waiting|release owner/repo v*|+72h|[]|waiting|-|waiting
 null|release owner/repo v*|+72h|[]|waiting|-|null
 fired|release owner/repo v*|+72h|[{"tagName":"v1","publishedAt":"2026-10-02T00:00:00Z","isDraft":false}]|due|2026-10-05T00:00:00Z|fired
 merge|merge|2026-10-04T00:00:00Z|[]|overdue|2026-10-04T00:00:00Z|merge
+merge-relative|merge|+72h|[]|overdue|2026-10-04T00:00:00Z|merge-hours
+time-relative|2026-10-03T12:00:00Z|+24h|[]|due|2026-10-04T12:00:00Z|hours
 ROWS
 printf '%s\n' '[]' >"$TMP_ROOT/releases.json"
 for control in overdue empty stale fields branch; do
