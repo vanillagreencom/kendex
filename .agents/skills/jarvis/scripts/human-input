@@ -44,6 +44,7 @@ def main():
         "shot": ["grim", *(["-g", args.rectangle] if getattr(args, "rectangle", None) is not None else []), "-"],
     }
     argv = commands[args.verb]
+    hyprctl = None
     if args.verb == "move" and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         hyprctl = shutil.which("hyprctl")
         if hyprctl:
@@ -67,9 +68,10 @@ def main():
     else:
         # Keyboard and pointer tools need the caller's active desktop environment.
         # Typing duration depends on stdin length and the selected per-key delay.
-        result = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        result = subprocess.run(argv, stdout=subprocess.PIPE if hyprctl else subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 timeout=None if args.verb == "type" else 30)
-    if result.returncode:
+    # hyprctl can exit successfully when the compositor rejects the dispatcher.
+    if result.returncode or (hyprctl and result.stdout.strip() != b"ok"):
         parser.exit(1, "human-input: operation=failed\n")
 
 
