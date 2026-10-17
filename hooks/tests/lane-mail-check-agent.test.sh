@@ -5,26 +5,38 @@
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
-# Claude's measured Agent call and its result: a launched child with no
+# Claude's measured tool call and its result. A launched child with no
 # terminal notification after it is still out.
-append_agent() { # RESULT [IS_ERROR]
-  jq -nc '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"call-agent",name:"Agent",input:{}}]}}' >> "$TRANSCRIPT"
-  jq -nc --arg r "$1" --argjson e "${2:-false}" \
+append_call() { # TOOL INPUT RESULT [IS_ERROR]
+  jq -nc --arg t "$1" --argjson i "$2" '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"call-agent",name:$t,input:$i}]}}' >> "$TRANSCRIPT"
+  jq -nc --arg r "$3" --argjson e "${4:-false}" \
     '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-agent",content:$r,is_error:$e}]}}' >> "$TRANSCRIPT"
 }
-append_launch() { append_agent 'Async agent launched successfully. agentId: a1'; }
+append_agent() { # INPUT RESULT [IS_ERROR]
+  append_call Agent "$@"
+}
+append_launch() { append_agent '{"run_in_background":true}' 'Async agent launched successfully. agentId: a1'; }
 # The teammate spawn Claude Code writes for a named Agent call.
 append_teammate() {
-  append_agent "$(printf 'Spawned successfully. (This tool result is internal metadata.)\nagent_id: areviewer-t1\nname: reviewer\nThe agent is now running and will receive instructions via mailbox.')"
+  append_agent '{"name":"reviewer"}' "$(printf 'Spawned successfully. (This tool result is internal metadata.)\nagent_id: areviewer-t1\nname: reviewer\nThe agent is now running and will receive instructions via mailbox.')"
 }
 append_notice() { # ID STATUS
   jq -nc --arg id "$1" --arg s "$2" '{type:"user",message:{role:"user",content:("<task-notification><task-id>"+$id+"</task-id><status>"+$s+"</status></task-notification>")}}' >> "$TRANSCRIPT"
 }
+# The idle notification Claude Code delivers after each teammate report.
+append_idle() { # NAME
+  jq -nc --arg n "$1" '{type:"user",message:{role:"user",content:("Another Claude session sent a message:\n<teammate-message teammate_id=\""+$n+"\" color=\"blue\">\n{\"type\":\"idle_notification\",\"from\":\""+$n+"\",\"idleReason\":\"available\"}\n</teammate-message>")}}' >> "$TRANSCRIPT"
+}
 
 # A transcript scan needs the host's timeout command; without it the roster
-# is unknown, which keeps the reserve as an agent out does.
+# is unknown, which keeps the reserve but observes no return, so a refusal
+# that names the wait where the scan reads an agent out names none there.
 SCAN_AVAILABLE=0
 if command -v timeout >/dev/null 2>&1; then SCAN_AVAILABLE=1; fi
+scan_key() { # KEY
+  if [ "$SCAN_AVAILABLE" -eq 1 ]; then printf '%s\n' "$1"; else printf '%s\n' "${1/agent-reserve=/agent-unobserved=}"; fi
+}
+handoffs_named() { grep -c 'set .* handoff ' "$ERR_FILE" || true; }
 
 launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if any
   local tokens="$1" tool="$2"
@@ -33,10 +45,16 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if an
   case "${AGENTS:-}" in
     out) append_launch ;;
     teammate) append_teammate ;;
-    # A result neither measured form matches, such as a foreground result.
-    unclassified) append_agent 'The review found no defects.' ;;
+    returned) append_teammate; append_idle reviewer ;;
+    # A plain-text send starts the idle teammate's next turn.
+    resumed) append_teammate; append_idle reviewer; append_call SendMessage '{"to":"reviewer","message":"Recheck the head."}' '{"success":true}' ;;
+    shutdown) append_teammate; append_call SendMessage '{"to":"reviewer","message":{"type":"shutdown_request"}}' '{"success":true}' ;;
+    # A foreground call's result is its finished child's output.
+    foreground) append_agent '{}' 'The review found no defects.' ;;
+    # A background call whose result neither measured launch form matches.
+    unclassified) append_agent '{"run_in_background":true}' 'The review found no defects.' ;;
     # A refused call launched nothing.
-    refused) append_agent 'PreToolUse:Agent hook error: refused' true ;;
+    refused) append_agent '{"run_in_background":true}' 'PreToolUse:Agent hook error: refused' true ;;
   esac
   ARM_ARGS=(halt)
   run_payload "$(jq -nc --arg t "$tool" --arg p "$TRANSCRIPT" \
@@ -49,28 +67,35 @@ mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
 TRANSCRIPT="$TMP_ROOT/agent-launch.jsonl"
 # The reserve applies only while an attached agent may be out; with none out
 # the launch meets the plain mark, 400000 tokens or strictly past the
-# percentage. Below that mark the reserve alone refuses as agent-reserve,
-# which names no handoff. An unreadable roster is never none, so rows whose
-# roster reads out or unknown also hold where the scan is unavailable.
+# percentage, the one mark that names a handoff. Below it the reserve refuses
+# as agent-reserve with an agent out, naming no handoff, and as
+# agent-unobserved where the roster is unknown, naming the lane's handoff.
+# Rows a scan reads as none are skipped where the scan is unavailable.
 while IFS='|' read -r agents tokens tool reserve rc key; do
-  case "$agents" in none | refused) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
+  case "$agents" in out | teammate | resumed | unclassified) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
+  key=$(scan_key "$key")
   AGENTS=$agents launch "$tokens" "$tool" "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$reserve"
   expect "$rc" "$key" "launch $tool at $tokens with reserve $reserve and agents $agents"
   case "$key" in
-    *agent-reserve=*) assert_eq "$(grep -c 'set .* handoff ' "$ERR_FILE" || true)" 0 "the reserve refusal at $tokens with agents $agents names no handoff" ;;
+    *agent-reserve=*) assert_eq "$(handoffs_named)" 0 "the reserve refusal at $tokens with agents $agents names no handoff" ;;
+    *agent-unobserved=* | *agent-launch=*) assert_eq "$(handoffs_named)" 1 "the refusal at $tokens with agents $agents names the lane handoff" ;;
   esac
 done <<'ROWS'
 out|249999|Agent||0|-
 out|250000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000
 out|250001|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250001 reserve=150000
 out|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-out|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=150000
+out|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000
 teammate|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-unclassified|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+returned|260000|Agent||0|-
+resumed|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+shutdown|260000|Agent||0|-
+foreground|260000|Agent||0|-
+unclassified|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
 refused|260000|Agent||0|-
 none|260000|Agent||0|-
 none|399999|Agent||0|-
-none|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=none
+none|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000
 out|100000|Agent|50000|0|-
 out|250000|Bash||0|-
 out|600000|TaskOutput||0|-
@@ -79,6 +104,17 @@ out|250000|Agent|-1|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_
 out|0|Agent|400000|2|lane-mail-check: agent-reserve=Agent tokens=0 reserve=400000
 none|0|Agent|400000|0|-
 ROWS
+# An unknown capacity is unmeasured at the plain mark, which is judged first,
+# so no agent out turns it into a reserve-only hold.
+for agents in none out; do
+  [ "$agents" = out ] || [ "$SCAN_AVAILABLE" -eq 1 ] || continue
+  usage_line sonnet 260000 > "$TRANSCRIPT"
+  [ "$agents" = none ] || append_launch
+  ARM_ARGS=(halt)
+  run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Agent",tool_input:{}}')" DISABLE_AUTO_COMPACT=0
+  ARM_ARGS=()
+  expect 2 'lane-mail-check: agent-input=context-unmeasured' "an unknown capacity at 260000 with agents $agents is unmeasured"
+done
 if [ "$SCAN_AVAILABLE" -eq 1 ]; then
   # A terminal notification brings the child back, so the plain mark applies.
   write_transcript "$TRANSCRIPT" 260000
@@ -162,19 +198,25 @@ while IFS='|' read -r harness tool tokens window rc key; do
   run_payload "$(jq -nc --arg p "$TRANSCRIPT" --arg t "$tool" --argjson w "$window" \
     '{session_id:"s1",transcript_path:$p,tool_name:$t,context_window:$w}')" ORCH_HANDOFF_AGENT_RESERVE_TOKENS=10000
   expect "$rc" "$key" "$harness attached tool $tool at its reserve boundary"
+  # No roster is read on this harness, so the refusal says so and names the
+  # lane's handoff rather than a wait.
+  if [ "$rc" = 2 ]; then
+    assert_eq "roster=$(sed -n 's/^lane-mail-check: agent-roster=//p' "$ERR_FILE") handoffs=$(handoffs_named)" \
+      "roster=unread harness=$harness handoffs=1" "$harness attached tool $tool names no roster and its handoff"
+  fi
   ARM_ARGS=()
 done <<'ROWS'
 codex|spawn_agent|119199|258400|0|-
-codex|spawn_agent|119200|258400|2|lane-mail-check: agent-reserve=spawn_agent tokens=119200 reserve=10000
-codex|multi_agent_v2.spawn_agent|119200|258400|2|lane-mail-check: agent-reserve=multi_agent_v2.spawn_agent tokens=119200 reserve=10000
-codex|collaborationspawn_agent|119200|258400|2|lane-mail-check: agent-reserve=collaborationspawn_agent tokens=119200 reserve=10000
+codex|spawn_agent|119200|258400|2|lane-mail-check: agent-unobserved=spawn_agent tokens=119200 reserve=10000
+codex|multi_agent_v2.spawn_agent|119200|258400|2|lane-mail-check: agent-unobserved=multi_agent_v2.spawn_agent tokens=119200 reserve=10000
+codex|collaborationspawn_agent|119200|258400|2|lane-mail-check: agent-unobserved=collaborationspawn_agent tokens=119200 reserve=10000
 codex|followup_task|119199|258400|0|-
-codex|followup_task|119200|258400|2|lane-mail-check: agent-reserve=followup_task tokens=119200 reserve=10000
-codex|collaborationfollowup_task|119200|258400|2|lane-mail-check: agent-reserve=collaborationfollowup_task tokens=119200 reserve=10000
-codex|multi_agent_v2.followup_task|119200|258400|2|lane-mail-check: agent-reserve=multi_agent_v2.followup_task tokens=119200 reserve=10000
+codex|followup_task|119200|258400|2|lane-mail-check: agent-unobserved=followup_task tokens=119200 reserve=10000
+codex|collaborationfollowup_task|119200|258400|2|lane-mail-check: agent-unobserved=collaborationfollowup_task tokens=119200 reserve=10000
+codex|multi_agent_v2.followup_task|119200|258400|2|lane-mail-check: agent-unobserved=multi_agent_v2.followup_task tokens=119200 reserve=10000
 codex|send_message|119200|258400|0|-
 pi|subagent|89999|200000|0|-
-pi|subagent|90000|200000|2|lane-mail-check: agent-reserve=subagent tokens=90000 reserve=10000
+pi|subagent|90000|200000|2|lane-mail-check: agent-unobserved=subagent tokens=90000 reserve=10000
 ROWS
 
 new_lane agent_copilot AGENT-1
@@ -189,7 +231,7 @@ for tool in task Agent Task; do
   ARM_ARGS=(halt)
   run_payload '{"sessionId":"s1","timestamp":1,"toolName":"'"$tool"'","toolArgs":{}}' ORCH_HANDOFF_AGENT_RESERVE_TOKENS=10000
   assert_eq "RC=$RC decision=$(jq -r '.permissionDecision' "$TMP_ROOT/stdout") first=$(first_line)" \
-    "RC=2 decision=deny first=lane-mail-check: agent-reserve=$tool tokens=70000 reserve=10000" 'Copilot camelCase names its attached launch and receives deny JSON'
+    "RC=2 decision=deny first=lane-mail-check: agent-unobserved=$tool tokens=70000 reserve=10000" 'Copilot camelCase names its attached launch and receives deny JSON'
 done
 ARM_ARGS=()
 CALL_ENV=()
@@ -201,12 +243,14 @@ new_overseer agent_overseer
 judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 AGENTS=out launch 250000 Agent $(overseer_env)
-expect 2 'lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000' 'the identified overseer meets the reserve'
+expect 2 "$(scan_key 'lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000')" 'the identified overseer meets the reserve'
 # Only a refusal at the plain mark names the succession, which oversee-succeed
-# judges by that same mark; a reserve refusal names none it would refuse.
+# judges by that same mark; a reserve refusal, with the roster read or not,
+# names none it would refuse.
 named_judge() { sed -n 's/.*oversee-succeed \(.*\) -- \[THE PERMISSION.*/\1/p' "$ERR_FILE" | head -n 1; }
 while IFS='|' read -r agents tokens rc key judge; do
-  [ "$agents" = out ] || [ "$SCAN_AVAILABLE" -eq 1 ] || continue
+  case "$agents" in out | unclassified) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
+  key=$(scan_key "$key")
   # shellcheck disable=SC2046
   AGENTS=$agents launch "$tokens" Agent $(overseer_env)
   expect "$rc" "$key" "overseer Agent launch at $tokens with agents $agents"
@@ -215,9 +259,11 @@ done <<'ROWS'
 out|240000|0|-|
 out|260000|2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000|
 out|300000|2|lane-mail-check: agent-reserve=Agent tokens=300000 reserve=150000|
-out|400000|2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=150000|--context 400000:1000000
+unclassified|300000|2|lane-mail-check: agent-unobserved=Agent tokens=300000 reserve=150000|
+out|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|--context 400000:1000000
+returned|260000|0|-|
 none|260000|0|-|
-none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=none|--context 400000:1000000
+none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|--context 400000:1000000
 ROWS
 record_overseer_handoff
 # shellcheck disable=SC2046
@@ -386,9 +432,9 @@ SCAN_TIMEOUT
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve unclassified wait; do
+  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground; do
     case "$mutation" in
-      completion | reserve | unclassified)
+      completion | reserve | unclassified | idle | resume | shutdown | foreground)
         # Each reddens only rows whose roster the transcript scan reads.
         if [ "$SCAN_AVAILABLE" -eq 0 ]; then
           printf 'skip: %s control requires a host timeout command\n' "$mutation"
@@ -404,10 +450,15 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then \.agents\[\$n\[0\]\] = \$n\[1\] else \. end/. /' ;;
       capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
       # Main's rule: the reserve applies whether or not an agent is out.
-      reserve) variant agent-reserve-always -e 's/^    attached_agents_out || held=none$/    :/' ;;
-      unclassified) variant agent-unclassified-none -e 's/then \.unclassified = true$/then ./' ;;
+      reserve) variant agent-reserve-always -e 's/^  attached_agents_out || return 0$/  attached_agents_out || :/' ;;
+      unclassified) variant agent-unclassified-none -e 's/else \.unclassified = true end)$/else . end)/' ;;
       # Main's refusal: the reserve alone names the handoff.
-      wait) variant agent-reserve-handoff -e 's/^      \*) refuse agent-reserve /      *) refuse_handoff agent-launch /' ;;
+      wait) variant agent-reserve-handoff -e 's/^    out:\*) refuse agent-reserve /    out:*) refuse_handoff agent-launch /' ;;
+      # Each measured transition the scan reads, removed in turn.
+      idle) variant agent-no-idle -e 's/then \.agents\[\.names\[\$n\[0\]\]\] = "completed" else/then . else/' ;;
+      resume) variant agent-no-resume -e 's/if (\$c\.input\.message | type) == "string" then/if false then/' ;;
+      shutdown) variant agent-no-shutdown -e 's/and \$c\.input\.message\.type == "shutdown_request" then/and false then/' ;;
+      foreground) variant agent-no-foreground -e 's/elif \$c\.sync then \.$/elif false then ./' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \

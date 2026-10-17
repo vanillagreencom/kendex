@@ -138,7 +138,9 @@
 #        --context, the watch's included, judges the account triggers alone.
 #        The shared lane_context_handoff_due rule judges both independent
 #        context triggers, using the same setting as the lane hook, and no
-#        agent reserve: a succession collects its attached children first.
+#        agent reserve, even with an agent out: the reserve protects only a
+#        new launch, and a succession waits for every attached child or names
+#        each unfinished one in the handoff.
 #        Below both it prints `context-below-mark`. An unmeasured context rule
 #        prints `context-unmeasured`, with `reason=window-unnamed` for a reading whose
 #        capacity is unknown below the token cap, and `reason=context-unread` for a

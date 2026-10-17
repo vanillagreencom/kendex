@@ -2075,9 +2075,11 @@ node|399999:|90|1|oversee-succeed: harness-unnamed pane=PANE
 foreign|100000:1000000|50|1|oversee-succeed: harness-unnamed pane=PANE
 ROWS
 
-# Succession judges by the plain mark alone, 400000 tokens or strictly past the
-# percentage, whatever the attached-result reserve setting: it runs only after
-# every attached child has returned, and the reserve is the launch refusal's.
+# The turn-end judge (--check-marks) and a succession judge by the plain mark
+# alone, 400000 tokens or strictly past the percentage, whatever the
+# attached-result reserve setting and even with an agent out: the reserve
+# protects only a new launch, and a succession waits for every attached child
+# or names each unfinished one in the handoff.
 while IFS='|' read -r reading reserve expected_rc verdict; do
   new_caller "$UNDER_MARK"
   AGENT_RESERVE="$reserve" CONTEXT_PCT=90 run_succeed agentreserve '' --check-marks --context "$reading"
