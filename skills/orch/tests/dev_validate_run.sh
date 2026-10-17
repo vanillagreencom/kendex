@@ -1402,7 +1402,7 @@ assert_eq "$RC $(sed -n 1p <<<"$OUT" | cut -d' ' -f1) $(verdict_of "$OUT")" \
   "0 state=started state=done guard-exit=0 validate=pass" \
   "an attached ci run prints its started line, then its done line" "$ERR"
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
-mutate_file "$CI_SCRIPT.mutant" '[[ "$attached" == true && "$validate_mode" != ci && "$bound_ended" == false && "$passed_before" == false ]]' '[[ "$attached" == true ]]'
+mutate_file "$CI_SCRIPT.mutant" '[[ "$attached" == true && ( "$validate_mode" != ci || "$scoped" == true ) && "$bound_ended" == false && "$passed_before" == false ]]' '[[ "$attached" == true ]]'
 ci_run "$CI_SCRIPT.mutant" --attached
 assert_eq "$(sed -n 1p <<<"$OUT" | cut -d' ' -f1)" "state=done" \
   "control: an attached ci run that skips its started line opens on the done line" "$ERR"
@@ -1511,9 +1511,14 @@ PUSH_ROWS=(
   'malformed queue line|push-first|pr-no-pr|standard|CI|full|none|full|class-uncovered|pass|||queue_only=unknown'
   'queue range subset|review-first|rules|standard|CI|range|subset|range|class-uncovered|pass|||queue_only=true cause=queue-lane'
   'branch queue work before fix|push-first|pr-no-pr|standard|CI|range|subset|range|class-uncovered|pass|||branch-only'
+  'fix before PR runs its selector scoped|push-first|pr-no-pr|standard|CI|ci|all|ci||pending'
+  'fix on open PR runs its selector scoped|push-first|rules|standard|CI|ci|all|ci||pending'
+  'red scoped suites before PR fail the round|push-first|pr-no-pr|standard|CI|ci|scoped-red|ci||FAILING'
+  'red scoped suites on open PR fail the round|push-first|rules|standard|CI|ci|scoped-red|ci||FAILING'
+  'red scoped suites before the queue fail the round|push-first|pr-no-pr-queue-required|standard|CI|ci|scoped-red|ci||FAILING||ci|queue_only=true cause=queue-lane|merge_group'
 )
 push_rows() { # SCRIPT [LABEL]
-  local row label order world class context request selector want_mode fallback verdict local_range want_resolve queue event resolved proj args dir head n=0
+  local row label order world class context request selector want_mode fallback verdict local_range want_resolve queue event resolved proj args dir head scoped_base scoped_echo n=0
   for row in "${PUSH_ROWS[@]}"; do
     IFS='|' read -r label order world class context request selector want_mode fallback verdict local_range want_resolve queue event <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
@@ -1525,7 +1530,12 @@ push_rows() { # SCRIPT [LABEL]
       sed '/^DEV_VALIDATE_RANGE_CMD =/d' "$proj/kendex.settings.toml" > "$proj/settings.next"
       mv "$proj/settings.next" "$proj/kendex.settings.toml"
     fi
-    [[ "$selector" == none ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+    # scoped-red previews all and fails the scoped run its preview admits.
+    case "$selector" in
+      none) ;;
+      scoped-red) printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; test $DEV_VALIDATE_SCOPED = false"\n' >> "$proj/kendex.settings.toml" ;;
+      *) printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml" ;;
+    esac
     git -C "$proj" add kendex.settings.toml
     git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m policy
     head="$(git -C "$proj" rev-parse HEAD)"
@@ -1557,7 +1567,21 @@ push_rows() { # SCRIPT [LABEL]
       fi
       if [[ "$want_mode" == ci ]]; then
         assert_eq "$(record_field ci-event "$OUT")" "$event" "$label records the required CI event" "$ERR"
-        assert_eq "$([[ -f "$dir/log" && -f "$dir/cmd" && ! -s "$dir/cmd" ]] && echo no-command || echo wrong-run)" no-command "$label starts no validation command"
+        if [[ "$selector" == none ]]; then
+          assert_eq "$([[ -f "$dir/log" && -f "$dir/cmd" && ! -s "$dir/cmd" ]] && echo no-command || echo wrong-run)" no-command "$label starts no validation command"
+        else
+          # The admitted round ran the selector once, scoped, at the round
+          # head, and its record names a class base, never the branch's pass.
+          # A full request reads the whole branch, from the fork point.
+          scoped_base="$head"
+          [[ "$request" != full ]] || scoped_base="$(git -C "$proj" merge-base HEAD origin/main)"
+          scoped_echo="$selector"
+          [[ "$selector" != scoped-red ]] || scoped_echo=all
+          assert_eq "$(record_field scoped "$OUT") $(record_field class-base "$OUT") $(sed 1d "$dir/log" | sed -n '/^selection=/p')" \
+            "true $scoped_base selection=$scoped_echo" "$label runs the selector's scoped suites once" "$ERR"
+          assert_eq "$(start_line "$dir" scoped) $([[ -s "$dir/exit" && -f "$dir/pid" ]] && echo ran || echo not-run)" \
+            "true ran" "$label records the scoped run it started" "$ERR"
+        fi
         run_script "$1" --last-pass --worktree "$proj"
         assert_eq "$RC $OUT" '1 last-pass=none' "$label provides no passing validation run" "$ERR"
       fi
@@ -1586,6 +1610,11 @@ for queue_row in 'queue work before PR' 'absent queue line' 'malformed queue lin
 done
 ci_control 'admission classified over the round' $'    ci_admission_attempted=true\n    classify ""' $'    ci_admission_attempted=true\n    classify "$class_base"' \
   'branch queue work before fix' 'ci||pending'
+for scoped_row in 'red scoped suites before PR fail the round' 'red scoped suites on open PR fail the round'; do
+  ci_control 'the admitted round left unscoped' \
+    '  if [[ "$validate_mode" == ci && -n "${selection_cmd//[[:space:]]/}" ]]; then' '  if false; then' \
+    "$scoped_row" 'ci||pending'
+done
 }
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 mutate_file "$CI_SCRIPT.mutant" 'ci_admission_attempted=true' $'ci_admission_attempted=true\n    ci_runs_validation || :'
@@ -1627,6 +1656,57 @@ assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked fix subset' resolve)" '0 val
 assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'stacked required base' resolve)" '0 validate-mode=range' \
   'control: default-base resolution misses CI required only on the PR base'
 rm -f -- "${CI_SCRIPT:?}.mutant"
+
+# A merge-group recovery reproduces the failed required run locally: under
+# push-first, with queue-only work whose base requires the merge queue and the
+# context, a plain request is admitted to CI; --reproduce runs the command its
+# mode runs and records that mode and its pass or failure.
+# label|requested mode|selector|command exit|recorded mode|verdict|command output
+REPRODUCE_ROWS=(
+  'a merge-group reproduction runs the full command|full|none|0|full|pass|full'
+  'a red merge-group reproduction records its failure|full|none|7|full|FAILING|full'
+  'a reproduction with a selector runs the full command, not the selector|full|all|0|full|pass|full'
+  'a range reproduction runs the range command|range|all|0|range|pass|range'
+)
+reproduce_rows() { # SCRIPT [LABEL]
+  local row label request selector status proj dir args n=0
+  for row in "${REPRODUCE_ROWS[@]}"; do
+    IFS='|' read -r label request selector status _ _ _ <<<"$row"
+    [[ -z "${2:-}" || "$label" == "$2" ]] || continue
+    n=$((n + 1))
+    proj="$(ci_proj "reproduce-$n-${1##*/}" CI)"
+    sed -i.bak 's/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = "push-first"/; s/^DEV_VALIDATE_CMD = .*/DEV_VALIDATE_CMD = "echo full; exit $STUB_LOCAL_EXIT"/' "$proj/kendex.settings.toml"
+    [[ "$selector" == none ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+    ci_world queue-required
+    args=(--worktree "$proj" --poll 1 --reproduce)
+    [[ "$request" == full ]] || args+=(--validate-mode "$request" --base HEAD)
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE='queue_only=true cause=queue-lane' STUB_ANSWER=change_class=standard STUB_DOCS=false \
+      STUB_MEASURED=true STUB_LOCAL_EXIT="$status" run_script "$1" "${args[@]}"
+    dir="$(run_dir_of "$OUT")"
+    run_script "$1" --record --run-dir "$dir"
+    printf '%s\t%s|%s|%s|%s\n' "$label" "$(record_field validate-mode "$OUT")" "$(record_field verdict "$OUT")" \
+      "$(record_field ci-event "$OUT")" "$(sed 1d "$dir/log" 2>/dev/null | paste -sd, -)"
+    rm -rf -- "${proj:?}"
+  done
+}
+REPRODUCE_GOT="$(reproduce_rows "$CI_SCRIPT")"
+for row in "${REPRODUCE_ROWS[@]}"; do
+  IFS='|' read -r label _ _ _ want_mode want_verdict want_out <<<"$row"
+  assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$REPRODUCE_GOT")" \
+    "$want_mode|$want_verdict||$want_out" "$label"
+done
+# Control: a runner that takes the flag and ignores it admits the
+# reproduction to CI, which runs nothing and stays pending.
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+# shellcheck disable=SC2016 # the script's own text
+mutate_file "$CI_SCRIPT.mutant" '--reproduce) once "$1" "$reproduce"; reproduce=true; shift ;;' '--reproduce) shift ;;'
+assert_eq "$(reproduce_rows "$CI_SCRIPT.mutant" 'a red merge-group reproduction records its failure' | cut -f2)" \
+  'ci|pending|merge_group|' \
+  'control: an ignored reproduction flag leaves the red fix pending in CI'
+rm -f -- "${CI_SCRIPT:?}.mutant"
+run_script "$CI_SCRIPT" --worktree "$proj_ci" --reproduce --validate-mode ci --base HEAD
+assert_eq "$RC $(sed -n 1p <"$ERR")" '2 dev-validate-run: reproduce-ci option=--reproduce validate-mode=ci' \
+  'a reproduction is never a ci request' "$ERR"
 
 # The rules read names the base branch: a read of another branch's rules is
 # one the stub fails, so the micro row runs range.
@@ -1694,7 +1774,10 @@ checks() {
     done < <(sed -n 's/^heavy=//p' "$path")
   done < "$DEV_VALIDATE_PATHS"
 }
-if [[ "$1" == preview ]]; then
+if [[ "$1" == preview && "${DEV_VALIDATE_SCOPED:-false}" == true ]]; then
+  cp -- "$DEV_VALIDATE_PATHS" scoped-paths
+  printf 'validate: lanes=scoped selection=subset\n'
+elif [[ "$1" == preview ]]; then
   printf '%s\n' "$DEV_VALIDATE_BASE" > preview-base
   printf '%s\n' "$DEV_VALIDATE_MODE" > preview-mode
   cp -- "$DEV_VALIDATE_PATHS" preview-paths
@@ -1714,7 +1797,7 @@ SH
     chmod +x "$proj/validation"
     sed -i.bak 's@^DEV_VALIDATE_CMD = .*@DEV_VALIDATE_CMD = "./validation run"@; s@^DEV_VALIDATE_RANGE_CMD = .*@DEV_VALIDATE_RANGE_CMD = "./validation run"@' "$proj/kendex.settings.toml"
     printf 'DEV_VALIDATE_SELECTION_CMD = "./validation preview"\n' >> "$proj/kendex.settings.toml"
-    printf 'preview-*\nlocal-*\n*.bak\n' >> "$proj/.gitignore"
+    printf 'preview-*\nlocal-*\nscoped-*\n*.bak\n' >> "$proj/.gitignore"
     mkdir -p "$proj/crates/positions/src" "$proj/crates/orders/src" "$proj/tests"
     printf 'heavy=loom\n' > "$proj/crates/positions/src/lib.rs"
     printf 'heavy=risk\n' > "$proj/crates/orders/src/lib.rs"
@@ -1740,12 +1823,21 @@ SH
     [[ ! -s "$proj/local-checks" ]] || checks="$(paste -sd, "$proj/local-checks")"
     preview=no
     if [[ -f "$proj/preview-base" && "$(cat "$proj/preview-base")" == "$round" ]]; then preview=yes; fi
+    # A round left to CI was admitted on the paths its scoped run then reads.
+    if [[ "$preview" == yes && "$(start_line "$dir" validate-mode)" == ci && "$(paste -sd, "$proj/preview-paths")" != "$paths" ]]; then
+      preview=other-paths
+    fi
     if [[ "$preview" == yes && -n "$context" ]]; then
       assert_eq "$(cat "$proj/preview-mode")" ci "$label: the selector reads the requested validation mode" "$ERR"
     fi
     assert_eq "$RC" 0 "$label: validation returns its exit status" "$ERR"
     if [[ "$selector" == failed ]]; then
       assert_eq "$(cat "$dir/selection.log")" 'selector: unavailable' "$label: selection failure is retained" "$ERR"
+    fi
+    # A round left to CI ran the selector's scoped suites over its own paths.
+    if [[ "$(start_line "$dir" validate-mode)" == ci ]]; then
+      assert_eq "$(paste -sd, "$proj/scoped-paths" 2>/dev/null)" "$paths" \
+        "$label: the scoped run reads the round's paths" "$ERR"
     fi
     if [[ "$(start_line "$dir" validate-mode)" == range && -f "$proj/local-checks" ]]; then
       run_script "$1" --record --run-dir "$dir"
@@ -1774,9 +1866,9 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 # shellcheck disable=SC2016 # private production mutations
 {
 ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if true; then'  \
-  'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
+  'unreported selector' 'ci||tests/widget.sh|none|no'
 ci_extension_control $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify "$class_base"' $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify ""' \
-  'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'
+  'widget-test fix' 'ci||tests/widget.sh|none|other-paths'
 ci_extension_control $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
   $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all) validate_mode=ci; class_base="" ;;' \
   'guarded crate fix' 'range|selection-unread|crates/orders/src/lib.rs|orders:risk|yes'
@@ -1784,6 +1876,8 @@ ci_extension_control '&& preview_selection; then' '&& { preview_selection || sel
   'failed selector' 'ci||tests/widget.sh|none|yes'
 ci_extension_control 'if [[ -z "$class_fallback" ]] && preview_selection; then' 'if preview_selection; then' \
   'unread round evidence' 'ci|||none|yes'
+ci_extension_control $'    classify "$class_base"\n    start_scoped' $'    classify ""\n    start_scoped' \
+  'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|other-paths'
 }
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
@@ -2454,18 +2548,18 @@ SELECTION_ROWS=(
   "direct full validation stays local|full|yes|all|rules|full||all|no|full|0|push-base|push-first|push-base"
   "direct range validation stays local|range|yes|all|rules|range||all|yes|range|0|push-base|push-first|push-base"
   "direct explicit CI validation stays local|ci|yes|all|rules|range||all|no|range|0|push-base|push-first|push-base"
-  "a full all selection uses required PR CI|full|yes|all|rules|ci||all|no|absent|0"
-  "a range all selection uses required PR CI|range|yes|all|rules|ci||all|no|absent|0"
+  "a full all selection uses required PR CI|full|yes|all|rules|ci|true|subset|yes|absent|0"
+  "a range all selection uses required PR CI|range|yes|all|rules|ci|true|subset|yes|absent|0"
   # KEN-3495's archived submit range selected all after PR #4528 opened.
   # Re-deriving its saved base/head diff yields standard, measured=false,
   # cause=verify-refused. Its original class.log is no longer available.
-  "KEN-3495 standard fallback all range uses required PR CI|range|yes|all-fallback|rules|ci||all|no|absent|0"
-  "a full standard fallback all selection uses required PR CI|full|yes|all-fallback|rules|ci||all|no|absent|0"
-  "a ci standard fallback all selection uses required PR CI|ci|yes|all-fallback|rules|ci||all|no|absent|0"
+  "KEN-3495 standard fallback all range uses required PR CI|range|yes|all-fallback|rules|ci|true|subset|yes|absent|0"
+  "a full standard fallback all selection uses required PR CI|full|yes|all-fallback|rules|ci|true|subset|yes|absent|0"
+  "a ci standard fallback all selection uses required PR CI|ci|yes|all-fallback|rules|ci|true|subset|yes|absent|0"
   "a full subset retains local execution|full|yes|subset|rules|full||subset|no|full|0"
-  "a range subset uses required PR CI|range|yes|subset|rules|ci||subset|no|absent|0"
-  "a guard-scans subset uses required PR CI|range|yes|guard-scans|rules|ci||subset|no|absent|0"
-  "a ci subset uses required PR CI|ci|yes|subset|rules|ci||subset|no|absent|0"
+  "a range subset uses required PR CI|range|yes|subset|rules|ci|true|subset|yes|absent|0"
+  "a guard-scans subset uses required PR CI|range|yes|guard-scans|rules|ci|true|subset|yes|absent|0"
+  "a ci subset uses required PR CI|ci|yes|subset|rules|ci|true|subset|yes|absent|0"
   "a pre-open range subset retains scoped local execution|range|yes|subset|pr-no-pr|range||subset|yes|range|0|pr-not-open"
   "a closed PR range subset retains scoped local execution|range|yes|subset|pr-closed|range||subset|yes|range|0|pr-not-open"
   "a merged PR range subset retains scoped local execution|range|yes|subset|pr-merged|range||subset|yes|range|0|pr-not-open"
