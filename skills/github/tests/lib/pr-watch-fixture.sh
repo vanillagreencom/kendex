@@ -307,7 +307,7 @@ observe() {
         value="${value//$'\n'/;}"
         value="${value// /+}" ;;
       diagnostic)
-        value="$(sed -n '/^pr-watch: /p' <<<"$OUT")"
+        value="$(sed -n '/^review-gate-error=/p' <<<"$OUT")"
         value="${value// /+}" ;;
       error_payload)
         value="$(awk -F'\t' '$3 == "error" {print}' <<<"$OUT")"

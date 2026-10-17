@@ -18,20 +18,25 @@
 # Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
 
-# The diagnostic record: `pr-watch: CODE value=VALUE`, the value escaped
-# with Bash printf %q, then the explanation.
+# The diagnostic record: `review-gate-error=CODE value=VALUE`, the value
+# escaped with Bash printf %q, then the explanation. oversee-watch carries
+# this stderr verbatim into the overseer's diagnostics, so the record keeps
+# the form its readers already hold.
 watch_message() { # CODE VALUE MESSAGE
-  printf 'pr-watch: %s value=%q\n%s\n' "$1" "$2" "$3"
+  printf 'review-gate-error=%s value=%q\n%s\n' "$1" "$2" "$3"
 }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for lib in refresh-identity kendex-env; do
-  # shellcheck source=/dev/null
-  if [ ! -r "$script_dir/lib/$lib.sh" ] || ! . "$script_dir/lib/$lib.sh"; then
-    watch_message "$lib-load" "$script_dir/lib/$lib.sh" "Could not load lib/$lib.sh." >&2
-    exit 2
-  fi
-done
+# shellcheck source=lib/refresh-identity.sh
+if [ ! -r "$script_dir/lib/refresh-identity.sh" ] || ! . "$script_dir/lib/refresh-identity.sh"; then
+  watch_message refresh-identity-load "$script_dir/lib/refresh-identity.sh" 'Could not load the refresh identity rule.' >&2
+  exit 2
+fi
+# shellcheck source=lib/kendex-env.sh
+if [ ! -r "$script_dir/lib/kendex-env.sh" ] || ! . "$script_dir/lib/kendex-env.sh"; then
+  watch_message kendex-env-load "$script_dir/lib/kendex-env.sh" 'Could not load the project settings loader.' >&2
+  exit 2
+fi
 
 print_usage() {
   cat <<'USAGE'
@@ -111,15 +116,16 @@ Exit codes:
   1  at least one attention line
   2  read failure, in two shapes: per-PR failures carry `error` lines on
      stdout (attention lines may also be present), while GLOBAL failures
-     (missing GH_REPO, a broken open-PR listing, which a GraphQL error
-     anywhere in it is) report on stderr only
+     (missing GH_REPO, unreadable project settings, a broken open-PR
+     listing, which a GraphQL error anywhere in it is) report on stderr only
      with no per-PR lines — surface stderr, not just stdout
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
 
 Settings: PR_REVIEW_WAIT_SECS from the environment, else the project
 settings at the git root of the working directory, read as the github.sh
-router reads them. Unreadable project settings are a global failure.
+router reads them. Without --awaiting-after, unreadable project settings
+are a global failure.
 
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground

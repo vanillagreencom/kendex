@@ -17,7 +17,7 @@ tags: [review]
 
 # Review operations
 
-GitHub rulesets enforce approvals, stale-approval dismissal and review-thread resolution. This package reports repository configuration and refreshes consumer installs. It posts no review status. The pull-request watcher is the github skill's `scripts/pr-watch.sh`.
+GitHub rulesets enforce approvals, stale-approval dismissal and review-thread resolution. This package reports repository configuration and refreshes consumer installs. It posts no review status. When the github skill is installed, its `scripts/pr-watch.sh` is the pull-request watcher.
 
 ## Organization standard
 
@@ -31,7 +31,7 @@ Consumers refresh on a schedule or a manual run. An organization managed by flee
 
 ## 4. Operations
 
-A pull request with no automatic review needs a Copilot request. When orch is present, request through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures: the github skill's `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
+A pull request with no automatic review needs a Copilot request. When orch is present, request through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures, when the github skill is installed: its `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
 
 The overseer's fallback approval and emergency merge follow the managing repository's merge workflow. This package grants no bypass and changes no ruleset.
 

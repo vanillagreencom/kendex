@@ -4,7 +4,7 @@
 
 GitHub enforces approvals and thread resolution. The package reports repository configuration but grants no merge permission.
 
-The settings loader is shared by the standard report and environment provisioning. Its process values override project files. `REVIEW_GATE_SETTINGS_FILE=/dev/null` selects no settings source.
+The settings loader is shared by the organization-standard tools, consumer refresh and orch's approval-wait. Its process values override project files. `REVIEW_GATE_SETTINGS_FILE=/dev/null` selects no settings source.
 
 Consumer adoption uses the committed workflow hash to prove that a retired copy remains unedited. Core refresh preserves adopted inventory records when their template disappears. Adoption uses that record to find a retired copy, including a renamed copy. It checks ownership before it changes any workflow or inventory entry.
 

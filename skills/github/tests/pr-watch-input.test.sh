@@ -9,7 +9,7 @@ for lib in refresh-identity kendex-env; do
   mv "$TMP_ROOT/scripts/lib/$lib.sh" "$TMP_ROOT/$lib.sh"
   run_watch '' --help
   assert_eq "$RC" 2 "a missing lib/$lib.sh refuses watcher startup"
-  assert_eq "$(sed -n 's/^pr-watch: \([^ ]*\) value=.*/\1/p' <<<"$OUT")" \
+  assert_eq "$(sed -n 's/^review-gate-error=\([^ ]*\) value=.*/\1/p' <<<"$OUT")" \
     "$lib-load" "the missing lib/$lib.sh has a structured load error"
   mv "$TMP_ROOT/$lib.sh" "$TMP_ROOT/scripts/lib/$lib.sh"
 done
@@ -37,7 +37,7 @@ echo "=== explicit PR arguments ==="
 # Each row compares the complete error record emitted by the boundary under
 # test.
 table \
-  "a failed PR listing names the repository||STUB_OPEN_PRS=fail|rc=2 kinds=none diagnostic=pr-watch:+watch-list-failed+value=acme/widgets" \
+  "a failed PR listing names the repository||STUB_OPEN_PRS=fail|rc=2 kinds=none diagnostic=review-gate-error=watch-list-failed+value=acme/widgets" \
   "a closed PR is skipped silently|9|STUB_PR_9=$PR9CLOSED|rc=0 kinds=none" \
   "a zero-padded argument normalizes|09|STUB_PR_9=$PR9CLOSED|rc=0 kinds=none" \
   "a junk response is that PR's error line and the rest still process|5 6|STUB_PR_5=not json at all;STUB_PR_6=$(pr_row 6 closed | jq -c .)|rc=2 kinds=error protocol=5~--------~error~PR+#5+response+is+not+a+well-formed+PR+object+(broken+read)" \
@@ -51,14 +51,14 @@ echo "=== a broken read is an error, never health ==="
 # Exit 2 with an error line. The complete record distinguishes inputs that
 # share an error kind and exit status.
 table \
-  "a zero-byte PR listing||STUB_OPEN_PRS=emptybytes|rc=2 kinds=none diagnostic=pr-watch:+watch-list-empty+value=acme/widgets" \
-  "a non-object listing element||STUB_OPEN_PRS=[42]|rc=2 kinds=none diagnostic=pr-watch:+watch-list-malformed+value=acme/widgets" \
-  "an empty-object listing element||STUB_OPEN_PRS=[{}]|rc=2 kinds=none diagnostic=pr-watch:+watch-list-malformed+value=acme/widgets" \
+  "a zero-byte PR listing||STUB_OPEN_PRS=emptybytes|rc=2 kinds=none diagnostic=review-gate-error=watch-list-empty+value=acme/widgets" \
+  "a non-object listing element||STUB_OPEN_PRS=[42]|rc=2 kinds=none diagnostic=review-gate-error=watch-list-malformed+value=acme/widgets" \
+  "an empty-object listing element||STUB_OPEN_PRS=[{}]|rc=2 kinds=none diagnostic=review-gate-error=watch-list-malformed+value=acme/widgets" \
   "a ghost author reduces like any other PR||STUB_OPEN_PRS=$P7GHOST|rc=0 kinds=none" \
   "a failed named read is each named PR's error line|7 9|STUB_OPEN_PRS=$P7;STUB_PR_9=$PR9CLOSED;STUB_REVIEW_FAIL=yes|rc=2 kinds=error,error protocol=7~--------~error~could+not+read+PR+#7;9~--------~error~could+not+read+PR+#9" \
   "a zero-byte named read is the named PR's error line|7|STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=emptybytes|rc=2 kinds=error protocol=7~--------~error~could+not+read+PR+#7" \
   "an unknown named PR fails the read with its neighbours|7 8|STUB_OPEN_PRS=$P7|rc=2 kinds=error,error" \
-  "a listing answer carrying GraphQL errors is no listing||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_ERRORS|rc=2 kinds=none diagnostic=pr-watch:+watch-list-failed+value=acme/widgets" \
+  "a listing answer carrying GraphQL errors is no listing||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_ERRORS|rc=2 kinds=none diagnostic=review-gate-error=watch-list-failed+value=acme/widgets" \
   "a review-state answer without reviewDecision||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_NODECISION|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
   "a reviewDecision outside the enum||STUB_OPEN_PRS=$P7;STUB_DECISION=DISMISSED|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
   "a queue membership that is not a boolean||STUB_OPEN_PRS=$P7;STUB_REVIEW_RAW=$R_QUEUEWORD|rc=2 kinds=error protocol=7~aaaaaaaa~error~$R_MALFORMED" \
@@ -118,18 +118,18 @@ printf 'shared page evidence: prs=80 threads-per-pr=200 response-bytes=%s\n' "$S
 case "$OSTYPE" in
   linux*)
     mutant_watch thread-response-argv 's#--arg state_fields "$PR_STATE_FIELDS"#--arg bulk "${rounds[2]:-}" --arg state_fields "${PR_STATE_FIELDS}"#' '--arg state_fields "$PR_STATE_FIELDS"'
-    table "must-fail: putting the shared response in argv loses every PR result||$LARGE_ENV|rc=2 kinds=none diagnostic=pr-watch:+watch-reduce-failed+value=acme/widgets"
+    table "must-fail: putting the shared response in argv loses every PR result||$LARGE_ENV|rc=2 kinds=none diagnostic=review-gate-error=watch-reduce-failed+value=acme/widgets"
     WATCH_BIN="$LIVE_WATCH" ;;
 esac
 
 echo "=== configuration errors refuse to reduce ==="
 table \
-  "a missing --awaiting-after value is refused|--awaiting-after||rc=2 kinds=none diagnostic=pr-watch:+watch-wait-invalid+value=''" \
-  "an unknown flag is refused by exact diagnostic|--unknown||rc=2 kinds=none diagnostic=pr-watch:+watch-flag-unknown+value=--unknown" \
-  "a non-numeric PR argument is refused by exact diagnostic|abc||rc=2 kinds=none diagnostic=pr-watch:+watch-pr-invalid+value=abc" \
-  "a non-numeric PR_REVIEW_WAIT_SECS||PR_REVIEW_WAIT_SECS=90s;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=pr-watch:+watch-wait-setting-invalid+value=90s" \
-  "a PR_REVIEW_WAIT_SECS past the integer range||PR_REVIEW_WAIT_SECS=99999999999999999999;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=pr-watch:+watch-wait-setting-range+value=99999999999999999999" \
-  "an --awaiting-after past the integer range|--awaiting-after 99999999999999999999|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=pr-watch:+watch-wait-range+value=99999999999999999999"
+  "a missing --awaiting-after value is refused|--awaiting-after||rc=2 kinds=none diagnostic=review-gate-error=watch-wait-invalid+value=''" \
+  "an unknown flag is refused by exact diagnostic|--unknown||rc=2 kinds=none diagnostic=review-gate-error=watch-flag-unknown+value=--unknown" \
+  "a non-numeric PR argument is refused by exact diagnostic|abc||rc=2 kinds=none diagnostic=review-gate-error=watch-pr-invalid+value=abc" \
+  "a non-numeric PR_REVIEW_WAIT_SECS||PR_REVIEW_WAIT_SECS=90s;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-setting-invalid+value=90s" \
+  "a PR_REVIEW_WAIT_SECS past the integer range||PR_REVIEW_WAIT_SECS=99999999999999999999;STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-setting-range+value=99999999999999999999" \
+  "an --awaiting-after past the integer range|--awaiting-after 99999999999999999999|STUB_OPEN_PRS=$P7;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-range+value=99999999999999999999"
 
 echo "=== --help answers before the GH_REPO requirement ==="
 # The contract callers route to: readable with no environment at all, against
@@ -144,7 +144,7 @@ done
 set +e
 OUT=$(cd "$TMP_ROOT" && env -u GH_REPO "$SKILL_ROOT/scripts/pr-watch.sh" 2>&1); RC=$?
 set -e
-assert_eq "$(observe "rc diagnostic")" "rc=2 diagnostic=pr-watch:+watch-repo-missing+value=''" "a missing repository is refused by exact diagnostic"
+assert_eq "$(observe "rc diagnostic")" "rc=2 diagnostic=review-gate-error=watch-repo-missing+value=''" "a missing repository is refused by exact diagnostic"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

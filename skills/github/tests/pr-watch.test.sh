@@ -87,7 +87,7 @@ mutant_watch settings-load 's#kendex_load_project_env "\$project_root" &&#: \&\&
 table "must-fail: without the project load the default holds the head silent||$RECENT_ENV|rc=0 kinds=none"
 WATCH_BIN="$LIVE_WATCH"
 printf '[env]\nPR_REVIEW_WAIT_SECS = 60\n' >"$PROJECT/kendex.settings.toml"
-table "an unreadable project setting refuses the pass||$RECENT_ENV|rc=2 kinds=none diagnostic=pr-watch:+watch-settings-unreadable+value=$PROJECT"
+table "an unreadable project setting refuses the pass||$RECENT_ENV|rc=2 kinds=none diagnostic=review-gate-error=watch-settings-unreadable+value=$PROJECT"
 WATCH_CWD="$TMP_ROOT/cwd"
 
 echo "=== a head commit that is not the PR's head ==="
