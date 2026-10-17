@@ -291,6 +291,7 @@ PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
 #   main-push-failing<TAB><repo><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
+#   main-schedule-failing<TAB><repo><TAB>the same, for the nightly scheduled run
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
@@ -2105,85 +2106,92 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
     && ! grep -qxF ".github/workflows/$2" <<<"$workflows"
 }
 
+# The push to main and the nightly schedule each keep their own incident
+# row: the push compiles, the nightly run tests the platform roster, so a
+# green push must not clear a red night.
 check_main_push() {
-  local repo runs run conclusion jobs log cause failures key prior changed rc
+  local repo event row runs run conclusion jobs log cause failures key prior changed rc
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err"
   for repo in "${REPOS[@]}"; do
-    rc=0
-    runs="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event push \
-      --status completed --limit 1 --json databaseId,conclusion 2>"$errf")" || rc=$?
-    if (( rc == 0 )); then
-      runs="$(jq -er '
-        if type == "array" and length <= 1 and all(.[];
-          (.databaseId | type) == "number" and (.conclusion | type) == "string") then
-          if length == 0 then "none|" else "\(.[0].databaseId)|\(.[0].conclusion)" end
-        else error("invalid completed main-push runs") end' <<<"$runs" 2>"$errf")" || rc=$?
-    fi
-    if (( rc != 0 )); then
-      if workflow_absent "$repo" skill-tests.yml "$errf"; then
-        rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
-          || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+    for event in push schedule; do
+      row=main-push-failing
+      [[ "$event" == push ]] || row=main-schedule-failing
+      rc=0
+      runs="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event "$event" \
+        --status completed --limit 1 --json databaseId,conclusion 2>"$errf")" || rc=$?
+      if (( rc == 0 )); then
+        runs="$(jq -er '
+          if type == "array" and length <= 1 and all(.[];
+            (.databaseId | type) == "number" and (.conclusion | type) == "string") then
+            if length == 0 then "none|" else "\(.[0].databaseId)|\(.[0].conclusion)" end
+          else error("invalid completed main-push runs") end' <<<"$runs" 2>"$errf")" || rc=$?
+      fi
+      if (( rc != 0 )); then
+        if workflow_absent "$repo" skill-tests.yml "$errf"; then
+          rows="$(lane_row_clear "$row" "$rows" "$repo")" \
+            || die state-read-failed "" "repo=$repo" "row=$row"
+          continue
+        fi
+        ow_message main-push-unread "repo=$repo" "read=runs" "exit=$rc" >&2
         continue
       fi
-      ow_message main-push-unread "repo=$repo" "read=runs" "exit=$rc" >&2
-      continue
-    fi
-    IFS='|' read -r run conclusion <<<"$runs"
-    if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
-      rows="$(lane_row_clear main-push-failing "$rows" "$repo")" \
-        || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-      continue
-    fi
-    rc=0
-    jobs="$(gh run view "$run" --repo "$repo" --json jobs 2>"$errf")" || rc=$?
-    if (( rc == 0 )); then
-      jobs="$(jq -ec '
-        if (.jobs | type) == "array" and all(.jobs[];
-          (.name | type) == "string" and (.conclusion | type) == "string") then
-          [.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | unique
-        else error("invalid main-push jobs") end' <<<"$jobs" 2>"$errf")" || rc=$?
-    fi
-    if (( rc != 0 )); then
-      ow_message main-push-unread "repo=$repo" "read=jobs" "run=$run" "exit=$rc" >&2
-      continue
-    fi
-    rc=0
-    log="$(gh run view "$run" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
-    cause=unread failures=null
-    if (( rc == 0 )); then
-      # Only producer summaries identify suites. Raw diagnostics describe
-      # the first cause but can change while the same suites still fail.
-      log="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
-        /^suite=.* fail=[1-9][0-9]*($| )/ || /^FAILED: / || /^FAIL[ :]/ || /^run-all.sh: (suite-timeout|run-deadline) / {
-          gsub("\t", " "); print
-        }' <<<"$log")" || rc=$?
-      if (( rc == 0 )); then
-        [[ -z "$log" ]] || cause="${log%%$'\n'*}"
-        failures="$(jq -Rsc 'split("\n") | map(
-          if startswith("suite=") then split(" ")[0]
-          elif startswith("FAILED: ") then ltrimstr("FAILED: ")
-          else empty end) | unique' <<<"$log")" || rc=$?
+      IFS='|' read -r run conclusion <<<"$runs"
+      if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
+        rows="$(lane_row_clear "$row" "$rows" "$repo")" \
+          || die state-read-failed "" "repo=$repo" "row=$row"
+        continue
       fi
-    fi
-    if (( rc != 0 )); then
-      ow_message main-push-unread "repo=$repo" "read=log" "run=$run" "exit=$rc" >&2
-    fi
-    prior="$(lane_row_get main-push-failing "$rows" "$repo")" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-    # Missing logs cannot change known failures. Recovery fills missing
-    # evidence quietly; later reads still compare it, including rerun attempts.
-    key="$(jq -cn --argjson jobs "$jobs" --argjson failures "$failures" --argjson prior "${prior:-null}" '
-      [$jobs, (if $failures == null and $prior[0] == $jobs then $prior[1] else $failures end)]')" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-    changed="$(jq -nr --argjson key "$key" --argjson prior "${prior:-null}" '
-      $prior == null or $key[0] != $prior[0] or ($prior[1] != null and $key[1] != $prior[1])')" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
-    if [[ "$changed" == true ]]; then
-      printf 'EVENT main-push-failing %s workflow=skill-tests.yml run=%s jobs=%s cause=%s\n' "$repo" "$run" "$jobs" "$cause"
-      PASS_EVENT=1
-    fi
-    rows="$(lane_row_set main-push-failing "$rows" "$repo" "$key")" \
-      || die state-read-failed "" "repo=$repo" "row=main-push-failing"
+      rc=0
+      jobs="$(gh run view "$run" --repo "$repo" --json jobs 2>"$errf")" || rc=$?
+      if (( rc == 0 )); then
+        jobs="$(jq -ec '
+          if (.jobs | type) == "array" and all(.jobs[];
+            (.name | type) == "string" and (.conclusion | type) == "string") then
+            [.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | unique
+          else error("invalid main-push jobs") end' <<<"$jobs" 2>"$errf")" || rc=$?
+      fi
+      if (( rc != 0 )); then
+        ow_message main-push-unread "repo=$repo" "read=jobs" "run=$run" "exit=$rc" >&2
+        continue
+      fi
+      rc=0
+      log="$(gh run view "$run" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
+      cause=unread failures=null
+      if (( rc == 0 )); then
+        # Only producer summaries identify suites. Raw diagnostics describe
+        # the first cause but can change while the same suites still fail.
+        log="$(awk '{ sub(/^[^\t]*\t[^\t]*\t[^ ]* /, ""); sub(/\r$/, "") }
+          /^suite=.* fail=[1-9][0-9]*($| )/ || /^FAILED: / || /^FAIL[ :]/ || /^run-all.sh: (suite-timeout|run-deadline) / {
+            gsub("\t", " "); print
+          }' <<<"$log")" || rc=$?
+        if (( rc == 0 )); then
+          [[ -z "$log" ]] || cause="${log%%$'\n'*}"
+          failures="$(jq -Rsc 'split("\n") | map(
+            if startswith("suite=") then split(" ")[0]
+            elif startswith("FAILED: ") then ltrimstr("FAILED: ")
+            else empty end) | unique' <<<"$log")" || rc=$?
+        fi
+      fi
+      if (( rc != 0 )); then
+        ow_message main-push-unread "repo=$repo" "read=log" "run=$run" "exit=$rc" >&2
+      fi
+      prior="$(lane_row_get "$row" "$rows" "$repo")" \
+        || die state-read-failed "" "repo=$repo" "row=$row"
+      # Missing logs cannot change known failures. Recovery fills missing
+      # evidence quietly; later reads still compare it, including rerun attempts.
+      key="$(jq -cn --argjson jobs "$jobs" --argjson failures "$failures" --argjson prior "${prior:-null}" '
+        [$jobs, (if $failures == null and $prior[0] == $jobs then $prior[1] else $failures end)]')" \
+        || die state-read-failed "" "repo=$repo" "row=$row"
+      changed="$(jq -nr --argjson key "$key" --argjson prior "${prior:-null}" '
+        $prior == null or $key[0] != $prior[0] or ($prior[1] != null and $key[1] != $prior[1])')" \
+        || die state-read-failed "" "repo=$repo" "row=$row"
+      if [[ "$changed" == true ]]; then
+        printf 'EVENT main-push-failing %s workflow=skill-tests.yml run=%s jobs=%s cause=%s\n' "$repo" "$run" "$jobs" "$cause"
+        PASS_EVENT=1
+      fi
+      rows="$(lane_row_set "$row" "$rows" "$repo" "$key")" \
+        || die state-read-failed "" "repo=$repo" "row=$row"
+    done
   done
   lane_row_commit "$rows"
 }

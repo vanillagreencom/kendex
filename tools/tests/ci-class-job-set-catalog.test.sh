@@ -69,32 +69,22 @@ cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/catalog/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
 catalog_copy="$TMP/catalog/tools/ci-job-set"
-for rule in inputs compiled scope skip proof; do
+for rule in inputs compiled scope skip; do
   case "$rule" in
     inputs) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false' ;;
     compiled) needle='  case "$read_lines" in *compiled=1*) catalog=true ;; esac'; replacement='  case "$read_lines" in *compiled=1*) catalog=false ;; esac' ;;
     scope) needle='          if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1'; replacement='          if (kind[r] == "include" || (kind[r] == "build" && path !~ ENVIRON["PROSE"])) compiled = 1' ;;
     skip) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  catalog=true; any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true' ;;
-    proof) needle='  case "$lane" in bot_instructions | catalog | smoke) ran=false ;; esac'; replacement='  case "$lane" in bot_instructions) ran=false ;; esac' ;;
   esac
   [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
   NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
   ! cmp -s "$JOB_SET" "$catalog_copy" || exit 1
   chmod +x "$catalog_copy"
-  case "$rule" in
-    proof)
-      got="$(SELECT_WITH="$catalog_copy" SELECT_PROOF="$(record pull_request micro false skills/orch/SKILL.md | tr ',' '\n')" selection micro false skills/orch/SKILL.md)"
-      [ "$(catalog_bits "$got")" != 'catalog=true
-smoke=true' ] && ok "must-fail: tree proof cannot cover external catalog inputs" || bad "must-fail: external catalog proof inverse"
-      ;;
-    *)
-      if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-$rule"; [ "$FAIL" -eq 0 ]); then
-        bad "must-fail: $rule inverse leaves catalog selection green"
-      else
-        ok "must-fail: $rule inverse fails catalog selection"
-      fi
-      ;;
-  esac
+  if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-$rule"; [ "$FAIL" -eq 0 ]); then
+    bad "must-fail: $rule inverse leaves catalog selection green"
+  else
+    ok "must-fail: $rule inverse fails catalog selection"
+  fi
 done
 # The platform lanes run on a standard diff that is not documentation alone,
 # prose included; the control drops that rule.

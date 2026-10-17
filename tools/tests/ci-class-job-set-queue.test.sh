@@ -14,8 +14,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/ci-job-set-case.sh"
 
 # --- 1c. The queue's macOS legs ---------------------------------------------
-# queue_macos_shards per row; the lane-source row above holds it over a
-# proof that stood every runner down.
+# queue_macos_shards per row.
 # WORLD (tree or fixture)|CLASS|PATHS (blank-separated)|MACOS
 queue_table() {
   cat <<ROWS

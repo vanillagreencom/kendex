@@ -28,23 +28,8 @@
 #   EVENT          pull_request|merge_group, the event the selection is for.
 #                  Both select the same lanes and shards for the same
 #                  class, docs verdict and paths, which --event-parity
-#                  checks
-#   PROOF_RECORD   the change-class action's `proof_record` output: the
-#                  record of the passing run that already tested this tree,
-#                  or empty where none did. Its `event`, `change_class`,
-#                  `docs_only` and `changed_path` lines are this script's
-#                  own inputs as that run had them, so what that run ran is
-#                  this selection over them, and a lane it ran stands down
-#                  on a pull request. Groups ignore this tree proof.
-#                  A record whose lines this selection refuses stands
-#                  nothing down and says why on a `proof=ignored` line.
-#   MACOS_PROOF_RECORD  the change-class action's accepted macOS record.
-#                  The action owns record eligibility. Only this
-#                  proof can stand macOS lanes down on a merge group.
-#                  Tree proof never stands group Linux or Windows lanes down.
-#   MACOS_RECORD_DIR   the action's record_dir, where a pull request appends
-#                  its actual macOS lane bits and selected macOS shards.
-#                  The workflow uploads the patch artifact after selection.
+#                  checks. The workflow selects on merge_group alone; the
+#                  change-class queue selector asks at pull_request.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
@@ -90,17 +75,6 @@
 #     verdict and paths. With --event-parity the
 #     script derives the selection at both events and refuses
 #     `event-parity` where they differ.
-#   - Tree proof stands down the selections its record covers on a pull
-#     request. A merge group accepts only matching macOS patch proof and
-#     never stands Linux or Windows lanes down. Tree coverage is re-derived
-#     from its record. Patch coverage reads the PR's recorded selection,
-#     because base changes can change what the current checkout selects.
-#     A shell runner stands down where the record covers its current shards.
-#     A lane or shard outside that record keeps its current selection.
-#     bot_instructions is never covered: its changelog step judges the
-#     range from this event's base, and a record names no base.
-#     queue_macos_shards reads the macOS bit after matching patch proof
-#     on merge groups, and the selected macOS bit on pull requests.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -119,8 +93,7 @@
 #     size.
 #   - catalog and smoke take the union of the explicit catalog inputs and
 #     the CLI smoke compiled inputs rust-reads derives. A compiled include counts even
-#     when it is prose; a run-time manifest read alone does not. Both lanes
-#     run on either event and accept no tree proof for external releases.
+#     when it is prose; a run-time manifest read alone does not.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
 #     include or manifest row names, or a path under a directory it names,
 #     takes the measured row its paths select, so the cargo lane runs on a
@@ -130,17 +103,17 @@
 #
 # The lanes:
 #
-#   shell_shards        true where the remaining `shards=` and `shell_os=`
-#                       lists are non-empty. shell_os names the unproven
-#                       runners. .github/workflows/skill-tests.yml owns the
-#                       jobs and events that consume these values.
-#   bot_instructions    on both events, the check of the rendered review-bot
-#                       instruction files and the root AGENTS.md region they
-#                       own, and changelog-entries --base over the range from
-#                       the event's base: fragments and package versions. On
-#                       a pull request also the document byte ceilings, the
-#                       index-wide work-marker scan and the secrets scan of
-#                       the commits it adds.
+#   shell_shards        true where the `shards=` and `shell_os=` lists are
+#                       non-empty. shell_os names the selected runners.
+#                       .github/workflows/skill-tests.yml owns the jobs and
+#                       events that consume these values.
+#   bot_instructions    the check of the rendered review-bot instruction
+#                       files and the root AGENTS.md region they own,
+#                       changelog-entries --base over the range from the
+#                       event's base (fragments and package versions), the
+#                       document byte ceilings, the index-wide work-marker
+#                       scan and the secrets scan of the commits the change
+#                       adds.
 #   cargo_linux         the workspace tests on Linux.
 #   cargo_macos         the workspace tests on the platform the app ships on.
 #   cargo_lint          clippy, fmt and doc over the workspace.
@@ -151,8 +124,8 @@
 #   smoke               the rendered sample trees read by real harness CLIs.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
-#                       shell bit is false or group patch proof covers it.
-#                       Pull requests and groups run these on macOS.
+#                       shell bit is false. Merge groups run these on macOS;
+#                       the nightly run runs the whole macOS roster.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -594,70 +567,19 @@ select_row() { # CLASS DOCS PATHS EVENT
       shell=true
       [ "$shards" != "[]" ] || shell=false
       macos=$platform
-      # The runner arithmetic uses the main-push macOS matrix's exclusions.
+      # The runner arithmetic uses the nightly macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
       printf '%s' "linux=$shell macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards"
       ;;
   esac
 }
 
-# The proving run's selection, where a record arrived: select_row over its
-# lines, which refuses a record its rules refuse as it would the diff's own.
-# A refused record stands nothing down and says why.
-was=""
-record="${PROOF_RECORD:-}"
-# A queue group must re-test every integrated-tree lane.
-[ "$EVENT" != merge_group ] || record=""
-if [ -n "$record" ]; then
-  record_line() { printf '%s\n' "$record" | sed -n "s/^$1=//p"; }
-  r_event="$(record_line event)"
-  r_class="$(record_line change_class)"
-  r_docs="$(record_line docs_only)"
-  r_paths="$(record_line changed_path)"
-  record_err="$(mktemp)" || die mktemp-failed "no temporary file could hold the record's selection"
-  trap 'rm -f -- "$record_err"' EXIT
-  status=0
-  was="$(select_row "$r_class" "$r_docs" "$r_paths" "$r_event" 2>"$record_err")" || status=$?
-  if [ "$status" -eq 0 ]; then
-    printf 'ci-job-set: proof=read event=%s class=%s docs_only=%s %s\n' \
-      "$r_event" "$r_class" "$r_docs" "$was" >&2
-  else
-    # The first refusal line; `sed -n 1p` reads to the end, so its writer
-    # is never cut off.
-    cause="$(sed -n 's/^ci-job-set: cause=//p' "$record_err" | sed -n 1p)" || cause=""
-    printf 'ci-job-set: proof=ignored cause=%s\n' "${cause:-status=$status}" >&2
-    was=""
-  fi
-fi
-
-# The action accepts the macOS record; this selector decides its coverage.
-# A failed coverage read leaves every macOS lane selected.
-patch_record="${MACOS_PROOF_RECORD:-}"
-patch_was=""
-if [ "$EVENT" = merge_group ] && [ -n "$patch_record" ]; then
-  patch_line() { printf '%s\n' "$patch_record" | sed -n "s/^$1=//p"; }
-  if ! r_macos="$(patch_line macos_selected)" || ! r_cargo="$(patch_line cargo_macos_selected)" ||
-    ! r_shards="$(patch_line macos_shards)"; then
-    printf 'ci-job-set: proof=ignored cause=macos-coverage-read-failed\n' >&2
-  else
-    case "$r_macos:$r_cargo" in
-      true:true | true:false | false:true | false:false)
-        if r_shards="$(jq -cse 'select(length == 1) | .[0] | select(type == "array" and all(.[]; type == "string"))' <<<"$r_shards")"; then
-          patch_was="linux=false macos=$r_macos ui=false bot_instructions=false cargo_linux=false cargo_macos=$r_cargo cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=$r_shards"
-        fi ;;
-    esac
-    if [ -z "$patch_was" ]; then
-      printf 'ci-job-set: proof=ignored cause=macos-coverage-refused\n' >&2
-    fi
-  fi
-fi
-
-now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$EVENT")" || exit 2
+now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 
 # Event parity: pull requests and merge groups receive equal lane, shard and
 # runner selections for the same class, docs verdict and paths. A rule that
-# reads the event breaks that and is refused before any proof stands a lane
-# down. .github/workflows/skill-tests.yml owns runner and event placement.
+# reads the event breaks that and is refused. .github/workflows/skill-tests.yml
+# owns runner and event placement.
 # Each other event costs a whole selection again, so only --event-parity
 # pays it.
 if [ "$parity" = true ]; then
@@ -669,44 +591,13 @@ if [ "$parity" = true ]; then
   done
 fi
 
-[ -z "$patch_was" ] || was="$patch_was"
-
-# A proof clears the lane selections its source row covers. Shell runner
-# bits also require that source row to include every current shard.
 now_shards="$(sel_get "$now" shards)"
-was_shards=""
-[ -z "$was" ] || was_shards="$(sel_get "$was" shards)"
-covered=false
-if [ -n "$was" ]; then
-  covered=true
-  for shard in $SHARDS; do
-    if [ -n "$patch_was" ]; then
-      case " $LINUX_ONLY_SHARDS " in *" $shard "*) continue ;; esac
-    fi
-    case "$now_shards" in *"\"$shard\""*) ;; *) continue ;; esac
-    case "$was_shards" in *"\"$shard\""*) ;; *) covered=false ;; esac
-  done
-fi
 legs=""
 jobs=""
 for lane in $LEGS $JOBS; do
   value="$(sel_get "$now" "$lane")"
-  ran=false
-  [ -z "$was" ] || ran="$(sel_get "$was" "$lane")"
-  case "$lane" in linux | macos) [ "$covered" = true ] || ran=false ;; esac
-  if [ "$EVENT" = merge_group ]; then
-    case "$lane" in macos | cargo_macos) ;; *) ran=false ;; esac
-  fi
-  # The changelog step's verdict reads the base, which the record lacks.
-  # Catalog and smoke also read the latest released engine or harness CLIs;
-  # a tree record cannot prove those external inputs stayed unchanged.
-  case "$lane" in bot_instructions | catalog | smoke) ran=false ;; esac
-  if [ "$value:$ran" = true:true ]; then
-    value=false
-    printf 'ci-job-set: proof=reused lane=%s\n' "$lane" >&2
-  fi
-  # The remaining runner bits become shell_os; shell_shards is true only
-  # where this list is non-empty.
+  # The runner bits become shell_os; shell_shards is true only where this
+  # list is non-empty.
   case "$lane:$value" in
     linux:true) legs="${legs:+$legs,}\"ubuntu-latest\"" ;;
     macos:true) legs="${legs:+$legs,}\"macos-latest\"" ;;
@@ -717,7 +608,7 @@ done
 shell=false
 [ -z "$legs" ] || shell=true
 
-# The PR and queue macOS legs; matching patch proof can clear only the group.
+# The merge group's macOS legs.
 queue=""
 if [ "$(sel_get "$now" macos)" = true ]; then
   for shard in $SHARDS; do
@@ -726,19 +617,5 @@ if [ "$(sel_get "$now" macos)" = true ]; then
   done
 fi
 
-if [ "$EVENT" = merge_group ] && [ -n "$patch_was" ]; then
-  case "$legs" in *macos-latest*) ;; *) queue="" ;; esac
-fi
-
 # shellcheck disable=SC2086 # one `lane=value` word per job
 emit "shell_shards=$shell" "shell_os=[$legs]" $jobs "shards=$now_shards" "queue_macos_shards=[$queue]"
-
-# Only the PR's executed selection can attest coverage. The proving run
-# must succeed before the reader accepts the artifact this record enters.
-if [ "$EVENT" = pull_request ] && [ -n "${MACOS_RECORD_DIR:-}" ]; then
-  selected_macos=false
-  [ -z "$queue" ] || selected_macos=true
-  printf 'macos_selected=%s\ncargo_macos_selected=%s\nmacos_shards=[%s]\n' \
-    "$selected_macos" "$(sel_get "$jobs" cargo_macos)" "$queue" >>"$MACOS_RECORD_DIR/record" ||
-    die "macos-record-unwritable path=$MACOS_RECORD_DIR/record" "the actual macOS selection could not be recorded"
-fi

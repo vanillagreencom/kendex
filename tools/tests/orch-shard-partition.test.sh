@@ -44,8 +44,8 @@
 #      original runner, including linear's reviewed native eligibility.
 #      The omission and duplication controls run on each runner's claims.
 #   4c. the macOS exclusions — tools/ci-job-set's Linux-only shard list
-#      matches the main-push macOS matrix's exclusions, and the merge
-#      queue's fallback equals the main-push roster less those exclusions.
+#      matches the nightly macOS matrix's exclusions, and the merge
+#      queue's fallback equals the nightly roster less those exclusions.
 #      The must-fail arms drop one exclude row and plant a Linux-only
 #      queue shard.
 #   4e. the linear controls — the workflow's actual shard arguments run the
@@ -1465,12 +1465,12 @@ if [[ -s "$TMP/owners-refresh" &&
   ok "must-fail: removing refresh selection names every omitted refresh suite"
 else bad "refresh shard selection control"; fi
 
-# --- 4c. The main-push macOS matrix's exclusions --------------------------
+# --- 4c. The nightly macOS matrix's exclusions --------------------------
 # The selector uses these exclusions for its macOS runner arithmetic.
-# .github/workflows/skill-tests.yml owns execution policy: its main-push
+# .github/workflows/skill-tests.yml owns execution policy: its nightly
 # macOS job uses the full fallback roster and applies these exclusions.
 
-# The shards the main-push macOS matrix excludes, read as
+# The shards the nightly macOS matrix excludes, read as
 # YAML sequence items the way cargo_excluded_legs reads them.
 macos_excluded_shards() { # macos_excluded_shards <workflow>
   excluded_shards "$1" macos-latest
@@ -1494,7 +1494,7 @@ else
 fi
 
 # The merge queue's macOS legs: the queue job's fallback list, which runs
-# where nothing classified, names the main-push roster less the shards
+# where nothing classified, names the nightly roster less the shards
 # excluded as Linux-only.
 queue_fallback_shards() { # queue_fallback_shards <workflow>
   awk '/^  [A-Za-z0-9_-]+:/ { job = $1 }
@@ -1504,7 +1504,7 @@ queue_fallback_shards() { # queue_fallback_shards <workflow>
 queue_shards="$(queue_fallback_shards "$WORKFLOW")"
 grep -qx orch-terminal <<< "$queue_shards" ||
   bad "no queue shard read from $WORKFLOW, so the queue reader is broken"
-check "the queue fallback equals the main-push roster less its macOS exclusions" \
+check "the queue fallback equals the nightly roster less its macOS exclusions" \
   "$(comm -23 <(sed -n "s/^        shard: &skill-suite-shards .*'\[\([^]]*\)\]'.*/\1/p" "$WORKFLOW" | tr -d ' "' | tr ',' '\n' | sort -u) <(printf '%s\n' "$excluded"))" "$queue_shards"
 check "no queue macOS shard is Linux-only" "" \
   "$(comm -12 <(printf '%s\n' "$queue_shards") <(linux_only_shards "$JOB_SET"))"
@@ -1517,7 +1517,7 @@ check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-c
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
 # Linux runs every shell suite. The native eligibility owner defines the
 # macOS subset. Actual workflow discovery must cover each eligible file once.
-# The roster jobs are the Linux job and the main-push macOS job; the merge
+# The roster jobs are the Linux job and the nightly macOS job; the merge
 # queue's macOS legs run a subset of shards and are no roster.
 roster_os() { # WORKFLOW — the os of each roster job's matrix, one per line
   awk '
@@ -1532,8 +1532,8 @@ check "the shell matrix retains each original OS exactly once" \
 awk '/^  skill-suites-macos:/ { job = 1 } /^  skill-suites-macos-queue:/ { job = 0 }
      job && $0 == "        os: [macos-latest]" { $0 = "        os: [ubuntu-latest]"; n++ }
      { print } END { exit n != 1 }' "$WORKFLOW" > "$TMP/mac-roster-linux.yml" ||
-  bad "must-fail: the main-push macOS os line is no longer one line in $WORKFLOW"
-check "must-fail: a main-push roster moved off macOS loses its OS" \
+  bad "must-fail: the nightly macOS os line is no longer one line in $WORKFLOW"
+check "must-fail: a nightly roster moved off macOS loses its OS" \
   $'ubuntu-latest\nubuntu-latest' "$(roster_os "$TMP/mac-roster-linux.yml")"
 shared_steps() { # WORKFLOW — the Linux anchor and macOS alias
   awk '
@@ -1743,8 +1743,8 @@ fi
 
 if [[ "$mode" != shell ]]; then
 
-check "Cargo name checks run only after the macOS CLI rest compile" \
-  " --cargo-only:true::matrix.crate == 'kendex-cli' && matrix.leg == 'rest'" \
+check "Cargo name checks run only after the macOS CLI rest compile, never on the push" \
+  " --cargo-only:true::matrix.crate == 'kendex-cli' && matrix.leg == 'rest' && github.event_name != 'push'" \
   "$(partition_cargo_steps "$WORKFLOW")"
 for defect in mode order; do
   mutant="$TMP/wf-partition-cargo-$defect.yml"

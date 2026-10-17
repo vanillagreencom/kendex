@@ -91,16 +91,17 @@ for row in \
 done
 
 # An unread dependency must preserve the standing failure. Its restoration
-# must stay quiet rather than creating another incident.
+# must stay quiet rather than creating another incident. An unread run list
+# fails the push and the nightly read alike, one notice each.
 for read_kind in runs jobs log; do
   case "$read_kind" in
-    runs) unread="$STUB_DIR/main-push.owner_repo.err" ;;
-    jobs) unread="$STUB_DIR/main-jobs.202.err" ;;
-    log) unread="$STUB_DIR/main-log.202.err" ;;
+    runs) unread="$STUB_DIR/main-push.owner_repo.err" notices=2 ;;
+    jobs) unread="$STUB_DIR/main-jobs.202.err" notices=1 ;;
+    log) unread="$STUB_DIR/main-log.202.err" notices=1 ;;
   esac
   printf 'HTTP 502: bad gateway\n' > "$unread"
   main_watch
-  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" 'rc=0 notices=1 events=' "unread $read_kind" "$STUB_DIR/err"
+  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=" "unread $read_kind" "$STUB_DIR/err"
   rm -- "$unread"
   main_watch
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' "restored $read_kind preserves incident" "$STUB_DIR/err"
@@ -130,12 +131,13 @@ for row in \
   assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES events=$MAIN_EVENTS" "rc=0 notices=$notices events=$expected" "$name" "$STUB_DIR/err"
 done
 
-# gh's rewritten 404 alone does not prove that the workflow is absent.
+# gh's rewritten 404 alone does not prove that the workflow is absent. The
+# push and the nightly read each print their own notice.
 for row in \
   "absent|{\"workflows\":[]}|0|$EVENT" \
-  'present-unread|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|1|' \
-  'workflow-list-unread|denied|1|' \
-  'workflow-list-invalid|{}|1|'; do
+  'present-unread|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|2|' \
+  'workflow-list-unread|denied|2|' \
+  'workflow-list-invalid|{}|2|'; do
   IFS='|' read -r name workflows notices restored <<<"$row"
   new_case "$name"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
@@ -172,6 +174,41 @@ for row in \
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=[\"Skill suites job\"] cause=$cause" "$name" "$STUB_DIR/err"
 done
 
+# A red nightly run is an incident of its own: a green push after it neither
+# hides nor clears it, and a red push beside it reports apart.
+NIGHT_JOBS='["Skill suites shard (orch-oversee, macos-latest)"]'
+NIGHT_EVENT="EVENT main-push-failing owner/repo workflow=skill-tests.yml run=302 jobs=$NIGHT_JOBS cause=$CAUSE"
+night_history() { # SCHEDULE_CONCLUSION PUSH_CONCLUSION
+  jq -cn --arg night "$1" --arg push "$2" '[
+    {databaseId: 303, headBranch: "main", event: "push", status: "completed", conclusion: $push},
+    {databaseId: 302, headBranch: "main", event: "schedule", status: "completed", conclusion: $night}
+  ]' > "$STUB_DIR/main-push.owner_repo.json"
+  jq -cn --argjson names "$NIGHT_JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.302.json"
+  jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.303.json"
+  printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.302.txt"
+  printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.303.txt"
+}
+new_case main_schedule
+for row in \
+  "night-red|failure|success|$NIGHT_EVENT" \
+  'night-standing-under-green-push|failure|success|' \
+  "push-red-beside-night|failure|failure|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=303 jobs=$JOBS cause=$CAUSE" \
+  'night-green|success|failure|' \
+  "night-red-after-recovery|failure|failure|$NIGHT_EVENT"; do
+  IFS='|' read -r name night push expected <<<"$row"
+  night_history "$night" "$push"
+  main_watch
+  assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$expected" "$name" "$STUB_DIR/err"
+done
+# A watch reading the push alone misses the red night the row above reports.
+NIGHT_MUTANT="$(mutant_scripts main-night/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-night/github"
+mutate_file "$NIGHT_MUTANT" '    for event in push schedule; do' '    for event in push; do'
+new_case main_schedule_control
+night_history failure success
+WATCH_BIN="$NIGHT_MUTANT" main_watch
+assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'control: a push-only watch misses the red night' "$STUB_DIR/err"
+
 # Admit raw diagnostics in a private watch. The unchanged-suite oracle must
 # reject its duplicate event while the mutant still completes the check.
 MUTANT="$(mutant_scripts main-control/orch oversee-watch)/oversee-watch" || exit 1
@@ -195,8 +232,8 @@ for code in current mutant; do
   TARGET="$(mutant_scripts "main-push-cut-$code/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-push-cut-$code/github"
   if [[ "$code" == mutant ]]; then
-    mutate_file "$TARGET" $'    IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
-      $'    gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n    IFS=\'|\' read -r run conclusion <<<"$runs"\n'
+    mutate_file "$TARGET" $'      IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
+      $'      gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n      IFS=\'|\' read -r run conclusion <<<"$runs"\n'
   fi
   new_case "main_push_cut_$code"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
@@ -207,7 +244,7 @@ for code in current mutant; do
   else
     CONTROL_RC=0
     ( assert_eq "rc=$MAIN_RC reads=$READS events=$MAIN_EVENTS" 'rc=0 reads=0 events=' 'cut budget-read oracle'; [[ "$FAIL" -eq 0 ]] ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
-    assert_eq "watch=$MAIN_RC reads=$READS oracle=$CONTROL_RC" 'watch=0 reads=1 oracle=1' 'restored history read fails the budget-read oracle' "$STUB_DIR/err"
+    assert_eq "watch=$MAIN_RC reads=$READS oracle=$CONTROL_RC" 'watch=0 reads=2 oracle=1' 'restored history read fails the budget-read oracle' "$STUB_DIR/err"
   fi
 done
 

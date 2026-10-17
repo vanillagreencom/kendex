@@ -61,9 +61,9 @@ On Linux a debug build and the installed app are two apps to the single-instance
 
 ## CI
 
-Pull requests run the selected macOS cargo tests and shell shards. A merge group can reuse the macOS selection that a successful pull-request run of the same workflow recorded with the same whitespace-preserving patch id. The id comes from the diff against the endpoints' merge base. A missing record, changed patch, changed workflow or job selector, unreadable proof, or new macOS selection runs the uncovered macOS tests again. Ubuntu lanes always test the integrated tree. Required check names stay unchanged.
+A pull request runs no lane: its Skill Tests run reports the required `CI` context alone, so GitHub admits it to the merge queue. The merge group runs the lanes its change class and paths select, the macOS cargo tests and shell shards among them, and is the only proof of a head. A red group returns the change to its lane. Required check names stay unchanged.
 
-Patch proof can miss a macOS failure that requires independently passing patches to combine. The push to main runs macOS cargo tests and the complete native shell profile to report that failure after merge. `tools/macos-test-contracts` owns native eligibility; Linux retains the complete shell roster. Check the main run when a merge group reused macOS proof. Linux and Windows cargo jobs on main compile without running tests.
+A macOS or Windows failure that independently passing changes cause only in combination surfaces in the nightly run: a daily schedule on main, or a manual dispatch, runs the macOS cargo tests, the Windows tests and the complete native shell profile. The overseer's watch reports a red nightly run. `tools/macos-test-contracts` owns native eligibility; Linux retains the complete shell roster. The push to main compiles the cargo lanes without running tests, which saves their cache under the merged lockfile.
 
 ## The self-install
 

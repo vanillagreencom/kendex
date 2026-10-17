@@ -324,8 +324,11 @@ The long pass's events, checked and reported in this order:
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
   EVENT main-push-failing <repo> workflow=skill-tests.yml run=<run-id> jobs=<JSON array> cause=<line>
-                             the latest completed push on main failed or
-                             timed out. jobs= lists failed or timed-out job
+                             the latest completed push on main, or the
+                             latest completed scheduled run there, failed or
+                             timed out; each event keeps its own incident,
+                             so a green push leaves a red night standing.
+                             jobs= lists failed or timed-out job
                              names in sorted order. cause= is the first
                              failing suite line from the failed-step log,
                              without gh's job, step and timestamp prefix;
@@ -1119,7 +1122,7 @@ Environment:
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff,
                               account, outside-contribution, refresh-failing,
-                              main-push-failing,
+                              main-push-failing, main-schedule-failing,
                               security-alert, bot-fix and
                               security-alerts-unread rows; the mail pass's
                               file beside the first one holds
