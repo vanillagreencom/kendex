@@ -454,6 +454,42 @@ for PARTITION_RUNNER_OS in Linux macOS; do
   ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "must-fail: missing lifecycle selector fails its $PARTITION_RUNNER_OS moved-leg contract" || bad "$PARTITION_RUNNER_OS lifecycle omission control retained the suite"
 done
 cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
+
+# The launch and owed-work families left the Linux orch-oversee complement
+# for its run deadline. Each family's suites and a future name of each keep
+# their owner; macOS keeps owed work in its state leg.
+moved_rows='oversee_launch|orch-dev|orch-dev
+oversee_launch_watch|orch-dev|orch-dev
+oversee_launch_future|orch-dev|orch-dev
+oversee_watch_owed|orch-dev|orch-state
+oversee_watch_owed_bulk|orch-dev|orch-state
+oversee_watch_owed_membership|orch-dev|orch-state
+oversee_watch_owed_release|orch-dev|orch-state
+oversee_watch_owed_shared|orch-dev|orch-state
+oversee_watch_owed_future|orch-dev|orch-state'
+orch_profiles=(orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest)
+printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_launch_future.sh"
+printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_watch_owed_future.sh"
+moved_owners() { # OS ; `name|shard` for every shard that runs a moved row's suite
+  local profile
+  for profile in "${orch_profiles[@]}"; do
+    PARTITION_RUNNER_OS="$1" selected --shard "$profile" | sed "s/\$/|$profile/"
+  done | awk -F'|' 'NR == FNR { moved[$1] = 1; next } $1 in moved' <(printf '%s\n' "$moved_rows") - | sort
+}
+for PARTITION_RUNNER_OS in Linux macOS; do
+  column=2
+  [[ "$PARTITION_RUNNER_OS" != macOS ]] || column=3
+  check "the moved families have one owner each on $PARTITION_RUNNER_OS" \
+    "$(cut -d'|' -f1,"$column" <<< "$moved_rows" | sort)" "$(moved_owners "$PARTITION_RUNNER_OS")"
+done
+# The moved rows must name the runner's row. Remove it from a disposable
+# copy; the families fall back to the Linux catch-all.
+sed 's/^    oversee_launch\*|oversee_watch_owed\*) OWNING_SHARD=orch-dev ;;$//' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
+cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "moved-family control changed no selector"
+check "must-fail: without their row the moved families return to Linux orch-oversee" \
+  "$(cut -d'|' -f1 <<< "$moved_rows" | sed 's/$/|orch-oversee/' | sort)" "$(moved_owners Linux)"
+cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
+rm -- "$SANDBOX/oversee_launch_future.sh" "$SANDBOX/oversee_watch_owed_future.sh"
 PARTITION_RUNNER_OS=Windows
 for profile in orch-oversee orch-oversee-watch orch-dev orch-state orch-rest; do
   check "$profile refuses an unsupported platform" "1" "$(status_of --shard "$profile")"

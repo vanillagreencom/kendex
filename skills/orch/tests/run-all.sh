@@ -225,6 +225,9 @@ shard_of() { # BASE
     *open-terminal*) OWNING_SHARD=orch-terminal ;;
     *oversee_succeed*|*oversee_watch_mail*|*oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
     oversee_watch|oversee_watch_lifecycle|oversee_watch_terminal|oversee_watch_lanes|oversee_watch_overseer*) OWNING_SHARD=orch-oversee-watch ;;
+    # Merge-group run 39048736979 stopped orch-oversee at its Linux deadline
+    # after 831s. These two families held 1111 of its 3195 suite seconds.
+    oversee_launch*|oversee_watch_owed*) OWNING_SHARD=orch-dev ;;
     *oversee*) OWNING_SHARD=orch-oversee ;;
     *dev*|*review*) OWNING_SHARD=orch-dev ;;
     *lane*|*workflow-state*) OWNING_SHARD=orch-state ;;

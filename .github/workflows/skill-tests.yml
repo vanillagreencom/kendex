@@ -768,7 +768,9 @@ jobs:
       # Source reductions retained all 72 orch-state suites, but run
       # 38164401517 still took 1383s on macOS. run-all.sh owns the family
       # profiles and their complement. Dev/review names enter `orch-dev`,
-      # including names that also carry lane or workflow-state. `orch-state`
+      # including names that also carry lane or workflow-state, and so does
+      # the oversee launch family; the owed-work family joins it on Linux.
+      # `orch-state`
       # takes the remaining lane/workflow-state names. `orch-rest` rejects
       # both families and the terminal/oversee names on Linux. The macOS
       # profiles spread watch contracts across these same jobs. New suites
@@ -852,7 +854,7 @@ jobs:
         if: matrix.shard == 'orch-oversee-succeed'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
 
-      - name: 'orch suites: the dev and review round-artifact suites'
+      - name: 'orch suites: the dev and review round-artifact suites, oversee launch and owed work'
         if: matrix.shard == 'orch-dev'
         run: bash skills/orch/tests/run-all.sh --shard orch-dev
 
