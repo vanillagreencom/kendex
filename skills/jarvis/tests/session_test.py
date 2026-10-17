@@ -518,7 +518,9 @@ class SessionContract(unittest.TestCase):
 
     def test_session_start_at_first_prompt(self):
         # Copilot CLI and Codex fire SessionStart only once the first prompt is
-        # submitted, and draw that kickoff turn before and after its stamp lands.
+        # submitted. Their kickoff turn draws a working line before its stamp
+        # and a bare composer after it, and the brief waits for that turn's
+        # native end.
         events = self.observe_inspection()
         fixture = self.home / ".fixture.json"
         fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"kickoff_barrier": str(events)}))
@@ -537,6 +539,7 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(record["pending"]["native_session_id"], launched["id"])
                 self.assertEqual(record["history"]["pending"]["native_session_id"], launched["id"])
                 self.assertTrue(record["history"]["pending"]["started_at"])
+                self.assertIs(record["pending"].get("kickoff_ended"), True)
                 # Running follows the session's own word that it took the brief.
                 self.assertIs(record["pending"].get("brief_taken"), True)
                 rows = [json.loads(line) for line in self.rows.read_text().splitlines()]

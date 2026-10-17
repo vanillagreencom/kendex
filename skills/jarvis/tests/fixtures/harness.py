@@ -181,9 +181,13 @@ def main():
     subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness],
                    input=json.dumps(payload), text=True, check=True)
     if barrier:
-        # The kickoff turn still runs after its stamp, then ends and clears
-        # its working line.
-        await_inspections(Path(barrier), 2)
+        # The kickoff turn still runs after its stamp and draws only its
+        # composer, which the pane reads as idle: no brief may land before
+        # the turn's own end. The first read after the draw may pair it with
+        # the record from before the stamp, so the third proves the worker
+        # decided on a read of both.
+        print("\033[2J\033[H❯\u00a0", flush=True)
+        await_inspections(Path(barrier), 3)
         assert not select.select([sys.stdin], [], [], 0)[0], "the brief reached the kickoff turn"
         print("\033[2J\033[H", end="", flush=True)
     if history == "confirmed":
@@ -193,6 +197,9 @@ def main():
         # Hold its prompt marker so automatic delivery cannot race that probe.
         with gate.open() as stream:
             stream.read(1)
+    if deferred:
+        # The kickoff turn ends: its native turn-end hook stamps the record.
+        brief_taken(fixture, harness, identity, "Stop")
     auth_mode = fixture.get("auth_mode")
     if auth_mode == "stale":
         print(AUTH_MESSAGES[harness] + "\n❯ continue\n❯\u00a0", flush=True)

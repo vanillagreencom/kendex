@@ -688,6 +688,41 @@ other-pane|.claude/hooks|5f0c|lane-mail-check|$STOP|.|none|TMUX_PANE=%8 JARVIS_G
 subagent|.claude/hooks|5f0c|lane-mail-halt|$SUB_TOOL|.|none|JARVIS_GENERATION=3
 stamped|.claude/hooks|5f0c|lane-mail-check|$STOP|.pending.brief_taken = "earlier"|earlier|JARVIS_GENERATION=3
 JARVISTAKEN
+# The kickoff-ended stamp: Codex and Copilot CLI start at their launch's
+# kickoff prompt, and that turn's own end, before the worker delivers the
+# brief, stamps the launch row once as the kickoff ended; it never stamps the
+# brief taken. Claude Code and Pi start with no kickoff, and no tool call,
+# other session or later turn end stamps it. Payloads as above, and Copilot's
+# agentStop for a subagent under its own session id.
+COP_SUB_STOP='{"sessionId":"s9","timestamp":1790975267602,"cwd":"/work","stopReason":"end_turn"}'
+stamp() { # FIELD
+  jq -r --arg field "$1" '.pending[$field] // "none"' "$RECORD"
+}
+jarvis_kickoff() { # PATCH
+  jq -c "{state: \"starting\"} + . | .pending += {started_at: 1790000001} | $1" "$RECORD" >"$RECORD.next"
+  mv "$RECORD.next" "$RECORD"
+}
+while IFS='|' read -r label home id wrapper payload patch want env; do
+  jarvis_checkout "jarvis_kickoff_$label" "$home" "$id"
+  jarvis_kickoff "$patch"
+  before="$(jq -c 'del(.pending.kickoff_ended)' "$RECORD")"
+  # shellcheck disable=SC2086  # env is a list of assignments.
+  run "$wrapper" "$payload" "JARVIS_RECORD=$RECORD" $env
+  assert_eq "RC=$RC unwritten=$(grep -c '^lane-mail-check: jarvis-rows-' "$ERR_FILE" || true) ended=$(stamp kickoff_ended) rest=$([ "$(jq -c 'del(.pending.kickoff_ended)' "$RECORD")" = "$before" ] && echo same || echo changed)" \
+    "RC=0 unwritten=0 ended=$want rest=same" "kickoff-ended stamp: $label"
+done <<JARVISKICKOFF
+codex-stop|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.|true|JARVIS_GENERATION=3
+copilot-stop|.github/hooks|l1|lane-mail-check|$COP_STOP|.|true|JARVIS_GENERATION=3 ${COP_ENV[*]}
+codex-tool|.codex/hooks|019a|lane-mail-halt|$CODEX_TOOL|.|none|JARVIS_GENERATION=3
+claude-stop|.claude/hooks|5f0c|lane-mail-check|$STOP|.|none|JARVIS_GENERATION=3
+pi-stop|.pi/kendex/hooks|p1|lane-mail-check|$PI_STOP|.|none|JARVIS_GENERATION=3
+unstarted|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.pending.started_at = null|none|JARVIS_GENERATION=3
+delivered|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.brief_delivered = true|none|JARVIS_GENERATION=3
+other-session|.codex/hooks|6a1d|lane-mail-check|$CODEX_STOP|.|none|JARVIS_GENERATION=3
+copilot-subagent|.github/hooks|l1|lane-mail-check|$COP_SUB_STOP|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
+running|.github/hooks|l1|lane-mail-check|$COP_STOP|.state = "running"|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
+stamped|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.pending.kickoff_ended = "earlier"|earlier|JARVIS_GENERATION=3
+JARVISKICKOFF
 # A record the stamp cannot read is reported under its key and passed.
 jarvis_checkout jarvis_taken_unreadable .claude/hooks 5f0c
 printf 'not json\n' >"$RECORD"
@@ -754,13 +789,30 @@ while IFS='@' read -r label file old new home id wrapper payload patch want env;
 done <<JARVISTAKENCONTROL
 dispatch@hook@{ [ "\$CALLER" != subagent ] && [ -z "\$ITEM" ] && [ -n "\${JARVIS_RECORD:-}" ]; } || return 0@return 0@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.@none
 copilot-unknown@hook@[ "\$CALLER" != subagent ] && [ -z@[ "\$CALLER" = lead ] && [ -z@.github/hooks@l1@lane-mail-halt@$COP_TOOL@.@none@${COP_ENV[*]}
-turn-end@lib@[ "\$5" = PreToolUse ] || [ "\$4" = claude ] || return 0@:@.pi/kendex/hooks@p1@lane-mail-check@$PI_STOP@.@true
+turn-end@lib@PreToolUse:* | Stop:claude)@PreToolUse:* | Stop:*)@.pi/kendex/hooks@p1@lane-mail-check@$PI_STOP@.@true
 started@lib@ and .pending.started_at != null@@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.pending.started_at = null@true
 session@lib@.pending.native_session_id == \$session and @@.claude/hooks@6a1d@lane-mail-halt@$TOOL@.@true
 delivered@lib@.brief_delivered == true@true@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.brief_delivered = false@true
 starting@lib@.state == "starting"@true@.claude/hooks@5f0c@lane-mail-check@$STOP@.state = "running"@true
 write-once@lib@.pending.brief_taken == null@true@.claude/hooks@5f0c@lane-mail-check@$STOP@.pending.brief_taken = "earlier"@true
 JARVISTAKENCONTROL
+# Each kickoff-ended rule removed from a copy reddens its row: the Copilot
+# turn end among the kickoff harnesses, the undelivered brief and write-once.
+while IFS='@' read -r label old new home id payload patch want env; do
+  jarvis_checkout "jarvis_kickoff_control_$label" "$home" "$id"
+  jarvis_kickoff "$patch"
+  rm -f -- "${CHECKOUT:?}/.agents/skills/orch/scripts"
+  cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
+  LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
+  mutate_lib "$old" "$new"
+  # shellcheck disable=SC2086  # env is a list of assignments.
+  run lane-mail-check "$payload" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}" $env
+  assert_eq "ended=$(stamp kickoff_ended)" "ended=$want" "control: kickoff-ended $label"
+done <<JARVISKICKOFFCONTROL
+copilot@Stop:codex | Stop:copilot)@Stop:codex)@.github/hooks@l1@$COP_STOP@.@none@${COP_ENV[*]}
+delivered@elif .brief_delivered == true then@elif false then@.codex/hooks@019a@$CODEX_STOP@.brief_delivered = true@true
+write-once@elif .pending.kickoff_ended != null then@elif false then@.codex/hooks@019a@$CODEX_STOP@.pending.kickoff_ended = "earlier"@true
+JARVISKICKOFFCONTROL
 
 # With a mailbox, losing the Jarvis error after the ordinary append hides the
 # rows-unwritten notice. The record and ordinary row still have their results.

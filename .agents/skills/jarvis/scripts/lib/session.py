@@ -471,7 +471,7 @@ class Session:
             # Backend operations share it; inspection never renews the launch.
             # The pane is read outside the record lock, which holds only each
             # read, decision and write, the brief's paste among them: a native
-            # hook's brief-taken stamp waits on that lock for SESSION_ROWS_WAIT
+            # hook's stamp waits on that lock for SESSION_ROWS_WAIT
             # (orch session-rows.sh), 2 s, far above that hold.
             while True:
                 if time.monotonic() >= self.deadline:
@@ -484,8 +484,9 @@ class Session:
                 identity = record.get("pending") or {}
                 # The native hook's stamp at the first tool call, or Claude
                 # Code turn end, after the brief: the session's own word that
-                # it took it. The pane is still read, so a sign-in wall or
-                # another account refuses the Start before the stamp counts.
+                # it took it. The pane is still read, so a sign-in wall, a
+                # trust question or another account refuses the Start before
+                # either stamp counts.
                 taken = record.get("brief_delivered") and identity.get("brief_taken")
                 observed = self.backend(
                     "inspect", socket, pane, record["harness"], prepared["var"], record["account"],
@@ -510,10 +511,14 @@ class Session:
                         record["identity_verified"] = True
                         record["history"] = self.confirmed_history(record)
                         self.write(record)
-                    # A kickoff turn's working pane is no turn on the brief: the
-                    # brief waits for that turn to end, and only the session's
-                    # brief-taken stamp then says it took the brief.
-                    if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in (("idle",) if prepared["kickoff"] else ("idle", "working")):
+                    # Copilot CLI and Codex run their kickoff turn first, and
+                    # the pane cannot tell that turn's first frames, or
+                    # Copilot's composer during it, from its end: their brief
+                    # waits for the native turn-end hook's kickoff_ended stamp
+                    # (orch session-rows.sh), after identity was verified. A
+                    # kickoff turn's working pane is no turn on the brief, so
+                    # only the brief-taken stamp then says it took the brief.
+                    if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and ((record.get("identity_verified") and identity.get("kickoff_ended")) if prepared["kickoff"] else observed in ("idle", "working")):
                         prompt = self.path.parent / ("start-" + str(generation) + ".txt")
                         stream = prompt.open("x")
                         try:
