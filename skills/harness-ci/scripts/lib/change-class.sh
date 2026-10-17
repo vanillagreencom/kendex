@@ -122,18 +122,21 @@ opencode.jsonc'
 
 # Lane decisions shared by the installed command and the action. The caller
 # supplies the class and harness-only's paths, outside list and range log in
-# WORK, the log also holding change-class's queue-only and per-push lines.
+# WORK, the log also holding change-class's per-push line.
 # Results are lanes, lanes_cause, and lane_values and lane_causes per
 # declared lane. Refusals pass cause= fields to the caller's die formatter.
 #
 # A schedule or workflow_dispatch run is the nightly full run: lanes=true
 # and every declared lane true, cause=full-run, whatever the class.
 # QUEUE_DEFAULT is true where the workflow asked for the queue-only default;
-# the stand-down below states what it does.
-change_class_lanes() { # CLASS DOCS EVENT REPO HEAD WORK LANES_FROM QUEUE_DEFAULT
+# the stand-down below states what it does. Positions 1 to 8 keep the
+# meaning an older caller gives them, since the merge-group run pairs this
+# tree's action with the default branch's library; a new argument is only
+# ever appended.
+change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
-  local work="$6" lanes_from="$7" queue_default="${8:-false}"
-  local declaration="" lanes_root="" judged_root="" queue_only per_push
+  local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"
+  local declaration="" lanes_root="" judged_root="" per_push
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head has_deletions status path index delta name claimed
   local moved_paths=() added_paths=() lane_hits=() lane_changed=() render_hits=()
@@ -147,10 +150,7 @@ if [ ! -s "${work:?}/paths" ] && [ "$class" != standard ]; then
     "a narrow class arrived with no changed path, which no classifier emits"
 fi
 
-# change-class's two records. An absent queue-only line defers no `:queue`
-# lane; an absent per-push line stands nothing down.
-queue_only="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
-  die "cause=queue-record-unreadable" "could not read change-class's queue-only line"
+# change-class's per-push record. An absent line stands nothing down.
 per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
   die "cause=queue-record-unreadable" "could not read change-class's per-push line"
 

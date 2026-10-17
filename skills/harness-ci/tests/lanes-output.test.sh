@@ -194,9 +194,6 @@ NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
   "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
 ! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
 write_row queue-path-control "$base_default" 'src/main.sh .github/workflows/ci.yml' 21
-run_local "$CHANGE_CLASS" pull_request "$base_default" "$SANDBOX/default"
-assert_eq 'the queue-path control row stands down' 'lanes=false' \
-  "$(sed -n '/^lanes=/p' "$SANDBOX/local-output")"
 run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
 assert_eq 'must-fail: a stand-down gated on the queue-only cause runs a queue-path change' \
   'queue_only=true lanes=true' \

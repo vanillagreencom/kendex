@@ -292,7 +292,7 @@ fi
 # while the action already carries it. With no decision, run every lane.
 if declare -F change_class_lanes >/dev/null; then
   change_class_lanes "$class" "$docs" "$EVENT" "$REPO" "$HEAD" \
-    "$work" "${LANES_FROM:-}" "$queue_default"
+    "$queue_only" "$work" "${LANES_FROM:-}" "$queue_default"
 else
   lane_count=0 lane_state=unset lane_values=() lane_causes=()
   lanes=true lanes_cause=lane-producer-unavailable

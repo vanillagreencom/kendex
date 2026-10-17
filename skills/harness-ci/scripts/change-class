@@ -435,7 +435,7 @@ answer() { # CLASS FIELDS [measured]
     # The two records below are the ones the action's log carries.
     { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
-      "$work" "$lanes_from" "$queue_default" >&2
+      "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" >&2
   fi
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY"
