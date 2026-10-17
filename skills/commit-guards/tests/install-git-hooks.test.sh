@@ -415,7 +415,7 @@ for row in \
   settings 'COMMIT_GUARDS_CHECKS = "md-refs"'
   seed
   mkdir -p "$R/docs" "$R/skills/x/scripts"
-  stage docs/guide.md '# Guide\n\n## Rules\n'
+  stage docs/guide.md '# Guide\n\n## Rules\n\nSee [Guide \302\247 Rules](guide.md#rules).\n'
   marker='#'
   [ "$name" != node ] || marker='//'
   stage "skills/x/scripts/$filename" "$interpreter\n$marker $target \302\247 Rules\n"
@@ -428,6 +428,16 @@ for row in \
     grammar:*"grammar=1"*) record=grammar ;;
   esac
   assert_eq "$name: md-refs judged the carrier" "$category" "$record"
+  if [ "$category" = clean ]; then
+    unmeasured=absent
+    grammar=absent
+    case "$OUT" in *"unmeasured=docs/guide.md:"*) unmeasured=present ;; esac
+    while IFS= read -r line; do
+      case "$line" in "md-refs: summary="*"grammar="*) grammar=present ;; esac
+    done <<<"$OUT"
+    assert_eq "$name: the document target is measured" absent "$unmeasured"
+    assert_eq "$name: the summary has no grammar skip" absent "$grammar"
+  fi
 done
 
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"

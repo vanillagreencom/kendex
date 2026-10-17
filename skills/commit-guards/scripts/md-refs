@@ -388,6 +388,8 @@ GG_WALK_SKIPPED=0
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>", as gg_walk_configured_paths reads it.
   f="${rec#*"$GG_TAB"}"
+  # Markdown uses the document pass, never the comment extractor.
+  case "$f" in *.md) continue ;; esac
   gg_matches_path_glob "$f" || continue
   gg_is_excluded "$f" && continue
   mode="${rec%% *}"
