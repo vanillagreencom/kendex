@@ -2002,7 +2002,9 @@ claude_attached_agents() { # [emergency STATE_FILE]
     # notification in a record arrived before or during the calls whose
     # results it carries, so it describes a turn that ended before their
     # message reached the child: a record's notifications apply before its
-    # call results.
+    # call results. A launch or spawn result in the same record may carry
+    # that child's first notification on a sibling result, so the record's
+    # launches register first.
     agents=$("${scan_bound[@]}" jq -Rnr '
       def text: if type == "string" then . elif type == "array" then
         [.[] | select(.type == "text") | .text] | join("\n") else "" end;
@@ -2012,6 +2014,7 @@ claude_attached_agents() { # [emergency STATE_FILE]
           | capture("agentId: (?<id>[A-Za-z0-9_-]+)")?),
         (select(startswith("Spawned successfully"))
           | capture("\nagent_id: (?<id>[A-Za-z0-9_-]+)\nname: (?<name>[^\n]+)")?);
+      def results: .content | if type == "array" then .[] else empty end | select(.type == "tool_result");
       def noted($m): reduce ($m.content | said
             | scan("<task-notification>[\\s\\S]*?<task-id>([A-Za-z0-9_-]+)</task-id>[\\s\\S]*?<status>([a-z_]+)</status>[\\s\\S]*?</task-notification>")) as $n
             (. ; if .agents | has($n[0]) then .agents[$n[0]] = $n[1] else . end)
@@ -2035,14 +2038,14 @@ claude_attached_agents() { # [emergency STATE_FILE]
               elif $c.name == "TaskStop" and ($c.input.task_id | type) == "string" then
                 .calls[$c.id] = {to: $c.input.task_id, status: "killed"}
               else . end)
-        elif $m.role == "user" then noted($m)
-          | reduce ($m.content | if type == "array" then .[] else empty end
-            | select(.type == "tool_result")) as $r
-            (. ; [$r.content | text | launched][0] as $l
-              | .calls[$r.tool_use_id | if type == "string" then . else "" end] as $c
-              | if $l != null then .agents[$l.id] = "running"
-                  | if $l.name != null then .names[$l.name] = $l.id else . end
-                elif $c == null or $r.is_error == true then .
+        elif $m.role == "user" then
+          reduce ($m | results | [.content | text | launched][0] | objects) as $l
+            (. ; .agents[$l.id] = "running"
+              | if $l.name != null then .names[$l.name] = $l.id else . end)
+          | noted($m)
+          | reduce ($m | results) as $r
+            (. ; .calls[$r.tool_use_id | if type == "string" then . else "" end] as $c
+              | if [$r.content | text | launched][0] != null or $c == null or $r.is_error == true then .
                 elif $c | has("to") then (.names[$c.to] // $c.to) as $t
                   | if .agents | has($t) then .agents[$t] = $c.status else . end
                 elif $c.sync then .
