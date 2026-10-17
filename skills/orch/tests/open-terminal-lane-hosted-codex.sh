@@ -13,6 +13,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-hosted-world.sh"
 
 
 CODEX_RELAUNCH="$HARNESS_UP;LANE_HOST_STUB_SELECTION=resume;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high"
+for route in fresh relaunch; do
+  route_args=()
+  [[ "$route" != relaunch ]] || route_args=(--relaunch)
+  run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness codex --lane "$H/.eclaude" --repo o/r \
+    ${route_args[@]+"${route_args[@]}"} --cmd "codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 {item} '$UNATTENDED_TEXT'" KEN-49
+  [[ "$RC" -eq 0 ]] || printf '%s\n' "$OUT"
+  assert_eq "rc=$RC compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q")" \
+    "rc=0 compaction=1" "a hosted custom Codex $route carries its executed compaction overrides"
+done
 run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane "$H/.eclaude" --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'features.daemon_auto_start=false' '-c' 'notice.hide_rate_limit_model_nudge=true' '--dangerously-bypass-hook-trust' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"

@@ -278,6 +278,37 @@ pi|subagent|89999|200000|0|-
 pi|subagent|90000|200000|2|lane-mail-check: agent-unobserved=subagent tokens=90000 reserve=10000
 ROWS
 
+# The first attached launch reads the environment built for a custom command.
+mkdir -p "$TMP_ROOT/launch-bin"
+cat > "$TMP_ROOT/launch-bin/codex" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "${ORCH_COMPACTION_OVERRIDES:-}"
+STUB
+chmod +x "$TMP_ROOT/launch-bin/codex"
+custom_row=0
+while IFS='|' read -r cmd rc key; do
+  custom_row=$((custom_row + 1))
+  new_lane "agent_codex_custom-$custom_row" AGENT-1
+  mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
+  install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
+  usage_line codex 1000 > "$TRANSCRIPT"
+  evidence=$(PATH="$TMP_ROOT/launch-bin:$PATH" "$BASH" -euo pipefail -c '
+    source "$1"
+    line=$(lane_launch_line "$2" codex CODEX_HOME "$3" custom)
+    "$BASH" -c "$line"
+  ' _ "$REPO_ROOT/skills/orch/scripts/lib/lane-launch.sh" "$cmd" "$TMP_ROOT/launch-home")
+  ARM_ARGS=(halt)
+  run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
+    '{session_id:"s1",transcript_path:$p,tool_name:"spawn_agent",tool_input:{}}')" \
+    "ORCH_COMPACTION_OVERRIDES=$evidence" ORCH_HANDOFF_AGENT_RESERVE_TOKENS=10000
+  expect "$rc" "$key" "first specialist from custom Codex command: $cmd"
+  ARM_ARGS=()
+done <<'ROWS'
+codex -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|0|-
+codex prompt|2|lane-mail-check: agent-input=context-unmeasured
+env codex -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|2|lane-mail-check: agent-input=context-unmeasured
+ROWS
+
 new_lane agent_copilot AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
 install_hook "$HOOK" "$LANE/.github/hooks/lane-mail-check.sh"

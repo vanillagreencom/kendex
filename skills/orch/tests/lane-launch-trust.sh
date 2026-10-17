@@ -478,7 +478,7 @@ compaction_child() { # LIB FORM CMD
     _ "$1" "$2" "$3" "$TMP_ROOT/compaction-home"
 }
 # form|actual arguments|effective threshold,scope,post. Later overrides win;
-# an incomplete or custom command cannot borrow the parent process evidence.
+# an incomplete or unparseable command cannot borrow the parent evidence.
 while IFS='|' read -r form args want; do
   [[ "$form" != account ]] || form="launcher:$TMP_ROOT/compaction-bin/account"
   actual=$(compaction_child "$SCRIPTS_DIR/lib/lane-launch.sh" "$form" "codex $args" |
@@ -488,8 +488,23 @@ done <<'ROWS'
 prefix|-c model_auto_compact_token_limit=300000 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|["300000","body_after_prefix","0"]
 account|-c model_auto_compact_token_limit=300000 --config model_auto_compact_token_limit=200000 --config=model_auto_compact_token_limit_scope=total -cmodel_post_turn_compact_threshold_percent=80|["200000","total","80"]
 prefix|-c model_auto_compact_token_limit=300000|["300000",null,null]
-unchecked|-c model_auto_compact_token_limit=300000|null
-custom|-c model_auto_compact_token_limit=300000|null
+unchecked|-c model_auto_compact_token_limit=300000|["300000",null,null]
+custom|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|["9223372036854775807","body_after_prefix","0"]
+custom|--config=model_auto_compact_token_limit=9223372036854775807 --config 'model_auto_compact_token_limit_scope="body_after_prefix"' -cmodel_post_turn_compact_threshold_percent=0|["9223372036854775807","body_after_prefix","0"]
+custom|-c model_auto_compact_token_limit=300000; :|null
+custom|-c model_auto_compact_token_limit=300000 "$(printf prompt)"|null
+custom|-c model_auto_compact_token_limit=300000 *|null
+custom|-c model_auto_compact_token_limit=300000 {-c,model_post_turn_compact_threshold_percent=80}|null
+custom|-c model_auto_compact_token_limit=300000 {1..3}|null
+ROWS
+
+while IFS= read -r cmd; do
+  assert_eq "$(lane_launch_compaction_env "$cmd" codex)" "ORCH_COMPACTION_OVERRIDES=''" \
+    "no literal Codex argv: $cmd"
+done <<'ROWS'
+env codex -c model_auto_compact_token_limit=300000
+codex -c 'model_auto_compact_token_limit=300000
+codex -c model_auto_compact_token_limit=300000 \
 ROWS
 
 # --- § control --------------------------------------------------------------
@@ -567,12 +582,6 @@ assert_eq "$(CODEX_HOME="$ACCOUNT_HOME" bash -c '
   ' bash "$MUTANT_FOUR_SCRIPTS/lib/lane-context.sh")" \
   "$ACCOUNT_HOME" \
   "control: without the home-to-account rule a session reports the home as its account"
-
-# A custom command cannot establish the compaction arguments it will execute.
-MUTANT_CUSTOM="$(mutant_scripts lane-launch-custom-evidence lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
-mutate_file "$MUTANT_CUSTOM" '[[ "$form" != unchecked && "$form" != custom ]]' '[[ "$form" != unchecked ]]'
-assert_eq "$(compaction_child "$MUTANT_CUSTOM" custom 'codex -c model_auto_compact_token_limit=300000' | jq -r '.evidence.settings.model_auto_compact_token_limit')" \
-  300000 'control: a custom command supplies compaction evidence when its exclusion is removed'
 
 # Removing transport leaves the stub with only its inherited, invalid value.
 MUTANT_COMPACTION="$(mutant_scripts lane-launch-compaction lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
