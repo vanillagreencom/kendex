@@ -48,11 +48,11 @@ assert_ne "a suite that ends with a background job still running fails" \
 assert_contains "and the diagnostic says the job would land after the verdict" \
 	"$delayed_background_out" "background job(s) still running"
 assert_not_contains "rather than reporting the assertions it did see" \
-	"$delayed_background_out" "ok: 1 assertions"
+	"$delayed_background_out" "pass: 1   fail: 0"
 
 # A job the suite waited for is finished, not outstanding, and is not refused —
 # which is what keeps run_status usable, since it backgrounds its subject.
 run_child awaited_background 'assert_eq "in the parent" 1 1; ( sleep 0.1 ) & wait $!'
 
 assert_eq "a background job the suite waited for is not refused" "$awaited_background_rc" 0
-assert_contains "and the suite reports its own assertions" "$awaited_background_out" "ok: 1 assertions"
+assert_contains "and the suite reports its own assertions" "$awaited_background_out" "pass: 1   fail: 0"

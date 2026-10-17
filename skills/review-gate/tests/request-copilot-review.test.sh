@@ -29,6 +29,7 @@ assert 'kendex/refresh' not in text.split('          script: |\n')[1]
 PY
 }
 check_declarations "$WORKFLOW"
+PASS=1
 for control in no-if no-draft no-merge-group hosted-runner no-head no-author no-type script-refresh-branch; do
   case "$control" in
     no-if) needle='    if:'; replacement='    # if:' ;;
@@ -57,6 +58,7 @@ for control in no-if no-draft no-merge-group hosted-runner no-head no-author no-
     exit 1
   fi
   printf 'request-copilot-review: control=%s rejected-defect\n' "$control"
+  PASS=$((PASS + 1))
 done
 python3 - "$WORKFLOW" "$TMP_ROOT/body.js" <<'PY'
 import pathlib, sys, textwrap
@@ -113,3 +115,4 @@ async function check(source) {
 JS
 NODE="$(command -v node)"
 env -i PATH="$PATH" HOME="$HOME" "$NODE" "$TMP_ROOT/check.cjs" "$TMP_ROOT/body.js"
+printf 'pass: %s   fail: 0\n' "$((PASS + 1))"

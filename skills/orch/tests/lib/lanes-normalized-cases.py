@@ -69,11 +69,22 @@ def mutate(name, old, new):
     return str(target)
 
 
+# run-all.sh reads a suite's rows from its closing tally; each case line here
+# is one row, and an assertion that fails raises before the tally prints.
+cases_reported = 0
+
+
+def report(line):
+    global cases_reported
+    cases_reported += 1
+    print("normalized: " + line, flush=True)
+
+
 prepare()
 stage(2)
 world.clock.write_text("1791540301\n")
 assert refreshed(answer()), "age expiry served the old reading"
-print("normalized: age=pass")
+report("age=pass")
 
 reset_control = mutate("reset-control", "$reset != null and $reset <= $now", "false and $reset != null and $reset <= $now")
 for script, expected in [(lanes, True), (reset_control, False)]:
@@ -84,7 +95,7 @@ for script, expected in [(lanes, True), (reset_control, False)]:
     stage(2)
     world.clock.write_text("1791540011\n")
     assert refreshed(answer(script)) == expected, "reset refresh assertion did not reject its control"
-print("normalized: reset=pass control=red")
+report("reset=pass control=red")
 
 mtime_control = mutate("mtime-control", '[[ -f "$file" && -f "$creds" && ! "$creds" -nt "$file" ]]', '[[ -f "$file" && -f "$creds" ]]')
 for script, expected in [(lanes, "error"), (mtime_control, "ok")]:
@@ -95,7 +106,7 @@ for script, expected in [(lanes, "error"), (mtime_control, "ok")]:
     os.utime(credentials, (2000000000, 2000000000))
     rows = answer(script)
     assert rows[0]["status"] == expected, ("login refresh assertion did not reject its control", script, expected, rows)
-print("normalized: credential-mtime=pass control=red")
+report("credential-mtime=pass control=red")
 
 prepare()
 stage(2)
@@ -103,7 +114,7 @@ credentials = world.home / ".aclaude" / ".credentials.json"
 credentials.write_text(json.dumps({"claudeAiOauth": {"accessToken": "changed-marker", "expiresAt": 1791547200000}}))
 os.utime(credentials, (2000000000, 2000000000))
 assert refreshed(answer()), "new credentials served the old usage"
-print("normalized: credential-refresh=pass")
+report("credential-refresh=pass")
 
 world.reset(home_count=1, providers=0, claims=0)
 env["FETCH_STATUS"] = "403"
@@ -115,21 +126,21 @@ credentials.write_text(json.dumps({"claudeAiOauth": {"accessToken": "changed-mar
 os.utime(credentials, (2000000000, 2000000000))
 del env["FETCH_STATUS"]
 assert refreshed(answer()), "a new login replayed the previous login's refusal"
-print("normalized: credential-refusal=pass")
+report("credential-refusal=pass")
 
 prepare()
 env["ORCH_LANE_RETIRE"] = "aclaude=2000-01-01"
 rows = answer()
 assert rows[0]["status"] == "retired" and not (world.root / "fetch.log").read_text(), "retirement served an eligible reading"
 del env["ORCH_LANE_RETIRE"]
-print("normalized: retire=pass")
+report("retire=pass")
 
 prepare()
 new = world.add_account("claude", "new")
 rows = answer()
 assert any(row["config_dir"] == str(new) and row["status"] == "ok" for row in rows), "discovery omitted a new account"
 assert (world.root / "fetch.log").read_text().splitlines() == [".newclaude"], "discovery refreshed an already fresh account"
-print("normalized: discovery=pass")
+report("discovery=pass")
 
 # The claims reader advances the fixture clock after startup and before the
 # normalized batch. A controlled advance reaches the same elapsed boundary
@@ -205,7 +216,7 @@ try:
             else:
                 passed = result["exit"] == 0 and rows[0]["usage_age_s"] == 4 and not fetches
             assert passed == should_pass, ("elapsed freshness assertion did not reject its control", through, cause, result, fetches)
-        print("normalized: elapsed-" + through + "-" + cause + "=pass control=red")
+        report("elapsed-" + through + "-" + cause + "=pass control=red")
 finally:
     tmux_wrapper.write_text(tmux_body)
 
@@ -257,7 +268,7 @@ try:
                 row = json.loads(result["stdout"])
                 passed = result["exit"] == 0 and row["session_5h_pct"] == 2 and (world.root / "fetch.log").read_text().splitlines() == ["provider", ".aclaude"]
             assert passed == should_refresh, ("consumption freshness assertion did not reject its control", verb, cause, result)
-        print("normalized: late-provider-" + verb + "-" + cause + "=pass control=red")
+        report("late-provider-" + verb + "-" + cause + "=pass control=red")
 finally:
     world.provider.write_text(provider_body)
     late_jq.write_text(late_jq_body)
@@ -284,7 +295,7 @@ for kind, field, predicate in [
         rows = answer(script)
         assert (rows[0]["status"] == "expired") == should_expire, ("warm expiry assertion did not reject its control", kind, rows)
         assert not (world.root / "fetch.log").read_text(), "the expiry row fetched usage after its login ended"
-    print("normalized: " + kind + "-expiry=pass control=red")
+    report(kind + "-expiry=pass control=red")
 
 # A failed batch is an account-read failure for each consumer, even when a
 # valid local reading has room and the provider's valid reading is full.
@@ -313,7 +324,7 @@ try:
                 failed = world.run(entry, script, settings)
                 refused = failed["exit"] == 1 and not failed["stdout"] and "lanes: account-read-failed step=normalized exit=70" in failed["stderr"]
                 assert refused == should_refuse, ("failed decoder assertion did not reject its control", phase, verb, failed)
-            print("normalized: decoder-" + phase + "-" + verb + "=pass control=red")
+            report("decoder-" + phase + "-" + verb + "=pass control=red")
 finally:
     jq_wrapper.write_text(jq_body)
 
@@ -351,7 +362,7 @@ try:
                 if started[0].poll() is None:
                     os.killpg(started[0].pid, signal.SIGKILL)
                     started[0].wait(timeout=5)
-        print("normalized: provider-term-" + phase + "=pass control=red")
+        report("provider-term-" + phase + "=pass control=red")
 finally:
     jq_wrapper.write_text(jq_body)
     world.provider.write_text(provider_body)
@@ -385,7 +396,7 @@ finally:
         if started and started[0].poll() is None:
             started[0].kill()
             started[0].wait(timeout=5)
-print("normalized: concurrent=pass fetches=one-per-account")
+report("concurrent=pass fetches=one-per-account")
 
 
 # Cache consumption and sample writes own observation time. The elected
@@ -583,7 +594,7 @@ def assert_elected_once(result):
 for kind in ("provider", "local"):
     result = election(Path(root) / (kind + "-election"), lanes, kind)
     assert_elected_once(result)
-    print("normalized: elected-" + kind + "=pass " + json.dumps(result), flush=True)
+    report("elected-" + kind + "=pass " + json.dumps(result))
 
 # Reintroduce a stale boundary observation without changing its caller or lock.
 read_clock_control = mutate("read-clock-control", '\tlane_now; observed="$LANE_NOW"\n\toutput="$(jq -er --arg h "$1"', '\tlane_now; observed="$LANE_NOW"\n\t[[ "$1" != host-accounts ]] || observed="$RUN_NOW"\n\toutput="$(jq -er --arg h "$1"')
@@ -591,7 +602,7 @@ result = election(Path(root) / "provider-election-control", read_clock_control, 
 try:
     assert_elected_once(result)
 except AssertionError:
-    print("normalized: elected-provider control=red " + json.dumps(result), flush=True)
+    report("elected-provider control=red " + json.dumps(result))
 else:
     raise AssertionError("the elected refresher assertion accepted its stale-clock defect")
 
@@ -603,12 +614,12 @@ if len(sys.argv) > 4 and sys.argv[4]:
     try:
         assert_elected_once(result)
     except AssertionError:
-        print("normalized: elected-provider base=red " + json.dumps(result), flush=True)
+        report("elected-provider base=red " + json.dumps(result))
     else:
         raise AssertionError("the reviewed provider accepted the required election invariant")
     result = election(Path(root) / "local-election-base", base_script, "local")
     assert_elected_once(result)
-    print("normalized: elected-local base=pass " + json.dumps(result), flush=True)
+    report("elected-local base=pass " + json.dumps(result))
 
 # Migration preserves all stored sample fields, even when observation advances
 # and a different record is bound at the existing writer's entry.
@@ -616,17 +627,17 @@ for retained in (False, True):
     for replacement in (False, True):
         result = normalize_sample(Path(root) / ("historical-" + str(retained) + "-" + str(replacement)), lanes, retained, replacement)
         assert result["pass"], result
-        print("normalized: historical-sample=pass " + json.dumps(result), flush=True)
+        report("historical-sample=pass " + json.dumps(result))
 
 date_control = mutate("historical-date-control", '\t\tUSAGE_WRITTEN_AT="$sample_at"', '\t\tlane_now; USAGE_WRITTEN_AT="$LANE_NOW"')
 result = normalize_sample(Path(root) / "historical-date-control-case", date_control, True)
 assert not result["pass"] and result["outer_unchanged"], "the historical sample assertion accepted current observation time"
-print("normalized: historical sample-time control=red " + json.dumps(result), flush=True)
+report("historical sample-time control=red " + json.dumps(result))
 
 body_control = mutate("historical-body-control", '\t\tbody="$retained_body"', '\t\tbody="$raw"')
 result = normalize_sample(Path(root) / "historical-body-control-case", body_control, True, True)
 assert not result["pass"] and result["outer_unchanged"], "the historical body assertion accepted an older caller-held answer"
-print("normalized: historical bound-body control=red " + json.dumps(result), flush=True)
+report("historical bound-body control=red " + json.dumps(result))
 
 # Answers can advance time after their caller started. Fresh samples and
 # refusals use that answer time; retained usage and prior samples stay put.
@@ -690,10 +701,11 @@ try:
             try:
                 assert_answer_sample(after, before, observed, kind)
             except AssertionError:
-                print("normalized: delayed-" + kind + "-sample control=red", flush=True)
+                report("delayed-" + kind + "-sample control=red")
                 continue
             raise AssertionError("the answer-time assertion accepted its stale observation defect")
-        print("normalized: delayed-" + kind + "-sample=pass", flush=True)
+        report("delayed-" + kind + "-sample=pass")
 finally:
     world.fetch.write_text(fetch_body)
     world.provider.write_text(provider_body)
+print("pass: %d   fail: 0" % cases_reported)

@@ -2697,5 +2697,5 @@ RECORD_CONTROL
     else bad "$row refusal" "$OUT"; fi
   done
 fi
-printf 'pass=%s fail=%s\n' "$PASS" "$FAIL"
+printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

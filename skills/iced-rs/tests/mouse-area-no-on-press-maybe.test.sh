@@ -54,5 +54,5 @@ else
     fail "button on_press_maybe API guidance was removed from widget-button.md"
 fi
 
-printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
+printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

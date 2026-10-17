@@ -23,4 +23,4 @@ detail-verdict|FAIL|workflow-equality|workflow.yml|detail\nFAIL injected|FAIL ch
 space-value|FAIL|runtime-missing|my script.sh|detail|FAIL check=runtime-missing value=my\\ script.sh\n  detail
 ROWS
 [ "$count" -gt 0 ] || { printf 'test-failure=report-rows value=0\n' >&2; exit 1; }
-printf 'test-pass=diagnostics-report value=%s\n' "$count"
+printf 'pass: %s   fail: 0\n' "$count"

@@ -51,6 +51,7 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
   return "$failed"
 }
 
+PASS=0
 for file in "$TEMPLATE" "$CALLER"; do
   [ -f "$file" ] && [ ! -L "$file" ] || { printf 'refresh-workflow: input=not-a-regular-file value=%q\n' "$file" >&2; exit 1; }
 done
@@ -75,6 +76,7 @@ while IFS='|' read -r shape expected_exit; do
     exit 1
   fi
   printf 'refresh-workflow: case=%s observed-exit=%s pass\n' "$shape" "$status"
+  PASS=$((PASS + 1))
 done <<'CASES'
 current|0
 unfixed|1
@@ -103,5 +105,7 @@ for source in template caller; do
       exit 1
     fi
     printf 'refresh-workflow: control=%s-%s observed-exit=%s pass\n' "$source" "$event" "$status"
+    PASS=$((PASS + 1))
   done
 done
+printf 'pass: %s   fail: 0\n' "$PASS"

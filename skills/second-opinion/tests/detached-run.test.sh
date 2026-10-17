@@ -17,7 +17,8 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
-ok() { printf 'PASS: %s\n' "$1"; }
+PASS=0
+ok() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
 assert_contains() { grep -Fq "$2" "$1" || fail "$3: $(sed -n '1,40p' "$1")"; ok "$3"; }
 assert_rc() { [[ "$1" == "$2" ]] || fail "$3 (expected $2, got $1)"; ok "$3"; }
 
@@ -489,3 +490,4 @@ assert_contains "$TMP_ROOT/help.stdout" "keep completed artifact on replay/runti
   "help preserves completed output on local wait failure"
 assert_contains "$TMP_ROOT/help.stdout" "otherwise act on replayed worker cause" \
   "help routes ordinary worker exit 1 by its replayed cause"
+printf 'pass: %s   fail: 0\n' "$PASS"

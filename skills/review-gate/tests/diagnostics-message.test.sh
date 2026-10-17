@@ -21,4 +21,4 @@ empty-value|error|arguments||review-gate-error=arguments value=''
 shell-metacharacters|error|settings-key|$(false)|review-gate-error=settings-key value=\$\(false\)
 ROWS
 [ "$count" -gt 0 ] || { printf 'test-failure=message-rows value=0\n' >&2; exit 1; }
-printf 'test-pass=diagnostics-message value=%s\n' "$count"
+printf 'pass: %s   fail: 0\n' "$count"

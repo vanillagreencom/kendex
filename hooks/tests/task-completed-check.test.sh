@@ -437,5 +437,5 @@ assert_eq "rc=$rc first=$(first_line) cargo=$(cat "$ARGS_LOG")" \
   "a missing jq completes unchecked under a notice naming it, before cargo runs"
 
 echo
-echo "passed: $PASS  failed: $FAIL"
+echo "pass: $PASS   fail: $FAIL"
 [ "$FAIL" -eq 0 ]

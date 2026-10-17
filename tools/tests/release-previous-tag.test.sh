@@ -18,8 +18,10 @@ export GIT_CONFIG_COUNT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 
+PASS=0
 assert_eq() {
   [[ $1 == "$2" ]] || { printf 'FAIL: %s: expected [%s], got [%s]\n' "$3" "$2" "$1" >&2; exit 1; }
+  PASS=$((PASS + 1))
   printf 'ok: %s\n' "$3"
 }
 
@@ -134,6 +136,7 @@ assert_eq "$RC:$OUT" '0:v1.2.3' 'missing-fetch control reaches the comparison'
 DIFF_RC=0
 git -C "$CLONE" diff --stat "$OUT" HEAD >"$TMP_ROOT/diff" 2>&1 || DIFF_RC=$?
 [[ $DIFF_RC != 0 ]] || { echo 'FAIL: comparison passed without fetching the tag' >&2; exit 1; }
+PASS=$((PASS + 1))
 printf 'ok: missing-fetch control fails the comparison\n'
 
 # Dependency failures and no stable release must leave no comparison tag.
@@ -152,3 +155,4 @@ for row in api-failure empty malformed fetch-failure; do
   run_tool "$TOOL" "$status"
   assert_eq "$RC:$OUT" '1:' "$row stops before returning a comparison tag"
 done
+printf 'pass: %s   fail: 0\n' "$PASS"

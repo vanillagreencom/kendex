@@ -7,7 +7,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # macOS CI deliberately runs Bash 3.2 to prove consumer compatibility.
 # Its shell has no distinct subshell PIDs; the Linux leg owns this count.
 if [[ -z "${BASHPID:-}" ]] || ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 401)); then
-  printf 'process-count: unavailable=bash-pid-tracing shell=%s\n' "$BASH_VERSION"
+  printf 'rowless: process-count unavailable=bash-pid-tracing shell=%s\n' "$BASH_VERSION"
   exit 0
 fi
 . "$TEST_DIR/lib/pr-watch-fixture.sh"

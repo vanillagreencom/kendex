@@ -131,5 +131,5 @@ if [ "${HELPER_CONTROL_ACTIVE:-}" != 1 ]; then
     'the helper isolates its callback log'
 fi
 
-echo "passed: $PASS  failed: $FAIL"
+echo "pass: $PASS   fail: $FAIL"
 [ "$FAIL" -eq 0 ]

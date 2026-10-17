@@ -357,4 +357,4 @@ STRUCTURAL_ROWS
 
 [[ "$structural_rows_executed" -gt 0 ]] \
   || fail "STRUCTURAL_ROWS executed no assertion rows"
-echo "all pass"
+printf 'pass: %d   fail: 0\n' "$((success_rows_executed + refusal_rows_executed + structural_rows_executed))"

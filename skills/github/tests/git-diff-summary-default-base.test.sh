@@ -96,5 +96,5 @@ local_json="$($SUMMARY -C "$local_repo")"
 assert_eq "remoteless repo falls back to local main" \
     '["feature.txt"]' "$(jq -c '[.domains[].files[]] | sort' <<<"$local_json")"
 
-printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
+printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

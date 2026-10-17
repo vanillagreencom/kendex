@@ -51,7 +51,8 @@ cleanup() {
 trap cleanup EXIT
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
-ok() { printf 'PASS: %s\n' "$1"; }
+PASS=0
+ok() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
 assert_rc() { [[ "$1" == "$2" ]] || fail "$3 (expected $2, got $1)"; ok "$3"; }
 assert_contains() { grep -Fq "$2" "$1" || fail "$3: $(sed -n '1,40p' "$1")"; ok "$3"; }
 gone() { ! kill -0 "$1" 2>/dev/null; }
@@ -909,3 +910,4 @@ for _ in $(seq 1 40); do
   sleep 0.05
 done
 ok "the teardown returns with nothing of the case still writing under the temp root"
+printf 'pass: %s   fail: 0\n' "$PASS"

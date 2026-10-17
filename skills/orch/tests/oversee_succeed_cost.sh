@@ -11,7 +11,7 @@ TMP_ROOT="$(mktemp -d)" || { echo 'oversee-succeed-cost: scratch=mktemp-failed' 
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'oversee-succeed-cost: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 if [[ -z "${BASHPID:-}" ]]; then
-  printf 'process counting requires BASHPID; behavior runs in the succession suites\npass: 0   fail: 0\n'
+  printf 'rowless: process counting requires BASHPID; behavior runs in the succession suites\n'
   exit 0
 fi
 python3 - "$TEST_DIR" "$TMP_ROOT" "$BASH" "${1:-}" <<'PY' > "$TMP_ROOT/results"

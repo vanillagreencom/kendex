@@ -16,7 +16,7 @@ first="${output%%$'\n'*}"
 printf -v expected_path '%q' "$TMP/lib/diagnostics.sh"
 expected="review-gate-error=diagnostics-load value=$expected_path"
 if [ "$rc" = 1 ] && [ "$first" = "$expected" ]; then
-  printf 'test-pass=settings-diagnostics-load value=missing\n'
+  printf 'pass: 1   fail: 0\n'
 else
   printf 'test-failure=settings-diagnostics-load value=missing\nrc=%s expected=%q actual=%q\n' "$rc" "$expected" "$first" >&2
   exit 1

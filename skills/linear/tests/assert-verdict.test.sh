@@ -58,7 +58,7 @@ assert_contains "however much the suite did" \
 run_child passing 'assert_eq "a claim that holds" 1 1'
 
 assert_eq "a suite whose assertions all pass exits zero" "$passing_rc" 0
-assert_contains "and reports how many ran" "$passing_out" "ok: 1 assertions"
+assert_contains "and reports how many ran" "$passing_out" "pass: 1   fail: 0"
 
 run_child failing 'assert_eq "a claim that does not hold" 1 2'
 

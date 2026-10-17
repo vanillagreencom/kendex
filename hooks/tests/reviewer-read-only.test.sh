@@ -276,5 +276,5 @@ tools_table() { # TOOLS
 tools_table "jq git cat grep dirname"
 
 echo
-echo "passed: $PASS  failed: $FAIL"
+echo "pass: $PASS   fail: $FAIL"
 [ "$FAIL" -eq 0 ]

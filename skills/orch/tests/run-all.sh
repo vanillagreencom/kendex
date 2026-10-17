@@ -99,9 +99,16 @@
 # `pass` and `fail` are the counts from the last summary line the suite
 # printed in any of the shapes the suites use (`pass: N  fail: M`,
 # `N passed, M failed`, `N pass, M fail`, or Python unittest's `Ran N tests`
-# with `OK` or `FAILED (failures=N, errors=M)`), and 0 where it printed none.
-# A suite that exits non-zero with no failure counted reports fail=1, so a
-# red suite never prints fail=0.
+# with `OK` or `FAILED (failures=N, errors=M)`). A suite that exits 0 with no
+# row counted, pass and fail both 0, ran nothing it proved: it is red, under
+#
+#   run-all.sh: no-rows suite=<name>
+#
+# before its report line, unless it printed the opt-out line, one line that
+# starts `rowless: ` and gives the reason it runs no row on this host, which a
+# suite that skips by design prints in place of a summary. No other line opts
+# out. A red suite with no failure counted reports fail=1, so a red suite
+# never prints fail=0.
 
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -381,9 +388,11 @@ trap 'stop_suites; exit 130' INT
 trap 'stop_suites; exit 143' TERM
 trap 'stop_suites; exit 129' HUP
 
-# Prints "PASS FAIL" from a suite's output, per the shapes the header names.
+# Prints "PASS FAIL ROWLESS" from a suite's output, per the shapes the header
+# names, ROWLESS being 1 where the suite printed the opt-out line.
 counts_of() { # FILE
   awk '
+    /^rowless: ./ { r = 1 }
     match($0, /pass: *[0-9]+ +fail: *[0-9]+/) ||
     match($0, /[0-9]+ pass(ed)?, *[0-9]+ fail(ed)?/) {
       s = substr($0, RSTART, RLENGTH); gsub(/[^0-9]+/, " ", s)
@@ -397,7 +406,7 @@ counts_of() { # FILE
       if (match($0, /errors=[0-9]+/)) f += substr($0, RSTART + 7, RLENGTH - 7)
       p = ran - f; ran = ""; next
     }
-    END { print p + 0, f + 0 }
+    END { print p + 0, f + 0, r + 0 }
   ' "$1"
 }
 
@@ -409,7 +418,7 @@ TOTAL_FAIL=0
 # that stopped it, suite-timeout or run-deadline, or unstarted for one the
 # deadline never let start; LAST is the line it printed last before the stop.
 report() { # BASE STATUS SECONDS [STOP LAST]
-  local pass fail counts
+  local pass fail rowless counts
   printf '\n──── %s ────\n' "$1"
   cat -- "$OUT_DIR/$1.out" 2>/dev/null ||
     echo "run-all.sh: $1 left no readable output"
@@ -423,11 +432,15 @@ report() { # BASE STATUS SECONDS [STOP LAST]
     *) echo "run-all.sh: report given stop '$4', not one this runner makes" >&2; exit 1 ;;
   esac
   [[ -z "${4:-}" ]] || printf 'last line: %s\n' "${5:-none}"
-  counts="$(counts_of "$OUT_DIR/$1.out" 2>/dev/null)" || counts="0 0"
-  read -r pass fail <<<"$counts"
+  counts="$(counts_of "$OUT_DIR/$1.out" 2>/dev/null)" || counts="0 0 0"
+  read -r pass fail rowless <<<"$counts"
   # A suite that trapped the stop and exited 0 still never finished.
   if [[ "$2" != 0 || -n "${4:-}" ]]; then
     [[ "$fail" -gt 0 ]] || fail=1
+    FAIL_FILES+=("$1")
+  elif [[ "$pass" == 0 && "$fail" == 0 && "$rowless" == 0 ]]; then
+    printf 'run-all.sh: no-rows suite=%s\n' "$1"
+    fail=1
     FAIL_FILES+=("$1")
   fi
   TOTAL_PASS=$((TOTAL_PASS + pass))

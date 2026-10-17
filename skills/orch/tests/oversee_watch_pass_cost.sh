@@ -8,7 +8,7 @@ source "${BASH_SOURCE[0]%/*}/lib/oversee-watch-harness.sh"
 source "${BASH_SOURCE[0]%/*}/lib/process-count.sh"
 
 if [[ -z "${BASHPID:-}" ]]; then
-  printf 'process attribution requires BASHPID\npass: 0   fail: 0\n'
+  printf 'rowless: process attribution requires BASHPID\n'
   exit 0
 fi
 

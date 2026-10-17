@@ -41,6 +41,7 @@ compare_copies() { # ROOT
 }
 
 compare_copies "$ROOT"
+PASS=1
 for source in "$ROOT"/skills/*/scripts/lib/kendex-env.sh; do
   rel="${source#"$ROOT/"}"
   mkdir -p "$SCRATCH/${rel%/*}" "$SCRATCH/.agents/${rel%/*}"
@@ -52,6 +53,7 @@ if compare_copies "$SCRATCH" >/dev/null 2>&1; then
   echo "vendored-settings-libs: planted divergence passed" >&2
   exit 1
 fi
+PASS=$((PASS + 1))
 # Each extractor guard has its own plant, asserting the diagnosis only that
 # guard prints: on these worlds the comparison against a missing canonical
 # would red as well, so the verdict alone would not prove the guard.
@@ -60,6 +62,7 @@ if diag="$(compare_copies "$SCRATCH/unmatched" 2>&1)" || [[ $diag != *"matched 1
   echo "vendored-settings-libs: an unmatched glob was not named as broken: $diag" >&2
   exit 1
 fi
+PASS=$((PASS + 1))
 mkdir -p "$SCRATCH/no-orch"
 cp -R "$SCRATCH/skills" "$SCRATCH/.agents" "$SCRATCH/no-orch/"
 rm -f "$SCRATCH/no-orch/skills/orch/scripts/lib/kendex-env.sh" "$SCRATCH/no-orch/.agents/skills/orch/scripts/lib/kendex-env.sh"
@@ -67,6 +70,7 @@ if diag="$(compare_copies "$SCRATCH/no-orch" 2>&1)" || [[ $diag != *"missed skil
   echo "vendored-settings-libs: a missing canonical copy was not named as broken: $diag" >&2
   exit 1
 fi
+PASS=$((PASS + 1))
 # The derived set is what this scan buys over a kept count: an eighth skill
 # vendoring the lib joins by existing. The plant plays that skill, and a scan
 # restricted to the seven present today reds here.
@@ -84,4 +88,6 @@ if ! diag="$(compare_copies "$SCRATCH/eighth" 2>&1)"; then
   echo "vendored-settings-libs: a skill vendoring an eighth copy was refused: $diag" >&2
   exit 1
 fi
+PASS=$((PASS + 1))
 echo "vendored-settings-libs: every copy and its render match"
+printf 'pass: %s   fail: 0\n' "$PASS"

@@ -21,8 +21,7 @@ if ! command -v kendex >/dev/null 2>&1; then
     echo 'tier-model-fixture: kendex is not on PATH and ORCH_REQUIRE_KENDEX is set' >&2
     exit 2
   fi
-  printf 'tier-model-fixture: kendex=absent\n'
-  printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+  printf 'rowless: tier-model-fixture kendex=absent\n'
   exit 0
 fi
 TMP_ROOT="$(mktemp -d)" || { echo 'tier-model-fixture: scratch=mktemp-failed' >&2; exit 1; }

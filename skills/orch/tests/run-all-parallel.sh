@@ -15,11 +15,14 @@
 # Surfaces:
 #   1. the report — each suite's start line comes once, before its output;
 #      each summary shape a suite prints becomes that suite's pass and fail
-#      counts, the last summary line winning, a suite's seconds cover its
+#      counts, the last summary line winning, a suite that prints the
+#      opt-out line stays green with no row, a suite's seconds cover its
 #      own run, and a green battery exits 0
 #   2. a red suite — the run exits 1, names the suite in the FAILED block,
 #      prints its stdout and stderr whole under its header, and its line
-#      never reads fail=0; one row per way a suite goes red
+#      never reads fail=0; one row per way a suite goes red, a suite that
+#      exits 0 with no row among them, with the control that removes that
+#      rule
 #   3. the worker count — at least 2 suites overlap when nproc reports 2,
 #      and exactly 4 where nproc cannot answer; at 1 no two overlap; a count
 #      that is not a number refuses
@@ -86,13 +89,13 @@ suite() { # DIR NAME STATUS BODY [ERR]
 }
 
 # The green roster: one suite per summary shape, and the counts it reports.
-GREEN_NAMES=(shape-colon shape-words shape-short shape-unittest shape-none)
+GREEN_NAMES=(shape-colon shape-words shape-short shape-unittest shape-rowless)
 GREEN_BODIES=(
   $'pass: 1   fail: 9\npass: 3   fail: 0'
   'Results: 4 passed, 0 failed'
   'container-close: 5 pass, 0 fail'
   $'Ran 6 tests in 0.1s\n\nOK'
-  'no summary at all'
+  'rowless: this host lacks what the suite measures'
 )
 GREEN_WANT=('pass=3 fail=0' 'pass=4 fail=0' 'pass=5 fail=0' 'pass=6 fail=0' 'pass=0 fail=0')
 
@@ -162,25 +165,28 @@ assert_eq "$(ls -A "$B.tmp")" "" "the run removes the directory that held suite 
 # The lower bound is the suite's own sleep; load only makes it longer.
 B="$TMP_ROOT/timed"
 battery "$B"
-printf '#!/usr/bin/env bash\nsleep 2\n' >"$B/timed.sh"
+printf '#!/usr/bin/env bash\nsleep 2\necho "pass: 1   fail: 0"\n' >"$B/timed.sh"
 run_battery "$B" 3
 secs="$(printf '%s\n' "$OUT" | sed -n 's/^suite=timed seconds=\([0-9][0-9]*\) .*/\1/p')"
 assert_eq "rc=$RC at-least-2=$([ "${secs:-0}" -ge 2 ] && echo yes || echo "no ($secs)")" \
   "rc=0 at-least-2=yes" "a suite that sleeps 2s reports seconds of at least 2"
 
 echo "=== 2. a red suite fails the run, under its own name ==="
-RED_NAMES=(red-counted red-uncounted red-crash red-unittest)
-RED_STATUS=(1 1 3 1)
+RED_NAMES=(red-counted red-uncounted red-crash red-unittest red-no-rows)
+RED_STATUS=(1 1 3 1 0)
 RED_BODIES=(
   'pass: 2   fail: 1'
   'pass: 2   fail: 0'
   ''
   $'Ran 5 tests in 0.1s\n\nFAILED (failures=1, errors=1)'
+  'no summary at all'
 )
 # red-counted also writes to stderr, which lands under its header after its
 # stdout.
-RED_ERR=('stderr-marker' '' '' '')
-RED_WANT=('pass=2 fail=1' 'pass=2 fail=1' 'pass=0 fail=1' 'pass=3 fail=2')
+RED_ERR=('stderr-marker' '' '' '' '')
+# The cause line the runner prints between a suite's output and its line.
+RED_CAUSE=('' '' '' '' 'run-all.sh: no-rows suite=red-no-rows')
+RED_WANT=('pass=2 fail=1' 'pass=2 fail=1' 'pass=0 fail=1' 'pass=3 fail=2' 'pass=0 fail=1')
 i=0
 while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
   name="${RED_NAMES[i]}"
@@ -189,6 +195,7 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
   suite "$B" "$name" "${RED_STATUS[i]}" "${RED_BODIES[i]}" "${RED_ERR[i]}"
   want_body="${RED_BODIES[i]}"
   [[ -z "${RED_ERR[i]}" ]] || want_body+=$'\n'"${RED_ERR[i]}"
+  [[ -z "${RED_CAUSE[i]}" ]] || want_body+=$'\n'"${RED_CAUSE[i]}"
   # A controlled report duration crosses the enabled review trigger. The
   # existing red fixtures still own their status and parsed failure count.
   mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 2'
@@ -219,6 +226,16 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
   i=$((i + 1))
 done
 
+# Control: without the no-rows rule the suite that ran no row reads green.
+B="$TMP_ROOT/no-rows-control"
+battery "$B"
+suite "$B" red-no-rows 0 'no summary at all'
+mutate_file "$B/run-all.sh" 'elif [[ "$pass" == 0 && "$fail" == 0 && "$rowless" == 0 ]]; then' \
+  'elif false && [[ "$pass" == 0 && "$fail" == 0 && "$rowless" == 0 ]]; then'
+run_battery "$B" 3
+assert_eq "rc=$RC $(line_of red-no-rows)" 'rc=0 suite=red-no-rows seconds=N pass=0 fail=0' \
+  "control: without the no-rows rule a suite that ran no row reads green"
+
 echo "=== 3. the worker count ==="
 # Each suite NAME appends `start NAME` and, a second later, `end NAME` to the
 # file $EV names, so that file's order is the order suites started and
@@ -227,7 +244,7 @@ event_suites() { # DIR NAME...
   local dir="$1" name
   shift
   for name in "$@"; do
-    printf '#!/usr/bin/env bash\necho "start %s" >>"$EV"\nsleep 1\necho "end %s" >>"$EV"\n' \
+    printf '#!/usr/bin/env bash\necho "start %s" >>"$EV"\nsleep 1\necho "end %s" >>"$EV"\necho "pass: 1   fail: 0"\n' \
       "$name" "$name" >"$dir/$name.sh"
   done
 }
@@ -383,7 +400,7 @@ for variant in normal signals-ignored; do
   B="$TMP_ROOT/suite-signals-$variant"
   battery "$B"
   for sig in INT QUIT; do
-    printf '#!/usr/bin/env bash\ntrap "exit 0" %s\nkill -%s "$$"\nexit 1\n' "$sig" "$sig" > "$B/$sig.sh"
+    printf '#!/usr/bin/env bash\ntrap "echo pass: 1 fail: 0; exit 0" %s\nkill -%s "$$"\nexit 1\n' "$sig" "$sig" > "$B/$sig.sh"
   done
   if [[ "$variant" == signals-ignored ]]; then
     mutate_file "$B/run-all.sh" '      "${KENDEX_GROUP_LEADER[@]}" bash' '      bash'
@@ -398,7 +415,7 @@ done
 echo "=== 6. a name filter selects by substring, or by whole name written =name ==="
 B="$TMP_ROOT/filter"
 battery "$B"
-for name in lanes lanes_context other; do suite "$B" "$name" 0 ''; done
+for name in lanes lanes_context other; do suite "$B" "$name" 0 'pass: 1   fail: 0'; done
 # FILTERS|SUITES THAT START, sorted
 FILTER_ROWS='=lanes|lanes
 lanes|lanes lanes_context
@@ -418,7 +435,7 @@ mkdir -p "$B/tmp" "$B.planted"
 printf '{"marker":"fixture"}\n' >"$B/tmp/workflow-state-oversee.json"
 printf '{"marker":"caller"}\n' >"$B.planted/workflow-state-oversee.json"
 # Bash 3.2 does not apply errexit to [[ ... ]]; each assertion exits explicitly.
-printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]] || exit 1\n' \
+printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]] || exit 1\necho "pass: 2   fail: 0"\n' \
   >"$B/state.sh"
 run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
 assert_eq "$RC" 0 "the suite reads fixture state and can set its own ORCH_STATE_DIR"
@@ -521,7 +538,7 @@ bound_battery() { # DIR KIND
       mutate_file "$1/run-all.sh" '    if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then' \
         $'    if [ -n "$base" ]; then\n      touch "$TEST_DIR/$base.release"\n      wait "${SLOT_PID[k]}"\n    fi\n    if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then'
       for name in c1 c2 c3; do
-        printf '#!/usr/bin/env bash\nwhile [ ! -f "%s/%s.release" ]; do sleep 0.1; done\n' "$1" "$name" >"$1/$name.sh"
+        printf '#!/usr/bin/env bash\nwhile [ ! -f "%s/%s.release" ]; do sleep 0.1; done\necho "pass: 1   fail: 0"\n' "$1" "$name" >"$1/$name.sh"
       done
       ;;
     clock)
@@ -530,7 +547,7 @@ bound_battery() { # DIR KIND
       done
       ;;
     trapped)
-      printf '#!/usr/bin/env bash\ntrap "exit 0" TERM\necho ok-before-hang\nwhile :; do sleep 1; done\n' >"$1/trapped.sh"
+      printf '#!/usr/bin/env bash\ntrap "exit 0" TERM\necho "pass: 1   fail: 0"\necho ok-before-hang\nwhile :; do sleep 1; done\n' >"$1/trapped.sh"
       ;;
     hang)
       cat >"$1/hang.sh" <<'EOF'
@@ -588,7 +605,7 @@ run_bounded() { # DIR [VAR=VALUE]...
 bound_outcome() { # DIR
   printf 'rc=%s red=%s stops=%s child=%s mark=%s' "$RC" "$(failed_of | sed 's/ $//')" \
     "$(printf '%s\n' "$OUT" | awk '
-      $1 == "run-all.sh:" && $3 ~ /^suite=/ {
+      $1 == "run-all.sh:" && ($2 == "suite-timeout" || $2 == "run-deadline") && $3 ~ /^suite=/ {
         stop = substr($3, 7) ":" $2 ":" $4; getline; sub(/^last line: /, "")
         printf "%s%s:%s", sep, stop, $0; sep = " "
       }')" \
@@ -630,7 +647,7 @@ a suite still running at its bound is stopped|clock|RUN_ALL_SUITE_SECS=1|rc=1 re
 with both bounds set and the suite bound the earlier, the suite bound stops the suite|trapped|RUN_ALL_SUITE_SECS=2 RUN_ALL_DEADLINE_EPOCH=+5|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|deadline-always|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=
 with both bounds set and the deadline the earlier, the deadline stops the suite|trapped|RUN_ALL_SUITE_SECS=6 RUN_ALL_DEADLINE_EPOCH=+3|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=|later-wins|rc=1 red=trapped stops=trapped:suite-timeout:seconds=6:ok-before-hang child=never-started mark=
 no suite starts once the deadline has passed|clock|RUN_ALL_DEADLINE_EPOCH=+0|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=no:none c2:run-deadline:started=no:none c3:run-deadline:started=no:none child=never-started mark=|gate-removed|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=yes:none c2:run-deadline:started=yes:none c3:run-deadline:started=yes:none child=never-started mark=
-a suite the deadline left unstarted reports red|clock|RUN_ALL_DEADLINE_EPOCH=+0|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=no:none c2:run-deadline:started=no:none c3:run-deadline:started=no:none child=never-started mark=|unstarted-green|rc=0 red= stops= child=never-started mark=
+a suite the deadline left unstarted reports red|clock|RUN_ALL_DEADLINE_EPOCH=+0|rc=1 red=c1 c2 c3 stops=c1:run-deadline:started=no:none c2:run-deadline:started=no:none c3:run-deadline:started=no:none child=never-started mark=|unstarted-green|rc=1 red=c1 c2 c3 stops= child=never-started mark=
 the stop sends TERM first, which the suite cleanup runs on|hang|RUN_ALL_SUITE_SECS=2|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=cleaned|term-skipped|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=
 the stop sends KILL after the grace to a process that ignores TERM|hang|RUN_ALL_SUITE_SECS=2|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=cleaned|kill-skipped|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=alive mark=cleaned
 the stop reaches every process under the suite, one that left its process group included|hang|RUN_ALL_SUITE_SECS=2|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=gone mark=cleaned|tree-root-only|rc=1 red=hang stops=hang:suite-timeout:seconds=2:ok-before-hang child=alive mark=cleaned
@@ -751,7 +768,7 @@ for row in 'review|301|900|300|125' 'margin|721|900|1000|125' 'annotation|301|90
   assert_eq "$CONTROL_RC" 1 "$rule control turns budget oracle red"
 done
 
-printf '#!/usr/bin/env bash\nsleep 2\n' >"$B/slow.sh"
+printf '#!/usr/bin/env bash\nsleep 2\necho "pass: 1   fail: 0"\n' >"$B/slow.sh"
 run_battery "$B" 1 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
   RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
   GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
@@ -771,7 +788,7 @@ battery "$B"
 mkdir -p "$B.bin"
 printf '#!/usr/bin/env bash\n[ "$JOB_TEST_EPOCH" != unread ] || exit 1\nprintf "%%s\\n" "$JOB_TEST_EPOCH"\n' >"$B.bin/date"
 chmod +x "$B.bin/date"
-printf '#!/usr/bin/env bash\nprintf "ran\\n" >>"${REPORT_SUITE_TRACE:?}"\n' >"$B/green.sh"
+printf '#!/usr/bin/env bash\nprintf "ran\\n" >>"${REPORT_SUITE_TRACE:?}"\necho "pass: 1   fail: 0"\n' >"$B/green.sh"
 TRACE="$B/trace"
 : >"$TRACE"
 for epoch in 1310 1321 1333; do

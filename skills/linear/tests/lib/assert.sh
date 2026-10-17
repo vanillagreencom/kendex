@@ -451,7 +451,7 @@ __assert_on_exit() {
 		printf 'FAIL: suite ended without executing an assertion\n' >&2
 		exit 1
 	fi
-	printf 'ok: %d assertions\n' "$ledger_ran"
+	printf 'pass: %d   fail: 0\n' "$ledger_ran"
 	exit 0
 }
 

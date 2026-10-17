@@ -8,7 +8,7 @@ source "${BASH_SOURCE[0]%/*}/process-count.sh"
 
 echo '=== oversee-watch process budgets ==='
 if [[ -z "${BASHPID:-}" ]]; then
-  printf 'process counting requires BASHPID; behavior runs in the mail suite\npass: 0   fail: 0\n'
+  printf 'rowless: process counting requires BASHPID; behavior runs in the mail suite\n'
   exit 0
 fi
 

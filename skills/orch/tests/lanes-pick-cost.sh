@@ -11,7 +11,7 @@ source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/tier-model-path.sh"
 if [[ -z "${BASHPID:-}" ]]; then
-  printf '%s\n' 'lanes-pick-cost: skip=no-bashpid'
+  printf '%s\n' 'rowless: lanes-pick-cost skip=no-bashpid'
   exit 0
 fi
 mkdir -p "$TEST_DIR/../../../tmp"
