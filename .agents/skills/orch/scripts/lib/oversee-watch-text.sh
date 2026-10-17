@@ -323,14 +323,16 @@ The long pass's events, checked and reported in this order:
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
-  EVENT main-push-failing <repo> workflow=<skill-tests.yml|ci.yml> event=<push|schedule> run=<run-id> jobs=<JSON array> cause=<line>
+  EVENT main-push-failing <repo> workflow=<file> event=<push|schedule> run=<run-id> jobs=<JSON array> cause=<line>
                              the latest completed push on main of that
                              workflow failed or timed out, or the latest
                              completed scheduled run there failed, timed
                              out, was cancelled or failed to start. The
                              workflows are kendex's skill-tests.yml and the
                              harness-ci template's ci.yml, whose nightly run
-                             is the only run of its platform lanes on main.
+                             is the only run of its platform lanes on main,
+                             and each one ORCH_MAIN_WORKFLOWS names for the
+                             repository.
                              Each workflow and event keeps its own incident,
                              so a green push leaves a red night standing,
                              and so does a read that lists no run.
@@ -351,6 +353,14 @@ The long pass's events, checked and reported in this order:
                              jobs are unchanged. A first unread log reports
                              cause=unread. Recovered logs update the recorded
                              failures without repeating the event
+  EVENT main-workflow-absent <repo> workflow=<file>
+                             a workflow ORCH_MAIN_WORKFLOWS names for the
+                             repository is not on its default branch, so
+                             none of its runs is read. Reported once; a
+                             later successful read of it clears the record,
+                             so a second removal reports again. A default
+                             workflow the repository lacks is skipped
+                             without an event
   EVENT security-alert <repo> kind=<dependabot|code-scanning|secret-scanning>
         number=<N> [severity=<s>] <package|rule>=<name> [manifest=<path>]
         [scope=<scope>] [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
@@ -1057,6 +1067,18 @@ Environment:
                               directory without those two: open-terminal
                               --help. oversee-report reads it as this watch
                               does
+  ORCH_MAIN_WORKFLOWS         blank-separated OWNER/REPO:FILE list, each a
+                              workflow file under .github/workflows/ whose
+                              latest completed push and scheduled run on
+                              main the watch reads for that repository, as
+                              main-push-failing, beside skill-tests.yml and
+                              ci.yml. A repository with no entry reads those
+                              two alone. A named file the default branch
+                              lacks is main-workflow-absent. An entry of
+                              another shape exits 2, in repeat mode before
+                              the first pass. Read at start from the same
+                              settings as ORCH_CONNECTED_REPOS; after a
+                              change, restart the watch
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,
@@ -1129,6 +1151,7 @@ Environment:
                               triage, lane-asking, usage-limit, handoff,
                               account, outside-contribution, refresh-failing,
                               main-push-failing, main-schedule-failing,
+                              main-workflow-absent,
                               security-alert, bot-fix and
                               security-alerts-unread rows; the mail pass's
                               file beside the first one holds
@@ -1198,6 +1221,7 @@ ow_message() { # REASON FIELD=VALUE...
     start-stall-unread) text='The lane start could not be read from its status file or GitHub. This pass cannot establish whether it started. No start-stalled event goes out and the row stands. The exit names the failed read.' ;;
     refresh-unread) text='The refresh run list or failed-step log could not be read. A failed run-list read leaves the baseline intact; a failed log read reports cause=unread. The watch continues.' ;;
     main-push-unread) text='The main-push run list, jobs or failed-step log could not be read. An unread run list or jobs leaves the incident intact; an unread log reports cause=unread. The watch continues.' ;;
+    main-workflows-invalid) text='ORCH_MAIN_WORKFLOWS takes blank-separated OWNER/REPO:FILE entries, FILE a .yml or .yaml workflow file name. entry is the first one of another shape.' ;;
     refresh-stale) text='GitHub answered the refresh run list with a page that judges nothing: newest= is the run it was checked against, the one the watch last read or, for a pair opening an incident or with none read, the newest completed run in the unfiltered list, none when it has none, and read= the newest run the page holds, none for an empty page. No pair is reported and none is cleared. The watch continues.' ;;
     refresh-order-unknown) text='The refresh run-list judgement named an order other than newer, same, older or unrecorded, so the run list cannot be judged.' ;;
     lane-rows-unread) text='The Pi lane session rows could not be read, so the lane reads unjudged this pass and its pane is not read in their place. The exit is lane_host_fetch'"'"'s for a hosted lane, 2 a failed read and 4 no lane-host slot; 0 is a file this read reached and could not read, or whose last row names an event no writer writes, and 2 on a local lane is a record naming no mail_root.' ;;

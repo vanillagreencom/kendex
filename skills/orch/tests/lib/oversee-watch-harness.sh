@@ -95,8 +95,9 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   main-push.<SLUG>.json is the Skill Tests run history (default: []),
 #   filtered by branch, event and status and capped by the list's limit;
 #   main-push.<SLUG>.err fails that list. main-ci.<SLUG>.json and .err are
-#   the same for the harness-ci template's ci.yml; absent .json reads as
-#   gh's rewritten 404 for that workflow. main-jobs.<RUN>.json supplies jobs,
+#   the same for the harness-ci template's ci.yml, and main-wf.<FILE>.<SLUG>
+#   for any other workflow FILE a main-branch list names; absent .json reads
+#   as gh's rewritten 404 for that workflow. main-jobs.<RUN>.json supplies jobs,
 #   main-jobs.<RUN>.err fails that read. main-log.<RUN>.txt and .err supply
 #   or fail the failed-step log of a main-push run.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
@@ -163,12 +164,13 @@ case "${1:-} ${2:-}" in
       shift
     done
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
-    if [[ "$verb" == list && ( "$workflow" == skill-tests.yml || "$workflow" == ci.yml ) ]]; then
+    if [[ "$verb" == list && "$branch" == main && -n "$workflow" ]]; then
       src="$STUB_DIR/main-push.$slug"
-      if [[ "$workflow" == ci.yml ]]; then
+      if [[ "$workflow" != skill-tests.yml ]]; then
         src="$STUB_DIR/main-ci.$slug"
+        [[ "$workflow" == ci.yml ]] || src="$STUB_DIR/main-wf.$workflow.$slug"
         [[ -f "$src.json" || -f "$src.err" ]] || {
-          printf 'HTTP 404: workflow ci.yml not found on the default branch (https://api.github.com/repos/%s/actions/workflows/ci.yml)\n' "$repo" >&2
+          printf 'HTTP 404: workflow %s not found on the default branch (https://api.github.com/repos/%s/actions/workflows/%s)\n' "$workflow" "$repo" "$workflow" >&2
           exit 1
         }
       fi
@@ -929,7 +931,7 @@ run_watch() {
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u TMUX_PANE -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST -u ORCH_WALL_RELAUNCH \
            -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_WATCH_LANE_STALL_SECS -u ORCH_CLOUD_STALL_MINUTES -u ORCH_WATCH_LANE_AGE_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
-           -u ORCH_SECURITY_ALERT_TOKEN_FILE -u ORCH_CONNECTED_REPOS \
+           -u ORCH_SECURITY_ALERT_TOKEN_FILE -u ORCH_CONNECTED_REPOS -u ORCH_MAIN_WORKFLOWS \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
            -u OVERSEE_REPORT_WORKFLOW_STATE -u OVERSEE_REPORT_TRACKER -u OVERSEE_REPORT_GITHUB \

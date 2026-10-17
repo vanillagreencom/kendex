@@ -293,6 +293,7 @@ PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 #   main-push-failing<TAB><repo>:<workflow><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
 #   main-schedule-failing<TAB><repo>:<workflow><TAB>the same, for the nightly scheduled run
 #     (a row keyed <repo> alone is skill-tests.yml's, from before the workflow key)
+#   main-workflow-absent<TAB><repo>:<workflow><TAB>reported, for a workflow ORCH_MAIN_WORKFLOWS names that the default branch lacks
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
@@ -642,6 +643,21 @@ LANE_AGE_SECS="${ORCH_WATCH_LANE_AGE_SECS:-12600}"
 # (wall_route), `ask` reports it with the pick's answer for the overseer.
 WALL_RELAUNCH="${ORCH_WALL_RELAUNCH:-auto}"
 [[ "$WALL_RELAUNCH" == auto || "$WALL_RELAUNCH" == ask ]] || die wall-relaunch-invalid "" "value=$WALL_RELAUNCH"
+# The workflows each repository names beyond the defaults check_main_push
+# reads, as " <repo>:<file> ... " with the repository lowercased as REPOS is.
+# kendex_load_project_env above already applied the settings ladder orch-env
+# reads, so the value is taken from the environment like every watch setting.
+# Judged here so a repeat run is refused at its start, not at its first pass.
+MAIN_DECLARED=" "
+main_list=()
+IFS=$' \t\n' read -ra main_list -d '' <<<"${ORCH_MAIN_WORKFLOWS-}" || true
+for main_entry in ${main_list[@]+"${main_list[@]}"}; do
+  [[ "$main_entry" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+\.ya?ml$ ]] \
+    || die main-workflows-invalid "" "entry=$main_entry"
+  main_entry="$(printf '%s' "${main_entry%%:*}" | tr '[:upper:]' '[:lower:]'):${main_entry#*:}"
+  [[ "$MAIN_DECLARED" == *" $main_entry "* ]] || MAIN_DECLARED+="$main_entry "
+done
+unset main_entry main_list
 # The state's records the pane never judges and the start-stall check reads,
 # rebuilt by every fleet read: `<window>=<item>` for each Pi lane, judged from
 # the rows its own hook writes (lib/session-rows.sh), and `<item>=<epoch it went
@@ -2110,10 +2126,12 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 # The default-branch runs a red main is read from: kendex's skill-tests.yml,
 # and the harness-ci template's ci.yml, whose nightly schedule run is its
 # only run on main; a push run counts only where a repository adds the
-# trigger. Each workflow's push and nightly schedule keep their own incident
-# row: the push compiles, the nightly run tests the platform roster, so a
-# green push must not clear a red night. A read that finds no completed run
-# of an event leaves its row as it stands.
+# trigger. Each repository also reads every workflow ORCH_MAIN_WORKFLOWS
+# names for it (MAIN_DECLARED), since a consumer's nightly platform run can
+# live in a file of its own. Each workflow's push and nightly schedule keep
+# their own incident row: the push compiles, the nightly run tests the
+# platform roster, so a green push must not clear a red night. A read that
+# finds no completed run of an event leaves its row as it stands.
 #
 # The pass's cost is held to the watch's process ceilings: every run list is
 # read first, so one jq start parses them all, and the rows are read and
@@ -2121,10 +2139,14 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 # an access failure to the same 404 as a workflow the default branch lacks,
 # so that 404 alone proves no absence. A run list this pass read from the
 # same repository proves access, and there the 404 proves the workflow
-# absent; with no such read, workflow_absent reads the workflow list.
+# absent; with no such read, workflow_absent reads the workflow list. A
+# default workflow proven absent clears its rows silently, since most
+# repositories lack one of the two. A declared one is a setting that names a
+# file the repository does not hold, and would leave its nightly unread, so
+# it raises main-workflow-absent once until a read of it succeeds.
 MAIN_WORKFLOWS='skill-tests.yml ci.yml'
 check_main_push() {
-  local repo workflow row_key event row failing runs run conclusion jobs log cause failures key prior changed rc i line
+  local repo workflow workflows entry row_key event row failing runs run conclusion jobs log cause failures key prior changed rc i line
   local -a slots lists reads parsed
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err" read_repos=" "
   slots=() lists=() reads=() parsed=()
@@ -2140,7 +2162,12 @@ check_main_push() {
         || die state-read-failed "" "repo=$repo" "row=$row"
       rows="$LANE_ROW"
     done
-    for workflow in $MAIN_WORKFLOWS; do
+    workflows="$MAIN_WORKFLOWS"
+    for entry in $MAIN_DECLARED; do
+      [[ "${entry%%:*}" == "$repo" && " $workflows " != *" ${entry#*:} "* ]] || continue
+      workflows+=" ${entry#*:}"
+    done
+    for workflow in $workflows; do
       for event in push schedule; do
         i="${#slots[@]}" rc=0
         runs="$(gh run list --repo "$repo" --workflow "$workflow" --branch main --event "$event" \
@@ -2186,10 +2213,25 @@ check_main_push() {
         lane_row_clear "$row" "$rows" "$row_key" >/dev/null \
           || die state-read-failed "" "repo=$repo" "row=$row"
         rows="$LANE_ROW"
+        [[ "$MAIN_DECLARED" == *" $row_key "* ]] || continue
+        # The push and the schedule read both prove it absent; the row
+        # keeps it to one event.
+        lane_row_get main-workflow-absent "$rows" "$row_key" >/dev/null
+        [[ -z "$LANE_ROW" ]] || continue
+        printf 'EVENT main-workflow-absent %s workflow=%s\n' "$repo" "$workflow"
+        PASS_EVENT=1
+        lane_row_set main-workflow-absent "$rows" "$row_key" reported >/dev/null \
+          || die state-read-failed "" "repo=$repo" "row=main-workflow-absent"
+        rows="$LANE_ROW"
         continue
       fi
       ow_message main-push-unread "repo=$repo" "workflow=$workflow" "read=runs" "exit=$rc" >&2
       continue
+    fi
+    if [[ "$MAIN_DECLARED" == *" $row_key "* ]]; then
+      lane_row_clear main-workflow-absent "$rows" "$row_key" >/dev/null \
+        || die state-read-failed "" "repo=$repo" "row=main-workflow-absent"
+      rows="$LANE_ROW"
     fi
     IFS='|' read -r run conclusion <<<"$runs"
     [[ "$run" != none ]] || continue

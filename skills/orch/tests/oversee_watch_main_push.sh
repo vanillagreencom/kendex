@@ -6,11 +6,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 
-main_watch() {
+main_watch() { # [VAR=VALUE...] — environment for this pass
   MAIN_RC=0
   : > "$STUB_DIR/gh.calls"
-  run_watch -- --max-loops 1 >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || MAIN_RC=$?
+  run_watch "$@" -- --max-loops 1 >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || MAIN_RC=$?
   MAIN_EVENTS="$(awk '/^EVENT main-push-failing /' "$STUB_DIR/out")"
+  MAIN_ABSENT="$(awk '/^EVENT main-workflow-absent /' "$STUB_DIR/out")"
   MAIN_NOTICES="$(awk '/^oversee-watch: main-push-unread / { n++ } END { print n+0 }' "$STUB_DIR/err")"
 }
 
@@ -379,6 +380,67 @@ done <<<"$legacy_files"
 [[ -z "$(grep -rlF 'owner/repo:skill-tests.yml' "$STATE_DIR")" ]] || { echo "the legacy rewrite left the keyed row" >&2; exit 1; }
 main_watch
 assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'a legacy row stays quiet' "$STUB_DIR/err"
+
+# ORCH_MAIN_WORKFLOWS adds a repository's own nightly workflow to the two
+# every repository reads. Its red scheduled run reports as main-push-failing
+# naming it; an entry for another repository, or none, reads the defaults
+# alone, with the same run-list calls.
+NAMED_JOBS='["iOS build"]'
+NAMED_CAUSE='FAILED: eas build ios'
+NAMED="EVENT main-push-failing owner/repo workflow=eas-build.yml event=schedule run=402 jobs=$NAMED_JOBS cause=$NAMED_CAUSE"
+named_case() { # NAME WATCH [VAR=VALUE] — `rc=<status> events=<main-push-failing lines>`
+  new_case "main_named_$1"
+  printf '[{"databaseId":201,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
+  printf '[{"databaseId":402,"headBranch":"main","event":"schedule","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-wf.eas-build.yml.owner_repo.json"
+  jq -cn --argjson names "$NAMED_JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.402.json"
+  printf '%s\n' "$NAMED_CAUSE" > "$STUB_DIR/main-log.402.txt"
+  WATCH_BIN="$2" main_watch ${3:+"$3"}
+  awk '/^run list / { sub(/ --json .*/, ""); print }' "$STUB_DIR/gh.calls" > "$STUB_DIR/lists"
+  printf 'rc=%s events=%s' "$MAIN_RC" "$MAIN_EVENTS"
+}
+KEN4217="$(mutant_scripts main-named-ken4217/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-named-ken4217/github"
+mutate_file "$KEN4217" '    for workflow in $workflows; do' '    for workflow in $MAIN_WORKFLOWS; do'
+WATCH="$REPO_ROOT/skills/orch/scripts/oversee-watch"
+named_case unset "$WATCH" >/dev/null
+DEFAULT_LISTS="$(cat "$STUB_DIR/lists")"
+# NAME|WATCH|SETTING|ANSWER
+for row in \
+  "named|$WATCH|ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml|rc=0 events=$NAMED" \
+  "named-in-owner-casing|$WATCH|ORCH_MAIN_WORKFLOWS=Owner/Repo:eas-build.yml other/repo:x.yml|rc=0 events=$NAMED" \
+  "other-repo|$WATCH|ORCH_MAIN_WORKFLOWS=other/repo:eas-build.yml|rc=0 events=" \
+  "control-ken4217-reader|$KEN4217|ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml|rc=0 events="; do
+  IFS='|' read -r name target setting expected <<<"$row"
+  assert_eq "$(named_case "$name" "$target" "$setting")" "$expected" "named workflow $name" "$STUB_DIR/err"
+done
+assert_eq "$(cat "$TMP_ROOT/cases/main_named_other-repo/lists")" "$DEFAULT_LISTS" 'an entry for another repository reads the defaults alone' "$STUB_DIR/err"
+
+# A named workflow the default branch lacks is reported once, across both
+# event reads and later passes, and again after a read of it succeeded. The
+# control drops the record that holds it to one report.
+absent_case() { # NAME WATCH — the main-workflow-absent count of each pass
+  local counts="" present
+  new_case "main_absent_$1"
+  printf '[{"databaseId":201,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
+  for present in no no yes no; do
+    rm -f -- "$STUB_DIR/main-wf.nightly.yml.owner_repo.json"
+    [[ "$present" == no ]] || printf '[]\n' > "$STUB_DIR/main-wf.nightly.yml.owner_repo.json"
+    WATCH_BIN="$2" main_watch ORCH_MAIN_WORKFLOWS=owner/repo:nightly.yml
+    counts+="$MAIN_RC:$(grep -cxF 'EVENT main-workflow-absent owner/repo workflow=nightly.yml' <<<"$MAIN_ABSENT" || true) "
+  done
+  printf '%s' "$counts"
+}
+ABSENT_MUTANT="$(mutant_scripts main-absent-once/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-absent-once/github"
+mutate_file "$ABSENT_MUTANT" $'        [[ -z "$LANE_ROW" ]] || continue\n' $'        :\n'
+assert_eq "$(absent_case current "$WATCH")" '0:1 0:0 0:0 0:1 ' 'a named absent workflow reports once until it reads' "$STUB_DIR/err"
+assert_eq "$(absent_case control "$ABSENT_MUTANT")" '0:2 0:2 0:0 0:2 ' 'control: no record reports every read' "$STUB_DIR/err"
+
+# An entry of another shape refuses the watch before any read.
+new_case main_named_invalid
+main_watch 'ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml owner/repo'
+assert_eq "rc=$MAIN_RC refusal=$(grep -cxF 'oversee-watch: main-workflows-invalid entry=owner/repo' "$STUB_DIR/err" || true) lists=$(grep -c '^run list' "$STUB_DIR/gh.calls" || true)" \
+  'rc=2 refusal=1 lists=0' 'an entry with no workflow file is refused' "$STUB_DIR/err"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
