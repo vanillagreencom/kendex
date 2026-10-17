@@ -355,40 +355,27 @@ Shut the review agents down and clear their state (wave mode: sessions are alrea
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [] | .review_agent_ids = {} | .review_wave_done = []'
 ```
 
-Then decide the QA routing. The inputs, in precedence order:
-
-1. **Dev signals** — the dev round's artifact `qa_labels` (its § 8 self-assessment of the final code).
-2. **Diff scan** — deterministic checks on the round's full diff:
+Then record the QA routing. One command reads the dev round's `qa_labels`, scans the round's full diff for unsafe code and atomics and for paths matching `QA_PERF_PATHS` and `QA_UI_PATHS`, and writes `qa_decision` to workflow state with the agent for each signal; `qa-signals --help` states each input and the agent table:
 
 ```bash
-git -C [WORKTREE_PATH] diff --exit-code -G'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)' "origin/[BASE_BRANCH]"...HEAD >/dev/null
+.agents/skills/orch/scripts/qa-signals [ISSUE_ID] --worktree [WORKTREE_PATH] --base "origin/[BASE_BRANCH]"
 ```
 
-   `[BASE_BRANCH]` is the § 1 `resolve-base-branch` output. Exit **1** means a matching change exists and adds `needs-safety-audit`; **0** means no signal; any other exit is a failed scan, which never reads as no signal: it adds `needs-safety-audit`, and the `qa_decision` rationale names the exit. Never use `--quiet` here: with `-G` it can exit 0 on a range holding a matching change. When the repo sets `QA_PERF_PATHS` (space-separated path globs), any changed file matching one adds `needs-perf-test`:
+`[BASE_BRANCH]` is the § 1 `resolve-base-branch` output. A non-zero exit records nothing: report its `qa-signals:` line and stop the review.
+
+**Judgment** — you may add or drop a signal with a one-line reason: run the same command again with `--add [SIGNAL]` or `--drop [SIGNAL]` and `--reason "[ONE_LINE]"`. Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 7:
 
 ```bash
-.agents/skills/orch/scripts/orch-env QA_PERF_PATHS ""
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[],"agents":{},"rationale":"user skip"}'
 ```
 
-   When the repo sets `QA_UI_PATHS` (space-separated path globs), any changed file matching one adds `needs-ui-review`:
-
-```bash
-.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""
-```
-
-3. **Judgment** — you may add or drop a signal with a one-line reason; record it:
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[SIGNALS],"rationale":"[ONE_LINE]"}'
-```
-
-Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 7. Signals empty → § 7. Otherwise → § 6.
+Signals empty → § 7. Otherwise → § 6.
 
 ## 6. QA Checks
 
 **Skip if** the recorded `qa_decision.signals` is empty → § 7, which finds no QA artifacts, converges, and routes on: the exit is decided in one place even when QA never ran.
 
-Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`, `needs-ui-review` → `reviewer-quality`, whose UI lens judges the screenshots the dev summary lists against the design-system doc `QA_UI_DESIGN_DOC` names; a project may override the mapping in its instructions. For each, delegate and wait.
+Delegate each recorded signal to the agent `qa_decision.agents` names for it, and wait. The `needs-ui-review` agent's UI lens judges the screenshots the dev summary lists against the design-system doc `QA_UI_DESIGN_DOC` names. A project may override the mapping in its instructions.
 
 A `needs-ui-review` delegation's Dev summary carries a Screenshots list, each changed view's set as `.agents/skills/code-quality/references/ui.md` § Screenshots defines it. On a QA re-check, each view's entries come from the latest dev round whose summary lists that view: a fix round that recaptured it, else the implement round.
 

@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# qa-signals — review-pr.md § 5's QA routing, recorded in workflow state.
+#
+# Usage: qa-signals ISSUE_ID --worktree PATH --base REF
+#                   [--add SIGNAL]... [--drop SIGNAL]... [--reason TEXT]
+#
+# Collects the signals for the round's diff REF...HEAD in PATH, writes them to
+# the state's qa_decision and prints that object on stdout. Each input adds
+# its signal and one cause to the rationale:
+#   dev     the state's qa_labels, the dev round's § 8 self-assessment
+#   safety  a diff line matching unsafe code or atomics adds
+#           needs-safety-audit
+#   perf    a changed path matching a QA_PERF_PATHS glob adds needs-perf-test
+#   ui      a changed path matching a QA_UI_PATHS glob adds needs-ui-review
+# The settings are space-separated bash patterns, read through orch-env from
+# the caller's checkout, each matched against the whole repository-relative
+# path; `*` crosses `/`. An unset setting adds nothing. A diff read that fails
+# adds the signal it would have decided and names the exit: a failed read
+# never reads as no signal.
+#
+# --add and --drop are § 5's judgment, applied after the scan, and need
+# --reason. Running the command again replaces the record.
+#
+# qa_decision is {signals, agents, rationale}. agents maps each signal to the
+# QA agent review-pr.md § 6 delegates it to:
+#   needs-safety-audit  reviewer-safety
+#   needs-perf-test     reviewer-perf
+#   needs-review        reviewer-correctness
+#   needs-ui-review     reviewer-quality
+#
+# Exit 2 is a usage refusal with one `qa-signals: <key> ...` stderr line;
+# exit 1 a settings or state failure. Either records nothing.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AGENTS='{"needs-safety-audit":"reviewer-safety","needs-perf-test":"reviewer-perf","needs-review":"reviewer-correctness","needs-ui-review":"reviewer-quality"}'
+
+usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+refuse() { printf 'qa-signals: %s\n' "$1" >&2; exit 2; }
+
+known_signal() { # SIGNAL SOURCE
+  jq -e --arg s "$1" 'has($s)' <<<"$AGENTS" >/dev/null || refuse "unknown-signal signal=$1 source=$2"
+}
+
+issue="" worktree="" base="" reason=""
+adds=() drops=()
+while (( $# > 0 )); do
+  case "$1" in
+    -h | --help) usage; exit 0 ;;
+    --worktree | --base | --add | --drop | --reason)
+      (( $# >= 2 )) || refuse "missing-value option=$1"
+      case "$1" in
+        --worktree) worktree="$2" ;;
+        --base) base="$2" ;;
+        --add) known_signal "$2" add; adds+=("$2") ;;
+        --drop) known_signal "$2" drop; drops+=("$2") ;;
+        --reason) reason="$2" ;;
+      esac
+      shift 2 ;;
+    -*) refuse "unknown-option option=$1" ;;
+    *) [[ -z "$issue" ]] || refuse "extra-argument value=$1"; issue="$1"; shift ;;
+  esac
+done
+[[ -n "$issue" && -n "$worktree" && -n "$base" ]] || refuse "missing-argument need=ISSUE_ID,--worktree,--base"
+judged=$(( ${#adds[@]} + ${#drops[@]} ))
+if (( judged > 0 )) && [[ -z "$reason" ]]; then refuse "judgment-reason cause=add-or-drop-without-reason"; fi
+if (( judged == 0 )) && [[ -n "$reason" ]]; then refuse "judgment-reason cause=reason-without-add-or-drop"; fi
+
+signals=() causes=()
+add_signal() { # SIGNAL CAUSE
+  local present
+  causes+=("$2")
+  for present in ${signals[@]+"${signals[@]}"}; do [[ "$present" != "$1" ]] || return 0; done
+  signals+=("$1")
+}
+
+dev_labels="$("$SCRIPT_DIR/workflow-state" get "$issue" '(.qa_labels // [])[]')"
+while IFS= read -r label; do
+  [[ -n "$label" ]] || continue
+  known_signal "$label" dev
+  add_signal "$label" "dev $label"
+done <<<"$dev_labels"
+
+# Never --quiet: with -G it can exit 0 on a range holding a matching change.
+status=0
+git -C "$worktree" diff --exit-code -G'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)' "$base"...HEAD >/dev/null || status=$?
+case "$status" in
+  0) ;;
+  1) add_signal needs-safety-audit "safety-scan match" ;;
+  *) add_signal needs-safety-audit "safety-scan exit=$status" ;;
+esac
+
+paths_status=0
+paths="$(git -C "$worktree" -c core.quotePath=false diff --no-renames --name-only "$base"...HEAD)" || paths_status=$?
+
+scan_paths() { # SETTING SIGNAL
+  local setting globs=() glob path
+  setting="$("$SCRIPT_DIR/orch-env" "$1" "")" || exit 1
+  read -r -a globs <<<"$setting"
+  (( ${#globs[@]} > 0 )) || return 0
+  if (( paths_status != 0 )); then
+    add_signal "$2" "$1 paths-unread exit=$paths_status"
+    return 0
+  fi
+  while IFS= read -r path; do
+    for glob in "${globs[@]}"; do
+      # shellcheck disable=SC2053 # the setting's glob is the pattern
+      if [[ -n "$path" && "$path" == $glob ]]; then
+        add_signal "$2" "$1 path=$path glob=$glob"
+        return 0
+      fi
+    done
+  done <<<"$paths"
+}
+scan_paths QA_PERF_PATHS needs-perf-test
+scan_paths QA_UI_PATHS needs-ui-review
+
+for drop in ${drops[@]+"${drops[@]}"}; do
+  kept=()
+  for present in ${signals[@]+"${signals[@]}"}; do [[ "$present" == "$drop" ]] || kept+=("$present"); done
+  signals=(${kept[@]+"${kept[@]}"})
+  causes+=("judgment drop=$drop")
+done
+for add in ${adds[@]+"${adds[@]}"}; do add_signal "$add" "judgment add=$add"; done
+(( judged == 0 )) || causes+=("judgment reason=$reason")
+
+rationale=""
+for cause in ${causes[@]+"${causes[@]}"}; do rationale="${rationale:+$rationale; }$cause"; done
+decision="$(jq -cn --argjson agents "$AGENTS" --arg rationale "${rationale:-scan: no signal}" \
+  '$ARGS.positional as $s
+   | {signals: $s, agents: (reduce $s[] as $x ({}; .[$x] = $agents[$x])), rationale: $rationale}' \
+  --args ${signals[@]+"${signals[@]}"})"
+"$SCRIPT_DIR/workflow-state" update "$issue" --argjson decision "$decision" '.qa_decision = $decision' >/dev/null
+printf '%s\n' "$decision"
