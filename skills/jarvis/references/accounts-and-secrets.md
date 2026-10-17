@@ -4,11 +4,11 @@
 
 - For 1Password work, use the packaged [op-broker](../scripts/op-broker) and [opq](../scripts/opq). Platform: Linux and macOS for `read`. Linux only: `op` requests, `@SCRIPT` requests, a broker whose directory comes from `JARVIS_OP_DIRECTORY`, and a broker that reuses an existing directory. On macOS those refuse `platform=unsupported`, except an existing directory, which refuses `directory=exists`: remove the leftover directory or choose a new path. This route is optional and requires the 1Password CLI, `op`. Read each script's `--help` for command syntax.
 - Give the broker an absolute directory path through `--directory` or `JARVIS_OP_DIRECTORY`, dedicated to the broker. The broker creates a private directory. After a restart it reuses an existing mode-700 directory only when the directory holds nothing but the broker's `lock` file, `requests` pipe and client reply pipes; any other entry refuses `directory=foreign` before the broker changes anything. It refuses `directory=busy` while another broker serves that directory. Select the intended account with `--account` or `OP_ACCOUNT`. Keep directory paths, account identifiers, vault names and item references in the consumer's private settings or account ledger.
-- Supply an approved session through `OP_SESSION`. A broker whose stdin is a terminal can instead start one CLI sign-in. Without either, the broker exits with `session=OP_SESSION-required`. The broker keeps the session token in memory. Its calls disable desktop app integration, so a sub-agent does not request desktop approval for each call.
+- Supply an approved session through `OP_SESSION`. A broker whose stdin is a terminal can instead start one CLI sign-in. Those calls disable desktop app integration, so a sub-agent does not request desktop approval for each call. A CLI that the 1Password desktop app integration alone registers has no session to supply: set `JARVIS_OP_APP_INTEGRATION=1` instead, and the desktop app approves each call. With neither, the broker exits with `session=OP_SESSION-required`. With both, it exits with `session=route-conflict`. Any value other than `1` or empty refuses `setting=JARVIS_OP_APP_INTEGRATION`. The broker keeps a session token in memory only.
 - Wait for the broker's `state=ready` message before a client request. Pass the broker directory, unless `JARVIS_OP_DIRECTORY` names it, and an absolute `--output` path. The client creates that file with mode 600 and refuses to overwrite an existing file.
   - `read op://REF` writes the field's value.
   - `op -- ARG...` runs `op` with those arguments inside the broker's session.
-  - `@/absolute/script` runs a script that the caller owns, with mode 700, inside the session. The script's environment carries `OP_SESSION`, and `OP_ACCOUNT` when the broker has one. A value with spaces or a secret stays inside the script.
+  - `@/absolute/script` runs a script that the caller owns, with mode 700, inside the session. The script's environment carries `OP_SESSION`, or `OP_BIOMETRIC_UNLOCK_ENABLED=true` under the app integration, and `OP_ACCOUNT` when the broker has one. A value with spaces or a secret stays inside the script.
   - An `op` or `@SCRIPT` request writes one JSON record, `{"exit": N, "stdout": BASE64}`, with the exit status and output of `op` or the script. The client exits 0 when it writes the record, and 2 with an `op-client: key=value` line when it refuses. A missing script refuses `script=not-found`.
   - After the request was sent, `request=timeout` or `request=cancelled` leaves the outcome of an `op` or `@SCRIPT` request unknown: the broker can still complete it. Check the result before retrying a write such as `op item create`.
 - The broker runs the script's checked file descriptor, so the script sees `$0` as `/dev/fd/N`. It cannot find sibling files through `dirname "$0"`, and it cannot live on a `noexec` mount. It runs with no stdin and no stderr. The broker ends the process group of an `op` or `@SCRIPT` request when its command exits, or after 30 seconds.
@@ -20,8 +20,8 @@
 - Command arguments lie outside the boundary. Other local users can read the arguments of `opq`, of `op` and of every process a script starts, item references included. Pass a secret value to `op` through a mode-600 file or a `--template` file that the script writes, never as an argument.
 - The private-script rule covers only the file named in `@SCRIPT`. A program or file the caller names through `op run`, `op plugin run`, `--out-file` or from inside a script is the caller's own choice. The exclusive mode-600 output guarantee does not cover it.
 - The `op` request gives write authority to every process of the user for the life of the session: item edits and deletes, vault and user commands. Apply [decisions.md:Authority](decisions.md#authority) to each such action.
-- The keepalive runs only when `JARVIS_OP_KEEPALIVE_SECS` is set. Then, after a successful call, the broker runs `op whoami` whenever it has been idle for that many seconds. The approved session stays valid past 1Password's idle expiry for as long as the broker runs and its calls succeed. That lifetime is longer than [decisions.md:Evidence and risk](decisions.md#evidence-and-risk) asks for, so set the keepalive only in the [Broker service](#broker-service) unit. The broker never signs out. Stopping the unit stops the renewal, and the session lapses at 1Password's idle expiry after the last call or `op whoami`. A broker started for one task leaves the keepalive unset, and its session lapses the same way.
-- A failed `op whoami` logs `op-broker: keepalive=failed`, with `exit=N` when `op` ran and exited nonzero. The keepalive tries again after the next interval, so a network failure does not end renewal. `op whoami` contacts the 1Password server, so that line does not show that the session expired. A caller's request returns `op`'s own exit status.
+- The keepalive runs only when `JARVIS_OP_KEEPALIVE_SECS` is set. Then, after a successful call, the broker renews whenever it has been idle for that many seconds: with `op whoami` for an `OP_SESSION`, or with `op vault list` under the app integration. The approval stays valid past 1Password's idle expiry for as long as the broker runs and its calls succeed. That lifetime is longer than [decisions.md:Evidence and risk](decisions.md#evidence-and-risk) asks for, so set the keepalive only in the [Broker service](#broker-service) unit. The broker never signs out. Stopping the unit stops the renewal, and the approval lapses at 1Password's idle expiry after the last call or renewal. A broker started for one task leaves the keepalive unset, and its approval lapses the same way.
+- A failed renewal logs `op-broker: keepalive=failed`, with `exit=N` when `op` ran and exited nonzero. The keepalive tries again after the next interval, so a network failure does not end renewal. The renewal contacts the 1Password server, so that line does not show that the approval expired. A caller's request returns `op`'s own exit status.
 
 ### Broker service
 
@@ -40,6 +40,21 @@ Restart=on-failure
 - The home writes that file under the runtime directory, `%t`, at mode 600 before it starts the unit. The runtime directory is a user-owned in-memory file system that systemd removes when the user's last session ends, so backups and dotfile sync never capture the session. The unit cannot approve a sign-in.
 - A restart after the unit is killed reuses the leftover directory.
 - The `EnvironmentFile=` keeps a usable token until 1Password's idle expiry, and the unit does not remove it. When you stop the unit deliberately, remove that file under [Secret transfer](#secret-transfer).
+
+For a CLI that the 1Password desktop app integration alone registers, the unit names the integration and needs no `EnvironmentFile=`:
+
+```ini
+[Service]
+Environment=JARVIS_OP_DIRECTORY=%t/jarvis-op
+Environment=JARVIS_OP_APP_INTEGRATION=1
+Environment=JARVIS_OP_KEEPALIVE_SECS=300
+ExecStart=/path/to/scripts/op-broker
+Restart=on-failure
+```
+
+- Set `OP_ACCOUNT` with another `Environment=` line when the desktop app holds more than one account.
+- The broker makes no `op` call at startup, so `state=ready` does not show that the desktop app will approve a call. The desktop app approves each call. The home supplies its own approval route, such as a helper that answers the prompt at the lock screen; the package ships none.
+- The integration's approval expires after 10 minutes with no call, and after 12 hours in all cases. The keepalive runs `op vault list`, a call the integration approves, so keep `JARVIS_OP_KEEPALIVE_SECS` below 600. It does not use `op whoami`, which can report no signed-in account under the integration. After the 12-hour limit, the next call needs a new approval.
 
 ## Secret transfer
 

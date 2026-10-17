@@ -510,9 +510,59 @@ elif sys.argv[1]=='read':
             with self.subTest(state=state):
                 effect = outcome if isinstance(outcome, BaseException) else (lambda *_: outcome)
                 with patch.object(module, "call_op", side_effect=effect) as call, redirect_stderr(io.StringIO()) as stderr:
-                    module.keep_session("op", {})
+                    module.keep_session("op", {}, ["whoami"])
                 self.assertEqual(stderr.getvalue(), diagnostic)
                 call.assert_called_once_with(["op", "whoami"], {})
+
+    def test_session_routes(self):
+        # Records each call; a vault list also acknowledges on HOME/ack, so the renewal is observed, not slept for.
+        body = """import os,sys,json
+home=os.environ['HOME']
+with open(home+'/calls','a') as f:
+    f.write(json.dumps({'verb':sys.argv[1], 'session':os.environ.get('OP_SESSION'), 'biometric':os.environ.get('OP_BIOMETRIC_UNLOCK_ENABLED')})+'\\n')
+if sys.argv[1:3]==['vault','list']:
+    with open(home+'/ack','wb',buffering=0) as f: f.write(b'V')
+elif sys.argv[1]=='read': sys.stdout.write('fixture-value')
+"""
+        ack_path = self.root / "ack"
+        os.mkfifo(ack_path, 0o600)
+        ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, ack)
+        self.env["JARVIS_OP_KEEPALIVE_SECS"] = "1"
+        # Every combination of the two route inputs a broker without a terminal can start with.
+        rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1"}, None),
+                ("both", {"JARVIS_OP_APP_INTEGRATION": "1", "OP_SESSION": "fixture-session"},
+                 b"op-broker: session=route-conflict"),
+                ("neither", {}, b"op-broker: session=OP_SESSION-required"),
+                ("empty-setting", {"JARVIS_OP_APP_INTEGRATION": ""}, b"op-broker: session=OP_SESSION-required"),
+                ("unknown-setting", {"JARVIS_OP_APP_INTEGRATION": "yes"}, b"op-broker: setting=JARVIS_OP_APP_INTEGRATION"))
+        base = dict(self.env)
+        for route, settings, key in rows:
+            with self.subTest(route=route):
+                self.env = dict(base, **settings)
+                self.log.unlink(missing_ok=True)
+                if key is not None:
+                    self.executable("op", body)
+                    result = self.run_tool("op-broker", "--directory", self.root / "broker", input=b"")
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stderr.splitlines()[0], key)
+                    self.assertFalse(self.log.exists())
+                    continue
+                process = self.start(body, args=["--directory", str(self.root / "broker")], terminal=False)
+                output = self.root / "value"
+                result = self.run_tool("opq", "--directory", self.directory, "read", "op://fixture/item/password",
+                                       "--output", output)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_bytes(), b"fixture-value")
+                self.assertTrue(select.select([ack], [], [], 10)[0], "keepalive did not renew the app approval")
+                self.assertEqual(os.read(ack, 1), b"V")
+                process.terminate()
+                _, stderr = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, stderr)
+                calls = self.calls()
+                self.assertEqual([call["verb"] for call in calls[:2]], ["read", "vault"])
+                for call in calls:
+                    self.assertEqual((call["session"], call["biometric"]), (None, "true"))
 
     @unittest.skipUnless(sys.platform == "linux", "op requests are Linux only")
     def test_keepalive(self):
