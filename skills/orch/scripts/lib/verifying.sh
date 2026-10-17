@@ -89,8 +89,8 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE GH_CL
       releases="" page=1
       while :; do
         read_file=""
-        # Cache pages, not a merge-bounded list: another issue in this pass
-        # can have an older merge and need the following page.
+        # Share complete history within the pass. GitHub's release list has
+        # no publication-time ordering guarantee: old drafts can publish later.
         if [[ -n "${8:-}" ]]; then
           read_file="$8/$(printf '%s' "${repo//\//%}" | tr '[:upper:]' '[:lower:]').releases.$page"
         fi
@@ -102,14 +102,14 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE GH_CL
           [[ -z "$read_file" ]] || printf '%s\n' "$page_data" >"$read_file" \
             || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
         fi
-        page_data="$(jq -r --argjson merged "$merged" '
+        page_data="$(jq -r '
           if type != "array" then error("release-fields") else . end
           | map({tagName: .tag_name, publishedAt: .published_at, isDraft: .draft}
               | if (.isDraft | type) != "boolean" then error("release-fields") else . end
               | if .isDraft then . else .publishedAt as $stamp
                 | if (.tagName | type) != "string" or (try ($stamp | fromdateiso8601 | todateiso8601 == $stamp) catch false) != true
                   then error("release-fields") else . end end)
-          | "\(length < 100 or any(.[]; .isDraft == false and (.publishedAt | fromdateiso8601) <= $merged))\u001f\(tojson)"' <<<"$page_data" 2>"$errf")" \
+          | "\(length < 100)\u001f\(tojson)"' <<<"$page_data" 2>"$errf")" \
           || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
         releases+="${releases:+$'\n'}${page_data#*$'\037'}"
         [[ "${page_data%%$'\037'*}" != true ]] || break

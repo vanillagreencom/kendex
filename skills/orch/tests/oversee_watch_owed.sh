@@ -933,23 +933,24 @@ command_arguments|release owner/repo v*|[]|2026-10-02T00:00:01Z|+24h|due|argumen
 ROWS
 fi
 
-# Both consumers read the same 1200-release repository. A late matching tag
-# proves pagination; an old publication on page one proves the merge cutoff.
-while IFS='|' read -r name recent pages; do
+# Both consumers exhaust the same 1200-release repository. GitHub can publish
+# an existing draft later, so publication dates cannot bound the history read.
+# The inverted row is a synthetic contract fixture, not a measured page order.
+while IFS='|' read -r name match recent; do
   release_world "release_pages_$name"
-  jq -n --argjson recent "$recent" '[range(1200) as $n
-    | {tagName:(if $n == ($recent - 1) then "v1" else "build-\($n)" end),
-       publishedAt:(if $n < $recent then "2026-10-01T12:00:00Z" else "2026-09-30T00:00:00Z" end),isDraft:false}]' \
+  jq -n --argjson match "$match" --argjson recent "$recent" '[range(1200) as $n
+    | {tagName:(if $n == $match then "v1" else "build-\($n)" end),
+       publishedAt:(if $n == $match or $n < $recent then "2026-10-01T12:00:00Z" else "2026-09-29T00:00:00Z" end),isDraft:false}]' \
     >"$STUB_DIR/releases.owner_releases.json"
   watch_pass -- --state "$STUB_DIR/state.json"
   assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "$name: watch resolves the matching release" "$ERR"
   assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "$name: watch uses the publication time" "$ERR"
-  assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" "$pages" "$name: watch reads only the required pages" "$ERR"
+  assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 "$name: watch reads complete history through the empty page" "$ERR"
   : >"$STUB_DIR/gh.calls"
   reconcile_same_world
   assert_eq "$RECONCILE_RC" 0 "$name: reconciliation completes" "$STUB_DIR/reconcile.err"
   assert_contains "$RECONCILE_OUT" 'status=due deadline=2026-10-02T12:00:00Z' "$name: reconciliation resolves the matching publication"
-  assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" "$pages" "$name: reconciliation reads only the required pages"
+  assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 "$name: reconciliation reads complete history through the empty page"
   MUTANT_DIR="$TMP_ROOT/release-pages-$name"
   MUTANT_WATCH="$(mutant_scripts "release-pages-$name/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
@@ -957,41 +958,71 @@ while IFS='|' read -r name recent pages; do
   if [[ "$name" == deep ]]; then
     mutate_verifying "$MUTANT_WATCH" 'add | map(select(.isDraft == false))' 'add | if length >= 1000 then error("release-list-incomplete") else . end | map(select(.isDraft == false))'
   else
-    mutate_verifying "$MUTANT_WATCH" 'length < 100 or any(.[]; .isDraft == false and (.publishedAt | fromdateiso8601) <= $merged)' 'length < 100'
+    # Restore a cutoff 24 hours before this fixture's merge. Even that
+    # margin loses the matching publication behind the full old page.
+    mutate_verifying "$MUTANT_WATCH" '"\(length < 100)\u001f\(tojson)"' '"\(length < 100 or any(.[]; .isDraft == false and (.publishedAt | fromdateiso8601) <= ("2026-09-30T00:00:00Z" | fromdateiso8601)))\u001f\(tojson)"'
   fi
   : >"$STUB_DIR/gh.calls"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
   if [[ "$name" == deep ]]; then
     assert_eq "$(verification_lines)" '' 'control: the old list cap loses the watch release result' "$ERR"
   else
-    assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 'control: removing the merge cutoff reads the full history' "$ERR"
+    assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 1 "control: $name publication cutoff leaves history unread" "$ERR"
+    if [[ "$name" == inverted ]]; then
+      assert_eq "$(box_status)" 'status=waiting' 'control: publication cutoff loses the later-page matching release' "$ERR"
+    fi
   fi
   : >"$STUB_DIR/gh.calls"
   reconcile_same_world "${MUTANT_WATCH%/*}"
   if [[ "$name" == deep ]]; then
     assert_eq "$RECONCILE_RC" 2 'control: the old list cap refuses reconciliation' "$STUB_DIR/reconcile.err"
   else
-    assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 'control: reconciliation without the cutoff reads the full history'
+    assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 1 "control: $name reconciliation cutoff leaves history unread"
+    if [[ "$name" == inverted ]]; then
+      assert_contains "$RECONCILE_OUT" 'status=waiting deadline=-' 'control: reconciliation cutoff loses the later-page matching release'
+    fi
   fi
 done <<'ROWS'
-deep|1100|12
-newest|1|1
+deep|1099|1100
+newest|0|1
+inverted|100|0
 ROWS
 
 release_world release_pages_older_merge
-jq '[.[0], (.[0] | .id = "KEN-2")]' "$STUB_DIR/tracker.out" >"$STUB_DIR/older-items.json"
+jq '[.[0], (.[0] | .id = "KEN-2"), (.[0] | .id = "KEN-3")]' "$STUB_DIR/tracker.out" >"$STUB_DIR/older-items.json"
 mv -- "$STUB_DIR/older-items.json" "$STUB_DIR/tracker.out"
-printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-02T00:00:00Z"},{"number":2,"headRefName":"ken-2","mergedAt":"2026-10-01T00:00:00Z"}]' >"$STUB_DIR/merged.json"
+printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-02T00:00:00Z"},{"number":2,"headRefName":"ken-2","mergedAt":"2026-10-01T00:00:00Z"},{"number":3,"headRefName":"ken-3","mergedAt":"2026-10-01T00:00:00Z"}]' >"$STUB_DIR/merged.json"
 jq -n '[range(1200) as $n
   | {tagName:(if $n == 50 then "v2" elif $n == 150 then "v1" else "build-\($n)" end),
      publishedAt:(if $n < 100 then "2026-10-02T12:00:00Z" elif $n < 200 then "2026-10-01T12:00:00Z" else "2026-09-30T00:00:00Z" end),isDraft:false}]' \
   >"$STUB_DIR/releases.owner_releases.json"
 jq -nr '"2026-10-02T13:00:00Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
 watch_pass -- --state "$STUB_DIR/state.json"
-assert_eq "$RC" 0 'an older merge extends the cached release pages' "$ERR"
+assert_eq "$RC" 0 'several items share complete release history' "$ERR"
 assert_contains "$(verification_lines)" 'verifying KEN-1 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T12:00:00Z' 'the newer merge selects its first publication' "$ERR"
 assert_contains "$(verification_lines)" 'verifying KEN-2 box=1 trigger="release owner/releases v*" status=overdue deadline=2026-10-02T12:00:00Z' 'the older merge sees the earlier matching tag' "$ERR"
-assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 3 'the shared cache reads each required page once' "$ERR"
+assert_contains "$(verification_lines)" 'verifying KEN-3 box=1 trigger="release owner/releases v*" status=overdue deadline=2026-10-02T12:00:00Z' 'the third item uses its own merge date' "$ERR"
+assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 'the watch cache reads complete history once for all items' "$ERR"
+: >"$STUB_DIR/gh.calls"
+reconcile_same_world
+assert_eq "$RECONCILE_RC" 1 'reconciliation reports the older items overdue' "$STUB_DIR/reconcile.err"
+assert_contains "$RECONCILE_OUT" 'verifying KEN-1 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T12:00:00Z' 'reconciliation selects the newer merge publication'
+assert_contains "$RECONCILE_OUT" 'verifying KEN-2 box=1 trigger="release owner/releases v*" status=overdue deadline=2026-10-02T12:00:00Z' 'reconciliation selects the older merge publication'
+assert_contains "$RECONCILE_OUT" 'verifying KEN-3 box=1 trigger="release owner/releases v*" status=overdue deadline=2026-10-02T12:00:00Z' 'reconciliation retains the third item judgement'
+assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 'the reconciliation cache reads complete history once for all items'
+MUTANT_DIR="$TMP_ROOT/release-pages-cache"
+MUTANT_WATCH="$(mutant_scripts release-pages-cache/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+ln -s "$TMP_ROOT/shared-reconcile/linear" "$MUTANT_DIR/linear"
+mutate_verifying "$MUTANT_WATCH" '[[ -n "$read_file" && -f "$read_file" ]]' '[[ -n "$read_file" && -f "$read_file" ]] && false'
+: >"$STUB_DIR/gh.calls"
+WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 0 'control: cache bypass still reaches the watch judgement' "$ERR"
+assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 39 'control: watch cache bypass repeats complete history for each item' "$ERR"
+: >"$STUB_DIR/gh.calls"
+reconcile_same_world "${MUTANT_WATCH%/*}"
+assert_eq "$RECONCILE_RC" 1 'control: cache bypass still reports overdue items' "$STUB_DIR/reconcile.err"
+assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 39 'control: reconciliation cache bypass repeats complete history for each item'
 
 if [[ "$PART" != pagination ]]; then
 release_world release_first
