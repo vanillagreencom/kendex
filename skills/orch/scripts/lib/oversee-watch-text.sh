@@ -442,7 +442,9 @@ The long pass's events, checked and reported in this order:
                              a record whose file once stood is never reported.
                              A record whose host kind declares files=none, a
                              cloud session, writes no file: its open pull
-                             request on the item branch stands in for it
+                             request on the item branch, or a push to that
+                             branch the watch saw since launch, stands in
+                             for it
   EVENT lane-stalled <item> age=<secs> [state=finished|out-of-credit]
                              state=finished: the pull request left draft.
                              Launch the item's landing lane in this pass,
@@ -471,7 +473,9 @@ The long pass's events, checked and reported in this order:
                              and again every ORCH_OVERSEER_MARK_REPEAT passes
                              while it stands; a change starts a fresh window
   EVENT cloud-stall-closed <item> directive_age=<secs>
-                             in place of a start-stalled or lane-stalled line:
+                             in place of a start-stalled or lane-stalled line,
+                             or for a lane started by a push that has no
+                             pull request:
                              the lane's record carries the directive_send
                              lane-mail wrote, sent at or after the lane last
                              moved, ORCH_CLOUD_STALL_MINUTES ago, and nothing

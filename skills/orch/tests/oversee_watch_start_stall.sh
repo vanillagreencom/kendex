@@ -406,7 +406,7 @@ fi
 ANY_HEAD_WATCH="$(mutant_scripts start-stall-any-head/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/start-stall-any-head/github"
 # shellcheck disable=SC2016
-mutate_file "$ANY_HEAD_WATCH" '[[ "$prior_running" == "$running" && "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ]]' '[[ -n "$OPEN_PR_BRANCH_HEAD" ]]'
+mutate_file "$ANY_HEAD_WATCH" '[[ "$prior_running" == "$running" && ( "$passes" == pushed || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ) ]]' '[[ -n "$OPEN_PR_BRANCH_HEAD" ]]'
 cloud_push start_stall_cloud_any_head "$BASE_HEAD" "$BASE_HEAD" "$ANY_HEAD_WATCH"
 assert_eq "events=$EVENTS" "events=" "control: reading any branch head as a start silences the unpushed row" "$STUB_DIR/err"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

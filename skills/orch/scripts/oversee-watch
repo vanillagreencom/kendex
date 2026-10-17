@@ -284,7 +284,7 @@ PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 #   lane-idle<TAB><lane><TAB>pi-merged-gone[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
-#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>|<branch heads>|<last observed progress epoch>
+#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, pushed, or seen>|<branch heads>|<last observed progress epoch>
 #   lane-long<TAB><item><TAB><launched_at epoch>|<reported age interval>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
@@ -2468,9 +2468,10 @@ check_refresh() {
 # session, writes no file this watch can read: its start is its own open pull
 # request on the item branch, or a push to that branch since launch, its
 # session words' empty first commit, since it opens its pull request only at
-# finish. Neither seen past the window still means never started.
+# finish. Neither seen past the window still means never started. A pushed
+# lane with no pull request stays here for cloud_stall_close.
 check_start_stall() {
-  local entry item running age prior passes path rc since prior_running prior_head rows="${PW_SEEN[0]}" items=()
+  local entry item running age prior passes path rc since prior_running prior_head started rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
     item="${entry%%=*}"
     running="${entry#*=}"
@@ -2499,16 +2500,20 @@ check_start_stall() {
       *) ow_message start-stall-unread "item=$item" "exit=$rc" >&2; continue ;;
     esac
     since="$running"
+    started=""
     IFS='|' read -r prior_running passes prior_head since <<<"$prior"
     if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
       # A branch head that moved between two reads of this running record is
-      # a push since launch: the session started. A first read cannot date the
-      # head it sees, so it starts nothing and only stamps since.
-      if [[ "$prior_running" == "$running" && "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ]]; then
-        rows="$(lane_row_set start-stalled "$rows" "$item" "$running|seen")"
-        continue
+      # a push since launch: the session started, and the row keeps it as
+      # pushed, so start-stalled never goes out for it. A push still dates
+      # since, which bounds a directive the session leaves unanswered before
+      # its pull request opens, as check_lane_stall bounds one after. A first
+      # read cannot date the head it sees, so it starts nothing and only
+      # stamps since.
+      if [[ "$prior_running" == "$running" && ( "$passes" == pushed || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ) ]]; then
+        started=pushed
       fi
-      if [[ "$prior_running" != "$running" || -z "$since" ]]; then
+      if [[ "$prior_running" != "$running" || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" || -z "$since" ]]; then
         since="$PASS_NOW"
         [[ -n "$OPEN_PR_BRANCH_HEAD" || -n "$prior_head" ]] || since="$running"
       fi
@@ -2518,13 +2523,17 @@ check_start_stall() {
     age=$((PASS_NOW - running))
     if (( age < START_STALL_SECS )); then
       if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
-        rows="$(lane_row_set start-stalled "$rows" "$item" "$running||$OPEN_PR_BRANCH_HEAD|$since")"
+        rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$started|$OPEN_PR_BRANCH_HEAD|$since")"
       else rows="$(lane_row_clear start-stalled "$rows" "$item")"; fi
       continue
     fi
     if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} && cloud_stall_close "$item" "$since"; then
       lane_row_commit "$rows"
       [[ -z "$CLOSE_TERMED" ]] || exit 143
+      continue
+    fi
+    if [[ -n "$started" ]]; then
+      rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$started|$OPEN_PR_BRANCH_HEAD|$since")"
       continue
     fi
     if [[ "$prior_running" == "$running" && -n "$passes" ]]; then

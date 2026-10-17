@@ -126,6 +126,7 @@ echo "=== a directive left unanswered past ORCH_CLOUD_STALL_MINUTES closes the l
 CLOSED="EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1800"
 BRANCH_HEAD=1111111111111111111111111111111111111111
 PUSHED_HEAD=2222222222222222222222222222222222222222
+MOVED_HEAD=3333333333333333333333333333333333333333
 closes() { awk 'END { print NR + 0 }' "$STUB_DIR/lane-close.args" 2>/dev/null || echo 0; }
 # LABEL|NAME|DIRECTIVE_AGE|rows as stall_case takes them
 for row in \
@@ -134,6 +135,8 @@ for row in \
   "a lane that never opened its pull request|start_bound|700|600,,,EVENT start-stalled issue-1 age=600;2499,,,;2500,,,$CLOSED" \
   "an unchanged branch without a pull request|start_bound_unchanged|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$BRANCH_HEAD,$CLOSED" \
   "a first push after the startup directive starts the lane|start_bound_first_push|700|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2560,,$PUSHED_HEAD,;2620,,$PUSHED_HEAD," \
+  "a directive after the first push left unanswered|start_bound_pushed_directive|2600|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;4399,,$PUSHED_HEAD,;4400,,$PUSHED_HEAD,$CLOSED" \
+  "a push answering a directive sent after the first push|start_bound_pushed_answered|2600|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2700,,$MOVED_HEAD,;4400,,$MOVED_HEAD," \
   "a changed branch without a pull request|start_bound_changed|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD," \
   "a branch first observed after the directive bound|start_bound_first_read|700|2500,,$PUSHED_HEAD,EVENT start-stalled issue-1 age=2500" \
   "an unread branch after the startup directive|start_bound_unread|700|600,,,EVENT start-stalled issue-1 age=600;2500,,unread," \
