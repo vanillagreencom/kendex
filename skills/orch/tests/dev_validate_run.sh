@@ -2853,6 +2853,7 @@ BOUND_ROWS=(
   "a bound-ended run under a lower bound is no evidence|docs/a.md|full|docs/a.md|10|||--|full|$OK|full|"
   "a run an earlier run's bound answered, which ran nothing, is no evidence|docs/a.md|full|docs/a.md|20||bound-run=/elsewhere|--|full|$OK|full|"
   "a fresh request runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--fresh|full|$OK|full|"
+  "a merge-group reproduction runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--reproduce|full|$OK|full|"
   "a bound-ended run that recorded no finding prefix is no evidence|docs/a.md|full|docs/a.md|20||no-finding-prefix|--|full|$OK|full|"
   "a ci request that falls back to range keeps its local run after a range run from another base|docs/a.md|range|docs/a.md|20||validate-base=0000000000000000000000000000000000000000|--validate-mode ci --base HEAD|range|$OK|range|"
   "a bound-ended run handed another class is no evidence|docs/a.md|full|docs/a.md|20||class=standard|--|full|$OK|full|"
@@ -2900,6 +2901,8 @@ bound_control 'answered runs taken as evidence' $'    [[ -z "$(start_field "$sta
   "a run an earlier run's bound answered, which ran nothing, is no evidence"
 bound_control '--fresh unread' ' && "$fresh" == false' '' \
   'a fresh request runs its command whatever the evidence'
+bound_control '--reproduce not implying --fresh' $'[[ "$reproduce" == false ]] || fresh=true\n' '' \
+  'a merge-group reproduction runs its command whatever the evidence'
 bound_control 'a missing finding prefix read as none' '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1' \
   'a bound-ended run that recorded no finding prefix is no evidence'
 bound_control 'no base rule' $'    [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue\n' '' \

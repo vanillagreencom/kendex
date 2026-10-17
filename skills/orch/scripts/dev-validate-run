@@ -52,8 +52,9 @@
 #       run that failed, such as a red merge-group run, whose CI cannot prove
 #       the fix: it skips CI admission and the selector, runs the command its
 #       full or range mode runs, and records that mode and its pass, failure
-#       or no-verdict, never ci. With --validate-mode ci it is refused as
-#       reproduce-ci.
+#       or no-verdict, never ci. It implies --fresh, so no earlier pass or
+#       bound-ended run answers it: the fix's tree always runs the command.
+#       With --validate-mode ci it is refused as reproduce-ci.
 #       --restack marks a ci request as the restack's own, which
 #       ../workflows/merge-pr-restack.md step 2 makes: a restack is no round,
 #       so CI admission runs no scoped suites and records CI pending at once.
@@ -751,6 +752,8 @@ done
 [[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
 [[ "$reproduce" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--reproduce" "mode=$mode"
 [[ "$reproduce" == false || "$validate_mode" != ci ]] || die reproduce-ci "option=--reproduce" "validate-mode=$validate_mode"
+# A reproduction proves the fix by running the failed command on its tree.
+[[ "$reproduce" == false ]] || fresh=true
 [[ "$restack" == false || -z "$mode" || ( "$mode" == start && "$validate_mode" == ci ) ]] \
   || die option-unused "option=--restack" "mode=$mode" "validate-mode=$validate_mode"
 [[ -z "$proof_head" || "$mode" == resolve ]] || die option-unused option=--require-proof "mode=$mode"
