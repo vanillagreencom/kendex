@@ -22,8 +22,8 @@
 
 # Every extension the extractor has a grammar for, spelled once here and
 # once in the table in ../../CHECKS.md § comments. Two spellings of each name
-# because `*` crosses `/` but never stands in for the separator. The lanes
-# that scan source files read it as their default path list.
+# because `*` crosses `/` but never stands in for the separator. The comments
+# lane reads it as its default path list.
 GG_COMMENT_PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
 
 # The grammar a path takes: its extension first, and for a path with none
