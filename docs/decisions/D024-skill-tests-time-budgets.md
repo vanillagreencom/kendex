@@ -4,7 +4,7 @@
 
 **Date**: 2026-10-11
 
-**Status**: Active (macOS coverage → D026)
+**Status**: Active (macOS coverage → D026; patch proof → D027)
 
 **Research**: [KEN-3774](https://linear.app/vanillagreen/issue/KEN-3774), [measured findings](https://uploads.linear.app/09589536-0763-447e-a0ed-6d9bf346d4cc/c9d06561-4387-464a-ad51-ffcaff2e59cb/dc460b31-e659-4b53-be3e-d5472d765adf)
 

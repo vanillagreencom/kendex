@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active (route selection → D016; approval and review status → D018)
+**Status**: Superseded by D027
 
 **Research**: KEN-2023; KEN-3082 for the macOS shards
 

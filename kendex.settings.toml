@@ -10,8 +10,9 @@
 
 [env]
 
-# A lane publishes a draft and runs internal review while CI is pending. The
-# merge-group run is the only CI proof of the head (KEN-4220).
+# A lane publishes a draft and runs internal review while CI is pending.
+# Every change is queue-only and merges only after its merge-group run
+# passes (docs/decisions/D027-merge-queue-proves-every-change.md).
 ORCH_PR_ORDER = "push-first"
 
 ORCH_OWNER_ASK_LABEL = "owner-gated"
@@ -249,18 +250,20 @@ REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
 REVIEW_GATE_STANDARD_CONTEXTS = "CI"
 
 # The bypass actors this organization's standard admits, as TYPE:ID:MODE
-# (docs/decisions/D013-admin-merge-green-prs.md, and the overseer app of
-# the KEN-2067 design note § Copilot-down fallback, attached to that issue): on the merge
-# queue ruleset the lanes app, always, and the overseer app in pull-request
-# mode; on the required checks ruleset the overseer app alone.
+# (docs/decisions/D027-merge-queue-proves-every-change.md, and the
+# overseer app of the KEN-2067 design note § Copilot-down fallback, attached
+# to that issue): on the merge queue ruleset the lanes app, always, and the
+# overseer app in pull-request mode; on the required checks ruleset the
+# overseer app alone.
 REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;Integration:5115517:pull_request"
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"
 
 # This repository's own queue-only paths beyond the list harness-ci ships.
 # The glob matches every path, so every change reads queue-only: pr-merge
-# never takes the admin route, and the merge-group run is the only proof of a
-# head (owner ruling, KEN-4220). Unset would answer the same but warn on
-# every classifier run.
+# never takes the admin route, and a change merges only after its
+# merge-group run passes
+# (docs/decisions/D027-merge-queue-proves-every-change.md). Unset would
+# answer the same but warn on every classifier run.
 HARNESS_CI_QUEUE_PATHS = "*"
 
 # ── Skill settings ───────────────────────────────────────────────────────
@@ -274,8 +277,8 @@ BOT_REMOTE_NAME = ""
 # Where the decider skill keeps architecture decision records.
 DECISIONS_DIR = "docs/decisions"
 
-# Local rounds validate the branch range. The merge-group run holds the full
-# validation record.
+# Local rounds validate the branch range. CI holds the full validation
+# record, and the merge waits on the merge-group run.
 DEV_VALIDATE_CMD = "base=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$base) && tools/guard --range $base"
 
 # A full run with CARGO_INCREMENTAL=0 writes one artifact set. Measured from a
@@ -297,13 +300,12 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # the working-tree bot-instructions check, the decision-ID check, the
 # free-space floor above and the class lane selection.
 # A restack also runs it, as skills/orch/workflows/merge-pr-restack.md sets out.
-# Submit requests CI validation. The merge-group run runs the selected lanes
-# and the decision-ID check and is the validation record of the head.
+# Submit requests CI validation. CI runs the selected lanes and the
+# decision-ID check, and the merge waits on the merge-group run.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
 # Preview the same suite selection before launching validation. An all-suite
-# pre-open run uses this command's scoped route; the merge-group run holds
-# the full record.
+# pre-open run uses this command's scoped route; CI holds the full record.
 DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; then branch=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$branch) || exit; fi; tools/guard --selection --range $base"
 
 # The required CI context runs the tools/guard lanes through tools/ci-job-set.

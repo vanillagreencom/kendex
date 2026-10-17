@@ -4,7 +4,7 @@
 
 **Date**: 2026-10-14
 
-**Status**: Active
+**Status**: Active (patch proof → D027)
 
 **Research**: [KEN-4013](https://linear.app/vanillagreen/issue/KEN-4013), [contract audit](https://uploads.linear.app/09589536-0763-447e-a0ed-6d9bf346d4cc/3afee16d-d50b-4e4c-9284-19d179e08ae3/470e242d-6f34-4f1f-8194-56f832fa2c21)
 
