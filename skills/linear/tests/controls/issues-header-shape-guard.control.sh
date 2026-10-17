@@ -73,7 +73,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 control_expect 'update refuses merge with set at merge'
 control_replace scripts/lib/issue-validation.sh 1 \
-	'			  elif .deadline_epoch == null and ((.deadline // "") | test("^\\+[0-9]+h$") | not) then' \
+	'			  elif .deadline_rule != null then' \
 	'			  elif false then'
 
 control_expect "an owner action before the outcome exits zero"

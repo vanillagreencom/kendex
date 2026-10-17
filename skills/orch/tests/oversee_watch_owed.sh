@@ -1094,16 +1094,19 @@ glob|[[ "$tag" == $glob ]]|[[ "$tag" == * ]]
 draft|select(.isDraft == false)|select(true)
 ROWS
 
-# Each release-read guard has a control at its own failing input.
+# Each release-read guard has a control at its own failing input. A
+# merge-hours fixture is a merge box with +24h, which needs the merge read too.
 while IFS='@' read -r name fixture status key old new; do
-  release_world "release_guard_$name"
+  trigger='release owner/releases v*'
+  [[ "$fixture" != merge-hours ]] || trigger=merge
+  release_world "release_guard_$name" "$trigger"
   case "$fixture" in
     shape) echo '{}' >"$STUB_DIR/releases.owner_releases.json" ;;
     page) jq -n '[range(1000) | {tagName:"v1",publishedAt:"2026-10-01T12:00:00Z",isDraft:false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
     time) echo '[{"tagName":"v1","publishedAt":"2026-09-31T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
     tag) echo '[{"tagName":42,"publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
     draft) echo '[{"tagName":"v1","publishedAt":"2026-10-01T12:00:00Z"}]' >"$STUB_DIR/releases.owner_releases.json" ;;
-    merge) echo '[]' >"$STUB_DIR/merged.json" ;;
+    merge|merge-hours) echo '[]' >"$STUB_DIR/merged.json" ;;
   esac
   MUTANT_DIR="$TMP_ROOT/release-guard-$name"
   MUTANT_WATCH="$(mutant_scripts "release-guard-$name/orch" oversee-watch)/oversee-watch" || exit 1
@@ -1124,7 +1127,8 @@ page@page@due@verifying-release-unread@or length >= $limit@or false
 time@time@due@verifying-release-unread@todateiso8601 == $stamp@true
 draft@draft@waiting@verifying-release-unread@(.isDraft | type) != "boolean"@false
 tag@tag@waiting@verifying-release-unread@(.tagName | type) != "string"@false
-merge@merge@waiting@verifying-merge-unread@[[ "$merged" != null ]]@[[ "$merged" != null ]] || merged="$now"
+merge@merge@waiting@verifying-merge-unread@"$merged" != null ]]@"$merged" != null ]] || merged="$now"
+merge_hours@merge-hours@due@verifying-merge-unread@"$merged" != null ]]@"$merged" != null ]] || merged="$now"
 ROWS
 release_world release_read_control
 touch "$STUB_DIR/release-fail"

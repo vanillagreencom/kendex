@@ -55,7 +55,8 @@ verifying_parse() { # SAFE_ROW
                deadline_epoch: null, deadline_hours: null, deadline: null, reading: .text, where: "-", why: "-"})
     else if (.errors | length) == 0 and all(.boxes[]; .checked or .post_merge)
     then [.boxes[] | select(.post_merge and (.checked | not))] else empty end end
-    # A release box and a merge box with +Nh read the deadline from the merge.
+    # A release box and a merge box with +Nh need the merge read: the release
+    # to find its publication after merge, the merge box to count its hours from it.
     | map(. + {needs_merge: (.trigger_kind == "release" or (.trigger_kind == "merge" and .deadline_hours != null))})' <<<"$parsed")" || boxes=""
   if [[ -z "$boxes" ]]; then
     verifying_error verifying-invalid "issue=$id"

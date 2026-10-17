@@ -59,15 +59,19 @@ control_replace scripts/lib/issue-validation.sh 1 \
     '                | if .trigger_kind == null or ((.why // "") | contains("; Trigger:")) or any([.reading, .where, .why][]; (. // "") | test("\\S") | not)' \
     '                | if false'
 
+# An absolute deadline past 72 hours after its trigger files and completes.
 control_expect 'post-merge late refuses before any write'
+control_expect 'post-merge time-late refuses at filing'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)' \
-    '                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or false)) end)'
+    '                        and ($deadline_epoch <= $trigger_fields.trigger_epoch or $deadline_epoch > ($trigger_fields.trigger_epoch + 259200)) then "post-merge-window"' \
+    '                        and ($deadline_epoch <= $trigger_fields.trigger_epoch or false) then "post-merge-window"'
 
+# An absolute deadline at or before its trigger files and completes.
 control_expect 'post-merge early refuses before any write'
+control_expect 'post-merge time-early refuses at filing'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                             or (.deadline_epoch != null and .trigger_epoch != null and (.deadline_epoch <= .trigger_epoch or .deadline_epoch > (.trigger_epoch + 259200))) end)' \
-    '                             or (.deadline_epoch != null and .trigger_epoch != null and (false or .deadline_epoch > (.trigger_epoch + 259200))) end)'
+    '                        and ($deadline_epoch <= $trigger_fields.trigger_epoch or $deadline_epoch > ($trigger_fields.trigger_epoch + 259200)) then "post-merge-window"' \
+    '                        and (false or $deadline_epoch > ($trigger_fields.trigger_epoch + 259200)) then "post-merge-window"'
 
 control_expect 'post-merge trigger refuses before any write'
 control_replace scripts/lib/issue-validation.sh 1 \
@@ -81,18 +85,30 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 control_expect 'post-merge trigger-before-merge refuses before any write'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                        else ($merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))' \
-    '                        else ($merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and false)))'
+    '                       or (.trigger_kind != "release" and $merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))' \
+    '                       or (.trigger_kind != "release" and $merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and false)))'
 
-control_expect 'post-merge release-late refuses before any write'
+# A +Nh deadline past 72 hours files and completes, from any trigger.
+control_expect 'post-merge merge-late refuses at filing'
+control_expect 'post-merge release-late refuses at completion'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or .deadline_hours > 72)' \
-    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or false)'
+    '                      (if $deadline_hours < 1 or $deadline_hours > 72 then "post-merge-window" else null end)' \
+    '                      (if $deadline_hours < 1 or false then "post-merge-window" else null end)'
 
-control_expect 'post-merge release-early refuses before any write'
+# A +0h deadline files and completes, from any trigger.
+control_expect 'post-merge merge-early refuses at filing'
+control_expect 'post-merge release-early refuses at completion'
 control_replace scripts/lib/issue-validation.sh 1 \
-    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (.deadline_hours <= 0 or .deadline_hours > 72)' \
-    '                  elif (if .trigger_kind == "release" then .deadline_hours != null and (false or .deadline_hours > 72)'
+    '                      (if $deadline_hours < 1 or $deadline_hours > 72 then "post-merge-window" else null end)' \
+    '                      (if false or $deadline_hours > 72 then "post-merge-window" else null end)'
+
+# Read +Nh after a release trigger alone, as before the shared rule: a merge
+# or time box with +Nh refuses at filing and at completion.
+control_expect 'post-merge merge-relative files'
+control_expect 'post-merge time-relative trigger completes successfully'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '                | ((try ($fields.deadline | capture("^\\+(?<hours>[0-9]+)h$").hours | tonumber) catch null) // null) as $deadline_hours' \
+    '                | (if $trigger_fields.trigger_kind == "release" then ((try ($fields.deadline | capture("^\\+(?<hours>[0-9]+)h$").hours | tonumber) catch null) // null) else null end) as $deadline_hours'
 
 control_expect 'a missing Trigger parses as merge'
 control_replace scripts/lib/issue-validation.sh 1 \

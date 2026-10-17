@@ -282,26 +282,28 @@ assert_jq "a missing Trigger parses as merge" "$parsed" '.boxes[0].trigger == "m
 parsed="$(done_when_parse "## Done when"$'\n'"- [ ] ${post/merged release/merged release; live evidence}" '[]' "$merged")"
 assert_jq "a semicolon in Why preserves the legacy form" "$parsed" '(.errors | length) == 0 and .boxes[0].trigger == "merge"'
 
-# Filing and completion read one Deadline rule: a box that files completes,
-# and a box completion refuses refuses at filing too. Columns: name | trigger
-# | deadline | the completion rule, or valid.
+# Filing and completion read one Deadline rule from done_when_parse: each row
+# below gets the same verdict from both. Filing cannot know the merge time, so
+# a merge trigger's UTC deadline and a time trigger before merge are judged at
+# completion alone, in the refusal table below. A refused row reads its
+# completion verdict from the parser completion calls; that table proves the
+# command refuses each rule before any write. Columns: name | trigger |
+# deadline | the completion rule, or valid.
 while IFS='|' read -r name trigger deadline rule; do
   printf '%s\n' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
-  log="$TMP_ROOT/trigger-$name.jsonl"
   filed=0
   require_issue_header_shape "$(cat "$TMP_ROOT/trigger.md")" 2>"$TMP_ROOT/filing.err" || filed=$?
-  rc=0
-  run_complete "$TMP_ROOT/trigger.md" "$log" CC-720 --post-merge-at "$merged" >"$TMP_ROOT/trigger.out" 2>"$TMP_ROOT/trigger.err" || rc=$?
   if [[ "$rule" == valid ]]; then
+    log="$TMP_ROOT/trigger-$name.jsonl"
+    rc=0
+    run_complete "$TMP_ROOT/trigger.md" "$log" CC-720 --post-merge-at "$merged" >"$TMP_ROOT/trigger.out" 2>"$TMP_ROOT/trigger.err" || rc=$?
     assert_eq "post-merge $name files" "$filed" 0
     assert_eq "post-merge $name trigger completes successfully" "$rc" 0
     assert_jq "post-merge $name trigger keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
   else
     assert_eq "post-merge $name refuses at filing" "$filed" 1
     assert_jq "post-merge $name names the filing rule" "$(cat "$TMP_ROOT/filing.err")" '.rule == "post-merge-deadline" and .box == 2'
-    assert_ne "post-merge $name refuses at completion" "$rc" 0
-    assert_jq "post-merge $name names the completion rule" "$(cat "$TMP_ROOT/trigger.err")" ".errors == [{box: 2, rule: \"$rule\"}]"
-    assert_not "post-merge $name writes nothing" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
+    assert_jq "post-merge $name refuses at completion" "$(done_when_parse "$(cat "$TMP_ROOT/trigger.md")" '[]' "$merged")" ".errors == [{box: 2, rule: \"$rule\"}] and .completion_state == null"
   fi
 done <<'ROWS'
 merge|merge|2026-10-04T00:00:00Z|valid
