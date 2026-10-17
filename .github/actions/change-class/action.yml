@@ -64,8 +64,9 @@ inputs:
   queue-only-default:
     description: >-
       true asks for the queue-only default: on pull_request and push every
-      lane stands down where change-class answered cause=per-push-unset, the
-      base naming no HARNESS_CI_PER_PUSH_REASON, and the lanes-from checkout
+      lane stands down where change-class's per-push line reads unset, the
+      base naming no HARNESS_CI_PER_PUSH_REASON, whichever queue-only cause
+      answered, and the lanes-from checkout
       and the judged head both carry the render that reads it. The harness-ci
       template passes it. Empty or false, a ci.yml copied before the default
       keeps its lanes while queue_only stays true, so pr-merge still takes
@@ -112,8 +113,8 @@ outputs:
       This covers both
       rename ends without content pairing. Other renders run none. A trivial class or
       docs_only=true on a non-render class runs none. On pull_request and
-      push, with queue-only-default true, the queue-only default's cause
-      runs none, where both renders read it. On schedule and
+      push, with queue-only-default true, a base that names no
+      HARNESS_CI_PER_PUSH_REASON runs none, where both renders read it. On schedule and
       workflow_dispatch every lane runs. When the
       selected classifier lacks the shared producer, the action sets
       lanes=true with lanes_cause=lane-producer-unavailable and empty

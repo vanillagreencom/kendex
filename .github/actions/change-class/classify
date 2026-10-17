@@ -121,8 +121,9 @@
 # deletes its reader only makes the lane run. A checkout that runs pr-merge
 # behind both trees is outside what CI sees, and wiring.md holds it as an
 # ordering rule. The whole-run stand-down on pull_request and push applies
-# only where QUEUE_ONLY_DEFAULT is true and change-class's queue-only line
-# names cause=per-push-unset, and follows the same rule with its own reader:
+# only where QUEUE_ONLY_DEFAULT is true and change-class's
+# `per-push: state=unset` line names the repository's default mode,
+# whichever queue-only cause answered, and follows the same rule with its own reader:
 # both trees must carry the render's change-class that reads
 # HARNESS_CI_PER_PUSH_REASON, or the lanes run with
 # lanes_cause=queue-only-reader-absent and one warning. With no LANES_FROM
@@ -219,13 +220,10 @@ case "$verdict" in
   *) die "verdict-unreadable class-line=$verdict" \
     "the classifier printed no change_class line this action knows" ;;
 esac
-# The documented stderr record owns queue_only and its cause. A classifier
-# predating it leaves the output absent, as it did before the action
-# forwarded the record, and names no cause, so nothing stands down.
+# The documented stderr record owns queue_only. A classifier predating it
+# leaves the output absent, as it did before the action forwarded the
+# record. The lane producer reads the same log for its stand-down.
 queue_only="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
-  die "queue-only-unreadable path=${work:?}/class-log" \
-    "could not read the queue-only record change-class wrote"
-queue_cause="$(sed -n 's/^queue-only: queue_only=[^ ]* cause=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
   die "queue-only-unreadable path=${work:?}/class-log" \
     "could not read the queue-only record change-class wrote"
 printf 'change_class=%s\n' "$class" >>"$GITHUB_OUTPUT"
@@ -294,7 +292,7 @@ fi
 # while the action already carries it. With no decision, run every lane.
 if declare -F change_class_lanes >/dev/null; then
   change_class_lanes "$class" "$docs" "$EVENT" "$REPO" "$HEAD" \
-    "$queue_only" "$work" "${LANES_FROM:-}" "$queue_cause" "$queue_default"
+    "$work" "${LANES_FROM:-}" "$queue_default"
 else
   lane_count=0 lane_state=unset lane_values=() lane_causes=()
   lanes=true lanes_cause=lane-producer-unavailable

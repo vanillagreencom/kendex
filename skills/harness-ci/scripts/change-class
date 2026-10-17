@@ -56,7 +56,8 @@
 #                         value also prints one `setting-refused:
 #                         setting=HARNESS_CI_PER_PUSH_REASON
 #                         cause=empty-reason` line and a warning; the
-#                         opt-back needs its reason
+#                         opt-back needs its reason. The per-push line
+#                         below carries the mode on every verdict
 #   lane-declaration-unreadable
 #                         the base commit's .github/ci-lanes.conf could not
 #                         be read
@@ -107,6 +108,14 @@
 # --output FILE carries the same value as `queue_only=true|false` beside
 # `change_class=`. This paragraph is the one statement of when the line reads
 # true; other docs point here.
+# Every verdict also prints one `per-push: state=unset|set|unread` line
+# after the queue-only line: the repository's mode, whichever cause that
+# line names. unset is the default, the base's HARNESS_CI_PER_PUSH_REASON
+# unset or blank; set, it names a reason; unread, the base commit's settings
+# could not be read. The change-class action's stand-down reads this line,
+# never the cause, so a change a cause above answers before the reason is
+# read, such as queue-path, stands down in a repository that takes the
+# default.
 # The render proof runs `kendex verify --scope
 # project --json` in the head revision's private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
@@ -409,20 +418,24 @@ harness_err="$work/harness-stderr"
 # its author decides otherwise, which is the way round that cannot hand a
 # waiver to a diff nothing read. stdout is unchanged: one `change_class=` line.
 answer() { # CLASS FIELDS [measured]
+  local queue_line per_push_line
   measured=true
   [ "$1" != standard ] || measured=false
   [ "${3:-}" != measured ] || measured=true
   [ "$QUEUE_ONLY" = true ] || queue_selection "$1"
+  per_push_mode
+  queue_line="queue-only: queue_only=$QUEUE_ONLY $QUEUE_CAUSE"
+  per_push_line="per-push: state=$PER_PUSH"
   if [ -n "$output" ] && [ "$output" != /dev/null ]; then
-    local lane_docs queue_cause="${QUEUE_CAUSE#cause=}"
-    queue_cause="${queue_cause%% *}"
+    local lane_docs
     lane_docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
       --paths-output "$work/paths" --outside-output "$work/outside" \
       --output /dev/null)" || die "cause=path-reader-failed" "could not read lane inputs"
     # harness-only owns the resolved endpoints; render move checks read them.
-    cp "$harness_err" "$work/class-log"
+    # The two records below are the ones the action's log carries.
+    { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
-      "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_cause" "$queue_default" >&2
+      "$work" "$lanes_from" "$queue_default" >&2
   fi
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY"
@@ -432,7 +445,7 @@ answer() { # CLASS FIELDS [measured]
         "could not append the verdict to '$output'"
     fi
   fi
-  printf 'queue-only: queue_only=%s %s\n' "$QUEUE_ONLY" "$QUEUE_CAUSE" >&2
+  printf '%s\n%s\n' "$queue_line" "$per_push_line" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0
@@ -638,6 +651,33 @@ queue_lane_of_paths() {
   done
 }
 
+# The repository's per-push mode, as PER_PUSH: `unset` where the base
+# commit's HARNESS_CI_PER_PUSH_REASON is unset or blank, the default, where
+# no pull-request run proves a head and every change takes the queue; `set`
+# where it names a reason; `unread` where those settings could not be read.
+# It is a fact about the repository, not about this change, so it is read
+# once and printed on its own line whichever queue-only cause answers: the
+# change-class action's stand-down reads it there. A blank reason is refused
+# as unset, never as a wiring error: the base holds it, so exit 2 would
+# redden every pull request, the one that repairs it included.
+PER_PUSH=""
+per_push_mode() {
+  [ -z "$PER_PUSH" ] || return 0
+  if ! base_settings; then
+    PER_PUSH=unread
+    return 0
+  fi
+  case "${HARNESS_CI_PER_PUSH_REASON:-}" in
+    *[![:space:]]*) PER_PUSH=set ;;
+    *)
+      if [ -n "${HARNESS_CI_PER_PUSH_REASON+x}" ]; then
+        printf 'setting-refused: setting=HARNESS_CI_PER_PUSH_REASON cause=empty-reason\n' >&2
+        echo "::warning title=per-push opt-back refused::HARNESS_CI_PER_PUSH_REASON is set without a reason in the base commit's settings, so every change stays queue-only; give the reason the repository runs its lanes on each pull-request push" >&2
+      fi
+      PER_PUSH=unset ;;
+  esac
+}
+
 # The queue-only class, from the whole changed-path set before any rule below
 # trims it, so every verdict from here on carries it. A list this script
 # cannot read, or one from before the `queue` group, keeps the unreadable
@@ -669,23 +709,10 @@ queue_only_of_paths() {
   # HARNESS_CI_QUEUE_PATHS, and a repository that declares none, the key
   # unset, has named no list the shipped one can be judged complete against:
   # queue-only. Set, even empty, the declaration is the rest of the list.
-  if ! base_settings; then
-    QUEUE_CAUSE="cause=queue-settings-unreadable"
-    return
-  fi
-  # The default: no pull-request run proves a head, so every change takes
-  # the queue. A blank reason is refused as unset, never as a wiring error:
-  # the base holds it, so exit 2 would redden every pull request, the one
-  # that repairs it included.
-  case "${HARNESS_CI_PER_PUSH_REASON:-}" in
-    *[![:space:]]*) ;;
-    *)
-      if [ -n "${HARNESS_CI_PER_PUSH_REASON+x}" ]; then
-        printf 'setting-refused: setting=HARNESS_CI_PER_PUSH_REASON cause=empty-reason\n' >&2
-        echo "::warning title=per-push opt-back refused::HARNESS_CI_PER_PUSH_REASON is set without a reason in the base commit's settings, so every change stays queue-only; give the reason the repository runs its lanes on each pull-request push" >&2
-      fi
-      QUEUE_CAUSE="cause=per-push-unset"
-      return ;;
+  per_push_mode
+  case "$PER_PUSH" in
+    unread) QUEUE_CAUSE="cause=queue-settings-unreadable"; return ;;
+    unset) QUEUE_CAUSE="cause=per-push-unset"; return ;;
   esac
   if ! queue_lane_of_paths; then
     QUEUE_CAUSE="cause=lane-declaration-unreadable"

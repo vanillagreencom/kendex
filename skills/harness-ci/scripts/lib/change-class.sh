@@ -122,18 +122,18 @@ opencode.jsonc'
 
 # Lane decisions shared by the installed command and the action. The caller
 # supplies the class and harness-only's paths, outside list and range log in
-# WORK. Results are lanes, lanes_cause, and lane_values and lane_causes per
+# WORK, the log also holding change-class's queue-only and per-push lines.
+# Results are lanes, lanes_cause, and lane_values and lane_causes per
 # declared lane. Refusals pass cause= fields to the caller's die formatter.
 #
 # A schedule or workflow_dispatch run is the nightly full run: lanes=true
 # and every declared lane true, cause=full-run, whatever the class.
-# QUEUE_CAUSE is the bare cause name of change-class's queue-only line, empty
-# where it printed none. QUEUE_DEFAULT is true where the workflow asked for
-# the queue-only default; the stand-down below states what it does.
-change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_CAUSE QUEUE_DEFAULT
+# QUEUE_DEFAULT is true where the workflow asked for the queue-only default;
+# the stand-down below states what it does.
+change_class_lanes() { # CLASS DOCS EVENT REPO HEAD WORK LANES_FROM QUEUE_DEFAULT
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
-  local queue_only="$6" work="$7" lanes_from="$8" queue_cause="${9:-}" queue_default="${10:-false}"
-  local declaration="" lanes_root="" judged_root=""
+  local work="$6" lanes_from="$7" queue_default="${8:-false}"
+  local declaration="" lanes_root="" judged_root="" queue_only per_push
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head has_deletions status path index delta name claimed
   local moved_paths=() added_paths=() lane_hits=() lane_changed=() render_hits=()
@@ -146,6 +146,13 @@ if [ ! -s "${work:?}/paths" ] && [ "$class" != standard ]; then
   die "cause=class-without-paths class=$class" \
     "a narrow class arrived with no changed path, which no classifier emits"
 fi
+
+# change-class's two records. An absent queue-only line defers no `:queue`
+# lane; an absent per-push line stands nothing down.
+queue_only="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
+  die "cause=queue-record-unreadable" "could not read change-class's queue-only line"
+per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
+  die "cause=queue-record-unreadable" "could not read change-class's per-push line"
 
 declaration=""
 if [ -n "$lanes_from" ]; then
@@ -364,13 +371,15 @@ render_reader_missing() { # PATH [MARKER]
 # the head. It applies only where the workflow asked for the default, which
 # the harness-ci template alone does, so a ci.yml copied before the default
 # keeps its lanes when a catalog refresh delivers this render. It also needs
-# change-class's per-push-unset cause, the default's own: a repository that
-# names HARNESS_CI_PER_PUSH_REASON runs its lanes on every queue-only change
-# too, deferring only its `:queue` lanes, below, since with no merge queue
-# pr-merge merges a queue-only change on its green pull-request run. The
+# change-class's per-push line to read unset, the repository's own mode,
+# whichever queue-only cause answered: there every change is queue-only. A
+# repository that names HARNESS_CI_PER_PUSH_REASON runs its lanes on every
+# queue-only change too, deferring only its `:queue` lanes, below, since
+# with no merge queue pr-merge merges a queue-only change on its green
+# pull-request run; settings change-class could not read run them too. The
 # reader check reads the default branch's render through LANES_FROM, so a
 # run that names none cannot stand down.
-if [ "$lanes" = true ] && [ "$queue_default" = true ] && [ "$queue_cause" = per-push-unset ]; then
+if [ "$lanes" = true ] && [ "$queue_default" = true ] && [ "$per_push" = unset ]; then
   case "$EVENT" in
     pull_request | push)
       if [ -z "$lanes_from" ]; then

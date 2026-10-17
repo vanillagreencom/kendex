@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Local --output and the action share the lane decision for real git diffs,
 # and both answer the queue-only default where the workflow asks for it: a
-# pull request or push stands every lane down, the merge group runs the
+# pull request or push stands every lane down, a change to a path on the
+# shipped queue list included, the merge group runs the
 # lanes its diff selects, and the nightly full run runs every lane. A
 # workflow that does not ask, a ci.yml copied before the default, keeps its
 # lanes once a refresh delivers the render.
@@ -66,23 +67,30 @@ verdicts() {
     tr '\n' ',' | sed 's/,$//'
 }
 
-# ROW|EVENT|BASE|PATH|LINES|DECLARATION|DEFAULT|LANES|LANES_CAUSE|QUEUE_ONLY|LANE VERDICTS
+# ROW|EVENT|BASE|PATHS|LINES|DECLARATION|DEFAULT|LANES|LANES_CAUSE|QUEUE_ONLY|LANE VERDICTS
 # BASE is the opt-back's state: default (unset), optback (a reason and an
-# empty queue list), undeclared (a reason, no queue list) or blank. DEFAULT
+# empty queue list), undeclared (a reason, no queue list) or blank. PATHS
+# are blank-separated, each written with LINES lines. DEFAULT
 # is the queue-only-default input; `no` passes none, as a copied ci.yml from
 # before the default does, and the local command then passes false.
 # LANE VERDICTS is the action's; `-` where no declaration is read.
+write_row() { # NAME BASE PATHS LINES: commits the row's change on BASE
+  local path
+  git -C "$repo" checkout -q -B row "$2"
+  git -C "$repo" clean -qfd
+  for path in $3; do
+    mkdir -p "$repo/$(dirname "$path")"
+    awk -v lines="$4" 'BEGIN { for (i=1; i<=lines; i++) print "line " i }' >"$repo/$path"
+  done
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm "$1"
+}
 rows=0
-while IFS='|' read -r name event base_name path lines declaration default expected cause queue lane_verdicts; do
+while IFS='|' read -r name event base_name paths lines declaration default expected cause queue lane_verdicts; do
   rows=$((rows + 1))
   base_var="base_$base_name"
   base="${!base_var}"
-  git -C "$repo" checkout -q -B row "$base"
-  git -C "$repo" clean -qfd
-  mkdir -p "$repo/$(dirname "$path")"
-  awk -v lines="$lines" 'BEGIN { for (i=1; i<=lines; i++) print "line " i }' >"$repo/$path"
-  git -C "$repo" add -A
-  git -C "$repo" commit -qm "$name"
+  write_row "$name" "$base" "$paths" "$lines"
   decl=""
   [ "$declaration" = none ] || decl="$SANDBOX/$declaration"
   input=true
@@ -104,6 +112,8 @@ docs-only|pull_request|default|docs/guide.md|21|default|yes|false|docs-only|true
 pull-request-code|pull_request|default|src/main.sh|21|default|yes|false|queue-only|true|lane_check=false,lane_other=false,lane_mac=false
 pull-request-standard|pull_request|default|src/main.sh|151|default|yes|false|queue-only|true|-
 push-code|push|default|src/main.sh|21|default|yes|false|queue-only|true|-
+queue-path|pull_request|default|src/main.sh .github/workflows/ci.yml|21|default|yes|false|queue-only|true|lane_check=false,lane_other=false,lane_mac=false
+queue-path-opted-back|pull_request|optback|src/main.sh .github/workflows/ci.yml|21|default|yes|true|standard|true|lane_check=true,lane_other=true,lane_mac=false
 copied-template|pull_request|default|src/main.sh|21|default|no|true|small|true|lane_check=true,lane_other=false,lane_mac=false
 merge-group-code|merge_group|default|src/main.sh|21|default|yes|true|small|true|lane_check=true,lane_other=false,lane_mac=false
 merge-group-unclaimed|merge_group|default|Makefile|21|default|yes|true|small|true|lane_check=true,lane_other=true,lane_mac=false
@@ -147,7 +157,7 @@ assert_eq "an unset reason prints no refusal" "queue_only=true 0" \
   "$(per_push_answer "$CHANGE_CLASS" "$base_default")"
 assert_eq "a reason opts the change back" "queue_only=false 0" \
   "$(per_push_answer "$CHANGE_CLASS" "$base_optback")"
-blank_control="$(mutant blank-is-reason change-class '    *[![:space:]]*) ;;' '    ?*) ;;')"
+blank_control="$(mutant blank-is-reason change-class '    *[![:space:]]*) PER_PUSH=set ;;' '    ?*) PER_PUSH=set ;;')"
 assert_eq "must-fail: a blank value read as a reason opts the change back" "queue_only=false 0" \
   "$(per_push_answer "$blank_control" "$base_blank")"
 
@@ -170,6 +180,27 @@ NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "      :"; next }
 run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
 assert_eq 'must-fail: base output contract omits the local lane answer' "" \
   "$(sed -n '/^lanes/p' "$SANDBOX/local-output")"
+
+# The stand-down reads the repository's per-push mode, not the queue-only
+# cause. The control gates it on the cause again, so the queue-path change
+# above, whose cause answers before the reason is read, runs its lanes.
+cp "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class"
+library="$SANDBOX/control/harness-ci/scripts/lib/change-class.sh"
+needle='per_push="$(sed -n '\''s/^per-push: state=//p'\'' "${work:?}/class-log")" ||'
+replacement='per_push="$(sed -n '\''s/^queue-only: queue_only=[^ ]* cause=per-push-unset.*/unset/p'\'' "${work:?}/class-log")" ||'
+NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
+    hits++; print ENVIRON["REPLACEMENT"]; next
+  } { print } END { if (hits != 1) exit 2 }' \
+  "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
+! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
+write_row queue-path-control "$base_default" 'src/main.sh .github/workflows/ci.yml' 21
+run_local "$CHANGE_CLASS" pull_request "$base_default" "$SANDBOX/default"
+assert_eq 'the queue-path control row stands down' 'lanes=false' \
+  "$(sed -n '/^lanes=/p' "$SANDBOX/local-output")"
+run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
+assert_eq 'must-fail: a stand-down gated on the queue-only cause runs a queue-path change' \
+  'queue_only=true lanes=true' \
+  "$(sed -n '/^queue_only=/p; /^lanes=/p' "$SANDBOX/local-output" | tr '\n' ' ' | sed 's/ $//')"
 
 # Local callers read the structured cause field, not the explanation. Both
 # checkout refusals are reachable from --lanes-from on the public command.

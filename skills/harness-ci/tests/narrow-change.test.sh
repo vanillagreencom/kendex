@@ -655,8 +655,8 @@ assert_eq "a classifier that keeps the process environment's list lets the base'
   "queue_only=false cause=no-queue-path" \
   "$(settings_queue "$environment_mutant" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
 rejected_mutant="$(mutant queue-settings-unreadable change-class \
-  '    QUEUE_CAUSE="cause=queue-settings-unreadable"' \
-  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-settings-unreadable"')"
+  '    unread) QUEUE_CAUSE="cause=queue-settings-unreadable"; return ;;' \
+  '    unread) QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-settings-unreadable"; return ;;')"
 assert_eq "a classifier that reads rejected settings as not queue-only lets the diff through" \
   "queue_only=false cause=queue-settings-unreadable" \
   "$(settings_queue "$rejected_mutant" "$rejected_base")"
@@ -707,7 +707,7 @@ control "a classifier that reads an unreadable declaration as not queue-only let
 ROW_BASE="$blank_reason_base"
 control "a classifier that takes a blank reason as the opt-back lets the diff take the admin route" \
   "queue_only=false cause=no-queue-path" runtime/product.ts=2 \
-  per-push-blank change-class '    *[![:space:]]*) ;;' '    ?*) ;;'
+  per-push-blank change-class '    *[![:space:]]*) PER_PUSH=set ;;' '    ?*) PER_PUSH=set ;;'
 ROW_BASE="$queue_default_base"
 control "a classifier without the queue-only default reads the empty list as not queue-only" \
   "queue_only=false cause=no-queue-path" runtime/product.ts=2 \

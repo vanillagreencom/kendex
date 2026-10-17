@@ -54,8 +54,8 @@
 #      event, and the
 #      classifier's queue_only line reaches the step's outputs. The
 #      stand-down: on a pull request whose workflow passed
-#      queue-only-default true and whose classifier answered the
-#      per-push-unset cause, every lane stands down only where both trees
+#      queue-only-default true and whose classifier's per-push line read
+#      unset, every lane stands down only where both trees
 #      hold the render's change-class that reads HARNESS_CI_PER_PUSH_REASON,
 #      and runs with a named cause and one warning where either lacks it or
 #      no lanes-from was given.
@@ -120,6 +120,7 @@ done
 [ -z "$output" ] || printf 'change_class=%s\n' "$STUB_CLASS" >>"$output"
 if [ "${STUB_QUEUE_ABSENT:-false}" != true ]; then
   printf 'queue-only: queue_only=%s cause=%s\n' "${STUB_QUEUE:-false}" "${STUB_QUEUE_CAUSE:-stub}" >&2
+  [ -z "${STUB_PER_PUSH:-}" ] || printf 'per-push: state=%s\n' "$STUB_PER_PUSH" >&2
   [ -z "$output" ] || printf 'queue_only=%s\n' "${STUB_QUEUE:-false}" >>"$output"
 fi
 printf 'change_class=%s\n' "$STUB_CLASS"
@@ -1083,46 +1084,50 @@ check "a behaviour-preserving queue mutant reads as still answering its row" sur
 # --- 5d. The queue-only stand-down and the nightly run ----------------------
 
 # On pull_request and push, every lane stands down only where the workflow
-# passed queue-only-default true, the classifier named the default's own
-# cause, per-push-unset, and the lanes-from checkout and the judged head
-# both hold the render's change-class reading HARNESS_CI_PER_PUSH_REASON.
-# A workflow that passes no input, a queue-only answer for any other cause
-# and an absent queue record run the lanes. Either tree without the reader
+# passed queue-only-default true, the classifier's per-push line reads
+# unset, the repository's default mode, and the lanes-from checkout and the
+# judged head both hold the render's change-class reading
+# HARNESS_CI_PER_PUSH_REASON. A workflow that passes no input, a per-push
+# line reading set or unread, and an absent queue record run the lanes.
+# Either tree without the reader
 # runs them and names the tree on one warning; no lanes-from runs them and
 # names that gap instead. The schedule and workflow_dispatch runs run every
 # lane. A `:nightly` lane runs off the full run only on its own glob, a
 # declaration change or a diff whose paths were not read, whatever path no
-# lane claims.
+# lane claims. Which queue-only cause the classifier names decides nothing
+# here: the stub names none, and lanes-output.test.sh holds the real
+# classifier's queue-path change to the stand-down.
 # ROW|EVENT|DECLARATION (`none`: no lanes-from)|JUDGED HEAD|DEFAULT INPUT|
-# QUEUE CAUSE (`no-queue-path` answers false, `absent` prints no line)|
-# PATHS|EXPECTED: lanes, lanes_cause, lane_verdicts and the first word of
-# the stand-down warning.
+# QUEUE ONLY (`absent` prints no queue-only line)|PER PUSH (`absent` prints
+# no per-push line)|PATHS|EXPECTED: lanes, lanes_cause, lane_verdicts and
+# the first word of the stand-down warning.
 standdown_rows() {
   cat <<'ROWS'
-pr-stood-down|pull_request|standdown|standdown|true|per-push-unset|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
-push-stood-down|push|standdown|standdown|true|per-push-unset|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
-merge-group|merge_group|standdown|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-copied-template|pull_request|standdown|standdown||per-push-unset|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-opted-back|pull_request|standdown|standdown|true|no-queue-path|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-opted-back-queue-only|pull_request|standdown|standdown|true|queue-list-undeclared|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-queue-only-absent|pull_request|standdown|standdown|true|absent|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-lanes-from-unset|pull_request|none|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-lanes-from-unset lane_verdicts= warn=lanes-from=unset
-lanes-from-old-render|pull_request|standdown-old|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from
-lanes-from-no-render|pull_request|good|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false warn=lanes-from
-judged-old-render|pull_request|standdown|old|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
-judged-no-render|pull_request|standdown|no-reader|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
-both-old-render|pull_request|standdown-old|old|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from,judged
-schedule|schedule|standdown|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
-dispatch|workflow_dispatch|standdown|standdown|true|per-push-unset||lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
-nightly-unclaimed|merge_group|standdown|standdown|true|per-push-unset|Makefile|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-nightly-no-paths|merge_group|standdown|standdown|true|per-push-unset||lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=true warn=
-nightly-claimed|merge_group|standdown|standdown|true|per-push-unset|macos/run.sh|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_mac=true warn=
+pr-stood-down|pull_request|standdown|standdown|true|true|unset|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
+push-stood-down|push|standdown|standdown|true|true|unset|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
+merge-group|merge_group|standdown|standdown|true|true|unset|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-copied-template|pull_request|standdown|standdown||true|unset|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-opted-back|pull_request|standdown|standdown|true|false|set|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-opted-back-queue-only|pull_request|standdown|standdown|true|true|set|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-settings-unread|pull_request|standdown|standdown|true|true|unread|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-queue-only-absent|pull_request|standdown|standdown|true|absent|absent|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-lanes-from-unset|pull_request|none|standdown|true|true|unset|src/main.rs|lanes=true lanes_cause=queue-only-lanes-from-unset lane_verdicts= warn=lanes-from=unset
+lanes-from-old-render|pull_request|standdown-old|standdown|true|true|unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from
+lanes-from-no-render|pull_request|good|standdown|true|true|unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false warn=lanes-from
+judged-old-render|pull_request|standdown|old|true|true|unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
+judged-no-render|pull_request|standdown|no-reader|true|true|unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
+both-old-render|pull_request|standdown-old|old|true|true|unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from,judged
+schedule|schedule|standdown|standdown|true|true|unset|src/main.rs|lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
+dispatch|workflow_dispatch|standdown|standdown|true|true|unset||lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
+nightly-unclaimed|merge_group|standdown|standdown|true|true|unset|Makefile|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+nightly-no-paths|merge_group|standdown|standdown|true|true|unset||lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=true warn=
+nightly-claimed|merge_group|standdown|standdown|true|true|unset|macos/run.sh|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_mac=true warn=
 ROWS
 }
 standdown_answer() { # SCRIPT ROW — the row's answer, or `crashed`
-  local line event decl judged default cause paths head lanes_from="" queue=true absent=false
+  local line event decl judged default queue per_push paths head lanes_from="" absent=false
   line="$(standdown_rows | grep -m1 "^$2|")" || { echo "no stand-down row named $2" >&2; exit 1; }
-  IFS='|' read -r _ event decl judged default cause paths _ <<<"$line"
+  IFS='|' read -r _ event decl judged default queue per_push paths _ <<<"$line"
   case "$judged" in
     standdown) head="$JUDGED_STANDDOWN" ;;
     old) head="$JUDGED_OLD_RENDER" ;;
@@ -1130,12 +1135,12 @@ standdown_answer() { # SCRIPT ROW — the row's answer, or `crashed`
     *) echo "stand-down row $2 names no judged head: $judged" >&2; exit 1 ;;
   esac
   [ "$decl" = none ] || lanes_from="$TMP/decl/$decl"
-  case "$cause" in
+  case "$queue" in
     absent) queue=false absent=true ;;
-    no-queue-path) queue=false ;;
   esac
+  [ "$per_push" != absent ] || per_push=""
   if [ "$(run "$1" EVENT="$event" HEAD="$head" LANES_FROM="$lanes_from" QUEUE_ONLY_DEFAULT="$default" \
-    STUB_QUEUE="$queue" STUB_QUEUE_CAUSE="$cause" STUB_QUEUE_ABSENT="$absent" \
+    STUB_QUEUE="$queue" STUB_QUEUE_ABSENT="$absent" STUB_PER_PUSH="$per_push" \
     STUB_PATHS="$paths" STUB_OUTSIDE="$paths")" != 0 ]; then
     echo crashed
     return 0
@@ -1145,7 +1150,7 @@ standdown_answer() { # SCRIPT ROW — the row's answer, or `crashed`
     "$(sed -n 's/^::warning title=lanes not stood down::\([^ ]*\) .*/\1/p' "$TMP/stdout" | tr '\n' ' ' | sed 's/ $//')"
 }
 rows=0
-while IFS='|' read -r name _ _ _ _ _ _ expected; do
+while IFS='|' read -r name _ _ _ _ _ _ _ expected; do
   rows=$((rows + 1))
   check "stand-down row $name" "$expected" "$(standdown_answer "$CLASSIFY" "$name")"
 done < <(standdown_rows)
@@ -1157,7 +1162,7 @@ mutants=0
 while IFS='@' read -r needle replacement row target; do
   mutants=$((mutants + 1))
   plant "$target" "$needle" "$replacement"
-  expected="$(standdown_rows | grep -m1 "^$row|" | cut -d'|' -f8)"
+  expected="$(standdown_rows | grep -m1 "^$row|" | cut -d'|' -f9)"
   answer="$(standdown_answer "$PLANTED" "$row")"
   if [ "$answer" != crashed ] && [ "$answer" != "$expected" ]; then
     ok "must-fail: '$needle' planted as '$replacement' fails the $row row"
@@ -1167,10 +1172,11 @@ while IFS='@' read -r needle replacement row target; do
 done <<'ROWS'
         if [ -z "$standdown_missing" ]; then@        if true; then@lanes-from-old-render@classify
 [ "$queue_default" = true ] && @@pr-copied-template@classify
- && [ "$queue_cause" = per-push-unset ]; then@; then@pr-opted-back-queue-only@classify
+ && [ "$per_push" = unset ]; then@; then@pr-opted-back-queue-only@classify
+ && [ "$per_push" = unset ]; then@ && [ "$per_push" != set ]; then@pr-settings-unread@classify
       if [ -z "$lanes_from" ]; then@      if false; then@pr-lanes-from-unset@classify
   '' | false) queue_default=false ;;@  '' | false) queue_default=true ;;@pr-copied-template@classify
-queue_cause="$(sed -n 's/^queue-only: queue_only=[^ ]* cause=\([^ ]*\).*/\1/p'@queue_cause="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p'@pr-stood-down@classify
+per_push="$(sed -n 's/^per-push: state=//p'@per_push="$(sed -n 's/^per-push: state=x//p'@pr-stood-down@classify
     pull_request | push)@    pull_request | push | merge_group)@merge-group@classify
 render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)@render_reader_missing "$per_push_reader")@judged-old-render@classify
 if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then@if [ "$EVENT" = schedule ]; then@dispatch@classify
