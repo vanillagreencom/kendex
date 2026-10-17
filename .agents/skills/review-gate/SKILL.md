@@ -43,7 +43,7 @@ A pull request with no automatic review needs a Copilot request. When orch is pr
 
 The overseer's fallback approval follows the managing repository's merge workflow. An emergency merge past a failing required check exists only in a consumer whose required-checks or merge-queue ruleset lists a bypass actor. A consumer whose rulesets list no bypass has no emergency merge.
 
-In that consumer, a merge group can fail to pass because a CI input read from the default branch broke: the classifier checkout, the lane declaration, the aggregate's needs or the change-class action. The overseer then asks the owner's delegate by mailbox, naming the repair's pull request. The delegate restores the lanes app's merge-queue bypass through the API for that one repair, reads it back, and removes it after the repair. This package grants no bypass and changes no ruleset.
+In that consumer, a merge group can fail to pass because a CI input read from the default branch broke: the classifier checkout, the lane declaration, the aggregate's needs or the change-class action. The overseer then asks the repository owner, or the person the owner delegates, by mailbox, naming the repair's pull request. The repository owner, or the person the owner delegates, restores the lanes app's merge-queue bypass through the API for that one repair, reads it back, and removes it after the repair. This package grants no bypass and changes no ruleset.
 
 ## Scripts
 
