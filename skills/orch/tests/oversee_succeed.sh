@@ -1058,10 +1058,10 @@ new_caller "$UNDER_MARK"
 codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 run_succeed headroom-wall 'claude:fable:high,codex:gpt-6-astra:high' -- "$BYPASS"
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
-# The refusal is read by its key, as every caller does: the walk's one kendex
-# model line is printed before it.
+# The refusal is read by its key, as every caller does. A walk that picks no
+# entry prints no kendex model line, since no model of its entries runs.
 assert_eq "$RC|$(keyed no-lane-qualifies "$OUT" | sed -n 1p)|$(grep -c '^model-resolution: ' <<<"$OUT" || :)|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|1|yes|0|none|none" \
+  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|0|yes|0|none|none" \
   "every account under the trigger: refusal names the account and its reset"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
@@ -3171,20 +3171,27 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed pickatbound 'claude:fable:high'
 assert_eq "$RC|$(keyed no-lane-qualifies "$OUT" | sed -n 1p)|$(grep -c '^model-resolution: ' <<<"$OUT" || :)|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|1|yes|0|none" \
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=headroom account=claude resets=$CLAUDE_USAGE_SESSION_RESET|0|yes|0|none" \
   "a candidate at exactly the trigger is refused, not picked"
-# A walk classifying two entries of one class prints its model line once; the
-# control prints it per classification, the second line the counts above refuse.
+# A walk prints the model line of the entry it picks, after the pick: every
+# claude account walled, the codex entry launches on its harness default, and
+# the one line names that default. The control prints each entry's line as the
+# walk classifies it, so the walled claude entry's opus line is the one shown.
 LINESCTL="$(mutant_scripts walk-linesctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$LINESCTL/lib/overseer-launch.sh" '    OL_CLASS_WARNED=1' '    :'
+mutate_file "$LINESCTL/lib/overseer-launch.sh" \
+  '  OL_ENTRY_CLASS="$OL_CLASS" OL_ENTRY_MODEL="$OL_CLASS_MODEL" OL_ENTRY_WARNING="$OL_CLASS_WARNING"' \
+  '  OL_ENTRY_CLASS="$OL_CLASS" OL_ENTRY_MODEL="$OL_CLASS_MODEL" OL_ENTRY_WARNING="$OL_CLASS_WARNING"; ol_model_line "$OL_CLASS_WARNING"'
 MODEL_LINES=""
 for bin in "$SUCCEED" "$LINESCTL/oversee-succeed"; do
   new_caller "$MARK"
-  SUCCEED_BIN="$bin" run_succeed pickatbound-lines 'claude:fable:high,claude:top:high'
-  MODEL_LINES="$MODEL_LINES rc=$RC lines=$(grep -c '^model-resolution: ' <<<"$OUT" || :)"
+  claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+  codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+  SUCCEED_BIN="$bin" run_succeed walled-lines 'claude:standard:high,codex:standard:high' -- --dangerously-skip-permissions
+  MODEL_LINES+=" rc=$RC harness=$(orec harness) selected=$(sed -n 's/^model-resolution: .* selected=\([^ ]*\) .*/\1/p' <<<"$OUT" | tr '\n' ,)"
 done
-assert_eq "$MODEL_LINES" " rc=3 lines=1 rc=3 lines=2" \
-  "a walk prints one model line for two entries of one class, and the control prints two"
+assert_eq "$MODEL_LINES" " rc=0 harness=codex selected=native-default, rc=0 harness=codex selected=opus," \
+  "a walk prints the picked codex entry's model line, and the control prints the walled claude entry's"
 
 new_caller "$MARK"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"

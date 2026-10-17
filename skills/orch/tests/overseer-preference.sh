@@ -23,17 +23,19 @@ ol_preference_entries "$2" "${4:-}" || rc=$?
 models=()
 for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do
   ol_entry_model "$entry" || { models+=("unread=$OL_CLASS_ERR"); continue; }
+  ol_model_line "$OL_ENTRY_WARNING"
   models+=("$OL_ENTRY_HARNESS${OL_ENTRY_HOST:+@$OL_ENTRY_HOST}:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT${OL_ENTRY_CLASS:+#$OL_ENTRY_CLASS}")
 done
 printf '%s|%s|%s|%s|%s|%s\n' "$rc" "$OL_NAMED" "${models[*]-}" "${OL_DEPRECATED_ENTRIES[*]-}" "${OL_REFUSED_ENTRIES[*]-}" "$OL_BAD_ENTRY"
 # A second parse and read in the same process must not repeat a warning.
 ol_preference_entries "$2" "${4:-}" || :
-for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do ol_entry_model "$entry" || :; done
+for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do ol_entry_model "$entry" && ol_model_line "$OL_ENTRY_WARNING" || :; done
 SH
 # observe PREFERENCE CALLER [LIB [HELD]] — the read's answer, then the one
 # preference-deprecated line's fields and the model each kendex
-# model-resolution line names as selected, each warning printed once per
-# process; HELD runs the read under ORCH_MODEL_LINES_HELD=1.
+# model-resolution line names as selected, the read handing each entry's
+# warning to ol_model_line, which prints one per process; HELD runs the read
+# under ORCH_MODEL_LINES_HELD=1.
 observe() {
   local out deprecation held=()
   [[ -z "${4:-}" ]] || held=(ORCH_MODEL_LINES_HELD=1)
@@ -53,7 +55,7 @@ claude:1:high|fable|0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|fable
 claude:1:high|opus|0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus
 claude:1:high|claude-opus-5-5|0|1|claude:claude-opus-5-5:high|claude:1:high|||$NUMERIC|
 codex:12:medium|gpt-6-astra|0|1|codex:gpt-6-astra:medium|codex:12:medium|||entry=codex:12:medium form=harness:model:effort|
-copilot:2:high|fable|0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|native-default
+copilot:2:high|fable|0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|
 pi:1:high|pi-claude/fable|0|1|pi:pi-claude/fable:high|pi:1:high|||entry=pi:1:high form=harness:model:effort|
 claude:1:high,codex:2:low|fable|0|2|claude:fable:high#top codex:fable:low#top|claude:1:high codex:2:low|||$NUMERIC|fable
 claude:fable:high|other|0|1|claude:fable:high#top|||||fable
@@ -149,6 +151,10 @@ control refusal claude:1:high fable "$NUMERIC_GREEN" \
 control model claude:1:high fable "$NUMERIC_GREEN" \
   '    OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"' '  : # caller model is dropped'
 control warning claude:1:high fable "$NUMERIC_GREEN" '  (( ! OL_DEPRECATION_WARNED )) || return 0' '  :'
+# A numeric copilot entry keeps the caller's model, so the runtime answer's
+# harness-default line names a model the launch does not run.
+control numeric-line copilot:2:high fable '0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|' \
+  '    [[ "$OL_CLASS_MODEL" != "$OL_ENTRY_MODEL" ]] || OL_ENTRY_WARNING="$OL_CLASS_WARNING"' '    OL_ENTRY_WARNING="$OL_CLASS_WARNING"'
 control numeric-class claude:1:high opus "0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus" \
   '    OL_ENTRY_CLASS="$OL_CLASS"' '    :'
 control alias "$CLASSES" other "$CLASSES_GREEN" \
@@ -158,7 +164,7 @@ control alias "$CLASSES" other "$CLASSES_GREEN" \
 control alias-warning "$CLASSES" other "$CLASSES_GREEN" \
   '    OL_CLASS_MODEL+="$window"' '    OL_CLASS_MODEL+="$window" OL_CLASS_WARNING="$warning"'
 control resolution-warning "$CLASSES" other "$CLASSES_GREEN" \
-  '  if [[ -n "$OL_CLASS_WARNING" ]] && (( ! OL_CLASS_WARNED )); then' '  if [[ -n "$OL_CLASS_WARNING" ]]; then'
+  '  [[ -n "$1" ]] && (( ! OL_CLASS_WARNED )) || return 0' '  [[ -n "$1" ]] || return 0'
 OLD_ID_GREEN='0|2|claude:claude-opus-5-5:high codex:gpt-5.5:high||||entry=claude:claude-opus-5-5:high form=model-class|'
 control old-id claude:claude-opus-5-5:high,codex:gpt-5.5:high other "$OLD_ID_GREEN" \
   '  (( OL_ENTRY_CLASS_RC != 2 )) || ol_deprecated "entry=$1" form=model-class' '  :'

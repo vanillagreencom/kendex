@@ -194,8 +194,14 @@ while IFS='|' read -r mode flags want model entry; do
     assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
   fi
 done < "$TMP_ROOT/permission-rows"
+# The walk prints the model line of the entry it picks: the codex class is
+# classified, then skipped on the caller's posture, and the claude class picked
+# after it names the model its launch runs.
+observe 'codex:standard:high,claude:top:high' none flags '' claude
+assert_eq "$(sed -n 's/^model-resolution: .* selected=\([^ ]*\) .*/\1/p' "$RUN/err" | tr '\n' ,)" 'fable,' \
+  'a preference walk prints the picked entry model line, not a skipped one' "$RUN/err"
 # A codex class runs no model in a lane, so the gate refuses it, naming the
-# class; kendex's one warning, printed when the entry was classified, names
+# class; kendex's one warning, printed once the entry was picked, names
 # the harness default that class resolved to.
 observe 'codex:standard:high' none flags '--dangerously-skip-permissions' claude
 assert_eq "${OBS%%|*}|$(sed -n 's/^open-terminal: launch-model-missing .* \(class=[^ ]*\)$/\1/p' "$RUN/err")|$(sed -n 's/^model-resolution: requested=standard selected=\([^ ]*\) .*/\1/p' "$RUN/err")" \

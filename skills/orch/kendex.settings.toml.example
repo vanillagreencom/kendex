@@ -363,10 +363,11 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # copilot or pi. On claude, codex or copilot the model is a model class, such
 # as standard or top, or the name that harness's --model takes, in lowercase
 # letters, digits, dots and hyphens, starting with a letter; `kendex
-# tier-model` classifies it at launch and a class's warning prints once. On claude
-# a class runs its family alias, standard as opus, and `model-classes`
-# overrides do not apply yet. On codex and copilot a class runs the harness
-# default: codex until its model list reaches the launch. On pi
+# tier-model` classifies it at launch, and the class of the entry the launch
+# picks prints its warning once. On claude a class runs its family alias,
+# standard as opus, and `model-classes` overrides do not apply yet. On codex
+# and copilot a class runs the harness default: codex until its model list
+# reaches the launch. On pi
 # it is provider/model, for example pi:github-copilot/claude-opus-5.5:high:
 # the provider in those same characters, the model in lowercase letters,
 # digits, dots, underscores, hyphens and slashes, starting with a letter or

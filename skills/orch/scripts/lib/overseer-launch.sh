@@ -15,6 +15,8 @@
 #   ol_preference_entries  the shared overseer and lane preference parse
 #   ol_model_class         a model word classified by kendex, a class
 #                          resolved to the model a launch runs
+#   ol_model_line          kendex's model-resolution line of the model a
+#                          launch runs, once per launch
 #   ol_account             the account a session spends, as `lanes` judges it
 #   ol_pi_model            a pi session's model, out of the sources naming it
 #   ol_entry_model         one entry's harness, model, class and effort, a
@@ -66,7 +68,7 @@
 # refusal the caller prints, with the reason in OL_REASON and its fields in
 # the OL_* variables each function documents; none of them prints a keyed
 # line of its own, save the preference deprecation warning and conversion and
-# kendex's model-resolution warning (ol_model_class), because
+# kendex's model-resolution warning (ol_model_line), because
 # the caller owns its own refusal prefix and words: ol_checkout_notice and
 # ol_fleet_log_notice print theirs through the caller's `message`. Every
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
@@ -143,7 +145,7 @@ OL_BAD_ENTRY=""
 OL_REFUSED_ENTRIES=()
 OL_DEPRECATED_ENTRIES=()
 # The once-per-process model lines, preference-deprecated (ol_deprecated) and
-# kendex's model-resolution line (ol_model_class), print only in the first
+# kendex's model-resolution line (ol_model_line), print only in the first
 # process of a launch to source this file. It reads ORCH_MODEL_LINES_HELD
 # unset, then exports it, so every process it starts inherits the hold and
 # prints neither line: a child `lanes` read's stderr is the caller's DEP_ERR
@@ -216,7 +218,8 @@ ol_deprecated() { # FIELD...
 # class MODEL names, a class or a legacy family alias such as opus, else
 # empty; into OL_CLASS_MODEL the model a launch runs; and into
 # OL_CLASS_WARNING the warning of the kendex answer that names that model,
-# printed once per launch (OL_LINES_HELD). A claude class runs claude's
+# which the caller prints once the launch runs that model (ol_model_line). A
+# claude class runs claude's
 # family alias for it, with the rank answer's warning (ol_claude_alias). A
 # codex or copilot class runs the runtime answer, which with no list evidence
 # is the harness default, an empty model, with that answer's warning. Any
@@ -231,7 +234,7 @@ ol_deprecated() { # FIELD...
 # ../../references/lane-directive.md § Launch gate
 # states. Returns 1 where kendex refused or its answer could not be read, with
 # kendex's and jq's words in OL_CLASS_ERR, which the caller relays.
-OL_CLASS="" OL_CLASS_MODEL="" OL_CLASS_WARNING="" OL_CLASS_ERR="" OL_CLASS_WARNED=$OL_LINES_HELD
+OL_CLASS="" OL_CLASS_MODEL="" OL_CLASS_WARNING="" OL_CLASS_ERR=""
 ol_model_class() { # HARNESS MODEL
   local word="$2" window="" context answer fields tag old_id warning
   OL_CLASS="" OL_CLASS_MODEL="$2" OL_CLASS_WARNING="" OL_CLASS_ERR=""
@@ -265,10 +268,19 @@ ol_model_class() { # HARNESS MODEL
   else
     OL_CLASS_MODEL="" OL_CLASS_WARNING="$warning"
   fi
-  if [[ -n "$OL_CLASS_WARNING" ]] && (( ! OL_CLASS_WARNED )); then
-    printf '%s\n' "$OL_CLASS_WARNING" >&2
-    OL_CLASS_WARNED=1
-  fi
+}
+
+# ol_model_line WARNING — WARNING, kendex's model-resolution line for the
+# model a launch runs, printed once per launch (OL_LINES_HELD). A preference
+# walk classifies each entry it reaches and prints only the line of the entry
+# it picks, after the pick (ol_walk, open-terminal preference_select), since
+# an entry it passes over names a model the launch does not run. `lanes pick
+# --model` prints its one word's.
+OL_CLASS_WARNED=$OL_LINES_HELD
+ol_model_line() { # WARNING
+  [[ -n "$1" ]] && (( ! OL_CLASS_WARNED )) || return 0
+  printf '%s\n' "$1" >&2
+  OL_CLASS_WARNED=1
 }
 
 # ol_claude_alias CLASS — claude's family alias for CLASS into OL_CLASS_MODEL,
@@ -367,28 +379,31 @@ ol_default_entry() { # HARNESS
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
 # OL_ENTRY_HARNESS, OL_ENTRY_HOST, OL_ENTRY_MODEL, OL_ENTRY_CLASS and
 # OL_ENTRY_EFFORT, its model classified and a class resolved to the model a
-# launch runs (ol_model_class). A claude entry naming an old exact id keeps
-# that model and is deprecated (ol_deprecated). Returns 1 where kendex could
-# not classify the model, which leaves it unresolved, OL_CLASS_ERR holding
-# kendex's words. A numeric
-# entry uses the caller's launch or observed model, which
-# is spelled for the caller's harness: ol_entry_permitted skips such an entry
-# naming another harness rather than hand that spelling to its CLI. That model
-# is classified for its class alone, which the conversion names and the
-# record carries: the launch keeps the session's own model, and the numeric
-# form's own warning stands for an old id. A claude old exact id names no
-# class, so the record carries none and the conversion names no replacement,
-# OL_ENTRY_CLASS_RC 2 telling ol_walk so. The
+# launch runs (ol_model_class), and into OL_ENTRY_WARNING the warning of the
+# kendex answer naming that model, unprinted (ol_model_line). A claude entry
+# naming an old exact id keeps that model and is deprecated (ol_deprecated).
+# Returns 1 where kendex could not classify the model, which leaves it
+# unresolved, OL_CLASS_ERR holding kendex's words. A numeric entry uses the
+# caller's launch or observed model, which is spelled for the caller's
+# harness: ol_entry_permitted skips such an entry naming another harness
+# rather than hand that spelling to its CLI. That model is classified for its
+# class alone, which the conversion names and the record carries: the launch
+# keeps the session's own model, so the entry keeps the answer's warning only
+# where that answer names the same model, and the numeric form's own warning
+# stands for an old id. A claude old exact id names no class, so the record
+# carries none and the conversion names no replacement, OL_ENTRY_CLASS_RC 2
+# telling ol_walk so. The
 # setting is the one source of which models the walk tries and in what order,
 # so nothing here holds a model list to check a name against: the launch line
 # carries the model the entry names, and a name its harness does not know is
 # the setting's to fix.
 OL_ENTRY_HARNESS="" OL_ENTRY_HOST="" OL_ENTRY_MODEL="" OL_ENTRY_CLASS="" OL_ENTRY_EFFORT="" OL_ENTRY_DEPRECATED=false
+OL_ENTRY_WARNING=""
 # oversee-succeed supplies the observed model before account measurement,
 # which deliberately drops codex's model to judge its binding bucket.
 OL_PREFERENCE_CALLER_MODEL=""
 ol_entry_model() { # ENTRY
-  OL_ENTRY_DEPRECATED=false OL_ENTRY_CLASS=""
+  OL_ENTRY_DEPRECATED=false OL_ENTRY_CLASS="" OL_ENTRY_WARNING=""
   IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"
   OL_ENTRY_HOST=""
   if [[ "$OL_ENTRY_HARNESS" == *@* ]]; then
@@ -403,6 +418,7 @@ ol_entry_model() { # ENTRY
     ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" || OL_ENTRY_CLASS_RC=$?
     (( OL_ENTRY_CLASS_RC != 1 )) || return 1
     OL_ENTRY_CLASS="$OL_CLASS"
+    [[ "$OL_CLASS_MODEL" != "$OL_ENTRY_MODEL" ]] || OL_ENTRY_WARNING="$OL_CLASS_WARNING"
     return 0
   fi
   ol_entry_class || return 1
@@ -410,14 +426,15 @@ ol_entry_model() { # ENTRY
 }
 
 # ol_entry_class — OL_ENTRY_MODEL classified (ol_model_class) into
-# OL_ENTRY_CLASS and the model it resolves to, ol_model_class's status in
-# OL_ENTRY_CLASS_RC; 1 where kendex could not classify it.
+# OL_ENTRY_CLASS and the model it resolves to, with that answer's warning in
+# OL_ENTRY_WARNING, ol_model_class's status in OL_ENTRY_CLASS_RC; 1 where
+# kendex could not classify it.
 OL_ENTRY_CLASS_RC=0
 ol_entry_class() {
   OL_ENTRY_CLASS_RC=0
   ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" || OL_ENTRY_CLASS_RC=$?
   (( OL_ENTRY_CLASS_RC != 1 )) || return 1
-  OL_ENTRY_CLASS="$OL_CLASS" OL_ENTRY_MODEL="$OL_CLASS_MODEL"
+  OL_ENTRY_CLASS="$OL_CLASS" OL_ENTRY_MODEL="$OL_CLASS_MODEL" OL_ENTRY_WARNING="$OL_CLASS_WARNING"
 }
 
 # ol_class_unread ENTRY — ol_walk's refusal for an entry whose model kendex
@@ -521,7 +538,8 @@ ol_account_id() { # DIR
 # launch takes, a first launch and a succession alike: ENTRY... in order, the
 # first that names a lane into OL_CHOSEN, with OL_HARNESS, OL_MODEL,
 # OL_EFFORT and OL_LANE_DIR beside it, OL_MODEL_CLASS the entry's class, and
-# OL_PICK_MODEL the model its pick was judged on. A named entry's pick is
+# OL_PICK_MODEL the model its pick was judged on. The chosen entry's kendex
+# model line prints once it is chosen (ol_model_line). A named entry's pick is
 # judged on the bucket that walls the model the entry names, resolved from
 # its class (ol_entry_model), the model its launch passes; ol_pick_lane
 # picks at TRIGGER, leaving EXCLUDE_DIR out, and its exit 3 skips the entry.
@@ -575,13 +593,13 @@ OL_WALK_KEEP_UNMEASURED="" OL_KEPT_UNMEASURED=0
 OL_CHOSEN="" OL_HARNESS="" OL_MODEL="" OL_MODEL_CLASS="" OL_EFFORT="" OL_PICK_MODEL="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none
 OL_WALK_SKIPS=() OL_FIELDS=()
 ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
-  local trigger="$1" exclude="$2" entry permitted_entry rc count deprecated_entry kept tab=$'\t'
+  local trigger="$1" exclude="$2" entry permitted_entry rc count deprecated_entry kept model_line tab=$'\t'
   shift 2
   OL_CHOSEN="" OL_LANE_DIR="" OL_FALLBACK_WALKED=none OL_WALK_SKIPS=() OL_FIELDS=() OL_KEPT_UNMEASURED=0
   for entry in "$@"; do
     if [[ "$entry" == caller ]]; then
       OL_HARNESS="$OL_WALK_CALLER_HARNESS" OL_MODEL="$OL_WALK_CALLER_MODEL" OL_EFFORT="$OL_WALK_CALLER_EFFORT"
-      OL_MODEL_CLASS=""
+      OL_MODEL_CLASS="" model_line=""
       OL_PICK_MODEL="$OL_WALK_CALLER_PICK_MODEL" OL_FALLBACK_WALKED="${OL_WALK_CALLER_HARNESS:-none}"
       ol_account "$OL_HARNESS" "$OL_PICK_MODEL"
       if [[ "$OL_ACCOUNT_HARNESS" == unknown ]]; then
@@ -607,7 +625,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
         permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"
       fi
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
-      OL_PICK_MODEL="$OL_ENTRY_MODEL" OL_MODEL_CLASS="$OL_ENTRY_CLASS"
+      OL_PICK_MODEL="$OL_ENTRY_MODEL" OL_MODEL_CLASS="$OL_ENTRY_CLASS" model_line="$OL_ENTRY_WARNING"
       if [[ "$OL_ENTRY_DEPRECATED" == true ]] && (( ! OL_DEPRECATION_CONVERTED )); then
         for deprecated_entry in ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"}; do
           [[ "$entry" == "$deprecated_entry" ]] || continue
@@ -675,6 +693,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then continue; fi
     fi
     OL_LANE_DIR="$OL_PICKED_DIR" OL_CHOSEN="$entry" OL_KEPT_UNMEASURED="$kept"
+    ol_model_line "$model_line"
     return 0
   done
   return 3

@@ -377,10 +377,11 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
   OL_WALK_SOURCE_HARNESS="$preference_harness" OL_WALK_SOURCE_FLAGS="${preference_input[*]+${preference_input[*]}}"
 fi
 # Every `lanes` read below prints no model line (lib/overseer-launch.sh §
-# OL_LINES_HELD). This launch prints those lines only where preference_select's
-# walk classifies the entry; a launch whose text names its model prints none,
-# since that model reaches the harness as written. Set after the preference
-# walk's source of that file, which reads the hold before it exports it.
+# OL_LINES_HELD). This launch prints those lines only for the entry
+# preference_select's walk picks (ol_model_line); a launch whose text names its
+# model prints none, since that model reaches the harness as written. Set
+# after the preference walk's source of that file, which reads the hold before
+# it exports it.
 export ORCH_MODEL_LINES_HELD=1
 
 # One owner chooses and rebuilds a preference launch from the original input.
@@ -429,6 +430,7 @@ preference_select() {
     esac
   done
   [[ -n "$PREFERENCE_ENTRY" ]] || { ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" >&2; return 1; }
+  ol_model_line "$OL_ENTRY_WARNING"
   ol_launch_flags --question-off "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" "$OL_ENTRY_EFFORT" \
     "$OL_ENTRY_MODEL" "$preference_harness" ${preference_input[@]+"${preference_input[@]}"} || {
     ot_message lane-resolution-failed "entry=$PREFERENCE_ENTRY" "step=$OL_REASON" >&2; return 1;

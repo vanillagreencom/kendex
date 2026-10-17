@@ -4479,7 +4479,7 @@ case "$SUB" in
 		model_rc=0
 		ol_model_class "$HARNESS" "$MODEL" || model_rc=$?
 		case "$model_rc" in
-			0) ;;
+			0) ol_model_line "$OL_CLASS_WARNING" ;;
 			2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;
 			*) die model-class-unread "$HARNESS" "$MODEL" "$OL_CLASS_ERR" ;;
 		esac
