@@ -10,15 +10,15 @@ Analyze the backlog, compute architecture order, and recommend a cycle plan.
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
-Read the project map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)): a deliverable's `ends_when` is its entry in the `### Project map` block. `[ACTIVE_PROJECT]`, used everywhere below, is the first `projects[]` entry, in `session-status`'s priority order, that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project; record its `name` and `id`. Extract `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` entries whose `project_name` is `[ACTIVE_PROJECT]`, `backlog_projects` (ordered by `sort_order`), and `next_project`. Those three lists feed planning only.
+Read the project map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)): a deliverable's `ends_when` is its entry in the `### Project map` block. `[ACTIVE_PROJECT]`, used everywhere below, is the first `projects[]` entry, in `session-status`'s priority order, that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project; record its `name` and its `id` as `[ACTIVE_PROJECT_ID]`. Extract `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` entries whose `project_name` is `[ACTIVE_PROJECT]`, `backlog_projects` (ordered by `sort_order`), and `next_project`. Those three lists feed planning only.
 
-Whether `[ACTIVE_PROJECT]` has an open item left is read from every open issue in it, as [§ Project kinds](../references/project-map.md#project-kinds) requires, in the open states `session-status` reads per started project:
+Whether `[ACTIVE_PROJECT]` has an open item left is the read [§ Project kinds](../references/project-map.md#project-kinds) defines, by its recorded id:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --state "Backlog,Todo,In Progress,In Review" --max
+.agents/skills/linear/scripts/linear.sh issues list --project-id "[ACTIVE_PROJECT_ID]" --max --format=compact
 ```
 
-**No row** means the project has no open item left — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), `actions.mark_complete` and `blocked_by_active`. `actions.mark_complete` is null when § Project kinds holds the project open. `blocked_by_active` is the started project that holds activation after this run: `completed_project` when it is held open, otherwise the next `projects[]` entry that § Project kinds counts as active, or null. With no entry counting as active, return the same way with `completed_project`, `actions.mark_complete` and `blocked_by_active` null.
+**No row whose `state_type` is neither `completed` nor `canceled`** means the project has no open item left — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), `actions.mark_complete` and `blocked_by_active`. `actions.mark_complete` is null when § Project kinds holds the project open. `blocked_by_active` is the started project that holds activation after this run: `completed_project` when it is held open, otherwise the next `projects[]` entry that § Project kinds counts as active, or null. With no entry counting as active, return the same way with `completed_project`, `actions.mark_complete` and `blocked_by_active` null.
 
 If any label recommendation may follow, load the inventory first — `labels list --max --format=safe`. Every `actions.set_labels[]` entry must name its update mode and category and carry enough data for the caller to preflight a full final set.
 
@@ -31,7 +31,7 @@ From `session-status`, take the last entry of `prev_cycle.completedScopeHistory`
 When both histories are empty, fall back to summing estimates over the last two weeks and splitting by `updated_at` into a current (0-7d) and previous (7-14d) window:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --state "Done" --updated-since 14d --max
+.agents/skills/linear/scripts/linear.sh issues list --project-id "[ACTIVE_PROJECT_ID]" --state "Done" --updated-since 14d --max
 ```
 
 Set `velocity.adjustment` only on a trigger: current ≥150% of baseline for 2+ cycles → `increase_baseline`; ≤50% for 2+ cycles → `decrease_baseline`; every cycle finishing at 100% with days to spare → `increase_capacity`. Otherwise null.
@@ -41,7 +41,7 @@ Set `velocity.adjustment` only on a trigger: current ≥150% of baseline for 2+ 
 Use the § 1 `issues.backlog` entries, or fall back to a cache query:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --state "Backlog" --max
+.agents/skills/linear/scripts/linear.sh issues list --project-id "[ACTIVE_PROJECT_ID]" --state "Backlog" --max
 ```
 
 Plan parents and standalone issues only — exclude anything with a non-empty `parent_id` (`issues.backlog` already applies this filter; apply it yourself to the fallback). Per issue, take `id`, `title`, `description`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, `blocked_by_open[]`, and `blocks[]`.
@@ -79,8 +79,8 @@ First match wins: current cycle with ≤3 days remaining → next cycle; current
 Health metrics for the plan:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --state "In Progress" --max
-.agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --label "blocked" --max
+.agents/skills/linear/scripts/linear.sh issues list --project-id "[ACTIVE_PROJECT_ID]" --state "In Progress" --max
+.agents/skills/linear/scripts/linear.sh issues list --project-id "[ACTIVE_PROJECT_ID]" --label "blocked" --max
 ```
 
 `health.stale` counts In Progress issues untouched for more than 3 days; `health.blocked` counts issues carrying the `blocked` label.

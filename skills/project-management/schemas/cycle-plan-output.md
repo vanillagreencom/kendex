@@ -4,7 +4,7 @@ Returned inline by `tpm-cycle-plan.md` and written by the caller to `tmp/cycle-p
 
 ## Status: project_complete
 
-The active project has no open issue left in Backlog, Todo, In Progress or In Review (tpm-cycle-plan § 1), or no started project counts as active ([project-map.md § Project kinds](../references/project-map.md#project-kinds)) and `completed_project` is null.
+The active project has no open item left, read by its recorded id as [project-map.md § Project kinds](../references/project-map.md#project-kinds) defines (tpm-cycle-plan § 1), or no started project counts as active ([project-map.md § Project kinds](../references/project-map.md#project-kinds)) and `completed_project` is null.
 
 ```json
 {
