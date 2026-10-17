@@ -58,7 +58,7 @@ Most projects are deliverables. Only work with no end is standing.
 | An item belongs when | Finishing it advances `ends_when` | It fits the `role` below |
 | A finding | A canceled deliverable the map still lists, and an open item in a completed or canceled deliverable | A completed or canceled standing project, or one with a target date |
 
-A step that completes a project with no open item left (tpm-audit § 11, tpm-cycle-plan § 1) reads the map first with `projects audit`. It never completes a standing map project. It completes a map deliverable only on stated evidence that its `ends_when` holds; without that evidence the deliverable stays started and the step reports it. A project off the map, and every project under `map-absent`, completes as before.
+A step that decides whether a project with no open item left completes (tpm-audit § 11 step 5, tpm-cycle-plan § 1) reads the map first, as tpm-audit § 1.6 does. It never completes a standing map project. It completes a map deliverable only on stated evidence that its `ends_when` holds; without that evidence the deliverable stays started and the step reports it. A project off the map, and every project under `map-absent`, completes once it has no open item left. The steps that run the completion, audit-issues § 2.3 and cycle-plan § 2, follow that decision and read no map.
 
 A standing project's `role` is one of:
 

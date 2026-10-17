@@ -35,6 +35,8 @@ Then present the candidates and ask which to start.
 
 ### PROJECT COMPLETE — [completed_project.name]
 
+**Held open** (map deliverable, `ends_when` not shown to hold): [completed_project.name] stays started — shown only when `actions.mark_complete` is null
+
 | # | Project | Pri | Ready | Blocked by |
 |---|---------|-----|-------|------------|
 | 1 | [NAME] | P[N] | yes/no | [BLOCKERS or —] |
