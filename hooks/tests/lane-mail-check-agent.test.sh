@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Attached launches and child state at the context mark. The hook is installed
 # in lib/lane-mail-world.sh's real lane and fleet layouts. Only Claude's
-# measured Agent id and task-notification status records are transcript inputs.
+# measured Agent and SendMessage calls, their launch and spawn results, and
+# task and teammate idle notifications are transcript inputs.
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
@@ -434,15 +435,6 @@ fi
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground; do
     case "$mutation" in
-      completion | reserve | unclassified | idle | resume | shutdown | foreground)
-        # Each reddens only rows whose roster the transcript scan reads.
-        if [ "$SCAN_AVAILABLE" -eq 0 ]; then
-          printf 'skip: %s control requires a host timeout command\n' "$mutation"
-          continue
-        fi
-        ;;
-    esac
-    case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
       children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
@@ -463,6 +455,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \
       > "$TMP_ROOT/$mutation.control.log" 2>&1 || control_rc=$?
+    # Without a host timeout command every row whose roster the transcript
+    # scan reads is skipped, so a control that reddens only those rows
+    # reddens nothing here. Such a host cannot hold it; a host with the scan,
+    # CI among them, does.
+    if [ "$control_rc" -eq 0 ] && [ "$SCAN_AVAILABLE" -eq 0 ]; then
+      printf 'skip: %s control reddens no row this host runs without a timeout command\n' "$mutation"
+      continue
+    fi
     assert_eq "$control_rc" 1 "control $mutation makes the real hook assertions fail"
   done
 fi
