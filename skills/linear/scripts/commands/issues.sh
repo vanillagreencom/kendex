@@ -769,10 +769,13 @@ bulk_update_issues() {
     fi
     linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
 
-    # Every check that can refuse runs here, before any write, so a refusal
-    # leaves no issue Done, moved or with uploaded assets. Each issue is read
-    # once, and only when its state or its team is not already known: the
-    # guard above pins every issue to LINEAR_TEAM when one is set. The map
+    # The state check and the map-project check run here, before any write,
+    # so neither refusal leaves an issue Done, moved or with uploaded assets.
+    # update_issue still refuses per issue in the write loop below (a
+    # --milestone missing from that issue's project, a label for that issue's
+    # team), after earlier issues are written. This loop reads each issue at
+    # most once, and only when the state check or the issue's team needs it:
+    # the guard above pins every issue to LINEAR_TEAM when one is set. The map
     # project is judged in each issue's own team; issue_project_id keeps each
     # team's result for the update_issue subshells below.
     local own_team_id=""
