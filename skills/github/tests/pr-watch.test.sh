@@ -5,6 +5,29 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/pr-watch-fixture.sh"
 
+# Keep the repository queue independent of the PR fields in this fixture.
+mv "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/gh-response"
+cat > "$TMP_ROOT/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+if [[ "$args" == *'--input -'* ]]; then
+  request="$(cat)"
+  args="$request"
+  answer="$("${BASH_SOURCE[0]%/*}/gh-response" "$@" <<<"$request")" || exit "$?"
+else
+  answer="$("${BASH_SOURCE[0]%/*}/gh-response" "$@")" || exit "$?"
+fi
+if [[ "$args" == *'mergeQueue{'* ]]; then
+  printf '%s\n' "$answer" | jq -c '
+    .data.repository.mergeQueue =
+      (if $ENV.STUB_REPO_QUEUE then $ENV.STUB_REPO_QUEUE | fromjson else null end)'
+else
+  printf '%s\n' "$answer"
+fi
+EOF
+chmod +x "$TMP_ROOT/bin/gh"
+
 P7U="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')"
 P7UD="$(jq -cn --argjson r "$(pr_row 7 open unarmed true)" '[$r]')"
 P7AD="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')"
@@ -35,6 +58,31 @@ table \
   "an unapproved PR is never disarmed|--awaiting-after 3600|STUB_OPEN_PRS=$P7U;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$NOW|rc=0 kinds=none" \
   "an open thread holds the stale-review nudge|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_DECISION=REVIEW_REQUIRED;STUB_HEAD_DATE=$OLD|rc=1 kinds=threads-open" \
   "an approved PR is never awaiting-stale|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_HEAD_DATE=$OLD|rc=0 kinds=none"
+
+echo '=== repository queue confirms a disarmed candidate ==='
+REPO_QUEUED='{"entries":{"pageInfo":{"hasNextPage":false},"nodes":[{"pullRequest":{"number":7}}]}}'
+REPO_EMPTY='{"entries":{"pageInfo":{"hasNextPage":false},"nodes":[]}}'
+QUEUE_RACE="STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$REPO_QUEUED"
+for mode in listing named paginated; do
+  flags="" pages=""
+  case "$mode" in
+    named) flags=7 ;;
+    paginated) pages=';STUB_THREADS_PAGES=2' ;;
+  esac
+  table \
+    "repository queue suppresses false disarmed: $mode|$flags|$QUEUE_RACE$pages|rc=0 kinds=none" \
+    "absent from both views stays disarmed: $mode|$flags|STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$REPO_EMPTY$pages|rc=1 kinds=disarmed"
+done
+table \
+  "unreadable queue is no confirmed disarm||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE={}|rc=2 kinds=error" \
+  "an incomplete queue cannot confirm absence||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$(jq -c '.entries.pageInfo.hasNextPage=true' <<<"$REPO_EMPTY")|rc=2 kinds=error" \
+  "membership is known even on an incomplete queue||$QUEUE_RACE;STUB_REPO_QUEUE=$(jq -c '.entries.pageInfo.hasNextPage=true' <<<"$REPO_QUEUED")|rc=0 kinds=none"
+mutant_watch repository-queue-member 's#elif any($entries.nodes\[\]?; .pullRequest.number == $n) then \[\]#elif false then []#' 'elif any($entries.nodes[]?; .pullRequest.number == $n) then []'
+table "must-fail: ignoring the repository queue repeats the false disarm||$QUEUE_RACE|rc=1 kinds=disarmed"
+WATCH_BIN="$LIVE_WATCH"
+mutant_watch repository-queue-absent 's#elif any($entries.nodes\[\]?; .pullRequest.number == $n) then \[\]#elif true then []#' 'elif any($entries.nodes[]?; .pullRequest.number == $n) then []'
+table "must-fail: treating an empty queue as membership loses a real disarm||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$REPO_EMPTY|rc=0 kinds=none"
+WATCH_BIN="$LIVE_WATCH"
 
 echo "=== the thread walk is paged, summed and bounded ==="
 # Over 100 threads, a cursor that never advances, or more than 20 advancing

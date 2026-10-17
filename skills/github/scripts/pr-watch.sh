@@ -227,6 +227,9 @@ PR_STATE_FIELDS='number state isDraft headRefOid headRefName createdAt author{lo
   timelineItems(last:10,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT,REVIEW_REQUESTED_EVENT]){nodes{
     ... on ReadyForReviewEvent{createdAt} ... on ReopenedEvent{createdAt} ... on ReviewRequestedEvent{createdAt}}}'
 PR_FIELDS="$PR_STATE_FIELDS reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}"
+# GitHub can clear both PR queue fields while rebuilding merge groups.
+# The repository queue supplies an independent view in the same request.
+QUEUE_FIELDS='mergeQueue{entries(first:100){pageInfo{hasNextPage} nodes{pullRequest{number}}}}'
 owner="${GH_REPO%%/*}"
 name="${GH_REPO#*/}"
 now="$(date +%s)" || {
@@ -247,13 +250,13 @@ if [ -n "$PR_ARGS" ]; then
     selection="$selection p$number:pullRequest(number:$number){...PR}"
   done
   main="$(gh api graphql -f owner="$owner" -f name="$name" \
-      -f query="query(\$owner:String!,\$name:String!){repository(owner:\$owner,name:\$name){$selection}} fragment PR on PullRequest{$PR_FIELDS}" \
+      -f query="query(\$owner:String!,\$name:String!){repository(owner:\$owner,name:\$name){$selection $QUEUE_FIELDS}} fragment PR on PullRequest{$PR_FIELDS}" \
       2>/dev/null)" || main_read=failed
   [ "$main_read" = failed ] || [ -n "$main" ] || main_read=empty
 else
   mode=list
   main="$(gh api graphql --paginate -f owner="$owner" -f name="$name" \
-      -f query="query(\$owner:String!,\$name:String!,\$endCursor:String){repository(owner:\$owner,name:\$name){pullRequests(states:OPEN,first:50,after:\$endCursor,orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{...PR}}}} fragment PR on PullRequest{$PR_FIELDS}")" || {
+      -f query="query(\$owner:String!,\$name:String!,\$endCursor:String){repository(owner:\$owner,name:\$name){pullRequests(states:OPEN,first:50,after:\$endCursor,orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{...PR}} $QUEUE_FIELDS}} fragment PR on PullRequest{$PR_FIELDS}")" || {
     watch_message watch-list-failed "$GH_REPO" "::error::pr-watch: could not list open PRs" >&2
     exit 2
   }
@@ -365,13 +368,14 @@ def stale($p; $commit; $n; $head; $queued):
       end
     end;
 
-def reduce_pr($n; $initial; $later):
+def reduce_pr($n; $initial; $later; $repository):
   # Thread histories can span concurrent pushes, arms and review updates.
   # Keep the first head for binding, but judge the latest state read beside
   # the last thread page before returning silence or a head-sensitive line.
   ($later | last) as $last
   | (if $last == null or $last.status != "ok" then $initial
      else $last.p + {reviewThreads: $initial.reviewThreads} end) as $p
+  | (if $last == null or $last.status != "ok" then $repository else $last.repository end) as $repo
   | if ($p | type) != "object" or $p.number != $n or ($p.headRefOid | sha | not)
      or ($p.state | type) != "string" or ($p | has("isDraft") | not) or ($p.isDraft | type) != "boolean"
      or ($p | has("autoMergeRequest") | not)
@@ -429,7 +433,17 @@ def reduce_pr($n; $initial; $later):
             then refresh_ci($commit; $n; $head; $queued)
             # Approved, unarmed, unqueued and ready: nothing will merge it.
             elif $decision == "APPROVED" and ($p.isDraft | not) and $p.autoMergeRequest == null and $queued == ""
-            then [finding($n; $head; "disarmed"; "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)")]
+            then $repo.mergeQueue.entries as $entries
+            | if ($repo | has("mergeQueue") | not)
+                or ($repo.mergeQueue != null and
+                  (($entries.nodes | type) != "array" or ($entries.pageInfo.hasNextPage | type) != "boolean"
+                   or any($entries.nodes[]; (.pullRequest.number | type) != "number")))
+              then [finding($n; $head; "error"; "repository queue response malformed")]
+              elif any($entries.nodes[]?; .pullRequest.number == $n) then []
+              elif $entries.pageInfo.hasNextPage == true
+              then [finding($n; $head; "error"; "repository queue is past one page; absence is unconfirmed")]
+              else [finding($n; $head; "disarmed"; "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)")]
+              end
             # Drafts await readiness, not review: the clock skips them.
             elif $decision == "REVIEW_REQUIRED" and ($p.isDraft | not) and ($refresh | not)
             then stale($p; $commit; $n; $head; $queued)
@@ -454,22 +468,22 @@ def page_of($n): try .data.repository["p\($n)"] catch null;
         or any($pages[]; type != "object" or (try (.data.repository.pullRequests.nodes | type) catch null) != "array")
         or any($pages[].data.repository.pullRequests.nodes[]; type != "object" or (.number | type) != "number")
      then null
-     else [$pages[].data.repository.pullRequests.nodes[] | {n: .number, p: .}] end
+     else [$pages[].data.repository as $repo | $repo.pullRequests.nodes[] | {n: .number, p: ., repository: $repo}] end
    else [$numbers | split(" ")[] | select(. != "") | tonumber as $n
      | if $read != "ok" then {n: $n, unread: true}
-       else {n: $n, p: (if ($pages | length) == 1 then $pages[0] | page_of($n) else null end)} end]
+       else {n: $n, p: (if ($pages | length) == 1 then $pages[0] | page_of($n) else null end), repository: $pages[0].data.repository} end]
    end) as $prs
 | if $prs == null then "global\twatch-list-malformed"
   else [$prs[] | . as $e
     | if $e.unread then [finding($e.n; "--------"; "error"; "could not read PR #\($e.n)")]
       else reduce_pr($e.n; $e.p;
         [$rounds[] | select(any(.numbers[]; . == ($e.n | tostring)))
-         | (.answer | page_of($e.n)) as $p | {status, p: $p, page: (try $p.reviewThreads catch null)}])
+         | (.answer | page_of($e.n)) as $p | {status, p: $p, page: (try $p.reviewThreads catch null), repository: .answer.data.repository}]; $e.repository)
       end | .[]] as $all
   | [$all[] | select(.walk)] as $walks
   | if ($walks | length) > 0 then $walks | unique_by(.n)
     # The cursor rides a GraphQL variable, never the query text.
-    | "walk\t" + ({query: "query($owner:String!,$name:String!\([.[] | ",$c\(.n):String!"] | join(""))){repository(owner:$owner,name:$name){\([.[] | "p\(.n):pullRequest(number:\(.n)){...PRState reviewThreads(first:100,after:$c\(.n)){pageInfo{hasNextPage endCursor} nodes{isResolved}}}"] | join(" "))}} fragment PRState on PullRequest{\($state_fields)}",
+    | "walk\t" + ({query: "query($owner:String!,$name:String!\([.[] | ",$c\(.n):String!"] | join(""))){repository(owner:$owner,name:$name){\([.[] | "p\(.n):pullRequest(number:\(.n)){...PRState reviewThreads(first:100,after:$c\(.n)){pageInfo{hasNextPage endCursor} nodes{isResolved}}}"] | join(" ")) \($queue_fields)}} fragment PRState on PullRequest{\($state_fields)}",
         variables: ({owner: $owner, name: $name} + ([.[] | {key: "c\(.n)", value: .walk}] | from_entries))} | tojson)
     else "exit\t\(if any($all[]; .kind == "error") then 2 elif ($all | length) > 0 then 1 else 0 end)",
       ($all[] | "\(.n)\t\(.head)\t\(.kind)\t\(.detail)")
@@ -494,6 +508,7 @@ reduction_input() {
 while :; do
   reduced="$(reduction_input | jq -nr --arg mode "$mode" --arg numbers "$PR_ARGS" --arg read "$main_read" \
       --arg state_fields "$PR_STATE_FIELDS" \
+      --arg queue_fields "$QUEUE_FIELDS" \
       --arg owner "$owner" --arg name "$name" --argjson now "$now" --argjson wait "$AWAITING_AFTER" \
       "def refresh_identity: $REFRESH_IDENTITY_JQ; $REDUCE_JQ")" || {
     watch_message watch-reduce-failed "$GH_REPO" "::error::pr-watch: the reduction failed" >&2
