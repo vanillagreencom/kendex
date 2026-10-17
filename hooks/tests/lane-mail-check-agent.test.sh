@@ -42,9 +42,13 @@ append_tool_note() { # string|block TEXT
     content:(if $f == "string" then "done\n" + $n else [{type:"text",text:"done"},{type:"text",text:$n}] end),is_error:false}]}}' >> "$TRANSCRIPT"
 }
 # The entry Claude Code 2.1.302 writes for a notification queued while the
-# model works.
+# model works, and the remove entry that repeats it once a turn absorbs it.
 append_queued() { # TEXT
   jq -nc --arg n "$1" '{type:"queue-operation",operation:"enqueue",timestamp:"2026-10-17T13:20:00.000Z",sessionId:"s1",content:$n}' >> "$TRANSCRIPT"
+}
+append_absorbed() { # TEXT
+  jq -nc --arg n "$1" '{type:"queue-operation",operation:"remove",timestamp:"2026-10-17T13:20:01.000Z",sessionId:"s1",content:$n,
+    reason:"absorbed_mid_turn",commandUuid:"c1",deliveryId:"d1"}' >> "$TRANSCRIPT"
 }
 
 # A transcript scan needs the host's timeout command; without it the roster
@@ -72,6 +76,14 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if an
     tool-block) append_launch; append_tool_note block "$(notice_text a1 completed)" ;;
     tool-idle) append_teammate; append_tool_note block "$(idle_text reviewer)" ;;
     queued) append_launch; append_queued "$(notice_text a1 completed)" ;;
+    # An idle appended to the resuming send's own result reports the turn
+    # that ended before the message reached the teammate.
+    resume-noted) append_teammate
+      append_call SendMessage '{"to":"reviewer","message":"Recheck the head."}' "$(printf '{"success":true}\n%s' "$(idle_text reviewer)")" ;;
+    # A remove entry repeats an idle the resume already followed.
+    requeued) append_teammate; append_queued "$(idle_text reviewer)"
+      append_call SendMessage '{"to":"reviewer","message":"Recheck the head."}' '{"success":true}'
+      append_absorbed "$(idle_text reviewer)" ;;
     stopped) append_teammate; append_call TaskStop '{"task_id":"reviewer"}' '{"message":"Successfully stopped task: areviewer-t1","task_id":"areviewer-t1","task_type":"in_process_teammate"}' ;;
     # A refused stop ended nothing.
     stop-refused) append_teammate; append_call TaskStop '{"task_id":"reviewer"}' '<tool_use_error>No task found with ID: reviewer</tool_use_error>' true ;;
@@ -98,7 +110,7 @@ TRANSCRIPT="$TMP_ROOT/agent-launch.jsonl"
 # agent-unobserved where the roster is unknown, naming the lane's handoff.
 # Rows a scan reads as none are skipped where the scan is unavailable.
 while IFS='|' read -r agents tokens tool reserve rc key; do
-  case "$agents" in out | teammate | resumed | unclassified | stop-refused) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
+  case "$agents" in out | teammate | resumed | resume-noted | requeued | unclassified | stop-refused) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
   key=$(scan_key "$key")
   AGENTS=$agents launch "$tokens" "$tool" "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$reserve"
   expect "$rc" "$key" "launch $tool at $tokens with reserve $reserve and agents $agents"
@@ -120,6 +132,8 @@ tool-string|260000|Agent||0|-
 tool-block|260000|Agent||0|-
 tool-idle|260000|Agent||0|-
 queued|260000|Agent||0|-
+resume-noted|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+requeued|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 stopped|260000|Agent||0|-
 stop-refused|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 foreground|260000|Agent||0|-
@@ -464,7 +478,7 @@ SCAN_TIMEOUT
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop; do
+  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop order remove; do
     case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
@@ -485,6 +499,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       tool-result) variant agent-no-tool-notes -e 's/^        (if type == "array" then \.\[\] | select(\.type == "tool_result") | \.content | text else empty end);$/        empty;/' ;;
       queued) variant agent-no-queued -e 's/if \.type == "queue-operation" then/if false then/' ;;
       stop) variant agent-no-stop -e 's/elif \$c\.name == "TaskStop" and/elif false and/' ;;
+      # A record's call results applied before its notifications.
+      order) variant agent-results-first -e 's/then noted(\$m)$/then ./' \
+        -e 's/else \.unclassified = true end)$/else .unclassified = true end) | noted($m)/' ;;
+      remove) variant agent-reads-remove -e 's/then select(\.operation == "enqueue") | /then /' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \
