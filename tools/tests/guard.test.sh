@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/guard at commit time, the last lane of the pre-commit chain: the
-# rooted() rule on new temporary fixtures, the bash32-lint, test-roster and
+# rooted() rule on new temporary fixtures, the bash32-lint, exec-bits, test-roster and
 # shipped-refs lanes, the common file set, the run-scoping scan, the compile checks a staged product change schedules, and
 # the verdicts guard leaves to the packages that own them. The --full lanes are guard-full.test.sh and the
 # render rule is guard-render.test.sh.
@@ -19,6 +19,7 @@ before=$((PASS + FAIL))
 while IFS='|' read -r expected path; do
   mkdir -p "$(dirname "$R/$path")"
   printf '// fixture\n' >"$R/$path"
+  chmod +x "$R/$path"
   rel="${path#skills/*/}"
   case "$rel" in
     tests/* | evals/*) ;;
@@ -182,6 +183,22 @@ git -C "$R" reset -q HEAD -- crates/cli
 rm -f "$R/crates/cli/Cargo.toml" "$R/crates/cli/tests/main.rs" "$R/crates/cli/tests/declared.rs" "$R/crates/cli/tests/orphan.rs"
 rmdir "$R/crates/cli/tests" "$R/crates/cli"
 
+echo "=== a skill suite staged at mode 100644 reds through the exec-bits lane ==="
+# The rule is tools/exec-bits' and its rows are tools/tests/exec-bits.test.sh;
+# this proves guard runs it and forwards its verdict.
+printf '#!/usr/bin/env bash\necho new\n' >"$R/skills/demo/tests/new.test.sh"
+git -C "$R" add -A && git -C "$R" update-index --chmod=-x skills/demo/tests/new.test.sh && run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: exec-bits=1"* ]] && [[ "$OUT" == *"not executable in git: skills/demo/tests/new.test.sh"* ]] && ok "a new skill suite at 100644 reds guard through the exec-bits lane, naming the file" || bad "a new skill suite at 100644 reds guard through the exec-bits lane, naming the file" "rc=$RC out=$OUT"
+if mutant_guard '/TOOLS_DIR\/exec-bits/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the exec-bits lane deleted the 100644 suite passes" \
+    || bad "control: with the exec-bits lane deleted the 100644 suite passes" "rc=$RC out=$OUT"
+else
+  bad "control: the exec-bits lane could not be deleted from a guard copy"
+fi
+reset_world
+
 echo "=== a shipped decision citation reds through the shipped-refs lane ==="
 # The rule is tools/shipped-refs' and its rows are tools/tests/
 # shipped-refs.test.sh; this proves guard runs it and forwards its verdict.
@@ -308,6 +325,7 @@ git -C "$R" checkout -q -- skills .agents
 echo "=== a caller carrying its own run scoping reds through the correlation lane ==="
 mkdir -p "$R/skills/github/scripts/commands"
 printf '#!/usr/bin/env bash\necho "def bucket: ."\n' >"$R/skills/github/scripts/commands/demo.sh"
+chmod +x "$R/skills/github/scripts/commands/demo.sh"
 git -C "$R" add skills/github/scripts/commands/demo.sh
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
@@ -326,6 +344,7 @@ git -C "$R" rm -q --cached skills/github/scripts/commands/demo.sh
 rm -rf -- "$R/skills/github"
 mkdir -p "$R/skills/orch/scripts"
 printf '#!/usr/bin/env bash\nscope_current_run() { :; }\n' >"$R/skills/orch/scripts/ci-wait"
+chmod +x "$R/skills/orch/scripts/ci-wait"
 git -C "$R" add skills/orch/scripts/ci-wait
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \

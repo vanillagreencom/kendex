@@ -43,6 +43,7 @@ printf '{"name": "ui"}\n' >"$R/ui/package.json"
 printf 'export const ui = 1;\n' >"$R/ui/src/main.ts"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/quiet/tests/quiet.test.sh"
 git -C "$R" add -A
+entry_points_executable
 git -C "$R" commit -q -m "chore: a crate, a UI package and a skill whose suite fails"
 BASE="$(git -C "$R" rev-parse HEAD)"
 
@@ -302,6 +303,7 @@ echo "=== the render and fixture rules read the range's one changed set ==="
 # untracked altogether. The compile set sees both; the rules must too.
 printf '#!/usr/bin/env bash\necho new\n' >"$R/skills/demo/scripts/new.sh"
 cp "$R/skills/demo/scripts/new.sh" "$R/.agents/skills/demo/scripts/new.sh"
+chmod +x "$R/skills/demo/scripts/new.sh"
 git -C "$R" add -N skills/demo/scripts/new.sh
 run_range "$BASE"
 [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: missing-render="* ]] \
@@ -553,6 +555,7 @@ printf 'brief="Read .agents/skills/doc-readers/schemas/review-finding-prompt.md"
 printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\n' >"$D/scripts/unused"
 printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\nprintf "%%s\\n" "$schema_file"\n' >"$D/scripts/printed-path"
 git -C "$R" add -A
+entry_points_executable
 git -C "$R" commit -q -m "chore: two skills and hooks with suites named for their files"
 mapped_base="$(git -C "$R" rev-parse HEAD)"
 # The mapped skill's whole set, read from the suites the builder above wrote

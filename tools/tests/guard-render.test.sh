@@ -102,6 +102,7 @@ git -C "$R" reset -q --hard HEAD
 # render the tree does not track yet.
 printf '#!/usr/bin/env bash\necho added\n' >"$R/skills/demo/scripts/added.sh"
 git -C "$R" add skills/demo/scripts/added.sh
+entry_points_executable
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/added.sh -> .agents/skills/demo/scripts/added.sh"* ]] \
   && ok "a new script in a rendered skill with no render reds, naming it" \
@@ -168,6 +169,7 @@ git -C "$R" reset -q --hard HEAD
 mkdir -p "$R/skills/other/scripts"
 printf '#!/usr/bin/env bash\necho local\n' >"$R/skills/other/scripts/local-only.sh"
 git -C "$R" add skills/other/scripts/local-only.sh
+entry_points_executable
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "a source in a skill with no tracked render passes" \
@@ -181,6 +183,7 @@ mkdir -p "$R/skills/demo[1/scripts" "$R/.agents/skills/demo[1/scripts"
 printf '#!/usr/bin/env bash\necho bracket\n' >"$R/skills/demo[1/scripts/b.sh"
 cp "$R/skills/demo[1/scripts/b.sh" "$R/.agents/skills/demo[1/scripts/b.sh"
 git -C "$R" add -A skills .agents
+entry_points_executable
 git -C "$R" commit -q -m "chore: a skill with a bracket in its name"
 printf 'echo more\n' >>"$R/skills/demo[1/scripts/b.sh"
 git -C "$R" add -A

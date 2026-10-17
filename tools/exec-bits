@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Every skill script, skill test and hook test entry point is executable in
+# git: a file committed at mode 100644 cannot be run as a command on a fresh
+# checkout, so the suite or tool that calls it fails there.
+#
+# The roster is discovered from the index, not listed: every tracked
+# `skills/*/tests/*.sh`, `skills/*/scripts/*` and `hooks/tests/*.sh`. A
+# pathspec `*` crosses `/`, so both skills patterns reach into
+# subdirectories. A lib and a control are sourced, never entry points, and
+# carry no mode bit, under either parent: `/(scripts|tests)/lib/` and
+# `/tests/controls/` are left out.
+#
+# The mode is the index's (`git ls-files -s`), which is what a commit
+# records, whatever the working tree's own bits are. tools/guard runs this at
+# commit time and the guards-scans shard of
+# .github/workflows/skill-tests.yml runs it at merge.
+#
+# Usage: tools/exec-bits
+#   judges the repository around the current directory
+# Exit: 0 every entry point is executable, 1 one is not, 2 the scan could
+# not run. A scan that did not run is never read as a clean tree.
+# A finding opens with `exec-bits: not-executable=<count>` on stdout, then
+# one `not executable in git: <path>` line per file. A refusal opens with
+# `exec-bits: <key>=<value>` on stderr.
+#
+# tools/tests/exec-bits.test.sh holds the rows; tools/tests/guard.test.sh
+# proves guard runs this lane.
+set -euo pipefail
+
+refuse() { # KEY VALUE [CAUSE] — the scan could not run
+  printf 'exec-bits: %s=%s\n' "$1" "$2" >&2
+  [ -z "${3-}" ] || printf '%s\n' "$3" >&2
+  exit 2
+}
+
+[ "$#" -eq 0 ] || refuse usage "tools/exec-bits"
+root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  refuse not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
+cd "$root" || refuse unenterable "$root"
+
+# Unquoted paths, so a finding names the file as it sits on disk.
+listing="$(git -c core.quotePath=false ls-files -s -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh')" ||
+  refuse listing unreadable
+# A tree that lists no entry point is a pathspec that stopped matching, not
+# a clean tree: this repository always ships skill scripts.
+[ -n "$listing" ] || refuse roster empty
+# The exclusion matches the path alone: the mode and object id before it
+# hold no `/`. Exit 1 is every listed file excluded, which leaves nothing to
+# judge; above 1 is grep's own failure.
+status=0
+entries="$(printf '%s\n' "$listing" | grep -vE '/(scripts|tests)/lib/|/tests/controls/')" || status=$?
+[ "$status" -le 1 ] || refuse filter "$status"
+
+tab="$(printf '\t')"
+count=0
+found=""
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  # `<mode> <object> <stage><TAB><path>`
+  [ "${line%% *}" = 100644 ] || continue
+  found="${found}not executable in git: ${line#*"$tab"}
+"
+  count=$((count + 1))
+done <<EOF
+$entries
+EOF
+
+[ "$count" -gt 0 ] || exit 0
+printf 'exec-bits: not-executable=%s\n%s' "$count" "$found"
+exit 1

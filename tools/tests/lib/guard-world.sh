@@ -16,6 +16,8 @@
 #                            when the edit changed nothing
 #   run_mutant               the copy at commit time; sets OUT and RC
 #   reset_world              the seeded commit, an empty index, a clean tree
+#   entry_points_executable [DIR]  the bit on each staged entry point
+#                            tools/exec-bits names in DIR, R by default
 #   ok / bad                 the tally in PASS and FAIL
 # The fixture build below is unchecked line by line and stands on errexit.
 set -euo pipefail
@@ -35,6 +37,20 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 R="$TMP/repo"
+# tools/exec-bits refuses a skill script, skill test or hook test staged at
+# 100644. A world that plants one stages it, then calls this to give every
+# file the real tool names the bit on disk and in the index, so the roster
+# stays the tool's alone.
+entry_points_executable() { # [DIR] — the world R when omitted
+  local dir="${1:-$R}" listed p status=0
+  listed="$(cd "$dir" && "$REPO/tools/exec-bits")" || status=$?
+  [ "$status" -le 1 ] || { echo "guard-world: exec-bits=$status dir=$dir" >&2; exit 2; }
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    chmod +x "$dir/$p"
+    git -C "$dir" update-index --chmod=+x -- "$p"
+  done < <(printf '%s\n' "$listed" | sed -n 's/^not executable in git: //p')
+}
 mkdir -p "$R/.claude" "$R/tools"
 mkdir -p "$R/crates/core/tests"
 git -C "$R" init -q
@@ -103,6 +119,7 @@ mkdir -p "$R/docs/authoring"
 cp "$REPO/kendex.settings.toml" "$R/kendex.settings.toml"
 cp "$REPO/docs/authoring/command-safety.md" "$R/docs/authoring/command-safety.md"
 git -C "$R" add -A
+entry_points_executable
 git -C "$R" commit -q -m fixture
 SEED="$(git -C "$R" rev-parse HEAD)"
 
@@ -131,6 +148,7 @@ ln -s "$REPO/.agents" "$TMP/.agents"
 MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
+cp "$REPO/tools/exec-bits" "$MUTANT_TOOLS/exec-bits"
 cp "$REPO/tools/bash32-parse" "$MUTANT_TOOLS/bash32-parse"
 cp "$REPO/tools/test-roster" "$MUTANT_TOOLS/test-roster"
 cp "$REPO/tools/shipped-refs" "$MUTANT_TOOLS/shipped-refs"

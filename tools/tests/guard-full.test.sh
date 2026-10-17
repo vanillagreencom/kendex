@@ -625,6 +625,7 @@ FULL_GUARD=1
 mkdir -p "$R/skills/quiet/tests"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/quiet/tests/quiet.test.sh"
 git -C "$R" add skills/quiet
+entry_points_executable
 git -C "$R" commit -q -m "chore: a skill whose suite fails"
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
@@ -661,6 +662,7 @@ printf '#!/usr/bin/env bash\necho quiet\n' >"$R/skills/quiet/scripts/quiet.sh"
 # A second script stays behind so the move leaves no empty roster directory.
 printf '#!/usr/bin/env bash\necho stays\n' >"$R/skills/quiet/scripts/stays.sh"
 git -C "$R" add skills/quiet
+entry_points_executable
 git -C "$R" commit -q -m "chore: a script in the quiet skill"
 git -C "$R" update-ref refs/remotes/origin/main HEAD
 git -C "$R" mv skills/quiet/scripts/quiet.sh hooks/quiet.sh
@@ -729,6 +731,7 @@ printf '#!/usr/bin/env bash\necho narrow\n' >"$R/hooks/narrow.sh"
 printf '#!/usr/bin/env bash\necho narrow-ran\n' >"$R/hooks/tests/narrow.test.sh"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$R/hooks/tests/unreached.test.sh"
 git -C "$R" add skills/narrow hooks
+entry_points_executable
 git -C "$R" commit -q -m "chore: a skill and hooks with a suite no change maps to"
 printf 'echo more\n' >>"$R/skills/narrow/scripts/alpha.sh"
 printf 'echo more\n' >>"$R/hooks/narrow.sh"
@@ -1502,7 +1505,7 @@ LANE_TOOLS="$TMP/lane-tools"
 LANE_BIN="$TMP/lane-bin"
 mkdir -p "$LANE_TOOLS" "$LANE_BIN"
 cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
-cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" \
+cp "$REPO/tools/bash32-lint" "$REPO/tools/exec-bits" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" \
   "$REPO/tools/macos-test-contracts" "$REPO/tools/macos-test-contracts.json" \
   "$REPO/tools/rust-reads" "$REPO/tools/shipped-refs" "$LANE_TOOLS/"
 cp -R "$REPO/tools/lib" "$LANE_TOOLS/lib"

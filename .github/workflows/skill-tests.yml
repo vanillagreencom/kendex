@@ -932,22 +932,10 @@ jobs:
       # tools/tests/orch-shard-partition.test.sh owns that invariant: it runs
       # every roster step below over a copy of this file and reds on a suite
       # claimed twice or claimed by none. -----------------------------------
+      # tools/exec-bits holds the rule; tools/guard runs it at commit time.
       - name: executable bits on skill tests and scripts
         if: matrix.shard == 'guards-scans'
-        run: |
-          set -u
-          fail=0
-          # A pathspec '*' crosses '/', so both skills patterns reach into
-          # subdirectories. A lib and a control are SOURCED, never entry
-          # points, and carry no mode bit — under either parent.
-          while IFS= read -r f; do
-            mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
-            if [ "$mode" = "100644" ]; then
-              echo "not executable in git: $f"
-              fail=1
-            fi
-          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
-          exit "$fail"
+        run: tools/exec-bits
 
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.

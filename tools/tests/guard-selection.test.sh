@@ -17,6 +17,7 @@ printf 'unmapped\n' > "$R/tools/unmapped"
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 git -C "$R" add -A
+entry_points_executable
 git -C "$R" commit -q -m fixture
 BASE="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main "$BASE"
@@ -89,6 +90,7 @@ grep -Fxq broken "$workflow" && exit 1
 exit 0
 SH
 git -C "$R" add -A
+entry_points_executable
 git -C "$R" commit -q -m inputs
 BASE="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main "$BASE"
@@ -168,6 +170,7 @@ printf 'refresh\n' >> "$SUITE_LOG"
 SH
 printf '#!/usr/bin/env bash\nprintf "unrelated-refresh\\n" >> "$SUITE_LOG"\nexit 1\n' > "$R/refresh/tests/unrelated.test.sh"
 git -C "$R" add -A
+entry_points_executable
 git -C "$R" commit -q -m libraries
 BASE="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main "$BASE"
@@ -373,6 +376,7 @@ git -C "$actual" config core.hooksPath "$TMP/nohooks"
 git -C "$actual" config gc.auto 0
 git -C "$actual" config maintenance.auto false
 git -C "$actual" add -A
+entry_points_executable "$actual"
 git -C "$actual" commit -q -m aggregate
 actual_base="$(git -C "$actual" rev-parse HEAD)"
 sed 's/run: tools\/ci-job-set --event-parity/run: tools\/ci-job-set/' "$actual/.github/workflows/skill-tests.yml" > "$TMP/broken-workflow"
