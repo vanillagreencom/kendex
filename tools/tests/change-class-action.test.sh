@@ -939,7 +939,7 @@ done <<'ROWS'
         declaration_comparison=unreadable@        declaration_comparison=not-needed@malformed-head
   elif [ "$declaration_comparison" = unreadable ]; then@  elif false; then@missing-head
             lane_count=$((lane_count + 1))@            :@added-lane
- && [ -n "${lane_hits[$index]}" ]; then@; then@queue-removed
+ && [ -n "$hit" ]; then@; then@queue-removed
           lane_changed[$index]=true@          lane_hits[$index]="" lane_changed[$index]=true@queue-claim-before-declaration
         [ -n "${lane_hits[$index]}" ] ||@        [ "${lane_changed[$index]}" = true ] ||@queue-claim-after-declaration
           lane_changed[$index]=true@          lane_changed[$index]=false@added-glob
@@ -1063,9 +1063,9 @@ while IFS='@' read -r needle replacement row target; do
     *) bad "must-fail: '$needle' planted as '$replacement' gave no verdict on the $row row" ;;
   esac
 done <<'ROWS'
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "${lane_hits[$index]}" ]; then@  elif false; then@pr-deferred@classify
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then@  elif false; then@pr-deferred@classify
 [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
- && [ -n "${lane_hits[$index]}" ]; then@; then@pr-unclaimed@classify
+ && [ -n "$hit" ]; then@; then@pr-unclaimed@classify
   if [ ! -f "$lanes_root/$1" ] ||@  if false ||@pr-reader-absent@classify
   if ! git -C "$REPO" cat-file blob "$HEAD:$1" >"${work:?}/judged-reader" 2>/dev/null ||@  if false ||@pr-judged-reader-absent@classify
     elif [ "$queue_only" != true ]; then@    elif false; then@pr-unconfirmed@classify

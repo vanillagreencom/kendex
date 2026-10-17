@@ -89,13 +89,13 @@
 # A lane verdict uses default-branch claims except for the declaration path,
 # whose comparison follows wiring.md § Per-lane verdicts. In this order:
 # true for every lane on the full run; false wherever lanes is false; then,
-# on render, true only for lanes whose
-# default-branch claim matches a changed path, with
-# cause=render-claim and its path and glob; then true for every lane where the
-# declaration comparison failed; then, on a pull request,
-# false with the cause queue-deferred for a lane the declaration marks
-# `:queue` and one of its own globs reaches, where this run's change-class
-# answered queue_only=true and both renders below read the mark; then true
+# on render, false for a lane whose default-branch claim matches no changed
+# path; then true for every lane where the declaration comparison failed;
+# then, on a pull request, false with the cause queue-deferred for a lane
+# the declaration marks `:queue` and one of its own globs reaches, a
+# render's claim included, where this run's change-class answered
+# queue_only=true and both renders below read the mark; then, on render,
+# true with cause=render-claim and its path and glob; then true
 # for every lane where no changed path was read; then, for a lane marked
 # `:nightly`, true only where its own glob or the declaration comparison
 # selects it; then true for every lane where a changed non-declaration path

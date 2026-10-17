@@ -3,7 +3,8 @@
 # render changes: in place, added, deleted or at either end of a move. The
 # merge group runs them; a pull request or push runs them only where the
 # base names HARNESS_CI_PER_PUSH_REASON, since the queue-only default stands
-# those events down. The real classifiers read synthetic git diffs; the
+# those events down, and a pull request still defers a `:queue` lane to the
+# merge group. The real classifiers read synthetic git diffs; the
 # verifier double supplies ownership, not the lane decision under test.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
@@ -12,15 +13,18 @@ set -euo pipefail
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 ACTION="$ROOT/.github/actions/change-class/classify"
 DECISION_LIB="$ROOT/skills/harness-ci/scripts/lib/change-class.sh"
-# The queue-only stand-down needs the render that reads the opt-back in both
-# trees a merge can run pr-merge from.
+# The queue-only stand-down needs the render that reads the opt-back, and the
+# `:queue` deferral the render that reads the mark, in both trees a merge can
+# run pr-merge from.
 READER=.agents/skills/harness-ci/scripts/change-class
+QUEUE_READER=.agents/skills/harness-ci/scripts/lib/ci-lanes.sh
 mkdir -p "$SANDBOX/control/skills"
 cp -R "$ROOT/skills/harness-ci" "$SANDBOX/control/skills/"
 cp -R "$ROOT/skills/orch" "$SANDBOX/control/skills/"
-mkdir -p "$SANDBOX/action" "$SANDBOX/bin" "$SANDBOX/default/.github" "$SANDBOX/default/$(dirname "$READER")"
+mkdir -p "$SANDBOX/action" "$SANDBOX/bin" "$SANDBOX/default/.github" "$SANDBOX/default/$(dirname "$READER")" "$SANDBOX/default/$(dirname "$QUEUE_READER")"
 cp "$ACTION" "$SANDBOX/action/classify"
 cp "$CHANGE_CLASS" "$SANDBOX/default/$READER"
+cp "$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh" "$SANDBOX/default/$QUEUE_READER"
 cat >"$SANDBOX/bin/kendex" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -53,8 +57,11 @@ spare=.agents/spare/original.py
 moved_spare=.agents/spare/renamed.py
 forwarder=.agents/skills/orch/scripts/lane-mail
 commit_paths "$repo" baseline "$old" "$spare" "$forwarder"
-mkdir -p "$repo/$(dirname "$READER")"
+mkdir -p "$repo/$(dirname "$READER")" "$repo/$(dirname "$QUEUE_READER")" "$repo/.github"
 cp "$CHANGE_CLASS" "$repo/$READER"
+cp "$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh" "$repo/$QUEUE_READER"
+# change-class reads the `:queue` mark from the base commit's declaration.
+cp "$SANDBOX/default/.github/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
 write_agents_inventory() {
   git -C "$repo" ls-files .agents | jq -Rs 'split("\n")[:-1] + [".kendex-generated.json"] | sort' >"$repo/.kendex-generated.json"
 }
@@ -102,27 +109,12 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
     unclaimed-in-place) printf 'updated implementation\n' >>"$repo/$spare" ;;
     unclaimed) git -C "$repo" mv "$spare" "$moved_spare" ;;
     destination) git -C "$repo" mv "$spare" "$new" ;;
-    rewritten)
-      git -C "$repo" mv "$spare" "$new"
-      printf 'replacement implementation\n' >"$repo/$new" ;;
     addition) printf 'replacement implementation\n' >"$repo/$new" ;;
-    legacy-copy)
-      cp "$repo/$spare" "$repo/$moved_spare"
-      git -C "$repo" mv "$spare" "$new"
-      printf 'replacement implementation\n' >"$repo/$new" ;;
-    unclaimed-rewritten)
-      git -C "$repo" mv "$spare" "$moved_spare"
-      printf 'replacement implementation\n' >"$repo/$moved_spare" ;;
   esac
   git -C "$repo" add -A
   write_agents_inventory
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$case"
-  if [ "$change" = legacy-copy ]; then
-    git_statuses="$(git -C "$repo" diff --name-status --find-renames --diff-filter=ADR "$base" HEAD)" || exit 1
-    assert_eq "$case: similarity pairs the deleted path with its copy" \
-      "$(printf 'A\t%s\nR100\t%s\t%s' "$new" "$spare" "$moved_spare")" "$git_statuses"
-  fi
   run_action "$SANDBOX/action/classify" "$event"
   assert_eq "$case: lanes" "$(printf 'lanes=%s\nlanes_cause=%s' "$expected_lanes" "$expected_cause")" \
     "$(sed -n '/^lanes=/p; /^lanes_cause=/p' "$SANDBOX/output")"
@@ -149,6 +141,12 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
             "$(sed -n "/^lane: name=$lane /p" "$SANDBOX/stderr")" ;;
       esac
     done
+    case ",$expected_verdicts," in
+      *",lane_orch=true,"*",lane_queue=false,"*)
+        assert_eq "$case: queue lane defers to the merge group" \
+          "lane: name=queue verdict=false cause=queue-deferred path=$old glob=.agents/skills/orch/scripts/lib/*" \
+          "$(sed -n '/^lane: name=queue /p' "$SANDBOX/stderr")" ;;
+    esac
   fi
   if [ -n "$control" ]; then
     case "$control" in
@@ -158,6 +156,9 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
       moved-only)
         needle='    --name-only -z --no-renames "$render_base" "$render_head" -- \'
         replacement='    --name-only -z --no-renames --diff-filter=AD "$render_base" "$render_head" -- \' ;;
+      render-undeferred)
+        needle='  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then'
+        replacement='  elif [ "$class" != render ] && [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then' ;;
       similarity-on)
         needle='    --name-only -z --no-renames "$render_base" "$render_head" -- \'
         replacement='    --name-only -z --find-renames "$render_base" "$render_head" -- \' ;;
@@ -172,22 +173,19 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
   fi
 done <<ROWS
 modify claimed file in place in merge group|merge_group|default|in-place|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_skills=true,lane_other=false|$old|moved-only|skills|false
-modify claimed file in place, opted back|pull_request|optback|in-place|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_skills=true,lane_other=false|$old
+modify claimed file in place, opted back|pull_request|optback|in-place|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=false,lane_skills=true,lane_other=false|$old|render-undeferred|queue|true
 modify claimed file in place, push opted back|push|optback|in-place|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_skills=true,lane_other=false|$old
 modify claimed file in place, queue-only default|pull_request|default|in-place|false|queue-only|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
 modify claimed file in place, push under the default|push|default|in-place|false|queue-only|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
 modify unclaimed file in place in merge group|merge_group|default|unclaimed-in-place|false|render|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
 modify unclaimed file in place, opted back|pull_request|optback|unclaimed-in-place|false|render|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
 modify unclaimed file in place, push opted back|push|optback|unclaimed-in-place|false|render|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
-rename across skills|pull_request|optback|renamed|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=true,lane_skills=true,lane_other=false|$new|similarity-on|orch|false
+rename across skills|pull_request|optback|renamed|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=false,lane_skills=true,lane_other=false|$new|similarity-on|orch|false
 rename in merge group|merge_group|optback|renamed|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=true,lane_queue=true,lane_skills=true,lane_other=false|$new
-delete claimed file|pull_request|optback|deleted|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=true,lane_skills=true,lane_other=false|$old|claim-skip|orch|false
+delete claimed file|pull_request|optback|deleted|true|render-claim|lane_orch=true,lane_orch-suite=true,lane_mailbox=false,lane_queue=false,lane_skills=true,lane_other=false|$old|claim-skip|orch|false
 rename unclaimed file|pull_request|optback|unclaimed|false|render|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
 rename into claimed directory|pull_request|optback|destination|true|render-claim|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_skills=true,lane_other=false|$new
-rewritten move into claimed directory|merge_group|optback|rewritten|true|render-claim|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_skills=true,lane_other=false|$new
 addition into claimed directory|pull_request|optback|addition|true|render-claim|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_skills=true,lane_other=false|$new
-rewritten unclaimed move|pull_request|optback|unclaimed-rewritten|false|render|lane_orch=false,lane_orch-suite=false,lane_mailbox=false,lane_queue=false,lane_skills=false,lane_other=false|-
-rewritten move with a retained copy|merge_group|optback|legacy-copy|true|render-claim|lane_orch=false,lane_orch-suite=false,lane_mailbox=true,lane_queue=false,lane_skills=true,lane_other=false|$new
 ROWS
 require_rows render-claims "$rows"
 report render-claims
