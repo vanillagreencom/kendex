@@ -376,8 +376,10 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
   fi
   OL_WALK_SOURCE_HARNESS="$preference_harness" OL_WALK_SOURCE_FLAGS="${preference_input[*]+${preference_input[*]}}"
 fi
-# Every `lanes` read below is this launch's child, whose model lines are this
-# process's (lib/overseer-launch.sh § OL_LINES_HELD). Set after the preference
+# Every `lanes` read below prints no model line (lib/overseer-launch.sh §
+# OL_LINES_HELD). This launch prints those lines only where preference_select's
+# walk classifies the entry; a launch whose text names its model prints none,
+# since that model reaches the harness as written. Set after the preference
 # walk's source of that file, which reads the hold before it exports it.
 export ORCH_MODEL_LINES_HELD=1
 

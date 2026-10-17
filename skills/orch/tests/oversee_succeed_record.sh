@@ -1062,17 +1062,17 @@ reading "Fable 5.1"
 print_on_successor() {
   CALLER_PANE="$SUCC_PANE" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
 }
-OWN="$(jq -cn --arg line "$DEAD_LINE" '{launch_line: $line}')"
-PENDING_OWN="$(jq -cn --arg line "$DEAD_LINE" --arg a "$H/.claude" '{launch_line: "the dead session line",
-  pending: {launch_line: $line, harness: "claude", account: $a, home: $a, model: "claude-opus-5", effort: "low", cwd: null}}')"
+OWN="$(jq -cn --arg line "$DEAD_LINE" '{launch_line: $line, class: "top"}')"
+PENDING_OWN="$(jq -cn --arg line "$DEAD_LINE" --arg a "$H/.claude" '{launch_line: "the dead session line", class: "top",
+  pending: {launch_line: $line, harness: "claude", account: $a, home: $a, model: "claude-opus-5", effort: "low", cwd: null, class: "standard"}}')"
 for row in \
-  "$OWN|$H/.eclaude|fable|high|the dead session's own line" \
-  "$PENDING_OWN|$H/.claude|claude-opus-5|low|a pending successor's line" \
+  "$OWN|$H/.eclaude|fable|high|top|the dead session's own line" \
+  "$PENDING_OWN|$H/.claude|claude-opus-5|low|standard|a pending successor's line" \
   ; do
-  IFS='|' read -r row_extra row_account row_model row_effort row_what <<<"$row"
+  IFS='|' read -r row_extra row_account row_model row_effort row_class row_what <<<"$row"
   dead_relaunch "$row_extra"
-  assert_eq "$RC|$(jq -r '.overseer | [.harness, .account, .model, .effort, (.pending // "none")] | join(" ")' "$FLEET_STATE")" \
-    "0|claude $row_account $row_model $row_effort none" \
+  assert_eq "$RC|$(jq -r '.overseer | [.harness, .account, .model, .effort, (.class // "none"), (.pending // "none")] | join(" ")' "$FLEET_STATE")" \
+    "0|claude $row_account $row_model $row_effort $row_class none" \
     "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
   print_on_successor
   print_model="$row_model"
@@ -1087,6 +1087,13 @@ dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
 print_on_successor
 assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$SUCC_PANE" \
   "control: a relaunch that records no identity leaves the next print refused"
+# The control: a projection of the six positional fields alone drops the class.
+DEADCLASSCTL="$(mutant_scripts deadclassctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$DEADCLASSCTL/lib/overseer-launch.sh" \
+  'def line_identity: ol_identity + (if has("class") then {class} else {} end);' 'def line_identity: ol_identity;'
+dead_relaunch "$PENDING_OWN" "$DEADCLASSCTL/oversee-succeed"
+assert_eq "$RC|$(jq -r '.overseer.class // "none"' "$FLEET_STATE")" "0|none" \
+  "control: a relaunch that projects no class records none"
 # A relaunch of a pending successor opens in the directory that successor was
 # built for, the one its record then names, not the dead pane's own.
 DEAD_CWD="$TMP_ROOT/dead-cwd"

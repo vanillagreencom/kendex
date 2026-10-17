@@ -1012,12 +1012,15 @@ ol_identity() { # HARNESS ACCOUNT HOME MODEL EFFORT CWD
 # ol_record_line_identity LINE — into OL_IDENTITY, the launch identity OL_PRIOR
 # records for LINE: the pending successor's where LINE is its line, the
 # current session's where LINE is that one's, and every field null where the
-# record holds neither. A relaunch that replays a recorded line builds no
-# command of its own, and this is the identity that line was built with.
+# record holds neither. Each keeps the `class` it records (ol_command_line),
+# which the six positional fields leave out. A relaunch that replays a
+# recorded line builds no command of its own, and this is the identity that
+# line was built with.
 ol_record_line_identity() { # LINE
   OL_IDENTITY="$(jq -c --arg line "$1" "$OL_JQ_DEFS"'
-      if type == "object" and (.pending.launch_line // null) == $line then .pending | ol_identity
-      elif type == "object" and (.launch_line // null) == $line then ol_identity
+      def line_identity: ol_identity + (if has("class") then {class} else {} end);
+      if type == "object" and (.pending.launch_line // null) == $line then .pending | line_identity
+      elif type == "object" and (.launch_line // null) == $line then line_identity
       else null | ol_identity end' <<<"${OL_PRIOR:-null}" 2>"$DEP_ERR")"
 }
 

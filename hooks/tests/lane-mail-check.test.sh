@@ -714,9 +714,10 @@ assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects t
 # An account nothing could measure is a gap the lane cannot act on: it is
 # reported and the turn ends, never refused, so a setup with no usage endpoint
 # is not stopped by a mark it can never reach.
-# The cause it relays is `lanes`' own words: the lane's launch printed its
-# model's lines, so no preference-deprecated or model-resolution line joins
-# them. The control drops the hook's hold.
+# The cause it relays is `lanes`' own words, with no preference-deprecated or
+# model-resolution line beside them: a lane's launch prints those only where
+# its preference walk classified the entry, and none where it named its model.
+# The control drops the hook's hold.
 new_handoff_lane handoff_unmeasured KEN-55
 write_transcript "$TRANSCRIPT" 1000
 # model_lines — the hook's first line, then the model lines ERR_FILE carries.

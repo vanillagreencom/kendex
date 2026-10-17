@@ -1264,9 +1264,10 @@ ORCH_LANE_HOST=/other run_close "$MUTANT" </dev/null
 assert_eq "host=$(cat "$LANE_CLOSE_LANES_CALLS.host")" "host=/other" \
   "control: without the record's host the wall is read under the caller's setting"
 # The wall read's stderr is the cause the help points at, never a model line:
-# the record's model printed its kendex lines at the lane's launch. The read
-# is the real `lanes` here, the tier-model fixture classifying `opus` on an
-# account that does not exist; the control drops lane-close's hold.
+# a lane's launch prints those only where its preference walk classified the
+# entry, and none where it named its model. The read is the real `lanes`
+# here, the tier-model fixture classifying `opus` on an account that does not
+# exist; the control drops lane-close's hold.
 cp -- "$SCRIPTS/lanes" "$TMP_ROOT/lanes.stub"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$TEST_DIR/../scripts/lanes" >"$SCRIPTS/lanes"
 MODEL_LINES=""

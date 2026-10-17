@@ -271,11 +271,12 @@ unmeasured|3|{"walled":0,"unmeasured":2}|0
 failure|1||1
 ROWS
 
-# A failed wall read relays the pick's own words, never a model line: the
-# record's model printed its kendex lines at the lane's launch, and the watch
-# starts its reads under the orch library's hold. The pick is the real `lanes`,
-# the tier-model fixture classifying `opus`, with its exit failed after it ran;
-# the control drops the library's export.
+# A failed wall read relays the pick's own words, never a model line: a lane's
+# launch prints those only where its preference walk classified the entry, and
+# none where it named its model, and the watch starts its reads under the orch
+# library's hold. The pick is the real `lanes`, the tier-model fixture
+# classifying `opus`, with its exit failed after it ran; the control drops the
+# library's export.
 HOLDCTL="$(mutant_scripts owed-holdctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$HOLDCTL/lib/overseer-launch.sh" 'export ORCH_MODEL_LINES_HELD=1' ':'
 OWED_LINES=""

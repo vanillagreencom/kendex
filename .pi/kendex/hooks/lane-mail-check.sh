@@ -37,8 +37,10 @@ AGENT_EMIT_SECONDS=3
 # Names are matched by byte ranges below, so the locale decides the match.
 export LC_ALL=C
 # No orch read this hook starts prints a model line into the stderr it relays
-# as a cause: the session's own launch printed them (orch
-# lib/overseer-launch.sh § OL_LINES_HELD).
+# as a cause (orch lib/overseer-launch.sh § OL_LINES_HELD). A session's launch
+# prints those lines only where its preference walk classified the entry, and
+# a launch that named its model prints none, since that model reaches the
+# harness as written.
 export ORCH_MODEL_LINES_HELD=1
 
 # What the refusal names, empty until it is known: the lane's unread lines,
