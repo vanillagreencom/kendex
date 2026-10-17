@@ -209,7 +209,7 @@ A text sent beside a file, the comment of `slack post --file` or the `report-due
 
 ### Owner summary template
 
-Use this mrkdwn template for the report file's comment. For a post without a file, use the standard Markdown markup above. `scripts/oversee-report write` refuses a summary that breaks tracker links, the Waiting on you section, the word limit or the item-line cap before it sends; its `--help` defines each refusal.
+Use this mrkdwn template for the report file's comment. For a post without a file, use the standard Markdown markup above. `scripts/oversee-report write` prints each finding about tracker links, the Waiting on you section, the word limit or the item-line cap and sends on the writer's word; its `--help` defines the keyed output.
 
 ```text
 [DATE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)

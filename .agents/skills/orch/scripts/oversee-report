@@ -31,7 +31,7 @@ LANE_MAIL_REFUSAL='^lane-mail: (host-unreachable|mail-read-failed)=([^ ]+)( |$)'
 # merge rate keeps well under MERGED_PAGE whatever the report settings are.
 LANDED_LOOKBACK=604800
 
-# Every line this script writes to stderr, and the only place its text lives:
+# Status and refusal messages, and the only place their text lives:
 # a stable key and the value acted on, then the English under it, then what a
 # command this script ran wrote. What its helpers write is held until exit and
 # printed after it (§ held stderr).
@@ -61,13 +61,6 @@ message() { # KEY VALUE [CAUSE]
       host-capabilities) echo "lane-host could not name the lane host kind's channel, so whether the lane has a mailbox to read is unknown:" ;;
       lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
       summary) echo "The summary file is missing or empty. The report notice carries the overseer's own summary to the owner, so nothing is written without one." ;;
-      summary-shape)
-        case "$2" in
-          bare-id) echo "Link each KEN item or PR number in Slack mrkdwn; do not leave a bare identifier." ;;
-          github-link) echo "Link the Linear item, not a GitHub pull request or commit. The item holds that detail." ;;
-          waiting-on-you) echo "Include the Waiting on you label, even when its answer is Nothing." ;;
-          layout) echo "Rewrite the summary to the shape the line below names: item lines of at most 20 words, each figure on its own line, no more item lines than ORCH_REPORT_SUMMARY_LINES. Nothing was written or sent; run write again." ;;
-        esac ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
       report-written) echo "The report printed above is this file's content." ;;
@@ -146,12 +139,13 @@ write    prints the rows and writes the same bytes to the path
          leaves the report file standing and the owner already holding the
          same text, under the notice id that line names.
          Before rendering, writing or sending, write checks the summary in
-         its posted mrkdwn form. It refuses as summary-shape with the first
-         failing rule: bare-id, github-link, waiting-on-you, layout.
-         A layout refusal's third line is summary-shape-notice: line=N
-         words=W for the first item over 20 words, else item-lines=N
-         cap=CAP when the item count exceeds ORCH_REPORT_SUMMARY_LINES.
-         Nothing is written or sent: rewrite the summary and write again.
+         its posted mrkdwn form. Each finding prints one stderr line:
+         oversee-report: summary-shape=RULE, with RULE bare-id, github-link,
+         waiting-on-you or layout. A matched line adds line=N. Each item
+         over 20 words adds words=W. An item count above
+         ORCH_REPORT_SUMMARY_LINES adds item-lines=N cap=CAP.
+         These findings are advisory: write sends on the writer's word.
+         Argument, setting and notice failures still refuse.
          Owner wording and the template live in
          references/communication-modes.md § Owner messages.
 
@@ -439,15 +433,19 @@ if ! SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i
   refuse summary "$SUMMARY"
 fi
 [[ -n "$SUMMARY_TEXT" ]] || refuse summary "$SUMMARY"
-# The overseer supplies Slack's upload comment through --summary-file.
-# Slack cannot enforce tracker links or the required owner-action section.
-if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
+# The writer owns Slack's upload comment. Findings advise the writer and
+# never refuse the send. Hold them with helper stderr so a later refusal
+# still names its cause first.
+if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
+  function finding(rule, detail) {
+    printf "oversee-report: summary-shape=%s%s\n", rule, detail
+  }
   {
     text = $0
     gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
     if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
-        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) bare = 1
-    if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) github = 1
+        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) finding("bare-id", " line=" NR)
+    if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) finding("github-link", " line=" NR)
     label = $0
     gsub(/\*/, "", label)
     sub(/^[[:space:]]+/, "", label)
@@ -460,23 +458,16 @@ if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
       sub(/^[[:space:]]*[-*][[:space:]]+/, "", words)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", words)
       count = split(words, fields, /[[:space:]]+/)
-      if (count > 20 && !notice) notice = "line=" NR " words=" count
+      if (count > 20) finding("layout", " line=" NR " words=" count)
     }
   }
   END {
-    if (bare) print "bare-id"
-    else if (github) print "github-link"
-    else if (!waiting) print "waiting-on-you"
-    else if (notice) print "summary-shape-notice: " notice
-    else if (items > cap) print "summary-shape-notice: item-lines=" items " cap=" cap
+    if (!waiting) finding("waiting-on-you", "")
+    if (items > cap) finding("layout", " item-lines=" items " cap=" cap)
   }' <<<"$SUMMARY_TEXT")"; then
   refuse summary "$SUMMARY"
 fi
-case "$SHAPE_FAILURE" in
-  summary-shape-notice:*) refuse summary-shape layout "$SHAPE_FAILURE" ;;
-  '') ;;
-  *) refuse summary-shape "$SHAPE_FAILURE" ;;
-esac
+[[ -z "$SHAPE_FINDINGS" ]] || printf '%s\n' "$SHAPE_FINDINGS" >&2
 fi
 
 # --- fleet state and the last report -----------------------------------------

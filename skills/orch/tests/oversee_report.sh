@@ -923,13 +923,15 @@ run OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail-saving" -- write --state "
 assert_eq "$RC|$(cat "$CASE/notice.txt")" "0|One line.
 $OWNER_ROWS" "the notice's text is the summary, its trailing blank lines dropped"
 seed_fleet write_notice_fails
-printf 'Nobody hears this.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+printf 'KEN-42 waits.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 touch "$CASE/notice-fail"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 FILE="$CASE/progress-reports/$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M).md"
 assert_eq "$RC|$(first_err)|$([[ -f "$FILE" ]] && echo written || echo missing)|$([[ -n "$OUT" && "$OUT" == "$(cat "$FILE")" ]] && echo printed)" \
   "2|oversee-report: notice=$FILE|written|printed" \
   "a notice that cannot be sent is refused by name after the report is printed, the file standing"
+assert_eq "$(awk '/^oversee-report: summary-shape=/ {print}' "$CASE/err")" \
+  'oversee-report: summary-shape=bare-id line=1' "a notice refusal retains the advisory finding after its refusal key"
 seed_fleet write_report_off
 printf 'The overseer hands over.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run ORCH_REPORT=off -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
@@ -997,82 +999,49 @@ assert_eq "$RC|$(sed -n '1p;3p' "$CASE/err" | paste -sd '|' -)|$([[ -n "$OUT" &&
   "2|oversee-report: notice=$FILE|lane-mail: owner-notice-repeated=overseer id=by-hand|printed|1" \
   "a summary the owner holds from a hand notice prints the report and refuses its notice, appending nothing"
 
-echo "=== write: owner summary shape before any report or notice ==="
-# The real producer is the overseer's --summary-file upload comment.
-# Each mutant keeps its detector and diagnostic but disables that rule's
-# refusal decision, so the same refusal assertion turns red.
-while IFS='~' read -r name lead mode setting rule; do
-  rows="$OWNER_ROWS"
-  case "$mode" in
-    normal) ;;
-    missing) rows=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing' ;;
-    *) echo "oversee_report: fixture-mode=$mode" >&2; exit 1 ;;
-  esac
-  new_case "summary_$name"
+echo "=== write: owner summary findings advise while the report sends ==="
+# The overseer supplies the upload comment. Its keyed findings are the
+# writer's correction protocol; no finding blocks publication or edits text.
+summary_write() { # CASE_SUFFIX
+  new_case "summary_${name}_$1"
   fleet ''
-  printf '%s\n%s\n' "$lead" "$rows" > "$CASE/summary.txt"
-  envs=()
-  [[ -z "$setting" ]] || envs+=("$setting")
-  run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-  artifacts="$(find "$CASE" -name '*.md' -o -name 'progress-reports' -o -name 'mail.calls' -o -name 'gh.calls')"
-  assert_eq "$RC|$(first_err)|$OUT|$artifacts" "2|oversee-report: summary-shape=$rule||" \
-    "summary $name refuses without rendering, writing a report or sending a notice"
-  # One must-fail control per rule, on the row whose name is the rule.
-  if [[ "$name" == "$rule" ]]; then
-    mutant="$(mutant_scripts "shape-$name/orch" oversee-report)/oversee-report" || exit 1
-    ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/shape-$name/github"
-    case "$rule" in
-      bare-id) old='if (bare) print "bare-id"'; new='if (0 && bare) print "bare-id"' ;;
-      github-link) old='else if (github) print "github-link"'; new='else if (0 && github) print "github-link"' ;;
-      waiting-on-you) old='else if (!waiting) print "waiting-on-you"'; new='else if (0 && !waiting) print "waiting-on-you"' ;;
-      *) echo "oversee_report: fixture-rule=$rule" >&2; exit 1 ;;
-    esac
-    mutate_file "$mutant" "$old" "$new"
-    REPORT_UNDER_TEST="$mutant" run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-    assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/${NAME%-succession.md}.md notice-id=notice-1" \
-      "control: removing $rule lets its defective summary write, reddening the refusal check"
-  fi
-done <<'ROWS'
-bare-id~KEN-42 is ready.~normal~~bare-id
-bare-pr~The change (#42) is ready.~normal~~bare-id
-markdown-id~[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.~normal~~bare-id
-github-link~See <https://github.com/owner/repo/pull/42|the change>.~normal~~github-link
-commit-link~See https://github.com/owner/repo/commit/abcdef.~normal~~github-link
-waiting-on-you~Work continues.~missing~~waiting-on-you
-first-failure~KEN-42: https://github.com/owner/repo/pull/42~missing~~bare-id
-ROWS
-echo "=== write: layout refuses before any report or notice ==="
-# The overseer rewrites a refused summary from its notice line and writes
-# again. A breach row proves nothing was written or sent; a conforming row
-# proves one send. Controls restore send-then-notice or move a detector,
-# reddening the same row's contract.
-layout_result() { # WANT
+  printf '%s\n%s\n\n\n' "$lead" "$rows" > "$CASE/summary.txt"
+  run OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail-saving" ${envs[@]+"${envs[@]}"} -- \
+    write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
   local file="$CASE/progress-reports/${NAME%-succession.md}.md"
-  if [[ -n "$1" ]]; then
-    printf '%s|%s|%s|%s|%s' "$RC" "$(first_err)" "$(sed -n 3p "$CASE/err")" "$OUT" \
-      "$(find "$CASE" -name '*.md' -o -name 'progress-reports' -o -name 'mail.calls' -o -name 'gh.calls')"
-  else
-    printf '%s|%s|%s|%s' "$RC" "$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")" \
-      "$(wc -l < "$CASE/mail.calls" | tr -d ' ')" "$([[ -f "$file" && "$OUT" == "$(cat "$file")" ]] && echo written)"
-  fi
-}
-layout_want() { # WANT
-  if [[ -n "$1" ]]; then printf '2|oversee-report: summary-shape=layout|%s||' "$1"; else printf '0||1|written'; fi
+  assert_eq "$RC|$(awk '/^oversee-report: summary-shape=/ {print}' "$CASE/err")" "0|$want" \
+    "summary $name sends and prints each keyed finding" "$CASE/err"
+  assert_eq "$([[ -f "$file" && -n "$OUT" && "$OUT" == "$(cat "$file")" ]] && echo written)|$(jq -sr '[.[] | select(.kind == "notice" and .to == "owner") | .attach] | join("|")' "$CASE/events.jsonl" 2>/dev/null || true)" \
+    "written|$file" "summary $name writes, prints and sends the report once" "$CASE/err"
+  assert_eq "$(cat "$CASE/notice.txt" 2>/dev/null || true)" "$(cat "$CASE/summary.txt")" \
+    "summary $name reaches the notice unchanged" "$CASE/err"
 }
 while IFS='~' read -r name mode setting want; do
   rows="$OWNER_ROWS"
+  lead='Work continues.'
   case "$mode" in
     normal) ;;
+    bare-id) lead='KEN-42 is ready.' ;;
+    bare-pr) lead='The change (#42) is ready.' ;;
+    markdown-id) lead='[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.' ;;
+    github-link) lead='See <https://github.com/owner/repo/pull/42|the change>.' ;;
+    commit-link) lead='See https://github.com/owner/repo/commit/abcdef.' ;;
+    missing) rows=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing' ;;
     spacing) rows=$'\n*Landed*\n- Nothing\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
-    words20|words21|links20)
+    words20|words21|links20|all)
       item=""
       for ((n=0; n<18; n++)); do item+="word "; done
       case "$mode" in
         words20) item+="word word" ;;
-        words21) item+="word word word" ;;
+        words21|all) item+="word word word" ;;
         links20) item+="<https://linear.app/vanillagreen/issue/KEN-42|KEN-42> <https://linear.app/vanillagreen/issue/KEN-43|KEN-43>" ;;
       esac
-      rows=$'\n*Landed*\n- '"$item"$'\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
+      if [[ "$mode" == all ]]; then
+        lead='KEN-42: https://github.com/owner/repo/pull/42'
+        rows=$'\n*Landed*\n- '"$item"$'\n- '"$item"$'\n- KEN-43: https://github.com/owner/repo/commit/abcdef'
+      else
+        rows=$'\n*Landed*\n- '"$item"$'\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing'
+      fi ;;
     cap20|cap21)
       extra=16
       [[ "$mode" != cap21 ]] || extra=17
@@ -1080,74 +1049,49 @@ while IFS='~' read -r name mode setting want; do
     figures) rows=$'\nClaude headroom: available\nCount: available\n'"$rows" ;;
     *) echo "oversee_report: fixture-mode=$mode" >&2; exit 1 ;;
   esac
-  new_case "summary_$name"
-  fleet ''
-  printf 'Work continues.\n%s\n\n\n' "$rows" > "$CASE/summary.txt"
+  want="${want//;/$'\n'}"
   envs=()
   [[ -z "$setting" ]] || envs+=("$setting")
-  run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-  if [[ -n "$want" ]]; then
-    assert_eq "$(layout_result "$want")" "$(layout_want "$want")" \
-      "summary $name refuses as layout with its notice, writing no report and sending no notice" "$CASE/err"
-  else
-    assert_eq "$(layout_result "$want")" "$(layout_want "$want")" \
-      "summary $name writes and sends once with no layout notice" "$CASE/err"
-  fi
-  case "$name" in
-    label-spacing|words|line-cap|word-limit|at-cap)
-      mutant="$(mutant_scripts "layout-$name/orch" oversee-report)/oversee-report" || exit 1
-      ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/layout-$name/github"
-      case "$name" in
-        label-spacing)
-          old='if (label ~ /^Waiting on you(:|[[:space:]]*$)/) waiting = 1'
-          new=$'if (label ~ /^(Landed|Running|Blocked|Waiting on you)(:|[[:space:]]*$)/ &&\n        (NR == 1 || previous ~ /[^[:space:]]/)) spacing = 1\n    previous = $0\n    '"$old"
-          mutate_file "$mutant" "$old" "$new"
-          old='else if (!waiting) print "waiting-on-you"'
-          new=$'else if (!waiting) print "waiting-on-you"\n    else if (spacing) print "label-spacing"' ;;
-        # The send-then-notice path the refusal replaced: hold the notice,
-        # send, then print it.
-        words|line-cap)
-          old='summary-shape-notice:*) refuse summary-shape layout "$SHAPE_FAILURE" ;;'
-          new='summary-shape-notice:*) SUMMARY_NOTICE="$SHAPE_FAILURE" ;;'
-          mutate_file "$mutant" "$old" "$new"
-          old='message report-written "$TARGET notice-id=${NOTICE_ID%% *}"'
-          new=$'message report-written "$TARGET notice-id=${NOTICE_ID%% *}"\nprintf \'%s\\n\' "$SUMMARY_NOTICE" >&3' ;;
-        word-limit) old='count > 20'; new='count > 21' ;;
-        at-cap) old='items++'; new='items = NR' ;;
+  summary_write shipped
+  if [[ "$name" == all-findings ]]; then
+    # Restore refusal or truncate the finding list in private copies. The
+    # same send-and-findings assertions must reject either regression.
+    for defect in refuse first-only; do
+      mutant="$(mutant_scripts "shape-$defect/orch" oversee-report)/oversee-report" || exit 1
+      ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/shape-$defect/github"
+      case "$defect" in
+        refuse)
+          old='[[ -z "$SHAPE_FINDINGS" ]] || printf '\''%s\n'\'' "$SHAPE_FINDINGS" >&2'
+          new='[[ -z "$SHAPE_FINDINGS" ]] || { printf '\''%s\n'\'' "$SHAPE_FINDINGS" >&2; exit 2; }' ;;
+        first-only)
+          old='printf "oversee-report: summary-shape=%s%s\n", rule, detail'
+          new='if (findings++ == 0) printf "oversee-report: summary-shape=%s%s\n", rule, detail' ;;
       esac
       mutate_file "$mutant" "$old" "$new"
-      # Each mutant gets an unwritten report destination.
-      new_case "summary_${name}_mutant"
-      fleet ''
-      printf 'Work continues.\n%s\n\n\n' "$rows" > "$CASE/summary.txt"
-      REPORT_UNDER_TEST="$mutant" run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-      case "$name" in
-        label-spacing)
-          assert_eq "$RC|$(first_err)" "2|oversee-report: summary-shape=$name" \
-            "control: restoring $name reddens the write-and-send row" ;;
-        words|line-cap)
-          assert_eq "$RC|$(wc -l < "$CASE/mail.calls" | tr -d ' ')|$(awk '/^summary-shape-notice:/ {print}' "$CASE/err")" "0|1|$want" \
-            "control: send-then-notice writes the envelope for the $name breach, reddening its refusal row" ;;
-        word-limit)
-          assert_eq "$RC|$(wc -l < "$CASE/mail.calls" | tr -d ' ')" "0|1" \
-            "control: raising the word limit sends the 21-word line, reddening its refusal row" ;;
-        at-cap)
-          assert_eq "$RC|$(first_err)|$(sed -n '3s/item-lines=[0-9]*/item-lines=N/p' "$CASE/err")" "2|oversee-report: summary-shape=layout|summary-shape-notice: item-lines=N cap=20" \
-            "control: counting physical lines refuses the conforming row" ;;
-      esac ;;
-  esac
+      if (FAIL=0; REPORT_UNDER_TEST="$mutant" summary_write "$defect"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/shape-$defect.out"; then
+        fail "summary control $defect did not redden send-and-findings coverage"
+      else
+        assert_file_contains "$TMP_ROOT/shape-$defect.out" '  FAIL  ' "summary coverage rejects $defect"
+      fi
+    done
+  fi
 done <<'ROWS'
+bare-id~bare-id~~oversee-report: summary-shape=bare-id line=1
+bare-pr~bare-pr~~oversee-report: summary-shape=bare-id line=1
+markdown-id~markdown-id~~oversee-report: summary-shape=bare-id line=1
+github-link~github-link~~oversee-report: summary-shape=github-link line=1
+commit-link~commit-link~~oversee-report: summary-shape=github-link line=1
+waiting-on-you~missing~~oversee-report: summary-shape=waiting-on-you
 conforming~normal~~
 label-spacing~spacing~~
-words~words21~~summary-shape-notice: line=4 words=21
-word-limit~words21~~summary-shape-notice: line=4 words=21
+words~words21~~oversee-report: summary-shape=layout line=4 words=21
 word-boundary~words20~~
 two-links~links20~~
-line-cap~cap21~~summary-shape-notice: item-lines=21 cap=20
+line-cap~cap21~~oversee-report: summary-shape=layout item-lines=21 cap=20
 at-cap~cap20~~
-custom-cap~normal~ORCH_REPORT_SUMMARY_LINES=3~summary-shape-notice: item-lines=4 cap=3
-figures~figures~ORCH_REPORT_SUMMARY_LINES=4~summary-shape-notice: item-lines=6 cap=4
-first-breach~words21~ORCH_REPORT_SUMMARY_LINES=3~summary-shape-notice: line=4 words=21
+custom-cap~normal~ORCH_REPORT_SUMMARY_LINES=3~oversee-report: summary-shape=layout item-lines=4 cap=3
+figures~figures~ORCH_REPORT_SUMMARY_LINES=4~oversee-report: summary-shape=layout item-lines=6 cap=4
+all-findings~all~ORCH_REPORT_SUMMARY_LINES=2~oversee-report: summary-shape=bare-id line=1;oversee-report: summary-shape=github-link line=1;oversee-report: summary-shape=layout line=4 words=21;oversee-report: summary-shape=layout line=5 words=21;oversee-report: summary-shape=bare-id line=6;oversee-report: summary-shape=github-link line=6;oversee-report: summary-shape=waiting-on-you;oversee-report: summary-shape=layout item-lines=3 cap=2
 ROWS
 for cap in '' 0 -1 text; do
   run "ORCH_REPORT_SUMMARY_LINES=$cap" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
