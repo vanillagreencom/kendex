@@ -48,8 +48,10 @@
 #     line for the pull request's range: queue_only=true on a CI workflow,
 #     queue_only=false, no line, a classifier that fails, or a range read
 #     that fails; head-moved:<sha> after it, the head every read but the
-#     range's answers; mark-moved  the MARK_REPO pull request below, in
-#     that checkout, its range read by the shipped classifier
+#     range's answers; mark-moved, mark-removed and mark-absent  the
+#     MARK_REPO pull requests below, in that checkout, their ranges read by
+#     the shipped classifier: a mark at the tip alone, at the recorded base
+#     alone, and at neither, the two bases differing in each
 #     queue-rule:<value|absent|fail>  a merge_queue rule on the base
 #     from ruleset 20569265, beside a required check from ruleset 24148610
 #     that answers never, whose read answers current_user_can_bypass
@@ -152,6 +154,18 @@ git -C "$MARK_REPO" checkout -q "$MARK_OPENED"
 printf 'check:queue src/*\n' >"$MARK_REPO/.github/ci-lanes.conf"
 git -C "$MARK_REPO" commit -q -am mark
 MARK_TIP="$(git -C "$MARK_REPO" rev-parse HEAD)"
+# A pull request opened on that marked base, MARK_TIP its recorded base,
+# whose base branch has since dropped the mark: UNMARK_TIP is that branch's
+# tip, UNMARK_HEAD the head, which changes the same path.
+mkdir -p "$MARK_REPO/src"
+printf 'app\n' >"$MARK_REPO/src/app.rs"
+git -C "$MARK_REPO" add -A
+git -C "$MARK_REPO" commit -q -m head-on-mark
+UNMARK_HEAD="$(git -C "$MARK_REPO" rev-parse HEAD)"
+git -C "$MARK_REPO" checkout -q "$MARK_TIP"
+printf 'check src/*\n' >"$MARK_REPO/.github/ci-lanes.conf"
+git -C "$MARK_REPO" commit -q -am unmark
+UNMARK_TIP="$(git -C "$MARK_REPO" rev-parse HEAD)"
 
 # A checkout whose settings still carry a retired merge key, which no mode
 # reads any more.
@@ -358,9 +372,9 @@ word() {
     rule-methods:*) W_ENV+=("STUB_RULE_METHODS=$(printf '%s' "$v" | tr '+' ' ')") ;;
     # The classifier stub's queue-only line for the pull request's range.
     route:range-fail) W_ENV+=("STUB_RANGE_FAIL=true") ;;
-    route:fail) W_ENV+=("STUB_BASE_TIP=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD") ;;
-    route:-) W_ENV+=("STUB_CLASS=standard" "STUB_BASE_TIP=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    route:true) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_TRUE" "STUB_BASE_TIP=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    route:fail) W_ENV+=("STUB_BASE_TIP=$RANGE_BASE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD") ;;
+    route:-) W_ENV+=("STUB_CLASS=standard" "STUB_BASE_TIP=$RANGE_BASE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    route:true) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_TRUE" "STUB_BASE_TIP=$RANGE_BASE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The head every read but the range's answers, the range still at the
     # head the classifier measured.
     head-moved:*) W_ENV+=("STUB_RANGE_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
@@ -368,7 +382,13 @@ word() {
     mark-moved)
       RUN_DIR="$MARK_REPO"
       W_ENV+=("STUB_BASE_OID=$MARK_OPENED" "STUB_BASE_TIP=$MARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
-    route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_TIP=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    mark-removed)
+      RUN_DIR="$MARK_REPO"
+      W_ENV+=("STUB_BASE_OID=$MARK_TIP" "STUB_BASE_TIP=$UNMARK_TIP" "STUB_HEAD=$UNMARK_HEAD") ;;
+    mark-absent)
+      RUN_DIR="$MARK_REPO"
+      W_ENV+=("STUB_BASE_OID=$MARK_OPENED" "STUB_BASE_TIP=$UNMARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
+    route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_TIP=$RANGE_BASE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The base's merge_queue rule and the answer its ruleset read gives.
     queue-entries:*) W_ENV+=("STUB_QUEUE_ENTRIES=$v") ;;
     queue-rule:fail) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "STUB_RULESET_EXIT=1") ;;
@@ -446,8 +466,7 @@ calls() {
       "pr view 123 --json mergeable"*) out="$out,view:mergeable" ;;
       "pr view 123 --json reviewDecision"*) out="$out,view:reviews" ;;
       "pr view 123 --json headRefOid"*) out="$out,view:head" ;;
-      "pr view 123 --json baseRefName,headRefOid"*) out="$out,view:range" ;;
-      "pr view 123 --json baseRefOid"*) out="$out,view:recorded-base" ;;
+      "pr view 123 --json baseRefName,baseRefOid,headRefOid"*) out="$out,view:range" ;;
       "pr view 123 --json state,headRefOid"*) out="$out,view:post" ;;
       "pr checks"*) out="$out,checks" ;;
       # Each flag that changes what GitHub does with the merge is its own

@@ -22,8 +22,11 @@
 #
 #   --mode    harness (default) | docs | render-candidate.
 #   --event   pull_request | merge_group | push. Any other event answers false.
-#   --base    the base endpoint: the PR base sha, the merge group's base sha,
-#             or a push's `before` sha.
+#   --base    the base endpoint, a revision git resolves in the checkout: on
+#             pull_request the merge ref's first parent (<github.sha>^1),
+#             the merge group's base sha, or a push's `before` sha. Never
+#             the PR's base.sha:
+#             ../references/wiring.md § The endpoint expressions.
 #   --head    the head endpoint. Default HEAD.
 #   --repo    classify this checkout instead of the working directory.
 #   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
@@ -103,8 +106,11 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
             No CI skip is authorized; change-class must prove render.
             Caller contract: ../SKILL.md, Shared refresh caller ownership.
   --event   pull_request | merge_group | push. Any other event answers false.
-  --base    the base endpoint: the PR base sha, the merge group's base sha,
-            or a push's `before` sha.
+  --base    the base endpoint, a revision git resolves in the checkout: on
+            pull_request the merge ref's first parent (<github.sha>^1),
+            the merge group's base sha, or a push's `before` sha. Never
+            the PR's base.sha:
+            ../references/wiring.md § The endpoint expressions.
   --head    the head endpoint. Default HEAD.
   --repo    classify this checkout instead of the working directory.
   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.

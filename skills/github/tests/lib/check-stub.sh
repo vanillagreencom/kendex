@@ -11,11 +11,11 @@
 # STUB_BRANCH_EXIT; a ruleset read's answer through STUB_RULESET_JSON_<id>,
 # per ruleset id, and its failure through STUB_RULESET_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the
 # post-merge read a GraphQL 200 carrying an errors array beside data, and
-# STUB_POST_VIEW_FAIL fails its pr-view fallback. STUB_BASE_TIP is the base end of the pull
+# STUB_POST_VIEW_FAIL fails its pr-view fallback. STUB_BASE_TIP is one base end of the pull
 # request's range, the base branch's tip its branch read answers, whose head
 # end is STUB_RANGE_HEAD where set, else STUB_HEAD, and STUB_RANGE_FAIL fails
-# the pull request's half of that read. STUB_BASE_OID is the base GitHub
-# recorded on the pull request, its baseRefOid. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
+# the pull request's half of that read. STUB_BASE_OID is the other base end,
+# the base GitHub recorded on the pull request, its baseRefOid. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
 # reviewDecision and latestReviews, and STUB_REQUIRE_TOKEN refuses a
 # merge-path call without the bot token. The repository read answers
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
@@ -372,17 +372,14 @@ case "${1:-}" in
                 # The pull request's half of the range, read only by the
                 # merge route. Matched before the baseRefName and headRefOid
                 # handlers, whose patterns this one contains.
-                if [[ "$*" == *"--json baseRefName,headRefOid"* ]]; then
+                if [[ "$*" == *"--json baseRefName,baseRefOid,headRefOid"* ]]; then
                     if [[ "${STUB_RANGE_FAIL:-false}" == "true" ]]; then
                         echo "could not read the pull request endpoints" >&2
                         exit 1
                     fi
-                    jq -cn --arg b "${STUB_BASE:-main}" --arg h "${STUB_RANGE_HEAD:-${STUB_HEAD:-test-head}}" \
-                        '{baseRefName:$b,headRefOid:$h}'
-                    exit 0
-                fi
-                if [[ "$*" == *"--json baseRefOid"* ]]; then
-                    echo "${STUB_BASE_OID:-base-oid}"
+                    jq -cn --arg b "${STUB_BASE:-main}" --arg o "${STUB_BASE_OID:-base-oid}" \
+                        --arg h "${STUB_RANGE_HEAD:-${STUB_HEAD:-test-head}}" \
+                        '{baseRefName:$b,baseRefOid:$o,headRefOid:$h}'
                     exit 0
                 fi
                 if [[ "$*" == *"--json baseRefName"* ]]; then

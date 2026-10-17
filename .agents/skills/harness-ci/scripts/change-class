@@ -544,8 +544,9 @@ path_class_matches() { # PHASE CLASS
 # from the judged tree: a branch cannot choose the ceilings or the roots its
 # own size is scored against, nor the paths that keep it in the queue, and a
 # settings file the branch changes answers standard as a configuration source
-# and is queue-only. That commit is the one --base names, the pull request's base tip or
-# a merge group's base, never the merge base, which the author picks by
+# and is queue-only. That commit is the one --base names, the pull request's base end
+# ../references/wiring.md § The endpoint expressions names or a merge
+# group's base, never the merge base, which the author picks by
 # choosing where to fork. The tables are parsed by orch's kendex-env.sh, the
 # shared settings reader, in its ladder's order,
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,

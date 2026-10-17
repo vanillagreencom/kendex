@@ -490,13 +490,19 @@ route_mutant route-direct-take '        method="$MERGE_ROUTE_METHOD"' '        m
 route_mutant route-queue-auto '    [ "$auto" != true ] && [ "$route" != queue ] || cmd+=(--auto)' '    [ "$auto" != true ] || cmd+=(--auto)'
 route_mutant route-occupied '    if [[ "$queue_count" =~ [1-9] ]]; then' '    if false; then'
 route_mutant route-unreadable '    if ! [[ "$queue_count" =~ ^[0-9]+$ ]]; then' '    if false; then'
-# The range's base read as main read it, the base GitHub recorded on the pull
-# request, with the shipped classifier beside the copy in place of the stub.
-mutant_copy route-recorded-base \
-  "    base_sha=\$(gh api \"repos/{owner}/{repo}/branches/\$encoded\" --jq '.commit.sha // \"\"') || return 1" \
-  '    base_sha=$(gh pr view "$1" --json baseRefOid --jq .baseRefOid) || return 1' >/dev/null
-for sibling in harness-ci orch bot-instructions; do
-  ln -s "$REPO_ROOT/skills/$sibling" "$TMPDIR/route-recorded-base/skills/$sibling"
+# The range read against one base alone, with the shipped classifier beside
+# the copy in place of the stub: the recorded base standing in for the tip,
+# as main read it, and the tip without the recorded base's second read.
+mutant_copy route-tip-cut \
+  "    tip_sha=\$(gh api \"repos/{owner}/{repo}/branches/\$encoded\" --jq '.commit.sha // \"\"') || return 1" \
+  '    tip_sha=$recorded_sha' >/dev/null
+mutant_copy route-recorded-cut \
+  '            if [ "$recorded_sha" != "$tip_sha" ]; then' \
+  '            if false; then' >/dev/null
+for mutant in route-tip-cut route-recorded-cut; do
+  for sibling in harness-ci orch bot-instructions; do
+    ln -s "$REPO_ROOT/skills/$sibling" "$TMPDIR/$mutant/skills/$sibling"
+  done
 done
 MARK_QUEUE="queue_only=true cause=queue-lane lane=check path=src/app.rs glob=src/*"
 ROUTE_PRE="$PRE,graphql:entries,view:range"
@@ -514,8 +520,11 @@ a ruleset answer with no bypass field takes the queue|checks:ci-required queue-r
 a failed ruleset read takes the queue and names the ruleset|checks:ci-required queue-rule:fail route:false post-queue|immediate-classified|75|-|merge-route: queue cause=ruleset-unreadable ruleset=20569265;{route-queue:ruleset};{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 the bypass is read under the merge's own token|checks:ci-required queue-rule:always route:false post:MERGED merge-commit:merged-oid require-token env:GH_BOT_TOKEN=ghp_test_token|immediate-classified|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;$QUEUE_FALSE;Using GH_BOT_TOKEN as stub-user;MERGED PR #123|calls=$ROUTE_PRE,user,merge:squash:admin,graphql:queue auth=<unset>+ghp_test_token
 a queue-only PR takes the queue whatever the token may bypass, naming the path that made it|checks:ci-required queue-rule:always route:true post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};$QUEUE_TRUE;{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
-a PR opened before its base marked a lane it changes takes the queue, the shipped classifier reading the base branch's tip|checks:ci-required queue-rule:always mark-moved post-queue|immediate|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};$MARK_QUEUE;{no-token};$QUEUED|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
-must-fail: with the range's base read off the pull request's recorded base, a lane marked after it opened is admin-merged past|checks:ci-required queue-rule:always mark-moved post:MERGED merge-commit:merged-oid|route-mutant:route-recorded-base|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;queue_only=false cause=no-queue-path;{no-token};MERGED PR #123|calls=$ROUTE_PRE,view:recorded-base,merge:squash:admin,graphql:queue auth=<unset>
+a PR opened before its base marked a lane it changes takes the queue, the shipped classifier reading the base branch's tip|checks:ci-required queue-rule:always mark-moved post-queue|immediate|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};$MARK_QUEUE base=tip:$MARK_TIP;{no-token};$QUEUED|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
+must-fail: with the range read off the pull request's recorded base alone, a lane marked after it opened is admin-merged past|checks:ci-required queue-rule:always mark-moved post:MERGED merge-commit:merged-oid|route-mutant:route-tip-cut|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;queue_only=false cause=no-queue-path;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
+a PR opened on a base that marked a lane it changes takes the queue after the base drops the mark, the shipped classifier reading the recorded base|checks:ci-required queue-rule:always mark-removed post-queue|immediate|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};$MARK_QUEUE base=recorded:$MARK_TIP;{no-token};$QUEUED|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
+must-fail: with the range read off the base branch's tip alone, a lane the recorded base marked is admin-merged past|checks:ci-required queue-rule:always mark-removed post:MERGED merge-commit:merged-oid|route-mutant:route-recorded-cut|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;queue_only=false cause=no-queue-path;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
+a PR whose recorded base and base tip both leave its lane unmarked admin-merges, naming both bases|checks:ci-required queue-rule:always mark-absent post:MERGED merge-commit:merged-oid|immediate|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;queue_only=false cause=no-queue-path base=tip:$UNMARK_TIP,recorded:$MARK_OPENED;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
 a classifier that prints no queue-only line reads queue-only, its stderr replayed|checks:ci-required queue-rule:always route:- post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};cause=classifier-unreadable;class: class=standard measured=true cause=stub;{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
 a classifier that fails reads queue-only|checks:ci-required queue-rule:always route:fail post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};cause=classifier-exit-1;{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
 an unreadable pull request range reads queue-only, gh's words replayed|checks:ci-required queue-rule:always route:range-fail post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;{route-queue:queue-only};cause=range-unreadable;could not read the pull request endpoints;{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>

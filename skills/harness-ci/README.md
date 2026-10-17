@@ -44,7 +44,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. |
 | `ORCH_SIZE_TEST_PATHS` | Test paths outside orch's default patterns. |
 
-For several test groups, declare their input paths in `.github/ci-lanes.conf`. The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration, the queue mark and the nightly mark for platform lanes. Refresh the install and sync the merging checkout before adding queue marks. After removing a mark, or after adding `HARNESS_CI_PER_PUSH_REASON`, update each open pull request's branch so its CI runs on the new base; a re-run keeps the old base.
+For several test groups, declare their input paths in `.github/ci-lanes.conf`. The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration, the queue mark and the nightly mark for platform lanes. Refresh the install and sync the merging checkout before adding queue marks. A `:queue` mark removed while an open pull request predates it can need one step before that pull request merges: [§ The endpoint expressions](references/wiring.md#the-endpoint-expressions).
 
 Arguments, defaults and setting precedence: `harness-only --help`, `change-class --help` and `aggregate-needs --help`. Maintainer rules and tests: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md).
 
