@@ -48,10 +48,10 @@
 #     line for the pull request's range: queue_only=true on a CI workflow,
 #     queue_only=false, no line, a classifier that fails, or a range read
 #     that fails; head-moved:<sha> after it, the head every read but the
-#     range's answers; mark-moved, mark-removed and mark-absent  the
-#     MARK_REPO pull requests below, in that checkout, their ranges read by
-#     the shipped classifier: a mark at the tip alone, at the recorded base
-#     alone, and at neither, the two bases differing in each
+#     range's answers; mark-transient and mark-unmoved  the MARK_REPO pull
+#     requests below, in that checkout, with the shipped classifier: a mark
+#     at neither base end but present between them, the ends differing, and
+#     an unmarked base the pull request recorded that is still the tip
 #     queue-rule:<value|absent|fail>  a merge_queue rule on the base
 #     from ruleset 20569265, beside a required check from ruleset 24148610
 #     that answers never, whose read answers current_user_can_bypass
@@ -128,13 +128,14 @@ git -C "$REPO" commit -q -m head
 RANGE_BASE="$(git -C "$REPO" rev-parse HEAD~1)"
 RANGE_HEAD="$(git -C "$REPO" rev-parse HEAD)"
 
-# A pull request opened before its base branch marked a lane `:queue`, judged
-# by the shipped classifier: MARK_OPENED is the base GitHub recorded on the
-# pull request, MARK_TIP the base branch's tip once the mark landed, and
-# MARK_HEAD the head, which changes a path the lane claims. The base opts
-# back to per-push runs and declares an empty queue list, so the mark alone
-# decides the queue-only class.
-MARK_REPO="$TMPDIR/mark-moved"
+# A pull request whose base branch marked a lane `:queue` after it opened and
+# dropped the mark again: MARK_OPENED is the base GitHub recorded on the pull
+# request, MARK_TIP the base branch once the mark landed, the base a push in
+# that window builds the pull request's merge ref on, UNMARK_TIP the tip
+# once the mark is gone, and MARK_HEAD the head, which changes a path the
+# lane claims. The base opts back to per-push runs and declares an empty
+# queue list, so the mark alone decides the queue-only class.
+MARK_REPO="$TMPDIR/mark-base"
 git init -q "$MARK_REPO"
 git -C "$MARK_REPO" config gc.auto 0
 git -C "$MARK_REPO" config maintenance.auto false
@@ -154,15 +155,6 @@ git -C "$MARK_REPO" checkout -q "$MARK_OPENED"
 printf 'check:queue src/*\n' >"$MARK_REPO/.github/ci-lanes.conf"
 git -C "$MARK_REPO" commit -q -am mark
 MARK_TIP="$(git -C "$MARK_REPO" rev-parse HEAD)"
-# A pull request opened on that marked base, MARK_TIP its recorded base,
-# whose base branch has since dropped the mark: UNMARK_TIP is that branch's
-# tip, UNMARK_HEAD the head, which changes the same path.
-mkdir -p "$MARK_REPO/src"
-printf 'app\n' >"$MARK_REPO/src/app.rs"
-git -C "$MARK_REPO" add -A
-git -C "$MARK_REPO" commit -q -m head-on-mark
-UNMARK_HEAD="$(git -C "$MARK_REPO" rev-parse HEAD)"
-git -C "$MARK_REPO" checkout -q "$MARK_TIP"
 printf 'check src/*\n' >"$MARK_REPO/.github/ci-lanes.conf"
 git -C "$MARK_REPO" commit -q -am unmark
 UNMARK_TIP="$(git -C "$MARK_REPO" rev-parse HEAD)"
@@ -379,15 +371,12 @@ word() {
     # head the classifier measured.
     head-moved:*) W_ENV+=("STUB_RANGE_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
     # The pull request of the MARK_REPO fixture, run in that checkout.
-    mark-moved)
-      RUN_DIR="$MARK_REPO"
-      W_ENV+=("STUB_BASE_OID=$MARK_OPENED" "STUB_BASE_TIP=$MARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
-    mark-removed)
-      RUN_DIR="$MARK_REPO"
-      W_ENV+=("STUB_BASE_OID=$MARK_TIP" "STUB_BASE_TIP=$UNMARK_TIP" "STUB_HEAD=$UNMARK_HEAD") ;;
-    mark-absent)
+    mark-transient)
       RUN_DIR="$MARK_REPO"
       W_ENV+=("STUB_BASE_OID=$MARK_OPENED" "STUB_BASE_TIP=$UNMARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
+    mark-unmoved)
+      RUN_DIR="$MARK_REPO"
+      W_ENV+=("STUB_BASE_OID=$UNMARK_TIP" "STUB_BASE_TIP=$UNMARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
     route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_TIP=$RANGE_BASE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The base's merge_queue rule and the answer its ruleset read gives.
     queue-entries:*) W_ENV+=("STUB_QUEUE_ENTRIES=$v") ;;

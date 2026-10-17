@@ -194,17 +194,12 @@ Merge route:
 
   The queue-only class is read only once everything else allows the admin
   route, from <skills>/harness-ci/scripts/change-class, else change-class on
-  PATH, over the PR's range from a base to its head. The range is read
-  from the base branch's current tip and, where it differs, from the PR's
-  recorded baseRefOid, and reads false only where both reads do: the PR's
-  CI may have classified against either end or a base between, per
+  PATH, over the PR's range from the base branch's current tip to its head.
+  It is read only where the PR's recorded baseRefOid is that tip. Where the
+  two differ, the PR's CI may have classified against a base between them,
+  so no read stands for it: the PR is queue-only, detail line
+  cause=base-moved recorded=<sha> tip=<sha>, per
   <skills>/harness-ci/references/wiring.md § The endpoint expressions.
-  Where the tip and the recorded base differ, the detail line ends with a
-  base= field naming the read or reads behind the answer: base=tip:<sha>
-  where the tip's read answered queue-only and the recorded base was not
-  read, base=recorded:<sha> where the tip's read answered false and the
-  recorded base's did not, and base=tip:<sha>,recorded:<sha> where both
-  answered false. Where they are one commit, the line carries no base=.
   The classifier takes a merge-base diff, so both commits AND an ancestor
   they share must be in this checkout: the two SHAs
   are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
@@ -1014,17 +1009,17 @@ merge_route() { # PR TOKEN HEAD QUEUE ACCEPTED...
 # readable line is queue-only: the queue is the route that runs the change in
 # a merge group before it lands.
 #
-# The range is read against two bases where they differ, the base branch's
-# tip and the base recorded on the pull request, and reads false only where
-# both do. The pull request's CI classified against one of them or a base
-# between, so a `:queue` mark or a setting either end carries keeps the
-# change in the queue: .agents/skills/harness-ci/references/wiring.md
-# § The endpoint expressions.
+# The range is classified only where the base recorded on the pull request
+# is the base branch's tip. The pull request's CI classified against that
+# recorded base or a base between it and the tip, and a `:queue` mark or a
+# setting can come and go between them, so where the two differ no single
+# read answers for the CI run and the change takes the queue, cause=base-moved:
+# .agents/skills/harness-ci/references/wiring.md § The endpoint expressions.
 QUEUE_ONLY=""
 QUEUE_ONLY_DETAIL=""
 QUEUE_ONLY_NOTES=""
 read_queue_only() { # PR HEAD
-    local pr_num="$1" pinned="$2" classifier root notes range tip_sha recorded_sha head_sha tip_detail
+    local pr_num="$1" pinned="$2" classifier root notes range tip_sha recorded_sha head_sha
     QUEUE_ONLY=true
     QUEUE_ONLY_NOTES=""
     classifier=$(sibling_script harness-ci change-class) || classifier=""
@@ -1048,21 +1043,10 @@ read_queue_only() { # PR HEAD
         # head the merge is not pinned to.
         if [ "$head_sha" != "$pinned" ]; then
             QUEUE_ONLY_DETAIL="cause=head-moved classified=$head_sha pinned=$pinned"
+        elif [ "$recorded_sha" != "$tip_sha" ]; then
+            QUEUE_ONLY_DETAIL="cause=base-moved recorded=$recorded_sha tip=$tip_sha"
         else
             queue_only_at "$root" "$classifier" "$notes" "$tip_sha" "$head_sha"
-            if [ "$recorded_sha" != "$tip_sha" ]; then
-                if [ "$QUEUE_ONLY" = false ]; then
-                    tip_detail="$QUEUE_ONLY_DETAIL"
-                    queue_only_at "$root" "$classifier" "$notes" "$recorded_sha" "$head_sha"
-                    if [ "$QUEUE_ONLY" = false ]; then
-                        QUEUE_ONLY_DETAIL="$tip_detail base=tip:$tip_sha,recorded:$recorded_sha"
-                    else
-                        QUEUE_ONLY_DETAIL="$QUEUE_ONLY_DETAIL base=recorded:$recorded_sha"
-                    fi
-                else
-                    QUEUE_ONLY_DETAIL="$QUEUE_ONLY_DETAIL base=tip:$tip_sha"
-                fi
-            fi
         fi
     fi
     case "$QUEUE_ONLY_DETAIL" in
