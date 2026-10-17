@@ -166,7 +166,7 @@ Bind what [merge-pr.md](merge-pr.md) § 1 binds once per run, which its §§ 4-7
 mkdir -p [MAIN_REPO_ROOT]/tmp
 ```
 
-Read the pull request's exact endpoints through the GitHub skill and bind them as `[BASE_SHA]` and `[HEAD_SHA]`:
+The pull request's recorded base can trail the base branch's tip: the harness-ci skill's `references/wiring.md` § The endpoint expressions. Read that recorded base and the head through the GitHub skill and bind them as `[BASE_SHA]` and `[HEAD_SHA]`:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid

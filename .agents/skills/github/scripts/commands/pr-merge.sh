@@ -199,9 +199,12 @@ Merge route:
   recorded baseRefOid, and reads false only where both reads do: the PR's
   CI may have classified against either end or a base between, per
   <skills>/harness-ci/references/wiring.md § The endpoint expressions.
-  Where two bases are read, the detail line ends base=tip:<sha>,
-  base=recorded:<sha> or base=tip:<sha>,recorded:<sha>, naming the base or
-  bases it was read off.
+  Where the tip and the recorded base differ, the detail line ends with a
+  base= field naming the read or reads behind the answer: base=tip:<sha>
+  where the tip's read answered queue-only and the recorded base was not
+  read, base=recorded:<sha> where the tip's read answered false and the
+  recorded base's did not, and base=tip:<sha>,recorded:<sha> where both
+  answered false. Where they are one commit, the line carries no base=.
   The classifier takes a merge-base diff, so both commits AND an ancestor
   they share must be in this checkout: the two SHAs
   are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
