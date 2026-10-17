@@ -87,7 +87,7 @@
 # which diffs run the lanes reaches every consumer with no workflow edit.
 #
 # A lane verdict uses default-branch claims except for the declaration path,
-# whose comparison follows wiring.md § Per-lane verdicts. On render, a
+# whose comparison follows skills/harness-ci/references/wiring.md § Per-lane verdicts. On render, a
 # lane's verdict follows that section's render bullet. Otherwise, in this
 # order: true for every lane on the full run; false wherever lanes is false;
 # then true for every lane where the declaration comparison failed;

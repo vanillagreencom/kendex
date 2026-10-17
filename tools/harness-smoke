@@ -953,8 +953,8 @@ no_session() { # HARNESS ROW — ROW is lane-mail or lane-question
 # ---- the mail-wake row -----------------------------------------------------
 # A lane idle at its prompt runs no hook, so the lane-mail row above never
 # reaches it: its own mailbox monitor, `lane-mail watch` under the harness's
-# background wake (skills/orch/references/watch-delivery.md § Lane mailbox
-# monitor), is what starts its next turn. The row asks the lane to arm that
+# background wake, per skills/orch/references/watch-delivery.md § Lane mailbox monitor,
+# is what starts its next turn. The row asks the lane to arm that
 # monitor and end its turn. A sender beside the session waits for the watch's
 # first liveness record, the monitor armed, then WAKE_DELAY seconds more, so
 # the directive lands once that turn is over; the directive asks the lane to

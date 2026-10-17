@@ -51,9 +51,8 @@ source "$SCRIPT_DIR/lib/comment-text.sh"
 # at; each name spelled at the root and below it, as the prose lane spells
 # them.
 PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
-# The files whose comment text is read for the same citations: the extractor's
-# own list of what it has a grammar for.
-SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"
+# Discover all carriers; the extractor selects a grammar, including shebangs.
+SOURCE_PATHS_DEFAULT="*"
 SECTION_SIGN=$'\302\247'
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
 SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
@@ -117,8 +116,7 @@ kendex.settings.toml [env] > default):
                                 (default $PATHS_DEFAULT)
   COMMIT_GUARDS_MD_REFS_SOURCE_PATHS
                                 the same, for the files read for citations
-                                in comment text (default: the extensions in
-                                CHECKS.md § comments)
+                                in comment text (default $SOURCE_PATHS_DEFAULT)
   COMMIT_GUARDS_MD_REFS_PATHS_EXTRA
   COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA
                                 globs added to the list above, the default

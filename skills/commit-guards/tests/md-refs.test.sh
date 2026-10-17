@@ -45,9 +45,12 @@ R=""
 run() { # ENVS ARGS
   local envs=() rc=0 out=""
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  # These grammar fixtures select their source extensions explicitly. Real
+  # commits in install-git-hooks.test.sh exercise the default discovery.
   # shellcheck disable=SC2086
   out="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" \
     XDG_CONFIG_HOME="$XDG_CONFIG_HOME" GIT_CONFIG_NOSYSTEM=1 LC_ALL=C \
+    COMMIT_GUARDS_MD_REFS_SOURCE_PATHS='*.rs *.ts *.sh *.toml *.svg *.h *.c' \
     ${envs[@]+"${envs[@]}"} "$MDR" $2 2>&1)" || rc=$?
   out="$(printf '%s\n' "$out" | LC_ALL=C awk '
     /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
@@ -430,8 +433,7 @@ fx_dec_symlink() { repo dec-symlink; put docs/decisions/real.md '# D008\n'; ln -
 fx_newline_src() { world_src newline-src; put "one"$'\n'"two.sh" "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
 # A shell carrier whose quote never closes, the opener past line 1.
 fx_unclosed_quote() { world_src unclosed-quote; put bin/q.sh "$SH"'# AGENTS.md \302\247 Rules\necho '"'"'open\n'; }
-# A dead citation in a default source and one in a suffixless script no
-# default glob names, so a row shows which lists the run read.
+# An extra adds the extensionless carrier to that configured set.
 fx_extra() { world_src "$1"; put bin/helper.sh "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; put bin/fleet "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
 fx_extra_docs() { world_src "$1"; put docs/guide.md '[dead](nope.md)\n'; }
 FLEET_DEAD="$(dead bin/fleet 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)")"
@@ -467,8 +469,8 @@ run_rows \
   "a decision ID landing on a skipped record names it|fx_dec_symlink|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md docs/decisions/*.md|--all|rc=0 $(skip docs/decisions/D008-scope.md symlink);$(clean 1 2 0 "$DEC_YES" "$(unmeasured 1 symlink=1)")" \
   "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS" \
   "and so is one left empty by an empty extra|fx_comment_ok empty-union|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS" \
-  "the source extra adds to the default list|fx_extra extra-default|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$HELPER_DEAD;$(failed 2 2 2 2)" \
-  "control: without it the default list does not read the suffixless script|fx_extra extra-unset||--all|rc=1 $HELPER_DEAD;$(failed 1 1 2 1)" \
+  "the source extra adds to the configured list|fx_extra extra-default|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$HELPER_DEAD;$(failed 2 2 2 2)" \
+  "control: without it the configured list does not read the extensionless script|fx_extra extra-unset||--all|rc=1 $HELPER_DEAD;$(failed 1 1 2 1)" \
   "the source extra adds to a replacing list, not to the default it replaced|fx_extra extra-replaced|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=*.rs,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$(failed 1 1 2 1)" \
   "an extra fills an emptied replacing list|fx_extra extra-emptied|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=,COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=bin/fleet|--all|rc=1 $FLEET_DEAD;$(failed 1 1 2 1)" \
   "the document extra adds to the default list|fx_extra_docs extra-docs|COMMIT_GUARDS_MD_REFS_PATHS_EXTRA=docs/*.md|--all|rc=1 $(dead docs/guide.md 1 "$(untracked '](nope.md)' docs/nope.md)");$(failed 1 1 3)" \

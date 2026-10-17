@@ -108,7 +108,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMINI.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `COMMIT_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
 | `COMMIT_GUARDS_MD_REFS_PATHS` | `PATHS_DEFAULT` in `scripts/md-refs` | Globs naming the Markdown documents md-refs judges. |
-| `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` | the `COMMIT_GUARDS_COMMENT_PATHS` default | Globs naming the source files md-refs reads for `§` citations in comment text. |
+| `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` | `SOURCE_PATHS_DEFAULT` in `scripts/md-refs` | Globs naming the source files md-refs reads for `§` citations in comment text. |
 | `COMMIT_GUARDS_MD_REFS_PATHS_EXTRA`, `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA` | *(empty)* | Globs added to the matching list above, its default or its replacing value, so adding one path restates none; an empty union is refused. |
 | `COMMIT_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
 | `COMMIT_GUARDS_MD_SCOPE` | `touched` | With no scope flag, `touched` runs md-format on staged files and md-refs on all configured documents when anything is staged; `all` checks every matching file. Under `touched` the batch may hand these lanes a commit range instead (`--base REF`, `--against REF`); under `all` it hands them `--all`, since a range is narrower than the sweep that setting asks for. |
