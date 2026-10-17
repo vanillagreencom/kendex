@@ -247,7 +247,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
    ```
 
-   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. Except on `[MICRO_ENTRY]`, require `[PREPARED_HEAD]=[CHECK_HEAD]`; a mismatch returns to § 3 for fresh readiness and approval. `[PREPARED_BASE]` is the recorded base, which can trail the base branch's tip: the harness-ci skill's `references/wiring.md` § The endpoint expressions. A `[MICRO_ENTRY]` run classifies them, fetching both first so a base the worktree's last fetch missed is still measured:
+   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. Except on `[MICRO_ENTRY]`, require `[PREPARED_HEAD]=[CHECK_HEAD]`; a mismatch returns to § 3 for fresh readiness and approval. `[PREPARED_BASE]` is the recorded base, which can trail the base branch's tip: the harness-ci skill's `wiring.md` reference, § The endpoint expressions. A `[MICRO_ENTRY]` run classifies them, fetching both first so a base the worktree's last fetch missed is still measured:
 
    ```bash
    git -C [WORKTREE_PATH] fetch --quiet --no-tags --no-write-fetch-head origin [PREPARED_BASE] [PREPARED_HEAD]
