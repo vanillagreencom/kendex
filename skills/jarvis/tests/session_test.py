@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 import shutil
 import signal
-from fixtures.harness import AUTH_MESSAGES, main as harness_main, native_header, native_launcher
+from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher
 import shlex
 import subprocess
 import sys
@@ -528,7 +528,12 @@ class SessionContract(unittest.TestCase):
         brief.write_text("Continue the consumer's private work.")
         for harness in ("copilot", "codex"):
             with self.subTest(harness=harness):
+                launches = len(self.started()) if self.rows.exists() else 0
                 self.call("start", harness, brief=brief)
+                # The launch line itself submits the kickoff, as the harness
+                # reads its argv; without one the start waits out its bound.
+                self.await_launches(launches + 1)
+                self.assertIsNotNone(launch_prompt(harness, self.started()[-1]["argv"]))
                 answer = self.wait()
                 self.assertIsNotNone(answer["terminal"])
                 launched = self.started()[-1]
