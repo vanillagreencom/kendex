@@ -48,10 +48,12 @@
 #     line for the pull request's range: queue_only=true on a CI workflow,
 #     queue_only=false, no line, a classifier that fails, or a range read
 #     that fails; head-moved:<sha> after it, the head every read but the
-#     range's answers; mark-transient and mark-unmoved  the MARK_REPO pull
-#     requests below, in that checkout, with the shipped classifier: a mark
-#     at neither base end but present between them, the ends differing, and
-#     an unmarked base the pull request recorded that is still the tip
+#     range's answers; mark-moved, mark-transient and mark-unmoved  the
+#     MARK_REPO pull requests below, in that checkout, with the shipped
+#     classifier: a mark at the tip and not at the recorded base, a mark at
+#     neither base end but present between them, the ends differing in
+#     both, and an unmarked base the pull request recorded that is still
+#     the tip
 #     queue-rule:<value|absent|fail>  a merge_queue rule on the base
 #     from ruleset 20569265, beside a required check from ruleset 24148610
 #     that answers never, whose read answers current_user_can_bypass
@@ -371,6 +373,9 @@ word() {
     # head the classifier measured.
     head-moved:*) W_ENV+=("STUB_RANGE_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
     # The pull request of the MARK_REPO fixture, run in that checkout.
+    mark-moved)
+      RUN_DIR="$MARK_REPO"
+      W_ENV+=("STUB_BASE_OID=$MARK_OPENED" "STUB_BASE_TIP=$MARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
     mark-transient)
       RUN_DIR="$MARK_REPO"
       W_ENV+=("STUB_BASE_OID=$MARK_OPENED" "STUB_BASE_TIP=$UNMARK_TIP" "STUB_HEAD=$MARK_HEAD") ;;
