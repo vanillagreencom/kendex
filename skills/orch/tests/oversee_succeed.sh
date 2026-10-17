@@ -2075,53 +2075,31 @@ node|399999:|90|1|oversee-succeed: harness-unnamed pane=PANE
 foreign|100000:1000000|50|1|oversee-succeed: harness-unnamed pane=PANE
 ROWS
 
-# The agent-launch refusal's named command accepts the same reading: the
-# reserve applies only with --agents-out, which the hook adds while an attached
-# agent may still be out. Without it the plain mark is 400000 tokens or strictly
-# past the percentage.
-while IFS='|' read -r reading agents reserve expected_rc verdict; do
+# Succession judges by the plain mark alone, 400000 tokens or strictly past the
+# percentage, whatever the attached-result reserve setting: it runs only after
+# every attached child has returned, and the reserve is the launch refusal's.
+while IFS='|' read -r reading reserve expected_rc verdict; do
   new_caller "$UNDER_MARK"
-  AGENT_RESERVE="$reserve" CONTEXT_PCT=90 run_succeed agentreserve '' --check-marks --context "$reading" ${agents:+"$agents"}
+  AGENT_RESERVE="$reserve" CONTEXT_PCT=90 run_succeed agentreserve '' --check-marks --context "$reading"
   assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" "$expected_rc|$verdict" \
-    "succession shares the agent-launch mark at $reading ${agents:-without agents out} with reserve $reserve"
+    "succession judges $reading by the plain mark with reserve $reserve"
 done <<'ROWS'
-240000:1000000|--agents-out|default|0|context-below-mark
-249999:1000000|--agents-out|150000|0|context-below-mark
-250000:1000000|--agents-out|150000|0|mark-reached
-260000:1000000|--agents-out|default|0|mark-reached
-300000:1000000|--agents-out|default|0|mark-reached
-29999:200000|--agents-out|150000|0|context-below-mark
-30000:200000|--agents-out|150000|0|mark-reached
-300000:1000000|--agents-out|50000|0|context-below-mark
-300000:1000000|--agents-out|-1|1|invalid-agent-reserve
-300000:1000000|--agents-out|0150000|1|invalid-agent-reserve
-300000:1000000|--agents-out|nope|1|invalid-agent-reserve
-260000:1000000||default|0|context-below-mark
-399999:1000000||default|0|context-below-mark
-400000:1000000||default|0|mark-reached
-180000:200000||default|0|context-below-mark
-180001:200000||default|0|mark-reached
-300000:1000000||nope|0|context-below-mark
+250000:1000000|150000|0|context-below-mark
+260000:1000000|default|0|context-below-mark
+399999:1000000|default|0|context-below-mark
+400000:1000000|default|0|mark-reached
+30000:200000|150000|0|context-below-mark
+180000:200000|default|0|context-below-mark
+180001:200000|default|0|mark-reached
+300000:1000000|nope|0|context-below-mark
 ROWS
+# Control: main's unconditional reserve hands over at 260000.
+RESERVECTL="$(mutant_scripts agent-reserve-always oversee-succeed)" || exit 1
+mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT")" || due_rc' '"$CONTEXT_PCT" 150000)" || due_rc'
 new_caller "$UNDER_MARK"
-NO_CONTEXT=1 run_succeed agentsalone '' --check-marks --agents-out
-assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" '1|mode-conflict' \
-  '--agents-out names the reserve of a reading and needs --context'
-# Two controls: main's three-argument call drops the reserve the launch
-# refusal applied, and main's unconditional reserve hands over at 260000 with
-# no agent out.
-RESERVECTL="$(mutant_scripts agent-reserve-control oversee-succeed)" || exit 1
-mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT" "$AGENT_RESERVE")' '"$CONTEXT_PCT")'
-new_caller "$UNDER_MARK"
-AGENT_RESERVE=150000 CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 300000:1000000 --agents-out
-assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" '0|context-below-mark' \
-  'control: a dropped reserve refuses succession at the reading that refuses an Agent launch'
-ALWAYSCTL="$(mutant_scripts agent-reserve-always oversee-succeed)" || exit 1
-mutate_file "$ALWAYSCTL/oversee-succeed" '  if (( AGENTS_OUT )); then' '  if true; then'
-new_caller "$UNDER_MARK"
-AGENT_RESERVE=default CONTEXT_PCT=90 SUCCEED_BIN="$ALWAYSCTL/oversee-succeed" run_succeed agentalwaysctl '' --check-marks --context 260000:1000000
+AGENT_RESERVE=default CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 260000:1000000
 assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" '0|mark-reached' \
-  'control: an unconditional reserve hands over at 260000 with no agent out'
+  'control: an unconditional reserve hands over at 260000 of 1000000'
 
 # A stored due reading never supplies context to either judging mode.
 while IFS='|' read -r check expected; do

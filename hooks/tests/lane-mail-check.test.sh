@@ -1534,7 +1534,8 @@ assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-75)" \
   "a notice the reader refuses is reported under its exit status, the record untouched, and the turn ends"
 assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the reader's own words under it"
 
-# The reviewed claude_attached_agents fallback reads only Agent-return ids
+# The reviewed claude_attached_agents fallback reads only Agent call ids, the
+# launch and spawn ids their results open with, whether a result is an error,
 # and matching task-notification ids/statuses. Pin that one jq read site;
 # a change to its fields, another site in that function, or a read in another
 # tracked hook must remain forbidden. The block is inventory data, not a
@@ -1544,18 +1545,30 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
     agents=$("${scan_bound[@]}" jq -Rnr '
       def text: if type == "string" then . elif type == "array" then
         [.[] | select(.type == "text") | .text] | join("\n") else "" end;
-      reduce (inputs | fromjson | .message? | objects) as $m ({};
-        if $m.role == "user" then
+      def launched: (select(startswith("Async agent launched successfully"))
+          | capture("agentId: (?<id>[A-Za-z0-9_-]+)")?),
+        (select(startswith("Spawned successfully"))
+          | capture("\nagent_id: (?<id>[A-Za-z0-9_-]+)")?);
+      reduce (inputs | fromjson | .message? | objects) as $m ({calls: {}, agents: {}, unclassified: false};
+        if $m.role == "assistant" then
           reduce ($m.content | if type == "array" then .[] else empty end
-            | select(.type == "tool_result") | .content | text
-            | select(startswith("Async agent launched successfully"))
-            | capture("agentId: (?<id>[A-Za-z0-9_-]+)")?) as $a
-            (. ; .[$a.id] = "running")
+            | select(.type == "tool_use" and (.name == "Agent" or .name == "Task"))
+            | .id | strings) as $c
+            (. ; .calls[$c] = true)
+        elif $m.role == "user" then
+          reduce ($m.content | if type == "array" then .[] else empty end
+            | select(.type == "tool_result")) as $r
+            (. ; ([$r.content | text | launched][0].id) as $id
+              | ($r.tool_use_id | if type == "string" then . else "" end) as $u
+              | if $id != null then .agents[$id] = "running"
+                elif .calls[$u] and $r.is_error != true then .unclassified = true
+                else . end)
           | reduce ($m.content | text
             | scan("<task-notification>[\\s\\S]*?<task-id>([A-Za-z0-9_-]+)</task-id>[\\s\\S]*?<status>([a-z_]+)</status>[\\s\\S]*?</task-notification>")) as $n
-            (. ; if has($n[0]) then .[$n[0]] = $n[1] else . end)
+            (. ; if .agents | has($n[0]) then .agents[$n[0]] = $n[1] else . end)
         else . end)
-      | to_entries[] | [.key, .value] | @tsv
+      | (.agents | to_entries[] | [.key, .value] | @tsv),
+        (select(.unclassified) | ["?", "agent-result"] | @tsv)
     ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || scan_rc=$?
 AGENT_ID_STATUS_READ
 text_reads() { # FILE...
@@ -1640,14 +1653,6 @@ context_rule_row() { # ROLE NAME [HOOK]
 for context_role in overseer lane; do
   context_rule_row "$context_role" "${context_role}_context_rule"
 done
-# Restore main's overseer explanation while retaining the same refusal and reading.
-mutant context-percentage-only \
-  -e 's@tokens used\. Without an agent reserve, handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). This overseer also requires handoff when tokens used plus its configured agent reserve reach either limit. Equality requires handoff on this reserve check. Succeed@tokens used, with an effective percentage setting of %s. Succeed@' \
-  -e '/^            "\$2" "\$MARK" "\$WINDOW" "\$HANDOFF_INSTRUCTION"$/s@ "\$WINDOW"@@'
-CONTEXT_RULE_CONTROL_LOG="$(PASS=0 FAIL=0; context_rule_row overseer control_context_rule "$MUTANT_PATH"; [ "$FAIL" -eq 0 ])" && CONTEXT_RULE_CONTROL_RC=0 || CONTEXT_RULE_CONTROL_RC=$?
-assert_eq "$CONTEXT_RULE_CONTROL_RC" 1 'control: main context text fails the overseer context-limit assertion'
-assert_eq "$(grep -Fxc '        got:  RC=2 first=lane-mail-check: context=405000 cap=0 percent=0 window=0' <<<"$CONTEXT_RULE_CONTROL_LOG" || true)" 1 \
-  'control: main text still refuses at 405000 tokens but omits the cap and printed-window limit'
 write_transcript "$TRANSCRIPT" "${OVERSEER_CONTEXT%%:*}"
 
 new_overseer overseer_context

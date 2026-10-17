@@ -5,10 +5,17 @@
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
-# Claude's measured Agent-return record: a launched child with no terminal
-# notification after it is still out.
-append_launch() {
-  jq -nc '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-agent",content:"Async agent launched successfully. agentId: a1"}]}}' >> "$TRANSCRIPT"
+# Claude's measured Agent call and its result: a launched child with no
+# terminal notification after it is still out.
+append_agent() { # RESULT [IS_ERROR]
+  jq -nc '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"call-agent",name:"Agent",input:{}}]}}' >> "$TRANSCRIPT"
+  jq -nc --arg r "$1" --argjson e "${2:-false}" \
+    '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-agent",content:$r,is_error:$e}]}}' >> "$TRANSCRIPT"
+}
+append_launch() { append_agent 'Async agent launched successfully. agentId: a1'; }
+# The teammate spawn Claude Code writes for a named Agent call.
+append_teammate() {
+  append_agent "$(printf 'Spawned successfully. (This tool result is internal metadata.)\nagent_id: areviewer-t1\nname: reviewer\nThe agent is now running and will receive instructions via mailbox.')"
 }
 append_notice() { # ID STATUS
   jq -nc --arg id "$1" --arg s "$2" '{type:"user",message:{role:"user",content:("<task-notification><task-id>"+$id+"</task-id><status>"+$s+"</status></task-notification>")}}' >> "$TRANSCRIPT"
@@ -19,11 +26,18 @@ append_notice() { # ID STATUS
 SCAN_AVAILABLE=0
 if command -v timeout >/dev/null 2>&1; then SCAN_AVAILABLE=1; fi
 
-launch() { # TOKENS TOOL [ENV...] — AGENTS=out leaves a launched child running
+launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if any
   local tokens="$1" tool="$2"
   shift 2
   write_transcript "$TRANSCRIPT" "$tokens"
-  [ "${AGENTS:-}" != out ] || append_launch
+  case "${AGENTS:-}" in
+    out) append_launch ;;
+    teammate) append_teammate ;;
+    # A result neither measured form matches, such as a foreground result.
+    unclassified) append_agent 'The review found no defects.' ;;
+    # A refused call launched nothing.
+    refused) append_agent 'PreToolUse:Agent hook error: refused' true ;;
+  esac
   ARM_ARGS=(halt)
   run_payload "$(jq -nc --arg t "$tool" --arg p "$TRANSCRIPT" \
     '{session_id:"s1",transcript_path:$p,tool_name:$t,tool_input:{}}')" "$@"
@@ -33,17 +47,27 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS=out leaves a launched child running
 new_lane agent_launch AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
 TRANSCRIPT="$TMP_ROOT/agent-launch.jsonl"
-# The reserve applies only while an attached agent is out; with none out the
-# launch meets the plain mark, 400000 tokens or strictly past the percentage.
+# The reserve applies only while an attached agent may be out; with none out
+# the launch meets the plain mark, 400000 tokens or strictly past the
+# percentage. Below that mark the reserve alone refuses as agent-reserve,
+# which names no handoff. An unreadable roster is never none, so rows whose
+# roster reads out or unknown also hold where the scan is unavailable.
 while IFS='|' read -r agents tokens tool reserve rc key; do
-  [ "$agents" = out ] || [ "$SCAN_AVAILABLE" -eq 1 ] || continue
+  case "$agents" in none | refused) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
   AGENTS=$agents launch "$tokens" "$tool" "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$reserve"
   expect "$rc" "$key" "launch $tool at $tokens with reserve $reserve and agents $agents"
+  case "$key" in
+    *agent-reserve=*) assert_eq "$(grep -c 'set .* handoff ' "$ERR_FILE" || true)" 0 "the reserve refusal at $tokens with agents $agents names no handoff" ;;
+  esac
 done <<'ROWS'
 out|249999|Agent||0|-
-out|250000|Agent||2|lane-mail-check: agent-launch=Agent tokens=250000 reserve=150000
-out|250001|Agent||2|lane-mail-check: agent-launch=Agent tokens=250001 reserve=150000
-out|260000|Agent||2|lane-mail-check: agent-launch=Agent tokens=260000 reserve=150000
+out|250000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000
+out|250001|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250001 reserve=150000
+out|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+out|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=150000
+teammate|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+unclassified|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+refused|260000|Agent||0|-
 none|260000|Agent||0|-
 none|399999|Agent||0|-
 none|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=none
@@ -52,7 +76,7 @@ out|250000|Bash||0|-
 out|600000|TaskOutput||0|-
 out|250000|Agent|nope|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=nope
 out|250000|Agent|-1|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=-1
-out|0|Agent|400000|2|lane-mail-check: agent-launch=Agent tokens=0 reserve=400000
+out|0|Agent|400000|2|lane-mail-check: agent-reserve=Agent tokens=0 reserve=400000
 none|0|Agent|400000|0|-
 ROWS
 if [ "$SCAN_AVAILABLE" -eq 1 ]; then
@@ -65,7 +89,7 @@ if [ "$SCAN_AVAILABLE" -eq 1 ]; then
   ARM_ARGS=()
   expect 0 - 'a returned child leaves no reserve'
 fi
-AGENTS=out launch 250000 Agent
+AGENTS=out launch 400000 Agent
 assert_eq "$(sed -n 's/^lane-mail-check: detached-route=//p' "$ERR_FILE")" orch-job-runner 'refusal names the existing detached route'
 usage_line sonnet 100000 > "$TRANSCRIPT"
 ARM_ARGS=(halt)
@@ -141,16 +165,16 @@ while IFS='|' read -r harness tool tokens window rc key; do
   ARM_ARGS=()
 done <<'ROWS'
 codex|spawn_agent|119199|258400|0|-
-codex|spawn_agent|119200|258400|2|lane-mail-check: agent-launch=spawn_agent tokens=119200 reserve=10000
-codex|multi_agent_v2.spawn_agent|119200|258400|2|lane-mail-check: agent-launch=multi_agent_v2.spawn_agent tokens=119200 reserve=10000
-codex|collaborationspawn_agent|119200|258400|2|lane-mail-check: agent-launch=collaborationspawn_agent tokens=119200 reserve=10000
+codex|spawn_agent|119200|258400|2|lane-mail-check: agent-reserve=spawn_agent tokens=119200 reserve=10000
+codex|multi_agent_v2.spawn_agent|119200|258400|2|lane-mail-check: agent-reserve=multi_agent_v2.spawn_agent tokens=119200 reserve=10000
+codex|collaborationspawn_agent|119200|258400|2|lane-mail-check: agent-reserve=collaborationspawn_agent tokens=119200 reserve=10000
 codex|followup_task|119199|258400|0|-
-codex|followup_task|119200|258400|2|lane-mail-check: agent-launch=followup_task tokens=119200 reserve=10000
-codex|collaborationfollowup_task|119200|258400|2|lane-mail-check: agent-launch=collaborationfollowup_task tokens=119200 reserve=10000
-codex|multi_agent_v2.followup_task|119200|258400|2|lane-mail-check: agent-launch=multi_agent_v2.followup_task tokens=119200 reserve=10000
+codex|followup_task|119200|258400|2|lane-mail-check: agent-reserve=followup_task tokens=119200 reserve=10000
+codex|collaborationfollowup_task|119200|258400|2|lane-mail-check: agent-reserve=collaborationfollowup_task tokens=119200 reserve=10000
+codex|multi_agent_v2.followup_task|119200|258400|2|lane-mail-check: agent-reserve=multi_agent_v2.followup_task tokens=119200 reserve=10000
 codex|send_message|119200|258400|0|-
 pi|subagent|89999|200000|0|-
-pi|subagent|90000|200000|2|lane-mail-check: agent-launch=subagent tokens=90000 reserve=10000
+pi|subagent|90000|200000|2|lane-mail-check: agent-reserve=subagent tokens=90000 reserve=10000
 ROWS
 
 new_lane agent_copilot AGENT-1
@@ -165,7 +189,7 @@ for tool in task Agent Task; do
   ARM_ARGS=(halt)
   run_payload '{"sessionId":"s1","timestamp":1,"toolName":"'"$tool"'","toolArgs":{}}' ORCH_HANDOFF_AGENT_RESERVE_TOKENS=10000
   assert_eq "RC=$RC decision=$(jq -r '.permissionDecision' "$TMP_ROOT/stdout") first=$(first_line)" \
-    "RC=2 decision=deny first=lane-mail-check: agent-launch=$tool tokens=70000 reserve=10000" 'Copilot camelCase names its attached launch and receives deny JSON'
+    "RC=2 decision=deny first=lane-mail-check: agent-reserve=$tool tokens=70000 reserve=10000" 'Copilot camelCase names its attached launch and receives deny JSON'
 done
 ARM_ARGS=()
 CALL_ENV=()
@@ -177,21 +201,23 @@ new_overseer agent_overseer
 judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 AGENTS=out launch 250000 Agent $(overseer_env)
-expect 2 'lane-mail-check: agent-launch=Agent tokens=250000 reserve=150000' 'the identified overseer meets the reserve'
-# The succession the refusal names is handed the reserve the refusal applied.
-named_judge() { grep -o 'oversee-succeed --context [0-9:]*\( --agents-out\)\{0,1\}' "$ERR_FILE" | head -n 1 || :; }
+expect 2 'lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000' 'the identified overseer meets the reserve'
+# Only a refusal at the plain mark names the succession, which oversee-succeed
+# judges by that same mark; a reserve refusal names none it would refuse.
+named_judge() { sed -n 's/.*oversee-succeed \(.*\) -- \[THE PERMISSION.*/\1/p' "$ERR_FILE" | head -n 1; }
 while IFS='|' read -r agents tokens rc key judge; do
   [ "$agents" = out ] || [ "$SCAN_AVAILABLE" -eq 1 ] || continue
   # shellcheck disable=SC2046
   AGENTS=$agents launch "$tokens" Agent $(overseer_env)
-  expect "$rc" "$key" "overseer Agent launch at $tokens with agents $agents shares the succession mark"
-  [ "$rc" = 0 ] || assert_eq "$(named_judge)" "$judge" "overseer refusal at $tokens with agents $agents names its judge"
+  expect "$rc" "$key" "overseer Agent launch at $tokens with agents $agents"
+  [ "$rc" = 0 ] || assert_eq "$(named_judge)" "$judge" "overseer refusal at $tokens with agents $agents names its succession"
 done <<'ROWS'
 out|240000|0|-|
-out|260000|2|lane-mail-check: agent-launch=Agent tokens=260000 reserve=150000|oversee-succeed --context 260000:1000000 --agents-out
-out|300000|2|lane-mail-check: agent-launch=Agent tokens=300000 reserve=150000|oversee-succeed --context 300000:1000000 --agents-out
+out|260000|2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000|
+out|300000|2|lane-mail-check: agent-reserve=Agent tokens=300000 reserve=150000|
+out|400000|2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=150000|--context 400000:1000000
 none|260000|0|-|
-none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=none|oversee-succeed --context 400000:1000000
+none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000 reserve=none|--context 400000:1000000
 ROWS
 record_overseer_handoff
 # shellcheck disable=SC2046
@@ -219,20 +245,39 @@ expect_fallback() { # EXPECTED_ROWS CASE
     assert_eq "$(agent_rows)" '' "$2: no unverified rows"
   fi
 }
-# The turn-end judge keeps the reserve only while a child may be out; with no
-# registry the roster is unknown and the reserve stays.
-while IFS='|' read -r fields want judged; do
+# The native registry names subagents and teammates; a task type outside the
+# documented agent and non-agent lists is unclassified, so the roster is
+# unknown. The turn-end judge takes the reading alone, whatever is out.
+while IFS='|' read -r fields want unknown; do
   rm -f -- "${JUDGE_DIR:?}/args"
   agent_stop "$fields"
   expect 2 'lane-mail-check: context=612000' 'a reached mark retains its refusal'
-  assert_eq "$(agent_rows)" "$want" 'native child list'
-  assert_eq "$(judge_argv)" "$judged" "turn-end judge arguments for $fields"
+  assert_eq "rows=$(agent_rows) unknown=$(sed -n 's/^lane-mail-check: agent-unclassified=//p' "$ERR_FILE")" \
+    "rows=$want unknown=$unknown" "native child list for $fields"
+  assert_eq "$(judge_argv)" '--check-marks --context 600000:1000000' "turn-end judge arguments for $fields"
 done <<'ROWS'
-{"background_tasks":[]}||--check-marks --context 600000:1000000
-{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}|a1 status=running output=unknown|--check-marks --context 600000:1000000 --agents-out
-{"background_tasks":[{"id":"a1","type":"subagent","status":"completed"},{"id":"s1","type":"shell","status":"running"}]}||--check-marks --context 600000:1000000
-{}||--check-marks --context 600000:1000000 --agents-out
+{"background_tasks":[]}||
+{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}|a1 status=running output=unknown|
+{"background_tasks":[{"id":"a1","type":"subagent","status":"completed"},{"id":"s1","type":"shell","status":"running"}]}||
+{"background_tasks":[{"id":"m1","type":"monitor","status":"running"},{"id":"p1","type":"MCP task","status":"running"}]}||
+{"background_tasks":[{"id":"t1","type":"teammate","status":"running"}]}|t1 status=running output=unknown|
+{"background_tasks":[{"id":"w1","type":"workflow","status":"running"}]}||task-type
 ROWS
+# A launch admitted with none out leaves its child running at the turn end,
+# which the judge reads by the plain mark: no reserve, so no hand-over below
+# 400000.
+if [ "$SCAN_AVAILABLE" -eq 1 ]; then
+  judge_says "$BELOW_MARK_LINE"
+  # shellcheck disable=SC2046
+  launch 260000 Agent $(overseer_env)
+  expect 0 - 'the overseer launches at 260000 of 1000000 with none out'
+  rm -f -- "${JUDGE_DIR:?}/args"
+  agent_stop '{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}'
+  expect 0 - 'its turn end with that child running demands no hand-over below 400000'
+  assert_eq "$(judge_argv)" '--check-marks --context 260000:1000000' 'the turn-end judge takes the reading alone'
+  judge_says "$CONTEXT_MARK_LINE"
+  write_transcript "$TRANSCRIPT" 600000
+fi
 agent_stop '{"background_tasks":null}'
 assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown 'malformed native state is unknown'
 
@@ -258,6 +303,9 @@ mkdir -p "${TRANSCRIPT%.jsonl}/subagents"
 : > "${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl"
 agent_stop '{}'
 expect_fallback "a1 status=running output=${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl" 'a later launch replaces completion and names existing output'
+append_teammate
+agent_stop '{}'
+expect_fallback "$(printf 'a1 status=running output=%s\nareviewer-t1 status=running output=unknown' "${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl")" 'fallback names a spawned teammate'
 printf '{broken\n' >> "$TRANSCRIPT"
 agent_stop '{}'
 assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown 'an unreadable fallback never reports no child'
@@ -290,7 +338,8 @@ SCAN_TIMEOUT
   fi
   for scan_case in timeout unbounded-control unavailable exhausted native; do
     case "$scan_case" in
-      timeout | unbounded-control)
+      # The budget is judged only once the host bound exists.
+      timeout | unbounded-control | exhausted)
         [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;;
     esac
     scan_edits=(-e 's/^  JUDGE_RC=0$/  HOOK_AGENT_DEADLINE=$((SECONDS + 30)); SECONDS=$((SECONDS + 20)); JUDGE_RC=0/')
@@ -337,21 +386,28 @@ SCAN_TIMEOUT
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve judge; do
-    if [ "$mutation" = completion ] && [ "$SCAN_AVAILABLE" -eq 0 ]; then
-      printf 'skip: completion control requires a host timeout command\n'
-      continue
-    fi
+  for mutation in launch input children native completion capability reserve unclassified wait; do
+    case "$mutation" in
+      completion | reserve | unclassified)
+        # Each reddens only rows whose roster the transcript scan reads.
+        if [ "$SCAN_AVAILABLE" -eq 0 ]; then
+          printf 'skip: %s control requires a host timeout command\n' "$mutation"
+          continue
+        fi
+        ;;
+    esac
     case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
       children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
       native) variant agent-no-native -e 's/^  if jq -e '\''has("background_tasks")'\'' <<<"\$INPUT" >\/dev\/null; then$/  if false; then/' ;;
-      completion) variant agent-no-completion -e 's/if has(\$n\[0\]) then .\[\$n\[0\]\] = \$n\[1\] else . end/. /' ;;
+      completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then \.agents\[\$n\[0\]\] = \$n\[1\] else \. end/. /' ;;
       capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
       # Main's rule: the reserve applies whether or not an agent is out.
-      reserve) variant agent-reserve-always -e 's/^    if attached_agents_out; then$/    if true; then/' ;;
-      judge) variant agent-judge-always -e 's/ && attached_agents_out native; then$/; then/' ;;
+      reserve) variant agent-reserve-always -e 's/^    attached_agents_out || held=none$/    :/' ;;
+      unclassified) variant agent-unclassified-none -e 's/then \.unclassified = true$/then ./' ;;
+      # Main's refusal: the reserve alone names the handoff.
+      wait) variant agent-reserve-handoff -e 's/^      \*) refuse agent-reserve /      *) refuse_handoff agent-launch /' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \
