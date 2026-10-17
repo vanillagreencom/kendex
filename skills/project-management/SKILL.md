@@ -109,10 +109,11 @@ A Linear list read is workspace-wide unless it passes `--team`, so each path sta
 | tpm-audit `single`, GitHub | n/a, reads nothing from Linear | n/a |
 | tpm-audit `project-order` | yes | § 11 initiatives and projects; per-project issue lists pass `--team` |
 | tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects; § 1.5 active/closed issue lists pass `--team` and comments cover inputs and candidates |
-| tpm-cycle-plan | **no** | **no**. § 1 picks the active project from `session-status`'s workspace-wide started projects, and every later read is scoped to that pick |
+| tpm-cycle-plan | **no** | **no**. § 1 picks the active project from `session-status`'s workspace-wide started projects, and every issue read is scoped to that pick. The § 1 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](references/project-map.md#audit)) |
 | audit-issues §§ 7.2-7.5 | n/a, executes an artifact tpm-audit produced under its scope | reads rooted at an in-scope project or an issue this run mutated |
-| audit-issues § 1.2.1, § 3 | **no** | **no**. `session-status` selects projects workspace-wide |
-| cycle-plan, roadmap-plan, roadmap-create, research-spike | **no** | **no**. Project, initiative, and label reads span the workspace |
+| audit-issues § 1.2.1, § 3 | **no** | **no**. `session-status` selects projects workspace-wide. The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](references/project-map.md#audit)) |
+| cycle-plan, roadmap-plan, roadmap-create | **no** | **no**. Project, initiative, and label reads span the workspace. roadmap-create's map read is scoped to the team it creates in |
+| research-spike | **no** | **no**. Project and label reads span the workspace. The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](references/project-map.md#audit)) |
 | research-complete | n/a | reads are rooted at the caller's issue identifier |
 | research-issue | n/a | reads rooted at the caller's identifiers; the project it creates into is the caller's pick |
 

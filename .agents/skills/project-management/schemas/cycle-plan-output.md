@@ -4,7 +4,7 @@ Returned inline by `tpm-cycle-plan.md` and written by the caller to `tmp/cycle-p
 
 ## Status: project_complete
 
-The active project has no backlog, actionable, or in-progress issues left, or no started project counts as active ([project-map.md § Project kinds](../references/project-map.md#project-kinds)) and `completed_project` is null.
+The active project has no open issue left in Backlog, Todo, In Progress or In Review (tpm-cycle-plan § 1), or no started project counts as active ([project-map.md § Project kinds](../references/project-map.md#project-kinds)) and `completed_project` is null.
 
 ```json
 {
@@ -14,11 +14,12 @@ The active project has no backlog, actionable, or in-progress issues left, or no
     {"id": "uuid", "name": "Phase 2: Data Layer", "priority": 2, "sort_order": 1.5, "ready": true, "blocked_by_incomplete": []}
   ],
   "recommended": {"id": "uuid", "name": "Phase 2: Data Layer", "reason": "First ready by sort_order"},
+  "blocked_by_active": {"id": "uuid", "name": "Windows Support"} | null,
   "actions": {"mark_complete": {"project_id": "uuid", "project_name": "Phase 1: Foundation", "ends_when_evidence": "string|null"}}
 }
 ```
 
-`actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1), and when `completed_project` is null; its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
+`actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1), and when `completed_project` is null; its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `blocked_by_active` is the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds) once this result is applied: `completed_project` when held open, otherwise another started project that counts as active; null when none does. `ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
 
 ## Status: plan_ready
 

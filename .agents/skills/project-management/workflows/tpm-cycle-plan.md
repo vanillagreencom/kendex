@@ -10,9 +10,15 @@ Analyze the backlog, compute architecture order, and recommend a cycle plan.
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
-Read the project map, as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does: a deliverable's `ends_when` is its entry in the `### Project map` block. `[ACTIVE_PROJECT]`, used everywhere below, is the first `projects[]` entry, in `session-status`'s priority order, that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project; record its `name` and `id`. Extract `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` entries whose `project_name` is `[ACTIVE_PROJECT]`, `backlog_projects` (ordered by `sort_order`), and `next_project`.
+Read the project map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)): a deliverable's `ends_when` is its entry in the `### Project map` block. `[ACTIVE_PROJECT]`, used everywhere below, is the first `projects[]` entry, in `session-status`'s priority order, that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project; record its `name` and `id`. Extract `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` entries whose `project_name` is `[ACTIVE_PROJECT]`, `backlog_projects` (ordered by `sort_order`), and `next_project`. Those three lists feed planning only.
 
-**All three issue lists empty** means the project has no open work left — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), and `actions.mark_complete`. `actions.mark_complete` is null when § Project kinds holds the project open. With no entry counting as active, return the same way with `completed_project` and `actions.mark_complete` null.
+Whether `[ACTIVE_PROJECT]` has an open item left is read from every open issue in it, as [§ Project kinds](../references/project-map.md#project-kinds) requires, in the open states `session-status` reads per started project:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --state "Backlog,Todo,In Progress,In Review" --max
+```
+
+**No row** means the project has no open item left — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), `actions.mark_complete` and `blocked_by_active`. `actions.mark_complete` is null when § Project kinds holds the project open. `blocked_by_active` is the started project that holds activation after this run: `completed_project` when it is held open, otherwise the next `projects[]` entry that § Project kinds counts as active, or null. With no entry counting as active, return the same way with `completed_project`, `actions.mark_complete` and `blocked_by_active` null.
 
 If any label recommendation may follow, load the inventory first — `labels list --max --format=safe`. Every `actions.set_labels[]` entry must name its update mode and category and carry enough data for the caller to preflight a full final set.
 

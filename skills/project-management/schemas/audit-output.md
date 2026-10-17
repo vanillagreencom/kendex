@@ -196,7 +196,7 @@ A parent created or promoted this way is a container by default. `(one PR)` mark
                "current_sort_order": -5000, "new_sort_order": -10000, "rationale": "..."}],
   "complete_candidates": [{"id": "uuid", "name": "string", "progress": 1.0, "unblocks": ["Project X"], "ends_when_evidence": "string|null"}],
   "complete_held": [{"id": "uuid", "name": "string", "progress": 1.0, "ends_when": "string|null"}],
-  "recommended_next": {"id": "uuid or null", "name": "string or null", "rationale": "...", "blocked_by_active": {"id": "uuid", "name": "string"}},
+  "recommended_next": {"id": "uuid or null", "name": "string or null", "rationale": "...", "blocked_by_active": {"id": "uuid", "name": "string"} | null},
   "summary": {"projects_analyzed": 0, "reorder_needed": 0, "projects_to_complete": 0, "projects_ready": 0}
 }
 ```

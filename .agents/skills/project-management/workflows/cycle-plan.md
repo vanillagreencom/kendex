@@ -21,7 +21,7 @@ This workflow mutates project state; every read below is live, so it acts on the
 
 ## 2. Project Complete
 
-The JSON carries `completed_project`, `next_projects` (by `sort_order`), `recommended`, and `actions.mark_complete`.
+The JSON carries `completed_project`, `next_projects` (by `sort_order`), `recommended`, `blocked_by_active`, and `actions.mark_complete`.
 
 Mark the finished project complete without asking. **Skip** the command when `actions.mark_complete` is null: the project map holds the project open, and the report says it stays started, or `completed_project` is null, as no started project counts as active.
 
@@ -37,6 +37,8 @@ Then present the candidates and ask which to start.
 
 **Held open** (map deliverable, `ends_when` not shown to hold): [completed_project.name] stays started — shown only when `completed_project` is set and `actions.mark_complete` is null
 
+**Active project**: [blocked_by_active.name] holds activation — shown only when `blocked_by_active` is set and is not `completed_project`
+
 | # | Project | Pri | Ready | Blocked by |
 |---|---------|-----|-------|------------|
 | 1 | [NAME] | P[N] | yes/no | [BLOCKERS or —] |
@@ -44,7 +46,7 @@ Then present the candidates and ask which to start.
 Recommended: [recommended.name] — [recommended.reason]
 </output_format>
 
-**Skip** the question when the map held the project open: that deliverable stays the active project, which holds every other project from activation ([project-map.md § Project kinds](../references/project-map.md#project-kinds)), and the workflow ends. Otherwise ask: `Activate [recommended.name]` | other projects with `ready: true` | `Skip`. Activating starts the project and re-runs § 1; `Skip` ends the workflow. A project with `ready: false` is not offered — show its blockers instead.
+**Skip** the question when `blocked_by_active` is set: that project is the active one, which holds every other project from activation ([project-map.md § Project kinds](../references/project-map.md#project-kinds)). When it is `completed_project`, held open, the workflow ends; otherwise re-run § 1, which plans it. With `blocked_by_active` null, ask: `Activate [recommended.name]` | other projects with `ready: true` | `Skip`. Activating starts the project and re-runs § 1; `Skip` ends the workflow. A project with `ready: false` is not offered — show its blockers instead.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state started
