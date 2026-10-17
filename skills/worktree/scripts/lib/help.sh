@@ -427,9 +427,12 @@ Lane mailboxes:
   Just before Git runs, each lane mailbox under the worktree's tmp/lane-mail
   moves to the main checkout's tmp/lane-mail, where the overseer's watch reads
   a removed lane's mail, and its to-lane.watch record is dropped. One meeting a
-  mailbox already there adds its to-overseer.jsonl lines after that one's.
-  A refusal from Git puts each mailbox back. A mailbox that cannot be moved
-  refuses the removal as worktree-lane-mail-move-failed with nothing removed;
+  mailbox already there adds to that one's to-lane.jsonl the overseer's
+  replies to its lines, so an answered or closed ask stays settled, then its
+  to-overseer.jsonl lines after that one's. Its other to-lane.jsonl lines,
+  mail to the finished lane, are dropped. A refusal from Git puts each
+  mailbox back. A mailbox that cannot be moved refuses the removal as
+  worktree-lane-mail-move-failed with nothing removed;
   one that cannot join the main checkout's is kept beside it, named by
   worktree-lane-mail-kept, and the exit is non-zero. cleanup does the same.
 EOF

@@ -2763,7 +2763,7 @@ check_mail() { # [overseer]
   local MAIL_ROW_MODE=1
   local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at unread_passes repeat standing reported at
-  local mail_items host_flag args row_kind row_fields state="$MAIL_SEEN"
+  local mail_items host_flag args row_fields state="$MAIL_SEEN"
   mail_items=()
   if [[ "${1:-}" != overseer ]]; then
     HOSTED_GONE_ITEMS=""
@@ -2818,21 +2818,21 @@ check_mail() { # [overseer]
     fi
     # The worktree skill's remove moves the lane's mailbox into the clone, so
     # on the first pass that finds the worktree gone the clone's mailbox is the
-    # file the worktree's cursor counted. A worktree row with a first id seeds
-    # the clone's; the first-id check below still reads a different mailbox
-    # whole, once.
+    # file the worktree's cursor counted. A worktree lane-mail row with a first
+    # id seeds the clone's; the first-id check below still reads a different
+    # mailbox whole, once. The directive row is taken over below, once the
+    # clone's to-lane.jsonl is read.
     if [[ "$cursor" == "$item@clone" ]]; then
-      for row_kind in lane-mail directive; do
-        lane_row_get "$row_kind" "$state" "$cursor" >/dev/null || die state-read-failed "" "item=$item" "row=$row_kind"
-        [[ -z "$LANE_ROW" ]] || continue
-        lane_row_get "$row_kind" "$state" "$item" >/dev/null || die state-read-failed "" "item=$item" "row=$row_kind"
+      lane_row_get lane-mail "$state" "$item@clone" >/dev/null || die state-read-failed "" "item=$item" "row=lane-mail"
+      if [[ -z "$LANE_ROW" ]]; then
+        lane_row_get lane-mail "$state" "$item" >/dev/null || die state-read-failed "" "item=$item" "row=lane-mail"
         read -r -a row_fields <<<"$LANE_ROW"
-        # `<count> <first>` and `<read> <unread> <first>`: a row short of its
-        # first id recorded an empty one.
-        [[ "$row_kind:${#row_fields[@]}" == lane-mail:2 || "$row_kind:${#row_fields[@]}" == directive:3 ]] || continue
-        lane_row_set "$row_kind" "$state" "$cursor" "${LANE_ROW%%$'\n'*}" >/dev/null
-        state="$LANE_ROW"
-      done
+        # `<count> <first>`: a row short of its first id recorded an empty one.
+        if [[ "${#row_fields[@]}" -eq 2 ]]; then
+          lane_row_set lane-mail "$state" "$cursor" "${LANE_ROW%%$'\n'*}" >/dev/null
+          state="$LANE_ROW"
+        fi
+      fi
     fi
     args=(--item "$item")
     [[ -z "$root" ]] || args+=(--root "$root" ${host_flag[@]+"${host_flag[@]}"})
@@ -2917,6 +2917,19 @@ check_mail() { # [overseer]
         die state-read-failed "" "item=$item" "row=directive"
       fi
       stored="$LANE_ROW"
+      # A clone with no row yet takes the worktree's while its to-lane.jsonl is
+      # still the file that row counted: the same first id and a cursor not
+      # behind it. The worktree skill's remove joins a lane mailbox to one
+      # already in the main checkout by carrying only the overseer's replies,
+      # so that to-lane.jsonl is another file, read as a lane with no row.
+      if [[ -z "$stored" && "$cursor" == "$item@clone" ]]; then
+        lane_row_get directive "$state" "$item" >/dev/null || die state-read-failed "" "item=$item" "row=directive"
+        read -r read_at unread_at seen <<<"$LANE_ROW"
+        if [[ -n "$seen" && "$seen" == "$to_first" && "$read_at" =~ ^[0-9]+$ && "$lane_read" =~ ^[0-9]+$ ]] \
+          && (( lane_read >= read_at )); then
+          stored="${LANE_ROW%%$'\n'*}"
+        fi
+      fi
       read -r read_at unread_at seen <<<"$stored"
       unread_passes=0
       if [[ "$unread_at" == *:* ]]; then

@@ -762,6 +762,47 @@ mutate_file "$MOVED_MAIL_WATCH" 'if [[ "$cursor" == "$item@clone" ]]; then' 'if 
 WATCH_BIN="$MOVED_MAIL_WATCH" moved_removed_mail mail_local_moved_hand_control hand
 assert_eq "$MOVED_MAIL_FACTS" 'pass=1 early=1; pass=2 rc=0 early=1 closing=1; pass=3 rc=0 early=0 closing=0; ' "control: a clone cursor that starts at zero reports the drained line again" "$STUB_DIR/run2.err"
 
+# The main checkout already holds the item's mailbox, an earlier lane's, whose
+# directive that lane read. This lane's ask was answered and its directive
+# read before the worktree skill's remove joined the two. Neither the answered
+# ask nor the earlier lane's directive is reported after the join.
+joined_removed_mail() { # CASE
+  local root box main pass out rc=0
+  new_case "$1"
+  root="$STUB_DIR/lane"
+  box="$root/tmp/lane-mail/KEN-94"
+  main="$CASE_REPO_ROOT/tmp/lane-mail/KEN-94"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  mkdir -p "$main"
+  printf '{"id":"old-1","kind":"notice","at":"t","text":"Done."}\n' > "$main/to-overseer.jsonl"
+  printf '{"id":"old-dir","kind":"directive","at":"t","text":"Stop."}\n' > "$main/to-lane.jsonl"
+  printf '1\n' > "$main/to-lane.cursor"
+  git -C "$CASE_REPO_ROOT" worktree add -q --detach "$root"
+  mkdir -p "$box"
+  printf '{"id":"ask-1","kind":"ask","at":"t","text":"Which?"}\n' > "$box/to-overseer.jsonl"
+  printf '{"id":"re-1","kind":"answer","re":"ask-1","at":"t","text":"This."}\n{"id":"dir-1","kind":"directive","at":"t","text":"Go."}\n' > "$box/to-lane.jsonl"
+  printf '2\n' > "$box/to-lane.cursor"
+  jq -nc --arg root "$root" '{lanes:[{item:"KEN-94",status:"running",host:"local",mail_root:$root,harness:"claude"}]}' > "$STUB_DIR/local-state.json"
+  run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" > "$STUB_DIR/run1.out" 2> "$STUB_DIR/run1.err"
+  JOINED_MAIL_FACTS="pass=1 question=$(grep -c 'EVENT lane-question KEN-94' "$STUB_DIR/run1.out" || :); "
+  printf '{"id":"closing-1","kind":"notice","at":"t","text":"Merged."}\n' >> "$box/to-overseer.jsonl"
+  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/worktree/scripts/worktree" remove "$root") \
+    > "$STUB_DIR/remove.out" 2> "$STUB_DIR/remove.err" || rc=$?
+  JOINED_MAIL_FACTS+="remove=$rc; "
+  for pass in 2 3; do
+    rc=0
+    out="$(run_watch -- --max-loops 1 --state "$STUB_DIR/local-state.json" 2> "$STUB_DIR/run$pass.err")" || rc=$?
+    JOINED_MAIL_FACTS+="pass=$pass rc=$rc question=$(grep -c 'EVENT lane-question KEN-94' <<<"$out" || :) directive=$(grep -c 'EVENT directive-' <<<"$out" || :) closing=$(grep -cx 'EVENT lane-notice KEN-94 closing-1' <<<"$out" || :); "
+  done
+}
+joined_removed_mail mail_local_joined
+assert_eq "$JOINED_MAIL_FACTS" 'pass=1 question=0; remove=0; pass=2 rc=0 question=0 directive=0 closing=1; pass=3 rc=0 question=0 directive=0 closing=0; ' "a lane mailbox joined to an earlier one reports its close-out notice and no settled ask or read directive" "$STUB_DIR/run2.err"
+JOINED_MAIL_WATCH="$(mutant_scripts joined-mail/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/joined-mail/github"
+mutate_file "$JOINED_MAIL_WATCH" 'if [[ -n "$seen" && "$seen" == "$to_first" && ' 'if [[ -n "$seen" ]] || [[ "$seen" == "$to_first" && '
+WATCH_BIN="$JOINED_MAIL_WATCH" joined_removed_mail mail_local_joined_control
+assert_eq "$JOINED_MAIL_FACTS" 'pass=1 question=0; remove=0; pass=2 rc=0 question=0 directive=1 closing=1; pass=3 rc=0 question=0 directive=0 closing=0; ' "control: a clone taking the worktree's directive row over another to-lane.jsonl reports the earlier directive again" "$STUB_DIR/run2.err"
+
 # An explicit local mailbox can stand before its directory becomes a Git
 # checkout. Discovery is advisory then, and the next pass must learn it.
 local_learning_mail() { # CASE

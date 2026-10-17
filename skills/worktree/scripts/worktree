@@ -2470,11 +2470,14 @@ lane_mail_move_out() { # WT
 }
 
 # A mailbox that met one already in the main checkout (a relaunch after an
-# earlier removal, or a send that fell back there) adds its to-overseer.jsonl
-# lines to that one as a single block; the watch may report lines it already
-# drained once more, and no line is lost. A plain append is safe here: the only
-# writer of a lane's to-overseer.jsonl is that lane, which has finished by its
-# removal, and compaction rewrites the overseer mailbox alone.
+# earlier removal, or a send that fell back there) joins it in two appends.
+# First the overseer's replies to this lane's lines, the to-lane.jsonl lines
+# whose `re` names one: lane-mail judges an ask answered or closed by the
+# to-lane.jsonl beside it, so an ask arriving without its replies would read as
+# owed again. Then its to-overseer.jsonl lines as one block, which the watch may
+# report once more where it had drained them. Its other to-lane.jsonl lines,
+# directives and notes to the finished lane, are dropped: carried, the watch
+# would report them read or unread a second time.
 lane_mail_settle() { # DEST INTO
   if [[ -z "$2" ]]; then
     # A watcher record left behind would make a later send's receipt claim a
@@ -2482,14 +2485,52 @@ lane_mail_settle() { # DEST INTO
     rm -f -- "$1/to-lane.watch"
     return 0
   fi
-  if [[ -f "$1/to-overseer.jsonl" ]]; then
-    if [[ ! -d "$2" || -L "$2" || -L "$2/to-overseer.jsonl" ]] ||
-      ! cat -- "$1/to-overseer.jsonl" >>"$2/to-overseer.jsonl"; then
-      worktree_message lane-mail-kept "${1%/*}" "Error: a lane mailbox could not join $2; its mail is kept at ${1%/*}" >&2
-      return 1
-    fi
+  if ! lane_mail_join "$1" "$2"; then
+    worktree_message lane-mail-kept "${1%/*}" "Error: a lane mailbox could not join $2; its mail is kept at ${1%/*}" >&2
+    return 1
   fi
   rm -rf -- "${1%/*}"
+}
+
+# The replies go first, so a watch reading between the two appends finds no
+# ask without its answer. Where the main mailbox's to-lane.cursor stood at the
+# end of its to-lane.jsonl, it moves past the replies, so no later inbox reads
+# them as new; short of that end, moving it would mark lines nobody read as
+# read, so it stays. Neither append takes a mailbox lock. The only writer of a
+# lane's to-overseer.jsonl is that lane, which has finished by its removal, and
+# compaction rewrites the overseer mailbox alone; the overseer only appends to
+# a lane's to-lane.jsonl, so a send made during the removal lands beside these
+# lines.
+lane_mail_join() { # FROM INTO
+  local from="$1" into="$2" ids replies="" count=0 cursor=0 scratch
+  [[ -d "$into" && ! -L "$into" && ! -L "$into/to-overseer.jsonl" ]] || return 1
+  [[ -f "$from/to-overseer.jsonl" ]] || return 0
+  if [[ -f "$from/to-lane.jsonl" ]]; then
+    ids="$(jq -c -n -R '[inputs | fromjson? | objects | .id | strings]' <"$from/to-overseer.jsonl")" || return 1
+    replies="$(jq -r -R --argjson ids "$ids" '. as $line | fromjson? | objects
+      | select(.re as $re | any($ids[]; . == $re)) | $line' <"$from/to-lane.jsonl")" || return 1
+  fi
+  if [[ -n "$replies" ]]; then
+    [[ ! -L "$into/to-lane.jsonl" && ! -L "$into/to-lane.cursor" ]] || return 1
+    if [[ -f "$into/to-lane.jsonl" ]]; then
+      count="$(wc -l <"$into/to-lane.jsonl")" || return 1
+      count=$((count))
+    fi
+    # An absent cursor is a lane that never read, at the end of an empty file.
+    if [[ -f "$into/to-lane.cursor" ]]; then
+      cursor="$(head -n 1 -- "$into/to-lane.cursor")" || return 1
+    fi
+    printf '%s\n' "$replies" >>"$into/to-lane.jsonl" || return 1
+    if [[ "$cursor" == "$count" ]]; then
+      scratch="$(mktemp "$into/.to-lane.cursor.XXXXXX")" || return 1
+      if ! printf '%s\n' "$((count + $(printf '%s\n' "$replies" | wc -l)))" >"$scratch" ||
+        ! mv -f -- "$scratch" "$into/to-lane.cursor"; then
+        rm -f -- "$scratch"
+        return 1
+      fi
+    fi
+  fi
+  cat -- "$from/to-overseer.jsonl" >>"$into/to-overseer.jsonl"
 }
 
 # Git refused the removal: each mailbox goes back where the lane reads it, or,
