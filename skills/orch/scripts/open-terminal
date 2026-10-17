@@ -3802,11 +3802,20 @@ launch_blockers_gate() { # ITEM
   return 1
 }
 
-# linear_team_key TEAM — prints the key of the Linear team named TEAM, or
-# refuses as item-repo-unresolved.
+# linear_team_key TEAM [DIR] — prints the key of the Linear team named TEAM, or
+# refuses as item-repo-unresolved. With DIR the read runs there with this
+# launcher's Linear settings dropped, so DIR's checkout picks the workspace and
+# credential: linear.sh reads them from its working directory's checkout, and
+# an inherited credential or private-file selector outranks that checkout's.
 linear_team_key() {
   local record
-  record="$("$linear_cli" teams get "$1" --format raw)" \
+  record="$(
+    if [[ -n "${2:-}" ]]; then
+      cd -- "$2" || exit 1
+      unset KENDEX_ENV_FILE LINEAR_TEAM LINEAR_APP_TOKEN LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET LINEAR_API_KEY
+    fi
+    "$linear_cli" teams get "$1" --format raw
+  )" \
     || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
   jq -er '.team.key | strings | select(length > 0)' <<<"$record" \
     || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
@@ -3829,16 +3838,28 @@ fi
 # it.
 [[ "$FLEET" != true ]] || overseer_bind || exit 1
 # A connected launch also admits the overseer checkout's own Linear team: the
-# overseer lists the repository because that team's items run there. The team
-# is read from the overseer's directory with this launcher's LINEAR_TEAM and
-# KENDEX_ENV_FILE dropped, as the caps below are, because both can be this
-# checkout's settings.
+# overseer lists the repository because that team's items run there.
+# overseer_team_key reads it once, for the first item the launch checkout's
+# team does not take, so a launch of that team's items never depends on it.
+# The team name and its key are read in the overseer's directory with this
+# launcher's settings dropped, as the caps below are, because they can be this
+# checkout's, whose Linear workspace can differ from the overseer's.
 overseer_repo=""
-if [[ -n "$checkout_repo" && "$TRACKER" == linear && "$OVERSEER_BIND" == connected ]]; then
-  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
-  overseer_team="$(cd -- "$OVERSEER_DIR" && unset LINEAR_TEAM KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" LINEAR_TEAM "")" || exit 1
-  [[ -z "$overseer_team" ]] || overseer_repo="$(linear_team_key "$overseer_team")" || exit 1
-fi
+overseer_team_read=false
+overseer_team_key() {
+  local team
+  [[ "$overseer_team_read" != true ]] || return 0
+  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; return 1; }
+  team="$(cd -- "$OVERSEER_DIR" && unset LINEAR_TEAM KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" LINEAR_TEAM "")" || return 1
+  [[ -z "$team" ]] || overseer_repo="$(linear_team_key "$team" "$OVERSEER_DIR")" || return 1
+  overseer_team_read=true
+}
+# same_key ITEM KEY — prints whether the item's repository or team is KEY,
+# compared case-insensitively, or refuses as item-repo-unresolved.
+same_key() {
+  jq -n --arg item "$1" --arg key "$2" '$item | ascii_downcase == ($key | ascii_downcase)' \
+    || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; return 1; }
+}
 if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   if [[ "$OVERSEER_BIND" == connected ]]; then
@@ -3902,9 +3923,11 @@ for raw in "${ITEMS[@]}"; do
   item_repo="$repo"
   [[ "$TRACKER" != linear ]] || item_repo="${item%-*}"
   if [[ -n "$checkout_repo" ]]; then
-    repo_match="$(jq -n --arg item "$item_repo" --arg checkout "$checkout_repo" --arg overseer "$overseer_repo" \
-      '($item | ascii_downcase) as $i | [$checkout, $overseer] | map(select(length > 0) | ascii_downcase) | any(. == $i)')" \
-      || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; exit 1; }
+    repo_match="$(same_key "$item_repo" "$checkout_repo")" || exit 1
+    if [[ "$repo_match" != true && "$TRACKER" == linear && "$OVERSEER_BIND" == connected ]]; then
+      overseer_team_key || exit 1
+      [[ -z "$overseer_repo" ]] || repo_match="$(same_key "$item_repo" "$overseer_repo")" || exit 1
+    fi
     if [[ "$repo_match" != true ]]; then
       ot_message item-foreign "repo=$item_repo" route=peer-mail >&2
       exit 1

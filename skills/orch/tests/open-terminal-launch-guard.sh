@@ -226,9 +226,11 @@ orch_fixture_shared_libs "$MUTANT_REPO"
 mkdir -p "$MUTANT_REPO/.agents/skills/linear/scripts"
 cp "$REPO/.agents/skills/linear/scripts/linear.sh" "$MUTANT_REPO/.agents/skills/linear/scripts/"
 mutate_file "$MUTANT_OT" \
-  '  record="$("$linear_cli" teams get "$1" --format raw)" \
+  '    "$linear_cli" teams get "$1" --format raw
+  )" \
     || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }' \
-  '  record="$("$linear_cli" teams get "$1" --format raw)" \
+  '    "$linear_cli" teams get "$1" --format raw
+  )" \
     || { if false; then ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; fi; }'
 mutate_file "$MUTANT_OT" \
   '  jq -er '\''.team.key | strings | select(length > 0)'\'' <<<"$record" \

@@ -912,7 +912,10 @@ one that cannot be judged, never one outside any checkout.
 A launch ORCH_CONNECTED_REPOS admits takes a Linear item of the team that
 LINEAR_TEAM names in the overseer directory, read the same way with this
 launcher's LINEAR_TEAM dropped, as well as one of this checkout's own team;
-an item of any other team is refused as item-foreign.
+an item of any other team is refused as item-foreign. That team and its key
+are read only for an item this checkout's team does not take, the key in the
+overseer directory with this launcher's Linear credentials dropped, so the
+overseer checkout's Linear workspace answers.
 
 Exit codes:
   0   at least one lane launched or handed to a background job and none

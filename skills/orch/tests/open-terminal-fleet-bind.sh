@@ -262,14 +262,25 @@ printf '%s\n' "$CAP_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
 
 echo "=== a connected launch admits the overseer's own Linear team ==="
 # The launcher's LINEAR_TEAM names the launch checkout's team, CC; the
-# overseer checkout's settings name its own. The stub tracker reads Checkout
-# team as CC and Fleet team as FLT, and fails every other name.
+# overseer checkout's settings name its own. The stub tracker answers from the
+# Linear workspace linear.sh would reach: the one an inherited LINEAR_APP_TOKEN
+# names, since that credential outranks the checkout's own, else the one of the
+# checkout it runs in, the target's in $TARGET and the overseer's anywhere
+# else. Both read Checkout team as CC. The overseer's workspace reads Fleet
+# team as FLT; the target's holds a team of that name keyed TGT. Every other
+# name fails.
 TEAM_STUB="$TMP_ROOT/linear-teams.sh"
-cat > "$TEAM_STUB" <<'EOF'
+cat > "$TEAM_STUB" <<EOF
 #!/bin/sh
-case "$*" in
-  'teams get Checkout team --format raw') printf '{"team":{"key":"CC"}}\n' ;;
-  'teams get Fleet team --format raw') printf '{"team":{"key":"FLT"}}\n' ;;
+workspace="\${LINEAR_APP_TOKEN:-}"
+if [ -z "\$workspace" ]; then
+  workspace=overseer
+  [ "\$(git rev-parse --show-toplevel)" != "$TARGET" ] || workspace=target
+fi
+case "\$workspace \$1 \$2 \$3" in
+  *' teams get Checkout team') printf '{"team":{"key":"CC"}}\n' ;;
+  'overseer teams get Fleet team') printf '{"team":{"key":"FLT"}}\n' ;;
+  'target teams get Fleet team') printf '{"team":{"key":"TGT"}}\n' ;;
   *) exit 7 ;;
 esac
 EOF
@@ -290,8 +301,9 @@ overseer_team() {
   [[ "$1" == absent ]] || printf 'LINEAR_TEAM = "%s"\n' "$1" >> "$OVERSEER_REPO/kendex.settings.toml"
 }
 # team_launch [SCRIPT=PATH] TEAM CWD ITEM [ENV=NAME=VALUE] — one launch of ITEM
-# from CWD under the launcher's Checkout team, with the overseer checkout's
-# team set to TEAM; sets TEAM_RESULT.
+# from CWD under the launcher's Checkout team and no inherited LINEAR_APP_TOKEN
+# unless ENV= sets one, with the overseer checkout's team set to TEAM; sets
+# TEAM_RESULT.
 team_launch() {
   local script=()
   [[ "$1" != SCRIPT=* ]] || { script=("$1"); shift; }
@@ -299,7 +311,7 @@ team_launch() {
   shift 3
   overseer_team "$team"
   fleet cwd "$OVERSEER_REPO"
-  run_ot ${script[@]+"${script[@]}"} CWD="$cwd" "ENV=LINEAR_TEAM=Checkout team" "$@" "$item"
+  run_ot ${script[@]+"${script[@]}"} CWD="$cwd" "ENV=LINEAR_TEAM=Checkout team" ENV=LINEAR_APP_TOKEN= "$@" "$item"
   TEAM_RESULT="rc=$RC record=$(record "$item") foreign=$(refused 'item-foreign ') unresolved=$(grep -cxF 'open-terminal: item-repo-unresolved tracker=linear team=Gone team' <<<"$ERR" || true)"
 }
 # The overseer checkout's team, the launch directory (the target clone or a
@@ -313,12 +325,15 @@ while IFS='|' read -r team where item extra want label; do
   team_launch "$team" "$cwd" "$item" ${extra_args[@]+"${extra_args[@]}"}
   assert_eq "$TEAM_RESULT" "$want" "$label"
 done <<'ROWS'
-Fleet team|target|FLT-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a connected launch admits an item of the overseer checkout's team
+Fleet team|target|FLT-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a connected launch admits an item of the overseer checkout's team, keyed in the overseer's workspace
 Fleet team|target|CC-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a connected launch still admits an item of the launch checkout's team
 Fleet team|target|OTHER-1||rc=1 record=none foreign=1 unresolved=0|a connected launch refuses an item of a third team as item-foreign
+Fleet team|target|TGT-1||rc=1 record=none foreign=1 unresolved=0|the launch checkout's workspace's team of the overseer team's name is not admitted
 absent|target|FLT-1||rc=1 record=none foreign=1 unresolved=0|with no team in the overseer checkout a connected launch admits the launch checkout's team alone
 Fleet team|target|FLT-1|KENDEX_ENV_FILE=alt.env|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's private-file selector does not pick the overseer's private file for its team
+Fleet team|target|FLT-1|LINEAR_APP_TOKEN=target|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's Linear credential does not pick the workspace the overseer's team is keyed in
 Gone team|target|FLT-1||rc=1 record=none foreign=0 unresolved=1|an overseer team whose key cannot be read refuses as item-repo-unresolved
+Gone team|target|CC-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a launch of the launch checkout's team's item never reads the overseer's team
 Fleet team|overseer|FLT-1||rc=1 record=none foreign=1 unresolved=0|an own launch compares the launch checkout's team alone, as before
 Fleet team|overseer|CC-1||rc=0 record=repo=null foreign=0 unresolved=0|an own launch admits an item of the launch checkout's team
 ROWS
@@ -332,18 +347,29 @@ team_control() {
   team_tracker "${dir%/scripts}"
   printf '%s\n' "$dir/open-terminal"
 }
-MUT="$(team_control item-team-old \
-  "'(\$item | ascii_downcase) as \$i | [\$checkout, \$overseer] | map(select(length > 0) | ascii_downcase) | any(. == \$i)'" \
-  "'\$item | ascii_downcase == (\$checkout | ascii_downcase)'")"
+OVERSEER_TEAM_GATE='if [[ "$repo_match" != true && "$TRACKER" == linear && "$OVERSEER_BIND" == connected ]]; then'
+MUT="$(team_control item-team-old "$OVERSEER_TEAM_GATE" "${OVERSEER_TEAM_GATE/connected/never}")"
 team_launch SCRIPT="$MUT" "Fleet team" "$TARGET" FLT-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
   "control: the launch checkout's team alone refuses a connected launch of the overseer team's item"
-MUT="$(team_control item-team-unread \
-  '[[ -z "$overseer_team" ]] || overseer_repo="$(linear_team_key "$overseer_team")" || exit 1' \
-  '[[ -z "$overseer_team" ]] || overseer_repo="$(linear_team_key "$overseer_team")" || true')"
+MUT="$(team_control item-team-unread '      overseer_team_key || exit 1' '      overseer_team_key || true')"
 team_launch SCRIPT="$MUT" "Gone team" "$TARGET" FLT-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=1" \
   "control: without the refusal an unread overseer team falls through to item-foreign"
+MUT="$(team_control item-team-cwd \
+  'overseer_repo="$(linear_team_key "$team" "$OVERSEER_DIR")"' 'overseer_repo="$(linear_team_key "$team")"')"
+team_launch SCRIPT="$MUT" "Fleet team" "$TARGET" FLT-1
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
+  "control: the overseer's team keyed in the launch checkout's workspace refuses the overseer team's item"
+MUT="$(team_control item-team-credential \
+  'unset KENDEX_ENV_FILE LINEAR_TEAM LINEAR_APP_TOKEN ' 'unset KENDEX_ENV_FILE LINEAR_TEAM ')"
+team_launch SCRIPT="$MUT" "Fleet team" "$TARGET" FLT-1 ENV=LINEAR_APP_TOKEN=target
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
+  "control: the launcher's inherited credential keys the overseer's team in the launch checkout's workspace"
+MUT="$(team_control item-team-eager "$OVERSEER_TEAM_GATE" "${OVERSEER_TEAM_GATE/\"\$repo_match\" != true/true}")"
+team_launch SCRIPT="$MUT" "Gone team" "$TARGET" CC-1
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=0 unresolved=1" \
+  "control: reading the overseer's team for every item refuses the launch checkout's own item when that read fails"
 printf '%s\n' "$TEAM_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
 
 echo "=== a binding that cannot be judged launches nothing ==="
