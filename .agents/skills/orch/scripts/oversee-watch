@@ -293,7 +293,7 @@ PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 #   main-push-failing<TAB><repo>:<workflow><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
 #   main-schedule-failing<TAB><repo>:<workflow><TAB>the same, for the nightly scheduled run
 #     (a row keyed <repo> alone is skill-tests.yml's, from before the workflow key)
-#   main-workflow-absent<TAB><repo>:<workflow><TAB>reported, for a workflow ORCH_MAIN_WORKFLOWS names that the default branch lacks
+#   main-workflow-absent<TAB><repo>:<workflow><TAB><branch|unwatched>, for a workflow ORCH_MAIN_WORKFLOWS names that no run list reads
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->|<status of the last saved unmeasured reading, or ->
@@ -2143,13 +2143,39 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 # default workflow proven absent clears its rows silently, since most
 # repositories lack one of the two. A declared one is a setting that names a
 # file the repository does not hold, and would leave its nightly unread, so
-# it raises main-workflow-absent once until a read of it succeeds.
+# it raises main-workflow-absent once until a read of it succeeds. An entry
+# for a repository the watch does not read, a misspelled one among them,
+# would leave its nightly unread the same way, so it raises the event too.
 MAIN_WORKFLOWS='skill-tests.yml ci.yml'
+# main_workflow_absent REPO WORKFLOW CAUSE — reports a declared workflow
+# no run list reads, once per cause: CAUSE is branch (the default branch
+# lacks it) or unwatched (REPO is not a repository this watch reads). Reads
+# and updates check_main_push's rows.
+main_workflow_absent() {
+  lane_row_get main-workflow-absent "$rows" "$1:$2" >/dev/null
+  [[ "$LANE_ROW" != "$3" ]] || return 0
+  printf 'EVENT main-workflow-absent %s workflow=%s cause=%s\n' "$1" "$2" "$3"
+  PASS_EVENT=1
+  lane_row_set main-workflow-absent "$rows" "$1:$2" "$3" >/dev/null \
+    || die state-read-failed "" "repo=$1" "row=main-workflow-absent"
+  rows="$LANE_ROW"
+}
 check_main_push() {
   local repo workflow workflows entry row_key event row failing runs run conclusion jobs log cause failures key prior changed rc i line
   local -a slots lists reads parsed
-  local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err" read_repos=" "
+  local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err" read_repos=" " watched=" ${REPOS[*]} "
   slots=() lists=() reads=() parsed=()
+  # A record for an entry the setting no longer names would hold back the
+  # report when the entry comes back with the same fault.
+  [[ "$rows" != *main-workflow-absent* ]] || while IFS=$'\t' read -r row row_key prior; do
+    [[ "$row" == main-workflow-absent && "$MAIN_DECLARED" != *" $row_key "* ]] || continue
+    lane_row_clear main-workflow-absent "$rows" "$row_key" >/dev/null \
+      || die state-read-failed "" "row=main-workflow-absent"
+    rows="$LANE_ROW"
+  done <<<"$rows"
+  for entry in $MAIN_DECLARED; do
+    [[ "$watched" == *" ${entry%%:*} "* ]] || main_workflow_absent "${entry%%:*}" "${entry#*:}" unwatched
+  done
   for repo in "${REPOS[@]}"; do
     # A row keyed <repo> alone is skill-tests.yml's, from before the
     # workflow key.
@@ -2216,13 +2242,7 @@ check_main_push() {
         [[ "$MAIN_DECLARED" == *" $row_key "* ]] || continue
         # The push and the schedule read both prove it absent; the row
         # keeps it to one event.
-        lane_row_get main-workflow-absent "$rows" "$row_key" >/dev/null
-        [[ -z "$LANE_ROW" ]] || continue
-        printf 'EVENT main-workflow-absent %s workflow=%s\n' "$repo" "$workflow"
-        PASS_EVENT=1
-        lane_row_set main-workflow-absent "$rows" "$row_key" reported >/dev/null \
-          || die state-read-failed "" "repo=$repo" "row=main-workflow-absent"
-        rows="$LANE_ROW"
+        main_workflow_absent "$repo" "$workflow" branch
         continue
       fi
       ow_message main-push-unread "repo=$repo" "workflow=$workflow" "read=runs" "exit=$rc" >&2

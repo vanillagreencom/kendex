@@ -384,11 +384,12 @@ assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'a legacy row stays q
 # ORCH_MAIN_WORKFLOWS adds a repository's own nightly workflow to the two
 # every repository reads. Its red scheduled run reports as main-push-failing
 # naming it; an entry for another repository, or none, reads the defaults
-# alone, with the same run-list calls.
+# alone, with the same run-list calls, and an entry for a repository the
+# watch does not read reports that it reads nothing.
 NAMED_JOBS='["iOS build"]'
 NAMED_CAUSE='FAILED: eas build ios'
 NAMED="EVENT main-push-failing owner/repo workflow=eas-build.yml event=schedule run=402 jobs=$NAMED_JOBS cause=$NAMED_CAUSE"
-named_case() { # NAME WATCH [VAR=VALUE] — `rc=<status> events=<main-push-failing lines>`
+named_case() { # NAME WATCH [VAR=VALUE] — `rc=<status> events=<main-push-failing lines> absent=<main-workflow-absent lines>`
   new_case "main_named_$1"
   printf '[{"databaseId":201,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
   printf '[{"databaseId":402,"headBranch":"main","event":"schedule","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-wf.eas-build.yml.owner_repo.json"
@@ -396,7 +397,7 @@ named_case() { # NAME WATCH [VAR=VALUE] — `rc=<status> events=<main-push-faili
   printf '%s\n' "$NAMED_CAUSE" > "$STUB_DIR/main-log.402.txt"
   WATCH_BIN="$2" main_watch ${3:+"$3"}
   awk '/^run list / { sub(/ --json .*/, ""); print }' "$STUB_DIR/gh.calls" > "$STUB_DIR/lists"
-  printf 'rc=%s events=%s' "$MAIN_RC" "$MAIN_EVENTS"
+  printf 'rc=%s events=%s absent=%s' "$MAIN_RC" "$MAIN_EVENTS" "$MAIN_ABSENT"
 }
 KEN4217="$(mutant_scripts main-named-ken4217/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-named-ken4217/github"
@@ -406,35 +407,52 @@ named_case unset "$WATCH" >/dev/null
 DEFAULT_LISTS="$(cat "$STUB_DIR/lists")"
 # NAME|WATCH|SETTING|ANSWER
 for row in \
-  "named|$WATCH|ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml|rc=0 events=$NAMED" \
-  "named-in-owner-casing|$WATCH|ORCH_MAIN_WORKFLOWS=Owner/Repo:eas-build.yml other/repo:x.yml|rc=0 events=$NAMED" \
-  "other-repo|$WATCH|ORCH_MAIN_WORKFLOWS=other/repo:eas-build.yml|rc=0 events=" \
-  "control-ken4217-reader|$KEN4217|ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml|rc=0 events="; do
+  "named|$WATCH|ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml|rc=0 events=$NAMED absent=" \
+  "named-in-owner-casing|$WATCH|ORCH_MAIN_WORKFLOWS=Owner/Repo:eas-build.yml other/repo:x.yml|rc=0 events=$NAMED absent=EVENT main-workflow-absent other/repo workflow=x.yml cause=unwatched" \
+  "other-repo|$WATCH|ORCH_MAIN_WORKFLOWS=other/repo:eas-build.yml|rc=0 events= absent=EVENT main-workflow-absent other/repo workflow=eas-build.yml cause=unwatched" \
+  "control-ken4217-reader|$KEN4217|ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml|rc=0 events= absent="; do
   IFS='|' read -r name target setting expected <<<"$row"
   assert_eq "$(named_case "$name" "$target" "$setting")" "$expected" "named workflow $name" "$STUB_DIR/err"
 done
 assert_eq "$(cat "$TMP_ROOT/cases/main_named_other-repo/lists")" "$DEFAULT_LISTS" 'an entry for another repository reads the defaults alone' "$STUB_DIR/err"
 
-# A named workflow the default branch lacks is reported once, across both
-# event reads and later passes, and again after a read of it succeeded. The
-# control drops the record that holds it to one report.
-absent_case() { # NAME WATCH — the main-workflow-absent count of each pass
-  local counts="" present
+# A named workflow no run list reads is reported once per cause, across
+# both event reads and later passes: cause=branch where the default branch
+# lacks it, again after a read of it succeeded; cause=unwatched where its
+# repository is not one the watch reads, a misspelled one included, and
+# cause=branch once that repository joins. An entry the setting drops loses
+# its record, so its return reports again. The control drops the record
+# that holds each cause to one report.
+absent_case() { # NAME WATCH — `<rc>:<causes>` per pass
+  local row setting connected present out=""
   new_case "main_absent_$1"
   printf '[{"databaseId":201,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
-  for present in no no yes no; do
+  # SETTING|CONNECTED|PRESENT (whether owner/repo holds nightly.yml)
+  for row in \
+    'owner/repo:nightly.yml||no' \
+    'owner/repo:nightly.yml||no' \
+    'owner/repo:nightly.yml||yes' \
+    'owner/repo:nightly.yml||no' \
+    'Owner/Rep0:nightly.yml||no' \
+    'Owner/Rep0:nightly.yml||no' \
+    'owner/repo:nightly.yml||no' \
+    'other/repo:nightly.yml||no' \
+    'other/repo:nightly.yml|other/repo|no'; do
+    IFS='|' read -r setting connected present <<<"$row"
     rm -f -- "$STUB_DIR/main-wf.nightly.yml.owner_repo.json"
     [[ "$present" == no ]] || printf '[]\n' > "$STUB_DIR/main-wf.nightly.yml.owner_repo.json"
-    WATCH_BIN="$2" main_watch ORCH_MAIN_WORKFLOWS=owner/repo:nightly.yml
-    counts+="$MAIN_RC:$(grep -cxF 'EVENT main-workflow-absent owner/repo workflow=nightly.yml' <<<"$MAIN_ABSENT" || true) "
+    WATCH_BIN="$2" main_watch "ORCH_MAIN_WORKFLOWS=$setting" "ORCH_CONNECTED_REPOS=$connected"
+    out+="$MAIN_RC:$(sed -n 's/^EVENT main-workflow-absent [^ ]* workflow=nightly.yml cause=//p' <<<"$MAIN_ABSENT" | paste -sd, -) "
   done
-  printf '%s' "$counts"
+  printf '%s' "$out"
 }
 ABSENT_MUTANT="$(mutant_scripts main-absent-once/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-absent-once/github"
-mutate_file "$ABSENT_MUTANT" $'        [[ -z "$LANE_ROW" ]] || continue\n' $'        :\n'
-assert_eq "$(absent_case current "$WATCH")" '0:1 0:0 0:0 0:1 ' 'a named absent workflow reports once until it reads' "$STUB_DIR/err"
-assert_eq "$(absent_case control "$ABSENT_MUTANT")" '0:2 0:2 0:0 0:2 ' 'control: no record reports every read' "$STUB_DIR/err"
+mutate_file "$ABSENT_MUTANT" $'  [[ "$LANE_ROW" != "$3" ]] || return 0\n' $'  :\n'
+assert_eq "$(absent_case current "$WATCH")" '0:branch 0: 0: 0:branch 0:unwatched 0: 0:branch 0:unwatched 0:branch ' \
+  'a named workflow no run list reads reports once per cause' "$STUB_DIR/err"
+assert_eq "$(absent_case control "$ABSENT_MUTANT")" '0:branch,branch 0:branch,branch 0: 0:branch,branch 0:unwatched 0:unwatched 0:branch,branch 0:unwatched 0:branch,branch ' \
+  'control: no record reports every read' "$STUB_DIR/err"
 
 # An entry of another shape refuses the watch before any read.
 new_case main_named_invalid

@@ -353,12 +353,15 @@ The long pass's events, checked and reported in this order:
                              jobs are unchanged. A first unread log reports
                              cause=unread. Recovered logs update the recorded
                              failures without repeating the event
-  EVENT main-workflow-absent <repo> workflow=<file>
-                             a workflow ORCH_MAIN_WORKFLOWS names for the
-                             repository is not on its default branch, so
-                             none of its runs is read. Reported once; a
-                             later successful read of it clears the record,
-                             so a second removal reports again. A default
+  EVENT main-workflow-absent <repo> workflow=<file> cause=<branch|unwatched>
+                             a workflow ORCH_MAIN_WORKFLOWS names is read by
+                             nothing: cause=branch, the repository's
+                             default branch lacks it; cause=unwatched, the
+                             repository is neither a --repo value nor in
+                             ORCH_CONNECTED_REPOS, a misspelled one
+                             included. Reported once per cause; a later
+                             successful read of it clears the record, so a
+                             second removal reports again. A default
                              workflow the repository lacks is skipped
                              without an event
   EVENT security-alert <repo> kind=<dependabot|code-scanning|secret-scanning>
@@ -1073,8 +1076,10 @@ Environment:
                               main the watch reads for that repository, as
                               main-push-failing, beside skill-tests.yml and
                               ci.yml. A repository with no entry reads those
-                              two alone. A named file the default branch
-                              lacks is main-workflow-absent. An entry of
+                              two alone. An entry the watch cannot read,
+                              its file not on the default branch or its
+                              repository not one the watch reads, is
+                              main-workflow-absent. An entry of
                               another shape exits 2, in repeat mode before
                               the first pass. Read at start from the same
                               settings as ORCH_CONNECTED_REPOS; after a
