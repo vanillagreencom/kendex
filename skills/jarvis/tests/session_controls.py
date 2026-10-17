@@ -1,4 +1,5 @@
 """Plant each defect in an owned, disposable source copy, never this tree."""
+import argparse
 import os
 from pathlib import Path
 import shutil
@@ -62,6 +63,22 @@ CONTROLS = [
 ]
 
 
+# All controls in one suite ran into run-all.sh's per-suite bound, so they
+# run as two suites in separate slots: controls.test.sh runs part 1 and
+# controls-2.test.sh part 2. A control runs in the part of its baseline case,
+# so each baseline runs once; a case this set does not name runs in part 2.
+PART_1_BASELINES = frozenset({
+    "test_idle_prompt_is_not_running",
+    "test_start_acquisition_failure_releases_ownership",
+    "test_pi_contract",
+    "test_resumed_history_is_no_trust_dialog",
+})
+
+
+def part_of(control):
+    return 1 if control[4] in PART_1_BASELINES else 2
+
+
 def applicable_controls(boot_scenario=BootReceiptScenario):
     controls = list(CONTROLS)
     if boot_scenario.applicable:
@@ -70,9 +87,14 @@ def applicable_controls(boot_scenario=BootReceiptScenario):
 
 
 def main():
-    controls = applicable_controls()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--part", type=int, choices=(1, 2), required=True)
+    part = parser.parse_args().part
+    stale = PART_1_BASELINES - {row[4] for row in CONTROLS}
+    assert not stale, "part-baseline-unknown=" + ",".join(sorted(stale))
+    controls = [row for row in applicable_controls() if part_of(row) == part]
     if not BootReceiptScenario.applicable:
-        for name, *_ in BootReceiptScenario.controls:
+        for name, *_ in (row for row in BootReceiptScenario.controls if part_of(row) == part):
             print("control: unavailable=" + name + " producer=boot-receipt", flush=True)
     with native_launcher() as native, tempfile.TemporaryDirectory() as allocation:
         scratch = Path(allocation).resolve()
