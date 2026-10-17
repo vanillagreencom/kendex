@@ -108,9 +108,9 @@ Collect the artifact per § 4.2 step 1-2, then present:
 |------------|---------|-------|-------|-----|-----------|
 | [NAME] | [NAME] | [STATE] | L[N] | [CURRENT]→[RECOMMENDED] | [WHY] |
 
-**Complete** (100%, needs state transition): [PROJECT] — unblocks [PROJECTS] [· ends_when holds: [ENDS_WHEN_EVIDENCE], for a map deliverable]
+**Complete** (no open item left, needs state transition): [PROJECT] — unblocks [PROJECTS] [· ends_when holds: [ENDS_WHEN_EVIDENCE], for a map deliverable]
 
-**Held open** (100%, `ends_when` not shown to hold): [PROJECT] — ends when [ENDS_WHEN]
+**Held open** (no open item left, `ends_when` not shown to hold): [PROJECT] — ends when [ENDS_WHEN]
 
 **Recommended next**: [PROJECT] — [REASON] [· waits for active project [BLOCKED_BY_ACTIVE]], or `None` with what blocks each candidate.
 </output_format>

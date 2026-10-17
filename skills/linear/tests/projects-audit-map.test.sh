@@ -16,9 +16,9 @@ TMP_ROOT=$(cd -- "$TMP_ROOT" && pwd -P)
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 # The clean team: a deliverable under its initiative and a standing area, both
-# started, with every open kendex item in the deliverable. A closed item and
-# another team's item, both outside the map, and another team's label named
-# like the area reach a reply only when a filter is dropped. Project rows have
+# started, with every open kendex item in the deliverable. A completed item, a
+# duplicate item and another team's item, all outside the map, and another
+# team's label named like the area reach a reply only when a filter is dropped. Project rows have
 # the shape of lib/fixtures/recorded/projects-list.json.
 CLEAN="$TMP_ROOT/clean-team.json"
 cat >"$CLEAN" <<'JSON'
@@ -35,6 +35,7 @@ cat >"$CLEAN" <<'JSON'
   {"identifier": "KEN-1", "team": "team-kendex", "state": "started", "project": "Fixture Deliverable"},
   {"identifier": "KEN-2", "team": "team-kendex", "state": "unstarted", "project": "Fixture Deliverable"},
   {"identifier": "KEN-3", "team": "team-kendex", "state": "completed", "project": "Fixture Off Map"},
+  {"identifier": "KEN-5", "team": "team-kendex", "state": "duplicate", "project": "Fixture Off Map"},
   {"identifier": "OTHER-1", "team": "team-other", "state": "started", "project": null},
   {"identifier": "KEN-4", "team": "team-kendex", "state": "backlog", "project": "Fixture Deliverable"}],
  "labels": [
@@ -71,10 +72,10 @@ case "$query" in
       | {id, name, state, targetDate}]}}}' "$DATA" ;;
 *"AuditMapIssues"*)
   jq -cj --argjson payload "$payload" \
-    --argjson open "$(has 'state: {type: {nin: ["completed", "canceled"]}}')" \
+    --argjson open "$(has 'state: {type: {nin: ["completed", "canceled", "duplicate"]}}')" \
     --argjson team "$(has 'team: {id: {eq: $teamId}}')" '
     .projects as $projects
-    | [.issues[] | select(($open | not) or (.state | IN("completed", "canceled") | not))
+    | [.issues[] | select(($open | not) or (.state | IN("completed", "canceled", "duplicate") | not))
       | select(($team | not) or .team == $payload.variables.teamId)
       | .project as $name
       | {identifier, project: (first($projects[] | select(.name == $name) | {id, name, state}) // null)}] as $rows
@@ -145,6 +146,7 @@ run_status rc audit clean .
 assert_eq "clean: succeeds" "$rc" 0
 assert "clean: yields no finding" jq -e '.findings == []' "$TMP_ROOT/clean.out"
 assert "clean: skips closed issues" jq -e 'all(.findings[]; .issue != "KEN-3")' "$TMP_ROOT/clean.out"
+assert "clean: skips duplicate issues" jq -e 'all(.findings[]; .issue != "KEN-5")' "$TMP_ROOT/clean.out"
 assert "clean: reads only the team's issues" jq -e 'all(.findings[]; .issue != "OTHER-1")' "$TMP_ROOT/clean.out"
 assert "clean: reads only the team's and workspace labels" \
   jq -e 'all(.findings[]; .label != "fixture-area")' "$TMP_ROOT/clean.out"

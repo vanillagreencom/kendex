@@ -1265,7 +1265,7 @@ audit_projects() {
         return 1
     fi
     variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}') || return 1
-    issues=$(graphql_pages 'query AuditMapIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \
+    issues=$(graphql_pages 'query AuditMapIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled", "duplicate"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \
         "$variables" issues) || return 1
     issues=$(jq -c '.issues.nodes' <<<"$issues") || return 1
     labels=$(graphql_pages 'query AuditMapLabels($teamId: ID!, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { name } } }' \
