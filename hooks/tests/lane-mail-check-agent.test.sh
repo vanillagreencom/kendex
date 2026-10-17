@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Attached launches and child state at the context mark. The hook is installed
 # in lib/lane-mail-world.sh's real lane and fleet layouts. Only Claude's
-# measured Agent and SendMessage calls, their launch and spawn results, and
-# task and teammate idle notifications are transcript inputs.
+# measured Agent, SendMessage and TaskStop calls, their launch and spawn
+# results, and task and teammate idle notifications are transcript inputs.
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
@@ -21,12 +21,30 @@ append_launch() { append_agent '{"run_in_background":true}' 'Async agent launche
 append_teammate() {
   append_agent '{"name":"reviewer"}' "$(printf 'Spawned successfully. (This tool result is internal metadata.)\nagent_id: areviewer-t1\nname: reviewer\nThe agent is now running and will receive instructions via mailbox.')"
 }
+notice_text() { # ID STATUS
+  printf '<task-notification><task-id>%s</task-id><status>%s</status></task-notification>' "$1" "$2"
+}
 append_notice() { # ID STATUS
-  jq -nc --arg id "$1" --arg s "$2" '{type:"user",message:{role:"user",content:("<task-notification><task-id>"+$id+"</task-id><status>"+$s+"</status></task-notification>")}}' >> "$TRANSCRIPT"
+  jq -nc --arg n "$(notice_text "$1" "$2")" '{type:"user",message:{role:"user",content:$n}}' >> "$TRANSCRIPT"
 }
 # The idle notification Claude Code delivers after each teammate report.
+idle_text() { # NAME
+  printf 'Another Claude session sent a message:\n<teammate-message teammate_id="%s" color="blue">\n{"type":"idle_notification","from":"%s","idleReason":"available"}\n</teammate-message>' "$1" "$1"
+}
 append_idle() { # NAME
-  jq -nc --arg n "$1" '{type:"user",message:{role:"user",content:("Another Claude session sent a message:\n<teammate-message teammate_id=\""+$n+"\" color=\"blue\">\n{\"type\":\"idle_notification\",\"from\":\""+$n+"\",\"idleReason\":\"available\"}\n</teammate-message>")}}' >> "$TRANSCRIPT"
+  jq -nc --arg n "$(idle_text "$1")" '{type:"user",message:{role:"user",content:$n}}' >> "$TRANSCRIPT"
+}
+# Claude Code appends a notification that arrives during a tool call to that
+# call's result, as its string or as a text block.
+append_tool_note() { # string|block TEXT
+  jq -nc '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:"call-bash",name:"Bash",input:{command:"true"}}]}}' >> "$TRANSCRIPT"
+  jq -nc --arg f "$1" --arg n "$2" '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-bash",
+    content:(if $f == "string" then "done\n" + $n else [{type:"text",text:"done"},{type:"text",text:$n}] end),is_error:false}]}}' >> "$TRANSCRIPT"
+}
+# The entry Claude Code 2.1.302 writes for a notification queued while the
+# model works.
+append_queued() { # TEXT
+  jq -nc --arg n "$1" '{type:"queue-operation",operation:"enqueue",timestamp:"2026-10-17T13:20:00.000Z",sessionId:"s1",content:$n}' >> "$TRANSCRIPT"
 }
 
 # A transcript scan needs the host's timeout command; without it the roster
@@ -50,6 +68,13 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if an
     # A plain-text send starts the idle teammate's next turn.
     resumed) append_teammate; append_idle reviewer; append_call SendMessage '{"to":"reviewer","message":"Recheck the head."}' '{"success":true}' ;;
     shutdown) append_teammate; append_call SendMessage '{"to":"reviewer","message":{"type":"shutdown_request"}}' '{"success":true}' ;;
+    tool-string) append_launch; append_tool_note string "$(notice_text a1 completed)" ;;
+    tool-block) append_launch; append_tool_note block "$(notice_text a1 completed)" ;;
+    tool-idle) append_teammate; append_tool_note block "$(idle_text reviewer)" ;;
+    queued) append_launch; append_queued "$(notice_text a1 completed)" ;;
+    stopped) append_teammate; append_call TaskStop '{"task_id":"reviewer"}' '{"message":"Successfully stopped task: areviewer-t1","task_id":"areviewer-t1","task_type":"in_process_teammate"}' ;;
+    # A refused stop ended nothing.
+    stop-refused) append_teammate; append_call TaskStop '{"task_id":"reviewer"}' '<tool_use_error>No task found with ID: reviewer</tool_use_error>' true ;;
     # A foreground call's result is its finished child's output.
     foreground) append_agent '{}' 'The review found no defects.' ;;
     # A background call whose result neither measured launch form matches.
@@ -73,7 +98,7 @@ TRANSCRIPT="$TMP_ROOT/agent-launch.jsonl"
 # agent-unobserved where the roster is unknown, naming the lane's handoff.
 # Rows a scan reads as none are skipped where the scan is unavailable.
 while IFS='|' read -r agents tokens tool reserve rc key; do
-  case "$agents" in out | teammate | resumed | unclassified) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
+  case "$agents" in out | teammate | resumed | unclassified | stop-refused) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
   key=$(scan_key "$key")
   AGENTS=$agents launch "$tokens" "$tool" "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$reserve"
   expect "$rc" "$key" "launch $tool at $tokens with reserve $reserve and agents $agents"
@@ -91,6 +116,12 @@ teammate|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 rese
 returned|260000|Agent||0|-
 resumed|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 shutdown|260000|Agent||0|-
+tool-string|260000|Agent||0|-
+tool-block|260000|Agent||0|-
+tool-idle|260000|Agent||0|-
+queued|260000|Agent||0|-
+stopped|260000|Agent||0|-
+stop-refused|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 foreground|260000|Agent||0|-
 unclassified|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
 refused|260000|Agent||0|-
@@ -433,7 +464,7 @@ SCAN_TIMEOUT
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground; do
+  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop; do
     case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
@@ -451,6 +482,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       resume) variant agent-no-resume -e 's/if (\$c\.input\.message | type) == "string" then/if false then/' ;;
       shutdown) variant agent-no-shutdown -e 's/and \$c\.input\.message\.type == "shutdown_request" then/and false then/' ;;
       foreground) variant agent-no-foreground -e 's/elif \$c\.sync then \.$/elif false then ./' ;;
+      tool-result) variant agent-no-tool-notes -e 's/^        (if type == "array" then \.\[\] | select(\.type == "tool_result") | \.content | text else empty end);$/        empty;/' ;;
+      queued) variant agent-no-queued -e 's/if \.type == "queue-operation" then/if false then/' ;;
+      stop) variant agent-no-stop -e 's/elif \$c\.name == "TaskStop" and/elif false and/' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \
