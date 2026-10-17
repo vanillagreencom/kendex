@@ -118,18 +118,22 @@ Every kendex issue lives in one project below; the project-management skill's `r
 
 ```json
 {
-  "initiatives": [],
+  "initiatives": [
+    {"name": "Self-Service App", "outcome": "A user keeps kendex current, signed in and configured from the desktop app alone, with no file edits and no terminal.", "projects": ["Package Settings", "Update Notice & Account"]}
+  ],
   "projects": [
-    {"name": "Package Settings", "kind": "deliverable", "ends_when": "A release ships the one documented package settings contract and package settings editing in the Customize UI.", "admits": "Work on the package settings contract: its resolvers, authoring template, template check and Customize UI editing."},
-    {"name": "Update Notice & Account", "kind": "deliverable", "ends_when": "A signed release ships the update notice on every install channel and the account surfaces this project keeps.", "admits": "Work on the app's update notice, self-update and account surfaces."},
-    {"name": "Windows", "kind": "deliverable", "ends_when": "A release installs and runs kendex on Windows with copy-mode delivery, skill roots and hooks working.", "admits": "Work whose completion makes kendex install and run on Windows."},
+    {"name": "Package Settings", "kind": "deliverable", "initiative": "Self-Service App", "ends_when": "A release ships the one documented package settings contract and package settings editing in the Customize UI.", "admits": "Work on the package settings contract: its resolvers, authoring template, template check and Customize UI editing."},
+    {"name": "Update Notice & Account", "kind": "deliverable", "initiative": "Self-Service App", "ends_when": "A signed release ships the update notice on every install channel and the account surfaces this project keeps.", "admits": "Work on the app's update notice, self-update and account surfaces."},
+    {"name": "Windows Support", "kind": "deliverable", "ends_when": "A release installs and runs kendex on Windows with copy-mode delivery, skill roots and hooks working.", "admits": "Work whose completion makes kendex install and run on Windows."},
     {"name": "t3code", "kind": "deliverable", "ends_when": "The orch overseer runs on the T3 Code host with its delivery position, state reader and release contract test.", "admits": "T3 Code overseer runtime work."},
     {"name": "Review Gate & CI", "kind": "standing", "role": "area", "admits": "CI workflows under .github/, the review gate, the merge rail and merge queue, CI validation and the skills and tools that run them."},
     {"name": "Agent Harness Integrations", "kind": "standing", "role": "area", "admits": "pi-extensions/, hooks/, MCP allowlists and the per-harness adapters."},
-    {"name": "CLI & Distribution", "kind": "standing", "role": "area", "admits": "The kendex CLI and engine under crates/: manifest, lock, settings, apply, refresh, verify, install and release publication."},
+    {"name": "CLI & Distribution", "kind": "standing", "role": "area", "admits": "The kendex CLI and engine under crates/core and crates/cli: manifest, lock, settings, apply, refresh, verify, install and release publication."},
+    {"name": "Desktop App", "kind": "standing", "role": "area", "admits": "Work on the app's code and screens under crates/app and ui/ that advances no deliverable."},
     {"name": "Docs & Onboarding", "kind": "standing", "role": "area", "admits": "README, AGENTS.md, docs/ and the adoption guides for consuming repositories."},
     {"name": "Skills & Agents Library", "kind": "standing", "role": "area", "admits": "Catalog skills and agents under skills/ and agents/ that no other area's rule names."},
-    {"name": "Tech Debt & Bugs", "kind": "standing", "role": "concern", "admits": "Cross-cutting cleanup and pre-existing defects no single area owns."}
+    {"name": "Tech Debt", "kind": "standing", "role": "concern", "admits": "Cleanup of past shortcuts and pre-existing defects no single area owns; an item that also fits Upkeep goes here."},
+    {"name": "Upkeep", "kind": "standing", "role": "concern", "admits": "Recurring maintenance no single area owns: dependency and toolchain updates that span areas, renewals, rotations, refresh adoption and scheduled housekeeping. A change confined to one area's paths goes to that area."}
   ]
 }
 ```
