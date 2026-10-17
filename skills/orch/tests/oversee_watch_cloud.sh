@@ -18,14 +18,15 @@ LAUNCHED_EPOCH="$(date -u -d "$LAUNCHED" +%s 2>/dev/null || date -u -j -f '%Y-%m
 
 # One running claude-cloud record, issue-1, its mail_root the local worktree
 # its launch made, which holds no status file, and WINDOW its window, none
-# where it is not given. DIRECTIVE_AGE, where set, is the age in seconds past
-# LAUNCHED at which lane-mail recorded a directive sent to it.
+# where it is not given. Its session_since is LAUNCHED, and the stub's branch
+# heads are committed long before it. DIRECTIVE_AGE, where set, is the age in
+# seconds past LAUNCHED at which lane-mail recorded a directive sent to it.
 cloud_state() { # [WINDOW]
   mkdir -p "$STUB_DIR/wt/issue-1"
   jq -n --arg root "$STUB_DIR/wt/issue-1" --arg at "$LAUNCHED" --arg window "${1:-}" \
     --arg sent "${DIRECTIVE_AGE:+$((LAUNCHED_EPOCH + DIRECTIVE_AGE))}" '{issue_id: "oversee", triaged: [], lanes: [
     {item: "issue-1", window: (if $window == "" then null else $window end), host: "claude-cloud", kind: "claude-cloud", mail_root: $root, harness: "claude",
-     session_id: "session_01CLOUD", account: "/cloud-account", launched_at: $at, running_at: $at, status: "running"}
+     session_id: "session_01CLOUD", account: "/cloud-account", session_since: $at, launched_at: $at, running_at: $at, status: "running"}
     + (if $sent == "" then {} else {directive_send: {at: ($sent | tonumber), result: "sent", text: "", credit: "unread"}} end)]}' > "$STUB_DIR/state.json"
 }
 # open_pr HEAD BODY [DRAFT] — the item branch's open pull request, or none where HEAD
@@ -118,15 +119,23 @@ CASE_LABEL="the body changes" stall_case stall_body \
   "100|abc111|## Lane status working||" "1900|abc111|## Lane status pushed fix||"
 CASE_LABEL="the head changes" stall_case stall_head \
   "100|abc111|## Lane status working||" "1900|abc222|## Lane status working||"
+BRANCH_HEAD=1111111111111111111111111111111111111111
+PUSHED_HEAD=2222222222222222222222222222222222222222
+MOVED_HEAD=3333333333333333333333333333333333333333
+# Before its pull request opens, a lane its push started is bounded on the
+# branch head as the pull request's head is above.
+CASE_LABEL="a pushed branch that stops moving with no pull request" stall_case start_pushed_still \
+  "100||$BRANCH_HEAD|" "300||$PUSHED_HEAD|" "2099||$PUSHED_HEAD|" \
+  "2100||$PUSHED_HEAD|EVENT lane-stalled issue-1 age=1800" "2160||$PUSHED_HEAD|" "2220||$PUSHED_HEAD|" \
+  "2280||$PUSHED_HEAD|EVENT lane-stalled issue-1 age=1980"
+CASE_LABEL="a pushed branch that moves again with no pull request" stall_case start_pushed_moving \
+  "100||$BRANCH_HEAD|" "300||$PUSHED_HEAD|" "2000||$MOVED_HEAD|" "2100||$MOVED_HEAD|"
 
 echo "=== a directive left unanswered past ORCH_CLOUD_STALL_MINUTES closes the lane ==="
 # The record's directive went out at DIRECTIVE_AGE; the default bound is 30
 # minutes. A close runs the harness's lane-close stub, whose argv the closes
 # row reads.
 CLOSED="EVENT lane-closed issue-1|EVENT cloud-stall-closed issue-1 directive_age=1800"
-BRANCH_HEAD=1111111111111111111111111111111111111111
-PUSHED_HEAD=2222222222222222222222222222222222222222
-MOVED_HEAD=3333333333333333333333333333333333333333
 closes() { awk 'END { print NR + 0 }' "$STUB_DIR/lane-close.args" 2>/dev/null || echo 0; }
 # LABEL|NAME|DIRECTIVE_AGE|rows as stall_case takes them
 for row in \
@@ -135,7 +144,7 @@ for row in \
   "a lane that never opened its pull request|start_bound|700|600,,,EVENT start-stalled issue-1 age=600;2499,,,;2500,,,$CLOSED" \
   "an unchanged branch without a pull request|start_bound_unchanged|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$BRANCH_HEAD,$CLOSED" \
   "a first push after the startup directive starts the lane|start_bound_first_push|700|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2560,,$PUSHED_HEAD,;2620,,$PUSHED_HEAD," \
-  "a directive after the first push left unanswered|start_bound_pushed_directive|2600|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;4399,,$PUSHED_HEAD,;4400,,$PUSHED_HEAD,$CLOSED" \
+  "a directive after the first push left unanswered|start_bound_pushed_directive|4300|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;4300,,$PUSHED_HEAD,EVENT lane-stalled issue-1 age=1800;6099,,$PUSHED_HEAD,;6100,,$PUSHED_HEAD,$CLOSED" \
   "a push answering a directive sent after the first push|start_bound_pushed_answered|2600|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2700,,$MOVED_HEAD,;4400,,$MOVED_HEAD," \
   "a changed branch without a pull request|start_bound_changed|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD," \
   "a branch first observed after the directive bound|start_bound_first_read|700|2500,,$PUSHED_HEAD,EVENT start-stalled issue-1 age=2500" \
@@ -222,6 +231,44 @@ for row in \
   IFS='|' read -r name credit sent steps <<<"$row"
   state_case "$name" "$credit" "$sent" "$steps"
 done
+
+echo "=== must-fail controls on a disposable copy ==="
+# MUTANT/orch/scripts beside a link to skills/github, as the watch reads it.
+mutant_watch() { # MUTANT OLD NEW
+  local copy
+  copy="$(mutant_scripts "$1/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
+  mutate_file "$copy" "$2" "$3"
+  MUTANT_WATCH="$copy"
+}
+# Bounding a pushed lane from its launch, not its last push, must redden the
+# pass just short of the bound.
+# shellcheck disable=SC2016
+mutant_watch pushed-stall-from-launch 'if (( PASS_NOW - since >= LANE_STALL_SECS )); then' \
+  'if (( PASS_NOW - running >= LANE_STALL_SECS )); then'
+new_case control_pushed_stall_from_launch
+cloud_state
+open_pr "" ""
+for age_head in "100|$BRANCH_HEAD" "300|$PUSHED_HEAD" "2099|$PUSHED_HEAD"; do
+  printf '%s\n' "${age_head#*|}" > "$STUB_DIR/branch-head"
+  CLOUD_WATCH="$MUTANT_WATCH" watch "${age_head%%|*}" ORCH_OVERSEER_MARK_REPEAT=3
+done
+assert_eq "events=$EVENTS" "events=EVENT lane-stalled issue-1 age=1799" \
+  "control: a stall bound counted from launch reports the pushed lane early" "$STUB_DIR/err"
+# Holding a pushed lane out of the directive close must leave the lane of
+# start_bound_pushed_directive open.
+# shellcheck disable=SC2016
+mutant_watch pushed-no-close 'if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} && cloud_stall_close "$item" "$since"; then' \
+  'if [[ -z "$started" ]] && item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"} && cloud_stall_close "$item" "$since"; then'
+new_case control_pushed_no_close
+DIRECTIVE_AGE=4300 cloud_state
+open_pr "" ""
+for age in 600 2500 4300 6099 6100; do
+  (( age < 2500 )) || printf '%s\n' "$PUSHED_HEAD" > "$STUB_DIR/branch-head"
+  CLOUD_WATCH="$MUTANT_WATCH" watch "$age" ORCH_OVERSEER_MARK_REPEAT=3
+done
+assert_eq "events=$EVENTS closes=$(closes)" "events= closes=0" \
+  "control: a pushed lane kept from the close stays open past its directive bound" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

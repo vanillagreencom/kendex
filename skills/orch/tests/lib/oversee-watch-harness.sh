@@ -263,7 +263,10 @@ case "${1:-} ${2:-}" in
       [[ ! -f "$STUB_DIR/branch-unread" ]] || { echo 'HTTP 502: bad gateway' >&2; exit 1; }
       if [[ -f "$STUB_DIR/branch-response.json" ]]; then cat "$STUB_DIR/branch-response.json"
       elif [[ -s "$STUB_DIR/branch-head" ]]; then
-        jq -n --arg oid "$(cat "$STUB_DIR/branch-head")" '{data:{repository:{ref:{target:{oid:$oid}}}}}'
+        # branch-committed dates the head; with none, a commit long before any case's launch.
+        committed=2026-01-01T00:00:00Z
+        [[ ! -s "$STUB_DIR/branch-committed" ]] || committed="$(cat "$STUB_DIR/branch-committed")"
+        jq -n --arg oid "$(cat "$STUB_DIR/branch-head")" --arg at "$committed" '{data:{repository:{ref:{target:{oid:$oid, committedDate:$at}}}}}'
       else printf '{"data":{"repository":{"ref":null}}}\n'; fi
       exit 0
     fi

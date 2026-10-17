@@ -284,7 +284,7 @@ PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 #   lane-idle<TAB><lane><TAB>pi-merged-gone[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
-#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, pushed, or seen>|<branch heads>|<last observed progress epoch>
+#   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, pushed, or seen>|<branch heads>|<last observed progress epoch>|<passes since a pushed lane's lane-stalled was reported>
 #   lane-long<TAB><item><TAB><launched_at epoch>|<reported age interval>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
@@ -2466,12 +2466,15 @@ check_refresh() {
 # through lane-host, and a read that failed settles nothing: the row stands
 # and the failure is noted. A lane whose kind declares files=none, a cloud
 # session, writes no file this watch can read: its start is its own open pull
-# request on the item branch, or a push to that branch since launch, its
-# session words' empty first commit, since it opens its pull request only at
-# finish. Neither seen past the window still means never started. A pushed
-# lane with no pull request stays here for cloud_stall_close.
+# request on the item branch, or a push to that branch since launch, since it
+# opens its pull request only at finish. Neither seen past the window still
+# means never started. A pushed lane with no pull request stays here: a head
+# that then does not move for LANE_STALL_SECS is lane-stalled, as
+# check_lane_stall reports a pull request's, and cloud_stall_close bounds the
+# directive that answers it.
 check_start_stall() {
-  local entry item running age prior passes path rc since prior_running prior_head started rows="${PW_SEEN[0]}" items=()
+  local entry item running age prior passes path rc since prior_running prior_head started stalled session_since
+  local rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
     item="${entry%%=*}"
     running="${entry#*=}"
@@ -2501,20 +2504,25 @@ check_start_stall() {
     esac
     since="$running"
     started=""
-    IFS='|' read -r prior_running passes prior_head since <<<"$prior"
+    IFS='|' read -r prior_running passes prior_head since stalled <<<"$prior"
     if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
-      # A branch head that moved between two reads of this running record is
-      # a push since launch: the session started, and the row keeps it as
-      # pushed, so start-stalled never goes out for it. A push still dates
-      # since, which bounds a directive the session leaves unanswered before
-      # its pull request opens, as check_lane_stall bounds one after. A first
-      # read cannot date the head it sees, so it starts nothing and only
-      # stamps since.
+      # A push since launch starts the session, and the row keeps it as
+      # pushed, so start-stalled never goes out for it: a branch head
+      # committed at or after the record's session_since, which every launch
+      # stamps before its session opens, or a head that moved between two
+      # reads of this running record. A push still dates since, which bounds
+      # a directive the session leaves unanswered before its pull request
+      # opens, as check_lane_stall bounds one after.
+      session_since="$(jq -r --arg item "$item" '[.lanes[]? | objects | select(.item == $item)
+        | .session_since | strings | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601] | first // empty' <<<"$FLEET_STATE")" \
+        || die state-invalid "" "item=$item" "field=session_since"
       if [[ "$prior_running" == "$running" && ( "$passes" == pushed || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ) ]]; then
+        started=pushed
+      elif [[ -n "$session_since" && -n "$OPEN_PR_BRANCH_DATE" ]] && (( OPEN_PR_BRANCH_DATE >= session_since )); then
         started=pushed
       fi
       if [[ "$prior_running" != "$running" || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" || -z "$since" ]]; then
-        since="$PASS_NOW"
+        since="$PASS_NOW" stalled=""
         [[ -n "$OPEN_PR_BRANCH_HEAD" || -n "$prior_head" ]] || since="$running"
       fi
     else
@@ -2523,7 +2531,7 @@ check_start_stall() {
     age=$((PASS_NOW - running))
     if (( age < START_STALL_SECS )); then
       if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
-        rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$started|$OPEN_PR_BRANCH_HEAD|$since")"
+        rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$started|$OPEN_PR_BRANCH_HEAD|$since|")"
       else rows="$(lane_row_clear start-stalled "$rows" "$item")"; fi
       continue
     fi
@@ -2533,7 +2541,15 @@ check_start_stall() {
       continue
     fi
     if [[ -n "$started" ]]; then
-      rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$started|$OPEN_PR_BRANCH_HEAD|$since")"
+      if (( PASS_NOW - since >= LANE_STALL_SECS )); then
+        if [[ -z "$stalled" ]]; then stalled=0
+        else stalled=$(( stalled + 1 )); (( stalled < MARK_REPEAT )) || stalled=0; fi
+        if (( stalled == 0 )); then
+          echo "EVENT lane-stalled $item age=$((PASS_NOW - since))"
+          PASS_EVENT=1
+        fi
+      fi
+      rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$started|$OPEN_PR_BRANCH_HEAD|$since|$stalled")"
       continue
     fi
     if [[ "$prior_running" == "$running" && -n "$passes" ]]; then
@@ -2545,7 +2561,7 @@ check_start_stall() {
       PASS_EVENT=1
     fi
     if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
-      rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes|$OPEN_PR_BRANCH_HEAD|$since")"
+      rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes|$OPEN_PR_BRANCH_HEAD|$since|")"
     else rows="$(lane_row_set start-stalled "$rows" "$item" "$running|$passes")"; fi
   done
   rows="$(lane_row_prune start-stalled "$rows" ${items[@]+"${items[@]}"})"

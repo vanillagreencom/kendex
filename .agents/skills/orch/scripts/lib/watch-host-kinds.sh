@@ -291,8 +291,10 @@ host_capabilities() { # HOST — sets LANE_CAPABILITIES
 # The lane's own open pull request on ITEM's branch, in the first repository
 # that holds one: its head commit as OPEN_PR_HEAD and a digest of its body as
 # OPEN_PR_DIGEST, and its draft flag as OPEN_PR_DRAFT. With none open, OPEN_PR_BRANCH_HEAD holds the item branch's
-# heads by repository, including an empty value when no branch exists. A
-# branch head is observed progress; a commit date cannot date its push.
+# heads by repository, including an empty value when no branch exists, and
+# OPEN_PR_BRANCH_DATE the newest of their committed dates in epoch seconds. A
+# branch head is observed progress; a commit date cannot date its push, but a
+# head committed after a launch was pushed after it.
 # Only a head the repository owner holds is the lane's,
 # lib/lane-state.sh's lane_own rule, so a fork's pull request on a guessable
 # branch name stands for nothing. One `gh pr list` per repository per item per
@@ -303,15 +305,16 @@ OPEN_PR_HEAD=""
 OPEN_PR_DIGEST=""
 OPEN_PR_DRAFT=""
 OPEN_PR_BRANCH_HEAD=""
+OPEN_PR_BRANCH_DATE=""
 OPEN_PR_SEEN=()
 item_open_pr() { # ITEM
-  local branch repo list row branch_head rc=1 entry
+  local branch repo list row branch_head committed rc=1 entry
   for entry in ${OPEN_PR_SEEN[@]+"${OPEN_PR_SEEN[@]}"}; do
     [[ "${entry%%|*}" == "$1" ]] || continue
-    IFS='|' read -r _ rc OPEN_PR_HEAD OPEN_PR_DIGEST OPEN_PR_BRANCH_HEAD OPEN_PR_DRAFT <<<"$entry"
+    IFS='|' read -r _ rc OPEN_PR_HEAD OPEN_PR_DIGEST OPEN_PR_BRANCH_HEAD OPEN_PR_BRANCH_DATE OPEN_PR_DRAFT <<<"$entry"
     return "$rc"
   done
-  OPEN_PR_HEAD="" OPEN_PR_DIGEST="" OPEN_PR_BRANCH_HEAD="" OPEN_PR_DRAFT=""
+  OPEN_PR_HEAD="" OPEN_PR_DIGEST="" OPEN_PR_BRANCH_HEAD="" OPEN_PR_BRANCH_DATE="" OPEN_PR_DRAFT=""
   branch="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   for repo in "${REPOS[@]}"; do
     if ! list="$(gh pr list --repo "$repo" --head "$branch" --state open --json headRefName,headRepositoryOwner,headRefOid,body,isDraft 2>"$WORK_DIR/pr.err")"; then
@@ -322,16 +325,22 @@ item_open_pr() { # ITEM
     if [[ -z "$row" ]]; then
       if ! list="$(gh api graphql -f owner="${repo%%/*}" -f name="${repo#*/}" -f ref="refs/heads/$branch" \
         -f query='query($owner:String!, $name:String!, $ref:String!) {
-          repository(owner:$owner, name:$name) { ref(qualifiedName:$ref) { target { ... on Commit { oid } } } }
+          repository(owner:$owner, name:$name) { ref(qualifiedName:$ref) { target { ... on Commit { oid committedDate } } } }
         }' 2>"$WORK_DIR/pr.err")" || ! branch_head="$(jq -er '
           .data.repository | if type != "object" then error("repository unread")
           elif (has("ref") | not) then error("branch unread")
           elif .ref == null then ""
-          elif (.ref.target.oid | type == "string" and test("^[0-9a-f]{40}$")) then .ref.target.oid
+          elif (.ref.target.oid | type == "string" and test("^[0-9a-f]{40}$"))
+            and (.ref.target.committedDate | type == "string") then
+            "\(.ref.target.oid) \(.ref.target.committedDate | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)"
           else error("branch head unread") end' <<<"$list" 2>"$WORK_DIR/pr.err")"; then
         ow_message branch-read-failed "item=$1" "repo=$repo" >&2; cat -- "$WORK_DIR/pr.err" >&2; rc=2; break
       fi
-      [[ -z "$branch_head" ]] || OPEN_PR_BRANCH_HEAD+="${OPEN_PR_BRANCH_HEAD:+,}$repo:$branch_head"
+      if [[ -n "$branch_head" ]]; then
+        committed="${branch_head#* }"
+        OPEN_PR_BRANCH_HEAD+="${OPEN_PR_BRANCH_HEAD:+,}$repo:${branch_head%% *}"
+        (( ${OPEN_PR_BRANCH_DATE:-0} >= committed )) || OPEN_PR_BRANCH_DATE="$committed"
+      fi
       continue
     fi
     OPEN_PR_HEAD="$(jq -r '.headRefOid // ""' <<<"$row")" && OPEN_PR_DIGEST="$(jq -r '.body // ""' <<<"$row" | cksum)" \
@@ -341,7 +350,7 @@ item_open_pr() { # ITEM
     rc=0
     break
   done
-  OPEN_PR_SEEN+=("$1|$rc|$OPEN_PR_HEAD|$OPEN_PR_DIGEST|$OPEN_PR_BRANCH_HEAD|$OPEN_PR_DRAFT")
+  OPEN_PR_SEEN+=("$1|$rc|$OPEN_PR_HEAD|$OPEN_PR_DIGEST|$OPEN_PR_BRANCH_HEAD|$OPEN_PR_BRANCH_DATE|$OPEN_PR_DRAFT")
   return "$rc"
 }
 
@@ -353,8 +362,9 @@ item_open_pr() { # ITEM
 # machine or spent its credit. The row keeps the head, a digest of the body
 # and the epoch either last moved, plus the reported state word. Reported
 # once, then every MARK_REPEAT passes while it stands. Before the pull request
-# opens the start-stall check holds the lane, and bounds a directive its
-# pushes leave unanswered, so a lane with none has no row.
+# opens the start-stall check holds the lane, reports its branch head standing
+# still and bounds a directive its pushes leave unanswered, so a lane with
+# none has no row.
 check_lane_stall() {
   local item prior head digest since passes age rc state reported rows="${PW_SEEN[0]}" items=()
   for item in ${STATUSLESS[@]+"${STATUSLESS[@]}"}; do
