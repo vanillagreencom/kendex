@@ -195,11 +195,10 @@ Merge route:
   The queue-only class is read only once everything else allows the admin
   route, from <skills>/harness-ci/scripts/change-class, else change-class on
   PATH, over the PR's base and head. The base is the base branch's current
-  tip, read from the branch, never the PR's baseRefOid: GitHub moves that
-  only when the PR itself is updated, so it can predate a lane mark or a
-  setting the base branch has since gained. The classifier takes a
-  merge-base diff, so both commits AND an ancestor they share must be in this
-  checkout: the two SHAs
+  tip, read from the branch, never the PR's baseRefOid, which can predate
+  it: <skills>/harness-ci/references/wiring.md § The endpoint expressions.
+  The classifier takes a merge-base diff, so both commits AND an ancestor
+  they share must be in this checkout: the two SHAs
   are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
   not readable, and it is checked again. Its stderr
   `queue-only: queue_only=true|false` line is the class, and change-class
@@ -402,9 +401,9 @@ checkout_root() {
 # The pull request's range as GitHub reports it: the base branch's current
 # tip and the head, blank-separated. Non-zero where it cannot be read, with
 # gh's own words, or the missing end, on stderr for the caller to keep.
-# The tip is read off the branch: the PR's baseRefOid is the base it was
-# last updated against, and a base declaration newer than that, a `:queue`
-# lane mark among them, is the one the merge lands on.
+# The tip is read off the branch, never the PR's baseRefOid, which can
+# predate it:
+# .agents/skills/harness-ci/references/wiring.md § The endpoint expressions.
 pr_range() { # PR
     local range_json branch encoded base_sha head_sha
     range_json=$(gh pr view "$1" --json baseRefName,headRefOid) || return 1
