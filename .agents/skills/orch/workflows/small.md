@@ -18,11 +18,13 @@ A lane never waits on the overseer for a step this workflow permits: [skill-rule
 
 ## 1. Open The Session
 
-Run [start-worktree.md](start-worktree.md) § 1, which records the tier as `standard`. Then record it as `small`, which is what bounds § 3 and § 4:
+Run [start-worktree.md](start-worktree.md) § 1, which records the tier as `standard`, on a handoff resume too. Then record it as `small`, which is what bounds § 3 and § 4:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier small
 ```
+
+Where that § 1's step 3 stamped a handoff record, continue from the first entry of the record's `remaining` list instead of § 2-5.
 
 ## 2. Implement
 

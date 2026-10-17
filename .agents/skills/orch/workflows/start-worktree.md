@@ -19,7 +19,7 @@ The full session from inside a worktree: implement → publication and review in
 
    Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to `git-context repo-root .`.
 
-3. **Resume from a handoff.** Run [start.md](start.md) § 0 for `[ISSUE_ID]`: its `handoff-standing` read, its stop-and-report rule, and its `handoff-resume` stamp. A `none` verdict → step 4. A stamped record replaces the rest of this file: take step 6's existing-state branch, then continue from the first entry of the record's `remaining` list.
+3. **Resume from a handoff.** Run [start.md](start.md) § 0 for `[ISSUE_ID]`: its `handoff-standing` read, its stop-and-report rule, and its `handoff-resume` stamp. A `none` verdict → step 4. A stamped record replaces the rest of this file: take step 6's existing-state branch and its tier write, then continue from the first entry of the record's `remaining` list. A workflow that runs this § 1, [small.md](small.md) § 1, names its own continuation.
 
 4. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
 
