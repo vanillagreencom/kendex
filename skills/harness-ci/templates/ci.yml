@@ -7,8 +7,8 @@
 # keeps that name and every lane reports into it. What the required-checks
 # ruleset holds is .agents/skills/harness-ci/references/wiring.md
 # § The CI context. The merge-queue run is the only proof of a head: on
-# pull_request the change-class action stands every lane down where the
-# change is queue-only, which is every change on a repository with no
+# pull_request the change-class action, asked by its queue-only-default input
+# below, stands every lane down on a repository with no
 # HARNESS_CI_PER_PUSH_REASON, and CI passes on that stand-down, which GitHub
 # needs before it admits the pull request to the queue. The merge group runs
 # the lanes its own diff calls for. The schedule and workflow_dispatch runs
@@ -131,6 +131,10 @@ jobs:
           # The lane declaration is the default branch's: the pull request's
           # own copy could stand its lanes down.
           lanes-from: classifier
+          # The queue-only default: a pull request stands its lanes down and
+          # the merge-group run proves the head. A copy without this line
+          # runs its lanes on every pull request.
+          queue-only-default: true
           event: ${{ env.EVENT }}
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}

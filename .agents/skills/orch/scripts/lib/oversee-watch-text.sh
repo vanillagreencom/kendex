@@ -332,7 +332,8 @@ The long pass's events, checked and reported in this order:
                              harness-ci template's ci.yml, whose nightly run
                              is the only run of its platform lanes on main.
                              Each workflow and event keeps its own incident,
-                             so a green push leaves a red night standing.
+                             so a green push leaves a red night standing,
+                             and so does a read that lists no run.
                              jobs= lists the job names with those
                              conclusions in sorted order. cause= is the first
                              failing suite line from the failed-step log,

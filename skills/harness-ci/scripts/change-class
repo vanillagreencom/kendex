@@ -3,12 +3,15 @@
 #
 # Usage:
 #   change-class --event EVENT [--base REF] [--head REF] [--repo DIR]
-#                [--output FILE] [--lanes-from DIR]
+#                [--output FILE] [--lanes-from DIR] [--queue-only-default BOOL]
 #
 # --output appends lanes=true|false and lanes_cause beside the class and queue
 # verdicts. The lane rules are ../references/wiring.md § Per-lane verdicts.
 # --lanes-from names a separate trusted checkout with .github/ci-lanes.conf;
-# empty by default, so no lane is declared.
+# empty by default, so no lane is declared. --queue-only-default true asks
+# for the queue-only default's stand-down, as the harness-ci template's
+# `queue-only-default: true` input does; false, the default, matches a
+# workflow that passes none.
 #
 # Flags carry the meanings `harness-only --help` gives them, except --mode and
 # --paths-output, which this script does not take. Every read of a diff range
@@ -333,6 +336,7 @@ head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
 lanes_from=""
+queue_default=false
 changed=""
 # The queue-only class. Until the changed paths are read, the diff is
 # unreadable, and an unreadable diff reads queue-only.
@@ -363,6 +367,7 @@ while [ "$#" -gt 0 ]; do
     --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
     --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
     --lanes-from) need_value "$1" "$#" "${2:-}"; lanes_from="$2"; shift 2 ;;
+    --queue-only-default) need_value "$1" "$#" "${2:-}"; queue_default="$2"; shift 2 ;;
     # Retired with proof reuse; read until the next major release.
     --covers-all-lanes)
       need_value "$1" "$#" "${2:-}"
@@ -375,6 +380,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$event" ] || die "cause=missing-event option=--event" "--event is required"
+case "$queue_default" in
+  true | false) ;;
+  *) die "cause=invalid-setting option=--queue-only-default value=$queue_default" \
+    "--queue-only-default must be true or false" ;;
+esac
 
 work="$(mktemp -d 2>/dev/null)" || work=""
 [ -n "$work" ] && [ -d "$work" ] ||
@@ -404,14 +414,15 @@ answer() { # CLASS FIELDS [measured]
   [ "${3:-}" != measured ] || measured=true
   [ "$QUEUE_ONLY" = true ] || queue_selection "$1"
   if [ -n "$output" ] && [ "$output" != /dev/null ]; then
-    local lane_docs
+    local lane_docs queue_cause="${QUEUE_CAUSE#cause=}"
+    queue_cause="${queue_cause%% *}"
     lane_docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
       --paths-output "$work/paths" --outside-output "$work/outside" \
       --output /dev/null)" || die "cause=path-reader-failed" "could not read lane inputs"
     # harness-only owns the resolved endpoints; render move checks read them.
     cp "$harness_err" "$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
-      "$QUEUE_ONLY" "$work" "$lanes_from" >&2
+      "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_cause" "$queue_default" >&2
   fi
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY"

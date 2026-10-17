@@ -2108,11 +2108,12 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 }
 
 # The default-branch runs a red main is read from: kendex's skill-tests.yml,
-# and the harness-ci template's ci.yml, whose push to main and nightly
-# schedule run are the only runs after the merge queue. Each workflow's push
-# and nightly schedule keep their own incident row: the push compiles, the
-# nightly run tests the platform roster, so a green push must not clear a
-# red night.
+# and the harness-ci template's ci.yml, whose nightly schedule run is its
+# only run on main; a push run counts only where a repository adds the
+# trigger. Each workflow's push and nightly schedule keep their own incident
+# row: the push compiles, the nightly run tests the platform roster, so a
+# green push must not clear a red night. A read that finds no completed run
+# of an event leaves its row as it stands.
 MAIN_WORKFLOWS='skill-tests.yml ci.yml'
 check_main_push() {
   local repo workflow row_key event row failing runs run conclusion jobs log cause failures key prior legacy changed rc i
@@ -2173,6 +2174,7 @@ check_main_push() {
           continue
         fi
         IFS='|' read -r run conclusion <<<"$runs"
+        [[ "$run" != none ]] || continue
         if [[ " $failing " != *" $conclusion "* ]]; then
           rows="$(lane_row_clear "$row" "$rows" "$row_key")" \
             || die state-read-failed "" "repo=$repo" "row=$row"

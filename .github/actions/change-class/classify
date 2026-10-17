@@ -13,7 +13,7 @@
 # and a path list out of the judged tree is not something to hand a shell.
 #
 # Environment, from the action's inputs, all required but BASE, CLASSIFIER,
-# LANES_FROM and COVERS_ALL_LANES:
+# LANES_FROM, QUEUE_ONLY_DEFAULT and COVERS_ALL_LANES:
 #   EVENT  github.event_name
 #   BASE   the base endpoint sha; empty where the event carries none
 #   HEAD   the head endpoint sha
@@ -24,6 +24,10 @@
 #   LANES_FROM  the checkout root whose .github/ci-lanes.conf declares the
 #          workflow's base lanes and claims; never REPO.
 #          Empty means no lane is declared.
+#   QUEUE_ONLY_DEFAULT  true where the workflow asks for the queue-only
+#          default's stand-down, which the harness-ci template passes; empty
+#          or false where it does not, so a ci.yml copied before the default
+#          keeps its lanes. Any other value is refused.
 #   COVERS_ALL_LANES  accepted and ignored: the retired proof reuse's
 #          coverage assertion, which copies of the harness-ci template
 #          still pass.
@@ -68,8 +72,10 @@
 #                      workflow_dispatch; render-moved-claim for a claimed
 #                      moved-file candidate in a render;
 #                      queue-only-reader-absent where a render lacks the
-#                      stand-down's reader; lane-producer-unavailable when
-#                      the classifier checkout lacks the installed producer;
+#                      stand-down's reader; queue-only-lanes-from-unset
+#                      where the stand-down was asked for with no
+#                      LANES_FROM; lane-producer-unavailable when the
+#                      classifier checkout lacks the installed producer;
 #                      the class otherwise.
 #   lane_verdicts      one `lane_<name>=true|false` line per default-branch
 #                      lane, in base order, with head-only lanes appended in
@@ -92,12 +98,11 @@
 # declaration comparison failed; then, on a pull request,
 # false with the cause queue-deferred for a lane the declaration marks
 # `:queue` and one of its own globs reaches, where this run's change-class
-# answered queue_only=true and both renders below read the mark; then, for
-# a lane marked `:nightly`, true only where its own glob or the declaration
-# comparison selects it; then true
-# for every lane where a changed non-declaration path no base lane claims
-# lies outside the docs
-# set or where no changed path was read; then true where a changed path
+# answered queue_only=true and both renders below read the mark; then true
+# for every lane where no changed path was read; then, for a lane marked
+# `:nightly`, true only where its own glob or the declaration comparison
+# selects it; then true for every lane where a changed non-declaration path
+# no base lane claims lies outside the docs set; then true where a changed path
 # matches one of the lane's base globs or the declaration comparison selects
 # that lane, and false everywhere else. A deferred
 # lane runs in the merge group. The deferral needs the queue_only
@@ -115,10 +120,14 @@
 # a `tree=` naming which, and the step raises one warning. A head that
 # deletes its reader only makes the lane run. A checkout that runs pr-merge
 # behind both trees is outside what CI sees, and wiring.md holds it as an
-# ordering rule. The whole-run stand-down on pull_request and push follows
-# the same rule with its own reader: both trees must carry the render's
-# change-class that reads HARNESS_CI_PER_PUSH_REASON, or the lanes run with
-# lanes_cause=queue-only-reader-absent and one warning. A glob is a shell
+# ordering rule. The whole-run stand-down on pull_request and push applies
+# only where QUEUE_ONLY_DEFAULT is true and change-class's queue-only line
+# names cause=per-push-unset, and follows the same rule with its own reader:
+# both trees must carry the render's change-class that reads
+# HARNESS_CI_PER_PUSH_REASON, or the lanes run with
+# lanes_cause=queue-only-reader-absent and one warning. With no LANES_FROM
+# no default-branch render can be read, so the lanes run with
+# lanes_cause=queue-only-lanes-from-unset and one warning. A glob is a shell
 # pattern, so `*` also matches `/`. The
 # declaration's grammar and reader are the classifier's lib/ci-lanes.sh.
 # The declaration is read from LANES_FROM, the default branch's copy, because
@@ -166,6 +175,12 @@ SCRIPTS="$(cd "$scripts_root/skills/harness-ci/scripts" 2>/dev/null && pwd)" ||
 [ -n "${REPO:-}" ] || die missing-repo "the repo input is required"
 [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
   "GITHUB_OUTPUT is unset, so no caller could read a verdict"
+case "${QUEUE_ONLY_DEFAULT:-}" in
+  '' | false) queue_default=false ;;
+  true) queue_default=true ;;
+  *) die "invalid-input input=queue-only-default value=$QUEUE_ONLY_DEFAULT" \
+    "the queue-only-default input must be true or false" ;;
+esac
 
 # shellcheck source=../../../skills/harness-ci/scripts/lib/change-class.sh
 if [ ! -r "$SCRIPTS/lib/change-class.sh" ] || ! . "$SCRIPTS/lib/change-class.sh"; then
@@ -204,9 +219,13 @@ case "$verdict" in
   *) die "verdict-unreadable class-line=$verdict" \
     "the classifier printed no change_class line this action knows" ;;
 esac
-# The documented stderr record owns queue_only. A classifier predating it
-# leaves the output absent, as it did before the action forwarded the record.
+# The documented stderr record owns queue_only and its cause. A classifier
+# predating it leaves the output absent, as it did before the action
+# forwarded the record, and names no cause, so nothing stands down.
 queue_only="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
+  die "queue-only-unreadable path=${work:?}/class-log" \
+    "could not read the queue-only record change-class wrote"
+queue_cause="$(sed -n 's/^queue-only: queue_only=[^ ]* cause=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
   die "queue-only-unreadable path=${work:?}/class-log" \
     "could not read the queue-only record change-class wrote"
 printf 'change_class=%s\n' "$class" >>"$GITHUB_OUTPUT"
@@ -275,7 +294,7 @@ fi
 # while the action already carries it. With no decision, run every lane.
 if declare -F change_class_lanes >/dev/null; then
   change_class_lanes "$class" "$docs" "$EVENT" "$REPO" "$HEAD" \
-    "$queue_only" "$work" "${LANES_FROM:-}"
+    "$queue_only" "$work" "${LANES_FROM:-}" "$queue_cause" "$queue_default"
 else
   lane_count=0 lane_state=unset lane_values=() lane_causes=()
   lanes=true lanes_cause=lane-producer-unavailable

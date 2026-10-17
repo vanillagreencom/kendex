@@ -252,13 +252,11 @@ REVIEW_GATE_STANDARD_CONTEXTS = "CI"
 REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;Integration:5115517:pull_request"
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"
 
-# This repository's own queue-only paths beyond the list harness-ci ships.
-# The glob matches every path, so every change reads queue-only: pr-merge
-# never takes the admin route, and a change merges only after its
-# merge-group run passes
-# (docs/decisions/D027-merge-queue-proves-every-change.md). Unset would
-# answer the same but warn on every classifier run.
-HARNESS_CI_QUEUE_PATHS = "*"
+# This repository sets no HARNESS_CI_PER_PUSH_REASON, so change-class
+# answers every change queue-only with cause=per-push-unset: pr-merge never
+# takes the admin route, and a change merges only after its merge-group run
+# passes (docs/decisions/D027-merge-queue-proves-every-change.md).
+# HARNESS_CI_QUEUE_PATHS is read only once a reason is set.
 
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.

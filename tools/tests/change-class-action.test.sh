@@ -53,10 +53,12 @@
 #      runs where any of the three is missing, and stands down on no other
 #      event, and the
 #      classifier's queue_only line reaches the step's outputs. The
-#      stand-down: on a pull request whose classifier answered
-#      queue_only=true, every lane stands down only where both trees hold
-#      the render's change-class that reads HARNESS_CI_PER_PUSH_REASON, and
-#      runs with a named cause and one warning where either lacks it.
+#      stand-down: on a pull request whose workflow passed
+#      queue-only-default true and whose classifier answered the
+#      per-push-unset cause, every lane stands down only where both trees
+#      hold the render's change-class that reads HARNESS_CI_PER_PUSH_REASON,
+#      and runs with a named cause and one warning where either lacks it or
+#      no lanes-from was given.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -117,7 +119,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -z "$output" ] || printf 'change_class=%s\n' "$STUB_CLASS" >>"$output"
 if [ "${STUB_QUEUE_ABSENT:-false}" != true ]; then
-  printf 'queue-only: queue_only=%s cause=stub\n' "${STUB_QUEUE:-false}" >&2
+  printf 'queue-only: queue_only=%s cause=%s\n' "${STUB_QUEUE:-false}" "${STUB_QUEUE_CAUSE:-stub}" >&2
   [ -z "$output" ] || printf 'queue_only=%s\n' "${STUB_QUEUE:-false}" >>"$output"
 fi
 printf 'change_class=%s\n' "$STUB_CLASS"
@@ -516,6 +518,7 @@ lanes-from-judged-tree root=$TMP/subject|LANES_FROM=$TMP/subject
 repo-unreadable repo=$TMP/nowhere|LANES_FROM=$TMP/decl/good REPO=$TMP/nowhere
 outside-list-unreadable status=2|LANES_FROM=$TMP/decl/good STUB_PATHS=Makefile STUB_NO_OUTSIDE=1
 lanes-reader-unreadable root=$TMP/no-lanes-lib|LANES_FROM=$TMP/decl/good CLASSIFIER=$TMP/no-lanes-lib
+invalid-input input=queue-only-default value=yes|QUEUE_ONLY_DEFAULT=yes
 ROWS
 require_rows refusal "$refusal_rows"
 
@@ -823,6 +826,10 @@ declare_lanes nightly-added 'check:event-uniform src/* Cargo.toml tests/*
 tmux:nightly tmux/*
 docs-build docs/*
 '
+declare_lanes nightly-glob-added 'check:event-uniform src/* Cargo.toml tests/*
+tmux:nightly tmux/* fixtures/*
+docs-build docs/*
+'
 declare_lanes uniform-only 'check src/* Cargo.toml tests/*
 tmux tmux/*
 docs-build docs/*
@@ -839,7 +846,7 @@ delta_git() { git -C "$DELTA_REPO" -c user.name=suite -c user.email=suite@exampl
 delta_git init -q
 delta_git config gc.auto 0
 delta_git config maintenance.auto false
-for decl in good added-glob reordered removed-glob added-lane removed-lane renamed-lane queue-added queue-glob-added nightly-added uniform-only bad-name unreadable absent; do
+for decl in good added-glob reordered removed-glob added-lane removed-lane renamed-lane queue-added queue-glob-added nightly-added nightly-glob-added uniform-only bad-name unreadable absent; do
   [ ! -e "$DELTA_REPO/.github/ci-lanes.conf" ] || rm -r -- "$DELTA_REPO/.github/ci-lanes.conf"
   case "$decl" in
     absent) ;;
@@ -866,6 +873,7 @@ added-lane|good|added-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,
 removed-lane|good|removed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 renamed-lane|good|renamed-lane|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false,lane_terminal=true
 nightly-added|good|nightly-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
+nightly-glob-changed|nightly-added|nightly-glob-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 queue-added|good|queue-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 queue-removed|queue-added|good|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
 queue-glob-only|queue-added|queue-glob-added|.github/ci-lanes.conf|lane_verdicts=lane_check=false,lane_tmux=true,lane_docs-build=false
@@ -925,6 +933,7 @@ done <<'ROWS'
 [ "${claims[$other]}" != "$claim" ]@[ "${claims[$other]}" = "$claim" ]@added-glob
 [ "${queues[$other]}" != "${lane_queue[$index]}" ]@false@queue-added
  || [ "${nightlies[$other]}" != "${lane_nightly[$index]}" ]; then@; then@nightly-added
+    elif [ "${lane_changed[$index]}" = true ]; then@    elif false; then@nightly-glob-changed
 [ "$found" = true ] || printf@[ "$found" = false ] || printf@removed-lane
         declaration_comparison=unreadable@        declaration_comparison=not-needed@malformed-head
   elif [ "$declaration_comparison" = unreadable ]; then@  elif false; then@missing-head
@@ -1073,56 +1082,70 @@ check "a behaviour-preserving queue mutant reads as still answering its row" sur
 
 # --- 5d. The queue-only stand-down and the nightly run ----------------------
 
-# On pull_request and push, a classifier answer of queue_only=true stands
-# every lane down, where the lanes-from checkout and the judged head both
-# hold the render's change-class reading HARNESS_CI_PER_PUSH_REASON. Either
-# without it runs the lanes, naming the tree on one warning. The schedule
-# and workflow_dispatch runs run every lane. A `:nightly` lane runs off the
-# full run only on its own glob or a declaration change, whatever path no
+# On pull_request and push, every lane stands down only where the workflow
+# passed queue-only-default true, the classifier named the default's own
+# cause, per-push-unset, and the lanes-from checkout and the judged head
+# both hold the render's change-class reading HARNESS_CI_PER_PUSH_REASON.
+# A workflow that passes no input, a queue-only answer for any other cause
+# and an absent queue record run the lanes. Either tree without the reader
+# runs them and names the tree on one warning; no lanes-from runs them and
+# names that gap instead. The schedule and workflow_dispatch runs run every
+# lane. A `:nightly` lane runs off the full run only on its own glob, a
+# declaration change or a diff whose paths were not read, whatever path no
 # lane claims.
-# ROW|EVENT|DECLARATION|JUDGED HEAD|QUEUE_ONLY (`absent` prints no line)|
-# PATHS|EXPECTED: lanes, lanes_cause, lane_verdicts and the warned trees.
+# ROW|EVENT|DECLARATION (`none`: no lanes-from)|JUDGED HEAD|DEFAULT INPUT|
+# QUEUE CAUSE (`no-queue-path` answers false, `absent` prints no line)|
+# PATHS|EXPECTED: lanes, lanes_cause, lane_verdicts and the first word of
+# the stand-down warning.
 standdown_rows() {
   cat <<'ROWS'
-pr-stood-down|pull_request|standdown|standdown|true|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
-push-stood-down|push|standdown|standdown|true|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
-merge-group|merge_group|standdown|standdown|true|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-opted-back|pull_request|standdown|standdown|false|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-pr-queue-only-absent|pull_request|standdown|standdown|absent|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-lanes-from-old-render|pull_request|standdown-old|standdown|true|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from
-lanes-from-no-render|pull_request|good|standdown|true|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false warn=lanes-from
-judged-old-render|pull_request|standdown|old|true|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
-judged-no-render|pull_request|standdown|no-reader|true|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
-both-old-render|pull_request|standdown-old|old|true|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from,judged
-schedule|schedule|standdown|standdown|true|src/main.rs|lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
-dispatch|workflow_dispatch|standdown|standdown|true||lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
-nightly-unclaimed|merge_group|standdown|standdown|true|Makefile|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-nightly-no-paths|merge_group|standdown|standdown|true||lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
-nightly-claimed|merge_group|standdown|standdown|true|macos/run.sh|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_mac=true warn=
+pr-stood-down|pull_request|standdown|standdown|true|per-push-unset|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
+push-stood-down|push|standdown|standdown|true|per-push-unset|src/main.rs|lanes=false lanes_cause=queue-only lane_verdicts=lane_check=false,lane_mac=false warn=
+merge-group|merge_group|standdown|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-copied-template|pull_request|standdown|standdown||per-push-unset|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-opted-back|pull_request|standdown|standdown|true|no-queue-path|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-opted-back-queue-only|pull_request|standdown|standdown|true|queue-list-undeclared|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-queue-only-absent|pull_request|standdown|standdown|true|absent|src/main.rs|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+pr-lanes-from-unset|pull_request|none|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-lanes-from-unset lane_verdicts= warn=lanes-from=unset
+lanes-from-old-render|pull_request|standdown-old|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from
+lanes-from-no-render|pull_request|good|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_tmux=false,lane_docs-build=false warn=lanes-from
+judged-old-render|pull_request|standdown|old|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
+judged-no-render|pull_request|standdown|no-reader|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=judged
+both-old-render|pull_request|standdown-old|old|true|per-push-unset|src/main.rs|lanes=true lanes_cause=queue-only-reader-absent lane_verdicts=lane_check=true,lane_mac=false warn=lanes-from,judged
+schedule|schedule|standdown|standdown|true|per-push-unset|src/main.rs|lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
+dispatch|workflow_dispatch|standdown|standdown|true|per-push-unset||lanes=true lanes_cause=full-run lane_verdicts=lane_check=true,lane_mac=true warn=
+nightly-unclaimed|merge_group|standdown|standdown|true|per-push-unset|Makefile|lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=false warn=
+nightly-no-paths|merge_group|standdown|standdown|true|per-push-unset||lanes=true lanes_cause=standard lane_verdicts=lane_check=true,lane_mac=true warn=
+nightly-claimed|merge_group|standdown|standdown|true|per-push-unset|macos/run.sh|lanes=true lanes_cause=standard lane_verdicts=lane_check=false,lane_mac=true warn=
 ROWS
 }
 standdown_answer() { # SCRIPT ROW — the row's answer, or `crashed`
-  local line event decl judged queue paths head absent=false
+  local line event decl judged default cause paths head lanes_from="" queue=true absent=false
   line="$(standdown_rows | grep -m1 "^$2|")" || { echo "no stand-down row named $2" >&2; exit 1; }
-  IFS='|' read -r _ event decl judged queue paths _ <<<"$line"
+  IFS='|' read -r _ event decl judged default cause paths _ <<<"$line"
   case "$judged" in
     standdown) head="$JUDGED_STANDDOWN" ;;
     old) head="$JUDGED_OLD_RENDER" ;;
     no-reader) head="$JUDGED_NO_READER" ;;
     *) echo "stand-down row $2 names no judged head: $judged" >&2; exit 1 ;;
   esac
-  [ "$queue" != absent ] || { queue=false absent=true; }
-  if [ "$(run "$1" EVENT="$event" HEAD="$head" LANES_FROM="$TMP/decl/$decl" STUB_QUEUE="$queue" \
-    STUB_QUEUE_ABSENT="$absent" STUB_PATHS="$paths" STUB_OUTSIDE="$paths")" != 0 ]; then
+  [ "$decl" = none ] || lanes_from="$TMP/decl/$decl"
+  case "$cause" in
+    absent) queue=false absent=true ;;
+    no-queue-path) queue=false ;;
+  esac
+  if [ "$(run "$1" EVENT="$event" HEAD="$head" LANES_FROM="$lanes_from" QUEUE_ONLY_DEFAULT="$default" \
+    STUB_QUEUE="$queue" STUB_QUEUE_CAUSE="$cause" STUB_QUEUE_ABSENT="$absent" \
+    STUB_PATHS="$paths" STUB_OUTSIDE="$paths")" != 0 ]; then
     echo crashed
     return 0
   fi
   printf '%s warn=%s\n' \
     "$(outputs | tr ' ' '\n' | grep -E '^(lanes|lanes_cause|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//')" \
-    "$(sed -n 's/^::warning title=lanes not stood down::\([^ ]*\) holds .*/\1/p' "$TMP/stdout" | tr '\n' ' ' | sed 's/ $//')"
+    "$(sed -n 's/^::warning title=lanes not stood down::\([^ ]*\) .*/\1/p' "$TMP/stdout" | tr '\n' ' ' | sed 's/ $//')"
 }
 rows=0
-while IFS='|' read -r name _ _ _ _ _ expected; do
+while IFS='|' read -r name _ _ _ _ _ _ expected; do
   rows=$((rows + 1))
   check "stand-down row $name" "$expected" "$(standdown_answer "$CLASSIFY" "$name")"
 done < <(standdown_rows)
@@ -1134,7 +1157,7 @@ mutants=0
 while IFS='@' read -r needle replacement row target; do
   mutants=$((mutants + 1))
   plant "$target" "$needle" "$replacement"
-  expected="$(standdown_rows | grep -m1 "^$row|" | cut -d'|' -f7)"
+  expected="$(standdown_rows | grep -m1 "^$row|" | cut -d'|' -f8)"
   answer="$(standdown_answer "$PLANTED" "$row")"
   if [ "$answer" != crashed ] && [ "$answer" != "$expected" ]; then
     ok "must-fail: '$needle' planted as '$replacement' fails the $row row"
@@ -1142,14 +1165,19 @@ while IFS='@' read -r needle replacement row target; do
     bad "must-fail: '$needle' planted as '$replacement' survived or crashed the $row row"
   fi
 done <<'ROWS'
-      if [ -z "$standdown_missing" ]; then@      if true; then@lanes-from-old-render@classify
-if [ "$lanes" = true ] && [ "$queue_only" = true ]; then@if [ "$lanes" = true ]; then@pr-opted-back@classify
+        if [ -z "$standdown_missing" ]; then@        if true; then@lanes-from-old-render@classify
+[ "$queue_default" = true ] && @@pr-copied-template@classify
+ && [ "$queue_cause" = per-push-unset ]; then@; then@pr-opted-back-queue-only@classify
+      if [ -z "$lanes_from" ]; then@      if false; then@pr-lanes-from-unset@classify
+  '' | false) queue_default=false ;;@  '' | false) queue_default=true ;;@pr-copied-template@classify
+queue_cause="$(sed -n 's/^queue-only: queue_only=[^ ]* cause=\([^ ]*\).*/\1/p'@queue_cause="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p'@pr-stood-down@classify
     pull_request | push)@    pull_request | push | merge_group)@merge-group@classify
 render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)@render_reader_missing "$per_push_reader")@judged-old-render@classify
 if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then@if [ "$EVENT" = schedule ]; then@dispatch@classify
   if [ "$lanes_cause" = full-run ]; then@  if false; then@schedule@classify
   elif [ "${lane_nightly[$index]}" = true ]; then@  elif false; then@nightly-unclaimed@classify
-      lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"@      lane_values[$index]=true lane_causes[$index]="cause=nightly-unreached"@nightly-no-paths@classify
+      lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"@      lane_values[$index]=true lane_causes[$index]="cause=nightly-unreached"@nightly-unclaimed@classify
+  elif [ "$no_changed_paths" = true ]; then@  elif [ "$no_changed_paths" = true ] && [ "${lane_nightly[$index]}" != true ]; then@nightly-no-paths@classify
 *:nightly) nightly=true name=@*:nightly) nightly=false name=@nightly-unclaimed@lib
 ROWS
 ROW_CLASSIFIER=""

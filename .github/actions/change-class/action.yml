@@ -22,9 +22,10 @@ description: >-
 # title, not the class itself: the author of the diff under judgement writes
 # every one of those, so an input that asserted a verdict would fail open on
 # exactly the diffs that most want to pass. The inputs below are the event and
-# its two endpoints, which GitHub writes, and three directories: where the
+# its two endpoints, which GitHub writes, three directories: where the
 # classifier is read from, where the lane declaration is read from, and which
-# tree it judges. A directory is a place to look, never a verdict.
+# tree it judges, and whether the workflow asks for the queue-only default,
+# which its own file states. A directory is a place to look, never a verdict.
 
 inputs:
   classifier:
@@ -58,6 +59,17 @@ inputs:
       workflow's base lanes and the paths each reads. Refused where it is the
       checkout `repo` names, whose author could stand a lane down. Empty
       declares no lane and leaves lane_verdicts empty.
+    required: false
+    default: ''
+  queue-only-default:
+    description: >-
+      true asks for the queue-only default: on pull_request and push every
+      lane stands down where change-class answered cause=per-push-unset, the
+      base naming no HARNESS_CI_PER_PUSH_REASON, and the lanes-from checkout
+      and the judged head both carry the render that reads it. The harness-ci
+      template passes it. Empty or false, a ci.yml copied before the default
+      keeps its lanes while queue_only stays true, so pr-merge still takes
+      the queue. Any other value fails the step.
     required: false
     default: ''
   covers-all-lanes:
@@ -100,8 +112,9 @@ outputs:
       This covers both
       rename ends without content pairing. Other renders run none. A trivial class or
       docs_only=true on a non-render class runs none. On pull_request and
-      push, queue_only=true runs none, where both renders read the queue-only
-      default. On schedule and workflow_dispatch every lane runs. When the
+      push, with queue-only-default true, the queue-only default's cause
+      runs none, where both renders read it. On schedule and
+      workflow_dispatch every lane runs. When the
       selected classifier lacks the shared producer, the action sets
       lanes=true with lanes_cause=lane-producer-unavailable and empty
       lane_verdicts, regardless of the class or docs verdict.
@@ -118,7 +131,8 @@ outputs:
       where lanes is false; full-run on schedule and workflow_dispatch;
       render-moved-claim for a claimed moved-file candidate in a render;
       queue-only-reader-absent where a render lacks the queue-only default's
-      reader; lane-producer-unavailable when the selected classifier lacks
+      reader; queue-only-lanes-from-unset where queue-only-default is true
+      with no lanes-from; lane-producer-unavailable when the selected classifier lacks
       the shared producer; the class otherwise.
     value: ${{ steps.classify.outputs.lanes_cause }}
   lane_verdicts:
@@ -161,6 +175,7 @@ runs:
         HEAD: ${{ inputs.head }}
         REPO: ${{ inputs.repo }}
         LANES_FROM: ${{ inputs.lanes-from }}
+        QUEUE_ONLY_DEFAULT: ${{ inputs.queue-only-default }}
         COVERS_ALL_LANES: ${{ inputs.covers-all-lanes }}
       run: |
         "$GITHUB_ACTION_PATH/classify"

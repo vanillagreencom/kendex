@@ -126,16 +126,14 @@ opencode.jsonc'
 # declared lane. Refusals pass cause= fields to the caller's die formatter.
 #
 # A schedule or workflow_dispatch run is the nightly full run: lanes=true
-# and every declared lane true, cause=full-run, whatever the class. On
-# pull_request and push, a run whose QUEUE_ONLY reads true stands every lane
-# down, lanes_cause=queue-only: the merge group proves the head, and
-# change-class answers queue_only=true for every change on a repository
-# with no HARNESS_CI_PER_PUSH_REASON. An empty or absent QUEUE_ONLY runs the
-# lanes. The stand-down needs the render that answers that default in both
-# trees a merge can run pr-merge from; render_reader_missing below.
-change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM
+# and every declared lane true, cause=full-run, whatever the class.
+# QUEUE_CAUSE is the bare cause name of change-class's queue-only line, empty
+# where it printed none. QUEUE_DEFAULT is true where the workflow asked for
+# the queue-only default; the stand-down below states what it does.
+change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_CAUSE QUEUE_DEFAULT
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
-  local queue_only="$6" work="$7" lanes_from="$8" declaration="" lanes_root="" judged_root=""
+  local queue_only="$6" work="$7" lanes_from="$8" queue_cause="${9:-}" queue_default="${10:-false}"
+  local declaration="" lanes_root="" judged_root=""
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head has_deletions status path index delta name claimed
   local moved_paths=() added_paths=() lane_hits=() lane_changed=() render_hits=()
@@ -362,16 +360,31 @@ render_reader_missing() { # PATH [MARKER]
   printf '%s' "$missing"
 }
 
-if [ "$lanes" = true ] && [ "$queue_only" = true ]; then
+# The whole-run stand-down, on pull_request and push: the merge group proves
+# the head. It applies only where the workflow asked for the default, which
+# the harness-ci template alone does, so a ci.yml copied before the default
+# keeps its lanes when a catalog refresh delivers this render. It also needs
+# change-class's per-push-unset cause, the default's own: a repository that
+# names HARNESS_CI_PER_PUSH_REASON runs its lanes on every queue-only change
+# too, deferring only its `:queue` lanes, below, since with no merge queue
+# pr-merge merges a queue-only change on its green pull-request run. The
+# reader check reads the default branch's render through LANES_FROM, so a
+# run that names none cannot stand down.
+if [ "$lanes" = true ] && [ "$queue_default" = true ] && [ "$queue_cause" = per-push-unset ]; then
   case "$EVENT" in
     pull_request | push)
-      standdown_missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)"
-      if [ -z "$standdown_missing" ]; then
-        lanes=false lanes_cause=queue-only
+      if [ -z "$lanes_from" ]; then
+        lanes_cause=queue-only-lanes-from-unset
+        printf '::warning title=lanes not stood down::lanes-from=unset the queue-only default reads the default branch'\''s render there; pass the default branch'\''s checkout as lanes-from, and until then the lanes run\n'
       else
-        lanes_cause=queue-only-reader-absent
-        printf '::warning title=lanes not stood down::%s holds no %s reading HARNESS_CI_PER_PUSH_REASON, so github.sh pr-merge run from it could read this change free to take the admin merge; run kendex refresh on the default branch and rebase onto it, and until then the lanes run\n' \
-          "$standdown_missing" "$per_push_reader"
+        standdown_missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)"
+        if [ -z "$standdown_missing" ]; then
+          lanes=false lanes_cause=queue-only
+        else
+          lanes_cause=queue-only-reader-absent
+          printf '::warning title=lanes not stood down::%s holds no %s reading HARNESS_CI_PER_PUSH_REASON, so github.sh pr-merge run from it could read this change free to take the admin merge; run kendex refresh on the default branch and rebase onto it, and until then the lanes run\n' \
+            "$standdown_missing" "$per_push_reader"
+        fi
       fi ;;
   esac
 fi
@@ -383,10 +396,11 @@ fi
 # the pull request off the admin merge. Otherwise it runs, its cause naming
 # what was missing. A queue lane only a fallback reached runs here, since no
 # glob of its own put the diff in the queue.
-# A failed declaration comparison permits no queue deferral. A `:nightly`
-# lane runs off the full run only on its own glob or a declaration change:
-# the unclaimed-path and no-changed-paths fallbacks would run it on most
-# changes, and the full run reaches it every night.
+# A failed declaration comparison permits no queue deferral, and a diff whose
+# paths could not be read runs every other lane. A `:nightly` lane runs off
+# the full run only on its own glob or a declaration change: the
+# unclaimed-path fallback would run it on most changes, and the full run
+# reaches it every night.
 lane_values=()
 lane_causes=()
 reader_missing=unread
@@ -414,6 +428,8 @@ while [ "$index" -lt "$lane_count" ]; do
     else
       lane_values[$index]=false lane_causes[$index]="cause=queue-deferred $hit"
     fi
+  elif [ "$no_changed_paths" = true ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=no-changed-paths"
   elif [ "${lane_nightly[$index]}" = true ]; then
     if [ -n "${lane_hits[$index]}" ]; then
       lane_values[$index]=true lane_causes[$index]="cause=claimed ${lane_hits[$index]}"
@@ -422,8 +438,6 @@ while [ "$index" -lt "$lane_count" ]; do
     else
       lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
     fi
-  elif [ "$no_changed_paths" = true ]; then
-    lane_values[$index]=true lane_causes[$index]="cause=no-changed-paths"
   elif [ -n "$unclaimed_path" ]; then
     lane_values[$index]=true lane_causes[$index]="cause=unclaimed-path path=$unclaimed_path"
   elif [ -n "${lane_hits[$index]}" ]; then

@@ -189,14 +189,16 @@ for row in \
 done
 
 # A red nightly run is an incident of its own: a green push after it neither
-# hides nor clears it, and a red push beside it reports apart.
+# hides nor clears it, and a red push beside it reports apart. A read that
+# lists no scheduled run leaves the standing night in place, so the same red
+# night after it raises nothing new.
 NIGHT_JOBS='["Skill suites shard (orch-oversee, macos-latest)"]'
 NIGHT_EVENT="EVENT main-push-failing owner/repo workflow=skill-tests.yml event=schedule run=302 jobs=$NIGHT_JOBS cause=$CAUSE"
-night_history() { # SCHEDULE_CONCLUSION PUSH_CONCLUSION
+night_history() { # SCHEDULE_CONCLUSION (none: no scheduled run) PUSH_CONCLUSION
   jq -cn --arg night "$1" --arg push "$2" '[
     {databaseId: 303, headBranch: "main", event: "push", status: "completed", conclusion: $push},
     {databaseId: 302, headBranch: "main", event: "schedule", status: "completed", conclusion: $night}
-  ]' > "$STUB_DIR/main-push.owner_repo.json"
+  ] | map(select(.event == "push" or $night != "none"))' > "$STUB_DIR/main-push.owner_repo.json"
   jq -cn --argjson names "$NIGHT_JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.302.json"
   jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.303.json"
   printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.302.txt"
@@ -208,7 +210,9 @@ for row in \
   'night-standing-under-green-push|failure|success|' \
   "push-red-beside-night|failure|failure|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=303 jobs=$JOBS cause=$CAUSE" \
   'night-green|success|failure|' \
-  "night-red-after-recovery|failure|failure|$NIGHT_EVENT"; do
+  "night-red-after-recovery|failure|failure|$NIGHT_EVENT" \
+  'night-unlisted|none|failure|' \
+  'night-standing-after-unlisted|failure|failure|'; do
   IFS='|' read -r name night push expected <<<"$row"
   night_history "$night" "$push"
   main_watch
@@ -222,6 +226,17 @@ new_case main_schedule_control
 night_history failure success
 WATCH_BIN="$NIGHT_MUTANT" main_watch
 assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'control: a push-only watch misses the red night' "$STUB_DIR/err"
+# A watch that clears the night on an empty list reports the same red night
+# again.
+UNLISTED_MUTANT="$(mutant_scripts main-unlisted/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-unlisted/github"
+mutate_file "$UNLISTED_MUTANT" '        [[ "$run" != none ]] || continue' '        :'
+new_case main_schedule_unlisted_control
+for night in failure none failure; do
+  night_history "$night" success
+  WATCH_BIN="$UNLISTED_MUTANT" main_watch
+done
+assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$NIGHT_EVENT" 'control: clearing on an empty list reports the standing night again' "$STUB_DIR/err"
 
 # Admit raw diagnostics in a private watch. The unchanged-suite oracle must
 # reject its duplicate event while the mutant still completes the check.

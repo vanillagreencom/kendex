@@ -24,11 +24,8 @@
 #      arguments the template passes, fed to aggregate-needs with the needs
 #      the template's own outputs make, accept a skipped lane only where the
 #      classifier succeeded and `lanes` or the lane's verdict was false, and
-#      CI runs on every event whatever its needs did. Per event, the action's
-#      answer runs the lanes and passes CI: a pull request's queue-only
-#      stand-down runs none, a merge group the lanes its diff selects, and
-#      the nightly run every lane. Its helper runs from an unconditional
-#      default-branch checkout and a missing helper fails.
+#      CI runs on every event whatever its needs did. Its helper runs from
+#      an unconditional default-branch checkout and a missing helper fails.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package or its required dependencies ship.
 #   5. the steps the classifier can live without: the render-reach, kendex
@@ -351,29 +348,6 @@ schedule|failure|yes
 ROWS
 require_rows ci "$ci_rows"
 
-# Per event, the lanes the action's answer runs and the aggregate's exit on
-# the results they leave: a lane that ran succeeded, one that did not was
-# skipped. A pull request's code diff takes the queue-only stand-down
-# (lanes=false, lanes_cause=queue-only) and passes CI with no lane run; the
-# merge group runs the lanes its diff selects; the nightly run every lane.
-# EVENT|ACTION'S LANES|LANE VERDICTS|CLASS|LANES THAT RUN|CI EXIT
-event_rows=0
-while IFS='|' read -r event lanes verdicts class expected exit_expected; do
-  event_rows=$((event_rows + 1))
-  ran="$(running "$TEMPLATE" "$event" success "$lanes" "$verdicts" "$class")"
-  lane_result=skipped
-  [ "$ran" = none ] || lane_result=success
-  assert_eq "$event for a $class diff the action answered lanes=$lanes: lanes run and CI exits" \
-    "$expected $exit_expected" "$ran $(aggregate_exit "$TEMPLATE" success "$lanes" "$verdicts" "$lane_result")"
-done <<'ROWS'
-pull_request|false|lane_test=false|standard|none|0
-merge_group|true|lane_test=true|standard|test|0
-merge_group|true|lane_test=false|small|none|0
-schedule|true|lane_test=true|standard|test|0
-workflow_dispatch|true|lane_test=true|standard|test|0
-ROWS
-require_rows event "$event_rows"
-
 # --- 4. The copy ------------------------------------------------------------
 
 assert_eq "every workflow expression closes on its own line" "" \
@@ -655,11 +629,19 @@ assert_eq "must-fail: guards from the merge ref pass the planted credential" "ex
 subject-code=ran" \
   "$(credential_scan "$SANDBOX/pr-guards.yml" pr-guards)"
 
-# --- 4a. The classifier's permission --------------------------------------
+# --- 4a. The classifier's permission and the default it asks for ---------
 # The classifier reads the repository and nothing else: no read of earlier
 # runs is left since proof reuse was removed.
 assert_eq "the changes job grants the checkout's read, nothing more" \
   "contents: read" "$(job_permissions "$TEMPLATE" changes)"
+# The template asks the action for the queue-only default. A copy without
+# the input keeps its lanes on every pull request, which is what a ci.yml
+# copied before the default gets, so the template must spell it.
+assert_eq "the classify step asks for the queue-only default" "true" \
+  "$(step_key "$TEMPLATE" classify queue-only-default)"
+plant "$TEMPLATE" "queue-only-default: true" "queue-only-default: false" "$SANDBOX/no-default.yml"
+assert_eq "must-fail: a template not asking is named" "false" \
+  "$(step_key "$SANDBOX/no-default.yml" classify queue-only-default)"
 
 # --- 5. The steps the classifier can live without -------------------------
 

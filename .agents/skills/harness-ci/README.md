@@ -37,7 +37,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | Setting | What to configure |
 |---|---|
 | `HARNESS_CI_STANDARD_PATHS` | High-risk paths that always need full checks. |
-| `HARNESS_CI_PER_PUSH_REASON` | The reason the repository runs its lanes on each pull-request push and may merge outside the queue. Unset, every change is queue-only and a pull request runs no lane: the merge-queue run proves the head. A blank value is refused and read as unset. A repository with no merge queue sets it to `no merge queue`. |
+| `HARNESS_CI_PER_PUSH_REASON` | The reason the repository runs its lanes on each pull-request push and may merge outside the queue. Set, the lanes run on every pull-request push and only `:queue` lanes wait for the merge group. Unset, every change is queue-only, and the CI template's pull request runs no lane: the merge-queue run proves the head. A blank value is refused and read as unset. A repository with no merge queue sets it to `no merge queue`. |
 | `HARNESS_CI_QUEUE_PATHS` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository's own CI inputs that need the merge queue. Set it empty when the shipped list covers them all. Leaving it unset requires the queue for every change. |
 | `HARNESS_CI_QUEUE_SELECTOR` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository command that identifies merge-group jobs. Update harness-ci on the default branch and sync the merging checkout before using this setting. |
 | `HARNESS_CI_TRIVIAL_PATHS` | Paths eligible for the trivial-change class. |
