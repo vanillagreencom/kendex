@@ -216,7 +216,11 @@ else exec '{shutil.which("date")}' "$@"; fi
                     and {e["id"]: e["kind"] for e in imported_rows} == public)
                 relay.poll("UBOT")
                 relay.poll("UBOT")
-                expected = "Approve this change? [KEN-7](https://linear.app/workspace/issue/KEN-7)"
+                due = ask["deadline"]
+                epoch = int(datetime.strptime(due, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
+                expected = ("<@UOWNER> Question from overseer: Approve this change? "
+                            "[KEN-7](https://linear.app/workspace/issue/KEN-7) It stands at "
+                            f"<!date^{epoch}^{{date_short_pretty}} at {{time}}|{due}> unless you reply in this thread.")
                 delivered = api.messages[-1].get("markdown_text", "")
                 facts["delivery"] &= (len(api.messages) == 2 and (delivered == expected if posted else
                     "More detail." in delivered and "approve, hold" in delivered))
