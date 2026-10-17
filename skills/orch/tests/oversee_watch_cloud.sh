@@ -133,7 +133,7 @@ for row in \
   "a head pushed after the directive|stall_bound_moved|2000|100,abc111,b,;1900,abc111,b,EVENT lane-stalled issue-1 age=1800;2100,abc222,b,;3800,abc222,b,;3900,abc222,b,EVENT lane-stalled issue-1 age=1800" \
   "a lane that never opened its pull request|start_bound|700|600,,,EVENT start-stalled issue-1 age=600;2499,,,;2500,,,$CLOSED" \
   "an unchanged branch without a pull request|start_bound_unchanged|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$BRANCH_HEAD,$CLOSED" \
-  "a first push after the startup directive whose pull request creation fails|start_bound_first_push|700|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2560,,$PUSHED_HEAD,;2620,,$PUSHED_HEAD,EVENT start-stalled issue-1 age=2620" \
+  "a first push after the startup directive starts the lane|start_bound_first_push|700|600,,,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD,;2560,,$PUSHED_HEAD,;2620,,$PUSHED_HEAD," \
   "a changed branch without a pull request|start_bound_changed|700|600,,$BRANCH_HEAD,EVENT start-stalled issue-1 age=600;2500,,$PUSHED_HEAD," \
   "a branch first observed after the directive bound|start_bound_first_read|700|2500,,$PUSHED_HEAD,EVENT start-stalled issue-1 age=2500" \
   "an unread branch after the startup directive|start_bound_unread|700|600,,,EVENT start-stalled issue-1 age=600;2500,,unread," \

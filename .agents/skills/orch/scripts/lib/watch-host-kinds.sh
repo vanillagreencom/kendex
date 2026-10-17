@@ -353,7 +353,8 @@ item_open_pr() { # ITEM
 # machine or spent its credit. The row keeps the head, a digest of the body
 # and the epoch either last moved, plus the reported state word. Reported
 # once, then every MARK_REPEAT passes while it stands. Before the pull request
-# opens the start-stall check holds the lane, so a lane with none has no row.
+# opens the start-stall check holds the lane until its first push, so a lane
+# with none has no row.
 check_lane_stall() {
   local item prior head digest since passes age rc state reported rows="${PW_SEEN[0]}" items=()
   for item in ${STATUSLESS[@]+"${STATUSLESS[@]}"}; do

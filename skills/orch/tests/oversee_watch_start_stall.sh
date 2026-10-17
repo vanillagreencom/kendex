@@ -172,6 +172,25 @@ for row in "start_stall_cloud_none||EVENT start-stalled issue-7 age=700" "start_
   cloud_start "$name" "$open"
   assert_eq "events=$EVENTS" "events=$want" "$name: a files=none lane's start is its own open pull request" "$STUB_DIR/err"
 done
+# A cloud session opens its pull request only at finish, so a branch push the
+# watch saw after launch is its start too. NAME|HEAD at 100s|HEAD at 700s|WANT
+BASE_HEAD=1111111111111111111111111111111111111111
+PUSHED_HEAD=2222222222222222222222222222222222222222
+cloud_push() { # NAME FIRST SECOND [WATCH_BIN]
+  new_case "$1"
+  write_state "$(launched issue-7 "$(worktree issue-7)" claude claude-cloud)"
+  : > "$STUB_DIR/open.txt"
+  printf '%s\n' "$2" > "$STUB_DIR/branch-head"
+  WATCH_BIN="${4:-}" watch 100
+  printf '%s\n' "$3" > "$STUB_DIR/branch-head"
+  WATCH_BIN="${4:-}" watch 700
+}
+for row in "start_stall_cloud_pushed|$BASE_HEAD|$PUSHED_HEAD|" \
+  "start_stall_cloud_unpushed|$BASE_HEAD|$BASE_HEAD|EVENT start-stalled issue-7 age=700"; do
+  IFS='|' read -r name first second want <<<"$row"
+  cloud_push "$name" "$first" "$second"
+  assert_eq "events=$EVENTS" "events=$want" "$name: a branch push since launch is a files=none lane's start" "$STUB_DIR/err"
+done
 
 echo "=== lane-long repeats at age intervals across a relaunch and a handoff ==="
 # issue-1 was launched at LAUNCHED; issue-2 an hour later and recorded running
@@ -383,5 +402,12 @@ if (FAIL=0; assert_default_long; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out";
 else
   assert_file_contains "$STUB_DIR/control.out" 'got:      events=' "control: the old default reddens the above-threshold row"
 fi
+# Reading any branch head as a start must redden the unpushed row.
+ANY_HEAD_WATCH="$(mutant_scripts start-stall-any-head/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/start-stall-any-head/github"
+# shellcheck disable=SC2016
+mutate_file "$ANY_HEAD_WATCH" '[[ "$prior_running" == "$running" && "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ]]' '[[ -n "$OPEN_PR_BRANCH_HEAD" ]]'
+cloud_push start_stall_cloud_any_head "$BASE_HEAD" "$BASE_HEAD" "$ANY_HEAD_WATCH"
+assert_eq "events=$EVENTS" "events=" "control: reading any branch head as a start silences the unpushed row" "$STUB_DIR/err"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

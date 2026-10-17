@@ -2465,10 +2465,10 @@ check_refresh() {
 # this run's mail pass found with its worktree gone. A hosted file is read
 # through lane-host, and a read that failed settles nothing: the row stands
 # and the failure is noted. A lane whose kind declares files=none, a cloud
-# session, writes no file this watch can read: its start is the draft pull
-# request its session words have it open on the item branch at once, after an
-# empty first commit, so no open pull request still means never started. A
-# pull request create the session token is refused reads the same way.
+# session, writes no file this watch can read: its start is its own open pull
+# request on the item branch, or a push to that branch since launch, its
+# session words' empty first commit, since it opens its pull request only at
+# finish. Neither seen past the window still means never started.
 check_start_stall() {
   local entry item running age prior passes path rc since prior_running prior_head rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
@@ -2501,10 +2501,14 @@ check_start_stall() {
     since="$running"
     IFS='|' read -r prior_running passes prior_head since <<<"$prior"
     if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
-      # A push can answer a directive even when the session's token cannot
-      # open its pull request. First observing a branch also leaves its push
-      # time unknown, so only an unchanged observation can authorize closing.
-      if [[ "$prior_running" != "$running" || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" || -z "$since" ]]; then
+      # A branch head that moved between two reads of this running record is
+      # a push since launch: the session started. A first read cannot date the
+      # head it sees, so it starts nothing and only stamps since.
+      if [[ "$prior_running" == "$running" && "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ]]; then
+        rows="$(lane_row_set start-stalled "$rows" "$item" "$running|seen")"
+        continue
+      fi
+      if [[ "$prior_running" != "$running" || -z "$since" ]]; then
         since="$PASS_NOW"
         [[ -n "$OPEN_PR_BRANCH_HEAD" || -n "$prior_head" ]] || since="$running"
       fi
