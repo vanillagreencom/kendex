@@ -41,7 +41,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Validation routing
 
-- In submit-pr § 1.1, reuse a passing local range result for the current commit before the first push. After the pull request opens, resolve its base branch with `resolve-base-branch`, then resolve the branch merge base with `git merge-base HEAD origin/<base-branch>`. Request validation with `dev-validate-run --validate-mode ci --base <merge-base>`. A failed base lookup or local result blocks publication. Fix rounds keep their delegated round base. CI and the merge queue hold the full validation record.
+- In submit-pr § 1.1, reuse a passing local range result for the current commit before the first push. After the pull request opens, resolve its base branch with `resolve-base-branch`, then resolve the branch merge base with `git merge-base HEAD origin/<base-branch>`. Request validation with `dev-validate-run --validate-mode ci --base <merge-base>`. A failed base lookup or local result blocks publication. Fix rounds keep their delegated round base. Every kendex change is queue-only, so the merge-group run alone holds the full validation record. A red merge-group run returns the change to its lane through merge-pr § 5's Recovery cycle, and the lane pushes a fixed head before it re-arms: an unchanged head never re-enters the queue after a red run.
 
 ### Owner messages
 

@@ -10,7 +10,8 @@
 
 [env]
 
-# KEN-3599 routes kendex lanes through pull-request CI.
+# A lane publishes a draft and runs internal review while CI is pending. The
+# merge-group run is the only CI proof of the head (KEN-4220).
 ORCH_PR_ORDER = "push-first"
 
 ORCH_OWNER_ASK_LABEL = "owner-gated"
@@ -52,7 +53,10 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # with slow dispatch.
 CI_WAIT_NO_CHECKS_GRACE = "600"
 
-# Wait past the observed 50 to 70 minute macOS jobs.
+# ci-wait reads only the pull request's checks; queue-wait watches the
+# merge-group run. Pull requests still run the macOS jobs, observed at 50 to
+# 70 minutes, so the wait stays past them until those jobs leave the
+# pull-request run.
 CI_WAIT_MAX_SECS = "5400"
 
 # Max automated ci-fix rounds per PR before a human takes over.
@@ -252,18 +256,12 @@ REVIEW_GATE_STANDARD_CONTEXTS = "CI"
 REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;Integration:5115517:pull_request"
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"
 
-# This repository's own queue-only paths beyond the list harness-ci ships
-# (orch's references/narrow-change.conf, which already names this catalog's
-# CI inputs). Set empty: the shipped list is the whole list here. Unset, the
-# change classifier reads every pull request as queue-only, so pr-merge never
-# takes the admin route.
-HARNESS_CI_QUEUE_PATHS = ""
-
-# The job selection whose merge-group macOS shards also make a change
-# queue-only: a change for which tools/ci-job-set's queue_macos_shards names
-# a shard merges through the queue, which runs those shards, never the admin
-# route, which skips them (docs/decisions/D013-admin-merge-green-prs.md).
-HARNESS_CI_QUEUE_SELECTOR = "tools/ci-job-set queue_macos_shards"
+# This repository's own queue-only paths beyond the list harness-ci ships.
+# The glob matches every path, so every change reads queue-only: pr-merge
+# never takes the admin route, and the merge-group run is the only proof of a
+# head (owner ruling, KEN-4220). Unset would answer the same but warn on
+# every classifier run.
+HARNESS_CI_QUEUE_PATHS = "*"
 
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
@@ -276,8 +274,8 @@ BOT_REMOTE_NAME = ""
 # Where the decider skill keeps architecture decision records.
 DECISIONS_DIR = "docs/decisions"
 
-# Local rounds validate the branch range. Pull-request CI and the merge
-# queue retain the full validation record.
+# Local rounds validate the branch range. The merge-group run holds the full
+# validation record.
 DEV_VALIDATE_CMD = "base=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$base) && tools/guard --range $base"
 
 # A full run with CARGO_INCREMENTAL=0 writes one artifact set. Measured from a
@@ -299,17 +297,18 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # the working-tree bot-instructions check, the decision-ID check, the
 # free-space floor above and the class lane selection.
 # A restack also runs it, as skills/orch/workflows/merge-pr-restack.md sets out.
-# Submit requests CI validation. CI runs the selected
-# lanes and the decision-ID check on both pull requests and merge groups.
+# Submit requests CI validation. The merge-group run runs the selected lanes
+# and the decision-ID check and is the validation record of the head.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
 # Preview the same suite selection before launching validation. An all-suite
-# pre-open run uses this command's scoped route; PR CI holds the full record.
+# pre-open run uses this command's scoped route; the merge-group run holds
+# the full record.
 DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; then branch=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$branch) || exit; fi; tools/guard --selection --range $base"
 
-# The required CI context runs the tools/guard lanes through tools/ci-job-set,
-# so a review-comment fix round on an open pull request leaves its validation
-# to that check.
+# The required CI context runs the tools/guard lanes through tools/ci-job-set.
+# Every kendex change is queue-only, so a round that leaves its validation to
+# this check records the merge-group run as its proof.
 DEV_VALIDATE_CI_CONTEXT = "CI"
 
 # The prefix tools/guard prints each finding with. A finding-free timeout lets

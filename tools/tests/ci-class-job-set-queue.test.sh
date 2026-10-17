@@ -84,53 +84,5 @@ s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch
 s/^    case " \$LINUX_ONLY_SHARDS " in \*" \$shard "\*) continue ;; esac$/    :/@skills/price-handling/scripts/x pi-extensions/pi-demo/src/x.ts
 CONTROLS
 
-# --- 1d. The queue route ---------------------------------------------------
-# kendex.settings.toml names this script and its queue_macos_shards line as
-# harness-ci's HARNESS_CI_QUEUE_SELECTOR, so a change whose selection names a
-# queue macOS shard reads queue-only and merges through the queue, and one
-# whose selection names none answers as before. The base is a copy of this
-# checkout's tracked files, the settings as they stand; the control's base
-# drops the selector line, and the queue path then reads free to take the
-# admin route. Each row commits one appended line on a base and reads the
-# queue-only line of this checkout's change-class.
-route_world="$TMP/route-world"
-git init -q -b main "$route_world"
-git -C "$route_world" config gc.auto 0
-git -C "$route_world" config maintenance.auto false
-git -C "$ROOT" ls-files -z >"$TMP/route-files"
-(cd "$ROOT" && tar --null -T "$TMP/route-files" -cf -) | tar -C "$route_world" -xf -
-route_commit() { # MESSAGE
-  git -C "$route_world" add -A
-  git -C "$route_world" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set \
-    commit -q -m "$1"
-  git -C "$route_world" rev-parse HEAD
-}
-route_base="$(route_commit base)"
-grep -v '^HARNESS_CI_QUEUE_SELECTOR = ' "$ROOT/kendex.settings.toml" >"$route_world/kendex.settings.toml"
-route_unwired="$(route_commit unwired)"
-route_queue() { # BASE PATH EVENT -- the queue-only line for one appended line under PATH on BASE
-  git -C "$route_world" checkout -q --detach "$1"
-  printf 'route row\n' >>"$route_world/$2"
-  route_commit "row $2" >/dev/null
-  "$ROOT/skills/harness-ci/scripts/change-class" --repo "$route_world" --event "$3" \
-    --base "$1" --head HEAD 2>&1 >/dev/null | sed -n 's/^queue-only: //p'
-}
-for event in pull_request merge_group; do
-  for path in skills/orch/scripts/open-terminal skills/linear/scripts/linear.sh; do
-    selected="$(SELECT_EVENT="$event" selection micro false "$path")"
-    expected="$(macos_shards "$(field shards <<<"$selected")")"
-    check "a change selecting macOS shards takes the queue on $event over $path" \
-      "queue_only=true cause=queue-selection selector=tools/ci-job-set output=queue_macos_shards value=$expected" \
-      "$(route_queue "$route_base" "$path" "$event")"
-  done
-  # The UI path is assembled: spelling it whole would make this suite a reader.
-  check "a change selecting no queue macOS shard answers as before on $event" \
-    "queue_only=false cause=no-queue-path" \
-    "$(route_queue "$route_base" "ui/src/App.$(printf tsx)" "$event")"
-  check "control: settings naming no selector permit the admin route on $event" \
-    "queue_only=false cause=no-queue-path" \
-    "$(route_queue "$route_unwired" skills/orch/scripts/open-terminal "$event")"
-done
-
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
