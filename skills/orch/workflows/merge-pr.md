@@ -369,7 +369,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    The lane owns completion after merge. The overseer owns the remaining post-merge checks on the same item.
 
-   Give every development remainder from a cut its own issue or bundle before completion. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's SKILL.md § Disposition states. Each box names its reading, location, why the branch cannot prove it, and a deadline in the form that section gives (`+Nh`, N from 1 through 72, from its trigger).
+   Give every development remainder from a cut its own issue or bundle before completion. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's SKILL.md § Disposition states. Each box names its reading, location, why the branch cannot prove it, and a deadline in the form that section gives.
 
    Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and use the completion command below. It sets Done when no post-merge box remains open, and Verifying otherwise, including when the integration already set Done. The merge lane never writes In Review or In Progress. Box acceptance follows [SKILL.md § The Cycle, The overseer reads results](../SKILL.md#the-cycle). For a failed post-merge check, follow [oversee-events.md § Verification](../references/oversee-events.md).
 

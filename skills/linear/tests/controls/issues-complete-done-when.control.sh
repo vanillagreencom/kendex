@@ -102,8 +102,8 @@ control_replace scripts/lib/issue-validation.sh 1 \
     '                      (if $deadline_hours < 1 or $deadline_hours > 72 then "post-merge-window" else null end)' \
     '                      (if false or $deadline_hours > 72 then "post-merge-window" else null end)'
 
-# Read +Nh after a release trigger alone, as before the shared rule: a merge
-# or time box with +Nh refuses at filing and at completion.
+# Read +Nh after a release trigger alone: a merge or time box with +Nh
+# refuses at filing and at completion.
 control_expect 'post-merge merge-relative files'
 control_expect 'post-merge time-relative trigger completes successfully'
 control_replace scripts/lib/issue-validation.sh 1 \
