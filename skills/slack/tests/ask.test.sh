@@ -97,10 +97,11 @@ draft_ask control-not-literal "$FENCED_DRAFT"
 sk_assert_red "$JOURNALED" "refused text-not-literal" "control: a draft posted past its backtick run fails the refusal assertion"
 sk_bin_reset
 
-# The tracker carries the detail. Slack posts the first question line and
-# the issue identifier, which outbound markup expands into its link.
+# The tracker carries the detail. Slack posts one line: the owner mention and
+# question frame, the first question line, the issue identifier, which
+# outbound markup expands into its link, and the deadline.
 tracker_ask() { # NAME FAILURE
-  local root scripts phase="${2:-}" deadline ask_rc=0 notice
+  local root scripts phase="${2:-}" at deadline ask_rc=0 notice
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
   scripts="$root/.agents/skills/mailbox/scripts"
@@ -142,20 +143,23 @@ Details on the item.')" --options approve,hold --recommend approve --wait 60 2>"
   [ -n "$phase" ] || posted=true
   assert_eq "$(jq -s --arg id "$ASK" 'any(.[]; .kind == "tracker-posted" and .re == $id)' \
     "$(sk_box "$root")/to-overseer.jsonl")" "$posted" "$1 records the intended tracker posting result"
-  deadline="$(jq -r 'select(.kind == "ask") | .deadline | fromdateiso8601' "$(sk_box "$root")/to-overseer.jsonl")"
+  at="$(jq -r 'select(.kind == "ask") | .deadline' "$(sk_box "$root")/to-overseer.jsonl")"
+  deadline="$(jq -rn --arg at "$at" '$at | fromdateiso8601')"
   sk_poll "$root"
   TRACKER_POST="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
+  # The one line still names the owner, frames the decision and gives its deadline.
+  TRACKER_LINE="<@U001> <@U002> Question from overseer: Approve action? $LINK It stands at <!date^$deadline^{date_short_pretty} at {time}|$at> unless you reply in this thread."
   # Slack's API post must carry the supplied question, choices and the date
   # token for the ask's deadline, rather than a guessed wall-clock value.
   FALLBACK_FACTS="$(jq -cn --arg text "$TRACKER_POST" --arg deadline "$deadline" \
     '$text | contains("Details on the item.") and contains("approve, hold") and contains($deadline)')"
 }
 tracker_ask tracker-line
-assert_eq "$TRACKER_POST" 'Approve action? [KEN-1](https://linear.app/workspace/issue/KEN-1)' \
-  'tracker ask posts the first question line and issue link'
+assert_eq "$TRACKER_POST" "$TRACKER_LINE" \
+  'tracker ask posts the owner mention, the question frame, its first line, issue link and deadline'
 sk_mutant tracker-line relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if False:'
 tracker_ask tracker-line-control
-sk_assert_red "$TRACKER_POST" 'Approve action? [KEN-1](https://linear.app/workspace/issue/KEN-1)' \
+sk_assert_red "$TRACKER_POST" "$TRACKER_LINE" \
   'control: posting the whole ask fails the tracker line assertion'
 sk_bin_reset
 for failure in assign labels-read label comment; do

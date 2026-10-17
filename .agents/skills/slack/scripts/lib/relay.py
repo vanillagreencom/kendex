@@ -252,6 +252,16 @@ def local_time(at: str) -> str:
     return f"<!date^{int(at_epoch(at))}^{{date_short_pretty}} at {{time}}|{at}>"
 
 
+def deadline_clause(envelope: Dict) -> str:
+    """What an ask's deadline means for the owner: no default for a reserved
+    ask, the recommendation standing for any other; empty with no deadline."""
+    if envelope.get("reserved") is True:
+        return f"No default: this decision waits for your reply in this thread, due {local_time(str(envelope['deadline']))}."
+    if envelope.get("deadline"):
+        return f"It stands at {local_time(str(envelope['deadline']))} unless you reply in this thread."
+    return ""
+
+
 def fingerprint() -> str:
     """Which code a relay runs: 12 hex characters of one sha256 over the
     launcher, every lib/*.py and the installed mailbox reader definitions."""
@@ -983,11 +993,16 @@ class RootRelay:
 
     def ask_pieces(self, envelope: Dict, header: str) -> List[Union[str, Verbatim]]:
         """The whole question under `header`: its text, any draft, and its
-        options, recommendation and deadline, a blank line between each."""
+        options, recommendation and deadline, a blank line between each. A
+        question the tracker holds is one line: the header, its first line,
+        the issue and the deadline."""
         if envelope.get("tracker_posted") is True:
-            # Outbound markup resolves the issue identifier to its tracker link.
+            # The tracker holds the detail; the one line still names the owner,
+            # frames the decision and gives its deadline. Outbound markup
+            # resolves the issue identifier to its tracker link.
             question = envelope.get("text", "").split("\n", 1)[0]
-            return [f"{question} {envelope['issue']}"]
+            return [" ".join(part for part in (header, question, str(envelope["issue"]), deadline_clause(envelope))
+                             if part)]
         options = ", ".join(envelope.get("options") or [])
         lines = [header, envelope.get("text", "")]
         draft = envelope.get("draft")
@@ -1001,10 +1016,9 @@ class RootRelay:
             tail.append(f"Options: {options}.")
         if envelope.get("recommend"):
             tail.append(f"Recommended: {envelope['recommend']}.")
-        if envelope.get("reserved") is True:
-            tail.append(f"No default: this decision waits for your reply in this thread, due {local_time(str(envelope['deadline']))}.")
-        elif envelope.get("deadline"):
-            tail.append(f"It stands at {local_time(str(envelope['deadline']))} unless you reply in this thread.")
+        deadline = deadline_clause(envelope)
+        if deadline:
+            tail.append(deadline)
         if tail:
             lines.append(" ".join(tail))
         pieces: List[Union[str, Verbatim]] = []
