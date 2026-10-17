@@ -38,10 +38,11 @@ commit_paths "$repo" baseline seed.txt
 seed="$(git -C "$repo" rev-parse HEAD)"
 
 # A base commit whose settings declare the queue list GLOBS, empty unless
-# given, beside SELECTOR, or no selector where SELECTOR is `-`.
+# given, beside SELECTOR, or no selector where SELECTOR is `-`. Each names a
+# per-push reason, the opt-back the queue list and selector are read under.
 selector_base() { # SELECTOR [GLOBS] -> prints the base commit
   git -C "$repo" checkout -q -B base-case "$seed"
-  printf '[env]\nHARNESS_CI_QUEUE_PATHS = "%s"\n' "${2:-}" >"$repo/kendex.settings.toml"
+  printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "selector suite"\nHARNESS_CI_QUEUE_PATHS = "%s"\n' "${2:-}" >"$repo/kendex.settings.toml"
   [ "$1" = - ] || printf 'HARNESS_CI_QUEUE_SELECTOR = "%s"\n' "$1" >>"$repo/kendex.settings.toml"
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "settings base"
@@ -167,7 +168,7 @@ control "the base commit's selector judges where the branch changes it" \
 control "a selector named in the process environment alone never runs" \
   'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]' \
   environment-selector change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS' 'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_STANDARD_PATHS'
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' 'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
 control "a selector outside the repository is queue-only" \
   "queue_only=true cause=queue-selector-failed selector=../select detail=command-absent" \
   climbing change-class "    '' | /* | .. | ../* | */.. | */../*) name=\"\" ;;" "    '') name=\"\" ;;"

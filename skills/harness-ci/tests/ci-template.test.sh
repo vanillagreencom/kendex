@@ -11,7 +11,8 @@
 #
 # Surfaces:
 #   1. the names: one job named CI, the classifier named `Classify the diff`,
-#      both gated events under `on:`, and CI needing every other job.
+#      both gated events and the nightly full run's two under `on:`, and CI
+#      needing every other job.
 #   2. the job set: per event and action answer, which lanes run. A lane
 #      stands down where `lanes` or its own verdict is false, an absent
 #      verdict leaves `lanes` deciding, both events read the answers the
@@ -23,8 +24,11 @@
 #      arguments the template passes, fed to aggregate-needs with the needs
 #      the template's own outputs make, accept a skipped lane only where the
 #      classifier succeeded and `lanes` or the lane's verdict was false, and
-#      CI runs on both events whatever its needs did. Its helper runs from
-#      an unconditional default-branch checkout and a missing helper fails.
+#      CI runs on every event whatever its needs did. Per event, the action's
+#      answer runs the lanes and passes CI: a pull request's queue-only
+#      stand-down runs none, a merge group the lanes its diff selects, and
+#      the nightly run every lane. Its helper runs from an unconditional
+#      default-branch checkout and a missing helper fails.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package or its required dependencies ship.
 #   5. the steps the classifier can live without: the render-reach, kendex
@@ -152,7 +156,8 @@ CI_JOB="$(jobs_named "$TEMPLATE" CI | tr '\n' ' ' | sed 's/ $//')"
 assert_eq "one job is named CI" "ci" "$CI_JOB"
 assert_eq "the classifier is named as every repository names it" "changes" \
   "$(jobs_named "$TEMPLATE" 'Classify the diff' | tr '\n' ' ' | sed 's/ $//')"
-assert_eq "the template runs on both gated events and no other" "merge_group pull_request" \
+assert_eq "the template runs on both gated events and the nightly full run, and no other" \
+  "merge_group pull_request schedule workflow_dispatch" \
   "$(triggers "$TEMPLATE" | tr '\n' ' ' | sed 's/ $//')"
 LANES="$(lane_jobs "$TEMPLATE" | tr '\n' ' ' | sed 's/ $//')"
 [ -n "$LANES" ] || { echo "no lane read out of $TEMPLATE, so the extractor is broken" >&2; exit 1; }
@@ -181,6 +186,8 @@ CI|merge_group|0|42|CI-merge_group-42|false
 CI|merge_group|0|43|CI-merge_group-43|false
 CI|push|0|42|CI-push-42|false
 CI|push|0|43|CI-push-43|false
+CI|schedule|0|44|CI-schedule-44|false
+CI|workflow_dispatch|0|45|CI-workflow_dispatch-45|false
 ROWS
   require_rows concurrency "$rows"
   [ "$FAIL" -eq 0 ]
@@ -223,10 +230,12 @@ pull_request|false|lane_test=false|standard|none
 pull_request|true|lane_test=false|standard|none
 pull_request|true|lane_test=true|standard|test
 pull_request|true||standard|test
+schedule|true|lane_test=true|standard|test
+workflow_dispatch|true|lane_test=true|standard|test
 ROWS
 require_rows job "$job_rows"
 assert_eq "the job rows name every lane the template runs" "test" "$LANES"
-for event in pull_request merge_group; do
+for event in pull_request merge_group schedule; do
   assert_eq "a dead classifier runs every lane on $event" "$LANES" "$(running "$TEMPLATE" "$event" failure "" "" "")"
 done
 
@@ -262,7 +271,7 @@ class_reads() { # TEMPLATE — the non-comment lines reading a change class
   grep -vE '^[[:space:]]*(#|change_class:)' "$1" | grep -F 'change_class' || true
 }
 assert_eq "no condition of the template spells a class rule" "" "$(class_reads "$TEMPLATE")"
-assert_eq "the class output forwards the action's proof" render \
+assert_eq "the class output forwards the action's class" render \
   "$(job_outputs "$TEMPLATE" false lane_test=false render | jq -r .change_class)"
 
 # --- 3. The aggregate -------------------------------------------------------
@@ -338,8 +347,32 @@ pull_request|success|yes
 pull_request|failure|yes
 merge_group|failure|yes
 merge_group|skipped|yes
+schedule|failure|yes
 ROWS
 require_rows ci "$ci_rows"
+
+# Per event, the lanes the action's answer runs and the aggregate's exit on
+# the results they leave: a lane that ran succeeded, one that did not was
+# skipped. A pull request's code diff takes the queue-only stand-down
+# (lanes=false, lanes_cause=queue-only) and passes CI with no lane run; the
+# merge group runs the lanes its diff selects; the nightly run every lane.
+# EVENT|ACTION'S LANES|LANE VERDICTS|CLASS|LANES THAT RUN|CI EXIT
+event_rows=0
+while IFS='|' read -r event lanes verdicts class expected exit_expected; do
+  event_rows=$((event_rows + 1))
+  ran="$(running "$TEMPLATE" "$event" success "$lanes" "$verdicts" "$class")"
+  lane_result=skipped
+  [ "$ran" = none ] || lane_result=success
+  assert_eq "$event for a $class diff the action answered lanes=$lanes: lanes run and CI exits" \
+    "$expected $exit_expected" "$ran $(aggregate_exit "$TEMPLATE" success "$lanes" "$verdicts" "$lane_result")"
+done <<'ROWS'
+pull_request|false|lane_test=false|standard|none|0
+merge_group|true|lane_test=true|standard|test|0
+merge_group|true|lane_test=false|small|none|0
+schedule|true|lane_test=true|standard|test|0
+workflow_dispatch|true|lane_test=true|standard|test|0
+ROWS
+require_rows event "$event_rows"
 
 # --- 4. The copy ------------------------------------------------------------
 
@@ -622,27 +655,11 @@ assert_eq "must-fail: guards from the merge ref pass the planted credential" "ex
 subject-code=ran" \
   "$(credential_scan "$SANDBOX/pr-guards.yml" pr-guards)"
 
-# --- 4a. The permission the proof reads with ------------------------------
-# The action reads the workflow's earlier runs and their records with the job
-# token, so the changes job grants `actions: read`; a template without it
-# gets one refusal per run and no reuse.
-assert_eq "the changes job grants the proof's read and the checkout's, nothing more" \
-  "actions: read contents: read" "$(job_permissions "$TEMPLATE" changes)"
-awk '$0 == "      actions: read" { n++; next } { print } END { if (n != 1) exit 2 }' \
-  "$TEMPLATE" >"$SANDBOX/no-actions-read.yml" ||
-  { echo "actions: read could not be dropped from a copy" >&2; exit 1; }
-assert_eq "must-fail: a changes job without actions: read is named" "contents: read" \
-  "$(job_permissions "$SANDBOX/no-actions-read.yml" changes)"
-
-# The template's lanes run wherever lanes is true and do the same work on
-# every event, which is the one thing that lets a run reading no declaration
-# record covers=all for the run after it; a template without the input
-# records covers=none and nothing reuses.
-assert_eq "the classify step says every lane runs wherever lanes is true" "true" \
-  "$(step_key "$TEMPLATE" classify covers-all-lanes)"
-plant "$TEMPLATE" "covers-all-lanes: true" "covers-all-lanes: false" "$SANDBOX/no-covers-all.yml"
-assert_eq "must-fail: a template not saying so is named" "false" \
-  "$(step_key "$SANDBOX/no-covers-all.yml" classify covers-all-lanes)"
+# --- 4a. The classifier's permission --------------------------------------
+# The classifier reads the repository and nothing else: no read of earlier
+# runs is left since proof reuse was removed.
+assert_eq "the changes job grants the checkout's read, nothing more" \
+  "contents: read" "$(job_permissions "$TEMPLATE" changes)"
 
 # --- 5. The steps the classifier can live without -------------------------
 
@@ -803,7 +820,7 @@ assert_eq "must-fail: CI without always() does not run on a failed need" "no" \
 # A template without merge_group never reports CI on a queue sha.
 awk '$0 == "  merge_group:" { n++; next } { print } END { if (n != 1) exit 2 }' "$TEMPLATE" >"$SANDBOX/no-group.yml" ||
   { echo "merge_group could not be dropped from a copy" >&2; exit 1; }
-assert_eq "must-fail: a template without merge_group is named" "pull_request" \
+assert_eq "must-fail: a template without merge_group is named" "pull_request schedule workflow_dispatch" \
   "$(triggers "$SANDBOX/no-group.yml" | tr '\n' ' ' | sed 's/ $//')"
 
 # render-reach failing the job, as it does where the default branch has no

@@ -4,15 +4,17 @@
 # change-class, whose queue-only line names a lane deferred to the merge
 # queue. Sourced; bash 3.2 compatible, so no associative array.
 #
-# The grammar: `<lane>[:event-uniform][:queue] <glob>...` per line, the marks
-# in either order, `#` to the end of a line a comment. A name is lowercase
-# letters, digits, `_` and `-`, starting with a letter or digit. A lane named
-# on several lines reads every glob they give it, and carries a mark where
-# any of them carries it.
+# The grammar: `<lane>[:queue][:nightly] <glob>...` per line, the marks in
+# any order, `#` to the end of a line a comment. A name is lowercase letters,
+# digits, `_` and `-`, starting with a letter or digit. A lane named on
+# several lines reads every glob they give it, and carries a mark where any
+# of them carries it. `:event-uniform`, the retired proof-reuse mark, is
+# accepted and ignored, so a consumer declaration that still carries it
+# keeps publishing verdicts.
 #
 # ci_lanes_read FILE fills lane N's name, its globs (one per line) and its
-# two marks (true|false) at index N of lane_names, lane_globs, lane_uniform
-# and lane_queue, and the count in lane_count. Where FILE is unreadable or
+# two marks (true|false) at index N of lane_names, lane_globs, lane_queue
+# and lane_nightly, and the count in lane_count. Where FILE is unreadable or
 # malformed it returns 1 with the cause in declaration_note; the arrays are
 # then partial and the caller discards them.
 # ci_lanes_claims INDEX PATH returns 0 where one of lane INDEX's globs
@@ -22,15 +24,15 @@
 
 lane_names=()
 lane_globs=()
-lane_uniform=()
 lane_queue=()
+lane_nightly=()
 lane_count=0
 declaration_note=""
 LANE_GLOB_HIT=""
 
 ci_lanes_read() { # FILE
-  local text line number=0 name raw uniform queue glob index
-  lane_names=() lane_globs=() lane_uniform=() lane_queue=() lane_count=0
+  local text line number=0 name raw queue nightly glob index
+  lane_names=() lane_globs=() lane_queue=() lane_nightly=() lane_count=0
   declaration_note=""
   text="$(cat -- "$1" 2>/dev/null)" ||
     { declaration_note="cause=unreadable"; return 1; }
@@ -44,11 +46,12 @@ ci_lanes_read() { # FILE
     [ "$#" -gt 0 ] || continue
     raw="$1" name="$1"
     shift
-    uniform=false queue=false
+    queue=false nightly=false
     while :; do
       case "$name" in
-        *:event-uniform) uniform=true name="${name%:event-uniform}" ;;
+        *:event-uniform) name="${name%:event-uniform}" ;;
         *:queue) queue=true name="${name%:queue}" ;;
+        *:nightly) nightly=true name="${name%:nightly}" ;;
         *) break ;;
       esac
     done
@@ -66,12 +69,12 @@ ci_lanes_read() { # FILE
     if [ "$index" -eq "$lane_count" ]; then
       lane_names[$index]="$name"
       lane_globs[$index]=""
-      lane_uniform[$index]=false
       lane_queue[$index]=false
+      lane_nightly[$index]=false
       lane_count=$((lane_count + 1))
     fi
-    [ "$uniform" = false ] || lane_uniform[$index]=true
     [ "$queue" = false ] || lane_queue[$index]=true
+    [ "$nightly" = false ] || lane_nightly[$index]=true
     for glob in "$@"; do
       lane_globs[$index]="${lane_globs[$index]}$glob
 "

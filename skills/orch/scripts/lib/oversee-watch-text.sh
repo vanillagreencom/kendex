@@ -323,13 +323,17 @@ The long pass's events, checked and reported in this order:
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
-  EVENT main-push-failing <repo> workflow=skill-tests.yml run=<run-id> jobs=<JSON array> cause=<line>
-                             the latest completed push on main failed or
-                             timed out, or the latest completed scheduled
-                             run there failed, timed out, was cancelled or
-                             failed to start; each event keeps its own
-                             incident, so a green push leaves a red night
-                             standing. jobs= lists the job names with those
+  EVENT main-push-failing <repo> workflow=<skill-tests.yml|ci.yml> event=<push|schedule> run=<run-id> jobs=<JSON array> cause=<line>
+                             the latest completed push on main of that
+                             workflow failed or timed out, or the latest
+                             completed scheduled run there failed, timed
+                             out, was cancelled or failed to start. The
+                             workflows are kendex's skill-tests.yml and the
+                             harness-ci template's ci.yml, whose nightly run
+                             is the only run of its platform lanes on main.
+                             Each workflow and event keeps its own incident,
+                             so a green push leaves a red night standing.
+                             jobs= lists the job names with those
                              conclusions in sorted order. cause= is the first
                              failing suite line from the failed-step log,
                              without gh's job, step and timestamp prefix;

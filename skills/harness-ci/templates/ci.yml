@@ -6,22 +6,31 @@
 # pull_request and merge_group, which standard-ci-context checks, so its job
 # keeps that name and every lane reports into it. What the required-checks
 # ruleset holds is .agents/skills/harness-ci/references/wiring.md
-# § The CI context. The classifier judges the diff on
-# pull_request and merge_group alike, and every lane reads the same answers
-# on both, so each event runs the lanes its own diff calls for, less the
-# ones a passing run of the same tree already ran: a merge group whose tree
-# its pull request's run tested stands down the lanes that run covered,
-# which is why every lane here does the same work on both events. Which diffs
-# run which lane is the change-class action's answer, not this file's: the
-# `changes` job forwards it and names no class, so a change to that rule
-# reaches this workflow with no edit to it. How a lane and CI combine its
-# answers is .agents/skills/harness-ci/references/wiring.md § Per-lane verdicts.
+# § The CI context. The merge-queue run is the only proof of a head: on
+# pull_request the change-class action stands every lane down where the
+# change is queue-only, which is every change on a repository with no
+# HARNESS_CI_PER_PUSH_REASON, and CI passes on that stand-down, which GitHub
+# needs before it admits the pull request to the queue. The merge group runs
+# the lanes its own diff calls for. The schedule and workflow_dispatch runs
+# are the nightly full run on the default branch: every lane, `:nightly`
+# lanes included. Which diffs run which lane is the change-class action's
+# answer, not this file's: the `changes` job forwards it and names no class,
+# so a change to that rule reaches this workflow with no edit to it. How a
+# lane and CI combine its answers is
+# .agents/skills/harness-ci/references/wiring.md § Per-lane verdicts, and the
+# default and its opt-back are § The CI template.
 name: CI
 
 "on":
+  # CI must report here, or GitHub admits no pull request to the queue.
   pull_request:
   # A required context a merge group never produces blocks the queue forever.
   merge_group:
+  # The nightly full run on the default branch; a red one reaches the
+  # overseer through orch's oversee-watch.
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,14 +47,12 @@ jobs:
     name: Classify the diff
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     # The render proof re-renders every installed item, so its cost grows
-    # with the install rather than with the diff.
+    # with the install rather than with the diff. It runs only for a render
+    # candidate, on pull_request too: the overseer's consumer refresh
+    # approval reads the pull request run's measured render class.
     timeout-minutes: 20
-    # `actions: read` is what the action reads this workflow's earlier runs
-    # with, to stand down the lanes a passing run of the same tree already
-    # ran: .agents/skills/harness-ci/references/wiring.md § Proof reuse.
     permissions:
       contents: read
-      actions: read
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
       # Whether the lanes run at all, as the action answered it: what every
@@ -124,15 +131,6 @@ jobs:
           # The lane declaration is the default branch's: the pull request's
           # own copy could stand its lanes down.
           lanes-from: classifier
-          # Every lane here runs wherever lanes is true and does the same
-          # work on every event, as the `:event-uniform` mark's definition in
-          # .agents/skills/harness-ci/references/wiring.md § Per-lane verdicts
-          # states, so a run that reads no declaration records that it
-          # covered them all, and a later run of the same tree stands them
-          # down. A workflow that selects its jobs by anything else, or runs
-          # a lane that does not, leaves this out. A declared lane stands
-          # down only where .github/ci-lanes.conf marks it `:event-uniform`.
-          covers-all-lanes: true
           event: ${{ env.EVENT }}
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}
@@ -146,11 +144,9 @@ jobs:
 
   # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
   # job per lane, each declared in .github/ci-lanes.conf, marked
-  # `:event-uniform` there where it does the same work on every event,
-  # `:queue` where it is slow enough to run in the merge group alone, which
-  # keeps the pull request that defers it off the admin merge once a kendex
-  # refresh whose harness-ci reads the mark is on the default branch, the
-  # pull request's head and the checkout that merges it, and published as a
+  # `:nightly` there where it is a platform lane (macOS, Windows, GPU or a
+  # larger runner) that runs per change only where its own paths change,
+  # and published as a
   # `lane_<name>` output above, given this `needs:` and this `if:` with its
   # own output, named in CI's `needs:` and aggregate step as they name
   # `test`. A lane that reads a file under docs/ or changelog.d/, or a root

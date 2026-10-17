@@ -10,7 +10,10 @@
 # review-first: validate, review, then publish.
 # open-first: validate, publish, then review.
 # push-first: publish a draft, then run internal review while CI may be pending.
-# Submit verifies required CI on the published head before merge.
+# Submit reads required CI on the published head. Under the harness-ci
+# queue-only default that run reports CI with no lane, and the merge-group
+# run, a record's ci-event=merge_group, proves the head before merge. A red
+# queue run returns the change to its lane: merge-pr.md § 5 Recovery cycle.
 # Review completes before merge in every order.
 # ORCH_DELIVERY=push-base always returns review-first without a GitHub read.
 #

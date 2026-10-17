@@ -26,7 +26,7 @@ kendex add vanillagreencom/kendex --skill harness-ci
 - The classifier also tells the merge route when a change requires the merge queue.
 - A required `CI` check reports success only after the required jobs pass or have an authorized skip.
 
-Classification contracts: [SKILL.md](SKILL.md). Workflow setup and proof reuse: [references/wiring.md](references/wiring.md).
+Classification contracts: [SKILL.md](SKILL.md). Workflow setup, the queue-only default and the nightly run: [references/wiring.md](references/wiring.md).
 
 ## Setup
 
@@ -37,13 +37,14 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | Setting | What to configure |
 |---|---|
 | `HARNESS_CI_STANDARD_PATHS` | High-risk paths that always need full checks. |
-| `HARNESS_CI_QUEUE_PATHS` | The repository's own CI inputs that need the merge queue. Set it empty when the shipped list covers them all. Leaving it unset requires the queue for every change. |
-| `HARNESS_CI_QUEUE_SELECTOR` | The repository command that identifies merge-group jobs. Update harness-ci on the default branch and sync the merging checkout before using this setting. |
+| `HARNESS_CI_PER_PUSH_REASON` | The reason the repository runs its lanes on each pull-request push and may merge outside the queue. Unset, every change is queue-only and a pull request runs no lane: the merge-queue run proves the head. A blank value is refused and read as unset. A repository with no merge queue sets it to `no merge queue`. |
+| `HARNESS_CI_QUEUE_PATHS` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository's own CI inputs that need the merge queue. Set it empty when the shipped list covers them all. Leaving it unset requires the queue for every change. |
+| `HARNESS_CI_QUEUE_SELECTOR` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository command that identifies merge-group jobs. Update harness-ci on the default branch and sync the merging checkout before using this setting. |
 | `HARNESS_CI_TRIVIAL_PATHS` | Paths eligible for the trivial-change class. |
 | `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. |
 | `ORCH_SIZE_TEST_PATHS` | Test paths outside orch's default patterns. |
 
-For several test groups, declare their input paths in `.github/ci-lanes.conf`. The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration and queue marks. Refresh the install and sync the merging checkout before adding queue marks. Re-run CI on open pull requests after removing a mark. The [proof reuse contract](references/wiring.md#proof-reuse) explains how to declare checks that do the same work on every event.
+For several test groups, declare their input paths in `.github/ci-lanes.conf`. The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration, the queue mark and the nightly mark for platform lanes. Refresh the install and sync the merging checkout before adding queue marks. Re-run CI on open pull requests after removing a mark, or after adding `HARNESS_CI_PER_PUSH_REASON`.
 
 Arguments, defaults and setting precedence: `harness-only --help`, `change-class --help` and `aggregate-needs --help`. Maintainer rules and tests: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md).
 

@@ -28,7 +28,7 @@ git -C "$FIXTURE" config gc.auto 0
 git -C "$FIXTURE" config maintenance.auto false
 mkdir -p "$FIXTURE/.github/workflows" "$FIXTURE/.github/actions/change-class"
 cp "$REPO_ROOT/.github/workflows/skill-tests.yml" "$FIXTURE/.github/workflows/"
-cp "$REPO_ROOT/.github/actions/change-class/"{action.yml,classify,proof} "$FIXTURE/.github/actions/change-class/"
+cp "$REPO_ROOT/.github/actions/change-class/"{action.yml,classify} "$FIXTURE/.github/actions/change-class/"
 git -C "$FIXTURE" add .github
 printf 'old\n' > "$FIXTURE/product"
 git -C "$FIXTURE" add product
@@ -44,7 +44,7 @@ git -C "$FIXTURE" commit -qm render
 HEAD_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 ORIGINAL_HEAD=$HEAD_SHA
 # Each changed producer keeps matching logs and an unchanged product diff.
-for part in action.yml classify proof; do
+for part in action.yml classify; do
   git -C "$FIXTURE" checkout -q --detach "$ORIGINAL_HEAD"
   printf '\n# altered producer\n' >> "$FIXTURE/.github/actions/change-class/$part"
   git -C "$FIXTURE" commit -qam "alter $part"
@@ -132,7 +132,7 @@ world() {
     jq '.check_run_url="https://api.github.com/repos/vanillagreencom/kendex/check-runs/72"' "$WORLD/job.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/job.json"
   fi
   case "$scenario" in
-    action.yml|classify|proof)
+    action.yml|classify)
       HEAD_SHA="$(git -C "$FIXTURE" rev-parse "refs/heads/alter-$scenario")"
       jq --arg head "$HEAD_SHA" '.[0].check_runs[0].head_sha=$head' "$WORLD/checks.json" > "$WORLD/edit"; mv "$WORLD/edit" "$WORLD/checks.json"
       for entry in job run; do
@@ -313,7 +313,6 @@ merged-log-empty|ci-proof-missing
 merged-standard|pass
 merged-action.yml|origin-untrusted
 merged-classify|origin-untrusted
-merged-proof|origin-untrusted
 merged-workflow-origin|ci-proof-missing
 merged-head-repository|ci-proof-missing
 merged-wrong-run-repo|ci-proof-missing

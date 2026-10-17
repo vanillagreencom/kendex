@@ -37,7 +37,7 @@ Usage: refresh-ci-proof PR_NUMBER HEAD_SHA --repo OWNER/REPO
 
 --merged reads measured classification for the exact first-parent range.
 It supports kendex's skill-tests.yml merge-group producer. The workflow and
-local action.yml/classify/proof must equal their trusted first-parent files.
+local action.yml/classify must equal their trusted first-parent files.
 Both run repositories, the check, job, run and logged range must match.
 It executes no classifier or proof. Missing evidence refuses ci-proof-missing;
 unsupported or changed producer code refuses origin-untrusted; an unmeasured
@@ -89,7 +89,7 @@ if [[ ${1:-} == --merged ]]; then
   # action code can forge logs even when the workflow itself is unchanged.
   origin_ok=true
   [[ $(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]') == vanillagreencom/kendex ]] || origin_ok=false
-  for producer in .github/workflows/skill-tests.yml .github/actions/change-class/action.yml .github/actions/change-class/classify .github/actions/change-class/proof; do
+  for producer in .github/workflows/skill-tests.yml .github/actions/change-class/action.yml .github/actions/change-class/classify; do
     old="$(env -i PATH="$PATH" git ls-tree "$base" -- "$producer")" || refuse origin-untrusted
     current="$(env -i PATH="$PATH" git ls-tree "$head" -- "$producer")" || refuse origin-untrusted
     [[ $old == 100644\ blob\ * || $old == 100755\ blob\ * ]] || origin_ok=false

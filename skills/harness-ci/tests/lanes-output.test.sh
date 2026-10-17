@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Local --output and the action share the lane decision for real git diffs.
+# Local --output and the action share the lane decision for real git diffs,
+# and both answer the queue-only default: a pull request or push stands
+# every lane down, the merge group runs the lanes its diff selects, and the
+# nightly full run runs every lane.
 # Inputs: harness-ci scripts, orch measurement and the change-class action.
 # Render causes are covered by render-moved-claims.test.sh.
 set -euo pipefail
@@ -7,81 +10,135 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
 
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-mkdir -p "$SANDBOX/action" "$SANDBOX/default/.github" "$SANDBOX/runner/change-class-record"
-cp "$ROOT/.github/actions/change-class/classify" "$SANDBOX/action/classify"
-cat >"$SANDBOX/action/proof" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "${USE_PROOF:-false}" = true ]; then
-  printf 'reuse=true\nreason=exact-proof\nrun=42\ntree=t1\nrecord=%s\n' "$RUNNER_TEMP/change-class-record/record"
-else
-  printf 'reuse=false\nreason=ineligible-event\n'
-fi
-STUB
-chmod +x "$SANDBOX/action/proof"
-printf 'covers=all\n' >"$SANDBOX/runner/change-class-record/record"
-printf 'check:event-uniform src/*\nother elsewhere/*\n' >"$SANDBOX/default/.github/ci-lanes.conf"
+CLASSIFY="$ROOT/.github/actions/change-class/classify"
+# The stand-down needs the render that reads the opt-back in both trees a
+# merge can run pr-merge from. `default` carries it; `no-reader` does not.
+READER=.agents/skills/harness-ci/scripts/change-class
+DECLARATION='check:event-uniform src/*
+other elsewhere/*
+mac:nightly macos/*
+'
+for root in default no-reader; do
+  mkdir -p "$SANDBOX/$root/.github"
+  printf '%s' "$DECLARATION" >"$SANDBOX/$root/.github/ci-lanes.conf"
+done
+mkdir -p "$SANDBOX/default/$(dirname "$READER")"
+cp "$CHANGE_CLASS" "$SANDBOX/default/$READER"
+
 repo="$(new_repo lanes-output)"
+mkdir -p "$repo/$(dirname "$READER")"
+cp "$CHANGE_CLASS" "$repo/$READER"
 commit_paths "$repo" baseline seed.txt
-base="$(git -C "$repo" rev-parse HEAD)"
-
-run_local() { # COMMAND DECLARATION COVERAGE
-  local command="$1" declaration="$2" coverage="$3"
-  : >"$SANDBOX/local-output"
-  RUNNER_TEMP="$SANDBOX/runner" USE_PROOF=true "$command" \
-    --event pull_request --base "$base" --head HEAD --repo "$repo" \
-    --lanes-from "$declaration" --covers-all-lanes "$coverage" \
-    --output "$SANDBOX/local-output" >"$SANDBOX/local-stdout" 2>"$SANDBOX/local-stderr"
+# Three bases, one per state of the opt-back in the base commit's settings.
+base_with_settings() { # NAME SETTINGS — prints the base commit
+  git -C "$repo" checkout -q -B "$1" main
+  if [ -n "$2" ]; then
+    printf '%s\n' "$2" >"$repo/kendex.settings.toml"
+    git -C "$repo" add -A
+    git -C "$repo" commit -qm "$1"
+  fi
+  git -C "$repo" rev-parse HEAD
 }
-lane_answer() { sed -n '/^lanes=/p; /^lanes_cause=/p' "$1"; }
+base_default="$(base_with_settings base-default '')"
+base_optback="$(base_with_settings base-optback "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "no merge queue"\nHARNESS_CI_QUEUE_PATHS = ""')")"
+base_blank="$(base_with_settings base-blank "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "  "\nHARNESS_CI_QUEUE_PATHS = ""')")"
 
+run_local() { # COMMAND EVENT BASE DECLARATION
+  : >"$SANDBOX/local-output"
+  "$1" --event "$2" --base "$3" --head HEAD --repo "$repo" \
+    --lanes-from "$4" --output "$SANDBOX/local-output" \
+    >"$SANDBOX/local-stdout" 2>"$SANDBOX/local-stderr"
+}
+run_action() { # EVENT BASE DECLARATION
+  : >"$SANDBOX/action-output"
+  CLASSIFIER="$ROOT" EVENT="$1" BASE="$2" HEAD="$(git -C "$repo" rev-parse HEAD)" REPO="$repo" \
+    LANES_FROM="$3" GITHUB_OUTPUT="$SANDBOX/action-output" \
+    "$CLASSIFY" >"$SANDBOX/action-stdout" 2>"$SANDBOX/action-stderr"
+}
+lane_answer() { sed -n '/^queue_only=/p; /^lanes=/p; /^lanes_cause=/p' "$1"; }
+# The action's lane_verdicts value, its lines joined with commas.
+verdicts() {
+  awk '$0 == "lane_verdicts<<__change_class_lane_verdicts_end__" { on = 1; next }
+    $0 == "__change_class_lane_verdicts_end__" { on = 0 } on' "$SANDBOX/action-output" |
+    tr '\n' ',' | sed 's/,$//'
+}
+
+# ROW|EVENT|BASE|PATH|LINES|DECLARATION|LANES|LANES_CAUSE|QUEUE_ONLY|LANE VERDICTS
+# BASE is the opt-back's state: default (unset), optback (a reason) or blank.
+# LANE VERDICTS is the action's; `-` where no declaration is read.
 rows=0
-while IFS='|' read -r cause path lines expected declaration; do
+while IFS='|' read -r name event base_name path lines declaration expected cause queue lane_verdicts; do
   rows=$((rows + 1))
+  base_var="base_$base_name"
+  base="${!base_var}"
   git -C "$repo" checkout -q -B row "$base"
   git -C "$repo" clean -qfd
   mkdir -p "$repo/$(dirname "$path")"
   awk -v lines="$lines" 'BEGIN { for (i=1; i<=lines; i++) print "line " i }' >"$repo/$path"
   git -C "$repo" add -A
-  git -C "$repo" commit -qm "$cause"
+  git -C "$repo" commit -qm "$name"
   decl=""
-  [ "$declaration" != declared ] || decl="$SANDBOX/default"
-  : >"$SANDBOX/action-output"
-  CLASSIFIER="$ROOT" EVENT=pull_request BASE="$base" HEAD=HEAD REPO="$repo" \
-    LANES_FROM="$decl" COVERS_ALL_LANES=true GITHUB_OUTPUT="$SANDBOX/action-output" \
-    "$SANDBOX/action/classify" >"$SANDBOX/action-stdout" 2>"$SANDBOX/action-stderr"
-  run_local "$CHANGE_CLASS" "$decl" true
-  assert_eq "$cause: action cause" "lanes_cause=$cause" \
-    "$(sed -n '/^lanes_cause=/p' "$SANDBOX/action-output")"
-  assert_eq "$cause: local gate" "lanes=$expected" \
-    "$(sed -n '/^lanes=/p' "$SANDBOX/local-output")"
-  assert_eq "$cause: local and action agree" "$(lane_answer "$SANDBOX/action-output")" \
+  [ "$declaration" = none ] || decl="$SANDBOX/$declaration"
+  run_action "$event" "$base" "$decl"
+  run_local "$CHANGE_CLASS" "$event" "$base" "$decl"
+  assert_eq "$name: local answer" \
+    "$(printf 'queue_only=%s\nlanes=%s\nlanes_cause=%s' "$queue" "$expected" "$cause")" \
     "$(lane_answer "$SANDBOX/local-output")"
-  assert_eq "$cause: stdout keeps its class contract" \
+  assert_eq "$name: local and action agree" "$(lane_answer "$SANDBOX/action-output")" \
+    "$(lane_answer "$SANDBOX/local-output")"
+  [ "$lane_verdicts" = - ] ||
+    assert_eq "$name: lane verdicts" "$lane_verdicts" "$(verdicts)"
+  assert_eq "$name: stdout keeps its class contract" \
     "$(sed -n '/^change_class=/p' "$SANDBOX/local-output")" "$(cat "$SANDBOX/local-stdout")"
 done <<'ROWS'
-trivial|docs/guide.md|1|false|none
-docs-only|docs/guide.md|21|false|declared
-micro|src/main.sh|1|true|declared
-small|src/main.sh|21|true|declared
-standard|src/main.sh|151|true|declared
+trivial|pull_request|default|docs/guide.md|1|none|false|trivial|true|-
+docs-only|pull_request|default|docs/guide.md|21|default|false|docs-only|true|lane_check=false,lane_other=false,lane_mac=false
+pull-request-code|pull_request|default|src/main.sh|21|default|false|queue-only|true|lane_check=false,lane_other=false,lane_mac=false
+pull-request-standard|pull_request|default|src/main.sh|151|default|false|queue-only|true|-
+push-code|push|default|src/main.sh|21|default|false|queue-only|true|-
+merge-group-code|merge_group|default|src/main.sh|21|default|true|small|true|lane_check=true,lane_other=false,lane_mac=false
+merge-group-unclaimed|merge_group|default|Makefile|21|default|true|small|true|lane_check=true,lane_other=true,lane_mac=false
+merge-group-nightly-path|merge_group|default|macos/run.sh|21|default|true|small|true|lane_check=false,lane_other=false,lane_mac=true
+schedule|schedule|default|src/main.sh|21|default|true|full-run|true|lane_check=true,lane_other=true,lane_mac=true
+reader-absent|pull_request|default|src/main.sh|21|no-reader|true|queue-only-reader-absent|true|lane_check=true,lane_other=false,lane_mac=false
+opted-back|pull_request|optback|src/main.sh|21|default|true|small|false|lane_check=true,lane_other=false,lane_mac=false
+blank-reason|pull_request|blank|src/main.sh|21|default|false|queue-only|true|-
 ROWS
 require_rows lanes-output "$rows"
 
-# The action can reuse a CI record. A local run with the same record still
-# opens the gate. Coverage describes the workflow; it grants no local proof.
-: >"$SANDBOX/action-output"
-CLASSIFIER="$ROOT" EVENT=pull_request BASE="$base" HEAD=HEAD REPO="$repo" \
-  LANES_FROM="$SANDBOX/default" GITHUB_OUTPUT="$SANDBOX/action-output" \
-  RUNNER_TEMP="$SANDBOX/runner" USE_PROOF=true "$SANDBOX/action/classify" \
-  >"$SANDBOX/action-stdout" 2>"$SANDBOX/action-stderr"
-assert_eq 'CI keeps proof reuse' lanes_cause=proof-reused \
-  "$(sed -n '/^lanes_cause=/p' "$SANDBOX/action-output")"
-for coverage in true false; do
-  run_local "$CHANGE_CLASS" "$SANDBOX/default" "$coverage"
-  assert_eq "local ignores proof with coverage=$coverage" \
-    "$(printf 'lanes=true\nlanes_cause=standard')" "$(lane_answer "$SANDBOX/local-output")"
-done
+# An empty reason is refused by one machine line and answered as unset, never
+# as a wiring error; an unset reason prints no refusal. The control counts a
+# blank value as a reason, so the blank base reads queue_only=false.
+refusal_line='setting-refused: setting=HARNESS_CI_PER_PUSH_REASON cause=empty-reason'
+refusals() { grep -cxF -- "$refusal_line" "$SANDBOX/local-stderr" || true; }
+per_push_answer() { # COMMAND BASE
+  git -C "$repo" checkout -q -B row "$2"
+  mkdir -p "$repo/src"
+  printf 'line\n' >"$repo/src/refusal.sh"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm refusal >/dev/null
+  run_local "$1" pull_request "$2" "$SANDBOX/default"
+  printf '%s %s' "$(sed -n '/^queue_only=/p' "$SANDBOX/local-output")" "$(refusals)"
+}
+assert_eq "a blank reason is refused and stays queue-only" "queue_only=true 1" \
+  "$(per_push_answer "$CHANGE_CLASS" "$base_blank")"
+assert_eq "the refusal names the default's cause" \
+  "queue-only: queue_only=true cause=per-push-unset" \
+  "$(sed -n '/^queue-only:/p' "$SANDBOX/local-stderr")"
+assert_eq "an unset reason prints no refusal" "queue_only=true 0" \
+  "$(per_push_answer "$CHANGE_CLASS" "$base_default")"
+assert_eq "a reason opts the change back" "queue_only=false 0" \
+  "$(per_push_answer "$CHANGE_CLASS" "$base_optback")"
+blank_control="$(mutant blank-is-reason change-class '    *[![:space:]]*) ;;' '    ?*) ;;')"
+assert_eq "must-fail: a blank value read as a reason opts the change back" "queue_only=false 0" \
+  "$(per_push_answer "$blank_control" "$base_blank")"
+
+# The retired proof-reuse flag is still read, with one machine notice.
+: >"$SANDBOX/local-output"
+"$CHANGE_CLASS" --event pull_request --base "$base_default" --head HEAD --repo "$repo" \
+  --covers-all-lanes true --output "$SANDBOX/local-output" >/dev/null 2>"$SANDBOX/local-stderr"
+assert_eq "the retired coverage flag is read with one notice" "1 queue_only=true" \
+  "$(grep -cxF 'option-retired: option=--covers-all-lanes' "$SANDBOX/local-stderr") $(sed -n '/^queue_only=/p' "$SANDBOX/local-output")"
 
 # Restore the base command's missing output in a disposable package copy.
 # The control must complete, then fail the same machine-output assertion.
@@ -92,9 +149,9 @@ needle='      [ "$output" = /dev/null ] || printf '\''lanes=%s\nlanes_cause=%s\n
 NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "      :"; next }
   { print } END { if (hits != 1) exit 2 }' "$CHANGE_CLASS" >"$SANDBOX/control/harness-ci/scripts/change-class"
 ! cmp -s "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class" || exit 1
-run_local "$SANDBOX/control/harness-ci/scripts/change-class" "$SANDBOX/default" true
+run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
 assert_eq 'must-fail: base output contract omits the local lane answer' "" \
-  "$(lane_answer "$SANDBOX/local-output")"
+  "$(sed -n '/^lanes/p' "$SANDBOX/local-output")"
 
 # Local callers read the structured cause field, not the explanation. Both
 # checkout refusals are reachable from --lanes-from on the public command.
@@ -113,7 +170,7 @@ while IFS='|' read -r name declaration expected command; do
   classifier="$CHANGE_CLASS"
   [ "$command" != control ] || classifier="$SANDBOX/control/harness-ci/scripts/change-class"
   status=0
-  run_local "$classifier" "$declaration" true || status=$?
+  run_local "$classifier" pull_request "$base_default" "$declaration" || status=$?
   assert_eq "$name: lane checkout refusal exits 2" 2 "$status"
   assert_eq "$name: structured local cause" "$expected" \
     "$(sed -n 's/^wiring-error: cause=\([^ ]*\).*/\1/p' "$SANDBOX/local-stderr")"

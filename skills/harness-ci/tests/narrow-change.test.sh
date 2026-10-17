@@ -242,11 +242,19 @@ settings_base() { # CONTENT -> prints the base commit
   git -C "$repo" commit -q -m "settings base"
   git -C "$repo" rev-parse HEAD
 }
-# A base declaring GLOBS as the repository's queue list.
+# The per-push opt-back's line. The queue list, the queue lanes and the
+# selector are read only under it; a base without it answers per-push-unset.
+REASON='HARNESS_CI_PER_PUSH_REASON = "narrow-change suite"'
+# A base declaring GLOBS as the repository's queue list, under the opt-back.
 list_base() { # GLOBS -> prints the base commit
-  settings_base "$(printf '[env]\nHARNESS_CI_QUEUE_PATHS = "%s"' "$1")"
+  settings_base "$(printf '[env]\n%s\nHARNESS_CI_QUEUE_PATHS = "%s"' "$REASON" "$1")"
 }
 empty_base="$(list_base "")"
+# The opt-back alone: a reason, and no queue list.
+reason_base="$(settings_base "$(printf '[env]\n%s' "$REASON")")"
+# The default: an empty queue list and no reason.
+queue_default_base="$(settings_base "$(printf '[env]\nHARNESS_CI_QUEUE_PATHS = ""')")"
+blank_reason_base="$(settings_base "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = " "\nHARNESS_CI_QUEUE_PATHS = ""')")"
 
 # Orch reads this machine line. Assert its path and glob as well as its class.
 class_line_of() { # STDERR
@@ -319,13 +327,13 @@ control "skipping repository matching lets its path through" "$MICRO" \
   '  : "cause=repository-standard-path $PATH_MATCH_HIT" measured'
 control "omitting the key loses the base declaration" "$MICRO" \
   runtime/product.ts=2 standard-reader change-class \
-  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS'" \
-  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR'"
+  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'" \
+  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_PER_PUSH_REASON'"
 ROW_ENV="HARNESS_CI_STANDARD_PATHS="
 control "keeping the caller setting loses the base exclusion" "$MICRO" \
   runtime/product.ts=2 standard-environment change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS' \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR'
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' \
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_PER_PUSH_REASON'
 ROW_ENV=""
 ROW_BASE=""
 
@@ -341,9 +349,10 @@ queue_rows=0
 queue_paths=""
 while IFS='|' read -r label expected edits declared; do
   queue_rows=$((queue_rows + 1))
-  ROW_BASE=""
+  ROW_BASE="$reason_base"
   case "$declared" in
     list=*) ROW_BASE="$(list_base "${declared#list=}")" ;;
+    base=*) row_base="${declared#base=}"; ROW_BASE="${!row_base}" ;;
   esac
   # shellcheck disable=SC2086
   assert_eq "$label" "$expected" "$(queue_of "$(run_row "$CHANGE_CLASS" $edits)")"
@@ -386,6 +395,10 @@ a path the repository's own list names is queue-only|queue_only=true cause=repos
 a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2|list=
 a workflow path git quotes is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|.github/workflows/we"ird.yml=2
 a quoted workflow path beside a product file is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|runtime/product.ts=2 .github/workflows/we"ird.yml=2
+a repository with no settings takes the queue-only default|queue_only=true cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=base
+the queue-only default precedes the repository's empty list|queue_only=true cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=queue_default_base
+a blank reason takes the queue-only default|queue_only=true cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=blank_reason_base
+a queue path answers ahead of the queue-only default|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2|base=queue_default_base
 ROWS
 ROW_BASE=""
 require_rows queue-only "$queue_rows"
@@ -402,7 +415,7 @@ settings_queue() { # CLASSIFIER BASE [NAME=VALUE] -> the queue-only line
   git -C "$repo" commit -q -m "settings row"
   queue_of "$(env ${3:+"$3"} "$1" --repo "$repo" --event pull_request --base "$2" --head HEAD 2>&1 >/dev/null)" || true
 }
-declared_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = "scripts/ci/*"')"
+declared_base="$(settings_base "$(printf '[env]\n%s\nHARNESS_CI_QUEUE_PATHS = "scripts/ci/*"' "$REASON")")"
 rejected_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = ""\nHARNESS_CI_QUEUE_PATHS = ""')"
 assert_eq "the base commit's settings declare the repository's list" \
   "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
@@ -420,7 +433,7 @@ assert_eq "a base whose settings the loader rejects reads queue-only" \
 unset_warnings_of() { # STDERR
   grep -c '^setting-unset: setting=HARNESS_CI_QUEUE_PATHS$' <<<"$1" || true
 }
-ROW_BASE=""
+ROW_BASE="$reason_base"
 assert_eq "an undeclared list warns once" 1 \
   "$(unset_warnings_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
 ROW_BASE="$empty_base"
@@ -444,8 +457,9 @@ ROW_BASE=""
 # `-`; with `unset`, a base whose settings hold no list at all.
 lanes_base() { # DECLARATION [unset] -> prints the base commit
   ROW_BASE="" reset_case
+  printf '[env]\n%s\n' "$REASON" >"$repo/kendex.settings.toml"
   [ "${2:-}" = unset ] ||
-    printf '[env]\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$repo/kendex.settings.toml"
+    printf 'HARNESS_CI_QUEUE_PATHS = ""\n' >>"$repo/kendex.settings.toml"
   mkdir -p "$repo/.github"
   if [ "$1" = - ]; then
     mkdir -p "$repo/.github/ci-lanes.conf"
@@ -614,7 +628,7 @@ order_mutant="$(mutant queue-order change-class '  queue_only_of_paths' '  :' \
 assert_eq "a classifier that judges the class after the refusals loses it on a refusal" \
   "queue_only=true cause=paths-unread" \
   "$(queue_of "$(run_row "$order_mutant" inventory-invalid runtime/product.ts=2)")"
-ROW_BASE=""
+ROW_BASE="$reason_base"
 control "a classifier that reads an undeclared list as not queue-only lets an unlisted diff through" \
   "queue_only=false cause=queue-list-undeclared" runtime/product.ts=2 \
   queue-undeclared change-class \
@@ -633,10 +647,10 @@ ROW_BASE=""
 base_mutant="$(mutant queue-base-settings change-class \
   '  if ! base_settings; then' '  if false; then')"
 assert_eq "a classifier that never reads the base's settings loses the declared list" \
-  "queue_only=true cause=queue-list-undeclared" \
+  "queue_only=true cause=per-push-unset" \
   "$(settings_queue "$base_mutant" "$declared_base")"
 environment_mutant="$(mutant queue-environment change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS' 'unset HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS')"
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' 'unset HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON')"
 assert_eq "a classifier that keeps the process environment's list lets the base's newly listed path through" \
   "queue_only=false cause=no-queue-path" \
   "$(settings_queue "$environment_mutant" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
@@ -688,6 +702,16 @@ control "a classifier that reads an unreadable declaration as not queue-only let
   queue-lane-unreadable change-class \
   '    QUEUE_CAUSE="cause=lane-declaration-unreadable"' \
   '    QUEUE_ONLY=false QUEUE_CAUSE="cause=lane-declaration-unreadable"'
+# The queue-only default, held by a control that reads any set value, blank
+# included, as the opt-back's reason.
+ROW_BASE="$blank_reason_base"
+control "a classifier that takes a blank reason as the opt-back lets the diff take the admin route" \
+  "queue_only=false cause=no-queue-path" runtime/product.ts=2 \
+  per-push-blank change-class '    *[![:space:]]*) ;;' '    ?*) ;;'
+ROW_BASE="$queue_default_base"
+control "a classifier without the queue-only default reads the empty list as not queue-only" \
+  "queue_only=false cause=no-queue-path" runtime/product.ts=2 \
+  per-push-default change-class '  case "${HARNESS_CI_PER_PUSH_REASON:-}" in' '  case "${HARNESS_CI_PER_PUSH_REASON:-set}" in'
 ROW_BASE=""
 CONTROL_READ=verdict_of
 

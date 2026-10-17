@@ -18,15 +18,6 @@ description: >-
 # A change to the classifier script itself is proved by the harness-ci suite,
 # not by this repository's live classifying job.
 #
-# The classify step also asks `proof` whether a passing run of the same
-# workflow already tested this tree, and stands down what that run covered
-# of the lanes the workflow says do the same work on every event, through
-# `covers-all-lanes` or its declaration's `:event-uniform` marks; the step
-# after it uploads the record classify wrote of this run, for the run after
-# it. The API read uses the job token, which the calling job grants `actions: read`;
-# a token without it is one refusal, printed on the step's `proof:` line, and
-# the lanes run.
-#
 # NO INPUT CARRIES A CLASS. Not a label, not a branch name, not a pull request
 # title, not the class itself: the author of the diff under judgement writes
 # every one of those, so an input that asserted a verdict would fail open on
@@ -71,27 +62,9 @@ inputs:
     default: ''
   covers-all-lanes:
     description: >-
-      true where this workflow runs every lane whenever lanes is true, as
-      the harness-ci template does, and each lane does the same work on
-      every event, as the harness-ci skill's references/wiring.md
-      § Per-lane verdicts defines it for the `:event-uniform` mark: the
-      adopter's assertion, since a later run of the same tree on another event
-      stands its lanes down on it. Only then does a run that reads no lane
-      declaration record that it covered every lane. A workflow that
-      selects its jobs itself, or runs a lane that works differently on
-      one event, leaves it unset, and its record says covers=none. Where a
-      declaration is read, its `:event-uniform` marks say the same per
-      lane and this input is not read.
-    required: false
-    default: ''
-  macos-patch-proof:
-    description: >-
-      true for a workflow that runs selected macOS tests on pull requests
-      and consumes macos_proof_record to reuse only those tests in a merge
-      group. Ubuntu tests must still run against the integrated tree.
-      The caller records its actual selection in record_dir and uploads
-      change-class-macos-proof-<patch_id> after selection.
-      Unset preserves the generic tree-proof contract.
+      Accepted and ignored. The retired proof reuse read it, and copies of
+      the harness-ci template still pass it; a declared input keeps their
+      runs free of an unexpected-input warning.
     required: false
     default: ''
 
@@ -126,11 +99,12 @@ outputs:
       default-branch claims reach a deleted path or an added path beside a deletion.
       This covers both
       rename ends without content pairing. Other renders run none. A trivial class or
-      docs_only=true on a non-render class runs none. Valid proof reuse can
-      stand down every lane under the Proof reuse contract. When the selected classifier
-      lacks the shared producer, the action first sets lanes=true with
-      lanes_cause=lane-producer-unavailable and empty lane_verdicts, regardless
-      of the class or docs verdict. Valid proof reuse still applies afterward.
+      docs_only=true on a non-render class runs none. On pull_request and
+      push, queue_only=true runs none, where both renders read the queue-only
+      default. On schedule and workflow_dispatch every lane runs. When the
+      selected classifier lacks the shared producer, the action sets
+      lanes=true with lanes_cause=lane-producer-unavailable and empty
+      lane_verdicts, regardless of the class or docs verdict.
       What a lane condition
       and an aggregate's waiver read, with lane_verdicts as
       skills/harness-ci/references/wiring.md § Per-lane verdicts sets out.
@@ -140,62 +114,13 @@ outputs:
     value: ${{ steps.classify.outputs.lanes }}
   lanes_cause:
     description: >-
-      Why lanes answered as it did: render, trivial, docs-only or
-      proof-reused where lanes is false; render-moved-claim for a claimed
-      moved-file candidate in a render; lane-producer-unavailable when the
-      selected classifier lacks the shared producer and no proof stands down
-      all lanes; the class otherwise.
+      Why lanes answered as it did: render, trivial, docs-only or queue-only
+      where lanes is false; full-run on schedule and workflow_dispatch;
+      render-moved-claim for a claimed moved-file candidate in a render;
+      queue-only-reader-absent where a render lacks the queue-only default's
+      reader; lane-producer-unavailable when the selected classifier lacks
+      the shared producer; the class otherwise.
     value: ${{ steps.classify.outputs.lanes_cause }}
-  proof_reuse:
-    description: >-
-      true where a passing run of this workflow tested this tree and left a
-      record of what it covered: on a merge group, the pull_request run of
-      the pull request its queue branch names, at that pull request's head,
-      where that run's record names the group's tree; on the merge queue's
-      push to the default branch, the merge_group run of the pushed sha.
-      false on every other event and on every refusal, whose key
-      proof_reason carries. A true answer requires proof_reason=exact-proof,
-      a nonempty proof_run and proof_tree, and a readable proof_record file
-      with a nonblank line. Otherwise the step exits 2 with
-      cause=proof-unreadable and publishes no outputs. Consumers need no
-      further check of these proof fields. The rules are
-      skills/harness-ci/references/wiring.md § Proof reuse.
-    value: ${{ steps.classify.outputs.proof_reuse }}
-  proof_reason:
-    description: exact-proof where proof_reuse is true, otherwise the refusal key.
-    value: ${{ steps.classify.outputs.proof_reason }}
-  proof_run:
-    description: The proving run's id where proof_reuse is true, else empty.
-    value: ${{ steps.classify.outputs.proof_run }}
-  proof_tree:
-    description: The tree this run tests, on every event, which names the record uploaded below.
-    value: ${{ steps.classify.outputs.proof_tree }}
-  proof_record:
-    description: >-
-      The proving run's record where proof_reuse is true, else empty: its
-      event, change_class, docs_only and one changed_path line per path,
-      for a workflow that selects its jobs itself to re-derive what that run
-      ran, and its covers and lane lines, which this action applies to
-      lanes and lane_verdicts. Where proof_reuse is true, the record contains
-      a nonblank line read from a readable file. An absent, unreadable or
-      blank record makes the step exit 2 with cause=proof-unreadable before
-      it publishes outputs.
-    value: ${{ steps.classify.outputs.proof_record }}
-  patch_id:
-    description: The whitespace-preserving diff id from the endpoints' merge base, empty when unavailable.
-    value: ${{ steps.classify.outputs.patch_id }}
-  macos_proof_record:
-    description: >-
-      The record of a successful pull-request run of this workflow with
-      macos-patch-proof enabled, the same patch_id and unchanged workflow
-      and job selector. Empty when no record qualifies. It authorizes only
-      covered macOS tests, never Ubuntu tests.
-    value: ${{ steps.classify.outputs.macos_proof_record }}
-  record_dir:
-    description: >-
-      The directory holding this run's record. An opt-in macOS workflow
-      records its actual selection here before uploading its patch artifact.
-    value: ${{ steps.classify.outputs.record_dir }}
   lane_verdicts:
     description: >-
       One lane_<name>=true|false line per default-branch lane, plus head-only
@@ -237,26 +162,5 @@ runs:
         REPO: ${{ inputs.repo }}
         LANES_FROM: ${{ inputs.lanes-from }}
         COVERS_ALL_LANES: ${{ inputs.covers-all-lanes }}
-        MACOS_PATCH_PROOF: ${{ inputs.macos-patch-proof }}
-        GH_TOKEN: ${{ github.token }}
       run: |
         "$GITHUB_ACTION_PATH/classify"
-    # The record of what this run tests and covers, named by its tree, for a
-    # later run of the same tree to reuse. classify decides whether a record
-    # exists and says so in record_dir, the directory holding it; proof_tree
-    # is published on every event. The directory is uploaded, not the file,
-    # so the artifact's member is the file's own name, `record`, which proof
-    # reads. An upload that fails loses that later reuse and nothing else, so
-    # it never reddens the step; the run after it prints its own refusal and
-    # runs its lanes. A pull request that waits longer than the retention
-    # between its last push and its merge runs its lanes again.
-    - name: the record of this run, for the run after it
-      if: steps.classify.outputs.record_dir != ''
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-      continue-on-error: true
-      with:
-        name: change-class-proof-${{ steps.classify.outputs.proof_tree }}
-        path: ${{ steps.classify.outputs.record_dir }}
-        retention-days: 30
-        overwrite: true
-        if-no-files-found: error

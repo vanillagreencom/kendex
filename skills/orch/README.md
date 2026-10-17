@@ -106,7 +106,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 
 Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 
-Every lane merges its own pull request, past the merge queue or through it, as the github skill's `pr-merge --help` § Merge route says.
+Every lane merges its own pull request, past the merge queue or through it, as the github skill's `pr-merge --help` § Merge route says. Under harness-ci's queue-only default every change takes the queue: the merge-group run proves the head, a red one returns the change to its lane, and an unchanged head never re-enters the queue, per [workflows/merge-pr.md § 5](workflows/merge-pr.md#5-execute-the-merge) Recovery cycle.
 
 Maintainer notes and test entry point: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md).
 

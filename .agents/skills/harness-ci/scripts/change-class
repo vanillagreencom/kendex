@@ -3,14 +3,12 @@
 #
 # Usage:
 #   change-class --event EVENT [--base REF] [--head REF] [--repo DIR]
-#                [--output FILE] [--lanes-from DIR] [--covers-all-lanes BOOL]
+#                [--output FILE] [--lanes-from DIR]
 #
 # --output appends lanes=true|false and lanes_cause beside the class and queue
 # verdicts. The lane rules are ../references/wiring.md § Per-lane verdicts.
 # --lanes-from names a separate trusted checkout with .github/ci-lanes.conf;
-# empty by default, so no lane is declared. --covers-all-lanes defaults to
-# false, matching the action. It describes workflow coverage for CI proof;
-# local runs never read a proof record and never answer proof-reused.
+# empty by default, so no lane is declared.
 #
 # Flags carry the meanings `harness-only --help` gives them, except --mode and
 # --paths-output, which this script does not take. Every read of a diff range
@@ -47,6 +45,15 @@
 #                         group for
 #   queue-settings-unreadable
 #                         the base commit's settings could not be read
+#   per-push-unset        the base's HARNESS_CI_PER_PUSH_REASON is unset or
+#                         blank: the repository takes the default, where the
+#                         merge-queue run is the only proof of a head, so
+#                         every change takes the queue and a pull request's
+#                         stub CI run never opens the admin route. A blank
+#                         value also prints one `setting-refused:
+#                         setting=HARNESS_CI_PER_PUSH_REASON
+#                         cause=empty-reason` line and a warning; the
+#                         opt-back needs its reason
 #   lane-declaration-unreadable
 #                         the base commit's .github/ci-lanes.conf could not
 #                         be read
@@ -73,6 +80,7 @@
 #                         of HARNESS_CI_QUEUE_PATHS, and the selector, where
 #                         the base declares one, names no job
 #
+# The causes after per-push-unset are read only where the base names a reason.
 # The first two answer where no changed path reaches the judgement; the rest
 # up to repository-queue-path are judged on every changed path harness-only
 # read, before any refusal or rule below. The selector's two are judged last,
@@ -215,8 +223,10 @@
 # exclusions before render and size classes, blank-separated, unset or empty adds none),
 # HARNESS_CI_QUEUE_PATHS (the repository's
 # own queue globs, blank-separated, set empty where the shipped list is the
-# whole list) and HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) come
-# from those tables alone, never from the environment. The private env file
+# whole list), HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) and
+# HARNESS_CI_PER_PUSH_REASON (the reason the repository runs its lanes on
+# each pull-request push; unset, every change is queue-only) come from those
+# tables alone, never from the environment. The private env file
 # is never read.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
 # copy of this script against the pull request's tree; the branch can change
@@ -323,7 +333,6 @@ head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
 lanes_from=""
-covers_all_lanes=false
 changed=""
 # The queue-only class. Until the changed paths are read, the diff is
 # unreadable, and an unreadable diff reads queue-only.
@@ -354,17 +363,18 @@ while [ "$#" -gt 0 ]; do
     --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
     --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
     --lanes-from) need_value "$1" "$#" "${2:-}"; lanes_from="$2"; shift 2 ;;
-    --covers-all-lanes) need_value "$1" "$#" "${2:-}"; covers_all_lanes="$2"; shift 2 ;;
+    # Retired with proof reuse; read until the next major release.
+    --covers-all-lanes)
+      need_value "$1" "$#" "${2:-}"
+      printf 'option-retired: option=--covers-all-lanes\n' >&2
+      echo "change-class: --covers-all-lanes is ignored since proof reuse was retired; drop it" >&2
+      shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) die "cause=unknown-argument argument=$1" "unknown argument '$1'" ;;
   esac
 done
 
 [ -n "$event" ] || die "cause=missing-event option=--event" "--event is required"
-case "$covers_all_lanes" in
-  true | false) ;;
-  *) die "cause=invalid-setting option=--covers-all-lanes" "coverage must be true or false" ;;
-esac
 
 work="$(mktemp -d 2>/dev/null)" || work=""
 [ -n "$work" ] && [ -d "$work" ] ||
@@ -517,12 +527,12 @@ path_class_matches() { # PHASE CLASS
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
 # so the private env file its KENDEX_ENV_FILE names never reaches this script.
 # A key this process's environment carries keeps that value, as it does on the
-# ladder, save the standard paths, queue list and selector: a caller's environment is its own
+# ladder, save the standard paths, queue list, selector and per-push reason: a caller's environment is its own
 # checkout's settings, which github.sh's router exports from the working
 # tree, so these are dropped from it and the base's alone decide. The load runs in a
 # subshell and hands back these keys alone.
-unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS'
+unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
 # The bytes of PATH as the commit --base names holds it, written to OUT:
@@ -652,6 +662,20 @@ queue_only_of_paths() {
     QUEUE_CAUSE="cause=queue-settings-unreadable"
     return
   fi
+  # The default: no pull-request run proves a head, so every change takes
+  # the queue. A blank reason is refused as unset, never as a wiring error:
+  # the base holds it, so exit 2 would redden every pull request, the one
+  # that repairs it included.
+  case "${HARNESS_CI_PER_PUSH_REASON:-}" in
+    *[![:space:]]*) ;;
+    *)
+      if [ -n "${HARNESS_CI_PER_PUSH_REASON+x}" ]; then
+        printf 'setting-refused: setting=HARNESS_CI_PER_PUSH_REASON cause=empty-reason\n' >&2
+        echo "::warning title=per-push opt-back refused::HARNESS_CI_PER_PUSH_REASON is set without a reason in the base commit's settings, so every change stays queue-only; give the reason the repository runs its lanes on each pull-request push" >&2
+      fi
+      QUEUE_CAUSE="cause=per-push-unset"
+      return ;;
+  esac
   if ! queue_lane_of_paths; then
     QUEUE_CAUSE="cause=lane-declaration-unreadable"
     return

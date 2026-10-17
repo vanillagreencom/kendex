@@ -14,11 +14,6 @@ cp -R "$ROOT/skills/harness-ci" "$SANDBOX/control/skills/"
 cp -R "$ROOT/skills/orch" "$SANDBOX/control/skills/"
 mkdir -p "$SANDBOX/action" "$SANDBOX/bin" "$SANDBOX/default/.github"
 cp "$ACTION" "$SANDBOX/action/classify"
-cat >"$SANDBOX/action/proof" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'reuse=false\nreason=ineligible-event\n'
-STUB
 cat >"$SANDBOX/bin/kendex" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -28,7 +23,7 @@ case "$*" in
   *) cat -- "$RENDER_DOCUMENT" ;;
 esac
 STUB
-chmod +x "$SANDBOX/action/proof" "$SANDBOX/bin/kendex"
+chmod +x "$SANDBOX/bin/kendex"
 export RENDER_DOCUMENT="$SANDBOX/document.json"
 cat >"$RENDER_DOCUMENT" <<'JSON'
 {"version":1,"clean":true,"checked":4,"failed":0,"base_owned":[{"path":".agents/skills/orch","owns":"tree"},{"path":".agents/skills/spare","owns":"tree"}],"rows":[{"kind":"skill","name":"orch","state":"ok","positions":[{"path":".agents/skills/orch","owns":"tree"}]},{"kind":"skill","name":"mailbox","state":"ok","positions":[{"path":".agents/skills/mailbox","owns":"tree"}]},{"kind":"skill","name":"spare","state":"ok","positions":[{"path":".agents/skills/spare","owns":"tree"}]},{"kind":"inventory","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}
@@ -47,6 +42,9 @@ new=.agents/skills/mailbox/scripts/lib/lane-mail-store.py
 spare=.agents/skills/spare/original.py
 forwarder=.agents/skills/orch/scripts/lane-mail
 commit_paths "$repo" baseline "$old" "$spare" "$forwarder"
+# The repository opts back into per-push lanes, so a pull request's lane
+# answer is the render rule's own, not the queue-only stand-down's.
+printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "render rule suite"\nHARNESS_CI_QUEUE_PATHS = ""\n' >"$repo/kendex.settings.toml"
 printf '%s\n' "$old" "$spare" "$forwarder" .kendex-generated.json | jq -Rs 'split("\n")[:-1] | sort' >"$repo/.kendex-generated.json"
 git -C "$repo" add -A
 git -C "$repo" commit -qm inventory

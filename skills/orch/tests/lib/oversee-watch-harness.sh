@@ -94,7 +94,9 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #   refresh-log.<RUN>.err fails that log with the file's stderr.
 #   main-push.<SLUG>.json is the Skill Tests run history (default: []),
 #   filtered by branch, event and status and capped by the list's limit;
-#   main-push.<SLUG>.err fails that list. main-jobs.<RUN>.json supplies jobs,
+#   main-push.<SLUG>.err fails that list. main-ci.<SLUG>.json and .err are
+#   the same for the harness-ci template's ci.yml; absent .json reads as
+#   gh's rewritten 404 for that workflow. main-jobs.<RUN>.json supplies jobs,
 #   main-jobs.<RUN>.err fails that read. main-log.<RUN>.txt and .err supply
 #   or fail the failed-step log of a main-push run.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
@@ -161,8 +163,15 @@ case "${1:-} ${2:-}" in
       shift
     done
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
-    if [[ "$verb" == list && "$workflow" == skill-tests.yml ]]; then
+    if [[ "$verb" == list && ( "$workflow" == skill-tests.yml || "$workflow" == ci.yml ) ]]; then
       src="$STUB_DIR/main-push.$slug"
+      if [[ "$workflow" == ci.yml ]]; then
+        src="$STUB_DIR/main-ci.$slug"
+        [[ -f "$src.json" || -f "$src.err" ]] || {
+          printf 'HTTP 404: workflow ci.yml not found on the default branch (https://api.github.com/repos/%s/actions/workflows/ci.yml)\n' "$repo" >&2
+          exit 1
+        }
+      fi
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       if [[ -f "$src.json" ]]; then
         jq -c --arg branch "$branch" --arg event "$event" --arg status "$status" --argjson limit "$limit" '

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # classify — the shipped classifier's verdict for a diff, whether the diff
-# runs a workflow's lanes, which individual lanes it runs,
-# the changed-path families a workflow selects its jobs with, and whether a
-# passing run of this workflow already proved the tree this run tests.
+# runs a workflow's lanes, which individual lanes it runs, and the
+# changed-path families a workflow selects its jobs with.
 #
 # Nothing here decides a class or a docs verdict. `change-class` prints one
 # on stdout, and this script forwards it with its queue-only stderr record.
@@ -25,24 +24,11 @@
 #   LANES_FROM  the checkout root whose .github/ci-lanes.conf declares the
 #          workflow's base lanes and claims; never REPO.
 #          Empty means no lane is declared.
-#   COVERS_ALL_LANES  `true` where the calling workflow runs every lane
-#          whenever lanes is true, as the harness-ci template's does, and
-#          each lane does the same work on every event, as the harness-ci
-#          skill's references/wiring.md § Per-lane verdicts defines it for
-#          the `:event-uniform` mark. Any other value, empty included, says
-#          it does not. Only it lets a run that reads no declaration record
-#          covers=all.
-#   MACOS_PATCH_PROOF  true when this workflow runs selected macOS jobs on
-#          pull requests; publishes patch_id and macos_proof_record separately
-#          from tree proof so no integrated-tree lane can skip on a patch.
-#   GH_TOKEN  the job token, which `proof` reads workflow runs with
+#   COVERS_ALL_LANES  accepted and ignored: the retired proof reuse's
+#          coverage assertion, which copies of the harness-ci template
+#          still pass.
 # Environment, from the runner:
 #   GITHUB_OUTPUT  the step output file every writer appends to
-#   RUNNER_TEMP    where the record below is written; unset, no record is
-#                  written and the step says so
-#   GITHUB_WORKFLOW_REF and GITHUB_REPOSITORY, which `proof` reads this
-#                  run's workflow file from
-#   GITHUB_SHA and the rest `proof` lists
 #
 # Outputs appended to GITHUB_OUTPUT:
 #   change_class       render|trivial|micro|small|standard, forwarded from the
@@ -68,18 +54,6 @@
 #                      printed them. A family is a grouping of this list, so a
 #                      caller whose lanes answer to a tree no family names
 #                      groups it here rather than reading the diff again.
-#   proof_reuse        true|false: whether a passing run of this workflow
-#                      tested this tree and left a record of what it covered,
-#                      as `proof` beside this script decides it.
-#   proof_reason       `exact-proof`, or the refusal key `proof` printed.
-#   proof_run          the proving run's id where proof_reuse is true.
-#   proof_tree         the tree this run tests, empty where the checkout
-#                      lacks the commit GITHUB_SHA names.
-#   proof_record       the proving run's record, its lines as below, empty
-#                      where proof_reuse is false. A workflow that selects
-#                      its jobs itself reads the run's class, docs verdict,
-#                      event and paths out of it to re-derive what that run
-#                      ran, as kendex's tools/ci-job-set does.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
 #                      A proved render runs lanes whose default-branch claims
 #                      match a deleted path or an added path when any old path
@@ -89,9 +63,12 @@
 #                      lanes=false. Remaining skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
-#   lanes_cause        why: render, trivial, docs-only or proof-reused where
-#                      lanes=false; render-moved-claim for a claimed moved-file
-#                      candidate in a render; lane-producer-unavailable when
+#   lanes_cause        why: render, trivial, docs-only or queue-only where
+#                      lanes=false; full-run on schedule and
+#                      workflow_dispatch; render-moved-claim for a claimed
+#                      moved-file candidate in a render;
+#                      queue-only-reader-absent where a render lacks the
+#                      stand-down's reader; lane-producer-unavailable when
 #                      the classifier checkout lacks the installed producer;
 #                      the class otherwise.
 #   lane_verdicts      one `lane_<name>=true|false` line per default-branch
@@ -99,34 +76,31 @@
 #                      head order on a valid declaration comparison. This is
 #                      the union of lane names. Empty where LANES_FROM is
 #                      empty or the base declaration is absent or malformed.
-#   record_dir         the directory holding the record below, whose one
-#                      file is `record`, where this run wrote one; empty
-#                      where it did not. The action's upload step alone
-#                      reads it, and no workflow: it uploads that directory,
-#                      so the artifact's member is `record`, the name
-#                      `proof` reads.
 #
-# lanes uses the two verdicts above, moved render claims and the proof.
+# lanes uses the two verdicts above, moved render claims, the event and the
+# queue_only answer, as the installed lib/change-class.sh decides them.
 # A workflow forwards it rather than spelling a class, so a change to
 # which diffs run the lanes reaches every consumer with no workflow edit.
 #
 # A lane verdict uses default-branch claims except for the declaration path,
 # whose comparison follows wiring.md § Per-lane verdicts. In this order:
-# false wherever lanes is false; then, on render, true only for lanes whose
+# true for every lane on the full run; false wherever lanes is false; then,
+# on render, true only for lanes whose
 # default-branch claim matches a deleted path or a possible added destination
 # when any old path disappears, with
 # cause=render-moved-claim and its path and glob; then true for every lane where the
 # declaration comparison failed; then, on a pull request,
 # false with the cause queue-deferred for a lane the declaration marks
 # `:queue` and one of its own globs reaches, where this run's change-class
-# answered queue_only=true and both renders below read the mark; then true
+# answered queue_only=true and both renders below read the mark; then, for
+# a lane marked `:nightly`, true only where its own glob or the declaration
+# comparison selects it; then true
 # for every lane where a changed non-declaration path no base lane claims
 # lies outside the docs
 # set or where no changed path was read; then true where a changed path
 # matches one of the lane's base globs or the declaration comparison selects
 # that lane, and false everywhere else. A deferred
-# lane runs in the merge group, which reuses no proof for it because this
-# run's record says it did not run. The deferral needs the queue_only
+# lane runs in the merge group. The deferral needs the queue_only
 # answer as well as the lane's own glob, so no lane is deferred on a pull
 # request change-class reads as free to take the admin merge.
 #
@@ -141,61 +115,25 @@
 # a `tree=` naming which, and the step raises one warning. A head that
 # deletes its reader only makes the lane run. A checkout that runs pr-merge
 # behind both trees is outside what CI sees, and wiring.md holds it as an
-# ordering rule. A glob is a shell pattern, so `*` also matches `/`. The
+# ordering rule. The whole-run stand-down on pull_request and push follows
+# the same rule with its own reader: both trees must carry the render's
+# change-class that reads HARNESS_CI_PER_PUSH_REASON, or the lanes run with
+# lanes_cause=queue-only-reader-absent and one warning. A glob is a shell
+# pattern, so `*` also matches `/`. The
 # declaration's grammar and reader are the classifier's lib/ci-lanes.sh.
 # The declaration is read from LANES_FROM, the default branch's copy, because
 # the author of the diff under judgement could edit the tree's own copy to
 # stand a lane down. For .github/ci-lanes.conf alone, compare that declaration
 # with HEAD using ci_lanes_read. Select the union's lanes whose names, claim
-# sets or queue marks changed. A declaration hit never defers a queue lane.
+# sets, queue marks or nightly marks changed. A declaration hit never defers a queue lane.
 # Other paths use the default branch's claims only. A missing, unreadable or
 # malformed copy keeps the all-lanes fallback.
 # An absent or malformed default-branch declaration is not a refusal:
 # the default branch holds it, so failing the step would redden every pull
 # request, the one that repairs it included.
 #
-# A proof stands down what the proving run covered and nothing else. Its
-# record says `covers=all`, `covers=none` or `covers=lanes` with one
-# `lane_<name>=true|false` line per lane name that run published. The
-# proving run ran on another event, so a declared lane stands down on it
-# only where the declaration marks the lane `:event-uniform`, the
-# declaration's word that the lane does the same work on every event. A
-# marked lane whose classified verdict is true and which the record covers
-# turns false with the cause proof-reused; where every lane the diff would
-# run turns false, lanes itself answers false with lanes_cause=proof-reused.
-# An unmarked lane keeps its verdict whatever the record says, and one whose
-# verdict is true and which the record covers has its `lane:` line name the
-# proof it held back. With no declaration read, only
-# `covers=all` stands the lanes down, on COVERS_ALL_LANES's word for every
-# lane: a record of named lanes cannot be mapped onto lanes this run does
-# not name. A lane the proving run skipped, or did not have, keeps its
-# classified verdict.
-#
-# The record this run leaves, for the run after it, is written to
-# RUNNER_TEMP/change-class-record/record on pull_request and merge_group,
-# and the action's next step uploads that directory under the tree's name.
-# Its lines:
-#   tree=<sha>  workflow=<path>  event=<event>  change_class=<class>
-#   docs_only=<bool>  covers=all|none|lanes  lane_<name>=true|false...
-#   changed_path=<path>...
-# covers is the action's view of what has passed on this tree once this run
-# passes, in the lane names that run published, not a list of the jobs the
-# workflow ran:
-#   all    where COVERS_ALL_LANES is true, no declaration was read and
-#          lanes is true; or where no declaration was read and a proof
-#          covered every lane.
-#   lanes  with one line per declared lane, where a declaration was read:
-#          true for the lanes whose final verdict is true and the ones the
-#          proof covered, marked or not, false for the rest; or the proving
-#          run's own lane lines, carried forward, where no declaration was
-#          read here. The record says what passed; the run reading it
-#          judges the mark.
-#   none   otherwise: a workflow that selects its jobs itself leaves
-#          COVERS_ALL_LANES unset, and its records say none.
-#
-# Outputs reach the caller only after the proof and record checks succeed.
-# A refusal leaves the caller's output file unchanged, and the failed step
-# runs every lane.
+# Outputs reach the caller only after every read succeeded. A refusal leaves
+# the caller's output file unchanged, and the failed step runs every lane.
 #
 # A segment is what the path holds, not what the caller hopes: `skills/AGENTS.md`
 # puts `AGENTS.md` in changed_skills. Over-inclusion is the safe direction —
@@ -222,9 +160,6 @@ scripts_root="${CLASSIFIER:-}"
 SCRIPTS="$(cd "$scripts_root/skills/harness-ci/scripts" 2>/dev/null && pwd)" ||
   die "classifier-unreadable root=$scripts_root" \
     "no skills/harness-ci/scripts under the classifier root"
-PROOF="$(dirname "$0")/proof"
-[ -x "$PROOF" ] || die "proof-missing path=$PROOF" \
-  "the proof script beside this one is absent or not executable"
 
 [ -n "${EVENT:-}" ] || die missing-event "the event input is required"
 [ -n "${HEAD:-}" ] || die missing-head "the head input is required"
@@ -247,7 +182,7 @@ work="$(mktemp -d)" || die mktemp-failed "could not create a working directory"
 trap 'rm -rf -- "${work:?}"' EXIT
 
 # The wrapped classifiers also write outputs. Keep their answers private
-# until this step has checked the proof that can stand consumer lanes down.
+# until every read below has succeeded.
 step_output="$GITHUB_OUTPUT"
 export GITHUB_OUTPUT="${work:?}/outputs"
 : >"$GITHUB_OUTPUT"
@@ -346,110 +281,6 @@ else
   lanes=true lanes_cause=lane-producer-unavailable
 fi
 
-# The proof: whether a passing run of this workflow tested this tree, and
-# its record. `proof` decides and never gates, so its lines are read as they
-# stand and a refusal is one `proof:` line and the classified answers above.
-proof_out="$("$PROOF" "${work:?}")" || {
-  status=$?
-  die "proof-failed status=$status" "proof exited $status"
-}
-proof_line() { # KEY — the value of the proof's line KEY
-  printf '%s\n' "$proof_out" | sed -n "s/^$1=//p"
-}
-proof_reuse="$(proof_line reuse)"
-proof_reason="$(proof_line reason)"
-proof_run="$(proof_line run)"
-proof_tree="$(proof_line tree)"
-proof_workflow="$(proof_line workflow)"
-proof_record="$(proof_line record)"
-patch_id="$(proof_line patch_id)"
-macos_contract="$(proof_line macos_contract)"
-macos_proof_record=""
-if [ "$(proof_line kind)" = macos-patch ]; then
-  [ "$proof_reuse" != true ] || macos_proof_record="$proof_record"
-  # Patch portability never authorizes a tree lane to skip integration.
-  proof_reuse=false
-  [ "$proof_reason" != exact-proof ] || proof_reason=patch-only-proof
-  proof_run=""
-  proof_record=""
-fi
-case "$proof_reuse" in
-  true)
-    [ "$proof_reason" = exact-proof ] &&
-      [ -n "$proof_run" ] &&
-      [ -n "$proof_tree" ] &&
-      [ -f "$proof_record" ] && [ -r "$proof_record" ] && grep -q '[^[:space:]]' -- "$proof_record" ;;
-  false) [ -n "$proof_reason" ] ;;
-  *) false ;;
-esac || die "proof-unreadable lines=$(printf '%s' "$proof_out" | tr '\n' ' ')" \
-  "proof printed an unknown answer or claimed reuse without a complete readable proof"
-printf 'proof: reuse=%s reason=%s run=%s %s\n' "$proof_reuse" "$proof_reason" \
-  "$proof_run" "$(proof_line detail)" >&2
-
-# What the proving run covered: `all`, `none`, or the named lanes, read from
-# its record. A record naming no covers line covers nothing.
-record_covers=none
-record_lanes=""
-if [ "$proof_reuse" = true ]; then
-  record_covers="$(sed -n 's/^covers=//p' "$proof_record")"
-  case "$record_covers" in
-    all | none) ;;
-    lanes) record_lanes="$(sed -n 's/^\(lane_[^=]*=[a-z]*\)$/\1/p' "$proof_record")" ;;
-    *) record_covers=none ;;
-  esac
-fi
-record_covers_lane() { # NAME — 0 where the proving run covered lane NAME
-  [ "$record_covers" = all ] && return 0
-  [ "$record_covers" = lanes ] || return 1
-  grep -qxF -- "lane_$1=true" <<<"$record_lanes"
-}
-
-# Apply the proof. A covered lane marked event-uniform whose classified
-# verdict is true turns false, and a covered one left unmarked is held;
-# where every lane the diff would run turns false, lanes turns false with
-# it. This is the one place the mark is judged. `proven` is one `true` or
-# `false` per lane, whether the record covers it, for the record below.
-proven=()
-applied=""
-index=0
-while [ "$index" -lt "$lane_count" ]; do
-  proven[$index]=false
-  ! record_covers_lane "${lane_names[$index]}" || proven[$index]=true
-  index=$((index + 1))
-done
-if [ "$proof_reuse" = true ] && [ "$lanes" = true ]; then
-  if [ "$lane_state" = read ]; then
-    uncovered=0 held=0 stood=0
-    index=0
-    while [ "$index" -lt "$lane_count" ]; do
-      if [ "${lane_values[$index]}" = true ]; then
-        if [ "${proven[$index]}" = true ] && [ "${lane_uniform[$index]}" = true ]; then
-          lane_values[$index]=false lane_causes[$index]="cause=proof-reused run=$proof_run"
-          stood=$((stood + 1))
-        elif [ "${proven[$index]}" = true ]; then
-          lane_causes[$index]="${lane_causes[$index]} proof-held=not-event-uniform run=$proof_run"
-          held=$((held + 1))
-        else
-          uncovered=$((uncovered + 1))
-        fi
-      fi
-      index=$((index + 1))
-    done
-    if [ "$uncovered" -eq 0 ] && [ "$held" -eq 0 ] && [ "$stood" -gt 0 ]; then
-      lanes=false lanes_cause=proof-reused applied="every lane the diff runs"
-    elif [ "$stood" -gt 0 ] || [ "$held" -gt 0 ]; then
-      applied="$stood of the lanes the diff runs, $held held as not event-uniform, $uncovered uncovered"
-    else
-      applied="none: the proving run covered no lane the diff runs"
-    fi
-  elif [ "$record_covers" = all ]; then
-    lanes=false lanes_cause=proof-reused applied="every lane"
-  else
-    applied="none: no declaration read here and the record covers $record_covers"
-  fi
-  printf 'proof: applied=%s\n' "$applied" >&2
-fi
-
 verdicts=""
 index=0
 while [ "$index" -lt "$lane_count" ]; do
@@ -460,85 +291,12 @@ while [ "$index" -lt "$lane_count" ]; do
   index=$((index + 1))
 done
 
-# Every lane_verdicts line starts `lane_`, and every record line is
-# `key=value` with a fixed key, so neither can spell its delimiter.
+# Every lane_verdicts line starts `lane_`, so none can spell its delimiter.
 {
-  if [ "${MACOS_PATCH_PROOF:-}" = true ]; then
-    printf 'patch_id=%s\nmacos_proof_record<<__change_class_macos_record_end__\n' "$patch_id"
-    [ -z "$macos_proof_record" ] || cat -- "$macos_proof_record"
-    printf '__change_class_macos_record_end__\n'
-  fi
-  printf 'proof_reuse=%s\nproof_reason=%s\nproof_run=%s\nproof_tree=%s\n' \
-    "$proof_reuse" "$proof_reason" "$proof_run" "$proof_tree"
-  printf 'proof_record<<__change_class_proof_record_end__\n'
-  [ -z "$proof_record" ] || cat -- "$proof_record"
-  printf '__change_class_proof_record_end__\n'
   printf 'lanes=%s\nlanes_cause=%s\n' "$lanes" "$lanes_cause"
   printf 'lane_verdicts<<__change_class_lane_verdicts_end__\n%s' "$verdicts"
   printf '__change_class_lane_verdicts_end__\n'
 } >>"$GITHUB_OUTPUT"
 printf 'lanes: lanes=%s cause=%s\n' "$lanes" "$lanes_cause" >&2
 
-# The record for the run after this one, on the two events a later run can
-# reuse: a merge group reuses a pull request's, a push a merge group's.
-# record_dir is written on every path out of this block, so the upload step
-# reads whether a record exists from this script alone.
-record_dir=""
-record_skipped() { # CAUSE
-  printf 'record: skipped cause=%s\n' "$1" >&2
-}
-case "$EVENT" in
-  pull_request | merge_group)
-    if [ -z "$proof_tree" ]; then
-      record_skipped tree-unreadable
-    elif [ -z "$proof_workflow" ]; then
-      record_skipped workflow-unreadable
-    elif [ -z "${RUNNER_TEMP:-}" ]; then
-      record_skipped no-runner-temp
-    else
-      record_dir="$RUNNER_TEMP/change-class-record"
-    fi ;;
-  *) record_skipped "unrecorded-event event=$EVENT" ;;
-esac
-if [ "$lanes" = true ] && [ "$lane_state" != read ] && [ "${COVERS_ALL_LANES:-}" = true ]; then
-  covers=all
-elif [ "$lane_state" = read ]; then
-  covers=lanes
-elif [ "$record_covers" = all ]; then
-  covers=all
-elif [ "$record_covers" = lanes ]; then
-  covers=carried
-else
-  covers=none
-fi
-if [ -n "$record_dir" ]; then
-  record="$record_dir/record"
-  mkdir -p -- "$record_dir" ||
-    die "record-unwritable path=$record_dir" "the record's directory could not be made"
-  {
-    printf 'tree=%s\nworkflow=%s\nevent=%s\nchange_class=%s\ndocs_only=%s\n' \
-      "$proof_tree" "$proof_workflow" "$EVENT" "$class" "${docs#docs_only=}"
-    if [ "${MACOS_PATCH_PROOF:-}" = true ] && [ -n "$patch_id" ]; then
-      printf 'patch_id=%s\nmacos_patch=true\nmacos_contract=%s\n' "$patch_id" "$macos_contract"
-    fi
-    case "$covers" in
-      carried)
-        printf 'covers=lanes\n%s\n' "$record_lanes" ;;
-      lanes)
-        printf 'covers=lanes\n'
-        index=0
-        while [ "$index" -lt "$lane_count" ]; do
-          covered=false
-          [ "${lane_values[$index]}" != true ] && [ "${proven[$index]}" != true ] || covered=true
-          printf 'lane_%s=%s\n' "${lane_names[$index]}" "$covered"
-          index=$((index + 1))
-        done ;;
-      *) printf 'covers=%s\n' "$covers" ;;
-    esac
-    sed 's/^/changed_path=/' "${work:?}/paths"
-  } >"$record" || die "record-unwritable path=$record" "the record could not be written"
-  printf 'record: path=%s tree=%s covers=%s\n' "$record" "$proof_tree" \
-    "$(sed -n 's/^covers=//p' "$record")" >&2
-fi
-printf 'record_dir=%s\n' "$record_dir" >>"$GITHUB_OUTPUT"
 cat -- "$GITHUB_OUTPUT" >>"$step_output"

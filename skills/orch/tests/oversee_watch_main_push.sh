@@ -17,7 +17,7 @@ main_watch() {
 new_case main_push_timeline
 JOBS='["Skill suites shard (guards-commit, macos-latest)","Skill suites shard (orch-oversee, macos-latest)"]'
 CAUSE='suite=oversee_watch seconds=1 pass=4 fail=1'
-EVENT="EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=$JOBS cause=$CAUSE"
+EVENT="EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=202 jobs=$JOBS cause=$CAUSE"
 # Separate invocations share the real watch's incident record. The newer
 # non-main, non-push and unfinished runs must not hide the completed main push.
 for row in \
@@ -33,14 +33,14 @@ for row in \
   'suite-timeout-new-bound|203|failure|timeout-later|' \
   'raw-failure|203|failure|raw|' \
   'raw-failure-changed|203|failure|raw-later|' \
-  "added-suite|203|failure|added|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=203 jobs=$JOBS cause=$CAUSE" \
-  "removed-suite|203|failure|base|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=203 jobs=$JOBS cause=$CAUSE" \
-  "changed-jobs|204|failure|changed|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=204 jobs=[\"Other job\"] cause=$CAUSE" \
-  "path-suites|204|failure|paths|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=204 jobs=$JOBS cause=FAILED: skills/orch/tests/oversee_watch_main_push.sh" \
+  "added-suite|203|failure|added|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=203 jobs=$JOBS cause=$CAUSE" \
+  "removed-suite|203|failure|base|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=203 jobs=$JOBS cause=$CAUSE" \
+  "changed-jobs|204|failure|changed|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=204 jobs=[\"Other job\"] cause=$CAUSE" \
+  "path-suites|204|failure|paths|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=204 jobs=$JOBS cause=FAILED: skills/orch/tests/oversee_watch_main_push.sh" \
   'reordered-paths|204|failure|paths-reverse|' \
-  "added-path|204|failure|paths-added|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=204 jobs=$JOBS cause=FAILED: skills/orch/tests/oversee_watch_main_push.sh" \
-  "removed-path|204|failure|paths|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=204 jobs=$JOBS cause=FAILED: skills/orch/tests/oversee_watch_main_push.sh" \
-  "jobs-only|204|failure|jobs-only|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=204 jobs=$JOBS cause=run-all.sh: run-deadline suite=oversee_watch started=yes" \
+  "added-path|204|failure|paths-added|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=204 jobs=$JOBS cause=FAILED: skills/orch/tests/oversee_watch_main_push.sh" \
+  "removed-path|204|failure|paths|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=204 jobs=$JOBS cause=FAILED: skills/orch/tests/oversee_watch_main_push.sh" \
+  "jobs-only|204|failure|jobs-only|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=204 jobs=$JOBS cause=run-all.sh: run-deadline suite=oversee_watch started=yes" \
   'jobs-only-new-diagnostic|204|failure|jobs-only-later|' \
   'recovered|205|success|base|' \
   "failure-after-recovery|202|failure|base|$EVENT"; do
@@ -114,7 +114,7 @@ printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"complete
 jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
 printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.202.txt"
 for row in \
-  "first-unread|unread|1|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=$JOBS cause=unread" \
+  "first-unread|unread|1|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=202 jobs=$JOBS cause=unread" \
   'still-unread|unread|1|' \
   'logs-recovered|read|0|' \
   'same-recovered-logs|read|0|' \
@@ -132,12 +132,13 @@ for row in \
 done
 
 # gh's rewritten 404 alone does not prove that the workflow is absent. The
-# push and the nightly read each print their own notice.
+# push and the nightly read each print their own notice. An unread workflow
+# list also leaves ci.yml, absent here, unproved: two more notices.
 for row in \
   "absent|{\"workflows\":[]}|0|$EVENT" \
   'present-unread|{"workflows":[]} {"workflows":[{"path":".github/workflows/skill-tests.yml"}]}|2|' \
-  'workflow-list-unread|denied|2|' \
-  'workflow-list-invalid|{}|2|'; do
+  'workflow-list-unread|denied|4|' \
+  'workflow-list-invalid|{}|4|'; do
   IFS='|' read -r name workflows notices restored <<<"$row"
   new_case "$name"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
@@ -182,7 +183,7 @@ for row in \
   if [[ "$reports" == yes ]]; then
     jobs='["Skill suites job"]'
     [[ -n "$job_conclusion" ]] || jobs='[]'
-    expected="EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=$jobs cause=$cause"
+    expected="EVENT main-push-failing owner/repo workflow=skill-tests.yml event=$event run=202 jobs=$jobs cause=$cause"
   fi
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$expected" "$name" "$STUB_DIR/err"
 done
@@ -190,7 +191,7 @@ done
 # A red nightly run is an incident of its own: a green push after it neither
 # hides nor clears it, and a red push beside it reports apart.
 NIGHT_JOBS='["Skill suites shard (orch-oversee, macos-latest)"]'
-NIGHT_EVENT="EVENT main-push-failing owner/repo workflow=skill-tests.yml run=302 jobs=$NIGHT_JOBS cause=$CAUSE"
+NIGHT_EVENT="EVENT main-push-failing owner/repo workflow=skill-tests.yml event=schedule run=302 jobs=$NIGHT_JOBS cause=$CAUSE"
 night_history() { # SCHEDULE_CONCLUSION PUSH_CONCLUSION
   jq -cn --arg night "$1" --arg push "$2" '[
     {databaseId: 303, headBranch: "main", event: "push", status: "completed", conclusion: $push},
@@ -205,7 +206,7 @@ new_case main_schedule
 for row in \
   "night-red|failure|success|$NIGHT_EVENT" \
   'night-standing-under-green-push|failure|success|' \
-  "push-red-beside-night|failure|failure|EVENT main-push-failing owner/repo workflow=skill-tests.yml run=303 jobs=$JOBS cause=$CAUSE" \
+  "push-red-beside-night|failure|failure|EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=303 jobs=$JOBS cause=$CAUSE" \
   'night-green|success|failure|' \
   "night-red-after-recovery|failure|failure|$NIGHT_EVENT"; do
   IFS='|' read -r name night push expected <<<"$row"
@@ -216,7 +217,7 @@ done
 # A watch reading the push alone misses the red night the row above reports.
 NIGHT_MUTANT="$(mutant_scripts main-night/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-night/github"
-mutate_file "$NIGHT_MUTANT" '    for event in push schedule; do' '    for event in push; do'
+mutate_file "$NIGHT_MUTANT" '      for event in push schedule; do' '      for event in push; do'
 new_case main_schedule_control
 night_history failure success
 WATCH_BIN="$NIGHT_MUTANT" main_watch
@@ -232,7 +233,7 @@ printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"complete
 jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
 printf 'run-all.sh: run-deadline suite=oversee_watch started=yes\n%s\n' "$CAUSE" > "$STUB_DIR/main-log.202.txt"
 WATCH_BIN="$MUTANT" main_watch
-assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=$JOBS cause=run-all.sh: run-deadline suite=oversee_watch started=yes" 'control reaches the check and preserves its first raw cause' "$STUB_DIR/err"
+assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run=202 jobs=$JOBS cause=run-all.sh: run-deadline suite=oversee_watch started=yes" 'control reaches the check and preserves its first raw cause' "$STUB_DIR/err"
 printf 'run-all.sh: run-deadline suite=oversee_watch started=no\n%s\n' "$CAUSE" > "$STUB_DIR/main-log.202.txt"
 WATCH_BIN="$MUTANT" main_watch
 CONTROL_RC=0
@@ -245,8 +246,8 @@ for code in current mutant; do
   TARGET="$(mutant_scripts "main-push-cut-$code/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-push-cut-$code/github"
   if [[ "$code" == mutant ]]; then
-    mutate_file "$TARGET" $'      IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
-      $'      gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n      IFS=\'|\' read -r run conclusion <<<"$runs"\n'
+    mutate_file "$TARGET" $'        IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
+      $'        gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n        IFS=\'|\' read -r run conclusion <<<"$runs"\n'
   fi
   new_case "main_push_cut_$code"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
@@ -260,6 +261,90 @@ for code in current mutant; do
     assert_eq "watch=$MAIN_RC reads=$READS oracle=$CONTROL_RC" 'watch=0 reads=2 oracle=1' 'restored history read fails the budget-read oracle' "$STUB_DIR/err"
   fi
 done
+
+# The harness-ci template's ci.yml runs on main only on a push and on its
+# nightly schedule. A red one is its own incident beside skill-tests.yml's:
+# a newer pull-request or dispatch run on main never hides it, and either
+# workflow's recovery leaves the other's incident standing.
+new_case main_ci_nightly
+NIGHTLY_JOBS='["macOS lane"]'
+NIGHTLY_CAUSE='FAILED: tests/macos.sh'
+NIGHTLY="EVENT main-push-failing owner/repo workflow=ci.yml event=schedule run=302 jobs=$NIGHTLY_JOBS cause=$NIGHTLY_CAUSE"
+jq -cn --argjson names "$NIGHTLY_JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.302.json"
+printf '%s\n' "$NIGHTLY_CAUSE" > "$STUB_DIR/main-log.302.txt"
+jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
+printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.202.txt"
+for row in \
+  "nightly-red|failure|success|$NIGHTLY" \
+  'nightly-still-red|failure|success|' \
+  "both-red|failure|failure|$EVENT" \
+  'nightly-recovered|success|failure|' \
+  "nightly-red-again|failure|failure|$NIGHTLY" \
+  'both-green|success|success|'; do
+  IFS='|' read -r name nightly push expected <<<"$row"
+  nightly_run=302 push_run=202
+  [[ "$nightly" == failure ]] || nightly_run=303
+  [[ "$push" == failure ]] || push_run=203
+  jq -cn --argjson id "$nightly_run" --arg conclusion "$nightly" '[
+    {databaseId: 399, headBranch: "main", event: "workflow_dispatch", status: "completed", conclusion: "success"},
+    {databaseId: 398, headBranch: "main", event: "pull_request", status: "completed", conclusion: "success"},
+    {databaseId: $id, headBranch: "main", event: "schedule", status: "completed", conclusion: $conclusion}
+  ]' > "$STUB_DIR/main-ci.owner_repo.json"
+  jq -cn --argjson id "$push_run" --arg conclusion "$push" \
+    '[{databaseId: $id, headBranch: "main", event: "push", status: "completed", conclusion: $conclusion}]' \
+    > "$STUB_DIR/main-push.owner_repo.json"
+  main_watch
+  assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$expected" "$name" "$STUB_DIR/err"
+done
+
+# Control: one incident row per repository and event, shared by both
+# workflows, fails the row above while the watch still completes.
+nightly_case() { # NAME WATCH — `first=<ci.yml events> second=<events>` over two passes
+  local first
+  new_case "main_ci_control_$1"
+  jq -cn --argjson names "$NIGHTLY_JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.302.json"
+  printf '%s\n' "$NIGHTLY_CAUSE" > "$STUB_DIR/main-log.302.txt"
+  jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
+  printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.202.txt"
+  printf '[{"databaseId":399,"headBranch":"main","event":"workflow_dispatch","status":"completed","conclusion":"success"},{"databaseId":302,"headBranch":"main","event":"schedule","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-ci.owner_repo.json"
+  printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
+  WATCH_BIN="$2" main_watch
+  first="$(grep -c 'workflow=ci.yml' <<<"$MAIN_EVENTS" || true)"
+  WATCH_BIN="$2" main_watch
+  printf 'rc=%s first=%s second=%s' "$MAIN_RC" "$first" "$(grep -c . <<<"$MAIN_EVENTS" || true)"
+}
+# NAME|NEEDLE|REPLACEMENT|ANSWER: the current watch reports the red nightly
+# run once; each control completes and answers otherwise.
+for row in \
+  'current|-|-|rc=0 first=1 second=0' \
+  'one-row|      row_key="$repo:$workflow"|      row_key="$repo"|rc=0 first=1 second=2'; do
+  IFS='|' read -r name old new expected <<<"$row"
+  TARGET="$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  if [[ "$name" != current ]]; then
+    TARGET="$(mutant_scripts "main-ci-$name/orch" oversee-watch)/oversee-watch" || exit 1
+    ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-ci-$name/github"
+    mutate_file "$TARGET" "$old" "$new"
+  fi
+  assert_eq "$(nightly_case "$name" "$TARGET")" "$expected" "nightly control $name" "$STUB_DIR/err"
+done
+
+# A standing skill-tests.yml incident recorded under the repository alone,
+# before the workflow key, keeps its record and raises no second event.
+new_case main_push_legacy_row
+printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"failure"}]\n' > "$STUB_DIR/main-push.owner_repo.json"
+jq -cn --argjson names "$JOBS" '{jobs: ($names | map({name: ., conclusion: "failure"}))}' > "$STUB_DIR/main-jobs.202.json"
+printf '%s\n' "$CAUSE" > "$STUB_DIR/main-log.202.txt"
+main_watch
+assert_eq "$MAIN_EVENTS" "$EVENT" 'legacy-row seed' "$STUB_DIR/err"
+legacy_files="$(grep -rlF $'main-push-failing\towner/repo:skill-tests.yml\t' "$STATE_DIR")" || legacy_files=""
+[[ -n "$legacy_files" ]] || { echo "no main-push-failing row under $STATE_DIR" >&2; exit 1; }
+while IFS= read -r file; do
+  sed -i.bak $'s|^main-push-failing\towner/repo:skill-tests.yml\t|main-push-failing\towner/repo\t|' "$file"
+  rm -f -- "$file.bak"
+done <<<"$legacy_files"
+[[ -z "$(grep -rlF 'owner/repo:skill-tests.yml' "$STATE_DIR")" ]] || { echo "the legacy rewrite left the keyed row" >&2; exit 1; }
+main_watch
+assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'a legacy row stays quiet' "$STUB_DIR/err"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

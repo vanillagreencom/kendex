@@ -504,7 +504,6 @@
     "tools/tests/bash32-parse.test.sh": "mixed",
     "tools/tests/bot-instructions.test.sh": "linux-duplicate",
     "tools/tests/change-class-action.test.sh": "linux-duplicate",
-    "tools/tests/change-class-proof.test.sh": "linux-duplicate",
     "tools/tests/changelog-entries-ci.test.sh": "linux-duplicate",
     "tools/tests/check-aur-sync.test.sh": "linux-duplicate",
     "tools/tests/ci-aggregate.test.sh": "linux-duplicate",
