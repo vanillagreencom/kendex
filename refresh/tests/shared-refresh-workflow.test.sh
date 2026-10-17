@@ -36,6 +36,8 @@ def check(text):
     block = text.split('    secrets:\n', 1)[1]
     actual = dict(re.findall(r'^      ([A-Za-z0-9_-]+): (.+)$', block, re.M))
     assert actual == expected, actual
+    permissions = text.split('  refresh:\n', 1)[1].split('    permissions:\n', 1)[1].split('    uses:', 1)[0]
+    assert dict(re.findall(r'^      ([a-z-]+): (.+)$', permissions, re.M)) == {'contents': 'read', 'actions': 'read', 'pull-requests': 'read'}
 for path in sys.argv[1:]:
     text = Path(path).read_text()
     check(text)
@@ -50,7 +52,7 @@ then ok 'default callers forward both fixed pairs; omitted same-name controls fa
 else bad 'default caller credential forwarding'; fi
 
 if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'
-import copy, json, pathlib, re, subprocess, sys
+import copy, datetime, io, json, os, pathlib, re, subprocess, sys, zipfile
 # Read the literal job keys, step inputs and run bodies. Full YAML syntax
 # belongs to preflight; this contract uses only block mappings.
 text = open(sys.argv[1]).read()
@@ -62,7 +64,7 @@ for block in re.split(r'^      - ', text, flags=re.M)[1:]:
     for line in block.splitlines():
         if current != 'run' and line.lstrip().startswith('#'):
             continue
-        match = re.match(r'^(?:        )?(name|uses|id|continue-on-error|working-directory): (.+)$', line)
+        match = re.match(r'^(?:        )?(name|uses|id|if|continue-on-error|working-directory): (.+)$', line)
         if match:
             k, v = match.groups(); step[k] = True if v == 'true' else v; current = None; continue
         if line in ('        with:', '        env:'):
@@ -70,7 +72,9 @@ for block in re.split(r'^      - ', text, flags=re.M)[1:]:
         if line == '        run: |':
             current = 'run'; step[current] = ''; continue
         if current == 'run':
-            step[current] += line.strip() + '\n'; continue
+            if line and not line.startswith('          '):
+                continue  # job-level comments between step bodies
+            step[current] += line[10:] + '\n'; continue
         if current in ('with', 'env'):
             match = re.match(r'^          ([a-zA-Z_-]+): (.+)$', line)
             assert match, line
@@ -182,8 +186,8 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     if mutation == 'consumer-script':
         refresh['run'] = refresh['run'].replace('"$GITHUB_WORKSPACE/kendex/refresh/', '"$GITHUB_WORKSPACE/consumer/.agents/skills/review-gate/scripts/')
     elif mutation == 'consumer-cwd': refresh['working-directory'] = 'kendex'
-    elif mutation == 'kendex-ref': steps[1]['with']['ref'] = '${{ github.sha }}'
-    elif mutation == 'credentials': steps[1]['with']['persist-credentials'] = 'true'
+    elif mutation == 'kendex-ref': next(s for s in steps if s.get('with', {}).get('path') == 'kendex')['with']['ref'] = '${{ github.sha }}'
+    elif mutation == 'credentials': next(s for s in steps if s.get('with', {}).get('path') == 'kendex')['with']['persist-credentials'] = 'true'
     elif mutation == 'exposure': refresh['env']['TOKEN'] = '${{ steps.issues-token.outputs.token }}'
     elif mutation == 'repository': next(s for s in steps if s.get('id') == 'issues-token')['with']['repositories'] = 'kendex,consumer'
     elif mutation == 'early-token':
@@ -215,6 +219,142 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
             assert error.args[0][2] == expected, (mutation, error)
             print('  control rejected: ' + mutation)
     else: raise AssertionError('must-fail control missed ' + mutation)
+
+# Execute the first step unchanged. Only the git and REST transports are
+# recorded fixtures; all tuple, artifact and review decisions are production.
+check_step = job['steps'][0]
+assert check_step['id'] == 'inputs'
+assert check_step['env']['WORKFLOW_SHA'] == '${{ job.workflow_sha }}'
+assert 'permissions:' not in text.split('jobs:\n', 1)[1].split('    steps:', 1)[0]
+gate = "steps.inputs.outputs.run == 'true'"
+def check_gates(candidate):
+    assert all(s.get('if', '').startswith(gate) for s in candidate['steps'][1:]), 'later-step-ungated'
+    save = next(s for s in candidate['steps'] if s.get('uses', '').startswith('actions/upload-artifact@'))
+    assert save['if'] == gate + " && steps.refresh.outputs.state == 'current' && steps.inputs.outputs.record-path != ''"
+    assert save['with'] == {'name': 'kendex-refresh-current', 'path': '${{ steps.inputs.outputs.record-path }}', 'if-no-files-found': 'error'}
+    assert next(s for s in candidate['steps'] if s.get('id') == 'refresh')['run'].endswith('refresh-consumer.sh"\n')
+check_gates(job)
+ungated = copy.deepcopy(job)
+del ungated['steps'][1]['if']
+try: check_gates(ungated)
+except AssertionError as error: assert error.args == ('later-step-ungated',)
+else: raise AssertionError('must-fail control missed later-step-ungated')
+
+bin_dir = workspace / 'check-bin'
+bin_dir.mkdir()
+# The wrapper fixes the check's clock without adding a production setting.
+(bin_dir / 'python3').write_text('#!' + sys.executable + '\n'
+    'import datetime, sys\n'
+    'class Clock(datetime.datetime):\n'
+    '    @classmethod\n'
+    '    def now(cls, tz=None): return cls(2026, 10, 17, tzinfo=datetime.timezone.utc)\n'
+    'datetime.datetime = Clock\n'
+    'exec(compile(sys.stdin.read(), "<production-step>", "exec"))\n')
+(bin_dir / 'python3').chmod(0o755)
+transport = '''#!@PYTHON@
+import io, json, os, pathlib, sys, zipfile
+w = json.loads(pathlib.Path(os.environ['CHECK_WORLD']).read_text())
+args = sys.argv[1:]
+with open(os.environ['CHECK_CALLS'], 'a') as calls: calls.write(json.dumps([pathlib.Path(sys.argv[0]).name] + args) + '\\n')
+if pathlib.Path(sys.argv[0]).name == 'git':
+    if w.get('fail') == 'refs': sys.exit(41)
+    print(w['refs']); sys.exit(0)
+path = args[-1]
+if w.get('fail') and w['fail'] in path: sys.exit(42)
+if '/commits/' in path: result = {'sha': w['head']}
+elif '/pulls?' in path:
+    assert '--paginate' in args and '--slurp' in args
+    result = w.get('pages', [[]])
+elif '/actions/artifacts?' in path: result = {'artifacts': w['artifacts']}
+elif '/actions/workflows/' in path: result = {'workflow_runs': [w.get('recent', {'id': 8})]}
+elif '/jobs?' in path: result = {'jobs': w['jobs']}
+elif '/actions/runs/' in path: result = w['run']
+elif path.endswith('/zip'):
+    if w.get('corrupt'): sys.stdout.buffer.write(b'broken'); sys.exit(0)
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, 'w') as archive: archive.writestr('record.json', json.dumps(w['record']))
+    sys.stdout.buffer.write(data.getvalue()); sys.exit(0)
+else: raise AssertionError(args)
+print(json.dumps(result))
+'''.replace('@PYTHON@', sys.executable)
+for name in ('git', 'gh'):
+    (bin_dir / name).write_text(transport)
+    (bin_dir / name).chmod(0o755)
+main, workflow, consumer = 'a'*40, 'b'*40, 'c'*40
+refs = f'{main}\trefs/heads/main\n{workflow}\trefs/tags/v1.2.3'
+tuple_record = dict(catalog=main, workflow=workflow, tags=[f'{workflow}\trefs/tags/v1.2.3'], consumer=consumer)
+world = dict(refs=refs, head=consumer, record=tuple_record,
+             artifacts=[dict(id=7, expired=False, created_at='2026-01-01T00:00:00Z',
+                             workflow_run=dict(id=8, head_branch='main', head_repository_id=1, repository_id=1))],
+             run=dict(id=8, conclusion='success', path='.github/workflows/kendex-refresh.yml'))
+now = datetime.datetime(2026, 10, 17, tzinfo=datetime.timezone.utc)
+recent = (now - datetime.timedelta(hours=1)).isoformat()
+old = (now - datetime.timedelta(hours=25)).isoformat()
+cases = [('unchanged', {}, False)]
+for field in tuple_record:
+    changed = copy.deepcopy(tuple_record)
+    changed[field] = [] if field == 'tags' else 'd'*40
+    cases.append(('changed-' + field, {'record': changed}, True))
+cases += [('unreadable-record', {'fail': '/zip'}, True),
+          ('corrupt-record', {'corrupt': True}, True),
+          ('missing-record', {'artifacts': []}, True),
+          ('unreadable-refs', {'fail': 'refs'}, True),
+          ('unreadable-head', {'fail': '/commits/'}, True),
+          ('unreadable-reviews', {'fail': '/pulls?'}, True),
+          ('unreadable-history', {'fail': '/actions/workflows/'}, True),
+          ('unreadable-jobs', {'recent': dict(id=9), 'fail': '/jobs?'}, True),
+          ('old-caller-grants', {'fail': '/actions/artifacts?'}, True),
+          ('open-rolling-pr', {'pages': [[dict(state='open', merged_at=None)]]}, True),
+          ('recent-merge-next-page', {'pages': [[], [dict(state='closed', merged_at=recent)]]}, True),
+          ('old-merge', {'pages': [[dict(state='closed', merged_at=old)]]}, False),
+          ('closed-unmerged', {'pages': [[dict(state='closed', merged_at=None)]]}, False),
+          ('failed-run', {'run': dict(id=8, conclusion='failure', path='.github/workflows/kendex-refresh.yml')}, True)]
+for conclusion, full in (('skipped', False), ('success', True)):
+    cases.append(('intervening-' + conclusion, dict(recent=dict(id=9), jobs=[dict(steps=[
+        dict(name='refresh-input-check', conclusion='success'),
+        dict(name='consumer checkout', conclusion=conclusion)])]), full))
+for source in ('fork', 'feature'):
+    artifacts = copy.deepcopy(world['artifacts'])
+    artifacts[0]['workflow_run']['head_repository_id' if source == 'fork' else 'head_branch'] = 2 if source == 'fork' else 'feature'
+    cases.append((source + '-record', {'artifacts': artifacts}, True))
+
+def execute_check(body, name, overrides, full):
+    case = workspace / name
+    case.mkdir(exist_ok=True)
+    data = copy.deepcopy(world); data.update(overrides)
+    fixture = case / 'world.json'; fixture.write_text(json.dumps(data))
+    outputs = case / 'outputs'; outputs.write_text('')
+    calls = case / 'calls'; calls.write_text('')
+    env = dict(PATH=str(bin_dir) + os.pathsep + '/usr/bin:/bin', GH_TOKEN='read-token',
+               GH_REPO='acme/widgets', DEFAULT_BRANCH='main', WORKFLOW_SHA=workflow,
+               GITHUB_OUTPUT=str(outputs), RUNNER_TEMP=str(case), CHECK_WORLD=str(fixture), CHECK_CALLS=str(calls))
+    result = subprocess.run([sys.argv[3], '-c', body], env=env, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, (name, result.stderr)
+    values = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
+    assert values['run'] == str(full).lower(), ('refresh-decision', name, values, result.stdout)
+    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/')), ('complete-initial-tuple', name, values)
+    if 'record-path' in values:
+        assert json.loads(pathlib.Path(values['record-path']).read_text()) == tuple_record
+    # Evaluate every shipped later gate against the actual first-step output.
+    for step in job['steps'][1:]:
+        assert (values['run'] == 'true') is full
+        assert step['if'].startswith(gate)
+    print('  executed check: ' + name + ' full=' + str(full).lower())
+
+for name, overrides, full in cases:
+    execute_check(check_step['run'], name, overrides, full)
+broken = check_step['run'].replace('if previous == inputs:', 'if True: # if previous == inputs:')
+assert broken != check_step['run']
+try: execute_check(broken, 'control-ignore-input-change', cases[1][1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed tuple comparison')
+original = "if recent['id'] != run['id']:"
+broken = check_step['run'].replace(original, 'if False: # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'intervening-success')
+try: execute_check(broken, 'control-reuse-stale-record', case[1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed intervening full run')
 PY
 then ok 'step bodies execute release scripts in the consumer cwd and propagate failure under the job and token boundaries; mutation controls'
 else bad 'shared workflow structure'; fi

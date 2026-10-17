@@ -555,6 +555,16 @@ reset_default
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary"; then ok 'current run summary reports the exact engine version'; else bad 'current run engine version missing'; fi
+current_record_matches() { [ "$RC" -eq 0 ] && [ "$(cat "$TMP/state/outputs")" = state=current ]; }
+if current_record_matches; then ok 'current refresh publishes its record eligibility'; else bad 'current refresh record eligibility' "$OUT"; fi
+record_runner="$runner"
+runner="$TMP/catalog-fallback-control/refresh/refresh-consumer.sh"
+cp "$record_runner" "$runner"
+file_edit "$TMP/catalog-fallback-control" refresh/refresh-consumer.sh 1 '^    printf .*state=current' '/^    printf .*state=current/s/printf/: # printf/'
+reset_default
+run_refresh current pass render
+if [ "$RC" -eq 0 ] && ! current_record_matches; then ok 'control: removing the current output rejects record eligibility'; else bad 'current output control' "$OUT"; fi
+runner="$record_runner"
 # The refresh passes --prune where the installed kendex lists it, and leaves
 # it out under a release that predates the flag.
 for lists in yes no; do
@@ -573,6 +583,7 @@ for lists in yes no; do
 done
 reset_default
 run_refresh stale pass render
+if [ ! -s "$TMP/state/outputs" ]; then ok 'changed refresh publishes no current record'; else bad 'changed refresh current output' "$OUT"; fi
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'stale consumer opens one rolling pull request'; else bad 'stale consumer opens one rolling pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/body"; then ok 'pushed body reports the exact engine version'; else bad 'pushed body engine version missing'; fi

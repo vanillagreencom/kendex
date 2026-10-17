@@ -62,22 +62,97 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
-    permissions:
-      contents: read
+    # Inherit the caller's grants. Older callers have contents:read only;
+    # their unreadable review/record evidence must select a full refresh.
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The REST jobs reader recognizes this name when a skipped run has no record.
+      - name: refresh-input-check
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, io, json, os, pathlib, re, subprocess, tempfile, urllib.parse, zipfile
+          def command(*args):
+              return subprocess.check_output(args, timeout=15, stderr=subprocess.PIPE)
+          def api(path):
+              return json.loads(command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/' + path))
+          output = pathlib.Path(os.environ['GITHUB_OUTPUT'])
+          with output.open('a') as stream:
+              stream.write('run=true\n')
+          try:
+              # GitHub's public git refs and REST APIs need no checkout or app token.
+              refs = command('git', 'ls-remote', 'https://github.com/vanillagreencom/kendex.git',
+                             'refs/heads/main', 'refs/tags/v1.*').decode().splitlines()
+              main = [row.split()[0] for row in refs if row.split()[1] == 'refs/heads/main']
+              tags = sorted(row for row in refs if re.fullmatch(r'refs/tags/v1\.[0-9]+\.[0-9]+(?:\^\{\})?', row.split()[1]))
+              head = api('commits/' + urllib.parse.quote(os.environ['DEFAULT_BRANCH'], safe=''))['sha']
+              assert len(main) == 1 and tags
+              assert all(re.fullmatch('[0-9a-f]{40}', sha) for sha in (main[0], head, os.environ['WORKFLOW_SHA']))
+              inputs = dict(catalog=main[0], workflow=os.environ['WORKFLOW_SHA'], tags=tags, consumer=head)
+              record = pathlib.Path(tempfile.mkdtemp(prefix='kendex-refresh-', dir=os.environ['RUNNER_TEMP'])) / 'record.json'
+              record.write_text(json.dumps(inputs, sort_keys=True))
+              with output.open('a') as stream:
+                  stream.write('record-path=' + str(record) + '\n')
+              owner = os.environ['GH_REPO'].split('/')[0]
+              query = urllib.parse.urlencode(dict(state='all', head=owner + ':kendex/refresh', per_page=100))
+              pages = json.loads(command('gh', 'api', '--paginate', '--slurp', 'repos/' + os.environ['GH_REPO'] + '/pulls?' + query))
+              cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)
+              for pr in (pr for page in pages for pr in page):
+                  merged = pr['merged_at']
+                  if pr['state'] == 'open' or (merged and datetime.datetime.fromisoformat(merged.replace('Z', '+00:00')) >= cutoff):
+                      print('refresh-check=full cause=reviews')
+                      raise SystemExit(0)
+              artifacts = api('actions/artifacts?name=kendex-refresh-current&per_page=100')['artifacts']
+              # A fork or feature-branch artifact cannot attest the default branch.
+              artifacts = [a for a in artifacts if not a['expired'] and
+                           a['workflow_run']['head_branch'] == os.environ['DEFAULT_BRANCH'] and
+                           a['workflow_run']['head_repository_id'] == a['workflow_run']['repository_id']]
+              latest = max(artifacts, key=lambda a: a['created_at'])
+              run = api('actions/runs/' + str(latest['workflow_run']['id']))
+              assert run['conclusion'] == 'success' and run['path'] == '.github/workflows/kendex-refresh.yml'
+              query = urllib.parse.urlencode(dict(status='success', branch=os.environ['DEFAULT_BRANCH'], per_page=1))
+              recent = api('actions/workflows/kendex-refresh.yml/runs?' + query)['workflow_runs'][0]
+              if recent['id'] != run['id']:
+                  # An intervening full run with no record invalidates the old tuple.
+                  jobs = api('actions/runs/' + str(recent['id']) + '/jobs?filter=latest&per_page=100')['jobs']
+                  following = [job['steps'][index + 1]['conclusion'] for job in jobs
+                               for index, step in enumerate(job['steps'])
+                               if step['name'] == 'refresh-input-check' and step['conclusion'] == 'success']
+                  assert following == ['skipped']
+              archive = command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/actions/artifacts/' + str(latest['id']) + '/zip')
+              with zipfile.ZipFile(io.BytesIO(archive)) as saved:
+                  previous = json.loads(saved.read('record.json'))
+              if previous == inputs:
+                  with output.open('a') as stream:
+                      stream.write('run=false\n')
+                  print('refresh-check=skip cause=current')
+              else:
+                  print('refresh-check=full cause=changed')
+          except (AssertionError, IndexError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
+              # Missing grants, expired artifacts and failed reads cannot authorize a skip.
+              print('refresh-check=full cause=unreadable')
+          PY
+      - if: steps.inputs.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: consumer
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: steps.inputs.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: kendex
           persist-credentials: false
       - name: Install the release tagged on this commit
+        if: steps.inputs.outputs.run == 'true'
         working-directory: kendex
         env:
           GH_TOKEN: ""
@@ -135,6 +210,7 @@ jobs:
           printf '%s\n' "$HOME/.local/bin" >>"$GITHUB_PATH"
           printf 'kendex-install: version=%s commit=%s\n' "$tag" "$WORKFLOW_SHA"
       - name: Mint the repository app token
+        if: steps.inputs.outputs.run == 'true'
         id: token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -152,6 +228,8 @@ jobs:
           permission-secrets: read
           permission-organization-secrets: ${{ github.event.repository.owner.type != 'User' && 'read' || '' }}
       - name: Refresh and arm the rolling pull request
+        if: steps.inputs.outputs.run == 'true'
+        id: refresh
         working-directory: consumer
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -161,6 +239,7 @@ jobs:
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-consumer.sh"
       - name: Mint the kendex issue token
+        if: steps.inputs.outputs.run == 'true'
         id: issues-token
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -173,6 +252,7 @@ jobs:
       # Thread-resolution rules: review-gate references/adoption.md,
       # Automatic consumer refresh.
       - name: File rendered-file findings upstream and resolve them
+        if: steps.inputs.outputs.run == 'true'
         working-directory: consumer
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -181,3 +261,10 @@ jobs:
         run: |
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-reviews.sh"
+      - name: Record a current refresh
+        if: steps.inputs.outputs.run == 'true' && steps.refresh.outputs.state == 'current' && steps.inputs.outputs.record-path != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kendex-refresh-current
+          path: ${{ steps.inputs.outputs.record-path }}
+          if-no-files-found: error

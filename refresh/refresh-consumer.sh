@@ -378,6 +378,9 @@ if git diff --cached --quiet; then
     gh pr close "$pr" --repo "$GH_REPO"
   fi
   printf 'refresh-state=current pr=none class=none\n'
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf 'state=current\n' >>"$GITHUB_OUTPUT"
+  fi
   printf '%s\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   # A run with no render change opens no pull request; its settings report
