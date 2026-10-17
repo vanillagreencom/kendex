@@ -196,7 +196,9 @@ harness there either it refuses as stop-failed cause=identity-unread or
 cause=identity-stale. No directory is read, so a lane whose worktree its own
 close-out removed, or one recreated at the same path, stops all the same. The
 close then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read
-exited.
+exited. A hosted Pi pane read as unjudged after successful provider status and
+capture reads keeps waiting. A failed read before the stop or during this wait
+refuses as pane-read-failed; a pane that never reads exited ends as exit-timeout.
 A hosted stop answering status 4 beside a stop-worktree-removed item=ITEM line
 on its stderr, from a provider that finds the harness by the item's worktree,
 which its own close-out already removed, prints
@@ -1242,6 +1244,11 @@ pane_cmd="$LANE_PANE_CMD"
 case "$pane_cmd" in
   claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;
 esac
+# Pi can leave no idle marker in a successful provider capture, including
+# after its stop. Failed status or capture reads carry no provider source.
+pane_state_readable() { # STATE
+  [[ "$host_pane" != verb || "$1" != unjudged || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]]
+}
 if [[ -n "$pane_id" ]]; then
   pane_screen="" hosted_source=""
   if [[ "$host_pane" == local ]]; then
@@ -1253,10 +1260,7 @@ if [[ -n "$pane_id" ]]; then
   # from a detached session that may already have disappeared.
   ORCH_LANE_HOST="${host:-local}" lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" "" "" "$hosted_item" "$harness" "$hosted_source" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
-  # A Pi pane with no idle marker reads unjudged off a capture that worked;
-  # the state switch below closes it only on the record's merge with its
-  # worktree gone. A failed status or capture read is no observation at all.
-  [[ "$host_pane" != verb || "$state" != unjudged || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]] || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  pane_state_readable "$state" || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
   pane_screen="$LANE_PANE_SCREEN" hosted_source="$LANE_PANE_SOURCE"
 else
   # A window gone with its work finished, a tmux restart or a reboot among the
@@ -1395,7 +1399,7 @@ pane_now_exited() {
     source="$LANE_PANE_SOURCE"
   fi
   ORCH_LANE_HOST="${host:-local}" lane_state current_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$screen" "" "" "" "$hosted_item" "$harness" "$source" || return 2
-  [[ "$host_pane" != verb || "$current_state" != unjudged ]] || return 2
+  pane_state_readable "$current_state" || return 2
   [[ "$current_state" == exited ]]
 }
 

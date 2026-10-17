@@ -153,6 +153,10 @@ fi
 printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
 if [[ "$1" == capture ]]; then
   [[ "${LANE_CLOSE_CAPTURE_STATUS:-0}" == 0 ]] || exit "$LANE_CLOSE_CAPTURE_STATUS"
+  if [[ "$(cat "$LANE_CLOSE_PHASE")" == stopping ]]; then
+    [[ "${LANE_CLOSE_POST_STOP:-}" != capture-failed ]] || exit 7
+    printf '\n'; exit 0
+  fi
   if [[ "$(cat "$LANE_CLOSE_PHASE")" == exited && "${LANE_CLOSE_CAPTURE_AFTER_EXIT:-0}" != 0 ]]; then
     exit "$LANE_CLOSE_CAPTURE_AFTER_EXIT"
   fi
@@ -160,6 +164,17 @@ if [[ "$1" == capture ]]; then
 fi
 if [[ "$1" == status ]]; then
   [[ "${LANE_CLOSE_STATUS_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_STATUS_FAIL"
+  if [[ "$(cat "$LANE_CLOSE_PHASE")" == stopping ]]; then
+    [[ "${LANE_CLOSE_POST_STOP:-}" != status-failed ]] || exit 7
+    reads="$(cat "$LANE_CLOSE_PHASE.reads")"
+    reads=$((reads + 1))
+    printf '%s\n' "$reads" >"$LANE_CLOSE_PHASE.reads"
+    if [[ "${LANE_CLOSE_POST_STOP:-}" == delayed && "$reads" -gt 2 ]]; then
+      printf 'exited\n' >"$LANE_CLOSE_PHASE"
+      echo exited; exit 0
+    fi
+    echo running; exit 0
+  fi
   [[ "${LANE_CLOSE_HARNESS_STATE:-running}" == exited || "$(cat "$LANE_CLOSE_PHASE")" == exited ]] && echo exited || echo running
   exit 0
 fi
@@ -238,7 +253,10 @@ if [[ "$1" == stop ]]; then
   # A host holding nothing of the item (LANE_CLOSE_HOST_ABSENT below) has no
   # harness to stop: the protocol's empty match.
   if [[ -n "${LANE_CLOSE_HOST_ABSENT:-}" ]]; then printf 'stopped item=%s processes=0\n' "$3"; exit 0; fi
-  if [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
+  if [[ -n "${LANE_CLOSE_POST_STOP:-}" ]]; then
+    printf 'stopping\n' >"$LANE_CLOSE_PHASE"
+    printf '0\n' >"$LANE_CLOSE_PHASE.reads"
+  elif [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
     printf 'exited\n' >"$LANE_CLOSE_PHASE"
     awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
     mv -- "$LANE_CLOSE_ROWS.next" "$LANE_CLOSE_ROWS"
@@ -1382,7 +1400,7 @@ done
 MUTANT="$(mutant lane-close-pi-unjudged '    state=idle ;;' '    message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;')"
 pi_unjudged_row "$MUTANT" pi 7 gone local
 assert_eq "$PI_UNJUDGED" 'rc=1 live=1 read=0 close=0 kill=0 status=running' 'control: without Pi acceptance the merged-and-gone lane refuses as unjudged'
-MUTANT="$(mutant lane-close-pi-verb-unjudged ' || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]] || { message pane-read-failed' ' ]] || { message pane-read-failed')"
+MUTANT="$(mutant lane-close-pi-verb-unjudged ' || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]]' ' ]]')"
 pi_unjudged_row "$MUTANT" pi 7 gone verb
 assert_eq "$PI_UNJUDGED" 'rc=1 live=0 read=1 close=0 kill=0 status=running' 'control: the hosted unjudged refusal ahead of the switch strands a merged-and-gone Pi lane'
 MUTANT="$(mutant lane-close-pi-verb-unread ' && "$LANE_PANE_SOURCE" == provider ) ]]' ' ) ]]')"
@@ -2149,6 +2167,32 @@ check_count() { grep -c -- '^stop-sandbox --check --item KEN-1 host=' "$HOST_CAL
 assert_eq "rc=$RC parked=$(grep -c '^lane-close: parked item=KEN-1 pr=7 head=abc123 status=parked$' <<<"$OUT" || true) view=$(grep -c '^pr view 7 --repo owner/repo --json ' "$GH_CALLS" || true) queue=$(grep -c '^api graphql -f query=.* -F owner=owner -F repo=repo -F number=7$' "$GH_CALLS" || true) reducer=$(grep -c '^7 repo=owner/repo$' "$LANE_CLOSE_PRWATCH_CALLS" || true) stop=$(stop_count KEN-1 codex) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") parked_rec=$(jq -c '.lanes[0].parked | [.pr, .head, .repo, (.at | type)]' "$STATE") order=$(awk '{ print $1 ($2 == "--check" ? "-check" : "") }' "$HOST_CALLS" | paste -sd, -)" \
   'rc=0 parked=1 view=1 queue=1 reducer=1 stop=1 kill=1 park=1 close=0 status=parked parked_rec=[7,"abc123","owner/repo","string"] order=stop-sandbox-check,cat,cat,cat,cat,stop,stop-sandbox' \
   'a working hosted lane on an open, armed, CLEAN, silent pull request is parked: the provider checked, the harness stopped, the window closed, the sandbox stopped, the record parked with its pull request and head'
+
+# Daytona can leave a Pi pane unjudged after stop while its process status
+# still reads running. These responses start only once stop has been called.
+pi_post_stop_row() { # SCRIPT RESPONSE
+  local list_fail=0
+  [[ "$2" != pane-failed ]] || list_fail=2
+  write_state running pi /host linear owner/repo; write_panes bash
+  printf '\n' >"$SCREEN"
+  LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" LANE_CLOSE_POST_STOP="$2" \
+    LANE_CLOSE_TMUX_LIST_FAIL_AT="$list_fail" run_close "$1" --park --pr 7
+  PI_POST_STOP="rc=$RC read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=pi pane=%7 processes=1$' <<<"$ERR" || true) stop=$(stop_count KEN-1 pi) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) park=$(park_count) status=$(jq -r '.lanes[0].status' "$STATE") pr=$(jq -r '.lanes[0].parked.pr' "$STATE")"
+}
+for row in \
+  'delayed|rc=0 read=0 timeout=0 stop=1 kill=1 park=1 status=parked pr=7' \
+  'unjudged|rc=1 read=0 timeout=1 stop=1 kill=0 park=0 status=running pr=null' \
+  'status-failed|rc=1 read=1 timeout=0 stop=1 kill=0 park=0 status=running pr=null' \
+  'capture-failed|rc=1 read=1 timeout=0 stop=1 kill=0 park=0 status=running pr=null' \
+  'pane-failed|rc=1 read=1 timeout=0 stop=1 kill=0 park=0 status=running pr=null'; do
+  IFS='|' read -r response want <<<"$row"
+  pi_post_stop_row "$SCRIPT" "$response"
+  assert_eq "$PI_POST_STOP" "$want" "hosted Pi park after stop: $response"
+done
+MUTANT="$(mutant pi-post-stop-unjudged '  pane_state_readable "$current_state" || return 2' '  [[ "$host_pane" != verb || "$current_state" != unjudged ]] || return 2')"
+pi_post_stop_row "$MUTANT" delayed
+assert_eq "$PI_POST_STOP" 'rc=1 read=1 timeout=0 stop=1 kill=0 park=0 status=running pr=null' \
+  'control: unconditional post-stop unjudged refusal prevents the delayed Pi park'
 
 # On a merge-queue base the arm converts to the queue entry once the checks
 # are green, so a queued pull request reads autoMergeRequest null for the whole
