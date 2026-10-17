@@ -17,10 +17,14 @@ import uuid
 
 CALL_SECONDS = 30
 CLIENT_SECONDS = 60
-KEEPALIVE_SECONDS = 600
 # Broker statuses for the op and script verbs, as the client reports them.
 RECORD_REFUSALS = {"invalid-request": "request=invalid", "script-refused": "script=private-owner-required",
-                   "run-failed": "run=failed", "platform-unsupported": "platform=unsupported"}
+                   "script-missing": "script=not-found", "run-failed": "run=failed",
+                   "platform-unsupported": "platform=unsupported"}
+# opq names each reply FIFO with one such basename.
+REPLY_NAME = r"[0-9a-f]{32}\.reply"
+# The only entries a broker or its clients leave in the directory, with their file types.
+OWN_ENTRIES = {"lock": stat.S_ISREG, "requests": stat.S_ISFIFO}
 
 
 class Refusal(Exception):
@@ -54,6 +58,14 @@ def open_script(path):
     # The broker runs this descriptor, so the file checked is the file run.
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     return private(fd, stat.S_ISREG, 0o700, "script=private-owner-required")
+
+
+def check_own_entries(directory):
+    """Refuse a reused directory holding anything a broker or its clients did not leave."""
+    for name in os.listdir(directory):
+        kind = stat.S_ISFIFO if re.fullmatch(REPLY_NAME, name) else OWN_ENTRIES.get(name)
+        if kind is None or not kind(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode):
+            raise Refusal("directory=foreign")
 
 
 def lock_directory(directory):
@@ -128,20 +140,27 @@ def session(op, account):
 
 
 def keepalive_seconds():
-    value = os.environ.get("JARVIS_OP_KEEPALIVE_SECS", str(KEEPALIVE_SECONDS))
+    """Return the renewal interval, or None when the home has not asked for renewal."""
+    value = os.environ.get("JARVIS_OP_KEEPALIVE_SECS")
+    if not value:
+        return None
     if not value.isascii() or not value.isdecimal() or int(value) < 1:
         raise Refusal("setting=JARVIS_OP_KEEPALIVE_SECS")
     return int(value)
 
 
 def keep_session(op, env):
+    """Renew the session; return whether the keepalive stays armed."""
     try:
-        if call_op([op, "whoami"], env).returncode == 0:
-            return True
+        status = call_op([op, "whoami"], env).returncode
     except (OSError, subprocess.TimeoutExpired):
-        pass
-    print("op-broker: session=expired", file=sys.stderr, flush=True)
-    return False
+        # op whoami contacts the server, so a failed run says nothing about the session.
+        print("op-broker: keepalive=failed", file=sys.stderr, flush=True)
+        return True
+    if status:
+        print("op-broker: session=expired", file=sys.stderr, flush=True)
+        return False
+    return True
 
 
 def call_op(argv, env, interactive=False):
@@ -230,6 +249,8 @@ def respond(request, op, env):
             return {"status": "invalid-request"}
         try:
             script = open_script(path)
+        except FileNotFoundError:
+            return {"status": "script-missing"}
         except (OSError, Refusal):
             return {"status": "script-refused"}
         argv = ["/dev/fd/%d" % script]
@@ -252,8 +273,8 @@ def answer(directory, line, op, env):
     if not isinstance(request, dict):
         return False
     reply = request.get("reply")
-    # opq produces one basename. Requests never select a filesystem path.
-    if not isinstance(reply, str) or not re.fullmatch(r"[0-9a-f]{32}\.reply", reply):
+    # Requests never select a filesystem path.
+    if not isinstance(reply, str) or not re.fullmatch(REPLY_NAME, reply):
         return False
     try:
         fd = open_fifo(directory, reply, os.O_WRONLY)
@@ -277,14 +298,20 @@ def broker(args):
     keepalive = keepalive_seconds()
     try:
         os.mkdir(args.directory, 0o700)
+        reused = False
     except FileExistsError:
-        pass  # A restart reuses its own private directory behind the lock.
+        # On macOS an inherited ACL can open a mode-700 directory to another user.
+        if sys.platform != "linux":
+            raise Refusal("platform=unsupported")
+        reused = True  # A restart reuses its own private directory behind the lock.
     directory = None
     lock = None
     fifo = None
     created_fifo = False
     try:
         directory = open_directory(args.directory)
+        if reused:
+            check_own_entries(directory)
         lock = lock_directory(directory)
         env = session(op, args.account or os.environ.get("OP_ACCOUNT"))
         try:
@@ -395,16 +422,21 @@ def client_request(parser, words):
 
 
 def main(kind):
-    parser = argparse.ArgumentParser(description="Optional 1Password FIFO broker. Platform: Linux and macOS; "
-        "the op and @SCRIPT requests and the no-argument broker are Linux only.",
+    parser = argparse.ArgumentParser(description="Optional 1Password FIFO broker. Platform: Linux and macOS. "
+        "Linux only: the op and @SCRIPT requests, a broker whose directory comes from JARVIS_OP_DIRECTORY, "
+        "and a broker that reuses an existing directory.",
         epilog="The broker takes OP_SESSION from its environment, or starts op signin --raw when its stdin is a "
-               "terminal. Calls disable desktop integration and never print secrets. After a successful call an "
-               "idle broker runs op whoami every JARVIS_OP_KEEPALIVE_SECS seconds (default "
-               + str(KEEPALIVE_SECONDS) + "). Clients need Python 3, not op. read writes the raw value to "
-               "--output; op and @SCRIPT write one JSON record {\"exit\": N, \"stdout\": BASE64}. "
+               "terminal. Calls disable desktop integration and never print secrets. When JARVIS_OP_KEEPALIVE_SECS "
+               "is set, the broker runs op whoami whenever it has been idle that many seconds after a successful "
+               "call, which keeps the session past 1Password's idle expiry; unset, it never renews. "
+               "Clients need Python 3, not op. read writes the raw value to --output; op and @SCRIPT write one "
+               "JSON record {\"exit\": N, \"stdout\": BASE64}. After an op or @SCRIPT request was sent, "
+               "request=timeout or request=cancelled leaves its outcome unknown: check before retrying a write. "
                "Stop clients before stopping the broker; it removes its directory when no reply pipe remains.")
     parser.add_argument("--directory", type=Path,
-                        help="absolute private FIFO directory, otherwise JARVIS_OP_DIRECTORY")
+                        help="absolute private FIFO directory dedicated to the broker, otherwise JARVIS_OP_DIRECTORY; "
+                             "the broker reuses an existing one only when it holds nothing but its own lock, "
+                             "requests and reply pipes")
     if kind == "broker":
         parser.add_argument("--account", help="1Password account, otherwise OP_ACCOUNT")
     else:

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-# Platform: Linux. Desktop openers return at once, so the browser starts in the background.
+# Platform: Linux. Desktop openers return at once. jarvis-browser checks the request in the foreground,
+# so a refusal reaches the caller with its status, and starts only the browser in the background.
 set -euo pipefail
-"${0%/*}/../jarvis-browser" "$1" </dev/null >/dev/null 2>&1 &
+exec "${0%/*}/../jarvis-browser" --detach -- "$1"

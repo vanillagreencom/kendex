@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 from urllib.parse import urlsplit
 import uuid
@@ -16,7 +17,7 @@ def set_downloads(profile, downloads):
     # opens, and a running browser owns the file, so only a closed profile is edited.
     if os.path.lexists(profile / "SingletonLock"):
         return
-    profile.mkdir(mode=0o700, exist_ok=True)
+    profile.mkdir(mode=0o700, parents=True, exist_ok=True)
     (profile / "Default").mkdir(mode=0o700, exist_ok=True)
     preferences = profile / "Default" / "Preferences"
     try:
@@ -42,9 +43,12 @@ def main():
         "JARVIS_BROWSER_PORT: loopback debugging port, default 9222. "
         "JARVIS_BROWSER_DOWNLOADS: optional absolute downloads directory, applied when the profile is not open. "
         "JARVIS_BROWSER_CLASS: optional window class, the Wayland app id on Linux. "
-        "The browser replaces this process; background the first launch when needed. "
-        "The --shim launchers start the browser in the background and return at once."))
+        "Without --detach the browser replaces this process; background the first launch when needed. "
+        "The --shim launchers use --detach."))
     parser.add_argument("url", nargs="?", help="URL to open; required unless a report flag is given")
+    parser.add_argument("--detach", action="store_true",
+                        help="check the request here, then start the browser in its own session with no output "
+                             "and return once it has started")
     report = parser.add_mutually_exclusive_group()
     report.add_argument("--port", action="store_true", help="print the configured debugging port")
     report.add_argument("--shim", action="store_true",
@@ -88,10 +92,15 @@ def main():
     if downloads:
         set_downloads(profile, Path(downloads))
     window = os.environ.get("JARVIS_BROWSER_CLASS")
+    argv = [browser, "--user-data-dir=" + str(profile), "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=" + port, "--no-first-run", *(["--class=" + window] if window else []), args.url]
     # This launcher passes the caller's desktop environment unchanged.
-    os.execv(browser, [browser, "--user-data-dir=" + str(profile),
-                      "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=" + port,
-                      "--no-first-run", *(["--class=" + window] if window else []), args.url])
+    if args.detach:
+        # A caller reading this process's output reaches its end when this process exits.
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return
+    os.execv(browser, argv)
 
 
 if __name__ == "__main__":

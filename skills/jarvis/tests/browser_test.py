@@ -51,7 +51,8 @@ class Browser(World):
 
     def test_downloads_and_class(self):
         self.executable("google-chrome")
-        profile, downloads = self.root / "profile", self.root / "downloads"
+        # The first launch's profile parent does not exist yet; Chromium creates a nested profile itself.
+        profile, downloads = self.root / "profiles" / "assistant", self.root / "downloads"
         self.env.update(JARVIS_BROWSER_PROFILE=str(profile), JARVIS_BROWSER_DOWNLOADS=str(downloads),
                         JARVIS_BROWSER_CLASS="jarvis-assistant")
         preferences = profile / "Default/Preferences"
@@ -97,19 +98,42 @@ class Browser(World):
         os.mkfifo(ack_path, 0o600)
         ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
         self.addCleanup(os.close, ack)
+        release_path = self.root / "release"
+        os.mkfifo(release_path, 0o600)
+        release = os.open(release_path, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, release)
+
+        def acknowledged(byte):
+            return bool(select.select([ack], [], [], 10)[0]) and os.read(ack, 1) == byte
+
+        # The browser stays open until the test releases it, so a launcher that waits for it times out.
         self.executable("google-chrome", "import json,os,sys\n"
             "with open(os.environ['TOOL_LOG'],'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
-            "with open(os.environ['HOME']+'/ack','wb',buffering=0) as f: f.write(b'B')\n")
-        self.env["JARVIS_BROWSER_PROFILE"] = str(self.root / "profile")
+            "with open(os.environ['HOME']+'/ack','wb',buffering=0) as f: f.write(b'B')\n"
+            "with open(os.environ['HOME']+'/release','rb',buffering=0) as f: f.read(1)\n"
+            "with open(os.environ['HOME']+'/ack','wb',buffering=0) as f: f.write(b'E')\n")
+        profile = str(self.root / "profile")
         for name in launchers:
             with self.subTest(launcher=name):
                 url = "https://example.org/device?name=" + name
-                result = subprocess.run([str(shim / name), url], env=self.env, capture_output=True, timeout=15)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertTrue(select.select([ack], [], [], 10)[0], "the launcher did not open the browser")
-                self.assertEqual(os.read(ack, 1), b"B")
+                # A refused request reaches the caller with the driver's own key and status.
+                self.env.pop("JARVIS_BROWSER_PROFILE", None)
+                launched = len(self.calls()) if self.log.exists() else 0
+                refused = subprocess.run([str(shim / name), url], env=self.env, capture_output=True, timeout=15)
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+                self.assertEqual(refused.stderr.splitlines()[0], b"jarvis-browser: setting=JARVIS_BROWSER_PROFILE")
+                self.assertEqual(len(self.calls()) if self.log.exists() else 0, launched)
+                self.env["JARVIS_BROWSER_PROFILE"] = profile
+                try:
+                    result = subprocess.run([str(shim / name), url], env=self.env, capture_output=True, timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.fail("the launcher waited for the browser")
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b"", b""))
+                self.assertTrue(acknowledged(b"B"), "the launcher did not open the browser")
                 self.assertEqual(self.calls()[-1][-1], url)
-                self.assertIn("--user-data-dir=" + str(self.root / "profile"), self.calls()[-1])
+                self.assertIn("--user-data-dir=" + profile, self.calls()[-1])
+                os.write(release, b"R")
+                self.assertTrue(acknowledged(b"E"), "the released browser did not finish")
 
     def test_platform_refusal(self):
         module = load("jarvis-browser")
