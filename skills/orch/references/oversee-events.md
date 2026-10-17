@@ -141,7 +141,7 @@ For a container, apply the same acceptance rule and post the evidence comment. A
 
 On a failed check or evidence still unreadable at its deadline, apply [project-management § Disposition, Done-when separates branch proof from live proof](../../project-management/SKILL.md#disposition). File a required peer fix through `audit-issues --single`. Comment on the original with the evidence and any fix item. When that blocker closes, read the same check again through this event’s due-box route.
 
-A box whose evidence no tool on the operator machine reaches goes to the owner once as an ask on the same item when it becomes due. Name the box, check, Where, and deadline. Apply [communication-modes.md § Owner-only verification](communication-modes.md#owner-only-verification) and record the person's reading before closing the ask.
+For each due or overdue box, select the reader and message under [communication-modes.md § Owner-only verification](communication-modes.md#owner-only-verification).
 
 After either completion route sets the item Done, read its parent through [merge-pr.md § 5 step 2](../workflows/merge-pr.md#5-execute-the-merge). A container with complete children is due for its holder’s outcome read. Apply the container route above only after that read passes. Repeat this duty for container ancestors. Record the parent duty and any closure diagnostics in the verification evidence comment.
 

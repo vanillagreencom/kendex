@@ -140,7 +140,15 @@ Under `engineer` a report is the same shape with the session's own vocabulary. T
 
 ## Owner-only verification
 
-A post-merge box that only a person can read goes to that person as an owner ask on its item. The overseer names the box, check, Where and deadline in the question. The person answers with one comment under § Owner asks. The overseer records the reading and closes the ask. Each overseer owns these asks through closure.
+Route each due or overdue post-merge box by who can read its evidence:
+
+| Reader | Action |
+|---|---|
+| A tool on the operator machine | The overseer reads the evidence and records the result on the item. |
+| Jarvis, the owner's delegate | Send Jarvis a notice naming the item, box, check, Where and deadline. This route applies when `Where:` names "Jarvis, the owner's delegate", or the item carries `jarvis-check`. Record the delegate's reading on the item. |
+| The owner alone | Send one owner ask on the same item. Name the box, check, Where and deadline. The owner answers with one comment under § Owner asks. Record the reading before closing the ask. |
+
+A delegate notice creates no owner ask. Each overseer owns a verification ask through closure.
 
 ## Owner messages
 
