@@ -269,7 +269,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Merge route.** `pr-merge` picks the route, and no step here judges it: it merges past the queue with `--admin` bound to the prepared head and exits `0`, or takes the queue and exits `75`, naming the cause on its `merge-route:` line (`pr-merge --help` § Merge route). Take the direct attempt below first. [submit-pr.md](submit-pr.md) § 2 step 5 arms at creation only a PR this route takes through the queue; where GitHub has already queued a PR, the attempt answers exit `75`. An item whose workflow state carries `pr_approval.forced`, and a PR on § 3.2's `unknown:` path, whose direct attempt would refuse on that issue, take the explicit `--auto --queue` arm below instead, which never passes `--admin`.
 
-   **Who acts.** The lane merges its own PR under the token the `github.sh` router selects, the lanes app's installation token in a lane sandbox. The emergency merge of [review-gate SKILL.md § 4. Operations](../../review-gate/SKILL.md#4-operations) is the overseer's GitHub App's alone.
+   **Who acts.** The lane merges its own PR under the token the `github.sh` router selects, the lanes app's installation token in a lane sandbox. An emergency merge exists only in a consumer whose ruleset lists the overseer's GitHub App as a bypass actor, and is that app's alone. A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in [review-gate SKILL.md § 4. Operations](../../review-gate/SKILL.md#4-operations).
 
    **The direct attempt.** Follow [merge-attempt.md](../references/merge-attempt.md#direct-attempt) for the approved-head CI wait, its pending bound, the exact-head attempt and exit routing. Its exit `75` enters the queue-wait block below.
 

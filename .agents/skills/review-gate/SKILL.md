@@ -41,7 +41,9 @@ Consumers refresh on a schedule or a manual run. An organization managed by flee
 
 A pull request with no automatic review needs a Copilot request. When orch is present, request through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures, when the github skill is installed: its `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
 
-The overseer's fallback approval and emergency merge follow the managing repository's merge workflow. This package grants no bypass and changes no ruleset.
+The overseer's fallback approval follows the managing repository's merge workflow. An emergency merge past a failing required check exists only in a consumer whose required-checks or merge-queue ruleset lists a bypass actor. A consumer whose rulesets list no bypass has no emergency merge.
+
+In that consumer, a merge group can fail to pass because a CI input read from the default branch broke: the classifier checkout, the lane declaration, the aggregate's needs or the change-class action. The overseer then asks the owner's delegate by mailbox, naming the repair's pull request. The delegate restores the lanes app's merge-queue bypass through the API for that one repair, reads it back, and removes it after the repair. This package grants no bypass and changes no ruleset.
 
 ## Scripts
 
