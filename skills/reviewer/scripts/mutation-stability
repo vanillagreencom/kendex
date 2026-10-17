@@ -242,6 +242,7 @@ try:
     finally:
         os.close(ownerfd)
 
+    uninspected = set()
     for sweep in range(20):
         found = False
         for entry in os.listdir("/proc"):
@@ -255,7 +256,18 @@ try:
                 # Equal clock ticks still qualify, so a fast child is kept.
                 if start_time(procfd) < owner_start:
                     continue
-                cwd = os.readlink("cwd", dir_fd=procfd)
+                try:
+                    cwd = os.readlink("cwd", dir_fd=procfd)
+                except PermissionError:
+                    # Non-dumpable same-user children hide cwd. Keep scratch
+                    # without replacing a completed measurement's verdict.
+                    with os.fdopen(os.open("status", os.O_RDONLY, dir_fd=procfd)) as status:
+                        uid_rows = [line.split()[1:] for line in status if line.startswith("Uid:")]
+                    if len(uid_rows) != 1 or len(uid_rows[0]) != 4:
+                        raise RuntimeError("process credentials are unavailable")
+                    if os.geteuid() in [int(uid) for uid in uid_rows[0]]:
+                        uninspected.add(entry)
+                    continue
                 if cwd != root and not cwd.startswith(root + "/"):
                     continue
                 found = True
@@ -274,15 +286,6 @@ try:
                 print("notice=workspace-process-ended pid=" + entry, file=sys.stderr)
                 print("workspace process exited after " + ended_by, file=sys.stderr)
             except OSError as error:
-                # Proc inode ownership changes when dumpability changes;
-                # credentials distinguish another user's private cwd.
-                if error.errno in (errno.EACCES, errno.EPERM) and procfd is not None:
-                    with os.fdopen(os.open("status", os.O_RDONLY, dir_fd=procfd)) as status:
-                        uid_rows = [line.split()[1:] for line in status if line.startswith("Uid:")]
-                    if len(uid_rows) != 1 or len(uid_rows[0]) != 4:
-                        raise RuntimeError("process credentials are unavailable")
-                    if os.geteuid() not in [int(uid) for uid in uid_rows[0]]:
-                        continue
                 if error.errno not in (errno.ENOENT, errno.ESRCH):
                     raise
             finally:
@@ -294,11 +297,20 @@ try:
             break
     else:
         raise RuntimeError("workspace processes keep appearing")
+    for entry in sorted(uninspected, key=int):
+        print("notice=workspace-process-unreadable pid=" + entry, file=sys.stderr)
+        print("process cwd is unreadable; workspace kept at " + root, file=sys.stderr)
+    if uninspected:
+        sys.exit(3)
 except (OSError, RuntimeError) as error:
     print(str(error), file=sys.stderr)
     sys.exit(2)
 PY
-  [ "$cleanup_status" = 0 ] || refuse_with_log cleanup-incomplete path "$ROOT" "safe workspace cleanup failed; workspace kept" "$ROOT/cleanup.log"
+  case "$cleanup_status" in
+    0) ;;
+    3) KEEP=1 ;;
+    *) refuse_with_log cleanup-incomplete path "$ROOT" "safe workspace cleanup failed; workspace kept" "$ROOT/cleanup.log" ;;
+  esac
   [ ! -s "$ROOT/cleanup.log" ] || cat -- "$ROOT/cleanup.log" >&2
 }
 

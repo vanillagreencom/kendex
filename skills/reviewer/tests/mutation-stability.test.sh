@@ -492,7 +492,9 @@ if [ -d /proc/self ] && command -v setsid >/dev/null && command -v python3 >/dev
   MS_GROUP_ONLY="$variant"
   plant_variant numeric-signal '                signal.pidfd_send_signal(pidfd, signal.SIGTERM)' '                os.kill(int(entry), signal.SIGTERM)'
   MS_NUMERIC="$variant"
-  mkdir -p "$TMP/no-numeric" "$TMP/no-pidfd"
+  plant_variant unreadable-refusal '                        uninspected.add(entry)' '                        uninspected.add(entry); raise'
+  MS_UNREADABLE_REFUSAL="$variant"
+  mkdir -p "$TMP/no-numeric" "$TMP/no-pidfd" "$TMP/other-user"
   cat > "$TMP/no-numeric/sitecustomize.py" <<'PY'
 import sys
 
@@ -507,6 +509,25 @@ import os
 if hasattr(os, "pidfd_open"):
     del os.pidfd_open
 PY
+  # Supply the other-user credential comparison without requiring a root
+  # runner. The fixture still creates a real unreadable proc cwd.
+  cat > "$TMP/other-user/sitecustomize.py" <<'PY'
+import os
+owner_uid = os.geteuid()
+os.geteuid = lambda: owner_uid + 1
+PY
+  cat > "$TMP/private-child.py" <<'PY'
+import ctypes
+import os
+from pathlib import Path
+import signal
+
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE
+    raise OSError(ctypes.get_errno(), "cannot hide fixture cwd")
+Path(os.environ["DETACHED_PID_FILE"]).write_text(str(os.getpid()))
+signal.pause()
+PY
   # A subreaper adopts this fixture's orphan, so the test can keep its pidfd
   # and reap the negative control before the suite removes any scratch.
   cat > "$TMP/detached-check.py" <<'PY'
@@ -519,7 +540,7 @@ import subprocess
 import sys
 import time
 
-script, repo, sha, scratch, mode = sys.argv[1:]
+script, repo, sha, scratch, mode, kill_mutation = sys.argv[1:]
 libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
     raise OSError(ctypes.get_errno(), "cannot adopt fixture descendants")
@@ -534,7 +555,10 @@ pid_path.unlink(missing_ok=True)
 ack_path.unlink(missing_ok=True)
 env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "MUTATION_STABILITY_SETTLE")}
 env.update(DETACHED_PID_FILE=str(pid_path), DETACHED_ACK_FILE=str(ack_path), DETACHED_MODE=mode)
-env["PYTHONPATH"] = str(Path(scratch) / ("no-pidfd" if mode == "unavailable" else "no-numeric"))
+private = mode in ("private-pass", "private-fail", "private-control", "other-user")
+env["PYTHONPATH"] = str(Path(scratch) / ("other-user" if mode == "other-user" else
+                                      "no-pidfd" if mode == "unavailable" else "no-numeric"))
+env["DETACHED_HELPER"] = str(Path(scratch) / "private-child.py")
 fixture = '''
 if [ "$DETACHED_MODE" = kill ]; then trap '' TERM; fi
 setsid sleep 1000 >/dev/null 2>&1 &
@@ -543,8 +567,17 @@ echo "$child" > "$DETACHED_PID_FILE"
 while [ ! -e "$DETACHED_ACK_FILE" ]; do sleep 0.01; done
 exit 0
 '''
+if private:
+    fixture = '''
+if [ ! -e "$DETACHED_PID_FILE" ]; then
+  setsid python3 "$DETACHED_HELPER" >/dev/null 2>&1 &
+  while [ ! -e "$DETACHED_ACK_FILE" ]; do sleep 0.01; done
+fi
+bash check.sh
+'''
+mutation = "true" if mode == "private-fail" else kill_mutation
 runner = subprocess.Popen([script, "--worktree", repo, "--sha", sha,
-                           "--build", "true", "--mutate", "false", "--stability", "1",
+                           "--build", "true", "--mutate", mutation if private else "false", "--stability", "1",
                            "--test", fixture], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 child = pidfd = None
 try:
@@ -560,6 +593,13 @@ try:
         if time.monotonic() >= deadline:
             raise RuntimeError("fixture did not create its session")
         time.sleep(0.01)
+    if private:
+        try:
+            os.readlink("/proc/" + str(child) + "/cwd")
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("fixture cwd is readable; host cannot exercise permission denial")
     ack_path.touch()
     output = runner.communicate(timeout=15)[0].decode()
     poll = select.poll()
@@ -570,7 +610,29 @@ try:
         assert stopped, output
 
     # The same assertion must reject group-only and numeric-signal teardown.
-    if mode in ("control", "numeric", "unavailable"):
+    if private:
+        root = Path(os.environ["TMPDIR"])
+        workspaces = list(root.glob("mutation-stability.*"))
+        # Each invocation has its own runtime dir so retention is observable.
+        assert not stopped, output
+        expected_exit = 1 if mode == "private-fail" else 0
+        notice = "notice=workspace-process-unreadable pid=" + str(child)
+        def assert_measured_exit():
+            assert runner.returncode == expected_exit, output
+        if mode == "private-control":
+            try:
+                assert_measured_exit()
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError("restored refusal did not redden measured-exit assertion")
+            assert "error=cleanup-incomplete path=" in output, output
+        else:
+            assert_measured_exit()
+            assert "mutation: killed " + ("0" if mode == "private-fail" else "1") + "/1; stability: 1/1" in output, output
+            assert output.splitlines().count(notice) == (0 if mode == "other-user" else 1), output
+        assert bool(workspaces) == (mode != "other-user"), output
+    elif mode in ("control", "numeric", "unavailable"):
         try:
             assert_child_stopped()
         except AssertionError:
@@ -612,11 +674,14 @@ finally:
         (Path(scratch) / "keep-process-scratch").touch()
         raise RuntimeError("fixture cleanup has no safe process handle")
 PY
-  for mode in term kill control numeric unavailable; do
+  for mode in term kill control numeric unavailable private-pass private-fail private-control other-user; do
     script="$MS"
     [ "$mode" != control ] || script="$MS_GROUP_ONLY"
     [ "$mode" != numeric ] || script="$MS_NUMERIC"
-    if python3 "$TMP/detached-check.py" "$script" "$REPO" "$SHA_BASE" "$TMP" "$mode"; then
+    [ "$mode" != private-control ] || script="$MS_UNREADABLE_REFUSAL"
+    mode_tmp="$TMP/detached-$mode"
+    mkdir -p "$mode_tmp"
+    if TMPDIR="$mode_tmp" python3 "$TMP/detached-check.py" "$script" "$REPO" "$SHA_BASE" "$TMP" "$mode" "$KILL_MUTATION"; then
       pass "detached child: $mode"
     else
       fail "detached child: $mode" "child termination or negative-control cleanup failed"
