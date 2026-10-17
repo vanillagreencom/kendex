@@ -138,8 +138,8 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"
   local declaration="" lanes_root="" judged_root="" per_push
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
-  local render_base render_head has_deletions status path index delta name claimed
-  local moved_paths=() added_paths=() lane_hits=() lane_changed=() render_hits=()
+  local render_base render_head path index delta name claimed
+  local lane_hits=() lane_changed=() render_hits=()
   local reader_missing queue_reader per_push_reader standdown_missing hit
 # Every class but `standard` is reached only after the classifier read a
 # changed path, so an empty list under one of them is a state neither script
@@ -259,34 +259,24 @@ if [ "$lane_state" = read ] && [ "$class" = render ]; then
     die "cause=render-range-unreadable" "could not read the render head revision"
   [ -n "$render_base" ] && [ -n "$render_head" ] ||
     die "cause=render-range-unreadable" "the render classifier supplied no resolved range"
+  # A render proof shows the files equal their sources, not that the
+  # consumer's code still works against them, so every changed path runs
+  # the lanes that claim it. WriteTree carries paths and bytes, not move
+  # identity, and similarity can pair an old file with a retained copy and
+  # hide its rewritten destination: disabling rename pairing names both ends.
   git -C "$REPO" diff --no-ext-diff --no-textconv \
-    --name-status -z --no-renames --diff-filter=AD "$render_base" "$render_head" -- \
-    >"${work:?}/moved" || die "cause=render-moves-unreadable" "could not read render additions and deletions"
-  moved_paths=() added_paths=() has_deletions=false
-  while IFS= read -r -d '' status <&3; do
-    IFS= read -r -d '' path <&3 || die "cause=render-moves-unreadable" "a moved path is absent"
-    case "$status" in
-      A) added_paths+=("$path") ;;
-      D) has_deletions=true; moved_paths+=("$path") ;;
-    esac
-  done 3<"${work:?}/moved"
-  # WriteTree carries paths and bytes, not move identity. Similarity can pair
-  # an old file with a retained copy and hide its rewritten destination.
-  # Disabling rename pairing keeps every disappeared path visible. Each
-  # addition then needs its claiming lane. Additions alone grant no lane.
-  if [ "$has_deletions" = true ]; then
-    moved_paths=("${moved_paths[@]+"${moved_paths[@]}"}" "${added_paths[@]+"${added_paths[@]}"}")
-  fi
-  for path in ${moved_paths[@]+"${moved_paths[@]}"}; do
+    --name-only -z --no-renames "$render_base" "$render_head" -- \
+    >"${work:?}/render-changed" || die "cause=render-paths-unreadable" "could not read the render's changed paths"
+  while IFS= read -r -d '' path; do
     index=0
     while [ "$index" -lt "$lane_count" ]; do
-      if ci_lanes_claims "$index" "$path" && [ -z "${render_hits[$index]:-}" ]; then
+      if [ -z "${render_hits[$index]:-}" ] && ci_lanes_claims "$index" "$path"; then
         render_hits[$index]="path=$path glob=$LANE_GLOB_HIT"
-        lanes=true lanes_cause=render-moved-claim
+        lanes=true lanes_cause=render-claim
       fi
       index=$((index + 1))
     done
-  done
+  done <"${work:?}/render-changed"
 fi
 declaration_comparison=not-needed
 no_changed_paths=false
@@ -421,7 +411,7 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"
   elif [ "$class" = render ]; then
     if [ -n "${render_hits[$index]:-}" ]; then
-      lane_values[$index]=true lane_causes[$index]="cause=render-moved-claim ${render_hits[$index]}"
+      lane_values[$index]=true lane_causes[$index]="cause=render-claim ${render_hits[$index]}"
     else
       lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
     fi

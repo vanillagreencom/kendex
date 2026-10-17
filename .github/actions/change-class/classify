@@ -60,17 +60,15 @@
 #                      groups it here rather than reading the diff again.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
 #                      A proved render runs lanes whose default-branch claims
-#                      match a deleted path or an added path when any old path
-#                      disappears. This covers both rename ends. In-place and
-#                      addition-only
-#                      renders and moves of only unclaimed paths keep
-#                      lanes=false. Remaining skip conditions follow
+#                      match a path it changes: in place, added, deleted or
+#                      either end of a move. A render of only unclaimed paths
+#                      keeps lanes=false. Remaining skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or queue-only where
 #                      lanes=false; full-run on schedule and
-#                      workflow_dispatch; render-moved-claim for a claimed
-#                      moved-file candidate in a render;
+#                      workflow_dispatch; render-claim where a declared lane
+#                      claims a path a render changes;
 #                      queue-only-reader-absent where a render lacks the
 #                      stand-down's reader; queue-only-lanes-from-unset
 #                      where the stand-down was asked for with no
@@ -83,7 +81,7 @@
 #                      the union of lane names. Empty where LANES_FROM is
 #                      empty or the base declaration is absent or malformed.
 #
-# lanes uses the two verdicts above, moved render claims, the event and the
+# lanes uses the two verdicts above, render claims, the event and the
 # queue_only answer, as the installed lib/change-class.sh decides them.
 # A workflow forwards it rather than spelling a class, so a change to
 # which diffs run the lanes reaches every consumer with no workflow edit.
@@ -92,9 +90,8 @@
 # whose comparison follows wiring.md § Per-lane verdicts. In this order:
 # true for every lane on the full run; false wherever lanes is false; then,
 # on render, true only for lanes whose
-# default-branch claim matches a deleted path or a possible added destination
-# when any old path disappears, with
-# cause=render-moved-claim and its path and glob; then true for every lane where the
+# default-branch claim matches a changed path, with
+# cause=render-claim and its path and glob; then true for every lane where the
 # declaration comparison failed; then, on a pull request,
 # false with the cause queue-deferred for a lane the declaration marks
 # `:queue` and one of its own globs reaches, where this run's change-class

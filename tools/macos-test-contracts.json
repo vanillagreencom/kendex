@@ -169,7 +169,7 @@
     "skills/harness-ci/tests/queue-selector.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/rename-into-render.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/render-candidate.test.sh": "linux-duplicate",
-    "skills/harness-ci/tests/render-moved-claims.test.sh": "linux-duplicate",
+    "skills/harness-ci/tests/render-claims.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/wiring-errors.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/wiring-shapes.test.sh": "linux-duplicate",
     "skills/iced-rs/tests/mouse-area-no-on-press-maybe.test.sh": "linux-duplicate",

@@ -7,7 +7,7 @@
 # workflow that does not ask, a ci.yml copied before the default, keeps its
 # lanes once a refresh delivers the render.
 # Inputs: harness-ci scripts, orch measurement and the change-class action.
-# Render causes are covered by render-moved-claims.test.sh.
+# Render causes are covered by render-claims.test.sh.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"

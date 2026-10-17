@@ -109,9 +109,8 @@ outputs:
       true where the diff runs the workflow's lanes, false where it runs
       none. The installed scripts/lib/change-class.sh owns the shared rules.
       With that producer available, a render runs lanes whose
-      default-branch claims reach a deleted path or an added path beside a deletion.
-      This covers both
-      rename ends without content pairing. Other renders run none. A trivial class or
+      default-branch claims reach a path it changes, both ends of a move
+      included without content pairing. Other renders run none. A trivial class or
       docs_only=true on a non-render class runs none. On pull_request and
       push, with queue-only-default true, a base that names no
       HARNESS_CI_PER_PUSH_REASON runs none, where both renders read it. On schedule and
@@ -130,7 +129,7 @@ outputs:
     description: >-
       Why lanes answered as it did: render, trivial, docs-only or queue-only
       where lanes is false; full-run on schedule and workflow_dispatch;
-      render-moved-claim for a claimed moved-file candidate in a render;
+      render-claim where a declared lane claims a path a render changes;
       queue-only-reader-absent where a render lacks the queue-only default's
       reader; queue-only-lanes-from-unset where queue-only-default is true
       with no lanes-from; lane-producer-unavailable when the selected classifier lacks
