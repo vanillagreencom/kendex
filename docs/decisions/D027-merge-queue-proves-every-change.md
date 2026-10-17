@@ -4,7 +4,7 @@
 
 **Date**: 2026-10-17
 
-**Status**: Active
+**Status**: Active (bypass actors → D029)
 
 **Research**: [KEN-4220](https://linear.app/vanillagreen/issue/KEN-4220), [KEN-4218](https://linear.app/vanillagreen/issue/KEN-4218), [KEN-4217](https://linear.app/vanillagreen/issue/KEN-4217), [KEN-3648](https://linear.app/vanillagreen/issue/KEN-3648); the owner's ruling in Slack thread 1792195437, messages 1792196004, 1792197483 and 1792197507
 

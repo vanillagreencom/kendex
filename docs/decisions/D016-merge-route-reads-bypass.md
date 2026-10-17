@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-29
 
-**Status**: Active (queue paths → D028)
+**Status**: Active (queue paths → D028, gate repair → D029)
 
 **Research**: KEN-2069
 

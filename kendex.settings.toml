@@ -243,14 +243,12 @@ REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
 # gate" leaves it: the CI jobs the ruleset lists, by name.
 REVIEW_GATE_STANDARD_CONTEXTS = "CI"
 
-# The bypass actors this organization's standard admits, as TYPE:ID:MODE
-# (docs/decisions/D027-merge-queue-proves-every-change.md, and the
-# overseer app of the KEN-2067 design note § Copilot-down fallback, attached
-# to that issue): on the merge queue ruleset the lanes app, always, and the
-# overseer app in pull-request mode; on the required checks ruleset the
-# overseer app alone.
-REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;Integration:5115517:pull_request"
-REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"
+# The organization's standard admits no bypass actor on either ruleset
+# (docs/decisions/D029-owner-merges-ci-input-repair.md), so the
+# standard-bypass-actors row reports any bypass, the repository owner's
+# temporary one-head repair bypass included.
+REVIEW_GATE_STANDARD_QUEUE_BYPASS = ""
+REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
 
 # This repository sets no HARNESS_CI_PER_PUSH_REASON, so change-class
 # answers every change queue-only: pr-merge never takes the admin route,
