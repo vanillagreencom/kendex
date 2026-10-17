@@ -1755,19 +1755,23 @@ linear_label_message() {
     esac
 }
 
-# Print the declared label names as a JSON array, or nothing when the
-# repository declares no taxonomy. A declared taxonomy this cannot read
-# refuses: enforcing nothing then would pass every label it exists to stop.
-linear_declared_labels() {
-    local file block rc=0 first=""
+# Print the first ```json block under HEADING in the project instructions of
+# every render, as the jq FILTER (with JQ_ARGS) validates and prints it, or
+# nothing when no render carries the heading. One reader serves every block a
+# repository declares there; MESSENGER is the block's refusal function, called
+# as `MESSENGER unreadable FILE` and `MESSENGER renders-differ FILE OTHER`.
+# Usage: linear_declared_block HEADING MESSENGER [JQ_ARGS...] FILTER
+linear_declared_block() {
+    local heading="$1" messenger="$2" file block rc=0 first=""
+    shift 2
     [[ ${#LINEAR_TAXONOMY_RENDERS[@]} -gt 0 ]] || return 0
     for file in "${LINEAR_TAXONOMY_RENDERS[@]}"; do
         rc=0
-        block=$(awk '
+        block=$(awk -v heading="$heading" '
             $0 == "<!-- kendex:project-instructions:start -->" { inside = 1; next }
             $0 == "<!-- kendex:project-instructions:end -->" { inside = 0; next }
             !inside { next }
-            state == 0 && $0 == "### Project taxonomy" { state = 1; next }
+            state == 0 && $0 == heading { state = 1; next }
             state == 1 && /^```json *$/ { state = 2; next }
             state == 1 && /^##?#? / { exit 3 }
             state == 2 && /^``` *$/ { state = 3; exit }
@@ -1776,28 +1780,35 @@ linear_declared_labels() {
         ' "$file") || rc=$?
         [[ -n "$first" ]] || first="$rc:$block"
         if [[ "$rc:$block" != "$first" ]]; then
-            linear_label_message renders-differ "$LINEAR_TAXONOMY_FILE" "$file" >&2
+            "$messenger" renders-differ "$LINEAR_TAXONOMY_FILE" "$file" >&2
             return 1
         fi
     done
-    # Exit 5 is no heading: the repository declares no taxonomy. A heading
+    # Exit 5 is no heading: the repository declares no such block. A heading
     # whose block is empty reaches jq with no input, which refuses it.
     [[ "$rc" != 5 ]] || return 0
     if [[ "$rc" != 0 ]]; then
-        linear_label_message unreadable "$LINEAR_TAXONOMY_FILE" >&2
+        "$messenger" unreadable "$LINEAR_TAXONOMY_FILE" >&2
         return 1
     fi
-    if ! jq -ce --arg agents "${LINEAR_AGENT_LABELS:-}" '
+    if ! jq -ce "$@" <<<"$block" 2>/dev/null; then
+        "$messenger" unreadable "$LINEAR_TAXONOMY_FILE" >&2
+        return 1
+    fi
+}
+
+# Print the declared label names as a JSON array, or nothing when the
+# repository declares no taxonomy. A declared taxonomy this cannot read
+# refuses: enforcing nothing then would pass every label it exists to stop.
+linear_declared_labels() {
+    linear_declared_block "### Project taxonomy" linear_label_message --arg agents "${LINEAR_AGENT_LABELS:-}" '
         select(type == "object" and (.categories | type == "object")
             and all(.categories[]; type == "object"
                 and ((.labels // []) | type == "array" and all(type == "string"))
                 and ((.match.parent // "") | type == "string")))
         | [.categories[] | (.labels // [])[], (.match.parent // empty)]
             + [$agents | splits("[, ]+") | select(length > 0)]
-        | unique' <<<"$block" 2>/dev/null; then
-        linear_label_message unreadable "$LINEAR_TAXONOMY_FILE" >&2
-        return 1
-    fi
+        | unique'
 }
 
 # Refuse, before any write, a label name the taxonomy does not declare.
@@ -1823,6 +1834,120 @@ linear_require_declared_labels() {
     [[ -n "$undeclared" ]] || return 0
     linear_label_message undeclared "$undeclared" >&2
     return 1
+}
+
+# Project map
+# -----------------------------------------------------------------------------
+# A repository declares which projects its issues may live in once: the first
+# ```json block under `### Project map` in the same project instructions as the
+# label taxonomy, read by linear_declared_block from the same renders. The
+# project-management skill's references/project-map.md states the format and
+# what each field means. With no such heading the repository declares no map,
+# and no rule below applies.
+
+# The comparison form of a project, initiative or label name: lowercase, with
+# every character but a-z and 0-9 dropped. The map's uniqueness rule and
+# `projects audit`'s name collisions read names through this one definition.
+LINEAR_NAME_KEY_JQ='def name_key: ascii_downcase | gsub("[^a-z0-9]"; "");'
+
+# Every project map refusal: the keyed first line, then the JSON error. A
+# refusal naming the legal projects takes them as a JSON array in OTHER.
+linear_project_message() {
+    local key="$1" value="$2" other="${3:-}"
+    case "$key" in
+    unreadable)
+        printf 'linear-projects: map-unreadable map=%s\n' "$value"
+        jq -cn --arg file "$value" \
+            '{error: ("The repository declares a project map in " + $file + " but its ### Project map section holds no readable JSON contract (project-management references/project-map.md § Declaration), so no project can be judged. Fix the manifest [skill-instructions].project-management and render it.")}'
+        ;;
+    renders-differ)
+        printf 'linear-projects: map-unreadable map=%s differs=%s\n' "$value" "$other"
+        jq -cn --arg file "$value" --arg other "$other" \
+            '{error: ("The project-management renders " + $file + " and " + $other + " carry different ### Project map sections, so no project can be judged: one is a stale render. Render the manifest [skill-instructions].project-management again (kendex refresh) so every render carries one map.")}'
+        ;;
+    declared-missing)
+        printf 'linear-projects: declared-missing project=%s map=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
+        jq -cn --arg project "$value" --arg file "$LINEAR_TAXONOMY_FILE" \
+            '{error: ("The project map in " + $file + " declares project " + ($project | tojson) + " but this team has no live Linear project of that name. Create the project or correct the map, then retry.")}'
+        ;;
+    ambiguous)
+        printf 'linear-projects: ambiguous project=%s map=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
+        jq -cn --arg project "$value" --arg file "$LINEAR_TAXONOMY_FILE" \
+            '{error: ("The project map in " + $file + " declares project " + ($project | tojson) + " and this team has more than one live Linear project of that name, so the map cannot say which one it means. Rename or cancel the extra project, then retry.")}'
+        ;;
+    project-missing)
+        printf 'linear-projects: project-missing map=%s\n' "$LINEAR_TAXONOMY_FILE"
+        jq -cn --arg file "$LINEAR_TAXONOMY_FILE" --argjson projects "$other" \
+            '{projects: $projects, error: ("This repository declares a project map in " + $file + ", so every create names its project: pass --project with the map project the item belongs in (project-management references/project-map.md § Routing), or hold the item as project_needed.")}'
+        ;;
+    off-map)
+        printf 'linear-projects: off-map project=%s map=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
+        jq -cn --arg project "$value" --arg file "$LINEAR_TAXONOMY_FILE" --argjson projects "$other" \
+            '{projects: $projects, error: ("Refusing project " + ($project | tojson) + ": the project map in " + $file + " does not list it. Use a map project (project-management references/project-map.md § Routing), or hold the item as project_needed until the map lists the project it needs.")}'
+        ;;
+    no-team)
+        printf 'linear-projects: no-team\n'
+        jq -cn '{error: "projects audit reads the open issues of one team: set LINEAR_TEAM in kendex.settings.toml [env] or pass --team <key-or-name>."}'
+        ;;
+    *)
+        printf 'linear-projects: unknown-message key=%s\n' "$key"
+        return 1
+        ;;
+    esac
+}
+
+# Print the declared project map as {initiatives, projects}, or nothing when
+# the repository declares none. A declared map this cannot read refuses, as an
+# unreadable taxonomy does.
+linear_project_map() {
+    linear_declared_block "### Project map" linear_project_message "$LINEAR_NAME_KEY_JQ"'
+        def text: type == "string" and length > 0;
+        select(type == "object"
+            and (.projects | type == "array" and length > 0)
+            and ((.initiatives // []) | type == "array"))
+        | {initiatives: (.initiatives // []), projects}
+        | select(all(.initiatives[]; type == "object" and (.name | text) and (.outcome | text)
+                and (.projects | type == "array" and all(.[]; text))))
+        | select(all(.projects[]; type == "object" and (.name | text) and (.admits | text)
+                and ((.kind == "deliverable" and (has("role") | not)
+                        and ((has("ends_when") | not) or (.ends_when | text))
+                        and ((has("initiative") | not) or (.initiative | text)))
+                    or (.kind == "standing" and (.role | IN("area", "concern"))
+                        and (has("ends_when") | not) and (has("initiative") | not)))))
+        | . as $map
+        | select(all($map.projects[] | select(has("initiative"));
+                .name as $p | .initiative as $i
+                | any($map.initiatives[]; .name == $i and any(.projects[]; . == $p))))
+        | select(all($map.initiatives[]; .name as $i
+                | all(.projects[]; . as $p
+                    | any($map.projects[]; .name == $p and .initiative == $i))))
+        | select([.projects[].name, .initiatives[].name] | map(name_key) | length == (unique | length))'
+}
+
+# Read each map project's Linear project, every page, as one array in map
+# order: {name, id, state, target_date, live}. `live` counts the live projects
+# of that name, so 0 with an id is a canceled-only project and 0 without one
+# is none. TEAM_ID scopes the read to the team's projects; empty reads the
+# workspace. PROJECT_PICK_JQ (lib/formatters.sh) picks the node, the rule
+# resolve_project_id reads.
+# Usage: linear_map_projects MAP [TEAM_ID]
+linear_map_projects() {
+    local map="$1" team_id="${2:-}" query variables result
+    query='query ProjectMap($names: [String!], $after: String) { projects(filter: {name: {in: $names}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name state targetDate } } }'
+    variables=$(jq -c '{names: [.projects[].name]}' <<<"$map") || return 1
+    if [[ -n "$team_id" ]]; then
+        query='query ProjectMap($names: [String!], $teamId: ID!, $after: String) { projects(filter: {name: {in: $names}, accessibleTeams: {some: {id: {eq: $teamId}}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name state targetDate } } }'
+        variables=$(jq -c --arg teamId "$team_id" '. + {teamId: $teamId}' <<<"$variables") || return 1
+    fi
+    result=$(graphql_pages "$query" "$variables" projects) || return 1
+    jq -c --argjson map "$map" "$PROJECT_PICK_JQ"'
+        (.projects.nodes // []) as $nodes
+        | [$map.projects[] | .name as $n
+            | [$nodes[] | select(.name == $n)] as $named
+            | (($named | live_project_pick($n)) // $named[0] // {}) as $pick
+            | {name: $n, id: ($pick.id // null), state: ($pick.state // null),
+               target_date: ($pick.targetDate // null),
+               live: ([$named[] | select(project_is_live)] | length)}]' <<<"$result"
 }
 
 # A milestone reference that is already a UUID, and so needs no project to

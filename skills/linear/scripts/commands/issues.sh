@@ -165,6 +165,12 @@ Create Options:
   kept. Create also refuses a declared label Linear does not have, where with
   no taxonomy it skips that label with a warning.
 
+  Project map: where the repository declares one (project-management
+  references/project-map.md), create refuses with no --project, and create,
+  update --project and bulk-update --project refuse, before any write, a
+  project the map does not list and a map project with no single live Linear
+  project in the team.
+
 Update Options:
   --state <name>        New state
   --label(s) <a,b,c>    Replace labels (comma-separated)
@@ -680,7 +686,7 @@ bulk_update_issues() {
     local from_stdin="false"
     local update_args=()
     local attach_paths=()
-    local description="" description_set="false" state=""
+    local description="" description_set="false" state="" project="" project_index=""
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -693,6 +699,7 @@ bulk_update_issues() {
             # These are update options - collect with their values
             # (--attach re-uploads per issue: Linear assets are issue-agnostic
             # but each issue gets its own embed/attachment)
+            [[ "$1" != --project ]] || project_index=$((${#update_args[@]} + 1)) project="$2"
             update_args+=("$1" "$2")
             [[ "$1" != --state && "$1" != --status ]] || state="$2"
             [[ "$1" != --attach ]] || attach_paths+=("$2")
@@ -705,6 +712,7 @@ bulk_update_issues() {
         --state=* | --status=* | --labels=* | --label=* | --title=* | --description=* | --project=* | --parent=* | --milestone=* | --priority=* | --estimate=* | --assignee=* | --cycle=* | --sort-order=* | --attach=*)
             # Support --key=value syntax (AI agents often use this)
             local _key="${1%%=*}" _val="${1#*=}"
+            [[ "$_key" != --project ]] || project_index=$((${#update_args[@]} + 1)) project="$_val"
             update_args+=("$_key" "$_val")
             [[ "$_key" != --state && "$_key" != --status ]] || state="$_val"
             [[ "$_key" != --attach ]] || attach_paths+=("$_val")
@@ -754,7 +762,27 @@ bulk_update_issues() {
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
     [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1
+    local project_map=""
+    if [ -n "$project_index" ]; then
+        project_map=$(linear_project_map) || return 1
+        linear_map_preflight "$project_map" "$project" update || return 1
+    fi
     linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
+
+    # One live map read for every issue: each update_issue below receives the
+    # project's id, which LINEAR_MAP_PASSED lets through, so a refusal here
+    # writes nothing and the batch costs one read. The guard above kept every
+    # issue in LINEAR_TEAM; with none set the read spans the workspace.
+    if [ -n "$project_map" ]; then
+        local map_team_id="" map_project_id
+        if [ -n "$DEFAULT_TEAM" ]; then
+            linear_own_team || return 1
+            map_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
+        fi
+        map_project_id=$(linear_map_live "$project_map" "$project" "$map_team_id") || return 1
+        LINEAR_MAP_PASSED+="$map_project_id "
+        update_args[project_index]="$map_project_id"
+    fi
 
     # A later refusal must not leave earlier issues Done or assets uploaded.
     if [ -n "$state" ]; then
@@ -1074,6 +1102,70 @@ require_agent_routing_label() {
     return 0
 }
 
+# Project map guard
+# -----------------------------------------------------------------------------
+# Under a declared project map (project-management references/project-map.md),
+# an issue write places its issue only in a map project, and a create names
+# one. This script holds the rule because Linear cannot: an issue may join any
+# project its team can reach, and no team setting narrows which
+# (https://linear.app/docs/teams). With no map both checks pass and send no
+# request.
+
+# Map project ids this invocation's live check has let through, each followed
+# by a space. bulk-update checks its --project once and hands each update_issue
+# subshell the id, which then passes without a second read.
+LINEAR_MAP_PASSED=" "
+
+# Refuse, before any request, a placement the map's text rules out: a create
+# with no project, and a project name the map does not list. A UUID waits for
+# the live check.
+# Usage: linear_map_preflight MAP REF ACTION || return 1
+linear_map_preflight() {
+    local map="$1" ref="$2" action="$3" legal
+    [[ -n "$map" ]] || return 0
+    legal=$(jq -c '[.projects[].name]' <<<"$map") || return 1
+    if [[ -z "$ref" ]]; then
+        [[ "$action" == create ]] || return 0
+        linear_project_message project-missing "" "$legal" >&2
+        return 1
+    fi
+    [[ ! "$ref" =~ $LINEAR_UUID_PATTERN ]] || return 0
+    if ! jq -e --arg ref "$ref" 'any(.[]; . == $ref)' <<<"$legal" >/dev/null; then
+        linear_project_message off-map "$ref" "$legal" >&2
+        return 1
+    fi
+}
+
+# Print the Linear id of the map project REF names, read live within TEAM_ID
+# (empty reads the workspace), or refuse: a map name with no live project or
+# with more than one, and a UUID that is no map project's.
+# Usage: project_id=$(linear_map_live MAP REF TEAM_ID) || return 1
+linear_map_live() {
+    local map="$1" ref="$2" team_id="$3" projects entry legal
+    if [[ "$ref" =~ $LINEAR_UUID_PATTERN && "$LINEAR_MAP_PASSED" == *" $ref "* ]]; then
+        printf '%s\n' "$ref"
+        return 0
+    fi
+    projects=$(linear_map_projects "$map" "$team_id") || return 1
+    entry=$(jq -c --arg ref "$ref" 'first(.[] | select(.name == $ref or .id == $ref)) // empty' <<<"$projects") || return 1
+    if [[ -z "$entry" ]]; then
+        legal=$(jq -c '[.projects[].name]' <<<"$map") || return 1
+        linear_project_message off-map "$ref" "$legal" >&2
+        return 1
+    fi
+    case "$(jq -r '.live' <<<"$entry")" in
+    1) jq -r '.id' <<<"$entry" ;;
+    0)
+        linear_project_message declared-missing "$(jq -r '.name' <<<"$entry")" >&2
+        return 1
+        ;;
+    *)
+        linear_project_message ambiguous "$(jq -r '.name' <<<"$entry")" >&2
+        return 1
+        ;;
+    esac
+}
+
 # Create pending non-image attachments on an issue that already exists.
 # Entries are "assetUrl<TAB>title" strings from the upload loop. A failure
 # here is a partial write: the issue mutation succeeded but an attachment is
@@ -1303,6 +1395,9 @@ create_issue() {
         declared=$(linear_declared_labels) || return 1
         linear_require_declared_labels "$labels" || return 1
     fi
+    local project_map
+    project_map=$(linear_project_map) || return 1
+    linear_map_preflight "$project_map" "$project" create || return 1
     require_issue_reach "$description" "$priority" "$review_born" || return 1
     require_issue_header_shape "$description" || return 1
 
@@ -1327,7 +1422,9 @@ create_issue() {
     # the asset in Linear storage with no issue referencing it. The ids they
     # yield are what the input below carries.
     local project_id=""
-    if [ -n "$project" ]; then
+    if [ -n "$project_map" ]; then
+        project_id=$(linear_map_live "$project_map" "$project" "$team_id") || return 1
+    elif [ -n "$project" ]; then
         project_id=$(resolve_project_id "$project" "$team_id") || return 1
         if [ -z "$project_id" ]; then
             return 1
@@ -1831,6 +1928,13 @@ update_issue() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
+    # A move is judged against the map; an issue already off it stays where
+    # it is, as a label it already carries is kept, for `projects audit`.
+    local project_map=""
+    if [ -n "$project" ]; then
+        project_map=$(linear_project_map) || return 1
+        linear_map_preflight "$project_map" "$project" update || return 1
+    fi
     linear_guard_issue_team update "$issue_id" || return 1
 
     local input_parts=()
@@ -1879,7 +1983,11 @@ update_issue() {
             jq -cn --arg issue "$issue_id" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
             return 1
         fi
-        project_id=$(resolve_project_id "$project" "$team_id") || return 1
+        if [ -n "$project_map" ]; then
+            project_id=$(linear_map_live "$project_map" "$project" "$team_id") || return 1
+        else
+            project_id=$(resolve_project_id "$project" "$team_id") || return 1
+        fi
         if [ -z "$project_id" ]; then
             return 1
         fi

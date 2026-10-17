@@ -265,6 +265,7 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
 | `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
 | `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
+| `project_needed`, `map_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |
 
 GitHub routes carry their commands inline in § 7.2.
 
@@ -273,6 +274,8 @@ Order per issue: relations first, then priority and labels, then project/state, 
 ### 7.2 Execute Approved Creations and Cancellations
 
 Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. The route comes from `TRACKER`. Never mix routes within one audit.
+
+**Project map (Linear).** Before the first create, check every create's `--project` against the map ([project-map.md § Routing](../references/project-map.md#routing)): each passes the map project its row recommends. A `project_needed` row is held, not created, and reported in § 8; it resumes once the map lists the new project. A row whose project the map does not list halts the whole batch before any create, so a mixed batch is never half applied.
 
 **Linear route (TRACKER=linear)**
 
@@ -378,6 +381,8 @@ Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty 
 - Cancelled: [ISSUE_ID]: [REASON]
 - Declined: [TITLE]: [REASON]
 - Deferred cleanup: [candidate BLOCKER_ID for TARGET_ID: REASON, or stale reference ISSUE_ID: OLD PATTERN; not applied under auto]
+- Project needed: [ISSUE_ID or TITLE]: [NAME] ([KIND]): [REASON], held until the map lists it
+- Map finding: [KIND] [SUBJECT]
 
 **Degraded (github)**: [every obligation executed through a documented degradation, or omit this line]
 

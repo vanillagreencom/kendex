@@ -125,7 +125,7 @@ The same stated cap applies: past 200 issues the comparison set is partial, and 
 
 **Skip if** TRACKER=github — treat the repository as one scope.
 
-For each project from § 1.3, extract from name, description, and content: its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
+Read the project map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`, kept for § 3 and § 6.3. A map repository's project definitions are the map entries, each with its `kind`, `admits`, `ends_when` or `role`, and its `projects[].id` ([project-map.md § Declaration](../references/project-map.md#declaration)). A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
 
 ### 1.7 Collect Verification Evidence
 
@@ -169,7 +169,7 @@ Store each result as `VERIFICATION_CONTEXTS[ISSUE_KEY]` — the output fields an
 
 **Skip if** MODE = issues.
 
-Verify each issue matches the target project's definition from § 1.6 — wrong work type, wrong scope, or content contradicting the project's stated purpose all go to `wrong_project[]`. In team mode the target is the project named on the issue's own row; a row with project `""` gets a `wrong_project[]` entry with `from: null` recommending the project its scope fits, or an `analysis[]` note when nothing fits.
+In a map repository, map the § 1.6 audit's findings to output per [project-map.md § Audit](../references/project-map.md#audit), with each `to` from [§ Routing](../references/project-map.md#routing). With no map, verify each issue matches the target project's definition from § 1.6 — wrong work type, wrong scope, or content contradicting the project's stated purpose all go to `wrong_project[]`. In team mode the target is the project named on the issue's own row; a row with project `""` gets a `wrong_project[]` entry with `from: null` recommending the project its scope fits, or an `analysis[]` note when nothing fits.
 
 Then trace what depends on this project's output: list what it modifies, find which projects build on or test those modifications, and record any missing project relation in `project_dependency_issues[]` as `{from_project, to_project, current_relation, should_be, reason}`. Project relations come from this scope analysis only, never bottom-up from individual issue relations.
 
@@ -263,7 +263,7 @@ With `DECISION_REF` present, also detect issues the decision made unnecessary by
 
 ### 6.3 Project Fit
 
-Compare each input issue against every project definition. A scope matching another project better, or a child sitting in a different project from its parent, goes to `wrong_project[]`. A dependency on work in another project is recorded as a relation, not a move. The current assignment is not evidence. A team-mode row with project `""` carries no assignment to weigh — recommend the project its scope fits.
+Compare each input issue against every project definition. A scope matching another project better, or a child sitting in a different project from its parent, goes to `wrong_project[]`. A dependency on work in another project is recorded as a relation, not a move. The current assignment is not evidence. In a map repository the project an item belongs in is the one [project-map.md § Routing](../references/project-map.md#routing) names, and an item it routes to none is a `project_needed[]` entry. With no map, a team-mode row with project `""` carries no assignment to weigh — recommend the project its scope fits.
 
 ---
 
@@ -335,7 +335,7 @@ Classify each component as implemented (exists, functions present, no major TODO
 
 **A gap is still an issue, so it still clears the creation bar.** Critical (blocks 2+ existing issues) becomes a P1 implementation issue; required (architecture-specified, unblocked) a P2; optional or future work needing investigation becomes a research issue. A gap that nothing depends on and no user would notice is declined with one line, not filed. Record `reasoning` (2-4 sentences), `evidence`, `blocked_issues[]`, `project_placement`, and `recommended_issue` with its full `labels[]`.
 
-Recommend a new project in `project_recommendations[]` only when 3+ related gaps form a subsystem larger than 8 points with no existing fit; recommend reopening a completed project only when a gap matches its scope and blocks active work or leaves its deliverables incomplete.
+Recommend a new project in `project_recommendations[]` for architecture gaps only when 3+ related gaps form a subsystem larger than 8 points with no existing fit (an item that fits no map project is `project_needed`, § 6.3); recommend reopening a completed project only when a gap matches its scope and blocks active work or leaves its deliverables incomplete.
 
 ---
 
@@ -426,7 +426,7 @@ One filing: the creation bar, a title-level duplicate check, the label set and t
 
 1. **Input.** Read the file as § 1.1 reads `issues` mode. It holds exactly one `items[]` entry and no `hierarchy_contract`; any other shape halts naming the item count, and the caller runs `--issues`.
 2. **Scope and labels.** § 1.1.1, then § 1.2.
-3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`. GitHub: § 1.3's degradation.
+3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`; in a map repository, the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing), with `project_needed` when it routes to none. GitHub: § 1.3's degradation.
 4. **Duplicates by title.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash

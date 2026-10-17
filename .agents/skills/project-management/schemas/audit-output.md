@@ -32,13 +32,14 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
   "summary": {"total_issues": 0, "created": 0, "closed": 0, "relations_to_add": 0, "relations_to_remove": 0,
               "priority_misalignment": 0, "agent_mismatch": 0, "label_cooccurrence": 0, "duplicates": 0,
               "obsolete": 0, "hierarchy_changes": 0, "wrong_project": 0, "combinations": 0,
-              "ready_to_schedule": 0, "declined": 0,
+              "ready_to_schedule": 0, "declined": 0, "project_needed": 0, "map_findings": 0,
               "architecture_gaps": {"critical": 0, "required": 0, "research": 0},
               "project_recommendations": {"new_projects": 0, "reopen_projects": 0}},
   "findings": {"project_dependency_issues": [], "add_relations": [], "remove_relations": [],
                "priority_misalignment": [], "agent_mismatch": [], "label_cooccurrence": [],
                "duplicates": [], "obsolete": [], "wrong_project": [], "hierarchy": [], "combine": [],
-               "ready_to_schedule": [], "architecture_gaps": [], "project_recommendations": [], "declined": []},
+               "ready_to_schedule": [], "architecture_gaps": [], "project_recommendations": [], "declined": [],
+               "project_needed": [], "map_findings": []},
   "analysis": ["markdown notes"]
 }
 ```
@@ -58,6 +59,10 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
 | `ready_to_schedule[]` | `id`, `title`, `cleared_blockers[]`, `reason` |
 | `declined[]` | `title`, `reason` — one line naming the creation-bar test it failed |
 | `project_dependency_issues[]` | `from_project`, `to_project`, `current_relation`, `should_be`, `reason` |
+| `project_needed[]` | `issue`\|`index`, `title`, `name`, `kind`, `initiative`, `ends_when`\|`role`, `reason` — the project an item needs when [project-map.md § Routing](../references/project-map.md#routing) routes it to none |
+| `map_findings[]` | A `projects audit` finding, as that command prints it, that maps to no other array ([project-map.md § Audit](../references/project-map.md#audit)) |
+
+In a map repository, `wrong_project[].to` is a map project and `to_id` its id from `projects audit`'s `projects[]`; a `from` of null is an item with no project.
 
 **`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled. A completed-blocker relation is satisfied history, never stale metadata (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations).
 
@@ -149,6 +154,8 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 | `supersede` | Cancel the existing issue, create a replacement |
 | `combine` | Absorb into an existing issue |
 | `cancel` | Cancel — obsolete |
+
+In a map repository a `create` whose item routes to no map project has `project.recommended: null` and a top-level `project_needed[]` row, in the PROJECT mode shape, keyed by its `index`; audit-issues holds that create.
 
 `approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval, and `reapprove: true` marks an entry changed since; a normalizer that drops one must drop both. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
 

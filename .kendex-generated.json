@@ -773,6 +773,7 @@
   ".agents/skills/project-management/SKILL.md",
   ".agents/skills/project-management/references/dependencies.md",
   ".agents/skills/project-management/references/labels.md",
+  ".agents/skills/project-management/references/project-map.md",
   ".agents/skills/project-management/schemas/audit-issues-input.md",
   ".agents/skills/project-management/schemas/audit-output.md",
   ".agents/skills/project-management/schemas/cycle-plan-output.md",

@@ -72,6 +72,28 @@ Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Sha
   }
 }
 ```
+
+### Project map
+
+Every kendex issue lives in one project below; the project-management skill's `references/project-map.md` states what each kind holds and the routing order. A create names one of these projects, or holds the item as `project_needed`.
+
+```json
+{
+  "initiatives": [],
+  "projects": [
+    {"name": "Package Settings", "kind": "deliverable", "ends_when": "A release ships the one documented package settings contract and package settings editing in the Customize UI.", "admits": "Work on the package settings contract: its resolvers, authoring template, template check and Customize UI editing."},
+    {"name": "Update Notice & Account", "kind": "deliverable", "ends_when": "A signed release ships the update notice on every install channel and the account surfaces this project keeps.", "admits": "Work on the app's update notice, self-update and account surfaces."},
+    {"name": "Windows", "kind": "deliverable", "ends_when": "A release installs and runs kendex on Windows with copy-mode delivery, skill roots and hooks working.", "admits": "Work whose completion makes kendex install and run on Windows."},
+    {"name": "t3code", "kind": "deliverable", "ends_when": "The orch overseer runs on the T3 Code host with its delivery position, state reader and release contract test.", "admits": "T3 Code overseer runtime work."},
+    {"name": "Review Gate & CI", "kind": "standing", "role": "area", "admits": "CI workflows under .github/, the review gate, the merge rail and merge queue, CI validation and the skills and tools that run them."},
+    {"name": "Agent Harness Integrations", "kind": "standing", "role": "area", "admits": "pi-extensions/, hooks/, MCP allowlists and the per-harness adapters."},
+    {"name": "CLI & Distribution", "kind": "standing", "role": "area", "admits": "The kendex CLI and engine under crates/: manifest, lock, settings, apply, refresh, verify, install and release publication."},
+    {"name": "Docs & Onboarding", "kind": "standing", "role": "area", "admits": "README, AGENTS.md, docs/ and the adoption guides for consuming repositories."},
+    {"name": "Skills & Agents Library", "kind": "standing", "role": "area", "admits": "Catalog skills and agents under skills/ and agents/ that no other area's rule names."},
+    {"name": "Tech Debt & Bugs", "kind": "standing", "role": "concern", "admits": "Cross-cutting cleanup and pre-existing defects no single area owns."}
+  ]
+}
+```
 <!-- kendex:project-instructions:end -->
 
 # Project Management
@@ -177,7 +199,7 @@ A Linear list read is workspace-wide unless it passes `--team`, so each path sta
 
 ## Hierarchy
 
-`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child must share a project; blocking relations may cross projects freely. See [references/dependencies.md](references/dependencies.md).
+`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child must share a project; blocking relations may cross projects freely. See [references/dependencies.md](references/dependencies.md). What an initiative, a project and a label each hold, the two project kinds, and which project an item goes in: [references/project-map.md](references/project-map.md).
 
 ## Contracts
 
@@ -185,7 +207,7 @@ A Linear list read is workspace-wide unless it passes `--team`, so each path sta
 |------|-------|
 | Schemas | [audit-issues-input](schemas/audit-issues-input.md), [audit-output](schemas/audit-output.md), [roadmap-plan-input](schemas/roadmap-plan-input.md), [roadmap-plan-output](schemas/roadmap-plan-output.md), [cycle-plan-output](schemas/cycle-plan-output.md) |
 | Templates | [issue-description-template](templates/issue-description-template.md), [parent-issue-template](templates/parent-issue-template.md), [initiative-project-template](templates/initiative-project-template.md) |
-| References | [labels](references/labels.md), [dependencies](references/dependencies.md) |
+| References | [labels](references/labels.md), [dependencies](references/dependencies.md), [project-map](references/project-map.md) |
 | Tracker CLI | Linear: `.agents/skills/linear/scripts/linear.sh`; GitHub: `gh` + `.agents/skills/github/scripts/github.sh` |
 
 ## Where each rule lives
@@ -195,6 +217,7 @@ A Linear list read is workspace-wide unless it passes `--team`, so each path sta
 | Issue body and field mapping | Package: [issue-description-template](templates/issue-description-template.md) and [parent-issue-template](templates/parent-issue-template.md) | The audit maps structured fields into its own body. Linear's [IssueCreateInput.templateId](https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts) lets supplied values override template values. A Linear copy would be a second body no create reads. audit-issues, orch's start-new, plan-issues and merge-pr, and linear's patterns/workflow-actions.md cite these templates. |
 | Reached by and Symptom lines | Tool: `linear.sh issues create`; meaning: § Disposition | The tool refuses missing values. The package says what each value names. audit-issues passes the template body and review-born flag. |
 | Required issue labels | Tool and project taxonomy: [labels](references/labels.md) | The tool checks the project's declared labels. The audit's label preflight builds the complete set. |
+| Project placement | Tool and project map: [project-map](references/project-map.md) | The tool refuses a project the map does not list, and `projects audit` reports every item outside it. tpm-audit routes, and audit-issues applies the moves. |
 | Initiative and project body | Package: [initiative-project-template](templates/initiative-project-template.md) | Linear documents [issue templates](https://linear.app/docs/issue-templates) and [project templates](https://linear.app/docs/project-templates). [InitiativeCreateInput](https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts) has no template id. roadmap-create uses this shared template. |
 | Initiative owner, lead team, labels, links and status updates; project lead, labels and links | Linear fields, set by the Linear CLI flags | Linear stores these values. roadmap-create sets the creation fields by flag. A Linear project template can prefill fields for a person in the app; the agent path needs no second template or consumer setup. Status updates use Linear's update fields when a workflow calls for them. |
 | GitHub issue and pull request templates | Repository: `.github/ISSUE_TEMPLATE` and `pull_request_template.md` | The repository owns its GitHub forms. This package ships none; kendex tracks work in Linear. |

@@ -35,6 +35,10 @@ Actions:
   list-updates     List project updates
   reorder          Analyze and reorder backlog projects
   set-sort-order   Set sortOrder for a specific project
+  audit            Read the team's open issues and projects against the
+                   repository's project map (project-management
+                   references/project-map.md) and list every finding;
+                   read-only. With no map it lists one map-absent finding.
 
 List Options:
   --state <name>        Filter by state (e.g., "started", "completed")
@@ -46,6 +50,9 @@ List Options:
 
 Get:
   projects.sh get <id-or-name>
+
+Audit Options:
+  --team <ref>          Team key or name (default: LINEAR_TEAM)
 
 Create Options:
   --name <text>         Project name (required)
@@ -108,6 +115,9 @@ Examples:
   # Reordering
   projects.sh reorder                           # Analyze and apply optimal order
   projects.sh reorder --dry-run                 # Preview changes only
+
+  # Project map
+  projects.sh audit --team KEN
   projects.sh set-sort-order <id> --after <id>  # Position project after another
 EOF
 }
@@ -1203,6 +1213,92 @@ set_sort_order() {
     normalize_mutation_response "$result" "projectUpdate" "project"
 }
 
+# Placement against the declared project map, read live: every open team
+# issue outside a map project, and every boundary and project-kind finding
+# the Audit section of project-management references/project-map.md lists.
+# Read-only; it reports and never moves an issue. Findings are data, so it
+# exits 0 with them; a read it cannot finish fails with no output.
+audit_projects() {
+    local team=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --team)
+            linear_require_team_value "$@" || return 1
+            team="$2"
+            shift 2
+            ;;
+        --) shift; break ;;
+        -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
+        *) break ;;
+        esac
+    done
+
+    linear_set_team_target "$team"
+    if [ -z "$LINEAR_TEAM_TARGET" ]; then
+        linear_project_message no-team "" >&2
+        return 1
+    fi
+    local map declared
+    map=$(linear_project_map) || return 1
+    if [ -z "$map" ]; then
+        jq -n --arg team "$LINEAR_TEAM_TARGET" --arg file "$LINEAR_TAXONOMY_FILE" \
+            '{team: $team, map: $file, projects: [], findings: [{kind: "map-absent", map: $file}]}'
+        return 0
+    fi
+    # The name collisions read the declared labels beside Linear's.
+    declared=$(linear_declared_labels) || return 1
+
+    local team_id variables projects issues labels missing
+    team_id=$(resolve_team_id "$LINEAR_TEAM_TARGET") || return 1
+    projects=$(linear_map_projects "$map" "$team_id") || return 1
+    missing=$(jq -r 'first(.[] | select(.live == 0 and .id == null) | .name) // empty' <<<"$projects") || return 1
+    if [ -n "$missing" ]; then
+        linear_project_message declared-missing "$missing" >&2
+        return 1
+    fi
+    missing=$(jq -r 'first(.[] | select(.live > 1) | .name) // empty' <<<"$projects") || return 1
+    if [ -n "$missing" ]; then
+        linear_project_message ambiguous "$missing" >&2
+        return 1
+    fi
+    variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}') || return 1
+    issues=$(graphql_pages 'query AuditMapIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \
+        "$variables" issues) || return 1
+    issues=$(jq -c '.issues.nodes' <<<"$issues") || return 1
+    labels=$(graphql_pages 'query AuditMapLabels($teamId: ID!, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { name } } }' \
+        "$variables" issueLabels) || return 1
+    labels=$(jq -c '[.issueLabels.nodes[].name]' <<<"$labels") || return 1
+
+    jq -s --arg team "$LINEAR_TEAM_TARGET" --arg file "$LINEAR_TAXONOMY_FILE" "$LINEAR_NAME_KEY_JQ"'
+        .[0] as $map | .[1] as $live | .[2] as $issues | .[3] as $labels | (.[4] // []) as $declared
+        | [$map.projects[] as $p | $live[] | select(.name == $p.name) | $p + {id, state, target_date}] as $projects
+        | [$projects[].id] as $ids
+        | ([$projects[] | {level: "project", name}] + [$map.initiatives[] | {level: "initiative", name}]) as $entries
+        | [$issues[] | .identifier as $issue | .project as $project
+            | if $project == null then {kind: "no-project", issue: $issue}
+              else (first($map.initiatives[] | select((.name | name_key) == ($project.name | name_key))) // null) as $initiative
+              | if $initiative != null then
+                  {kind: "initiative-holds-issue", issue: $issue, initiative: $initiative.name, project: $project.name}
+                elif any($ids[]; . == $project.id) | not then {kind: "outside-map", issue: $issue, project: $project.name}
+                elif $project.state == "completed" then {kind: "completed-project-item", issue: $issue, project: $project.name}
+                else empty end
+              end] as $items
+        | ([($labels + $declared) | unique[] as $label
+            | $entries[] | select((.name | name_key) == ($label | name_key))
+            | {kind: "name-collision", label: $label, map: ., declared: any($declared[]; . == $label)}]
+          | group_by([(.label | name_key), .map.level, .map.name])
+          | map(.[0] + {declared: any(.[]; .declared)})) as $collisions
+        | [$projects[]
+            | if .kind == "standing" then
+                (select(.state == "completed" or .state == "canceled") | {kind: "standing-closed", project: .name, state}),
+                (select(.target_date != null) | {kind: "standing-target-date", project: .name, target_date})
+              else select(has("ends_when") | not) | {kind: "deliverable-no-ends-when", project: .name} end] as $kinds
+        | {team: $team, map: $file,
+           projects: [$projects[] | {name, kind, id, state}],
+           findings: ($items + $collisions + $kinds | sort_by(.kind, (.issue // .project // .label)))}' \
+        <<<"$map"$'\n'"$projects"$'\n'"$issues"$'\n'"$labels"$'\n'"${declared:-null}"
+}
+
 # Main routing
 action="${1:-help}"
 shift || true
@@ -1275,6 +1371,9 @@ list-updates)
     ;;
 reorder)
     reorder_projects "$@"
+    ;;
+audit)
+    audit_projects "$@"
     ;;
 set-sort-order)
     if [ -z "${1:-}" ]; then
