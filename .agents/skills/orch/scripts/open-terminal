@@ -3082,6 +3082,9 @@ launch_finish() {
     # A lane has no person to assign when it activates its work item.
     run="export KENDEX_USER_EMAIL='' && $run"
     run="$(lane_launch_line "$run" "$HARNESS" "" "" custom)" || return 1
+    # A Pi lane on the Copilot pool hands its pane agents the key and proxy
+    # settings its login shell holds (lib/lane-launch.sh lane_pi_session_env).
+    [[ "$HARNESS" != pi || "$(lane_pick_pool pi "$LAUNCH_MODEL")" != copilot ]] || run="$(lane_pi_session_env) && $run"
     # The host's shell runs on whatever environment its provider hands it,
     # which can carry the launching session's identity. This text is POSIX
     # shell (a hosted relaunch reads `$?`), so `unset` clears the list here.

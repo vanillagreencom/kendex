@@ -1647,6 +1647,35 @@ lane_copilot_allows_all() { # CMD [HARNESS]
   return 1
 }
 
+# The POSIX shell step a hosted Pi lane on the Copilot pool runs before its
+# harness, inside the provider's login shell, which alone holds what the lane
+# needs to call github-copilot: the provider puts the key and the egress proxy
+# settings in the login profile, and the host's tmux server, started from a
+# shell that never read it, holds neither. pi-agents-tmux starts each pane
+# agent with `tmux split-window`, and a new pane takes its environment from
+# the tmux server and session, never from the process that asked for it, so
+# without this step every pane agent stops on "No API key found for
+# github-copilot" or reaches GitHub with the key unreplaced. The step copies,
+# from its own environment into the session holding its pane and never into
+# the server's global one:
+#   - each variable the github-copilot provider in the lane's Pi models.json
+#     names in its apiKey or header values, `$NAME` or `${NAME}` (the
+#     interpolation Pi's models documentation states); an absent models.json names
+#     none, as Pi then reads none;
+#   - the proxy settings Node's fetch reads on that host: HTTPS_PROXY,
+#     HTTP_PROXY and NO_PROXY under NODE_USE_ENV_PROXY, with the proxy's CA in
+#     NODE_EXTRA_CA_CERTS and SSL_CERT_FILE.
+# A name its environment does not hold is skipped. A shell outside tmux has no
+# session for pane agents to start in, and copies nothing. A models.json jq
+# cannot read, or a copy tmux refuses, ends the shell before the harness
+# starts, so the launch reports a lane that did not start rather than one
+# whose pane agents fail later. No value is printed.
+lane_pi_session_env() {
+  cat <<'STEP'
+if [ -n "${TMUX_PANE:-}" ]; then lane_models="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json" lane_keys=; if [ -e "$lane_models" ]; then lane_keys=$(jq -r '.providers["github-copilot"] // {} | [.apiKey, (.headers // {} | .[])][] | strings | scan("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)")[] | strings' "$lane_models" 2>/dev/null) || { printf '%s\n' "lane-session-env: models-unreadable path=$lane_models" >&2; jq empty "$lane_models" >&2; exit 1; }; fi; for lane_name in $lane_keys HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_EXTRA_CA_CERTS SSL_CERT_FILE NODE_USE_ENV_PROXY; do if lane_value=$(printenv "$lane_name"); then tmux set-environment -t "$TMUX_PANE" "$lane_name" "$lane_value" || { printf '%s\n' "lane-session-env: set-failed name=$lane_name" >&2; exit 1; }; fi; done; fi
+STEP
+}
+
 # CODEX_HOME from the deepest codex process under pane pid $1, even when unset.
 # Other lane variables retain the deepest nonempty value. Breadth first, so no
 # process found later is shallower than one found earlier.

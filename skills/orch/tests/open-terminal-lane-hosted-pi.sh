@@ -20,6 +20,11 @@ PI_RESUME="0) exec pi '--exclude-tools' 'question' '--model' 'github-copilot/opu
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi KEN-48 ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start KEN-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 resume=1 fresh=1" \
   "a hosted pi relaunch selects its host session or the start brief, keeping its lane and continuation line"
+# A Pi lane on the Copilot pool hands its pane agents the key and proxy
+# settings (open-terminal-pi-session-env.sh runs the step); the Anthropic Pi
+# launch below does not.
+assert_eq "session_env=$(grep -cF 'tmux set-environment -t "$TMUX_PANE"' <<<"$PI_REMOTE" || true)" 'session_env=1' \
+  'a hosted Pi launch on the Copilot pool runs the session environment step'
 PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-native/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-native/orch"
@@ -71,6 +76,8 @@ api_launch_room() {
 }
 api_hosted_rows 150
 api_launch_room
+assert_eq "session_env=$(typed 'tmux set-environment')" 'session_env=0' \
+  'a hosted Pi launch on an Anthropic model hands no session environment'
 
 # The preference walk spends the hosted API grant before the local Claude
 # account. A restricted source posture must reach the fallback before flags
