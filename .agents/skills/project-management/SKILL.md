@@ -64,7 +64,7 @@ Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Sha
   "required_categories_for_new_issues": ["agent", "surface"],
   "categories": {
     "agent": {"required": true, "exclusive": true, "match": {"prefix": "agent:"}, "forbid_group_labels": true},
-    "surface": {"required": true, "exclusive": true, "labels": ["app", "cli", "skills", "harness", "ci-infra", "docs", "releases"]},
+    "surface": {"required": true, "exclusive": true, "labels": ["app", "cli", "skills", "harness", "ci-infra", "documentation", "releases"]},
     "stack": {"required": false, "exclusive": false, "labels": ["rust-core", "iced", "test", "security"]},
     "platform": {"required": false, "exclusive": true, "labels": ["macos", "windows", "linux"]},
     "classification": {"required": false, "exclusive": false, "labels": ["bug", "feature", "refactor", "design", "chore", "owner-gated", "1.0"]},

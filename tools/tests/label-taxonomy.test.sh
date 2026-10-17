@@ -31,7 +31,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd)"
 MANIFEST="$REPO_ROOT/kendex-local.toml"
 RENDER="$REPO_ROOT/.agents/skills/project-management/SKILL.md"
 
-SURFACES='["app","cli","skills","harness","ci-infra","docs","releases"]'
+SURFACES='["app","cli","skills","harness","ci-infra","documentation","releases"]'
 
 PASS=0
 FAIL=0
