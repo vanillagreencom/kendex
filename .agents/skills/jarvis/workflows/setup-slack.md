@@ -4,7 +4,7 @@ Run when the user asks to connect Slack.
 
 Read [Secret transfer](../references/accounts-and-secrets.md#secret-transfer), [Message types](../references/communication.md#message-types) and [Authority](../references/decisions.md#authority) before acting.
 
-Use the [home layout](../README.md#home-layout) for home paths.
+Use the [home layout](../references/home-layout.md) for home paths.
 
 ## Steps
 

@@ -45,7 +45,7 @@ Your assistant reads the Jarvis skill when you delegate a task. It follows the r
 
 Use the [home layout](#home-layout) for your files. Name your decision owners, permitted work, reporting cadence and quiet hours in your standing instructions.
 
-For a skill you write, create a `my-task/SKILL.md` under the own-skills path in the [home layout](#home-layout). Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Run the command in the own-skills row below from your assistant home. Select the harnesses you use with `--harness`.
+For a skill you write, create a `my-task/SKILL.md` under the own-skills path in the [home layout](#home-layout). Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Run `kendex add ./skills/own/my-task --skill my-task --harness codex --yes` from your assistant home. Select the harnesses you use with `--harness`.
 
 Follow [Memory](references/memory.md) for personal facts and preferences. Put reading routes for those notes in your standing instructions. Follow the [session workflow](workflows/session.md) for unfinished work. Store secrets in a password manager rather than memory notes.
 
@@ -55,24 +55,7 @@ Use a private Git repository for your assistant home. Committed files travel wit
 
 Install the `jarvis` bundle in this home with `kendex add --bundle jarvis --harness claude,codex,copilot,pi --yes`. The bundle installs Jarvis and the hooks that confirm the native session identity.
 
-Before the first Jarvis Start with Copilot CLI, open this home in native Copilot with the selected account. Approve its folder-trust request once. Jarvis does not approve native security requests. Without this setup, Start ends the native session and reports Blocked with reason `trust-required`, naming the dialog's question in its detail.
-
-| Path | Git status | Reason |
-|---|---|---|
-| `AGENTS.md` | Committed | Your standing instructions travel with you. |
-| `skills/own/` | Committed | You are the source; `kendex add ./skills/own/my-task --skill my-task --harness codex --yes` makes your skill available to the harness. |
-| `memory/` | Committed | Durable facts and rulings travel with you under [Memory](references/memory.md). |
-| `state/handoff.md` | Committed | The session model writes the current handoff under [Handoff](references/long-session.md#handoff). |
-| `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](references/long-session.md#handoff). |
-| Other files under `state/` | Committed | A consumer's file and shell tools write its work here. An app-managed home limits model file and shell writes to this folder. |
-| `${XDG_STATE_HOME:-$HOME/.local/state}/kendex/jarvis/<canonical-home-key>/jarvis-session.json` | Outside the home | The session runtime and the native SessionStart hook write the local controller record. The runtime writes no start-critical record under `state/`. |
-| `.agents/skills/` and each harness's skill and agent directories, such as `.claude/skills/`, `.claude/agents/` and `.codex/agents/` | Committed | kendex renders or links installed skills and agents here so a clone has them. In a home where kendex did not install Jarvis, an assistant app such as VGS can copy a kendex-rendered package to these same paths. |
-| `tmp/` | Local | Scratch files stay on this machine under [Scratch files](references/computer-use.md#scratch-files). |
-| `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
-
-`kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. These lines keep scratch and secrets out of Git. You do not need to add them yourself.
-
-The [session command](workflows/session.md#session-command) keeps one tmux controller per canonical home. Its record stays across logins and restarts. Each home uses a separate tmux socket. Status names that socket and the owned session, window and pane.
+Follow the [home layout reference](references/home-layout.md) for file paths, Git status, Copilot folder trust and the session record.
 
 ## Control-host events
 

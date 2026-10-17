@@ -4,7 +4,7 @@ Follow this workflow when starting a continuing session, reconciling open work o
 
 ## Session command
 
-- Before the first Start with Copilot CLI, open the selected home in native Copilot with the selected account and approve folder trust once. Follow the prerequisite in [Home layout](../README.md#home-layout).
+- Before the first Start with Copilot CLI, follow [Copilot folder trust](../references/home-layout.md#copilot-folder-trust).
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`. Use the Jarvis package installed in HOME. Supply the account directory for the selected app. Both modes follow [Start](#start).
 - A consumer can append `--brief-file PATH` with its private instructions on one printable line. The session command delivers those instructions with Start after the harness confirms its native identity. This route starts no repository overseer workflow.
 - Read `.agents/skills/jarvis/scripts/jarvis-session status --home HOME` for the recorded session. A `starting` answer means a fact Start waits for is still unconfirmed: the native identity, on Copilot CLI and Codex the end of the kickoff turn the launch submits before the brief, or the session's taking of the Start brief at its first tool call or, on Claude Code, its turn end. Status starts and stops nothing.
@@ -12,7 +12,7 @@ Follow this workflow when starting a continuing session, reconciling open work o
 
 ## Start
 
-- Read `state/handoff.md` first, at the path in the [home layout](../README.md#home-layout). If it is absent and the user has an earlier handoff elsewhere, read that file. Have the user move it once to the current path. Read the [Handoff contract](../references/long-session.md#handoff) before using it. Read its State, Sub-agents and Instructions in force sections. Compare its state time with the clock and the user's staleness bound. Refuse a handoff outside that bound. Ask the user to set the bound if none exists.
+- Read `state/handoff.md` first, at the path in the [home layout](../references/home-layout.md). If it is absent and the user has an earlier handoff elsewhere, read that file. Have the user move it once to the current path. Read the [Handoff contract](../references/long-session.md#handoff) before using it. Read its State, Sub-agents and Instructions in force sections. Compare its state time with the clock and the user's staleness bound. Refuse a handoff outside that bound. Ask the user to set the bound if none exists.
 - Load only the safety core at start: the role in [persona.md](../persona.md), [Authority](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records). Use already loaded text rather than reading it again. Keep one assistant in control at a time.
 - Check current holds and temporary instructions in the compact handoff sections above. Read the current owner request with its delivered context. Apply its decision boundary through Authority before choosing work.
 - Check the event registration state in the handoff's State section.
@@ -61,7 +61,7 @@ A consumer's own rule files keep their content. Its start instructions load only
 
 - After the initial reads and first decision, read every section of the predecessor handoff and its progress log. Include records in Owed and open, Context, Agent contact, Verify and Open requests when those sections exist.
 - For every record outside session state, write it to its home under [Homes](../references/long-session.md#homes), or confirm that its home already retains it. Preserve its contents, durable id and recorded time. Read each destination to confirm retention before replacing the handoff or clearing the progress log. A failed destination read or write leaves the predecessor handoff and progress log untouched and stops replacement.
-- Archive the predecessor's handoff and progress log under `state/archive/` in the [home layout](../README.md#home-layout) before replacing them. Use the retention rule in [accounts-and-secrets.md:Retention](../references/accounts-and-secrets.md#retention). An archive failure stops replacement.
+- Archive the predecessor's handoff and progress log under `state/archive/` in the [home layout](../references/home-layout.md) before replacing them. Use the retention rule in [accounts-and-secrets.md:Retention](../references/accounts-and-secrets.md#retention). An archive failure stops replacement.
 
 ## Succession
 

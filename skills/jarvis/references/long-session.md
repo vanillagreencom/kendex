@@ -22,7 +22,7 @@ Each record kind has one home. Write a record to its home, never to the handoff.
 
 Before normal succession, wait for every attached sub-agent this session launched to return in the current turn. Use the harness wait or result tool and collect each result. Record a failed child as failed. Launch an attached child only when the context room holds its return. Otherwise use the orch job runner described in `waiter-launch.md`, Launch, or a separate session. Record its run directory in the handoff. If the session is dead, walled, or cannot read its child state, the emergency handoff names each known unfinished child, its known output location, and any unknown state or location. An output location can be a file path or a harness reply. The successor reads existing child output before repeating the task.
 
-The current handoff is `state/handoff.md` in the [home layout](../README.md#home-layout). Read this contract when writing, reading or checking a handoff or lane result during the [session workflow](../workflows/session.md). Each item has a durable id and a recorded time. The current handoff has these four sections.
+The current handoff is `state/handoff.md` in the [home layout](home-layout.md). Read this contract when writing, reading or checking a handoff or lane result during the [session workflow](../workflows/session.md). Each item has a durable id and a recorded time. The current handoff has these four sections.
 
 | Section | Required content |
 |---|---|

@@ -102,7 +102,7 @@ tags: [assistant, productivity]
 
 ## Setup
 
-Use the [home layout](README.md#home-layout) for the assistant home.
+Use the [home layout](references/home-layout.md) for the assistant home.
 
 kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`.
 
