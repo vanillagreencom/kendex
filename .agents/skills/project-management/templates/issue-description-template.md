@@ -48,7 +48,7 @@
 | `[DONE]` / `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | Summarize completion in one sentence; list its observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives, only when it needs a deployment or installation, live use over time, or a person's screen or hands |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
-| `--project` (create flag, not body text) | `project.recommended` in the audit output, or the caller | The map project [project-map.md § Routing](../references/project-map.md#routing) names for the item's Location, or none: the item is `project_needed` and is not created |
+| `--project` (create flag, not body text) | `project.recommended` in the audit output, or the caller | Under a declared project map, the map project [project-map.md § Routing](../references/project-map.md#routing) names for the item's Location, or none: the item is `project_needed` and is not created |
 | `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Filing record; omit the line when absent. Decision references use decider's `schemas/decision-format.md` § Cross-references |
 
 ## Rules
@@ -57,6 +57,6 @@
 2. Write the body to a file with the harness file-write tool and pass `--description-file` (Linear) or `--body-file` (GitHub). Never an inline string, heredoc, or command substitution. The same flags work on update.
 3. Before creating, check the governing decision with `.agents/skills/decider/scripts/decisions search "[KEYWORDS]"` and reference it in Filing record. A description must not contradict an active decision.
 4. Every create passes the validated final `labels[]` from the label preflight.
-5. Every create passes `--project` with the map project for the item's Location, per [project-map.md § Routing](../references/project-map.md#routing); an item that fits none is held as `project_needed`.
+5. Under a declared project map, every create passes `--project` with the map project for the item's Location, per [project-map.md § Routing](../references/project-map.md#routing); an item that fits none is held as `project_needed`.
 6. The opening outcome and done sentences explain the issue without the filing record. Keep the section order shown above. A body over 1500 characters has `##` headings.
 7. Keep each `**Key**:` header at line start. Each prose header value is one sentence with links. Keep Expected delta in the numeric form its reader accepts. A run, log or pull request is its URL and the one fact it shows. Move longer evidence to short Evidence list items. Omit Evidence when empty. Paste no log lines. Mailbox and Slack ids appear only in Source.

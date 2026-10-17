@@ -125,7 +125,7 @@ The same stated cap applies: past 200 issues the comparison set is partial, and 
 
 **Skip if** TRACKER=github — treat the repository as one scope.
 
-Read the project map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`, kept for § 3 and § 6.3. A map repository's project definitions are the map entries, each with its `kind`, `admits`, `ends_when` or `role`, and its `projects[].id` ([project-map.md § Declaration](../references/project-map.md#declaration)). A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
+Read the project map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`, kept for § 3 and § 6.3. A map repository's project definitions are the entries of the `### Project map` block rendered in this skill's project instructions, each with its `kind`, `admits`, and `ends_when` or `role` ([project-map.md § Declaration](../references/project-map.md#declaration)); each entry's Linear id is the audit's `projects[].id`. A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
 
 ### 1.7 Collect Verification Evidence
 
@@ -289,7 +289,7 @@ Items outside `child_indexes` — `origin: "discovered"` refactors, for instance
 
 Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); two or more input issues on the same target, or a large issue with implicit sub-tasks (parent candidate); and two or more issues sharing an agent label, project, and work type, or applying one refactor pattern across sibling components (bundle candidate). Bundle on pattern, not size.
 
-Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation.
+Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says which.
 
 ### 7.2 Evaluate Coherence
 

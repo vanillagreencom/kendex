@@ -769,19 +769,35 @@ bulk_update_issues() {
     fi
     linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
 
-    # One live map read for every issue: each update_issue below receives the
-    # project's id, which LINEAR_MAP_PASSED lets through, so a refusal here
-    # writes nothing and the batch costs one read. The guard above kept every
-    # issue in LINEAR_TEAM; with none set the read spans the workspace.
+    # The live map check for every issue, before any write, so a refusal
+    # writes nothing. Each issue is judged in its own team, as update_issue
+    # judges it: the guard above kept every issue in LINEAR_TEAM, so one read
+    # serves the batch; with none set each issue's team is read, never the
+    # workspace, where another team's project of the name would pass. Each
+    # update_issue below receives its issue's project id, which
+    # LINEAR_MAP_PASSED lets through without a second read.
+    local -A issue_project_ids=()
     if [ -n "$project_map" ]; then
-        local map_team_id="" map_project_id
-        if [ -n "$DEFAULT_TEAM" ]; then
-            linear_own_team || return 1
-            map_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
-        fi
-        map_project_id=$(linear_map_live "$project_map" "$project" "$map_team_id") || return 1
-        LINEAR_MAP_PASSED+="$map_project_id "
-        update_args[project_index]="$map_project_id"
+        local -A team_project_ids=()
+        local map_team_id map_project_id issue_result
+        for id in "${identifiers[@]}"; do
+            if [ -n "$DEFAULT_TEAM" ]; then
+                linear_own_team || return 1
+                map_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
+            else
+                issue_result=$(get_issue "$id" --format=raw) || return 1
+                if ! map_team_id=$(jq -er '.issue.team.id | strings | select(length > 0)' <<<"$issue_result"); then
+                    jq -cn --arg issue "$id" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
+                    return 1
+                fi
+            fi
+            if [[ -z "${team_project_ids[$map_team_id]:-}" ]]; then
+                map_project_id=$(linear_map_live "$project_map" "$project" "$map_team_id") || return 1
+                team_project_ids[$map_team_id]="$map_project_id"
+                LINEAR_MAP_PASSED+="$map_project_id "
+            fi
+            issue_project_ids[$id]="${team_project_ids[$map_team_id]}"
+        done
     fi
 
     # A later refusal must not leave earlier issues Done or assets uploaded.
@@ -817,6 +833,7 @@ bulk_update_issues() {
     for id in "${identifiers[@]}"; do
         local result
         local update_rc=0
+        [ -z "$project_map" ] || update_args[project_index]="${issue_project_ids[$id]}"
         : >"$stderr_file"
         if result=$(update_issue "$id" "${update_args[@]}" 2>"$stderr_file"); then
             update_rc=0

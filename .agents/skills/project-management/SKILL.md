@@ -199,7 +199,7 @@ A Linear list read is workspace-wide unless it passes `--team`, so each path sta
 
 ## Hierarchy
 
-`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child must share a project; blocking relations may cross projects freely. See [references/dependencies.md](references/dependencies.md). What an initiative, a project and a label each hold, the two project kinds, and which project an item goes in: [references/project-map.md](references/project-map.md).
+`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child must share a project; under a project map, the parent's route sets it ([references/project-map.md § Routing](references/project-map.md#routing)). Blocking relations may cross projects freely. See [references/dependencies.md](references/dependencies.md). What an initiative, a project and a label each hold, the two project kinds, and which project an item goes in: [references/project-map.md](references/project-map.md).
 
 ## Contracts
 

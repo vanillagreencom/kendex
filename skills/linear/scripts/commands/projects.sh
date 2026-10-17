@@ -115,10 +115,10 @@ Examples:
   # Reordering
   projects.sh reorder                           # Analyze and apply optimal order
   projects.sh reorder --dry-run                 # Preview changes only
+  projects.sh set-sort-order <id> --after <id>  # Position project after another
 
   # Project map
   projects.sh audit --team KEN
-  projects.sh set-sort-order <id> --after <id>  # Position project after another
 EOF
 }
 case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
@@ -1251,6 +1251,9 @@ audit_projects() {
     local team_id variables projects issues labels missing
     team_id=$(resolve_team_id "$LINEAR_TEAM_TARGET") || return 1
     projects=$(linear_map_projects "$map" "$team_id") || return 1
+    # A map project Linear lacks refuses the audit, as it refuses a write. One
+    # Linear holds only as canceled has an id, and the findings below report it
+    # and each open item in it.
     missing=$(jq -r 'first(.[] | select(.live == 0 and .id == null) | .name) // empty' <<<"$projects") || return 1
     if [ -n "$missing" ]; then
         linear_project_message declared-missing "$missing" >&2
@@ -1280,7 +1283,8 @@ audit_projects() {
               | if $initiative != null then
                   {kind: "initiative-holds-issue", issue: $issue, initiative: $initiative.name, project: $project.name}
                 elif any($ids[]; . == $project.id) | not then {kind: "outside-map", issue: $issue, project: $project.name}
-                elif $project.state == "completed" then {kind: "completed-project-item", issue: $issue, project: $project.name}
+                elif $project.state | IN("completed", "canceled") then
+                  {kind: "closed-project-item", issue: $issue, project: $project.name, state: $project.state}
                 else empty end
               end] as $items
         | ([($labels + $declared) | unique[] as $label
@@ -1292,7 +1296,10 @@ audit_projects() {
             | if .kind == "standing" then
                 (select(.state == "completed" or .state == "canceled") | {kind: "standing-closed", project: .name, state}),
                 (select(.target_date != null) | {kind: "standing-target-date", project: .name, target_date})
-              else select(has("ends_when") | not) | {kind: "deliverable-no-ends-when", project: .name} end] as $kinds
+              else
+                (select(.state == "canceled") | {kind: "deliverable-canceled", project: .name}),
+                (select(has("ends_when") | not) | {kind: "deliverable-no-ends-when", project: .name})
+              end] as $kinds
         | {team: $team, map: $file,
            projects: [$projects[] | {name, kind, id, state}],
            findings: ($items + $collisions + $kinds | sort_by(.kind, (.issue // .project // .label)))}' \

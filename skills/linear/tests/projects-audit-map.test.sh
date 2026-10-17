@@ -2,7 +2,8 @@
 # bash-runtime: 4
 # `projects audit` against recorded Linear replies: each project map finding
 # the Audit section of project-management references/project-map.md lists,
-# one planted defect per row in a copy of a clean team that yields none.
+# one planted defect per row in a copy of a clean team that yields none, and
+# its refusal of a map project Linear lacks or has twice live.
 
 set -euo pipefail
 
@@ -118,25 +119,26 @@ audit() {
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
 }
 
-# Each row plants one defect and names the one finding it yields; `^`
-# separates the fields, since a plant is a jq program.
-while IFS='^' read -r name plant finding; do
+# Each row plants one defect and names the findings it yields, in the
+# audit's order; `^` separates the fields, since a plant is a jq program.
+while IFS='^' read -r name plant findings; do
   run_status rc audit "$name" "$plant"
   assert_eq "$name: succeeds" "$rc" 0
-  assert "$name: yields its one finding" jq -e --argjson want "$finding" '.findings == [$want]' "$TMP_ROOT/$name.out"
+  assert "$name: yields its findings" jq -e --argjson want "$findings" '.findings == $want' "$TMP_ROOT/$name.out"
 done <<ROWS
-outside-map^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Off Map"}]^{"kind": "outside-map", "issue": "KEN-9", "project": "Fixture Off Map"}
-no-project^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: null}]^{"kind": "no-project", "issue": "KEN-9"}
-initiative-holds-issue^.projects += [{id: "proj-initiative", name: "Fixture Initiative", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Initiative"}]^{"kind": "initiative-holds-issue", "issue": "KEN-9", "initiative": "Fixture Initiative", "project": "Fixture Initiative"}
-label-like-project^.labels += [{name: "Fixture_Area", team: null}]^{"kind": "name-collision", "label": "Fixture_Area", "map": {"level": "project", "name": "Fixture Area"}, "declared": false}
-project-like-label^.map.projects += [{name: "Bug", kind: "standing", role: "concern", admits: "Fixture defects."}] | .projects += [{id: "proj-bug", name: "Bug", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .labels += [{name: "BUG", team: {id: "team-kendex"}}]^{"kind": "name-collision", "label": "BUG", "map": {"level": "project", "name": "Bug"}, "declared": true}
-initiative-like-label^.taxonomy.categories.surface.labels += ["fixture initiative"]^{"kind": "name-collision", "label": "fixture initiative", "map": {"level": "initiative", "name": "Fixture Initiative"}, "declared": true}
-standing-completed^(.projects[] | select(.name == "Fixture Area") | .state) = "completed"^{"kind": "standing-closed", "project": "Fixture Area", "state": "completed"}
-standing-canceled^(.projects[] | select(.name == "Fixture Area") | .state) = "canceled"^{"kind": "standing-closed", "project": "Fixture Area", "state": "canceled"}
-standing-target-date^(.projects[] | select(.name == "Fixture Area") | .targetDate) = "2026-12-01"^{"kind": "standing-target-date", "project": "Fixture Area", "target_date": "2026-12-01"}
-deliverable-no-ends-when^del(.map.projects[0].ends_when)^{"kind": "deliverable-no-ends-when", "project": "Fixture Deliverable"}
-completed-project-item^.map.projects += [{name: "Fixture Done", kind: "deliverable", ends_when: "Fixture shipped.", admits: "Fixture done work."}] | .projects += [{id: "proj-done", name: "Fixture Done", state: "completed", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Done"}]^{"kind": "completed-project-item", "issue": "KEN-9", "project": "Fixture Done"}
-map-absent^.map = null^{"kind": "map-absent", "map": "$RENDER"}
+outside-map^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Off Map"}]^[{"kind": "outside-map", "issue": "KEN-9", "project": "Fixture Off Map"}]
+no-project^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: null}]^[{"kind": "no-project", "issue": "KEN-9"}]
+initiative-holds-issue^.projects += [{id: "proj-initiative", name: "Fixture Initiative", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Initiative"}]^[{"kind": "initiative-holds-issue", "issue": "KEN-9", "initiative": "Fixture Initiative", "project": "Fixture Initiative"}]
+label-like-project^.labels += [{name: "Fixture_Area", team: null}]^[{"kind": "name-collision", "label": "Fixture_Area", "map": {"level": "project", "name": "Fixture Area"}, "declared": false}]
+project-like-label^.map.projects += [{name: "Bug", kind: "standing", role: "concern", admits: "Fixture defects."}] | .projects += [{id: "proj-bug", name: "Bug", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .labels += [{name: "BUG", team: {id: "team-kendex"}}]^[{"kind": "name-collision", "label": "BUG", "map": {"level": "project", "name": "Bug"}, "declared": true}]
+initiative-like-label^.taxonomy.categories.surface.labels += ["fixture initiative"]^[{"kind": "name-collision", "label": "fixture initiative", "map": {"level": "initiative", "name": "Fixture Initiative"}, "declared": true}]
+standing-completed^(.projects[] | select(.name == "Fixture Area") | .state) = "completed"^[{"kind": "standing-closed", "project": "Fixture Area", "state": "completed"}]
+standing-canceled^(.projects[] | select(.name == "Fixture Area") | .state) = "canceled"^[{"kind": "standing-closed", "project": "Fixture Area", "state": "canceled"}]
+standing-target-date^(.projects[] | select(.name == "Fixture Area") | .targetDate) = "2026-12-01"^[{"kind": "standing-target-date", "project": "Fixture Area", "target_date": "2026-12-01"}]
+deliverable-no-ends-when^del(.map.projects[0].ends_when)^[{"kind": "deliverable-no-ends-when", "project": "Fixture Deliverable"}]
+deliverable-canceled^(.projects[] | select(.name == "Fixture Deliverable") | .state) = "canceled"^[{"kind": "closed-project-item", "issue": "KEN-1", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-2", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-4", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "deliverable-canceled", "project": "Fixture Deliverable"}]
+closed-project-item^.map.projects += [{name: "Fixture Done", kind: "deliverable", ends_when: "Fixture shipped.", admits: "Fixture done work."}] | .projects += [{id: "proj-done", name: "Fixture Done", state: "completed", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Done"}]^[{"kind": "closed-project-item", "issue": "KEN-9", "project": "Fixture Done", "state": "completed"}]
+map-absent^.map = null^[{"kind": "map-absent", "map": "$RENDER"}]
 ROWS
 
 run_status rc audit clean .
@@ -151,3 +153,15 @@ assert "clean: lists each map project's id" \
   "$TMP_ROOT/clean.out"
 assert "map-absent: names the render it read" jq -e --arg render "$RENDER" '.map == $render' "$TMP_ROOT/map-absent.out"
 assert_not "map-absent: no request is sent" test -s "$TMP_ROOT/map-absent.jsonl"
+
+# A map project with no Linear project in the team, or with two live ones,
+# leaves the map unjudgeable: the audit refuses, keyed, and prints nothing.
+while IFS='^' read -r name plant key; do
+  run_status rc audit "$name" "$plant"
+  assert_ne "$name: refused" "$rc" 0
+  assert_file_contains "$name: the refusal is keyed" "$TMP_ROOT/$name.err" "$key"
+  assert_not "$name: prints no findings" test -s "$TMP_ROOT/$name.out"
+done <<ROWS
+declared-missing^.projects |= map(select(.name != "Fixture Area"))^linear-projects: declared-missing project=Fixture Area map=$RENDER
+ambiguous^.projects += [.projects[] | select(.name == "Fixture Area") | .id = "proj-area-twin"]^linear-projects: ambiguous project=Fixture Area map=$RENDER
+ROWS

@@ -90,8 +90,9 @@ Environment:
                   team, other writes refuse and reads run without a team
                   filter.
                   Only issues/projects/cycles/
-                  labels create, labels audit, cycles list and statuses
-                  list/get take --team <key-or-name> as a per-call override.
+                  labels create, labels audit, projects audit, cycles list
+                  and statuses list/get take --team <key-or-name> as a
+                  per-call override.
 
 For resource-specific help:
   ./linear.sh <resource> --help

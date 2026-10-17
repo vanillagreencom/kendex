@@ -111,9 +111,10 @@ for kind in declared none no-json invalid differ; do
 done
 RENDER=.agents/skills/project-management/SKILL.md
 
-# Each row runs one command, its arguments split on `;`. A refused row sends
-# no issue write; an accepted one sends its mutation with the project id the
-# row names, or none, and WANT_READS ProjectMap reads (`-` skips the count).
+# Each row runs one command, its arguments split on `;`; a leading NAME=VALUE
+# argument sets that variable for the run. A refused row sends no issue write;
+# an accepted one sends its mutation with the project id the row names, or
+# none, and WANT_READS ProjectMap reads (`-` skips the count).
 while IFS='|' read -r name kind want key mutation project_id reads args; do
   IFS=';' read -ra argv <<<"$args"
   run_status rc run_label_team_request "$TMP_ROOT/$kind" "$name" "" PROJECTS="$PROJECTS" "${argv[@]}"
@@ -146,6 +147,9 @@ update-no-project|declared|accepted||issueUpdate||0|update;KEN-2413;--title;T
 bulk-off-map|declared|refused|linear-projects: off-map project=Fixture Off Map map=$TMP_ROOT/declared/$RENDER|||0|bulk-update;KEN-2413;KEN-2414;--project;Fixture Off Map
 bulk-off-map-uuid|declared|refused|linear-projects: off-map project=$OFF_MAP map=$TMP_ROOT/declared/$RENDER|||1|bulk-update;KEN-2413;KEN-2414;--project=$OFF_MAP
 bulk-on-map|declared|accepted||issueUpdate|$AREA|1|bulk-update;KEN-2413;KEN-2414;--project=Fixture Area
+bulk-on-map-space|declared|accepted||issueUpdate|$AREA|1|bulk-update;KEN-2413;KEN-2414;--project;Fixture Area
+bulk-no-team-on-map|declared|accepted||issueUpdate|$AREA|1|LINEAR_TEAM=;bulk-update;KEN-2413;KEN-2414;--project;Fixture Area
+bulk-no-team-missing|declared|refused|linear-projects: declared-missing project=Fixture Missing map=$TMP_ROOT/declared/$RENDER|||1|LINEAR_TEAM=;bulk-update;KEN-2413;KEN-2414;--project;Fixture Missing
 no-json|no-json|refused|linear-projects: map-unreadable map=$TMP_ROOT/no-json/$RENDER|||0|create;--title;T;--no-agent-label;--project;Fixture Area
 invalid|invalid|refused|linear-projects: map-unreadable map=$TMP_ROOT/invalid/$RENDER|||0|create;--title;T;--no-agent-label;--project;Fixture Area
 differ|differ|refused|linear-projects: map-unreadable map=$TMP_ROOT/differ/$RENDER differs=$TMP_ROOT/differ/.claude/skills/project-management/SKILL.md|||0|create;--title;T;--no-agent-label;--project;Fixture Area

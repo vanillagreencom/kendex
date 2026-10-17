@@ -31,7 +31,6 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
       "priority": 2,
       "estimate": 2,
       "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]", "[WORKFLOW_LABEL]"],
-      "project": "Review Gate & CI",
       "category": "issue",
       "found_by": "agent-name",
       "origin": "suggestion|escalated|skipped|planned|discovered",
@@ -75,7 +74,6 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |
 | `labels` | Before create | Full issue-label set, validated against live inventory and project taxonomy before creation |
-| `project` | No | The map project the caller already routed the item to ([project-map.md § Routing](../references/project-map.md#routing)); the audit checks it as a hint |
 | `category` | Yes | Always `issue` — fix items never reach the audit |
 | `found_by` | Yes | Agent that identified it |
 | `origin` | Yes | `suggestion`, `escalated` (items no dev round resolved: blockers dev could not fix, plus items outstanding at the review cycle cap), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |

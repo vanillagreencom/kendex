@@ -275,13 +275,13 @@ Order per issue: relations first, then priority and labels, then project/state, 
 
 Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. The route comes from `TRACKER`. Never mix routes within one audit.
 
-**Project map (Linear).** Before the first create, check every create's `--project` against the map ([project-map.md § Routing](../references/project-map.md#routing)): each passes the map project its row recommends. A `project_needed` row is held, not created, and reported in § 8; it resumes once the map lists the new project. A row whose project the map does not list halts the whole batch before any create, so a mixed batch is never half applied.
+**Project map (Linear).** **Skip if** the repository declares no project map. Before the first create, check every create's `--project` against the map ([project-map.md § Routing](../references/project-map.md#routing)): each passes the map project its row recommends. A `project_needed` row is held, not created, and reported in § 8; it resumes once the map lists the new project. A row whose project the map does not list halts the whole batch before any create, so a mixed batch is never half applied.
 
 **Linear route (TRACKER=linear)**
 
 | Action | Execution |
 |--------|-----------|
-| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. Backlog is mandatory, never the team-default Triage. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. |
+| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. Backlog is mandatory, never the team-default Triage. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies. |
 | expand, update | workflow-actions § Descriptions + reason comment |
 | supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
 | cancel | workflow-actions § State Transitions |
