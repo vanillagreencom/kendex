@@ -25,7 +25,7 @@ EOF
 chmod +x "$TMP_ROOT/terminal-watch/harness-ci/scripts/change-class"
 mkdir -p "$TMP_ROOT/repo/.github/workflows" "$TMP_ROOT/repo/.github/actions/change-class"
 cp "$REPO_ROOT/.github/workflows/skill-tests.yml" "$TMP_ROOT/repo/.github/workflows/"
-cp "$REPO_ROOT/.github/actions/change-class/"{action.yml,classify,proof} "$TMP_ROOT/repo/.github/actions/change-class/"
+cp "$REPO_ROOT/.github/actions/change-class/"{action.yml,classify} "$TMP_ROOT/repo/.github/actions/change-class/"
 git -C "$TMP_ROOT/repo" add .github
 git -C "$TMP_ROOT/repo" -c user.name=test -c user.email=test@example.com commit -qm producer
 git -C "$TMP_ROOT/repo" -c user.name=test -c user.email=test@example.com commit -qm merge --allow-empty

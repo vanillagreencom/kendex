@@ -119,7 +119,7 @@ git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 mkdir -p "$REPO/.github/workflows" "$REPO/.github/actions/change-class"
 cp "$TEST_DIR/../../../.github/workflows/skill-tests.yml" "$REPO/.github/workflows/"
-cp "$TEST_DIR/../../../.github/actions/change-class/"{action.yml,classify,proof} "$REPO/.github/actions/change-class/"
+cp "$TEST_DIR/../../../.github/actions/change-class/"{action.yml,classify} "$REPO/.github/actions/change-class/"
 git -C "$REPO" add .github
 commit "$REPO" base
 env GIT_AUTHOR_DATE='1790000060 +0000' GIT_COMMITTER_DATE='1790000900 +0000' \

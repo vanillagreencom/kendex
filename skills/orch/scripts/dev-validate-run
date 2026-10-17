@@ -192,7 +192,7 @@
 #          ci-event=merge_group, as every queue-only change's does, the
 #          merge-group run proves the head; submit's pull-request wait
 #          proves nothing there. A red queue run returns the change to its
-#          lane: merge-pr.md § 5 Recovery cycle.
+#          lane by the Recovery cycle of ../workflows/merge-pr.md § 5.
 #          Anywhere else it runs the command a range request runs, records
 #          the mode that ran, and names why as the ci-fallback= line of start.
 #          Without a repository selector it hands that command the class,

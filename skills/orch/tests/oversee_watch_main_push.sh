@@ -161,6 +161,25 @@ for row in \
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$restored" "$name restoration" "$STUB_DIR/err"
 done
 
+# A run list the pass read from the same repository proves access, so ci.yml's
+# rewritten 404 there proves it absent without a workflow-list read. The
+# control drops that proof and reads the list once per event.
+for code in current mutant; do
+  TARGET="$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  if [[ "$code" == mutant ]]; then
+    TARGET="$(mutant_scripts main-witness-$code/orch oversee-watch)/oversee-watch" || exit 1
+    ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-witness-$code/github"
+    mutate_file "$TARGET" '      if { [[ "$read_repos" == *" $repo "* ]] &&' '      if { false &&'
+  fi
+  new_case "main_push_witness_$code"
+  printf '[{"databaseId":201,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
+  WATCH_BIN="$TARGET" main_watch
+  LISTS="$(grep -c '^api --paginate repos/owner/repo/actions/workflows' "$STUB_DIR/gh.calls" || true)"
+  expected='rc=0 notices=0 lists=0'
+  [[ "$code" == current ]] || expected='rc=0 notices=0 lists=2'
+  assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES lists=$LISTS" "$expected" "absent ci.yml beside a read skill-tests.yml: $code" "$STUB_DIR/err"
+done
+
 # These producers are the workflow's FAILED: loop and GitHub's timed_out,
 # cancelled and startup_failure conclusions. A red push or night must produce
 # a failing event through the real watch. The scheduled run alone runs the
@@ -230,7 +249,7 @@ assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'control: a push-only
 # again.
 UNLISTED_MUTANT="$(mutant_scripts main-unlisted/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-unlisted/github"
-mutate_file "$UNLISTED_MUTANT" '        [[ "$run" != none ]] || continue' '        :'
+mutate_file "$UNLISTED_MUTANT" '    [[ "$run" != none ]] || continue' '    :'
 new_case main_schedule_unlisted_control
 for night in failure none failure; do
   night_history "$night" success
@@ -261,8 +280,8 @@ for code in current mutant; do
   TARGET="$(mutant_scripts "main-push-cut-$code/orch" oversee-watch)/oversee-watch" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-push-cut-$code/github"
   if [[ "$code" == mutant ]]; then
-    mutate_file "$TARGET" $'        IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
-      $'        gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n        IFS=\'|\' read -r run conclusion <<<"$runs"\n'
+    mutate_file "$TARGET" $'    IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
+      $'    gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n    IFS=\'|\' read -r run conclusion <<<"$runs"\n'
   fi
   new_case "main_push_cut_$code"
   printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
@@ -332,7 +351,7 @@ nightly_case() { # NAME WATCH — `first=<ci.yml events> second=<events>` over t
 # run once; each control completes and answers otherwise.
 for row in \
   'current|-|-|rc=0 first=1 second=0' \
-  'one-row|      row_key="$repo:$workflow"|      row_key="$repo"|rc=0 first=1 second=2'; do
+  'one-row|    row_key="$repo:$workflow"|    row_key="$repo"|rc=0 first=1 second=2'; do
   IFS='|' read -r name old new expected <<<"$row"
   TARGET="$REPO_ROOT/skills/orch/scripts/oversee-watch"
   if [[ "$name" != current ]]; then

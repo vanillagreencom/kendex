@@ -308,8 +308,9 @@ assert_eq "$(cat "$WT/tmp/network-pushes")" $'push\npush' 'control: dropping the
 # owner. This branch changes shell source so the classifier covers it.
 CI_WT="$(make_worktree ci-restack)" || fixture_failed ci-worktree
 # A declared queue path lets the real classifier prove this shell change has
-# no queue work. Undeclared queue paths cannot prove PR coverage.
-printf 'HARNESS_CI_QUEUE_PATHS = "queued/**"\n' >> "$CI_WT/kendex.settings.toml"
+# no queue work. Undeclared queue paths cannot prove PR coverage, and the
+# queue list is read only under the per-push opt-back's reason.
+printf 'HARNESS_CI_PER_PUSH_REASON = "restack suite"\nHARNESS_CI_QUEUE_PATHS = "queued/**"\n' >> "$CI_WT/kendex.settings.toml"
 git -C "$CI_WT" add -f kendex.settings.toml
 git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m coverage
 git -C "$CI_WT" update-ref refs/remotes/origin/main HEAD
@@ -456,7 +457,9 @@ mutate_file "$MUTANT_PROOF/dev-validate-run" $'    exit 1\n  fi\n  # Read agains
 printf '#!/bin/sh\nexit 0\n' > "$NETWORK_PUSH"
 for cause in timeout host; do
   PROOF_WT="$(make_worktree "proof-$cause")" || fixture_failed proof-worktree
-  printf 'HARNESS_CI_QUEUE_PATHS = "queued/**"\nDEV_VALIDATE_FINDING_PREFIX = "guard: "\n' >> "$PROOF_WT/kendex.settings.toml"
+  # The opt-back's reason keeps this change off the queue-only default, so
+  # an unrequired context answers context-unrequired, not class-uncovered.
+  printf 'HARNESS_CI_PER_PUSH_REASON = "restack suite"\nHARNESS_CI_QUEUE_PATHS = "queued/**"\nDEV_VALIDATE_FINDING_PREFIX = "guard: "\n' >> "$PROOF_WT/kendex.settings.toml"
   # Keep settings out of the validation snapshot when each CI contract varies.
   git -C "$PROOF_WT" add -f kendex.settings.toml
   git -C "$PROOF_WT" -c user.name=t -c user.email=t@example.com commit -q -m settings
