@@ -363,7 +363,7 @@ Then record the QA routing. One command reads the dev round's `qa_labels`, scans
 
 `[BASE_BRANCH]` is the § 1 `resolve-base-branch` output. A non-zero exit records nothing: report its `qa-signals:` line and stop the review.
 
-**Judgment** — you may add or drop a signal with a one-line reason: run the same command again with `--add [SIGNAL]` or `--drop [SIGNAL]` and `--reason "[ONE_LINE]"`. Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 7:
+**Judgment** — you may add or drop a signal with a one-line reason: run the same command again with `--add [SIGNAL]` or `--drop [SIGNAL]`, each followed by its own `--reason "[ONE_LINE]"`. Put every judgment in that one run: a later run rescans and replaces the record, keeping only its own judgments. Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 7:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[],"agents":{},"rationale":"user skip"}'

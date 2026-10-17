@@ -2,7 +2,7 @@
 # qa-signals — review-pr.md § 5's QA routing, recorded in workflow state.
 #
 # Usage: qa-signals ISSUE_ID --worktree PATH --base REF
-#                   [--add SIGNAL]... [--drop SIGNAL]... [--reason TEXT]
+#                   [{--add|--drop} SIGNAL --reason TEXT]...
 #
 # Collects the signals for the round's diff REF...HEAD in PATH, writes them to
 # the state's qa_decision and prints that object on stdout. Each input adds
@@ -14,12 +14,14 @@
 #   ui      a changed path matching a QA_UI_PATHS glob adds needs-ui-review
 # The settings are space-separated bash patterns, read through orch-env from
 # the caller's checkout, each matched against the whole repository-relative
-# path; `*` crosses `/`. An unset setting adds nothing. A diff read that fails
-# adds the signal it would have decided and names the exit: a failed read
-# never reads as no signal.
+# path; `*` crosses `/` and `**/` also matches no directory. An unset setting
+# adds nothing. A diff read that fails adds the signal it would have decided
+# and names the exit: a failed read never reads as no signal.
 #
-# --add and --drop are § 5's judgment, applied after the scan, and need
-# --reason. Running the command again replaces the record.
+# --add and --drop are § 5's judgment, applied after the scan in the order
+# given. Each takes the one --reason that follows it, and a signal is judged
+# at most once. Running the command again rescans and replaces the record, so
+# every judgment goes in one run.
 #
 # qa_decision is {signals, agents, rationale}. agents maps each signal to the
 # QA agent review-pr.md § 6 delegates it to:
@@ -28,33 +30,51 @@
 #   needs-review        reviewer-correctness
 #   needs-ui-review     reviewer-quality
 #
-# Exit 2 is a usage refusal with one `qa-signals: <key> ...` stderr line;
-# exit 1 a settings or state failure. Either records nothing.
+# Exit 2 is a usage refusal; exit 1 a settings or state failure, after the
+# failing script's own stderr. Either ends with one `qa-signals: <key> ...`
+# stderr line and records nothing.
 set -euo pipefail
+shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENTS='{"needs-safety-audit":"reviewer-safety","needs-perf-test":"reviewer-perf","needs-review":"reviewer-correctness","needs-ui-review":"reviewer-quality"}'
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 refuse() { printf 'qa-signals: %s\n' "$1" >&2; exit 2; }
+fail() { printf 'qa-signals: %s\n' "$1" >&2; exit 1; }
 
 known_signal() { # SIGNAL SOURCE
   jq -e --arg s "$1" 'has($s)' <<<"$AGENTS" >/dev/null || refuse "unknown-signal signal=$1 source=$2"
 }
 
-issue="" worktree="" base="" reason=""
-adds=() drops=()
+# judged_ops, judged_signals and judged_reasons are parallel: entry i is one
+# judgment and the reason that followed it.
+issue="" worktree="" base=""
+judged_ops=() judged_signals=() judged_reasons=()
+unreasoned() { # true while the last judgment still waits for its --reason
+  local n=${#judged_reasons[@]}
+  (( n > 0 )) && [[ -z "${judged_reasons[n - 1]}" ]]
+}
 while (( $# > 0 )); do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     --worktree | --base | --add | --drop | --reason)
       (( $# >= 2 )) || refuse "missing-value option=$1"
       case "$1" in
-        --worktree) worktree="$2" ;;
-        --base) base="$2" ;;
-        --add) known_signal "$2" add; adds+=("$2") ;;
-        --drop) known_signal "$2" drop; drops+=("$2") ;;
-        --reason) reason="$2" ;;
+        --worktree) [[ -z "$worktree" ]] || refuse "duplicate-option option=$1"; worktree="$2" ;;
+        --base) [[ -z "$base" ]] || refuse "duplicate-option option=$1"; base="$2" ;;
+        --add | --drop)
+          ! unreasoned || refuse "judgment-reason cause=add-or-drop-without-reason signal=${judged_signals[${#judged_signals[@]} - 1]}"
+          known_signal "$2" "${1#--}"
+          for present in ${judged_signals[@]+"${judged_signals[@]}"}; do
+            [[ "$present" != "$2" ]] || refuse "judgment-conflict signal=$2"
+          done
+          judged_ops+=("${1#--}") judged_signals+=("$2") judged_reasons+=("") ;;
+        --reason)
+          (( ${#judged_reasons[@]} > 0 )) || refuse "judgment-reason cause=reason-without-add-or-drop"
+          unreasoned || refuse "duplicate-option option=--reason signal=${judged_signals[${#judged_signals[@]} - 1]}"
+          [[ -n "$2" ]] || refuse "missing-value option=--reason"
+          judged_reasons[${#judged_reasons[@]} - 1]="$2" ;;
       esac
       shift 2 ;;
     -*) refuse "unknown-option option=$1" ;;
@@ -62,9 +82,7 @@ while (( $# > 0 )); do
   esac
 done
 [[ -n "$issue" && -n "$worktree" && -n "$base" ]] || refuse "missing-argument need=ISSUE_ID,--worktree,--base"
-judged=$(( ${#adds[@]} + ${#drops[@]} ))
-if (( judged > 0 )) && [[ -z "$reason" ]]; then refuse "judgment-reason cause=add-or-drop-without-reason"; fi
-if (( judged == 0 )) && [[ -n "$reason" ]]; then refuse "judgment-reason cause=reason-without-add-or-drop"; fi
+! unreasoned || refuse "judgment-reason cause=add-or-drop-without-reason signal=${judged_signals[${#judged_signals[@]} - 1]}"
 
 signals=() causes=()
 add_signal() { # SIGNAL CAUSE
@@ -74,7 +92,8 @@ add_signal() { # SIGNAL CAUSE
   signals+=("$1")
 }
 
-dev_labels="$("$SCRIPT_DIR/workflow-state" get "$issue" '(.qa_labels // [])[]')"
+dev_labels="$("$SCRIPT_DIR/workflow-state" get "$issue" '(.qa_labels // [])[]')" ||
+  fail "state-read-failed issue=$issue exit=$?"
 while IFS= read -r label; do
   [[ -n "$label" ]] || continue
   known_signal "$label" dev
@@ -94,8 +113,8 @@ paths_status=0
 paths="$(git -C "$worktree" -c core.quotePath=false diff --no-renames --name-only "$base"...HEAD)" || paths_status=$?
 
 scan_paths() { # SETTING SIGNAL
-  local setting globs=() glob path
-  setting="$("$SCRIPT_DIR/orch-env" "$1" "")" || exit 1
+  local setting globs=() glob pattern path any_dirs='@(*/|)'
+  setting="$("$SCRIPT_DIR/orch-env" "$1" "")" || fail "setting-read-failed setting=$1 exit=$?"
   read -r -a globs <<<"$setting"
   (( ${#globs[@]} > 0 )) || return 0
   if (( paths_status != 0 )); then
@@ -104,8 +123,9 @@ scan_paths() { # SETTING SIGNAL
   fi
   while IFS= read -r path; do
     for glob in "${globs[@]}"; do
+      pattern="${glob//\*\*\//$any_dirs}"
       # shellcheck disable=SC2053 # the setting's glob is the pattern
-      if [[ -n "$path" && "$path" == $glob ]]; then
+      if [[ -n "$path" && "$path" == $pattern ]]; then
         add_signal "$2" "$1 path=$path glob=$glob"
         return 0
       fi
@@ -115,14 +135,17 @@ scan_paths() { # SETTING SIGNAL
 scan_paths QA_PERF_PATHS needs-perf-test
 scan_paths QA_UI_PATHS needs-ui-review
 
-for drop in ${drops[@]+"${drops[@]}"}; do
-  kept=()
-  for present in ${signals[@]+"${signals[@]}"}; do [[ "$present" == "$drop" ]] || kept+=("$present"); done
-  signals=(${kept[@]+"${kept[@]}"})
-  causes+=("judgment drop=$drop")
+for i in ${judged_ops[@]+"${!judged_ops[@]}"}; do
+  signal="${judged_signals[i]}" cause="judgment ${judged_ops[i]}=${judged_signals[i]} reason=${judged_reasons[i]}"
+  if [[ "${judged_ops[i]}" == add ]]; then
+    add_signal "$signal" "$cause"
+  else
+    kept=()
+    for present in ${signals[@]+"${signals[@]}"}; do [[ "$present" == "$signal" ]] || kept+=("$present"); done
+    signals=(${kept[@]+"${kept[@]}"})
+    causes+=("$cause")
+  fi
 done
-for add in ${adds[@]+"${adds[@]}"}; do add_signal "$add" "judgment add=$add"; done
-(( judged == 0 )) || causes+=("judgment reason=$reason")
 
 rationale=""
 for cause in ${causes[@]+"${causes[@]}"}; do rationale="${rationale:+$rationale; }$cause"; done
@@ -130,5 +153,6 @@ decision="$(jq -cn --argjson agents "$AGENTS" --arg rationale "${rationale:-scan
   '$ARGS.positional as $s
    | {signals: $s, agents: (reduce $s[] as $x ({}; .[$x] = $agents[$x])), rationale: $rationale}' \
   --args ${signals[@]+"${signals[@]}"})"
-"$SCRIPT_DIR/workflow-state" update "$issue" --argjson decision "$decision" '.qa_decision = $decision' >/dev/null
+"$SCRIPT_DIR/workflow-state" update "$issue" --argjson decision "$decision" '.qa_decision = $decision' >/dev/null ||
+  fail "state-write-failed issue=$issue exit=$?"
 printf '%s\n' "$decision"
