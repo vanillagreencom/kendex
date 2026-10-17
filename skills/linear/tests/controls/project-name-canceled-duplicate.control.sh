@@ -18,5 +18,5 @@ control_replace scripts/lib/common.sh 1 \
 
 control_expect 'an existing issue without a team refuses name resolution'
 control_replace scripts/commands/issues.sh 1 \
-    '        if [[ -z "$team_id" && ! "$project" =~ $LINEAR_UUID_PATTERN ]]; then' \
-    '        if [[ -z "$team_id" && ! "$project" =~ $LINEAR_UUID_PATTERN && "$project" == "" ]]; then'
+    '    if [[ -z "$team_id" && ! "$ref" =~ $LINEAR_UUID_PATTERN ]]; then' \
+    '    if [[ -z "$team_id" && ! "$ref" =~ $LINEAR_UUID_PATTERN && "$ref" == "" ]]; then'

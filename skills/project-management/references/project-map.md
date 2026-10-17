@@ -67,7 +67,7 @@ A project named for a label's value is a boundary finding, as "Tech Debt & Bugs"
 
 ## Routing
 
-Place every item by the first rule that admits it:
+Place an item with no parent by the first rule that admits it; a child follows its parent, below:
 
 1. The deliverable whose `ends_when` the item advances.
 2. The standing area that owns the item's Location paths.

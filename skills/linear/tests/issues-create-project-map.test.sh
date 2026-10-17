@@ -46,7 +46,8 @@ MAP='{"initiatives": [{"name": "Fixture Initiative", "outcome": "Fixture outcome
 # project with an ends_when) or differ (the map in .agents/skills and none in
 # .claude/skills). Its curl answers ProjectMap and
 # GetProject from the projects above, applying only the filters the request
-# sends, and every other request from the recorded issue and labels.
+# sends, a read of KEN-2499 with the recorded issue moved to the other team,
+# and every other request from the recorded issue and labels.
 make_project() {
   local project="$1" kind="$2" render
   mkdir -p "$project/.agents/skills/project-management"
@@ -72,6 +73,13 @@ case "$query" in
       | select(.name | IN(($payload.variables.names // [$payload.variables.name])[]))
       | select(($scoped | not) or any(.teams.nodes[]; .id == $payload.variables.teamId))
       | {id, name, state, targetDate}]}}}' "$PROJECTS"
+  printf '%s' '___HTTP_CODE___200'
+  ;;
+*"issue(id:"*)
+  [[ "$(jq -r '.variables.id' <<<"$payload")" == KEN-2499 ]] || exec "${0%/*}/curl-recorded" "$@" <<<"$config"
+  printf '%s\n' "$payload" >>"${CURL_LOG:?}"
+  jq -cj --arg team "${OTHER_TEAM:?}" '{data: (.issue.identifier = "KEN-2499"
+    | .issue.team = {key: "OTH", id: $team, name: "other"})}' "$FIXTURE_DIR/label-team-issue.json"
   printf '%s' '___HTTP_CODE___200'
   ;;
 *) exec "${0%/*}/curl-recorded" "$@" <<<"$config" ;;
@@ -117,7 +125,7 @@ RENDER=.agents/skills/project-management/SKILL.md
 # none, and WANT_READS ProjectMap reads (`-` skips the count).
 while IFS='|' read -r name kind want key mutation project_id reads args; do
   IFS=';' read -ra argv <<<"$args"
-  run_status rc run_label_team_request "$TMP_ROOT/$kind" "$name" "" PROJECTS="$PROJECTS" "${argv[@]}"
+  run_status rc run_label_team_request "$TMP_ROOT/$kind" "$name" "" PROJECTS="$PROJECTS" OTHER_TEAM="$OTHER" "${argv[@]}"
   log="$TMP_ROOT/$name.jsonl"
   if [[ "$want" == refused ]]; then
     assert_ne "$name: refused" "$rc" 0
@@ -150,6 +158,8 @@ bulk-on-map|declared|accepted||issueUpdate|$AREA|1|bulk-update;KEN-2413;KEN-2414
 bulk-on-map-space|declared|accepted||issueUpdate|$AREA|1|bulk-update;KEN-2413;KEN-2414;--project;Fixture Area
 bulk-no-team-on-map|declared|accepted||issueUpdate|$AREA|1|LINEAR_TEAM=;bulk-update;KEN-2413;KEN-2414;--project;Fixture Area
 bulk-no-team-missing|declared|refused|linear-projects: declared-missing project=Fixture Missing map=$TMP_ROOT/declared/$RENDER|||1|LINEAR_TEAM=;bulk-update;KEN-2413;KEN-2414;--project;Fixture Missing
+bulk-mixed-team-missing|declared|refused|linear-projects: declared-missing project=Fixture Missing map=$TMP_ROOT/declared/$RENDER|||2|LINEAR_TEAM=;bulk-update;KEN-2499;KEN-2413;--project;Fixture Missing
+bulk-mixed-team-uuid|declared|refused|linear-projects: off-map project=$AREA map=$TMP_ROOT/declared/$RENDER|||2|LINEAR_TEAM=;bulk-update;KEN-2413;KEN-2499;--project=$AREA
 no-json|no-json|refused|linear-projects: map-unreadable map=$TMP_ROOT/no-json/$RENDER|||0|create;--title;T;--no-agent-label;--project;Fixture Area
 invalid|invalid|refused|linear-projects: map-unreadable map=$TMP_ROOT/invalid/$RENDER|||0|create;--title;T;--no-agent-label;--project;Fixture Area
 differ|differ|refused|linear-projects: map-unreadable map=$TMP_ROOT/differ/$RENDER differs=$TMP_ROOT/differ/.claude/skills/project-management/SKILL.md|||0|create;--title;T;--no-agent-label;--project;Fixture Area

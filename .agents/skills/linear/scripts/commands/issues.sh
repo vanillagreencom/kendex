@@ -686,7 +686,7 @@ bulk_update_issues() {
     local from_stdin="false"
     local update_args=()
     local attach_paths=()
-    local description="" description_set="false" state="" project="" project_index=""
+    local description="" description_set="false" state="" project=""
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -699,7 +699,7 @@ bulk_update_issues() {
             # These are update options - collect with their values
             # (--attach re-uploads per issue: Linear assets are issue-agnostic
             # but each issue gets its own embed/attachment)
-            [[ "$1" != --project ]] || project_index=$((${#update_args[@]} + 1)) project="$2"
+            [[ "$1" != --project ]] || project="$2"
             update_args+=("$1" "$2")
             [[ "$1" != --state && "$1" != --status ]] || state="$2"
             [[ "$1" != --attach ]] || attach_paths+=("$2")
@@ -712,7 +712,7 @@ bulk_update_issues() {
         --state=* | --status=* | --labels=* | --label=* | --title=* | --description=* | --project=* | --parent=* | --milestone=* | --priority=* | --estimate=* | --assignee=* | --cycle=* | --sort-order=* | --attach=*)
             # Support --key=value syntax (AI agents often use this)
             local _key="${1%%=*}" _val="${1#*=}"
-            [[ "$_key" != --project ]] || project_index=$((${#update_args[@]} + 1)) project="$_val"
+            [[ "$_key" != --project ]] || project="$_val"
             update_args+=("$_key" "$_val")
             [[ "$_key" != --state && "$_key" != --status ]] || state="$_val"
             [[ "$_key" != --attach ]] || attach_paths+=("$_val")
@@ -763,56 +763,43 @@ bulk_update_issues() {
     fi
     [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1
     local project_map=""
-    if [ -n "$project_index" ]; then
+    if [ -n "$project" ]; then
         project_map=$(linear_project_map) || return 1
         linear_map_preflight "$project_map" "$project" update || return 1
     fi
     linear_guard_issue_team bulk-update "${identifiers[@]}" || return 1
 
-    # The live map check for every issue, before any write, so a refusal
-    # writes nothing. Each issue is judged in its own team, as update_issue
-    # judges it: the guard above kept every issue in LINEAR_TEAM, so one read
-    # serves the batch; with none set each issue's team is read, never the
-    # workspace, where another team's project of the name would pass. Each
-    # update_issue below receives its issue's project id, which
-    # LINEAR_MAP_PASSED lets through without a second read.
-    local -A issue_project_ids=()
-    if [ -n "$project_map" ]; then
-        local -A team_project_ids=()
-        local map_team_id map_project_id issue_result
-        for id in "${identifiers[@]}"; do
-            if [ -n "$DEFAULT_TEAM" ]; then
-                linear_own_team || return 1
-                map_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
-            else
-                issue_result=$(get_issue "$id" --format=raw) || return 1
-                if ! map_team_id=$(jq -er '.issue.team.id | strings | select(length > 0)' <<<"$issue_result"); then
-                    jq -cn --arg issue "$id" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
-                    return 1
-                fi
-            fi
-            if [[ -z "${team_project_ids[$map_team_id]:-}" ]]; then
-                map_project_id=$(linear_map_live "$project_map" "$project" "$map_team_id") || return 1
-                team_project_ids[$map_team_id]="$map_project_id"
-                LINEAR_MAP_PASSED+="$map_project_id "
-            fi
-            issue_project_ids[$id]="${team_project_ids[$map_team_id]}"
-        done
+    # Every check that can refuse runs here, before any write, so a refusal
+    # leaves no issue Done, moved or with uploaded assets. Each issue is read
+    # once, and only when its state or its team is not already known: the
+    # guard above pins every issue to LINEAR_TEAM when one is set. The map
+    # project is judged in each issue's own team; issue_project_id keeps each
+    # team's result for the update_issue subshells below.
+    local own_team_id=""
+    if [[ -n "$project_map" && -n "$DEFAULT_TEAM" ]]; then
+        linear_own_team || return 1
+        own_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
     fi
-
-    # A later refusal must not leave earlier issues Done or assets uploaded.
-    if [ -n "$state" ]; then
-        local preflight_failed=0 issue_result effective_description
+    if [[ -n "$state" || -n "$project_map" ]]; then
+        local preflight_failed=0 issue_result effective_description team_id
         for id in "${identifiers[@]}"; do
-            if ! issue_result=$(get_issue "$id" --format=raw); then
+            issue_result=""
+            if [[ -n "$state" || -z "$own_team_id" ]] && ! issue_result=$(get_issue "$id" --format=raw); then
                 preflight_failed=1
                 continue
             fi
-            effective_description="$description"
-            if [ "$description_set" != true ]; then
-                effective_description=$(jq -r '.issue.description // ""' <<<"$issue_result") || return 1
+            if [ -n "$state" ]; then
+                effective_description="$description"
+                if [ "$description_set" != true ]; then
+                    effective_description=$(jq -r '.issue.description // ""' <<<"$issue_result") || return 1
+                fi
+                resolve_issue_update_state "$issue_result" "$state" "$effective_description" >/dev/null || preflight_failed=1
             fi
-            resolve_issue_update_state "$issue_result" "$state" "$effective_description" >/dev/null || preflight_failed=1
+            if [ -n "$project_map" ]; then
+                team_id="$own_team_id"
+                [ -n "$team_id" ] || team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
+                issue_project_id "$project_map" "$project" "$team_id" "$id" || return 1
+            fi
         done
         [ "$preflight_failed" = 0 ] || return 1
     fi
@@ -833,7 +820,6 @@ bulk_update_issues() {
     for id in "${identifiers[@]}"; do
         local result
         local update_rc=0
-        [ -z "$project_map" ] || update_args[project_index]="${issue_project_ids[$id]}"
         : >"$stderr_file"
         if result=$(update_issue "$id" "${update_args[@]}" 2>"$stderr_file"); then
             update_rc=0
@@ -1128,11 +1114,6 @@ require_agent_routing_label() {
 # (https://linear.app/docs/teams). With no map both checks pass and send no
 # request.
 
-# Map project ids this invocation's live check has let through, each followed
-# by a space. bulk-update checks its --project once and hands each update_issue
-# subshell the id, which then passes without a second read.
-LINEAR_MAP_PASSED=" "
-
 # Refuse, before any request, a placement the map's text rules out: a create
 # with no project, and a project name the map does not list. A UUID waits for
 # the live check.
@@ -1159,10 +1140,6 @@ linear_map_preflight() {
 # Usage: project_id=$(linear_map_live MAP REF TEAM_ID) || return 1
 linear_map_live() {
     local map="$1" ref="$2" team_id="$3" projects entry legal
-    if [[ "$ref" =~ $LINEAR_UUID_PATTERN && "$LINEAR_MAP_PASSED" == *" $ref "* ]]; then
-        printf '%s\n' "$ref"
-        return 0
-    fi
     projects=$(linear_map_projects "$map" "$team_id") || return 1
     entry=$(jq -c --arg ref "$ref" 'first(.[] | select(.name == $ref or .id == $ref)) // empty' <<<"$projects") || return 1
     if [[ -z "$entry" ]]; then
@@ -1181,6 +1158,39 @@ linear_map_live() {
         return 1
         ;;
     esac
+}
+
+# The Linear id each --project ref of this invocation resolved to, keyed by
+# "TEAM_ID:REF": a ref resolved in one team says nothing of another. A
+# `$(...)` subshell inherits it, so bulk-update fills it before its
+# update_issue subshells and each finds its issue's team there.
+declare -A LINEAR_ISSUE_PROJECT_IDS=()
+ISSUE_PROJECT_ID=""
+
+# Set ISSUE_PROJECT_ID to the Linear id of --project REF for ISSUE, an
+# existing issue of team TEAM_ID: under MAP the map project in that team, else
+# the project resolve_project_id names. A name resolves only in the issue's
+# team, so an issue whose team is unknown refuses one; a UUID needs no team.
+# Call it in the command's own shell, not `$(...)`, so the result is kept.
+# Usage: issue_project_id MAP REF TEAM_ID ISSUE || return 1
+issue_project_id() {
+    local map="$1" ref="$2" team_id="$3" issue="$4" key="$3:$2" id
+    if [[ -n "${LINEAR_ISSUE_PROJECT_IDS[$key]:-}" ]]; then
+        ISSUE_PROJECT_ID="${LINEAR_ISSUE_PROJECT_IDS[$key]}"
+        return 0
+    fi
+    if [[ -z "$team_id" && ! "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
+        jq -cn --arg issue "$issue" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
+        return 1
+    fi
+    if [ -n "$map" ]; then
+        id=$(linear_map_live "$map" "$ref" "$team_id") || return 1
+    else
+        id=$(resolve_project_id "$ref" "$team_id") || return 1
+    fi
+    [ -n "$id" ] || return 1
+    LINEAR_ISSUE_PROJECT_IDS[$key]="$id"
+    ISSUE_PROJECT_ID="$id"
 }
 
 # Create pending non-image attachments on an issue that already exists.
@@ -1996,18 +2006,8 @@ update_issue() {
     # after the upload strands the asset in Linear storage.
     local project_id=""
     if [ -n "$project" ]; then
-        if [[ -z "$team_id" && ! "$project" =~ $LINEAR_UUID_PATTERN ]]; then
-            jq -cn --arg issue "$issue_id" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
-            return 1
-        fi
-        if [ -n "$project_map" ]; then
-            project_id=$(linear_map_live "$project_map" "$project" "$team_id") || return 1
-        else
-            project_id=$(resolve_project_id "$project" "$team_id") || return 1
-        fi
-        if [ -z "$project_id" ]; then
-            return 1
-        fi
+        issue_project_id "$project_map" "$project" "$team_id" "$issue_id" || return 1
+        project_id="$ISSUE_PROJECT_ID"
     fi
     local milestone_id=""
     if [ -n "$milestone" ]; then

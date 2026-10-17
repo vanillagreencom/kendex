@@ -28,48 +28,53 @@ control_replace scripts/commands/issues.sh 1 \
     '        project_id=$(linear_map_live "$project_map" "$project" "$team_id") || return 1' \
     '        project_id=$(resolve_project_id "$project" "$team_id") || return 1'
 
-# Resolve an update's project without the map.
+# Resolve an existing issue's project without the map.
 control_expect "update-off-map-uuid: refused"
 control_expect "update-off-map-uuid: no write is sent"
 control_expect "update-on-map: map reads"
 control_replace scripts/commands/issues.sh 1 \
-    '            project_id=$(linear_map_live "$project_map" "$project" "$team_id") || return 1' \
-    '            project_id=$(resolve_project_id "$project" "$team_id") || return 1'
+    '        id=$(linear_map_live "$map" "$ref" "$team_id") || return 1' \
+    '        id=$(resolve_project_id "$ref" "$team_id") || return 1'
 
-# Skip bulk-update's live check: every issue reads the map itself.
+# Skip bulk-update's live check: each update_issue reads the map itself, and
+# the issues before a refused one are written.
 control_expect "bulk-off-map-uuid: map reads"
 control_replace scripts/commands/issues.sh 1 \
-    '                map_project_id=$(linear_map_live "$project_map" "$project" "$map_team_id") || return 1' \
-    '                map_project_id=$project'
-
-# Forget the id bulk-update checked: every issue reads the map again.
-control_expect "bulk-on-map: map reads"
-control_replace scripts/commands/issues.sh 1 \
-    '                LINEAR_MAP_PASSED+="$map_project_id "' \
+    '                issue_project_id "$project_map" "$project" "$team_id" "$id" || return 1' \
     '                :'
 
-# With no team set, judge the bulk project across the workspace: another
-# team's project of the map name passes and is written.
+# Forget the project each team resolved: every issue reads the map again.
+control_expect "bulk-on-map: map reads"
+control_replace scripts/commands/issues.sh 1 \
+    '    LINEAR_ISSUE_PROJECT_IDS[$key]="$id"' \
+    '    :'
+
+# Key the resolved project by its ref alone: the first issue's team passes it
+# for every issue, in the name form and the UUID form.
+control_expect "bulk-mixed-team-missing: refused"
+control_expect "bulk-mixed-team-missing: the refusal is keyed"
+control_expect "bulk-mixed-team-missing: map reads"
+control_expect "bulk-mixed-team-uuid: refused"
+control_expect "bulk-mixed-team-uuid: no write is sent"
+control_replace scripts/commands/issues.sh 1 \
+    '    local map="$1" ref="$2" team_id="$3" issue="$4" key="$3:$2" id' \
+    '    local map="$1" ref="$2" team_id="$3" issue="$4" key="$2" id'
+
+# With no team set, judge the project across the workspace: another team's
+# project of the map name passes and is written.
 control_expect "bulk-no-team-missing: refused"
 control_expect "bulk-no-team-missing: the refusal is keyed"
 control_expect "bulk-no-team-missing: no write is sent"
 control_replace scripts/commands/issues.sh 1 \
-    '                map_project_id=$(linear_map_live "$project_map" "$project" "$map_team_id") || return 1' \
-    '                map_project_id=$(linear_map_live "$project_map" "$project" "${DEFAULT_TEAM:+$map_team_id}") || return 1'
+    '        id=$(linear_map_live "$map" "$ref" "$team_id") || return 1' \
+    '        id=$(linear_map_live "$map" "$ref" "${DEFAULT_TEAM:+$team_id}") || return 1'
 
-# Point the space form's project index at the option name, not its value.
+# Read the space form's option name as the project.
 control_expect "bulk-on-map-space: accepted"
 control_expect "bulk-on-map-space: the write carries the map project"
 control_replace scripts/commands/issues.sh 1 \
-    '            [[ "$1" != --project ]] || project_index=$((${#update_args[@]} + 1)) project="$2"' \
-    '            [[ "$1" != --project ]] || project_index=$((${#update_args[@]})) project="$2"'
-
-# Hand each issue the project name, not the id checked for its team: every
-# issue reads the map again.
-control_expect "bulk-on-map-space: map reads"
-control_replace scripts/commands/issues.sh 1 \
-    '        [ -z "$project_map" ] || update_args[project_index]="${issue_project_ids[$id]}"' \
-    '        :'
+    '            [[ "$1" != --project ]] || project="$2"' \
+    '            [[ "$1" != --project ]] || project="$1"'
 
 # Read every team's projects: another team's project passes for the map's.
 control_expect "create-missing: refused"
