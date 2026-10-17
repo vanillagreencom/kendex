@@ -163,7 +163,7 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
         assert marker.exists(), "watch did not publish its liveness record"
         while entered and not Path(entered).exists() and time.monotonic() < deadline:
             time.sleep(.02)
-        assert not entered or Path(entered).exists(), "the poll's jq never started"
+        assert not entered or Path(entered).exists(), "the jq of the poll never started"
         os.kill(child.pid, signal.SIGTERM)
         deadline = time.monotonic() + 3
         state = "running"
@@ -178,7 +178,7 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
             time.sleep(.02)
         record = "record-kept" if marker.exists() else "record-withdrawn"
         if (state, record) != ("exited", "record-withdrawn"):
-            # The group's processes name the step that held the exit.
+            # The processes of the group name the step that held the exit.
             probe = subprocess.run([ps, "-A", "-o", "pid=,ppid=,pgid=,stat=,command="], env=env,
                                    capture_output=True, check=True, timeout=5)
             sys.stderr.write("term-row: watch group pid ppid pgid stat command\n")
