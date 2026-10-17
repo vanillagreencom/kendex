@@ -20,8 +20,7 @@ source "$TEST_DIR/lib/assertions.sh"
 # battery under /bin/bash 3.2; the linear shard skips its own suites there
 # for the same reason.
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
-  printf 'skip: the linear CLI needs Bash 4 or newer, this shell is %s\n' "$BASH_VERSION"
-  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  printf 'rowless: reconcile-work-items-complete bash=%s needs=4\n' "$BASH_VERSION"
   exit 0
 fi
 

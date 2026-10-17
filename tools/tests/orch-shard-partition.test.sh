@@ -66,7 +66,7 @@
 #      bounded leg, and delete each of the two workflow shapes read here.
 #
 # The shell roster is real and the suites are not: every shell run happens in a
-# sandbox holding a copy of run-all.sh and one empty file per suite name, or a
+# sandbox holding a copy of run-all.sh and one stub file per suite name, or a
 # copy of the workflow and a `bash` that does nothing, so the real filter and
 # roster logic runs over the real names without running the battery. Cargo's
 # integration harness is compiled and listed, but its tests do not run.
@@ -109,6 +109,11 @@ ok()  { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 check() { # check <desc> <expected> <actual>
   if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
+}
+# A fixture suite runs nothing real and prints one passing row, since
+# run-all.sh reds a suite that exits 0 with no row counted.
+stub_suite() { # stub_suite <path>
+  printf '#!/usr/bin/env bash\nprintf '\''pass: 1   fail: 0\\n'\''\n' > "$1"
 }
 
 # One record per step carrying a `run: |` block or a one-line battery call: the step's `if:` text on the
@@ -189,7 +194,7 @@ roster=""
 for f in "$TEST_DIR"/*.sh; do
   base="$(basename "$f" .sh)"
   [[ "$base" == "run-all" ]] && continue
-  printf '#!/usr/bin/env bash\n' > "$SANDBOX/$base.sh"
+  stub_suite "$SANDBOX/$base.sh"
   roster="$roster$base
 "
 done
@@ -373,7 +378,7 @@ PARTITION_RUNNER_OS=Linux
 
 # CI produces these profiles. Future suite names follow their family once,
 # and dev/review owns an overlap with lane/workflow-state. The real runner
-# decides membership; these empty files add no second selector owner.
+# decides membership; these stub files add no second selector owner.
 family_rows='dev_future|orch-dev
 review_future|orch-dev
 lane_future|orch-state
@@ -381,7 +386,7 @@ workflow-state_future|orch-state
 dev_review_lane_workflow-state_future|orch-dev
 other_future|orch-rest'
 while IFS='|' read -r name profile; do
-  printf '#!/usr/bin/env bash\n' > "$SANDBOX/$name.sh"
+  stub_suite "$SANDBOX/$name.sh"
 done <<< "$family_rows"
 for PARTITION_RUNNER_OS in Linux macOS; do
   for profile in orch-dev orch-state orch-rest; do
@@ -412,7 +417,7 @@ for PARTITION_RUNNER_OS in Linux macOS; do
       > "$TMP/family-failure.log" 2>&1 || rc=$?
     check "must-fail: $profile propagates an asserted failure on $PARTITION_RUNNER_OS" "1" "$rc"
     grep -qxF "  - $name" "$TMP/family-failure.log" && ok "$profile names its failed suite" || bad "$profile lost the failed suite name"
-    printf '#!/usr/bin/env bash\n' > "$SANDBOX/$name.sh"
+    stub_suite "$SANDBOX/$name.sh"
   done <<'ROWS'
 dev_future|orch-dev
 lane_future|orch-state
@@ -425,7 +430,7 @@ PARTITION_RUNNER_OS=Linux
 
 # A new oversee suite belongs to the complement on both platforms, even when its
 # name extends one of the moved suites. The workflow produces both profiles.
-printf '#!/usr/bin/env bash\n' > "$SANDBOX/oversee_watch_terminal_future.sh"
+stub_suite "$SANDBOX/oversee_watch_terminal_future.sh"
 for PARTITION_RUNNER_OS in Linux macOS; do
 for profile in orch-oversee orch-oversee-watch; do
   kept="$(selected --shard "$profile")"
@@ -519,7 +524,7 @@ PARTITION_RUNNER_OS=Linux
 #
 # Rosters come from each step's run block in a sandbox whose workflow is the
 # copy under test and whose trees are this checkout. A `bash` shim leaves
-# serial suite calls empty and runs pooled calls over empty suite copies.
+# serial suite calls empty and runs pooled calls over stub suite copies.
 # The shim reports suite calls from the real globs, skip arms and filters.
 #
 # The file keeps its name: the orch filters above are still the seam most
@@ -550,7 +555,7 @@ SH
 chmod +x "$PART/tools/rust-reads"
 ln -s "$ROOT/hooks"  "$PART/hooks"
 ln -s "$ROOT/refresh" "$PART/refresh"
-# Pooled calls use the real runners over empty copies of the suite files.
+# Pooled calls use the real runners over stub copies of the suite files.
 # This preserves their discovery and filters without starting the batteries.
 POOL="$TMP/pool"
 mkdir -p "$POOL/skills/orch/tests/lib" "$POOL/skills/orch/scripts/lib" "$POOL/tools/tests" "$TMP/pool-claims"
@@ -565,11 +570,11 @@ for f in "$ROOT"/skills/*/tests/*.sh "$ROOT"/tools/tests/*.test.sh "$ROOT"/hooks
   [[ "${f##*/}" != run-all.sh ]] || continue
   path="${f#"$ROOT"/}"
   mkdir -p "$POOL/${path%/*}"
-  printf '#!/usr/bin/env bash\n' > "$POOL/$path"
+  stub_suite "$POOL/$path"
 done
 # Ownership readers consume the shim's suite-invoked marker. Workflow
 # headings do not prove a suite call. A pooled invocation reports the files
-# its real runner selects over immutable empty batteries, as in UNION_RUNS.
+# its real runner selects over immutable stub batteries, as in UNION_RUNS.
 SHIM="$TMP/shim"
 mkdir -p "$SHIM"
 printf '#!%s\n' "$BASH" > "$SHIM/bash"
@@ -591,7 +596,7 @@ if [[ -n "$battery" ]]; then
   key="${RUN_ALL_NATIVE_CONTRACTS:+native}-$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
   cache="$PARTITION_POOL_CLAIMS/$key"
   if [[ ! -f "$cache" ]]; then
-    # No job deadline or inherited pool bound applies to empty fixture suites.
+    # No job deadline or inherited pool bound applies to stub fixture suites.
     (cd "$PARTITION_POOL" && env -u RUN_ALL_DEADLINE_EPOCH -u RUN_ALL_SUITE_SECS \
       PATH="$PARTITION_HOST_PATH" "$BASH" "$@") >"$cache.out" || exit 1
     if [[ "${#batteries[@]}" -le 1 ]]; then
@@ -1451,7 +1456,7 @@ cp "$PART/tools/rust-reads" "$GITHUB_SELECT/tools/rust-reads"
 cp "$ROOT/tools/lib/skill-requirements.awk" "$GITHUB_SELECT/tools/lib/skill-requirements.awk"
 cp "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$GITHUB_SELECT/tools/"
-printf '#!/usr/bin/env bash\n' > "$GITHUB_SELECT/skills/github/tests/pr-view.test.sh"
+stub_suite "$GITHUB_SELECT/skills/github/tests/pr-view.test.sh"
 git -C "$GITHUB_SELECT" init -q
 git -C "$GITHUB_SELECT" add skills/github/tests/pr-view.test.sh
 printf 'orch-rest\tskills/github/tests/pr-view.test.sh\n' > "$TMP/github-selection-owner"
@@ -1691,10 +1696,10 @@ mkdir -p "$UNION_RUNS" "$PARTITION_POOL_CLAIMS"
 while IFS='|' read -r path linux_owner macos_owner; do
   for tree in "$PART" "$POOL" "$GITHUB_SELECT"; do
     mkdir -p "$tree/${path%/*}"
-    printf '#!/usr/bin/env bash\n' > "$tree/$path"
+    stub_suite "$tree/$path"
   done
   case "$path" in
-    skills/orch/tests/*) printf '#!/usr/bin/env bash\n' > "$SANDBOX/${path##*/}" ;;
+    skills/orch/tests/*) stub_suite "$SANDBOX/${path##*/}" ;;
   esac
   printf '%s\n' "$path" >> "$TMP/unknown-paths"
   printf '%s\t%s\n' "$linux_owner" "$path" >> "$TMP/unknown-linux-owners"

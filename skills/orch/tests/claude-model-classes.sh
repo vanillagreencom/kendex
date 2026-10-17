@@ -26,8 +26,7 @@ if ! command -v claude >/dev/null 2>&1; then
     echo "harness: claude is not on PATH under CI; this suite runs the plugin under Claude Code" >&2
     exit 2
   fi
-  printf 'claude-model-classes: native-kit=unsupported\n'
-  printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
+  printf 'rowless: claude-model-classes claude=absent\n'
   exit 0
 fi
 TMP_ROOT="$(mktemp -d)" || { echo "claude-model-classes: scratch=mktemp-failed" >&2; exit 1; }

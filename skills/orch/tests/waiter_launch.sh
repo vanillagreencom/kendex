@@ -25,7 +25,7 @@ source "$TEST_DIR/lib/assertions.sh"
 source "$SKILL_DIR/../github/scripts/lib/group-leader.sh"
 for dep in setsid perl; do
   if ! command -v "$dep" >/dev/null; then
-    printf 'skip: waiter launch requires %s\n' "$dep"
+    printf 'rowless: waiter_launch %s=absent\n' "$dep"
     exit 0
   fi
 done

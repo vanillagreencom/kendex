@@ -38,7 +38,7 @@ class NativeContracts(unittest.TestCase):
         for path in self.contracts:
             suite = self.root / path
             suite.parent.mkdir(parents=True, exist_ok=True)
-            suite.write_text('printf "%s\\n" ' + suite.stem + '\n')
+            suite.write_text('printf "%s\\n" ' + suite.stem + '\nprintf "pass: 1   fail: 0\\n"\n')
         self.save()
 
     def save(self):
@@ -142,7 +142,7 @@ class NativeContracts(unittest.TestCase):
         environment = os.environ | {"RUN_ALL_NATIVE_CONTRACTS": str(self.owner)}
         native = self.root / "skills/demo/tests/native.sh"
         native.write_text('[ -z "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 1\n' + native.read_text())
-        (self.root / "skills/demo/tests/future.sh").write_text("exit 0\n")
+        (self.root / "skills/demo/tests/future.sh").write_text('printf "pass: 1   fail: 0\\n"\n')
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)
         self.assertEqual(answer.returncode, 0, answer.stderr)
         started = {line.removeprefix("start suite=") for line in answer.stdout.splitlines() if line.startswith("start suite=")}

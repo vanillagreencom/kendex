@@ -26,8 +26,8 @@ cleanup() {
 trap cleanup EXIT
 REAL_SLEEP="$(command -v sleep)"
 REAL_DATE="$(command -v date)"
-TIMEOUT="$(command -v timeout || command -v gtimeout)" || { echo 'skip: timeout is unavailable'; exit 0; }
-command -v setsid >/dev/null || { echo 'skip: setsid is unavailable'; exit 0; }
+TIMEOUT="$(command -v timeout || command -v gtimeout)" || { echo 'rowless: codex_round_wait timeout=absent'; exit 0; }
+command -v setsid >/dev/null || { echo 'rowless: codex_round_wait setsid=absent'; exit 0; }
 
 awk '/^```sh$/ { active=1; blocks++; next } /^```$/ && active { active=0; next } active { print } END { if (blocks != 1 || active) exit 1 }' \
   "$SKILL_DIR/references/waiter-launch.md" > "$TMP_ROOT/launch.sh"

@@ -214,10 +214,12 @@ if [[ -n "$SPLIT_BOUND" ]]; then
   cat > "$SPLIT_RUNNER/dev_validate_run.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'split-row=dev_validate_run:%s\n' "${1:-none}"
+printf 'pass: 1   fail: 0\n'
 SH
   cat > "$SPLIT_RUNNER/unrelated.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'split-row=unrelated:%s\n' "${1:-none}"
+printf 'pass: 1   fail: 0\n'
 SH
   SPLIT_EXTERNAL="$TMP_ROOT/split-external"
   mkdir -p "$SPLIT_EXTERNAL/lib"
@@ -276,7 +278,7 @@ SH
     split_fixture="$(split_world "$split_family")"
     rm -- "$split_fixture/dev_validate_run_selection.sh"
     cp "$TEST_DIR/${split_family}_"*.sh "$split_fixture/"
-    printf '#!/usr/bin/env bash\nprintf '\''split-row=%s:%%s\\n'\'' "${1:-none}"\n' \
+    printf '#!/usr/bin/env bash\nprintf '\''split-row=%s:%%s\\n'\'' "${1:-none}"\nprintf '\''pass: 1   fail: 0\\n'\''\n' \
       "$split_family" > "$split_fixture/$split_family.sh"
     cp "$SPLIT_RUNNER/unrelated.sh" "$split_fixture/"
     split_external_fixture="$TMP_ROOT/split-external-$split_family"

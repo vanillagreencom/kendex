@@ -45,8 +45,7 @@ elif ! command -v setsid >/dev/null 2>&1; then
   SKIP_REASON="setsid is not installed"
 fi
 if [[ -n "$SKIP_REASON" ]]; then
-  echo "  skip  $SKIP_REASON; the attached rows did not run"
-  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  printf 'rowless: dev_validate_run_attached %s\n' "$SKIP_REASON"
   exit 0
 fi
 

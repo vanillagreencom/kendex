@@ -347,10 +347,12 @@ tar -xf "$TMP/aggregate-tree.tar" -C "$actual"
 stub_replay_suite() { # REPOSITORY-RELATIVE-SUITE
   local suite="$1" stop header
   case "$suite" in
-    *.mjs) stop='process.exit(0);'; header='^[[:space:]]*(//|#!|$)' ;;
-    *) stop='exit 0'; header='^[[:space:]]*(#|$)' ;;
+    *.mjs) stop="console.log('pass: 1   fail: 0'); process.exit(0);"; header='^[[:space:]]*(//|#!|$)' ;;
+    *) stop="echo 'pass: 1   fail: 0'; exit 0"; header='^[[:space:]]*(#|$)' ;;
   esac
   # Header metadata must stay before the first command for the runtime lint.
+  # The stop prints one passing row, since run-all.sh reds a suite that exits
+  # 0 with no row counted.
   # Keep the body text so dependency selection still reads the real inputs.
   awk -v stop="$stop" -v header="$header" '
     !stopped && $0 !~ header { print stop; stopped = 1 }
