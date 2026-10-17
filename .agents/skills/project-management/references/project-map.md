@@ -60,6 +60,8 @@ Most projects are deliverables. Only work with no end is standing.
 
 A step that decides whether a project with no open item left completes (tpm-audit § 11 step 5, tpm-cycle-plan § 1) reads the map first, as tpm-audit § 1.6 does. It never completes a standing map project. It completes a map deliverable only on stated evidence that its `ends_when` holds; without that evidence the deliverable stays started and the step reports it. A project off the map, and every project under `map-absent`, completes once it has no open item left. The steps that run the completion, audit-issues § 2.3 and cycle-plan § 2, follow that decision and read no map.
 
+The active project is the started project whose work is current: the one a step plans or audits when none is named, and the one that holds every other project from activation. A standing map project never counts as active; it stays started beside the active project. A started map deliverable counts, a held-open one included, and so does a started project off the map; under `map-absent` every started project counts. tpm-audit § 11 step 5 makes the activation decision, and audit-issues § 2.3 follows it and reads no map. A step that picks the active project from a list of started projects (tpm-cycle-plan § 1, audit-issues § 3) reads the map first, as tpm-audit § 1.6 does, and skips each standing map project.
+
 A standing project's `role` is one of:
 
 - `area`: an owned subsystem with continuing work, such as Review Gate & CI. An item belongs to it when it changes the area's Location paths without advancing a deliverable. A defect in an area goes to that area; bug-ness is the `bug` label.

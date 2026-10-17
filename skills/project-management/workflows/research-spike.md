@@ -26,6 +26,8 @@ On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_
 
 ## 3. Hand Off
 
+The research issue's project comes from the project map, read as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does. In a map repository, place it by [project-map.md § Routing](../references/project-map.md#routing) from the topic and domains; a route to none stops the spike before the handoff and reports the `project_needed` entry that section names. Under `map-absent`, take the first started project, which [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as active:
+
 ```bash
 .agents/skills/linear/scripts/linear.sh projects list --state started --first
 ```

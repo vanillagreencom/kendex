@@ -4,7 +4,7 @@ Returned inline by `tpm-cycle-plan.md` and written by the caller to `tmp/cycle-p
 
 ## Status: project_complete
 
-The active project has no backlog, actionable, or in-progress issues left.
+The active project has no backlog, actionable, or in-progress issues left, or no started project counts as active ([project-map.md § Project kinds](../references/project-map.md#project-kinds)) and `completed_project` is null.
 
 ```json
 {
@@ -18,7 +18,7 @@ The active project has no backlog, actionable, or in-progress issues left.
 }
 ```
 
-`actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1); its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
+`actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1), and when `completed_project` is null; its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
 
 ## Status: plan_ready
 

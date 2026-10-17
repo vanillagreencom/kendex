@@ -10,9 +10,9 @@ Analyze the backlog, compute architecture order, and recommend a cycle plan.
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
-Extract `project.name` (use as `[ACTIVE_PROJECT]` everywhere), `project.id`, `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` arrays, `backlog_projects` (ordered by `sort_order`), and `next_project`.
+Read the project map, as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does: a deliverable's `ends_when` is its entry in the `### Project map` block. `[ACTIVE_PROJECT]`, used everywhere below, is the first `projects[]` entry, in `session-status`'s priority order, that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project; record its `name` and `id`. Extract `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` entries whose `project_name` is `[ACTIVE_PROJECT]`, `backlog_projects` (ordered by `sort_order`), and `next_project`.
 
-**All three issue arrays empty** means the project has no open work left — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), and `actions.mark_complete`. Read the project map first, as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does: the deliverable's `ends_when` is its entry in the `### Project map` block. `actions.mark_complete` is null when [project-map.md § Project kinds](../references/project-map.md#project-kinds) holds the project open.
+**All three issue lists empty** means the project has no open work left — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), and `actions.mark_complete`. `actions.mark_complete` is null when § Project kinds holds the project open. With no entry counting as active, return the same way with `completed_project` and `actions.mark_complete` null.
 
 If any label recommendation may follow, load the inventory first — `labels list --max --format=safe`. Every `actions.set_labels[]` entry must name its update mode and category and carry enough data for the caller to preflight a full final set.
 
@@ -32,7 +32,7 @@ Set `velocity.adjustment` only on a trigger: current ≥150% of baseline for 2+ 
 
 ## 3. Backlog Candidates
 
-Use `issues.backlog`, or fall back to a cache query:
+Use the § 1 `issues.backlog` entries, or fall back to a cache query:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --project "[ACTIVE_PROJECT]" --state "Backlog" --max

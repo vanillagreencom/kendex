@@ -112,7 +112,7 @@ Collect the artifact per § 4.2 step 1-2, then present:
 
 **Held open** (100%, `ends_when` not shown to hold): [PROJECT] — ends when [ENDS_WHEN]
 
-**Recommended next**: [PROJECT] — [REASON], or `None` with what blocks each candidate.
+**Recommended next**: [PROJECT] — [REASON] [· waits for active project [BLOCKED_BY_ACTIVE]], or `None` with what blocks each candidate.
 </output_format>
 
 ### 2.3 Apply and Activate
@@ -124,7 +124,7 @@ Apply reorders and the `complete_candidates[]` completions without asking; a `co
 .agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state completed
 ```
 
-**Skip if** `recommended_next` is null or a started project already exists. Otherwise ask: `Activate [RECOMMENDED]` | other ready projects | `Skip`. On activation:
+**Skip if** `recommended_next.id` is null or `recommended_next.blocked_by_active` is set, the active project tpm-audit § 11 step 5 found. Otherwise ask: `Activate [RECOMMENDED]` | other ready projects | `Skip`. On activation:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state started
@@ -138,7 +138,7 @@ Then ask "Continue to full audit of [PROJECT]?" — yes sets MODE=project, TARGE
 
 **Skip if** MODE is `issue` or `team` — team audits the whole team and resolves no target. Linear only.
 
-With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work` — `session-status` selects projects workspace-wide and reports no team, so confirm the chosen project belongs to the configured team before using it ([SKILL.md](../SKILL.md) § Scope by Path). With no such project, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
+With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work` that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project, reading the map first as that section says — `session-status` selects projects workspace-wide and reports no team, so confirm the chosen project belongs to the configured team before using it ([SKILL.md](../SKILL.md) § Scope by Path). With no such project, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
 
 ---
 

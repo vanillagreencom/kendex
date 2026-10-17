@@ -196,7 +196,7 @@ A parent created or promoted this way is a container by default. `(one PR)` mark
                "current_sort_order": -5000, "new_sort_order": -10000, "rationale": "..."}],
   "complete_candidates": [{"id": "uuid", "name": "string", "progress": 1.0, "unblocks": ["Project X"], "ends_when_evidence": "string|null"}],
   "complete_held": [{"id": "uuid", "name": "string", "progress": 1.0, "ends_when": "string|null"}],
-  "recommended_next": {"id": "uuid or null", "name": "string or null", "rationale": "..."},
+  "recommended_next": {"id": "uuid or null", "name": "string or null", "rationale": "...", "blocked_by_active": {"id": "uuid", "name": "string"}},
   "summary": {"projects_analyzed": 0, "reorder_needed": 0, "projects_to_complete": 0, "projects_ready": 0}
 }
 ```
@@ -206,3 +206,5 @@ A parent created or promoted this way is a container by default. `(one PR)` mark
 `recommended_order[]` is diagnostic: it records the § 11 step 3 ordering in full. The caller executes `reorder[]`, `complete_candidates[]`, and `recommended_next` — never this array.
 
 `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `complete_held[]` lists each map deliverable at 100% without that evidence, with the map's `ends_when` (null when the map states none); the caller reports it and never completes it ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
+
+`recommended_next.blocked_by_active` is the started project that holds activation, the active project of [project-map.md § Project kinds](../references/project-map.md#project-kinds) that this run does not complete, and null when none does. A standing map project is never in it. The caller activates `recommended_next` only when this field is null.
