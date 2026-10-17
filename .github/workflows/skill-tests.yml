@@ -24,7 +24,7 @@ name: Skill Tests
 # macOS cargo and shell legs run in the group. The two diff checks,
 # preflight and Markdown, run on every group against its base.
 # `tools/ci-job-set --event-parity` holds the pull-request selection, which
-# the classifier's queue selector reads, equal to the group's. The required
+# local validation (`tools/guard --full`) reads, equal to the group's. The required
 # checks retain their names. The last job, `CI`, accepts only the skips the
 # selection authorized. Every other job reports into it except the nightly
 # macOS skill suites. GitHub enforces approval and thread resolution
@@ -33,11 +33,12 @@ name: Skill Tests
 # A PUSH TO MAIN carries the tree its merge group proved, so its cargo lanes
 # run only the compile steps, which save the compile cache under the merged
 # lockfile for each platform, and the catalog and smoke checks run as on
-# every main run. THE NIGHTLY RUN, the daily schedule on main or a manual
-# dispatch, also runs the full macOS shell roster, the macOS cargo tests and
-# the Windows tests. A macOS or Windows failure that independently passing
-# changes cause only in combination, or that no group's selection reached,
-# surfaces there, and the overseer's watch reports a red nightly run.
+# every main run. THE NIGHTLY RUN, the daily schedule on main, also runs the
+# full macOS shell roster, the macOS cargo tests and the Windows tests; a
+# manual dispatch runs the same jobs on demand. A macOS or Windows failure
+# that independently passing changes cause only in combination, or that no
+# group's selection reached, surfaces there, and the overseer's watch
+# reports a red scheduled run.
 # Whatever else does NOT run on every event carries its own `if:` saying
 # why. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
 # groups and every shard does each night.
@@ -306,18 +307,23 @@ jobs:
     timeout-minutes: 5
     steps:
       # The whole history: the secrets scan judges every commit the group
-      # adds against that commit's own parents, which a shallow clone has not
-      # fetched.
+      # and its pull request add against that commit's own parents, which a
+      # shallow clone has not fetched.
       - id: candidate-checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: candidate
           persist-credentials: false
           fetch-depth: 0
-      # The commit lane's credential scan over the lines each commit of the
-      # group adds past its base. gitleaks installs in the same step, so the
-      # scan never runs without it, and the notice records the seconds the
-      # step added, the install included.
+      # The commit lane's credential scan over the lines each commit adds
+      # past the group's base: the group's commits, then the pull request's
+      # own. The queue squashes a pull request into one group commit, so a
+      # credential one of its commits added and a later one removed is in no
+      # group commit, yet the pull request's public ref still publishes it.
+      # The queue branch, gh-readonly-queue/<base>/pr-<number>-<sha>, names
+      # that pull request; a group ref naming none fails the scan. gitleaks
+      # installs in the same step, so the scan never runs without it, and
+      # the notice records the seconds the step added, the install included.
       # Scan before candidate scripts: they can change the scanner executable
       # in the shared runner directory. Trusted code and policy alone cannot
       # protect a scan that runs after candidate code.
@@ -335,12 +341,28 @@ jobs:
         working-directory: candidate
         env:
           BASE: ${{ github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
         run: |
           start=$SECONDS
           status=0
+          scan() { PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/secrets" --against "$BASE" --policy-root "$GITHUB_WORKSPACE/guards"; }
           "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks" || status=$?
           if [ "$status" -eq 0 ]; then
-            PATH="$RUNNER_TEMP/gitleaks:$PATH" "$GITHUB_WORKSPACE/guards/skills/commit-guards/scripts/secrets" --against "$BASE" --policy-root "$GITHUB_WORKSPACE/guards" || status=$?
+            scan || status=$?
+            pr="${HEAD_REF#refs/heads/gh-readonly-queue/"${BASE_REF#refs/heads/}"/pr-}"
+            pr="${pr%%-*}"
+            case "$pr" in
+              '' | *[!0-9]*)
+                echo "::error title=secrets scan::queue-ref=$HEAD_REF names no pull request, so its commits were not scanned"
+                status=2 ;;
+              *)
+                pr_status=0
+                git fetch --quiet --no-tags origin "refs/pull/$pr/head" &&
+                  git worktree add --quiet --detach "$RUNNER_TEMP/pull-request-head" FETCH_HEAD &&
+                  (cd -- "$RUNNER_TEMP/pull-request-head" && scan) || pr_status=$?
+                [ "$pr_status" -eq 0 ] || status=$pr_status ;;
+            esac
           fi
           echo "::notice title=secrets scan::$((SECONDS - start)) seconds, gitleaks install included"
           exit "$status"

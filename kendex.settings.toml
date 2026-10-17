@@ -54,12 +54,6 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # with slow dispatch.
 CI_WAIT_NO_CHECKS_GRACE = "600"
 
-# ci-wait reads only the pull request's checks; queue-wait watches the
-# merge-group run. Pull requests still run the macOS jobs, observed at 50 to
-# 70 minutes, so the wait stays past them until those jobs leave the
-# pull-request run.
-CI_WAIT_MAX_SECS = "5400"
-
 # Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 

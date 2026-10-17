@@ -63,7 +63,7 @@ On Linux a debug build and the installed app are two apps to the single-instance
 
 A pull request runs no lane: its Skill Tests run reports the required `CI` context alone, so GitHub admits it to the merge queue. The merge group runs the lanes its change class and paths select, the macOS cargo tests and shell shards among them, and is the only proof of a head. A red group returns the change to its lane. Required check names stay unchanged.
 
-A macOS or Windows failure that independently passing changes cause only in combination surfaces in the nightly run: a daily schedule on main, or a manual dispatch, runs the macOS cargo tests, the Windows tests and the complete native shell profile. The overseer's watch reports a red nightly run. `tools/macos-test-contracts` owns native eligibility; Linux retains the complete shell roster. The push to main compiles the cargo lanes without running tests, which saves their cache under the merged lockfile.
+A macOS or Windows failure that independently passing changes cause only in combination surfaces in the nightly run: a daily schedule on main runs the macOS cargo tests, the Windows tests and the complete native shell profile, and a manual dispatch runs the same jobs on demand. The overseer's watch reports a red scheduled run. `tools/macos-test-contracts` owns native eligibility; Linux retains the complete shell roster. The push to main compiles the cargo lanes without running tests, which saves their cache under the merged lockfile.
 
 ## The self-install
 

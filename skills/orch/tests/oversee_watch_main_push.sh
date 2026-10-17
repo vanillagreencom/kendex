@@ -160,18 +160,31 @@ for row in \
   assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$restored" "$name restoration" "$STUB_DIR/err"
 done
 
-# These producers are the workflow's FAILED: loop and GitHub's timed_out
-# conclusion. Both must produce a failing event through the real watch.
+# These producers are the workflow's FAILED: loop and GitHub's timed_out,
+# cancelled and startup_failure conclusions. A red push or night must produce
+# a failing event through the real watch. The scheduled run alone runs the
+# platform roster, so a night cut short (a job past its timeout-minutes ends
+# cancelled) or never started reports too, its cancelled jobs named; a
+# cancelled push does not.
 for row in \
-  'timed-out|timed_out|suite=oversee_watch seconds=1 pass=4 fail=1' \
-  'failed-suite-line|failure|FAILED: skills/orch/tests/oversee_watch_main_push.sh'; do
-  IFS='|' read -r name conclusion cause <<<"$row"
+  'timed-out|push|timed_out|timed_out|suite=oversee_watch seconds=1 pass=4 fail=1|yes' \
+  'failed-suite-line|push|failure|failure|FAILED: skills/orch/tests/oversee_watch_main_push.sh|yes' \
+  'night-cancelled|schedule|cancelled|cancelled|suite=oversee_watch seconds=1 pass=4 fail=1|yes' \
+  'night-startup-failure|schedule|startup_failure||suite=oversee_watch seconds=1 pass=4 fail=1|yes' \
+  'push-cancelled|push|cancelled|cancelled|suite=oversee_watch seconds=1 pass=4 fail=1|no'; do
+  IFS='|' read -r name event conclusion job_conclusion cause reports <<<"$row"
   new_case "$name"
-  jq -cn --arg conclusion "$conclusion" '[{databaseId: 202, headBranch: "main", event: "push", status: "completed", conclusion: $conclusion}]' > "$STUB_DIR/main-push.owner_repo.json"
-  jq -cn --arg conclusion "$conclusion" '{jobs: [{name: "Skill suites job", conclusion: $conclusion}]}' > "$STUB_DIR/main-jobs.202.json"
+  jq -cn --arg event "$event" --arg conclusion "$conclusion" '[{databaseId: 202, headBranch: "main", event: $event, status: "completed", conclusion: $conclusion}]' > "$STUB_DIR/main-push.owner_repo.json"
+  jq -cn --arg conclusion "$job_conclusion" '{jobs: (if $conclusion == "" then [] else [{name: "Skill suites job", conclusion: $conclusion}, {name: "Skipped job", conclusion: "skipped"}] end)}' > "$STUB_DIR/main-jobs.202.json"
   printf 'Job\tSuite\t2026-10-08T08:00:00Z %s\n' "$cause" > "$STUB_DIR/main-log.202.txt"
   main_watch
-  assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=[\"Skill suites job\"] cause=$cause" "$name" "$STUB_DIR/err"
+  expected=''
+  if [[ "$reports" == yes ]]; then
+    jobs='["Skill suites job"]'
+    [[ -n "$job_conclusion" ]] || jobs='[]'
+    expected="EVENT main-push-failing owner/repo workflow=skill-tests.yml run=202 jobs=$jobs cause=$cause"
+  fi
+  assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" "rc=0 events=$expected" "$name" "$STUB_DIR/err"
 done
 
 # A red nightly run is an incident of its own: a green push after it neither

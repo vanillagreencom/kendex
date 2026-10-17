@@ -2110,12 +2110,17 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 # row: the push compiles, the nightly run tests the platform roster, so a
 # green push must not clear a red night.
 check_main_push() {
-  local repo event row runs run conclusion jobs log cause failures key prior changed rc
+  local repo event row failing runs run conclusion jobs log cause failures key prior changed rc
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err"
   for repo in "${REPOS[@]}"; do
     for event in push schedule; do
-      row=main-push-failing
-      [[ "$event" == push ]] || row=main-schedule-failing
+      # The conclusions and job conclusions that mark the run red. Nothing
+      # else runs the nightly platform roster, so a scheduled run cut short
+      # by a job's timeout-minutes (GitHub reports it cancelled) or one that
+      # never started reports too.
+      row=main-push-failing failing='failure timed_out'
+      [[ "$event" == push ]] ||
+        row=main-schedule-failing failing='failure timed_out cancelled startup_failure'
       rc=0
       runs="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event "$event" \
         --status completed --limit 1 --json databaseId,conclusion 2>"$errf")" || rc=$?
@@ -2136,7 +2141,7 @@ check_main_push() {
         continue
       fi
       IFS='|' read -r run conclusion <<<"$runs"
-      if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
+      if [[ " $failing " != *" $conclusion "* ]]; then
         rows="$(lane_row_clear "$row" "$rows" "$repo")" \
           || die state-read-failed "" "repo=$repo" "row=$row"
         continue
@@ -2144,10 +2149,10 @@ check_main_push() {
       rc=0
       jobs="$(gh run view "$run" --repo "$repo" --json jobs 2>"$errf")" || rc=$?
       if (( rc == 0 )); then
-        jobs="$(jq -ec '
+        jobs="$(jq -ec --arg failing "$failing" '
           if (.jobs | type) == "array" and all(.jobs[];
             (.name | type) == "string" and (.conclusion | type) == "string") then
-            [.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | unique
+            [.jobs[] | select(.conclusion as $c | $failing | split(" ") | any(. == $c)) | .name] | unique
           else error("invalid main-push jobs") end' <<<"$jobs" 2>"$errf")" || rc=$?
       fi
       if (( rc != 0 )); then

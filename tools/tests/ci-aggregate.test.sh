@@ -46,9 +46,12 @@
 #      job dropped from CI's needs, CI without always(), a lane dropped from
 #      CI and a diff check held to the pull request. Every run step of the
 #      bot-instructions job runs on the merge group; the job checks out the
-#      whole history the secrets scan judges each commit against. Arms
+#      whole history the secrets scan judges each commit against, and that
+#      scan finds a credential one pull-request commit added and a later one
+#      removed, which the group's squash commit no longer holds. Arms
 #      change a step's event condition, add a run step the table does not
-#      hold and plant a shallow checkout.
+#      hold, plant a shallow checkout, run the candidate's scanner and drop
+#      the pull request's scan.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -780,8 +783,9 @@ awk '
 check "must-fail: a run step the table does not hold is named" "missing=planted extra=" \
   "$(step_coverage_gap "$TMP/wf-step-unlisted.yml")"
 
-# The secrets scan in the content-scan job judges each pull request commit
-# against its own parents, which only the whole history (depth 0) holds.
+# The secrets scan in the content-scan job judges each group and pull
+# request commit against its own parents, which only the whole history
+# (depth 0) holds.
 checkout_depth() { # WORKFLOW JOB — the candidate checkout's depth, or none
   local depth
   depth="$(step_field "$1" "$2" candidate-checkout fetch-depth)" || return 1
@@ -799,6 +803,9 @@ check "must-fail: a content-scan checkout without fetch-depth 0 is named" "none"
 # Use the template suite's neutral credential fixture with this source
 # workflow's actual checkout inputs and scan body. No candidate script may
 # run first: it shares the runner directory with the scanner executable.
+# The pull request adds the credential in one commit and removes it in the
+# next; the queue's squash commit, the group, holds neither, so only the
+# scan of the pull request's own commits can find it.
 check "the credential scan runs before candidate scripts" "$SECRETS_STEP" \
   "$(job_steps "$WORKFLOW" "$SCAN_JOB" | awk -F '\t' '$3 == "yes" { print $1; exit }')"
 CREDENTIAL_REPO="$TMP/credential-source"
@@ -821,19 +828,39 @@ mkdir -p "$CREDENTIAL_REPO/tools"
 printf '*\tthe candidate excludes every path\n' >"$CREDENTIAL_REPO/tools/secrets-excludes"
 git -C "$CREDENTIAL_REPO" add -A
 git -C "$CREDENTIAL_REPO" commit -qm 'candidate guard fixture'
-git -C "$CREDENTIAL_REPO" checkout -qb pr-merge main
-git -C "$CREDENTIAL_REPO" merge -q --no-ff candidate -m merge
+git -C "$CREDENTIAL_REPO" rm -q cred.txt
+git -C "$CREDENTIAL_REPO" commit -qm 'candidate drops the credential'
+git -C "$CREDENTIAL_REPO" update-ref refs/pull/7/head candidate
+git -C "$CREDENTIAL_REPO" checkout -qb group main
+git -C "$CREDENTIAL_REPO" merge -q --squash candidate
+git -C "$CREDENTIAL_REPO" commit -qm 'the queue squash of pull request 7'
+[ -z "$(git -C "$CREDENTIAL_REPO" ls-tree -r --name-only group -- cred.txt)" ] ||
+  { echo 'the group commit holds the credential the pull request removed' >&2; exit 1; }
+CREDENTIAL_BASE="$(git -C "$CREDENTIAL_REPO" rev-parse main)"
 if ! GITLEAKS_BIN="$(command -v gitleaks)"; then
   "$ROOT/skills/commit-guards/scripts/install-gitleaks" "$TMP/gitleaks"
   GITLEAKS_BIN="$TMP/gitleaks/gitleaks"
 fi
 
 # Keep the scanner call and its flags, but execute the candidate's copy.
-# This inverse control must lose both refusal and source isolation.
+# This inverse control must lose both refusal and source isolation. The
+# group-only control drops the pull request's scan and must lose the
+# finding.
 plant "$WORKFLOW" '/guards/skills/commit-guards/scripts/secrets' \
   '/candidate/skills/commit-guards/scripts/secrets' "$TMP/candidate-scanner.yml" "$SCAN_JOB"
-while IFS='|' read -r row wf expected; do
-  root="$TMP/credential-$row"
+plant "$WORKFLOW" '(cd -- "$RUNNER_TEMP/pull-request-head" && scan)' 'true' \
+  "$TMP/group-only-scan.yml" "$SCAN_JOB"
+QUEUE_REF="refs/heads/gh-readonly-queue/main/pr-7-$CREDENTIAL_BASE"
+scan_env() { # WORKFLOW KEY CONTEXT_JSON — the scan step's env value at that context
+  local expr
+  expr="$(step_field "$1" "$SCAN_JOB" "$SECRETS_STEP" "$2")" || return 1
+  [ -n "$expr" ] || { echo "credential scan has no $2 expression" >&2; return 1; }
+  gh_eval value "$3" "$expr" | jq -r '. // ""'
+}
+credential_row=0
+while IFS='|' read -r row wf head_ref expected; do
+  credential_row=$((credential_row + 1))
+  root="$TMP/credential-$credential_row"
   mkdir -p "$root/runner/gitleaks"
   cp "$GITLEAKS_BIN" "$root/runner/gitleaks/gitleaks"
   for checkout in candidate-checkout 'the credential guards, from the default branch'; do
@@ -842,7 +869,7 @@ while IFS='|' read -r row wf expected; do
     depth="$(step_field "$wf" "$SCAN_JOB" "$checkout" fetch-depth)" || exit 1
     [ -n "$path" ] || { echo 'credential checkout has no path' >&2; exit 1; }
     case "$ref" in
-      '') branch=pr-merge ;;
+      '') branch=group ;;
       '${{ github.event.repository.default_branch }}') branch=main ;;
       *) echo 'credential checkout has an unsupported ref' >&2; exit 1 ;;
     esac
@@ -855,13 +882,15 @@ while IFS='|' read -r row wf expected; do
   work="$(step_field "$wf" "$SCAN_JOB" "$SECRETS_STEP" working-directory)" || exit 1
   body="$(step_field "$wf" "$SCAN_JOB" "$SECRETS_STEP" run)" || exit 1
   [ -n "$body" ] || { echo 'credential scan has no run body' >&2; exit 1; }
-  # The step's base, evaluated for a merge group whose base is main.
-  base_expr="$(step_field "$wf" "$SCAN_JOB" "$SECRETS_STEP" BASE)" || exit 1
-  [ -n "$base_expr" ] || { echo 'credential scan has no BASE expression' >&2; exit 1; }
-  base="$(gh_eval value "$(jq -cn --arg sha "$(git -C "$CREDENTIAL_REPO" rev-parse main)" \
-    '{github: {event_name: "merge_group", event: {merge_group: {base_sha: $sha}}}}')" "$base_expr" | jq -r '. // ""')" || exit 1
+  # The step's refs, evaluated for a merge group whose base is main.
+  context="$(jq -cn --arg sha "$CREDENTIAL_BASE" --arg head "$head_ref" \
+    '{github: {event_name: "merge_group", event: {merge_group: {base_sha: $sha, base_ref: "refs/heads/main", head_ref: $head}}}}')"
+  scan_BASE="$(scan_env "$wf" BASE "$context")" || exit 1
+  scan_BASE_REF="$(scan_env "$wf" BASE_REF "$context")" || exit 1
+  scan_HEAD_REF="$(scan_env "$wf" HEAD_REF "$context")" || exit 1
   status=0
-  (cd -- "$root/${work:-.}" && env -i PATH="$PATH" HOME="$root" BASE="$base" \
+  (cd -- "$root/${work:-.}" && env -i PATH="$PATH" HOME="$root" BASE="$scan_BASE" \
+    BASE_REF="$scan_BASE_REF" HEAD_REF="$scan_HEAD_REF" \
     KENDEX_REAL_HOME=1 CI=true GITHUB_ACTIONS=true GITHUB_WORKSPACE="$root" RUNNER_TEMP="$root/runner" \
     "$BASH" --noprofile --norc -e -o pipefail -c "$body") >"$root/out" 2>&1 || status=$?
   finding=no
@@ -871,8 +900,10 @@ while IFS='|' read -r row wf expected; do
   check "$row: scan exit, credential finding, and candidate execution" \
     "$expected" "$status:$finding:$candidate"
 done <<ROWS
-trusted|$WORKFLOW|1:yes:no
-must-fail|$TMP/candidate-scanner.yml|0:no:yes
+trusted|$WORKFLOW|$QUEUE_REF|1:yes:no
+must-fail: the candidate's scanner|$TMP/candidate-scanner.yml|$QUEUE_REF|0:no:yes
+must-fail: the group's commits alone|$TMP/group-only-scan.yml|$QUEUE_REF|0:no:no
+a queue ref naming no pull request|$WORKFLOW|refs/heads/gh-readonly-queue/main/head|2:no:no
 ROWS
 
 # Execute the decision step read from the workflow, not a second invocation

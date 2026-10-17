@@ -28,8 +28,8 @@
 #   EVENT          pull_request|merge_group, the event the selection is for.
 #                  Both select the same lanes and shards for the same
 #                  class, docs verdict and paths, which --event-parity
-#                  checks. The workflow selects on merge_group alone; the
-#                  change-class queue selector asks at pull_request.
+#                  checks. The workflow selects on merge_group alone;
+#                  tools/guard --full asks at pull_request.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
@@ -84,8 +84,9 @@
 #   - A diff to what defines the lanes, a path under .github/workflows/ or
 #     .github/actions/ or tools/ci-job-set, tools/ci-aggregate,
 #     tools/rust-reads or tools/lib/skill-requirements.awk, runs every
-#     lane, so a change to a lane or to its selection runs on the pull
-#     request that makes it. Any path under .github/ selects every shard.
+#     lane, so a change to a lane or to its selection runs every lane in
+#     the merge group that lands it. Any path under .github/ selects every
+#     shard.
 #   - A `render` or `trivial` diff runs bot_instructions, the one
 #     seconds-long verify job, whose steps its lane entry below lists. The
 #     classifier proved a `render` diff by re-rendering it, and a `trivial`
@@ -112,8 +113,8 @@
 #                       changelog-entries --base over the range from the
 #                       event's base (fragments and package versions), the
 #                       document byte ceilings, the index-wide work-marker
-#                       scan and the secrets scan of the commits the change
-#                       adds.
+#                       scan and the secrets scan of the commits the group
+#                       and its pull request add.
 #   cargo_linux         the workspace tests on Linux.
 #   cargo_macos         the workspace tests on the platform the app ships on.
 #   cargo_lint          clippy, fmt and doc over the workspace.

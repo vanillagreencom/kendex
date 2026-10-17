@@ -318,7 +318,7 @@ case "${1:-}" in
       '--selection: report selection=all|subset without running checks or suites.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
-      '        the same suite mapper, leaving the full record to pull-request CI.'
+      '        the same suite mapper, leaving the full record to merge-group CI.'
     exit 0
     ;;
 esac
@@ -339,8 +339,8 @@ fi
 # with an empty paths file: the runner's fallback when it could not read a
 # class, which it hands over as standard, docs-only false and no paths. Any
 # other class runs the lanes ci-job-set selects from those inputs, so
-# completion validation stands a lane down where the checks judging the pull
-# request do and nowhere else. A class ci-job-set does not know is refused;
+# completion validation stands a lane down where the merge group's checks
+# do and nowhere else. A class ci-job-set does not know is refused;
 # any other selection failure is a finding, and every lane still runs. The
 # commit chain reads no class.
 #
@@ -363,8 +363,9 @@ if [ "$MODE" = full ] && [ -n "$validate_class" ]; then
     # The rows come from the output file alone; stderr, which repeats them,
     # is shown and read for a refusal's cause.
     selection_status=0
-    # The selection is the pull request's: what CI runs on the pull request
-    # is what completion validation stands a lane down against.
+    # The pull request's selection, which --event-parity holds equal to the
+    # merge group's: what CI runs in the group is what completion validation
+    # stands a lane down against.
     selection=$(CHANGE_CLASS="$validate_class" DOCS_ONLY="$validate_docs_only" EVENT=pull_request \
       CHANGED_PATHS="$selected_paths" GITHUB_OUTPUT="$selection_rows" "$TOOLS_DIR/ci-job-set" 2>&1) ||
       selection_status=$?
@@ -448,7 +449,7 @@ fi
 # Decision IDs are judged before merge and not per commit: the check fetches
 # the base branch and reads its tip, since a merge base older than another
 # branch's merged record cannot show the collision. Bot instructions CI
-# runs the same check on pull requests and merge groups. A range run leaves
+# runs the same check on merge groups. A range run leaves
 # it to full validation or that required CI job.
 if [ "$MODE" = full ]; then
   decision_status=0
@@ -1980,7 +1981,7 @@ fi
 
 if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ]; then
   # The cross-target checks and cargo doc each write a target tree of their
-  # own, and CI covers both on the pull requests tools/ci-job-set selects
+  # own, and CI covers both on the merge groups tools/ci-job-set selects
   # its cargo_lint, cargo_macos and cargo_windows_check lanes for. Here they are
   # skipped only when the touched set shows the branch changed no Rust
   # input: no crate, no workspace compiler input, no file compiled code
