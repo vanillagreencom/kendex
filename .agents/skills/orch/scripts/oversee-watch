@@ -2110,10 +2110,34 @@ workflow_absent() { # REPO WORKFLOW ERROR_FILE
 # row: the push compiles, the nightly run tests the platform roster, so a
 # green push must not clear a red night.
 check_main_push() {
-  local repo event row failing runs run conclusion jobs log cause failures key prior changed rc
+  local repo event row failing runs run conclusion jobs log cause failures key prior changed rc i
+  local -a events lists reads parsed
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err"
   for repo in "${REPOS[@]}"; do
+    # Both run lists are read first, so one jq start parses the pair.
+    events=() lists=() reads=() parsed=()
     for event in push schedule; do
+      rc=0
+      runs="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event "$event" \
+        --status completed --limit 1 --json databaseId,conclusion 2>"$WORK_DIR/main-runs-$event.err")" || rc=$?
+      events+=("$event") lists+=("$runs") reads+=("$rc")
+    done
+    # One line per list, in read order; a list that is not a valid page
+    # prints invalid. A failed read's line goes unused.
+    rc=0
+    runs="$(jq -nr '$ARGS.positional[] | try (fromjson |
+        if type == "array" and length <= 1 and all(.[];
+          (.databaseId | type) == "number" and (.conclusion | type) == "string") then
+          if length == 0 then "none|" else "\(.[0].databaseId)|\(.[0].conclusion)" end
+        else error("invalid completed main-push runs") end) catch "invalid|"' \
+      --args "${lists[@]}" 2>"$errf")" || rc=$?
+    if (( rc == 0 )); then
+      IFS=$'\n' read -ra parsed -d '' <<<"$runs" || true
+    else
+      for i in "${!reads[@]}"; do (( reads[i] != 0 )) || reads[i]=$rc; done
+    fi
+    for i in "${!events[@]}"; do
+      event="${events[i]}"
       # The conclusions and job conclusions that mark the run red. Nothing
       # else runs the nightly platform roster, so a scheduled run cut short
       # by a job's timeout-minutes (GitHub reports it cancelled) or one that
@@ -2121,18 +2145,11 @@ check_main_push() {
       row=main-push-failing failing='failure timed_out'
       [[ "$event" == push ]] ||
         row=main-schedule-failing failing='failure timed_out cancelled startup_failure'
-      rc=0
-      runs="$(gh run list --repo "$repo" --workflow skill-tests.yml --branch main --event "$event" \
-        --status completed --limit 1 --json databaseId,conclusion 2>"$errf")" || rc=$?
-      if (( rc == 0 )); then
-        runs="$(jq -er '
-          if type == "array" and length <= 1 and all(.[];
-            (.databaseId | type) == "number" and (.conclusion | type) == "string") then
-            if length == 0 then "none|" else "\(.[0].databaseId)|\(.[0].conclusion)" end
-          else error("invalid completed main-push runs") end' <<<"$runs" 2>"$errf")" || rc=$?
-      fi
+      rc="${reads[i]}" runs="${parsed[i]:-}"
+      # 5 is the status jq gives the invalid page it parsed alone.
+      if (( rc == 0 )) && [[ "$runs" == 'invalid|' ]]; then rc=5; fi
       if (( rc != 0 )); then
-        if workflow_absent "$repo" skill-tests.yml "$errf"; then
+        if workflow_absent "$repo" skill-tests.yml "$WORK_DIR/main-runs-$event.err"; then
           rows="$(lane_row_clear "$row" "$rows" "$repo")" \
             || die state-read-failed "" "repo=$repo" "row=$row"
           continue
