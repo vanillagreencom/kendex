@@ -16,7 +16,7 @@ set -euo pipefail
 # A reader failure must never refuse the edit, including an unexpected status.
 trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then notice payload reader-failed; fi; exit 0' EXIT
 
-notice() { # KEY VALUE [INSTRUCTION]
+notice() { # KEY VALUE [DETAIL]
   local text encoded bs=\\ q='"' octal char escaped
   printf -v text 'jarvis-memory-note: %s=%s' "$1" "$2"
   [ -z "${3:-}" ] || text="$text"$'\n'"$3"
@@ -37,15 +37,18 @@ for dependency in jq cat; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || { notice missing-tools "${MISSING#,}"; exit 0; }
-INPUT=$(cat 2>/dev/null) || { notice payload unreadable; exit 0; }
-TOOL=$(jq -er '.tool_name | strings | select(length > 0)' 2>/dev/null <<<"$INPUT") ||
-  { notice payload invalid-json; exit 0; }
+INPUT=$(cat 2>&1) || { notice payload unreadable "$INPUT"; exit 0; }
+TOOL=$(jq -r '.tool_name | strings | select(length > 0)' 2>&1 <<<"$INPUT") ||
+  { notice reader tool-name "$TOOL"; exit 0; }
+[ -n "$TOOL" ] || { notice payload invalid-json; exit 0; }
 case "$TOOL" in
-  Edit | MultiEdit | NotebookEdit | Write) ;;
+  NotebookEdit) FIELD=notebook_path ;;
+  Edit | MultiEdit | Write) FIELD=file_path ;;
   *) notice payload unknown-tool; exit 0 ;;
 esac
-TARGET=$(jq -er '.tool_input.file_path | strings | select(length > 0)' 2>/dev/null <<<"$INPUT") ||
-  { notice payload no-file-path; exit 0; }
+TARGET=$(jq -r --arg field "$FIELD" '.tool_input[$field] | strings | select(length > 0)' 2>&1 <<<"$INPUT") ||
+  { notice reader target "$TARGET"; exit 0; }
+[ -n "$TARGET" ] || { notice payload no-file-path; exit 0; }
 case "$TARGET" in /*) ;; *) TARGET="$PWD/$TARGET" ;; esac
 
 # Write can create parent directories. Resolve the existing ancestor before
@@ -60,7 +63,7 @@ while [ ! -d "$PARENT" ]; do
   PARENT=${PARENT%/*}
   [ -n "$PARENT" ] || PARENT=/
 done
-PARENT=$(cd -- "$PARENT" 2>/dev/null && pwd -P) || { notice payload unresolved-path; exit 0; }
+PARENT=$({ cd -- "$PARENT" && pwd -P; } 2>&1) || { notice payload unresolved-path "$PARENT"; exit 0; }
 DIRECTORY="$PARENT$TAIL"
 while [ "$DIRECTORY" != / ] && [ -n "$DIRECTORY" ]; do
   if [ "${DIRECTORY##*/}" = memory ]; then
