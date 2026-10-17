@@ -123,11 +123,13 @@ BRANCH_HEAD=1111111111111111111111111111111111111111
 PUSHED_HEAD=2222222222222222222222222222222222222222
 MOVED_HEAD=3333333333333333333333333333333333333333
 # Before its pull request opens, a lane its push started is bounded on the
-# branch head as the pull request's head is above.
+# branch head as the pull request's head is above: a move after a report
+# starts a fresh window, whose first stall is reported at once.
 CASE_LABEL="a pushed branch that stops moving with no pull request" stall_case start_pushed_still \
   "100||$BRANCH_HEAD|" "300||$PUSHED_HEAD|" "2099||$PUSHED_HEAD|" \
   "2100||$PUSHED_HEAD|EVENT lane-stalled issue-1 age=1800" "2160||$PUSHED_HEAD|" "2220||$PUSHED_HEAD|" \
-  "2280||$PUSHED_HEAD|EVENT lane-stalled issue-1 age=1980"
+  "2280||$PUSHED_HEAD|EVENT lane-stalled issue-1 age=1980" "2340||$MOVED_HEAD|" \
+  "4140||$MOVED_HEAD|EVENT lane-stalled issue-1 age=1800"
 CASE_LABEL="a pushed branch that moves again with no pull request" stall_case start_pushed_moving \
   "100||$BRANCH_HEAD|" "300||$PUSHED_HEAD|" "2000||$MOVED_HEAD|" "2100||$MOVED_HEAD|"
 
@@ -267,7 +269,7 @@ for age in 600 2500 4300 6099 6100; do
   (( age < 2500 )) || printf '%s\n' "$PUSHED_HEAD" > "$STUB_DIR/branch-head"
   CLOUD_WATCH="$MUTANT_WATCH" watch "$age" ORCH_OVERSEER_MARK_REPEAT=3
 done
-assert_eq "events=$EVENTS closes=$(closes)" "events= closes=0" \
+assert_eq "events=$EVENTS closes=$(closes) rc=$RC" "events= closes=0 rc=0" \
   "control: a pushed lane kept from the close stays open past its directive bound" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

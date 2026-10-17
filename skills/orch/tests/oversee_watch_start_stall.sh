@@ -45,15 +45,16 @@ worktree() { # ITEM [status]
   printf '%s\n' "$root"
 }
 # watch AGE [ENV=VAL...] — one pass at LAUNCHED + AGE seconds; EVENTS holds its
-# EVENT lines joined by `|`, the heartbeat left out. An empty
-# ORCH_WATCH_LANE_AGE_SECS drops the harness's neutral lane-long bound for the
-# watch's own default.
+# EVENT lines joined by `|`, the heartbeat left out, and RC its status. An
+# empty ORCH_WATCH_LANE_AGE_SECS drops the harness's neutral lane-long bound
+# for the watch's own default.
 watch() {
-  local age="$1"
+  local age="$1" out
   shift
   printf '%s\n' "$((LAUNCHED_EPOCH + age))" > "$STUB_DIR/now.epoch"
-  EVENTS="$(run_watch ORCH_WATCH_LANE_AGE_SECS "$@" -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null \
-    | grep '^EVENT ' | grep -v '^EVENT heartbeat' | paste -sd '|' - || true)"
+  out="$(run_watch ORCH_WATCH_LANE_AGE_SECS "$@" -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null)" \
+    && RC=0 || RC=$?
+  EVENTS="$(grep '^EVENT ' <<<"$out" | grep -v '^EVENT heartbeat' | paste -sd '|' - || true)"
 }
 
 echo "=== a lane with no status file past the window is reported, on every harness ==="
@@ -175,28 +176,31 @@ done
 # A cloud session opens its pull request only at finish, so a branch push
 # after launch is its start too: a head that moved between two reads, or one
 # committed at or after the record's session_since, LAUNCHED. COMMITTED dates
-# both heads, the stub's old default where empty.
-# NAME|HEAD at 100s|HEAD at 700s|COMMITTED|WANT
+# both heads, the stub's old default where empty. RUNNING_AFTER stamps the
+# record's running_at as launched() does, none where empty: open-terminal
+# stamps it after session_since, and a head committed between the two is a
+# start.
+# NAME|HEAD at 100s|HEAD at 700s|COMMITTED|RUNNING_AFTER|WANT
 BASE_HEAD=1111111111111111111111111111111111111111
 PUSHED_HEAD=2222222222222222222222222222222222222222
 BEFORE_LAUNCH="$(date -u -d "@$((LAUNCHED_EPOCH - 1))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -r "$((LAUNCHED_EPOCH - 1))" +%Y-%m-%dT%H:%M:%SZ)"
-cloud_push() { # NAME FIRST SECOND COMMITTED [WATCH_BIN]
+cloud_push() { # NAME FIRST SECOND COMMITTED RUNNING_AFTER [WATCH_BIN]
   new_case "$1"
-  write_state "$(launched issue-7 "$(worktree issue-7)" claude claude-cloud | jq -c --arg at "$LAUNCHED" '. + {session_since: $at}')"
+  write_state "$(launched issue-7 "$(worktree issue-7)" claude claude-cloud "$5" | jq -c --arg at "$LAUNCHED" '. + {session_since: $at}')"
   : > "$STUB_DIR/open.txt"
   [[ -z "$4" ]] || printf '%s\n' "$4" > "$STUB_DIR/branch-committed"
   printf '%s\n' "$2" > "$STUB_DIR/branch-head"
-  WATCH_BIN="${5:-}" watch 100
+  WATCH_BIN="${6:-}" watch 100
   printf '%s\n' "$3" > "$STUB_DIR/branch-head"
-  WATCH_BIN="${5:-}" watch 700
+  WATCH_BIN="${6:-}" watch 700
 }
-for row in "start_stall_cloud_pushed|$BASE_HEAD|$PUSHED_HEAD||" \
-  "start_stall_cloud_unpushed|$BASE_HEAD|$BASE_HEAD||EVENT start-stalled issue-7 age=700" \
-  "start_stall_cloud_first_read|$PUSHED_HEAD|$PUSHED_HEAD|$LAUNCHED|" \
-  "start_stall_cloud_committed_before|$BASE_HEAD|$BASE_HEAD|$BEFORE_LAUNCH|EVENT start-stalled issue-7 age=700"; do
-  IFS='|' read -r name first second committed want <<<"$row"
-  cloud_push "$name" "$first" "$second" "$committed"
+for row in "start_stall_cloud_pushed|$BASE_HEAD|$PUSHED_HEAD|||" \
+  "start_stall_cloud_unpushed|$BASE_HEAD|$BASE_HEAD|||EVENT start-stalled issue-7 age=700" \
+  "start_stall_cloud_first_read|$PUSHED_HEAD|$PUSHED_HEAD|$LAUNCHED|60|" \
+  "start_stall_cloud_committed_before|$BASE_HEAD|$BASE_HEAD|$BEFORE_LAUNCH||EVENT start-stalled issue-7 age=700"; do
+  IFS='|' read -r name first second committed running_after want <<<"$row"
+  cloud_push "$name" "$first" "$second" "$committed" "$running_after"
   assert_eq "events=$EVENTS" "events=$want" "$name: a branch push since launch is a files=none lane's start" "$STUB_DIR/err"
 done
 
@@ -415,14 +419,14 @@ ANY_HEAD_WATCH="$(mutant_scripts start-stall-any-head/orch oversee-watch)/overse
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/start-stall-any-head/github"
 # shellcheck disable=SC2016
 mutate_file "$ANY_HEAD_WATCH" '[[ "$prior_running" == "$running" && ( "$passes" == pushed || "$prior_head" != "$OPEN_PR_BRANCH_HEAD" ) ]]' '[[ -n "$OPEN_PR_BRANCH_HEAD" ]]'
-cloud_push start_stall_cloud_any_head "$BASE_HEAD" "$BASE_HEAD" "" "$ANY_HEAD_WATCH"
-assert_eq "events=$EVENTS" "events=" "control: reading any branch head as a start silences the unpushed row" "$STUB_DIR/err"
+cloud_push start_stall_cloud_any_head "$BASE_HEAD" "$BASE_HEAD" "" "" "$ANY_HEAD_WATCH"
+assert_eq "events=$EVENTS rc=$RC" "events= rc=0" "control: reading any branch head as a start silences the unpushed row" "$STUB_DIR/err"
 # A head committed in the second session_since was stamped is after it, so a
 # strict comparison must redden the first-read row.
 AFTER_SINCE_WATCH="$(mutant_scripts start-stall-after-since/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/start-stall-after-since/github"
 mutate_file "$AFTER_SINCE_WATCH" '(( OPEN_PR_BRANCH_DATE >= session_since ))' '(( OPEN_PR_BRANCH_DATE > session_since ))'
-cloud_push start_stall_cloud_after_since "$PUSHED_HEAD" "$PUSHED_HEAD" "$LAUNCHED" "$AFTER_SINCE_WATCH"
+cloud_push start_stall_cloud_after_since "$PUSHED_HEAD" "$PUSHED_HEAD" "$LAUNCHED" "" "$AFTER_SINCE_WATCH"
 assert_eq "events=$EVENTS" "events=EVENT start-stalled issue-7 age=700" \
   "control: a strict session_since comparison misses a head committed at it" "$STUB_DIR/err"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
