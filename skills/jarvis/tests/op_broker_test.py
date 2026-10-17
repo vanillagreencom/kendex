@@ -283,14 +283,13 @@ elif sys.argv[1]=='read':
         stream = module.open_fifo(fd, reply, os.O_RDWR)
         script = self.script("private-script")
         try:
-            # The unknown verb carries every field a known verb would accept.
+            # The unknown verb carries every field a known verb would accept. Linux is
+            # patched in so the shape checks behind macOS's platform refusal run everywhere.
             for request in ({"verb": "write", "reference": "op://fixture/item/password", "args": ["whoami"], "path": str(script)},
                             {"verb": "read", "reference": "https://example.org"},
                             {"verb": "op", "args": []}, {"verb": "op", "args": "whoami"}, {"verb": "op", "args": ["whoami", 1]},
                             {"verb": "script", "path": "relative-script"}):
-                if request["verb"] in ("op", "script") and sys.platform != "linux":
-                    continue
-                with self.subTest(request=request):
+                with self.subTest(request=request), patch.object(module, "sys", SimpleNamespace(platform="linux")):
                     module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {})
                     self.assertEqual(module.receive(stream, module.time.monotonic() + 5)["status"], "invalid-request")
             self.assertFalse((self.root / "ran").exists())

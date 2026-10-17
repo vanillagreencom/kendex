@@ -1,6 +1,7 @@
 """Must-fail controls use disposable production copies and the normal suite files."""
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -73,18 +74,19 @@ class Controls(unittest.TestCase):
             ("browser-class", "scripts/jarvis-browser", "*([\"--class=\" + window] if window else [])", "*([] if window else [])", "browser_test.py", "Browser.test_downloads_and_class"),
         ]
         baseline_env = dict(os.environ, JARVIS_TOOL_SCRIPTS=str(PACKAGE / "scripts"), JARVIS_TOOL_SKILL=str(PACKAGE / "SKILL.md"))
-        baselines = set()
+        skipped = {}
         for rule, relative, before, after, suite, case in rows:
-            if suite == "human_input_test.py" and case != "HumanInput.test_platform_refusal" and sys.platform != "linux":
-                print("control=" + rule + " unavailable platform=" + sys.platform, flush=True)
-                continue
             if rule == "required-agent-browser" and kendex_path() is None and not os.environ.get("HARNESS_CI_REQUIRE_KENDEX"):
                 print("control=" + rule + " unavailable dependency=kendex", flush=True)
                 continue
-            if (suite, case) not in baselines:
+            if (suite, case) not in skipped:
                 clean = run_case(PACKAGE / "tests" / suite, case, baseline_env)
                 self.assertEqual(clean.returncode, 0, clean.stderr)
-                baselines.add((suite, case))
+                # unittest's documented summary for one case its platform marker skipped.
+                skipped[suite, case] = re.search(rb"^OK \(skipped=1\)$", clean.stderr, re.MULTILINE) is not None
+            if skipped[suite, case]:
+                print("control=" + rule + " unavailable platform=" + sys.platform, flush=True)
+                continue
             with self.subTest(rule=rule), tempfile.TemporaryDirectory(prefix="jarvis-control-") as scratch:
                 copy = Path(scratch) / "jarvis"
                 shutil.copytree(PACKAGE, copy)

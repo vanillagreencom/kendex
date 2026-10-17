@@ -13,8 +13,13 @@ import uuid
 
 
 def set_downloads(profile, downloads):
-    # Chromium has no downloads switch. It reads this preference when the profile
-    # opens, and a running browser owns the file, so only a closed profile is edited.
+    # Chromium has no downloads switch. DevTools Browser.setDownloadBehavior is
+    # experimental and its override is cleared when the setting session detaches,
+    # which this launcher does on exec or detach. The DownloadDirectory policy is
+    # read only from machine-wide managed locations (root-owned /etc on Linux, a
+    # managed profile on macOS) and would move the user's own browser's downloads too.
+    # Chromium reads this preference when the profile opens, and a running browser
+    # owns the file, so only a closed profile is edited.
     if os.path.lexists(profile / "SingletonLock"):
         return
     profile.mkdir(mode=0o700, parents=True, exist_ok=True)
