@@ -121,12 +121,24 @@ await_polls() { # N
 
 # A long interval makes a delayed TERM observable. Keep the child unreaped
 # until cleanup: its process-group identity then cannot be reused while a
-# no-exec forwarder leaves its watch child alive.
+# no-exec forwarder leaves its watch child alive. With `jq`, the TERM waits
+# until the first poll's jq has started and holds: bash runs a trapped signal
+# only once a foreground child returns, so this places the TERM in a poll step
+# rather than wherever the scheduler leaves it.
 TERM_RUN=0
-term_row() { # BIN — TERMED records process exit and liveness withdrawal
+term_row() { # BIN [jq] — TERMED records process exit and liveness withdrawal
+  local bin_path="$STUB_BIN:$PATH" entered=""
   TERM_RUN=$((TERM_RUN + 1))
   new_lane "term-$TERM_RUN"
-  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$STUB_BIN:$PATH" "$WATCH_OUT" "$WATCH_ERR" <<'PY_TERM'
+  if [ "${2:-}" = jq ]; then
+    entered="$TMP_ROOT/term-$TERM_RUN.jq-entered"
+    mkdir -p "$TMP_ROOT/term-$TERM_RUN.bin"
+    printf '#!/bin/sh\nif [ -e %q ]; then : >%q; exec sleep 30; fi\nexec %q "$@"\n' \
+      "$BOX/to-lane.watch" "$entered" "$(command -v jq)" >"$TMP_ROOT/term-$TERM_RUN.bin/jq"
+    chmod +x "$TMP_ROOT/term-$TERM_RUN.bin/jq"
+    bin_path="$TMP_ROOT/term-$TERM_RUN.bin:$bin_path"
+  fi
+  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$bin_path" "$WATCH_OUT" "$WATCH_ERR" "$entered" <<'PY_TERM'
 import os
 from pathlib import Path
 import shutil
@@ -135,7 +147,7 @@ import subprocess
 import sys
 import time
 
-bash, script, lane, box, path, stdout, stderr = sys.argv[1:]
+bash, script, lane, box, path, stdout, stderr, entered = sys.argv[1:]
 env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
 env["PATH"] = path
 ps = shutil.which("ps", path=path)
@@ -149,6 +161,9 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
         while not marker.exists() and time.monotonic() < deadline:
             time.sleep(.02)
         assert marker.exists(), "watch did not publish its liveness record"
+        while entered and not Path(entered).exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert not entered or Path(entered).exists(), "the poll's jq never started"
         os.kill(child.pid, signal.SIGTERM)
         deadline = time.monotonic() + 3
         state = "running"
@@ -162,6 +177,17 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
                 break
             time.sleep(.02)
         record = "record-kept" if marker.exists() else "record-withdrawn"
+        if (state, record) != ("exited", "record-withdrawn"):
+            # The group's processes name the step that held the exit.
+            probe = subprocess.run([ps, "-A", "-o", "pid=,ppid=,pgid=,stat=,command="], env=env,
+                                   capture_output=True, check=True, timeout=5)
+            sys.stderr.write("term-row: watch group pid ppid pgid stat command\n")
+            for row in probe.stdout.decode(errors="replace").splitlines():
+                fields = row.split(None, 4)
+                if len(fields) > 2 and fields[2] == str(child.pid):
+                    sys.stderr.write("  " + row.strip() + "\n")
+            sys.stderr.write("term-row: record=%s %s\n" % (record,
+                             marker.read_text().strip() if marker.exists() else "-"))
         print(state + ":" + record)
     finally:
         try:
@@ -414,6 +440,9 @@ for term_entry in "$LANE_MAIL" "$REPO_ROOT/skills/orch/scripts/lane-mail"; do
   term_row "$term_entry"
   term_assertion
 done
+term_row "$LANE_MAIL" jq
+assert_eq "$TERMED" "exited:record-withdrawn" \
+  "a TERM while the poll's jq holds ends the watch within three seconds and withdraws its liveness record"
 
 # A KILL runs no trap, so what the lane's messages leave behind is what the
 # poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.
@@ -449,7 +478,7 @@ mutant() { # NAME OLD NEW — MUTANT holds the copy
   MUTANT="$dir/lane-mail"
 }
 
-mutant announces-again '      ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"' '      :'
+mutant announces-again '        ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"' '        :'
 new_lane control_again
 send_directive 'Once.'
 start_watch "$MUTANT"
@@ -459,7 +488,7 @@ assert_eq "$([ "$(announced)" -gt 1 ] && echo repeated || echo once)" "repeated"
   "control: without the announced count the same directive is announced at every poll"
 stop_watch
 
-mutant once-keeps-running '        [ "$ONCE" -eq 0 ] || exit 0' '        :'
+mutant once-keeps-running '      [ "$ONCE" -eq 0 ] || [ "$NEW" -eq 0 ] || exit 0' '      :'
 once_row 15 "$MUTANT"
 assert_eq "$ONCE" "running" \
   "control: without its exit a --once watch keeps polling after its announcement, and wakes nobody"
@@ -468,6 +497,11 @@ mutant drops-answers '  lm_objects "$1"' '  lm_objects "$1" | jq -c '\''select(.
 once_row 15 "$MUTANT" notice
 assert_eq "$ONCE $(announced)" "running 0" \
   "control: excluding answers leaves the watch asleep after a reply to a notice"
+
+mutant foreground-poll '      } &' '      }'
+term_row "$MUTANT" jq
+assert_eq "$TERMED" "running:record-kept" \
+  "control: with the poll in the foreground a TERM waits out its jq and the record stays"
 
 mutant wider-window 'now - at <= 2 * interval + 5' 'now - at <= 4 * interval + 5'
 LIVENESS=""
