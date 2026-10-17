@@ -3,7 +3,7 @@ import stat
 import sys
 import unittest
 from types import SimpleNamespace
-from desktop_world import World
+from desktop_world import SCRIPTS, World, run_case
 
 
 class HumanInput(World):
@@ -14,6 +14,7 @@ class HumanInput(World):
     @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
     def test_input_commands(self):
         self.executable("ydotool")
+        self.executable("hyprctl")
         self.executable("wtype", "import os,sys,json\nwith open(os.environ['TOOL_LOG'],'a') as f: f.write(json.dumps([sys.argv[1:],sys.stdin.read()])+'\\n')\n")
         for args, expected, typed in [
             (("move", "15", "25"), ["mousemove", "--absolute", "-x", "15", "-y", "25"], None),
@@ -27,6 +28,46 @@ class HumanInput(World):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, b"")
                 self.assertEqual(self.calls()[-1], expected)
+
+    @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
+    def test_move_backends(self):
+        self.executable("ydotool")
+        for signature, available, args, expected in (
+            ("fixture-hyprland", True, ("move", "10", "20"),
+             ["dispatch", "hl.dsp.cursor.move({ x = 10, y = 20 })"]),
+            (None, True, ("move", "10", "20"),
+             ["mousemove", "--absolute", "-x", "10", "-y", "20"]),
+            ("", True, ("move", "10", "20"),
+             ["mousemove", "--absolute", "-x", "10", "-y", "20"]),
+            ("fixture-hyprland", False, ("move", "10", "20"),
+             ["mousemove", "--absolute", "-x", "10", "-y", "20"]),
+            ("fixture-hyprland", True, ("click", "right"), ["click", "0xC1"]),
+        ):
+            with self.subTest(signature=signature, hyprctl=available, args=args):
+                if signature is None:
+                    self.env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+                else:
+                    self.env["HYPRLAND_INSTANCE_SIGNATURE"] = signature
+                hyprctl = self.executable("hyprctl")
+                if not available:
+                    hyprctl.unlink()
+                result = self.run_tool("human-input", *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, b"")
+                self.assertEqual(self.calls()[-1], expected)
+
+    @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
+    def test_move_backend_control(self):
+        source = (SCRIPTS / "human-input").read_text()
+        guard = 'if args.verb == "move" and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):'
+        self.assertEqual(source.count(guard), 1)
+        changed = source.replace(guard, "if False:", 1)
+        self.assertNotEqual(changed, source)
+        (self.root / "human-input").write_text(changed)
+        env = dict(self.env, JARVIS_TOOL_SCRIPTS=str(self.root))
+        result = run_case(__file__, "HumanInput.test_move_backends", env)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"FAIL: test_move_backends", result.stderr)
 
     @unittest.skipUnless(sys.platform == "linux", "desktop operations require Linux")
     def test_capture_exclusive(self):

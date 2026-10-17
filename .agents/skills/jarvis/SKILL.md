@@ -84,6 +84,9 @@ dependencies:
     - command: ydotool
       purpose: Optional pointer input on Linux Wayland
       optional: true
+    - command: hyprctl
+      purpose: Optional pointer movement in logical coordinates on Hyprland
+      optional: true
     - command: wtype
       purpose: Optional keyboard input on Linux Wayland
       optional: true

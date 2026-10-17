@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Platform: Linux Wayland with Python 3; ydotool, wtype and grim per operation.
+# Platform: Linux Wayland with Python 3; hyprctl, ydotool, wtype and grim per operation.
 """Send authorized desktop input. Read typed text from stdin without logging it."""
 import argparse
 import os
@@ -11,7 +11,9 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
-        "Platform: Linux Wayland. move/click require ydotool and its configured daemon; "
+        "Platform: Linux Wayland. move uses hyprctl with logical coordinates when "
+        "HYPRLAND_INSTANCE_SIGNATURE is set and hyprctl is on PATH, else ydotool; "
+        "click uses ydotool. ydotool requires its configured daemon; "
         "type/key require wtype and compositor virtual-keyboard support; shot requires grim. "
         "type reads its text from stdin and prints nothing, so human-input type < FILE types a mode-600 file "
         "without the text reaching argv or output. "
@@ -42,6 +44,10 @@ def main():
         "shot": ["grim", *(["-g", args.rectangle] if getattr(args, "rectangle", None) is not None else []), "-"],
     }
     argv = commands[args.verb]
+    if args.verb == "move" and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        hyprctl = shutil.which("hyprctl")
+        if hyprctl:
+            argv = [hyprctl, "dispatch", f"hl.dsp.cursor.move({{ x = {args.x}, y = {args.y} }})"]
     command = shutil.which(argv[0])
     if command is None:
         parser.exit(2, "human-input: optional-dependency=" + argv[0] + "\nInstall the tool for this desktop operation.\n")
