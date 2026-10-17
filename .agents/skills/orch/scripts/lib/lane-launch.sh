@@ -1662,14 +1662,18 @@ lane_copilot_allows_all() { # CMD [HARNESS]
 #     names in its apiKey or header values, `$NAME` or `${NAME}` (the
 #     interpolation Pi's models documentation states); an absent models.json names
 #     none, as Pi then reads none;
-#   - the proxy settings Node's fetch reads on that host: HTTPS_PROXY,
-#     HTTP_PROXY and NO_PROXY under NODE_USE_ENV_PROXY, with the proxy's CA in
-#     NODE_EXTRA_CA_CERTS and SSL_CERT_FILE.
+#   - the egress proxy settings on that host: HTTPS_PROXY, HTTP_PROXY and
+#     NO_PROXY, which Node's fetch reads under NODE_USE_ENV_PROXY, with the
+#     proxy's CA in NODE_EXTRA_CA_CERTS, which Node reads, and SSL_CERT_FILE,
+#     which the OpenSSL-based tools a pane agent runs, such as git and gh, read.
 # A name its environment does not hold is skipped. A shell outside tmux has no
 # session for pane agents to start in, and copies nothing. A models.json jq
-# cannot read, or a copy tmux refuses, ends the shell before the harness
-# starts, so the launch reports a lane that did not start rather than one
-# whose pane agents fail later. No value is printed.
+# cannot read, or a copy tmux refuses, ends the shell with a
+# `lane-session-env:` line on its stderr, and the harness does not start.
+# open-terminal makes no harness check on a fresh hosted launch, so it still
+# counts that lane launched. The line in the lane's pane is the only record,
+# and a provider that runs the shell in a detached host session closes that
+# pane with the shell. No value is printed.
 lane_pi_session_env() {
   cat <<'STEP'
 if [ -n "${TMUX_PANE:-}" ]; then lane_models="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json" lane_keys=; if [ -e "$lane_models" ]; then lane_keys=$(jq -r '.providers["github-copilot"] // {} | [.apiKey, (.headers // {} | .[])][] | strings | scan("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)")[] | strings' "$lane_models" 2>/dev/null) || { printf '%s\n' "lane-session-env: models-unreadable path=$lane_models" >&2; jq empty "$lane_models" >&2; exit 1; }; fi; for lane_name in $lane_keys HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_EXTRA_CA_CERTS SSL_CERT_FILE NODE_USE_ENV_PROXY; do if lane_value=$(printenv "$lane_name"); then tmux set-environment -t "$TMUX_PANE" "$lane_name" "$lane_value" || { printf '%s\n' "lane-session-env: set-failed name=$lane_name" >&2; exit 1; }; fi; done; fi
