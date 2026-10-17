@@ -63,7 +63,7 @@ A standing project's `role` is one of:
 - `area`: an owned subsystem with continuing work, such as Review Gate & CI. An item belongs to it when it changes the area's Location paths without advancing a deliverable. A defect in an area goes to that area; bug-ness is the `bug` label.
 - `concern`: cross-cutting work with no single owning area, such as Tech Debt or Upkeep. An item belongs to it only when no single area owns it.
 
-A project named for a label's value is a boundary finding, as "Tech Debt & Bugs" is against the `bug` label.
+`projects audit` reports a label value in a project name only as an exact `name-collision`. The owner judges a partial match, such as "Tech Debt & Bugs" against the `bug` label, when editing the map.
 
 ## Routing
 
@@ -103,4 +103,4 @@ Each finding maps to one action. tpm-audit emits it; audit-issues § 7.1 applies
 | `deliverable-no-ends-when` | `project` | `map_findings[]`: the owner states `ends_when` in the map |
 | `map-absent` | `map` | `map_findings[]`: the repository declares no map |
 
-The audit is team-wide. A `project` audit keeps the item findings whose `issue` is in its input set and the project findings naming its project; an `issues` audit keeps the item findings for its input issues and drops the rest. Every run keeps `map-absent`.
+The audit is team-wide. A `project` audit keeps the item findings whose `issue` is in its input set and the project findings naming its project; an `issues` or `single` audit keeps the item findings for its input issues and drops the rest. A `project` audit also keeps `map-absent`; an `issues` or `single` audit drops it, as its output has no `map_findings[]`.
