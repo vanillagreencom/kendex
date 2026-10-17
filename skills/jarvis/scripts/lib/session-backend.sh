@@ -100,7 +100,10 @@ case "$verb" in
         *) exit 1 ;;
       esac
     fi
-    if [[ "$state" == working || "$6" == confirmed ]]; then
+    # The account is judged once SessionStart confirmed the start. Copilot and
+    # Codex draw their kickoff turn before their stamp lands, and a pending
+    # record holds no observed account to compare.
+    if [[ "$6" == confirmed ]]; then
       lane_account_equivalent "${7:-}" "$account" || { printf 'wrong-account\n'; exit; }
       lane_account_check "$pane" "$var" "$account" prefix 2 || { printf 'wrong-account\n'; exit; }
       case "$LANE_ACCOUNT_RESULT" in

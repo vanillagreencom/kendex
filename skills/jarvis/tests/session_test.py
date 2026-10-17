@@ -516,6 +516,36 @@ class SessionContract(unittest.TestCase):
         self.assertIsNotNone(answer["terminal"])
         self.assertIs(json.loads(self.record.read_text())["pending"]["brief_taken"], True)
 
+    def test_session_start_at_first_prompt(self):
+        # Copilot CLI and Codex fire SessionStart only once the first prompt is
+        # submitted, and draw that kickoff turn before its stamp lands.
+        events = self.observe_inspection()
+        fixture = self.home / ".fixture.json"
+        fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"kickoff_barrier": str(events)}))
+        brief = self.home / "private.txt"
+        brief.write_text("Continue the consumer's private work.")
+        for harness in ("copilot", "codex"):
+            with self.subTest(harness=harness):
+                self.call("start", harness, brief=brief)
+                answer = self.wait()
+                self.assertIsNotNone(answer["terminal"])
+                launched = self.started()[-1]
+                record = json.loads(self.record.read_text())
+                if harness == "copilot":
+                    # The native id is the id Start preassigned at launch.
+                    self.assertIn("--session-id=" + record["pending"]["native_session_id"], launched["argv"])
+                self.assertEqual(record["pending"]["native_session_id"], launched["id"])
+                self.assertEqual(record["history"]["pending"]["native_session_id"], launched["id"])
+                self.assertTrue(record["history"]["pending"]["started_at"])
+                rows = [json.loads(line) for line in self.rows.read_text().splitlines()]
+                own = [row for row in rows if row.get("id") == launched["id"] and ("kickoff" in row or "prompt" in row)]
+                self.assertEqual(["kickoff" in row for row in own], [True, False])
+                self.assertNotIn(brief.read_text(), own[0]["kickoff"])
+                self.assertNotIn(str(brief), own[0]["kickoff"])
+                self.assertIn(brief.read_text(), own[1]["prompt"])
+                self.call("stop")
+                self.wait("stopped")
+
     def test_trust_dialog_is_refused(self):
         # Copilot CLI 1.0.88's folder-trust question holds a new home before
         # its start; the refusal names it well inside the launch bound.

@@ -521,7 +521,9 @@ class Session:
                             prompt.unlink()
                         record["brief_delivered"] = True
                         self.write(record)
-                    elif record.get("brief_delivered") and (taken or observed == "working"):
+                    # Running needs the confirmed native identity, never a
+                    # working pane alone: Copilot and Codex draw a kickoff turn.
+                    elif identity.get("started_at") and record.get("identity_verified") and record.get("brief_delivered") and (taken or observed == "working"):
                         record.update(state="running", reason=launch["reason"], detail="")
                         record.pop("predecessor", None)
                         record.pop("launch", None)
