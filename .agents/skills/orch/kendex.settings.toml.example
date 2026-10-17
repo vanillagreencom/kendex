@@ -383,9 +383,11 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # the caller's model. With no caller model, the overseer uses the same-harness
 # class from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
 # uses the harness's native model default. It warns once per run until the
-# next major release and names the conversion: the caller model's class,
-# the same-harness default class for a claude exact id, and otherwise the
-# model itself.
+# next major release and names the conversion: with a caller model, that
+# model's class, or the model itself where it names no class; for a claude
+# old exact id, the model with no replacement; with no caller model, the
+# same-harness default class, or the harness default where that class runs
+# no model, as on codex; with neither, the harness default.
 # Numeric succession entries can cross harnesses only when the model comes
 # from the target harness's default preference. The permission rules in
 # oversee-succeed --help still apply.
