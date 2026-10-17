@@ -81,6 +81,10 @@ second-glob-hit|docs/* ui/src/*|-|ui/src/a.css|changed|[]|main||0|needs-ui-revie
 globstar-no-dir|ui/src/**/*.tsx|-|ui/src/App.tsx|changed|[]|main||0|needs-ui-review|reviewer-quality
 globstar-deep|ui/src/**/*.tsx|-|ui/src/view/a/Panel.tsx|changed|[]|main||0|needs-ui-review|reviewer-quality
 globstar-miss|ui/src/**/*.tsx|-|ui/src/App.ts|changed|[]|main||0||none
+dir-word|ui/src|-|ui/src/view/Panel.tsx|changed|[]|main||0|needs-ui-review|reviewer-quality
+dir-word-slash|ui/src/|-|ui/src/view/Panel.tsx|changed|[]|main||0|needs-ui-review|reviewer-quality
+dir-word-sibling|ui/src|-|ui/srcx/Panel.tsx|changed|[]|main||0||none
+file-word|ui/index.html|-|ui/index.html|changed|[]|main||0|needs-ui-review|reviewer-quality
 dev-and-ui|ui/src/*|-|ui/src/a.tsx|changed|["needs-review","needs-ui-review"]|main||0|needs-review,needs-ui-review|reviewer-quality
 perf-not-ui|-|crates/*|crates/core/lib.rs|changed|[]|main||0|needs-perf-test|none
 safety-match|-|-|crates/core/lib.rs|unsafe { x() }|[]|main||0|needs-safety-audit|none
@@ -117,8 +121,8 @@ assert_eq "$(jq -c . "$TMP_ROOT/out")" "$state" "stdout matches the recorded qa_
 # Must-fail control: a private copy with the path match removed must miss the
 # ui-glob-hit row's signal.
 MUTANT="$(mutant_scripts mutant qa-signals)/qa-signals" || exit 1
-mutate_file "$MUTANT" 'if [[ -n "$path" && "$path" == $pattern ]]; then' \
-  'if false && [[ -n "$path" && "$path" == $pattern ]]; then'
+mutate_file "$MUTANT" 'if [[ -n "$path" ]] && [[ "$path" == $pattern || "$path" == $pattern/* ]]; then' \
+  'if false; then'
 repo="$(fixture mutant-ui-glob-hit 'ui/src/*' - ui/src/view/Panel.tsx changed '[]')"
 got="$(record "$MUTANT" "$repo" main)"
 assert_eq "$got" "0||none" "must-fail control: without the path match the ui-glob-hit row records no signal"

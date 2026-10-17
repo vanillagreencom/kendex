@@ -14,8 +14,9 @@
 #   ui      a changed path matching a QA_UI_PATHS glob adds needs-ui-review
 # The settings are space-separated bash patterns, read through orch-env from
 # the caller's checkout, each matched against the whole repository-relative
-# path; `*` crosses `/` and `**/` also matches no directory. An unset setting
-# adds nothing. A diff read that fails adds the signal it would have decided
+# path, or naming a directory the path sits under, so `ui/src` and `ui/src/`
+# match `ui/src/App.tsx`; `*` crosses `/` and `**/` also matches no directory.
+# An unset setting adds nothing. A diff read that fails adds the signal it would have decided
 # and names the exit: a failed read never reads as no signal.
 #
 # --add and --drop are § 5's judgment, applied after the scan in the order
@@ -123,9 +124,10 @@ scan_paths() { # SETTING SIGNAL
   fi
   while IFS= read -r path; do
     for glob in "${globs[@]}"; do
-      pattern="${glob//\*\*\//$any_dirs}"
+      pattern="${glob%/}"
+      pattern="${pattern//\*\*\//$any_dirs}"
       # shellcheck disable=SC2053 # the setting's glob is the pattern
-      if [[ -n "$path" && "$path" == $pattern ]]; then
+      if [[ -n "$path" ]] && [[ "$path" == $pattern || "$path" == $pattern/* ]]; then
         add_signal "$2" "$1 path=$path glob=$glob"
         return 0
       fi
