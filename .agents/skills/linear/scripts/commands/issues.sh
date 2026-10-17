@@ -161,9 +161,10 @@ Create Options:
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
   bulk-update --labels, activate and block refuse a label it does not declare,
-  naming the label and the taxonomy file. A label the issue already carries is
-  kept. Create also refuses a declared label Linear does not have, where with
-  no taxonomy it skips that label with a warning.
+  naming the label and the taxonomy file. The taxonomy check does not refuse
+  an undeclared label the issue already carries. Create also refuses a
+  declared label Linear does not have, where with no taxonomy it skips that
+  label with a warning.
 
   Project map: where the repository declares one (project-management
   references/project-map.md), create refuses with no --project, and create,
@@ -173,7 +174,9 @@ Create Options:
 
 Update Options:
   --state <name>        New state
-  --label(s) <a,b,c>    Replace labels (comma-separated)
+  --label(s) <a,b,c>    Replace the whole label set (comma-separated).
+                        Read current labels, apply the intended change, then
+                        pass the full final set.
   --title <text>        New title
   --description <text>  New description (empty text clears it)
   --description-file <path>  Read new description from file (preferred for markdown)
