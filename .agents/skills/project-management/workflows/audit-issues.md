@@ -108,14 +108,16 @@ Collect the artifact per § 4.2 step 1-2, then present:
 |------------|---------|-------|-------|-----|-----------|
 | [NAME] | [NAME] | [STATE] | L[N] | [CURRENT]→[RECOMMENDED] | [WHY] |
 
-**Complete** (100%, needs state transition): [PROJECT] — unblocks [PROJECTS]
+**Complete** (100%, needs state transition): [PROJECT] — unblocks [PROJECTS] [· ends_when holds: [ENDS_WHEN_EVIDENCE], for a map deliverable]
+
+**Held open** (100%, `ends_when` not shown to hold): [PROJECT] — ends when [ENDS_WHEN]
 
 **Recommended next**: [PROJECT] — [REASON], or `None` with what blocks each candidate.
 </output_format>
 
 ### 2.3 Apply and Activate
 
-Apply reorders and completions without asking:
+Apply reorders and the `complete_candidates[]` completions without asking; a `complete_held[]` project stays started:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects set-sort-order [PROJECT_ID] --position [NEW_SORT_ORDER]

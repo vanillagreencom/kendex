@@ -375,7 +375,7 @@ For every `create`: populate `create_fields` per [audit-output.md](../schemas/au
 
 Entered from § 1.1 after § 1.1.1; §§ 2-10 do not apply. Every project, initiative, and issue read below is filtered to the § 1.1.1 scope first: an initiative naming another team's projects contributes none of them, and a project whose `teams[]` omits `TEAM` is neither ordered nor recommended.
 
-1. **Fetch** initiatives (`initiatives list --max`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Build the name→initiative map that fills each project's `initiative` field.
+1. **Fetch** initiatives (`initiatives list --max`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Build the name→initiative map that fills each project's `initiative` field. Read the project map as § 1.6 does, kept for step 5.
 
 2. **Assign a layer** to each `planned` and `backlog` project (never `started` or `completed`) from its scope: what it delivers, what it consumes, and what its issues touch (`issues list --team "[TEAM]" --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress" --max`). Verify against the architecture docs that deliverables do not depend on unbuilt code. L0 foundation (no project dependencies) → L1 core infrastructure → L2 features → L3 integration and testing → L4 polish and release.
 
@@ -383,7 +383,7 @@ Entered from § 1.1 after § 1.1.1; §§ 2-10 do not apply. Every project, initi
 
 4. **Compare to current, per state column.** `sortOrder` is relative **within one column only**. Execution order is started → planned top-to-bottom → backlog top-to-bottom. Current position: started = 0, then planned by `sortOrder`, then backlog by `sortOrder`. For each mismatch, decide whether the project is in the wrong state (recommend a state change) or the wrong position within its state (recommend a reorder), and compute `new_sort_order` with spacing per state column.
 
-5. **Detect transitions**: a `started` project at `progress == 1.0` is a `complete_candidates[]` entry noting what it unblocks; assuming reorders applied, the first `planned`/`backlog` project with no incomplete blockers is `recommended_next` — null with a `rationale` listing each candidate's blockers when nothing is ready.
+5. **Detect transitions**: a `started` project at `progress == 1.0` that [project-map.md § Project kinds](../references/project-map.md#project-kinds) lets complete is a `complete_candidates[]` entry noting what it unblocks, with the `ends_when` evidence for a map deliverable; a map deliverable that rule holds open is a `complete_held[]` entry; assuming reorders applied, the first `planned`/`backlog` project with no incomplete blockers is `recommended_next` — null with a `rationale` listing each candidate's blockers when nothing is ready.
 
 Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint and the project-order schema in [audit-output.md](../schemas/audit-output.md).
 

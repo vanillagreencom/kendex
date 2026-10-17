@@ -58,6 +58,8 @@ Most projects are deliverables. Only work with no end is standing.
 | An item belongs when | Finishing it advances `ends_when` | It fits the `role` below |
 | A finding | A canceled deliverable the map still lists, and an open item in a completed or canceled deliverable | A completed or canceled standing project, or one with a target date |
 
+A step that completes a project with no open item left (tpm-audit § 11, tpm-cycle-plan § 1) reads the map first with `projects audit`. It never completes a standing map project. It completes a map deliverable only on stated evidence that its `ends_when` holds; without that evidence the deliverable stays started and the step reports it. A project off the map, and every project under `map-absent`, completes as before.
+
 A standing project's `role` is one of:
 
 - `area`: an owned subsystem with continuing work, such as Review Gate & CI. An item belongs to it when it changes the area's Location paths without advancing a deliverable. A defect in an area goes to that area; bug-ness is the `bug` label.
@@ -78,7 +80,7 @@ No default project exists. Under a declared map, `linear.sh issues create` refus
 
 A `project_needed` item is held, not created. Its producer returns the project it needs: `name`, `kind`, `initiative`, `ends_when` for a deliverable or `role` for a standing project, and `reason`. Propose a deliverable only with a stated `ends_when`, and an area only when a subsystem has no owner; otherwise the item fits a concern or fails the creation bar. The overseer creates the project per [initiative-project-template](../templates/initiative-project-template.md) and adds it to the map; the held create then proceeds.
 
-A child takes its parent's project ([SKILL.md](../SKILL.md) § Hierarchy): the parent is routed, and its children follow it. When the parent sits outside the map, move the parent to its own route first, then create the child there. When the parent's route is `project_needed`, a `hierarchy_contract` child is held with it, and any other child takes audit-issues § 7.2's standalone fallback: created in its own route, with `related` to the parent.
+A child takes its parent's project ([SKILL.md](../SKILL.md) § Hierarchy): the parent is routed, and its children follow it. A parent outside the map moves to its own route before its child is created there. research-complete § 6.4 makes that move for the `hierarchy_contract` parent before it builds the audit input, and holds the whole contract when the parent's route is `project_needed`. A parent no step moves keeps its project, and its child takes audit-issues § 7.2's standalone fallback: created in its own route, with `related` to the parent.
 
 ## Audit
 

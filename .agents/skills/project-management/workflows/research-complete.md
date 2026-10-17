@@ -128,13 +128,14 @@ Agent-reported refactors go into the audit input as standalone items in step 7 b
 
 **2+ domains** → decompose every requirement, existing and new, into one sub-issue per domain, leaving the parent coordination-only:
 
+0. **Place the parent.** **Skip if** `.blocks` holds more than one issue. Read the map with `.agents/skills/linear/scripts/linear.sh projects audit --team [TEAM_KEY]`, `[TEAM_KEY]` being the blocked issue's identifier prefix; a non-zero exit halts with its error output, and `map-absent` leaves nothing to place. A finding whose `issue` is the blocked issue puts it outside the map: route it per [project-map.md § Routing](../references/project-map.md#routing), then move it with `issues update [BLOCKED_ISSUE_ID] --project "[ROUTE]"`. When the route is `project_needed`, hold the whole decomposition, the step 7 refactors included: build no audit input, leave the blocked issue as it is in § 6.5, and report the project it needs in § 6.6. Run this section again once the map lists that project.
 1. One sub-issue per domain, in the parent's project, titled `[Domain verb]: [scope] for [DECISION_ID]`.
 2. Full validated `labels[]` per sub-issue — `agent:[TYPE]` for the domain plus the required domain, stack, workflow, and classification labels, validated against the § 2 inventory before the file is written.
 3. Blocking order between the sub-issues, recorded as `blocks_items`/`blocked_by_items`.
 4. Supplementary findings fold into the sub-issue for their domain — never a separate issue for a small item in the same domain.
 5. Build the audit input per [audit-issues-input.md](../schemas/audit-issues-input.md) with `source: "research-complete"`, `parent_issue` (the single blocked issue, else null), `worktree`, `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and:
 
-   `hierarchy_contract` (required when `parent_issue` is non-null): `mode: "decompose-under-parent"`, `parent_issue` = the blocked implementation issue, `child_indexes` = the `index` of every domain sub-issue from step 1 (exclude step 7 `origin: "discovered"` refactor items), `sequencing` = the order from step 3. The TPM MUST create every listed item as a same-project child of `parent_issue` and MUST NOT fold any domain back into the parent as its implementation leaf or spin it off standalone. Under a project map, a parent outside the map moves first ([project-map.md § Routing](../references/project-map.md#routing)). Omit only when `parent_issue` is null — then `blocked_issues` acts as a hint.
+   `hierarchy_contract` (required when `parent_issue` is non-null): `mode: "decompose-under-parent"`, `parent_issue` = the blocked implementation issue, `child_indexes` = the `index` of every domain sub-issue from step 1 (exclude step 7 `origin: "discovered"` refactor items), `sequencing` = the order from step 3. The TPM MUST create every listed item as a same-project child of `parent_issue` and MUST NOT fold any domain back into the parent as its implementation leaf or spin it off standalone. Omit only when `parent_issue` is null — then `blocked_issues` acts as a hint.
 
 6. Every `items[]` entry carries its full validated `labels[]`.
 7. Add the agent-reported refactors as extra items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`, and NOT listed in `hierarchy_contract.child_indexes`.
@@ -171,6 +172,9 @@ Comment on the research issue, omitting empty sections:
 
 ### Declined
 - [ITEM]: [which creation-bar test it failed]
+
+### Held
+- [BLOCKED_ISSUE_ID]: needs project [NAME] ([KIND]) — [REASON]
 ```
 
 For informational research that produced no decision, replace the Decision section with `### Key Findings` (2-3 bullets) and `### Outcome` (what was learned or why no action is needed).

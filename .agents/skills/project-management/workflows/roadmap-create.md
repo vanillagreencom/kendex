@@ -12,6 +12,8 @@ From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project
 
 For a cited research/spec input, use `context.research_path` as the reference and `context.research_source_issue` as its source under the shared Planning artifacts rule. Keep resolved files for this checkout's reads and uploads; keep the reference fields unchanged for § 4 issue text.
 
+**Project map.** Before § 2 writes anything, read the map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM_KEY_OR_NAME]"`. A non-zero exit halts with its error output, and `map-absent` leaves § 3 as written. When `project_placement.project_name` is a map project, keep its `projects[].id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing. Otherwise halt before any tracker write and report the project as `project_needed`, with the fields [project-map.md § Routing](../references/project-map.md#routing) names; run `roadmap create` again on the same plan once the map lists it.
+
 ---
 
 ## 2. Resolve Existing Work
@@ -44,6 +46,8 @@ For each conflict whose resolution changed since the plan gate or was not presen
 
 ### 3.1 Initiative
 
+**Skip if** § 1 kept a map project as `PROJECT_ID`.
+
 List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | `Create new initiative` | `No initiative`.
 
 ```bash
@@ -57,6 +61,8 @@ For a new initiative, complete [initiative-project-template.md](../templates/ini
 ```
 
 ### 3.2 Project
+
+**Skip if** § 1 kept a map project as `PROJECT_ID`.
 
 Complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs if § 3.1 did not collect them. Use the plan's project outcome for `[PROJECT_DESC]` and its deliverables and acceptance for `[PROJECT_CONTENT]`, following that template. Add `--link "[RESOURCE_LABEL]=[RESOURCE_URL]"` when the project has research or design.
 
@@ -99,7 +105,7 @@ Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate t
 | `index` | Sequential, 1-based |
 | `identifier` | null — all proposed |
 | `title`, `action`, `target`, `reason` | Same fields on `organized_issues[i]` |
-| `project.recommended` | `project_placement.project_name`; `recommended_id` = `PROJECT_ID` from § 3.2 |
+| `project.recommended` | `project_placement.project_name`; `recommended_id` = `PROJECT_ID` from § 1 or § 3.2 |
 | `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. Preserve each relation on the issue named in the plan under linear SKILL.md § Blocked Label vs Issue Relations. Keep valid leaf waits on their leaves. A reference to an entry § 2 omitted follows step 1 below |
 | `hierarchy` | Bundle children are `make_child` of their bundle parent per step 1 below. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
 | `supersedes` | Supersession entries in `cross_project_findings` — only those § 2 neither executed nor skipped |

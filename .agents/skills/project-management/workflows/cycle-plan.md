@@ -23,7 +23,7 @@ This workflow mutates project state; every read below is live, so it acts on the
 
 The JSON carries `completed_project`, `next_projects` (by `sort_order`), `recommended`, and `actions.mark_complete`.
 
-Mark the finished project complete without asking:
+Mark the finished project complete without asking. **Skip** the command when `actions.mark_complete` is null: the project map holds the project open, and the report says it stays started.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [mark_complete.project_id] --state completed

@@ -14,11 +14,11 @@ The active project has no backlog, actionable, or in-progress issues left.
     {"id": "uuid", "name": "Phase 2: Data Layer", "priority": 2, "sort_order": 1.5, "ready": true, "blocked_by_incomplete": []}
   ],
   "recommended": {"id": "uuid", "name": "Phase 2: Data Layer", "reason": "First ready by sort_order"},
-  "actions": {"mark_complete": {"project_id": "uuid", "project_name": "Phase 1: Foundation"}}
+  "actions": {"mark_complete": {"project_id": "uuid", "project_name": "Phase 1: Foundation", "ends_when_evidence": "string|null"}}
 }
 ```
 
-`ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
+`actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1); its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
 
 ## Status: plan_ready
 
