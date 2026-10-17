@@ -108,9 +108,10 @@ outputs:
     description: >-
       true where the diff runs the workflow's lanes, false where it runs
       none. The installed scripts/lib/change-class.sh owns the shared rules.
-      With that producer available, a render runs lanes whose
-      default-branch claims reach a path it changes, both ends of a move
-      included without content pairing. Other renders run none. A trivial class or
+      With that producer available, a render runs none unless a
+      default-branch claim reaches a path it changes; the render bullet of
+      skills/harness-ci/references/wiring.md § Per-lane verdicts names the
+      events a claimed lane runs on. A trivial class or
       docs_only=true on a non-render class runs none. On pull_request and
       push, with queue-only-default true, a base that names no
       HARNESS_CI_PER_PUSH_REASON runs none, where both renders read it. On schedule and

@@ -59,10 +59,9 @@
 #                      caller whose lanes answer to a tree no family names
 #                      groups it here rather than reading the diff again.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
-#                      A proved render runs lanes whose default-branch claims
-#                      match a path it changes: in place, added, deleted or
-#                      either end of a move. A render of only unclaimed paths
-#                      keeps lanes=false. Remaining skip conditions follow
+#                      A proved render runs none unless a default-branch
+#                      claim matches a path it changes. The render rule and
+#                      the remaining skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or queue-only where
@@ -87,15 +86,14 @@
 # which diffs run the lanes reaches every consumer with no workflow edit.
 #
 # A lane verdict uses default-branch claims except for the declaration path,
-# whose comparison follows wiring.md § Per-lane verdicts. In this order:
-# true for every lane on the full run; false wherever lanes is false; then,
-# on render, false for a lane whose default-branch claim matches no changed
-# path; then true for every lane where the declaration comparison failed;
+# whose comparison follows wiring.md § Per-lane verdicts. On render, a
+# lane's verdict follows that section's render bullet. Otherwise, in this
+# order: true for every lane on the full run; false wherever lanes is false;
+# then true for every lane where the declaration comparison failed;
 # then, on a pull request, false with the cause queue-deferred for a lane
-# the declaration marks `:queue` and one of its own globs reaches, a
-# render's claim included, where this run's change-class answered
-# queue_only=true and both renders below read the mark; then, on render,
-# true with cause=render-claim and its path and glob; then true
+# the declaration marks `:queue` and one of its own globs reaches, where
+# this run's change-class answered queue_only=true and both renders below
+# read the mark; then true
 # for every lane where no changed path was read; then, for a lane marked
 # `:nightly`, true only where its own glob or the declaration comparison
 # selects it; then true for every lane where a changed non-declaration path
