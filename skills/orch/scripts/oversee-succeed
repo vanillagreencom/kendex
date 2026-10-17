@@ -4,12 +4,12 @@
 # position.
 #
 # Usage:
-#   oversee-succeed [--harness H] [--context TOKENS:WINDOW] [--handoff PATH] [--wait-secs N]
+#   oversee-succeed [--harness H] [--context TOKENS:WINDOW [--agents-out]] [--handoff PATH] [--wait-secs N]
 #                   [--handoff-body BODY] [-- HARNESS_FLAGS...]
 #   oversee-succeed --write-only --handoff-body BODY [--handoff PATH]
 #   oversee-succeed --print-launch-line [--entry ENTRY] [--harness H] [--handoff PATH | --brief-file PATH]
 #                   [-- HARNESS_FLAGS...]
-#   oversee-succeed --check-marks [--harness H] [--context TOKENS:WINDOW]
+#   oversee-succeed --check-marks [--harness H] [--context TOKENS:WINDOW [--agents-out]]
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
 #   oversee-succeed --walled-pane PANE [--harness H] [--handoff PATH] [--wait-secs N]
 #                   [-- HARNESS_FLAGS...]
@@ -137,7 +137,11 @@
 #        is never judged on a figure another session left, and a run given no
 #        --context, the watch's included, judges the account triggers alone.
 #        The shared lane_context_handoff_due rule judges both independent
-#        context triggers, using the same setting as the lane hook. Below both
+#        context triggers, using the same setting as the lane hook.
+#        --agents-out, which the hook adds while an attached agent of this
+#        session may still be out, also keeps ORCH_HANDOFF_AGENT_RESERVE_TOKENS
+#        for that agent's results, by the four-argument rule the hook's
+#        attached-launch refusal takes, equality included. Below both
 #        it prints `context-below-mark`. An unmeasured context rule prints
 #        `context-unmeasured`, with `reason=window-unnamed` for a reading whose
 #        capacity is unknown below the token cap, and `reason=context-unread` for a
@@ -519,7 +523,7 @@ message() { # KEY FIELD=VALUE...
     brief-file-unreadable) text='--brief-file must name a readable file.' ;;
     brief-file-empty) text='--brief-file must contain a task, not only whitespace.' ;;
     brief-file-control) text='--brief-file takes one line with no control characters. Trailing newlines are removed.' ;;
-    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --entry and --brief-file are taken only by --print-launch-line; --brief-file also conflicts with --handoff. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the named pane supplies its launch identity; --check-marks takes no other option but --context, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone.' ;;
+    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --entry and --brief-file are taken only by --print-launch-line; --brief-file also conflicts with --handoff. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the named pane supplies its launch identity; --check-marks takes no other option but --context and --agents-out, --handoff and --wait-secs included, because it opens no window for either to reach; --context is taken by --check-marks and a plain succession alone, and --agents-out only beside --context.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     record-unread) text='The fleet state could not be read, so this session'\''s launch record was not consulted: its harness, account and model are read off its pane and its environment, as for a session nothing has recorded.' ;;
     record-unwritten) text='The session record in the fleet state could not be written for the successor, or put back after an abandoned launch, so the record does not name the session that is running. The step field says which; the succession itself stands.' ;;
@@ -830,6 +834,7 @@ CONTEXT_ARG=""
 CONTEXT_GIVEN=0
 HARNESS_ARG=""
 HARNESS_GIVEN=0
+AGENTS_OUT=0
 FLAGS_GIVEN=0
 RECOVERY_GIVEN=0
 while [[ $# -gt 0 ]]; do
@@ -854,6 +859,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --print-launch-line) PRINT_LINE=1; shift ;;
     --check-marks) CHECK_MARKS=1; shift ;;
+    --agents-out) AGENTS_OUT=1; shift ;;
     --write-only) WRITE_ONLY=1; shift ;;
     --) FLAGS_GIVEN=1; shift; HARNESS_FLAGS=("$@"); break ;;
     *) die unknown-option "arg=$1" ;;
@@ -934,6 +940,7 @@ fi
 JUDGES=0
 [[ "$MODE" != succeed && "$MODE" != check ]] || JUDGES=1
 (( JUDGES || ! CONTEXT_GIVEN )) || die mode-conflict "mode=$MODE" "context=$CONTEXT_ARG"
+(( CONTEXT_GIVEN || ! AGENTS_OUT )) || die mode-conflict "mode=$MODE" agents-out=1 context=none
 [[ "$MODE" != dead || -z "$HARNESS_ARG" ]] || die mode-conflict "mode=$MODE" "harness=$HARNESS_ARG"
 case "$HARNESS_ARG" in '' | claude | codex | copilot | pi) ;; *) die invalid-harness "value=$HARNESS_ARG" ;; esac
 # Only a supplied reading is judged; a stored record can name identity alone.
@@ -978,16 +985,24 @@ if (( JUDGES )); then
     || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
 fi
 if (( JUDGES )) && [[ "$CONTEXT_STATE" == unmeasured ]]; then
-  AGENT_RESERVE="$(orch_env_value ORCH_HANDOFF_AGENT_RESERVE_TOKENS "" 2>"$DEP_ERR")" \
-    || die settings-rejected "setting=ORCH_HANDOFF_AGENT_RESERVE_TOKENS"
-  AGENT_RESERVE=${AGENT_RESERVE:-150000}
   due_rc=0
-  # The command the agent-launch refusal names must accept that same reading.
-  due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT" "$AGENT_RESERVE")" || due_rc=$?
+  if (( AGENTS_OUT )); then
+    AGENT_RESERVE="$(orch_env_value ORCH_HANDOFF_AGENT_RESERVE_TOKENS "" 2>"$DEP_ERR")" \
+      || die settings-rejected "setting=ORCH_HANDOFF_AGENT_RESERVE_TOKENS"
+    AGENT_RESERVE=${AGENT_RESERVE:-150000}
+    # The command the agent-launch refusal names must accept that same reading.
+    due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT" "$AGENT_RESERVE")" || due_rc=$?
+  else
+    due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT")" || due_rc=$?
+  fi
   case "$due_rc" in
     0) CONTEXT_STATE="$due" ;;
     1) CONTEXT_STATE=unmeasured ;;
-    *) die invalid-agent-reserve "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$AGENT_RESERVE" ;;
+    *)
+      # Only the reserve can be rejected here: the reading and mark are checked above.
+      (( AGENTS_OUT )) || die invalid-context "value=$CONTEXT_ARG"
+      die invalid-agent-reserve "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$AGENT_RESERVE"
+      ;;
   esac
 fi
 if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then

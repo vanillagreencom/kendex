@@ -64,8 +64,9 @@ WINDOW=""
 # compaction, the backstop mark; false until its turn end reads the flag.
 COMPACTED=false
 # What the overseer's judge and the succession its refusal names are handed:
-# the reading this turn end took, as `--context`, or the harness this install
-# names where nothing was read; empty until the overseer path sets it.
+# the reading this turn end took, as `--context`, followed by `--agents-out`
+# where an attached agent may still be out, or the harness this install names
+# where nothing was read; empty until the overseer path sets it.
 JUDGE_ARGS=()
 # The launch home the fleet record names for the overseer session, read beside
 # its pane key and empty until then; the transcript ownership gate holds the
@@ -329,7 +330,7 @@ message() { # KEY VALUE [CAUSE]
           "$2" "$HANDOFF_INSTRUCTION"
         ;;
       agent-launch=*)
-        printf 'The attached launch %s reaches the context mark minus its result reserve. Use the orch job runner in waiter-launch.md, Launch, or a separate session.\n%s\n' "$2" "$HANDOFF_INSTRUCTION"
+        printf 'The attached launch %s reaches the context mark, less its result reserve while an attached agent of this session may still be out; reserve=none is the plain mark, with no agent out. Use the orch job runner in waiter-launch.md, Launch, or a separate session.\n%s\n' "$2" "$HANDOFF_INSTRUCTION"
         ;;
       agent-input=*)
         printf 'The attached launch cannot be judged because %s is unavailable. Repair that input, or use the orch job runner in waiter-launch.md, Launch, or a separate session.\n%s\n' "$2" "$HANDOFF_INSTRUCTION"
@@ -431,7 +432,7 @@ message() { # KEY VALUE [CAUSE]
         ;;
       context=*)
         if [ "$ROLE" = overseer ]; then
-          printf 'this overseer requires handoff under the shared context rule at %s tokens used. Without an agent reserve, handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). This overseer also requires handoff when tokens used plus its configured agent reserve reach either limit. Equality requires handoff on this reserve check. Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n%s\n' \
+          printf 'this overseer requires handoff under the shared context rule at %s tokens used. Without an agent reserve, handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). While an attached agent of this session may still be out, this overseer also requires handoff when tokens used plus its configured agent reserve reach either limit. Equality requires handoff on this reserve check. Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n%s\n' \
             "$2" "$MARK" "$WINDOW" "$HANDOFF_INSTRUCTION"
         else
           printf 'this lane requires handoff under the shared context rule: tokens used=%s, effective capacity=%s. Handoff is required at 400000 tokens used, or strictly past %s percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n%s\n' \
@@ -2012,6 +2013,21 @@ claude_attached_agents() { # [emergency STATE_FILE]
   done <<<"$agents"
 }
 
+# Whether an attached agent this session launched may still be out, which is
+# when the agent reserve applies: exit 1 only where Claude's roster reads none
+# out. Every other harness names no roster here, and an unknown roster is never
+# read as none. `native` takes Stop's task registry alone and skips the
+# transcript scan, which could spend the budget the account judgement after it
+# needs.
+attached_agents_out() { # [native]
+  [ "$HARNESS" = claude ] || return 0
+  if [ "${1:-}" = native ] && ! jq -e 'has("background_tasks")' <<<"$INPUT" >/dev/null 2>&1; then
+    return 0
+  fi
+  claude_attached_agents
+  [ -n "$AGENT_ROWS" ]
+}
+
 # Pi delegate_subagent is a recognized name, but its useful calls carry
 # child identity and do not reach the lead-only check below.
 # Codex writes tool_name as the canonical name or a configured namespace
@@ -2027,7 +2043,7 @@ attached_launch() {
 # existing cost, and wait, result and handoff tools remain usable.
 attached_launch_check() {
   [ "$CALLER" = lead ] && attached_launch || return 0
-  local gate_rc=0 due_rc=0
+  local gate_rc=0 due_rc=0 applied
   session_gate || gate_rc=$?
   case "$gate_rc" in
     1) return 0 ;;
@@ -2055,10 +2071,22 @@ attached_launch_check() {
   fi
   [ -z "$READ_GAP" ] && [ -n "$TOKENS" ] && [ "$TOKENS" != "$LANE_CONTEXT_UNREAD" ] ||
     refuse_handoff agent-input "${READ_GAP:-usage-absent}"
+  applied=$AGENT_RESERVE
   DUE=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK" "$AGENT_RESERVE") || due_rc=$?
+  # The reserve keeps room for results still to come. The roster is read only
+  # where the reserve can decide, since its fallback scans the whole transcript.
+  if [ "$due_rc:$DUE" = 0:due ]; then
+    if attached_agents_out; then
+      # The succession this refusal names judges the reading the same way.
+      [ "${JUDGE_ARGS[0]:-}" != --context ] || JUDGE_ARGS+=(--agents-out)
+    else
+      applied=none
+      DUE=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK") || due_rc=$?
+    fi
+  fi
   case "$due_rc:$DUE" in
     0:room) return 0 ;;
-    0:due) refuse_handoff agent-launch "$TOOL tokens=$TOKENS reserve=$AGENT_RESERVE" ;;
+    0:due) refuse_handoff agent-launch "$TOOL tokens=$TOKENS reserve=$applied" ;;
     *) refuse_handoff agent-input context-unmeasured ;;
   esac
 }
@@ -3237,6 +3265,10 @@ handoff_check() {
     # is.
     overseer_context_read || message "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
     [ "$COMPACTED" != true ] || refuse_handoff compacted auto
+    # The judge keeps the agent reserve only while an attached agent is out.
+    if [ "${JUDGE_ARGS[0]:-}" = --context ] && attached_agents_out native; then
+      JUDGE_ARGS+=(--agents-out)
+    fi
     overseer_marks
     if [ -n "$WAKE_NOTICE" ]; then
       printf '%s\n' "$WAKE_NOTICE" >&2
