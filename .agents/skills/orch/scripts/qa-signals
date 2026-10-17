@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qa-signals — review-pr.md § 5's QA routing, recorded in workflow state.
+# qa-signals — the QA routing of ../workflows/review-pr.md § 5, recorded in workflow state.
 #
 # Usage: qa-signals ISSUE_ID --worktree PATH --base REF
 #                   [{--add|--drop} SIGNAL --reason TEXT]...
@@ -25,7 +25,7 @@
 # every judgment goes in one run.
 #
 # qa_decision is {signals, agents, rationale}. agents maps each signal to the
-# QA agent review-pr.md § 6 delegates it to:
+# QA agent ../workflows/review-pr.md § 6 delegates it to:
 #   needs-safety-audit  reviewer-safety
 #   needs-perf-test     reviewer-perf
 #   needs-review        reviewer-correctness
