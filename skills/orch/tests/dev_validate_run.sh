@@ -1612,7 +1612,7 @@ ci_control 'admission classified over the round' $'    ci_admission_attempted=tr
   'branch queue work before fix' 'ci||pending'
 for scoped_row in 'red scoped suites before PR fail the round' 'red scoped suites on open PR fail the round'; do
   ci_control 'the admitted round left unscoped' \
-    '  if [[ "$validate_mode" == ci && -n "${selection_cmd//[[:space:]]/}" ]]; then' '  if false; then' \
+    '    if [[ "$restack" == false && -n "${selection_cmd//[[:space:]]/}" ]]; then' '    if false; then' \
     "$scoped_row" 'ci||pending'
 done
 }
@@ -1622,8 +1622,8 @@ assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'fix unrequired full fallback' rule-r
   'repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main,repos/{owner}/{repo}/rules/branches/main,repos/{owner}/{repo}/branches/main' \
   'control: repeated CI admission breaks the single required-context read'
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
-mutate_file "$CI_SCRIPT.mutant" 'selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
-  'selection=all|selection=subset) validate_mode=ci; [[ "$requested_mode" != full || "$selection" != selection=subset ]] || validate_mode=full; class_base="" ;;'
+mutate_file "$CI_SCRIPT.mutant" 'selection=all|selection=subset) validate_mode=ci ;;' \
+  'selection=all|selection=subset) validate_mode=ci; [[ "$requested_mode" != full || "$selection" != selection=subset ]] || validate_mode=full ;;'
 assert_eq "$(push_rows "$CI_SCRIPT.mutant" 'implement subset before PR' full-subset)" 'full|selection-unread|pass' \
   'control: dropping full subset admission breaks the implement CI record while range admission stays intact'
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
@@ -1707,6 +1707,9 @@ rm -f -- "${CI_SCRIPT:?}.mutant"
 run_script "$CI_SCRIPT" --worktree "$proj_ci" --reproduce --validate-mode ci --base HEAD
 assert_eq "$RC $(sed -n 1p <"$ERR")" '2 dev-validate-run: reproduce-ci option=--reproduce validate-mode=ci' \
   'a reproduction is never a ci request' "$ERR"
+run_script "$CI_SCRIPT" --worktree "$proj_ci" --restack --validate-mode range --base HEAD
+assert_eq "$RC $(sed -n 1p <"$ERR")" '2 dev-validate-run: option-unused option=--restack mode=start validate-mode=range' \
+  'a restack flag belongs to a ci request only' "$ERR"
 
 # The rules read names the base branch: a read of another branch's rules is
 # one the stub fails, so the micro row runs range.
@@ -1866,18 +1869,16 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 # shellcheck disable=SC2016 # private production mutations
 {
 ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if true; then'  \
-  'unreported selector' 'ci||tests/widget.sh|none|no'
-ci_extension_control $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify "$class_base"' $'          [[ "$requested_mode" == full ]] || class_base="$base_sha"\n          classify ""' \
-  'widget-test fix' 'ci||tests/widget.sh|none|other-paths'
-ci_extension_control $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all|selection=subset) validate_mode=ci; class_base="" ;;' \
-  $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all) validate_mode=ci; class_base="" ;;' \
+  'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
+ci_extension_control $'          class_base="$round_class_base"\n          classify "$class_base"' $'          class_base="$round_class_base"\n          classify ""' \
+  'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'
+ci_extension_control $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all|selection=subset) validate_mode=ci ;;' \
+  $'          if [[ -z "$class_fallback" ]] && preview_selection; then\n            case "$selection" in\n              selection=all) validate_mode=ci ;;' \
   'guarded crate fix' 'range|selection-unread|crates/orders/src/lib.rs|orders:risk|yes'
 ci_extension_control '&& preview_selection; then' '&& { preview_selection || selection=selection=all; }; then' \
   'failed selector' 'ci||tests/widget.sh|none|yes'
 ci_extension_control 'if [[ -z "$class_fallback" ]] && preview_selection; then' 'if preview_selection; then' \
   'unread round evidence' 'ci|||none|yes'
-ci_extension_control $'    classify "$class_base"\n    start_scoped' $'    classify ""\n    start_scoped' \
-  'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|other-paths'
 }
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
@@ -1960,8 +1961,8 @@ mutant mutant-record-no-battery 'selection=(all|subset|battery)$/' 'selection=(a
 run_script "$MUTANT" --record --run-dir "$round_dir"
 assert_eq "$RC $(record_field selection "$OUT") $(record_field class-base "$OUT")" "0 unreported $round_base" \
   "control: with battery outside the grammar the whole battery reads as unreported, which submit never reuses" "$ERR"
-mutant mutant-round-base '[[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base="$base_sha"' \
-  '[[ "$validate_mode" != range || -n "$orphaned_sha" ]] || class_base=""'
+mutant mutant-round-base '[[ "$validate_mode" != range ]] || class_base="$round_class_base"' \
+  '[[ "$validate_mode" != range ]] || class_base=""'
 # The mutant's copy sits outside the catalog, so it finds the classifier on PATH.
 RUN_PATH="$REPO_ROOT/skills/harness-ci/scripts:$PATH"
 run_script "$MUTANT" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
@@ -2758,7 +2759,7 @@ selection_control 'rejecting a conservative standard fallback turns explicit CI 
   'standard) return 0 ;;' 'standard) [[ "$CHANGE_CLASS_MEASURED" == true ]]; return $? ;;' \
   'a ci standard fallback all selection uses required PR CI'
 selection_control 'omitting the automatic class fallback turns its record red' \
-  $'        [[ "$ci_admission_attempted" == true ]] || ci_fallback=class-uncovered\n' '' \
+  $'          ci_fallback=class-uncovered\n          classify ""\n' $'          classify ""\n' \
   'an all selection CI does not cover retains local execution'
 for row in "${SELECTION_ROWS[@]}"; do
   IFS='|' read -r label requested _ selected _ _ _ _ _ want_launch want_rc _ <<<"$row"

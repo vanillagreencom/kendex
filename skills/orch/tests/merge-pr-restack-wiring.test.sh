@@ -338,15 +338,24 @@ case "$2" in
 esac
 SH
 chmod +x "$TMP_ROOT/ci-bin/gh"
-CI_COMMAND='dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH]'
+CI_COMMAND='dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack'
+# A selector that admits the change and marks any scoped run: a restack is no
+# round, so its ci call runs none.
+printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; test $DEV_VALIDATE_SCOPED = false || touch %s"\n' \
+  "$TMP_ROOT/ci-restack-scoped-ran" >> "$CI_WT/kendex.settings.toml"
 CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed ci-resolve
 assert_eq "$CI_RESOLVED" validate-mode=ci 'push-first restack resolves to pending CI'
 CI_OUT="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main -)" || fixture_failed ci-start
 CI_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$CI_OUT")"
 CI_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$CI_WT" main "$CI_DIR")" || fixture_failed ci-record
-assert_contains "$CI_RECORD" 'validate-mode=ci selection=unreported verdict=pending' 'restack records pending proof, not a local pass'
+assert_contains "$CI_RECORD" 'validate-mode=ci selection=all verdict=pending' 'restack records pending proof, not a local pass'
 assert_contains "$CI_RECORD" "head=$(git -C "$CI_WT" rev-parse HEAD)" 'restack CI record binds the restacked head'
-assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
+assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" || -e "$TMP_ROOT/ci-restack-scoped-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
+assert_eq "$(grep -c '^class-base=' "$CI_DIR/start" || :)" 0 'restack CI record names no class base'
+MUTANT_SCRIPTS="$(mutant_scripts ci-restack-scoped dev-validate-run)" || fixture_failed ci-scoped-mutant
+mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '--restack)  once "$1" "$restack"; restack=true; shift ;;' '--restack)  shift ;;'
+PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main - "$MUTANT_SCRIPTS" > "$TMP_ROOT/ci-scoped-control.out" || fixture_failed ci-scoped-control
+assert_eq "$([[ -e "$TMP_ROOT/ci-restack-scoped-ran" ]] && echo ran || echo deferred)" ran 'control: a runner that ignores --restack runs the scoped suites on the restack'
 MUTANT_SCRIPTS="$(mutant_scripts ci-restack-mode dev-validate-run)" || fixture_failed ci-mutant
 mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '"$validate_mode" == ci || "$pr_order" == push-first' '"$validate_mode" == ci || false'
 CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main - "$MUTANT_SCRIPTS")" || fixture_failed ci-control

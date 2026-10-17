@@ -265,7 +265,8 @@ and a --validate-note naming the cause and scoped suites that passed; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it,
 or --validate-record below; a FAILING round with no run omits both and
 records validate_mode null. validate_class_base is the base --record reports:
-the round base or, for scoped full execution, the branch merge base.
+the round base, or the branch merge base for scoped full execution and for a
+scoped ci run of a full request or an orphaned base.
 Submit reuses only a local full pass without one or with selection
 battery. A current-head ci receipt defers required validation to PR CI. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null

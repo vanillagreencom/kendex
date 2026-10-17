@@ -167,7 +167,12 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 - `copilot-error` → route as [Copilot requests](../references/gates.md#copilot-requests) says. Managed: return the unmet gate to the caller. Standalone: re-run this step once for the overseer approval. If the gate stays unmet, use the `timeout` stop route below.
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
 
-For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm. A red local run is the fix's failure; report it and stop. The pull-request wait below proves nothing about the fix under the harness-ci queue-only default, where the pull-request run reports `CI` with no lane. The caller re-arms only under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle's re-queue rule.
+For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
+
+- A red local run is the fix's failure; report it and stop.
+- A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. For a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.
+
+The pull-request wait below proves nothing about the fix under the harness-ci queue-only default, where the pull-request run reports `CI` with no lane. The caller re-arms only under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle's re-queue rule.
 
 ```bash
 .agents/skills/orch/scripts/ci-wait [PR_NUMBER] --required-only --item [STATE_KEY]
