@@ -510,7 +510,10 @@ class Session:
                         record["identity_verified"] = True
                         record["history"] = self.confirmed_history(record)
                         self.write(record)
-                    if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in ("idle", "working"):
+                    # A kickoff turn's working pane is no turn on the brief: the
+                    # brief waits for that turn to end, and only the session's
+                    # brief-taken stamp then says it took the brief.
+                    if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and observed in (("idle",) if prepared["kickoff"] else ("idle", "working")):
                         prompt = self.path.parent / ("start-" + str(generation) + ".txt")
                         stream = prompt.open("x")
                         try:
@@ -521,9 +524,7 @@ class Session:
                             prompt.unlink()
                         record["brief_delivered"] = True
                         self.write(record)
-                    # Running needs the confirmed native identity, never a
-                    # working pane alone: Copilot and Codex draw a kickoff turn.
-                    elif identity.get("started_at") and record.get("identity_verified") and record.get("brief_delivered") and (taken or observed == "working"):
+                    elif record.get("brief_delivered") and (taken or (observed == "working" and not prepared["kickoff"])):
                         record.update(state="running", reason=launch["reason"], detail="")
                         record.pop("predecessor", None)
                         record.pop("launch", None)

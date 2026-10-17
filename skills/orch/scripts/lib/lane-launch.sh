@@ -70,11 +70,15 @@ lane_env_prefix() { # HARNESS DIR [MODEL]
 # without a prompt. Copilot CLI and Codex fire it only when the first prompt is
 # submitted (Copilot's sessionStart payload carries `initialPrompt`; Codex runs
 # its pending SessionStart hooks from its first turn), so their launch submits
-# this fixed kickoff, which holds no brief. The explicit Pi account is its
-# agent directory, rather than a Claude seat selected for pi-claude.
+# this fixed kickoff, which holds no brief, and LANE_SESSION_PROMPTED tells
+# the caller that a kickoff turn runs before the brief. The explicit Pi account
+# is its agent directory, rather than a Claude seat selected for pi-claude.
 LANE_SESSION_KICKOFF='Jarvis Start: your Start brief is the next message. Reply only Waiting, and take no action until it arrives.'
 lane_session_command() { # HARNESS NATIVE_ID RESUME_FILE
-  local harness="$1" id="$2" file="$3"
+  local harness="$1" id="$2" file="$3" kickoff=""
+  case "$harness" in codex | copilot) kickoff="$(lane_single_quote "$LANE_SESSION_KICKOFF")" ;; esac
+  LANE_SESSION_PROMPTED=false
+  [[ -z "$kickoff" ]] || LANE_SESSION_PROMPTED=true
   LANE_SESSION_ACCOUNT_VAR="$(lane_env_prefix "$harness" -)"
   LANE_SESSION_ACCOUNT_VAR="${LANE_SESSION_ACCOUNT_VAR%%=*}"
   [[ "$harness" != pi ]] || LANE_SESSION_ACCOUNT_VAR=PI_CODING_AGENT_DIR
@@ -88,11 +92,11 @@ lane_session_command() { # HARNESS NATIVE_ID RESUME_FILE
       printf 'codex'
       printf ' %q' "${LAUNCH_CHOICE_KEPT[@]}"
       [[ -z "$file" ]] || printf ' resume %q' "$id"
-      printf ' %s' "$(lane_single_quote "$LANE_SESSION_KICKOFF")" ;;
+      printf ' %s' "$kickoff" ;;
     (copilot)
       if [[ -n "$file" ]]; then printf 'copilot --resume=%q' "$id"
       else printf 'copilot --session-id=%q' "$id"; fi
-      printf ' -i %s' "$(lane_single_quote "$LANE_SESSION_KICKOFF")" ;;
+      printf ' -i %s' "$kickoff" ;;
     (pi)
       if [[ -n "$file" ]]; then printf 'pi --session %q' "$file"
       else printf 'pi --session-id %q' "$id"; fi ;;

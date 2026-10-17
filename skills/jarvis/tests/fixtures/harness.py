@@ -142,7 +142,6 @@ def main():
     if gate.exists():
         with gate.open() as stream:
             stream.read(1)
-    assert not select.select([sys.stdin], [], [], 0)[0], "a prompt preceded SessionStart"
     file = account / "sessions" / (identity + ".jsonl")
     header = native_header(harness, identity, os.getcwd())
     if harness == "copilot":
@@ -160,7 +159,8 @@ def main():
         sys.stdin.read()
         return
     barrier = fixture.get("kickoff_barrier")
-    if harness in ("copilot", "codex"):
+    deferred = harness in ("copilot", "codex")
+    if deferred:
         # Copilot CLI and Codex fire SessionStart only once the first prompt
         # is submitted: the launch line's prompt, or else the first typed line.
         kickoff = launch_prompt(harness, args)
@@ -173,6 +173,7 @@ def main():
             # The kickoff turn draws before its SessionStart stamp lands.
             print("Working to interrupt", flush=True)
             await_inspections(Path(barrier), 2)
+    assert not select.select([sys.stdin], [], [], 0)[0], "a prompt preceded SessionStart"
     payload = {"session_id": identity}
     if harness != "copilot":
         payload["transcript_path"] = str(file)
@@ -180,7 +181,10 @@ def main():
     subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness],
                    input=json.dumps(payload), text=True, check=True)
     if barrier:
-        # The kickoff turn ends and clears its working line.
+        # The kickoff turn still runs after its stamp, then ends and clears
+        # its working line.
+        await_inspections(Path(barrier), 2)
+        assert not select.select([sys.stdin], [], [], 0)[0], "the brief reached the kickoff turn"
         print("\033[2J\033[H", end="", flush=True)
     if history == "confirmed":
         print(TRUST_HISTORY[history], flush=True)
@@ -223,6 +227,13 @@ def main():
         brief_taken(fixture, harness, identity, "Stop")
     else:
         print("Working to interrupt", flush=True)
+    if deferred and auth_mode != "current":
+        if barrier:
+            # A working pane after a kickoff turn is no proof of the brief:
+            # the controller reads it twice before the stamp.
+            await_inspections(Path(barrier), 2)
+        # The Start brief's first tool call says the session took it.
+        brief_taken(fixture, harness, identity, "PreToolUse")
     sys.stdin.read()
 
 

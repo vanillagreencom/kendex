@@ -59,8 +59,8 @@ case "$verb" in
     # Jarvis acts on the owner's desktop, so its session keeps the live display.
     lane_launch_keep_live_session
     line="$(lane_launch_line "$cmd" "$harness" "$var" "$LANE_TRUST_HOME" "$form" "" "$child_env")" || exit 1
-    jq -cn --arg line "$line" --arg var "$var" --arg home "$LANE_TRUST_HOME" \
-      '{line:$line, var:$var, effective_home:$home}' ;;
+    jq -cn --arg line "$line" --arg var "$var" --arg home "$LANE_TRUST_HOME" --argjson kickoff "$LANE_SESSION_PROMPTED" \
+      '{line:$line, var:$var, effective_home:$home, kickoff:$kickoff}' ;;
   inspect)
     socket="$1" pane="$2" harness="$3" var="$4" account="$5" brief="$8"
     export TMUX="$socket,0,0"
