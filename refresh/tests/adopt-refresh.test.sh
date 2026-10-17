@@ -25,6 +25,7 @@ trap exit_report EXIT
 ADOPT='refresh/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
 TEMPLATE='.agents/skills/review-gate/templates/kendex-refresh.yml'
+printf '["%s"]\n' "$TEMPLATE" >"$PRISTINE/.kendex-generated.json"
 # Seed a committed, owned writer to make retirement ordering observable.
 printf 'retired workflow\n' >"$PRISTINE/.github/workflows/review-gate-writer.yml"
 record_adoption "$PRISTINE" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
@@ -45,7 +46,7 @@ while IFS='|' read -r key value mutation expected; do
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   [ "$RC" -eq 0 ] || exit 1
   rm -- "${DIR:?}/$REFRESH"
-  printf '[]\n' >"$DIR/.kendex-generated.json"
+  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
   cp "$BIN/gh" "$BIN/gh-environment-base"
   api_calls="$TMP/api-environment-calls"
   : >"$api_calls"
@@ -106,7 +107,7 @@ while IFS='|' read -r input record result writer; do
   sandbox
   if [ "$writer" = absent ]; then
     rm -- "${DIR:?}/.github/workflows/review-gate-writer.yml"
-    printf '[]\n' >"$DIR/.kendex-generated.json"
+    printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
   fi
   cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
   case "$input" in
@@ -374,7 +375,7 @@ else bad 'self-exclusion control did not reach adoption' "$OUT"; fi
 
 sandbox
 rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-printf '[]\n' >"$DIR/.kendex-generated.json"
+printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
 printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" || exit 1
@@ -403,7 +404,7 @@ OWNER=".agents/skills/review-gate/templates/review-gate-writer.yml"
 while IFS='|' read -r mutation expected; do
   sandbox
   rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-  printf '[]\n' >"$DIR/.kendex-generated.json"
+  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
   writer='.github/workflows/retired.yml'
   printf 'retired workflow\n' >"$DIR/$writer"
   record_adoption "$DIR" "$writer" "$OWNER"
@@ -434,18 +435,18 @@ AUTOMATIC
 while IFS='|' read -r kind expected; do
   sandbox
   rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-  printf '[]\n' >"$DIR/.kendex-generated.json"
+  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
   writer="$DIR/.github/workflows/retired.yml"
   printf 'retired workflow\n' >"$writer"
   record_adoption "$DIR" .github/workflows/retired.yml "$OWNER"
   commit "$DIR"
   case "$kind" in
-    initial) rm -- "${writer:?}"; printf '[]\n' >"$DIR/.kendex-generated.json" ;;
+    initial) rm -- "${writer:?}"; printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json" ;;
     new-install)
       rm -- "${writer:?}"
       git -C "$DIR" rm -q .kendex-generated.json
       commit "$DIR"
-      printf '[]\n' >"$DIR/.kendex-generated.json" ;;
+      printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json" ;;
     retired|repeat) ;;
     missing) rm "$writer" ;;
     edited) printf 'consumer edit\n' >>"$writer" ;;
@@ -512,7 +513,7 @@ CASES
 while IFS='|' read -r kind pattern replacement; do
   sandbox
   rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-  printf '[]\n' >"$DIR/.kendex-generated.json"
+  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
   writer="$DIR/.github/workflows/retired.yml"
   printf 'retired workflow\n' >"$writer"
   record_adoption "$DIR" .github/workflows/retired.yml "$OWNER"
@@ -566,18 +567,25 @@ if [ "$RC" -ne 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/caller-workflow" && grep -q '
   ok 'control: the v1.5.1 adopter refuses the rendered caller template'
 else bad "v1.5.1 adopter control (rc=$RC)" "$OUT"; fi
 
-# The shared workflow passes its release tree, outside the consumer. The
-# caller ships only at refresh/ in the catalog. The copy gets no record, the
-# earlier refresh record goes and every other record stays.
+# A release checkout can sit beside or inside the consumer. Neither location
+# makes its caller a declared consumer render.
 RELEASE="$TMP/release-refresh"
 mkdir -p "$RELEASE"
 cp "$CALLER" "$RELEASE/kendex-refresh.yml"
 ship_caller_template "$CALLER"
-for mutation in none record history; do
+while IFS='|' read -r location mutation; do
   sandbox
+  [ "$location" != nested ] || printf 'tmp/\n' >>"$DIR/.gitignore"
   cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
   record_adoption "$DIR" "$REFRESH" "$TEMPLATE"
   commit "$DIR"
+  release_templates="$RELEASE"
+  adopter="$DIR/$ADOPT"
+  if [ "$location" = nested ]; then
+    git clone -q -c gc.auto=0 -c maintenance.auto=false -- "$PRISTINE" "$DIR/tmp/kendex-v1"
+    release_templates="$DIR/tmp/kendex-v1/refresh"
+    adopter="$release_templates/adopt-refresh.sh"
+  fi
   case "$mutation" in
     none) ;;
     record)
@@ -585,26 +593,35 @@ for mutation in none record history; do
         's/^    entries = \[e for e in entries if not isinstance(e, dict) or e\["path"\] != .*$/    pass  # &/' ;;
     history)
       file_edit "$DIR" "$ADOPT" 1 '^paths = \(' 's/, "refresh\/kendex-refresh.yml")/) # "refresh\/kendex-refresh.yml"/' ;;
+    containment)
+      file_edit "$DIR/tmp/kendex-v1" "$ADOPT" 1 '^from_render = ' \
+        's/^from_render = .*$/from_render = template.is_relative_to(root)/' ;;
   esac
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+  run_refresh_command "$DIR" "$adopter" --templates-dir "$release_templates"
   matched=no
   if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
       retirement_matches "$DIR" .github/workflows/review-gate-writer.yml "$OWNER" preserved &&
       jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then matched=yes; fi
   case "$mutation:$matched" in
-    none:yes) ok 'release-tree adoption writes the caller and drops its record' ;;
-    record:no | history:no) ok "control: $mutation turns the release-tree adoption assertion red" ;;
-    *) bad "release-tree adoption mutation=$mutation (rc=$RC)" "$OUT" ;;
+    none:yes) ok "$location release-tree adoption writes the caller and drops its record" ;;
+    record:no | history:no | containment:no) ok "control: $mutation turns the release-tree adoption assertion red" ;;
+    *) bad "$location release-tree adoption mutation=$mutation (rc=$RC)" "$OUT" ;;
   esac
   if [ "$mutation" = none ]; then
     commit "$DIR"
     cp "$DIR/.kendex-generated.json" "$TMP/release-inventory"
-    run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+    run_refresh_command "$DIR" "$adopter" --templates-dir "$release_templates"
     if [ "$RC" -eq 0 ] && cmp -s "$TMP/release-inventory" "$DIR/.kendex-generated.json" && cmp -s "$DIR/$REFRESH" "$CALLER"; then
       ok 'repeated release-tree adoption accepts the shipped caller and keeps the inventory'
     else bad "repeated release-tree adoption (rc=$RC)" "$OUT"; fi
   fi
-done
+done <<'RELEASE_ROWS'
+external|none
+external|record
+external|history
+nested|none
+nested|containment
+RELEASE_ROWS
 
 # The v1.8.0 caller passes no secrets, so its called job reads them empty. A
 # consumer holding those shipped bytes takes the current caller.

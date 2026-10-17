@@ -1,0 +1,1 @@
+- Refresh adoption accepts a kendex release checkout inside the consumer without recording its temporary template path in the generated-file inventory.

@@ -9,7 +9,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the declared consumer environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Environment, secret-name inputs and matching secret mappings survive adoption. All other bytes must match kendex default-branch template history.' 'An in-consumer template gets an inventory record only when the adopted bytes equal its bytes.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the declared consumer environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Environment, secret-name inputs and matching secret mappings survive adoption. All other bytes must match kendex default-branch template history.' 'A template listed as a render in the consumer inventory gets an adoption record only when the adopted bytes equal its bytes.'
   exit 0
 fi
 templates="$SCRIPT_DIR"
@@ -165,10 +165,9 @@ def path_of(entry):
 
 refresh = root / ".github/workflows/kendex-refresh.yml"
 template = templates / refresh.name
-# kendex verify compares a record's template, a path inside the consumer. A
-# template outside it has no such path; the shipped-history check above is
-# that copy's equality check.
-from_render = template.is_relative_to(root)
+# A release checkout can sit inside the consumer. Only a rendered-path row
+# identifies a consumer render; an earlier adoption record cannot declare one.
+from_render = template.is_relative_to(root) and template.relative_to(root).as_posix() in entries
 retired_owner = ".agents/skills/review-gate/templates/review-gate-writer.yml"
 retired = [e for e in entries if isinstance(e, dict) and e["template"] == retired_owner]
 retiring = retired if sys.argv[3] == "retire-writer" else []

@@ -321,7 +321,7 @@ root = Path(sys.argv[1])
 path, template = sys.argv[2:]
 data = (root / template).read_bytes()
 assert (root / path).read_bytes() == data, "adoption=workflow-bytes value=" + path
-assert json.loads((root / ".kendex-generated.json").read_text()) == [{"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()}], "adoption=inventory value=" + path
+assert json.loads((root / ".kendex-generated.json").read_text()) == [template, {"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()}], "adoption=inventory value=" + path
 PY
 }
 

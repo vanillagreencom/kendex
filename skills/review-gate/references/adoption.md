@@ -99,7 +99,7 @@ The adopter also accepts `--templates-dir DIR`, where DIR holds the installed re
 "$KENDEX_RELEASE/refresh/adopt-refresh.sh" --templates-dir .agents/skills/review-gate/templates
 ```
 
-For a template inside the consumer, adoption writes a record in `.kendex-generated.json` only when the adopted workflow bytes equal the template bytes. A preserved configuration that changes those bytes gets no record and removes any earlier workflow record. Its `path` is `.github/workflows/kendex-refresh.yml`; its `template` is the selected template path relative to the consumer root. Its `templateHash` is `sha256:` followed by the SHA-256 digest of the template bytes. The release-checkout route also removes the earlier workflow record.
+For a template listed as a rendered path in the consumer's `.kendex-generated.json`, adoption writes a record only when the adopted workflow bytes equal the template bytes. A preserved configuration that changes those bytes gets no record and removes any earlier workflow record. Its `path` is `.github/workflows/kendex-refresh.yml`; its `template` is the selected template path relative to the consumer root. Its `templateHash` is `sha256:` followed by the SHA-256 digest of the template bytes. The release-checkout route also removes the earlier workflow record, including when the checkout sits inside the consumer.
 
 The [caller adoption contract](#caller-adoption-contract) uses both template paths, `skills/review-gate/templates/kendex-refresh.yml` and `refresh/kendex-refresh.yml`, in kendex's default-branch ancestry as shipment evidence. The adopter fetches that history from `https://github.com/vanillagreencom/kendex.git` as data only. Consumer history and adoption records supply no replacement permission.
 
