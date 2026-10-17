@@ -66,10 +66,10 @@ verifying_parse() { # SAFE_ROW
   printf '%s\n' "$boxes"
 }
 
-verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT GH_CLI [PASS_READ_DIR]
+verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE GH_CLI [PASS_READ_DIR]
   # GH_CLI follows reconciliation's existing command-word contract.
-  local row="$1" merged="$2" merged_repos="$3" now="$4" boxes="$5" errf="$6" release_limit="$7" gh_cli="$8"
-  local records id needs_merge number repo oid glob releases resolved at compare_tag tag comparison read_file fired_at=""
+  local row="$1" merged="$2" merged_repos="$3" now="$4" boxes="$5" errf="$6" gh_cli="$7"
+  local records id needs_merge number repo oid glob releases resolved at compare_tag tag comparison read_file page page_data fired_at=""
   # The issue ID and whether any box needs the merge, then one record per
   # release box. The glob comes last, so read keeps any separator it holds;
   # an oid of `invalid` is a merge row whose commit is not a full
@@ -86,26 +86,39 @@ verifying_judge() { # SAFE_ROW MERGE_EPOCH MERGED_REPOS NOW BOXES ERR_FILE LIMIT
   if [[ "$records" == *$'\n'* ]]; then
     while IFS=$'\037' read -r number repo oid glob; do
       [[ "$oid" != invalid ]] || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
-      read_file=""
-      if [[ -n "${9:-}" ]]; then
-        read_file="$9/$(printf '%s' "${repo//\//%}" | tr '[:upper:]' '[:lower:]').releases"
-      fi
-      if [[ -n "$read_file" && -f "$read_file" ]]; then
-        releases="$(cat "$read_file")" || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
-      else
-      releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
-        || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
-      [[ -z "$read_file" ]] || printf '%s\n' "$releases" >"$read_file" \
-        || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
-      fi
+      releases="" page=1
+      while :; do
+        read_file=""
+        # Cache pages, not a merge-bounded list: another issue in this pass
+        # can have an older merge and need the following page.
+        if [[ -n "${8:-}" ]]; then
+          read_file="$8/$(printf '%s' "${repo//\//%}" | tr '[:upper:]' '[:lower:]').releases.$page"
+        fi
+        if [[ -n "$read_file" && -f "$read_file" ]]; then
+          page_data="$(cat "$read_file")" || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
+        else
+          page_data="$($gh_cli api "repos/$repo/releases?per_page=100&page=$page" 2>"$errf")" \
+            || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
+          [[ -z "$read_file" ]] || printf '%s\n' "$page_data" >"$read_file" \
+            || { verifying_error verifying-release-unread "" "issue=$id" "repo=$repo"; return 2; }
+        fi
+        page_data="$(jq -r --argjson merged "$merged" '
+          if type != "array" then error("release-fields") else . end
+          | map({tagName: .tag_name, publishedAt: .published_at, isDraft: .draft}
+              | if (.isDraft | type) != "boolean" then error("release-fields") else . end
+              | if .isDraft then . else .publishedAt as $stamp
+                | if (.tagName | type) != "string" or (try ($stamp | fromdateiso8601 | todateiso8601 == $stamp) catch false) != true
+                  then error("release-fields") else . end end)
+          | "\(length < 100 or any(.[]; .isDraft == false and (.publishedAt | fromdateiso8601) <= $merged))\u001f\(tojson)"' <<<"$page_data" 2>"$errf")" \
+          || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }
+        releases+="${releases:+$'\n'}${page_data#*$'\037'}"
+        [[ "${page_data%%$'\037'*}" != true ]] || break
+        page=$((page + 1))
+      done
       # One record per candidate after the merge: its epoch, the tag as a
       # URL path segment, then the tag itself.
-      releases="$(jq -r --argjson merged "$merged" --argjson limit "$release_limit" '
-        if type != "array" or length >= $limit then error("release-list-incomplete") else . end
-        | map(if (.isDraft | type) != "boolean" then error("release-fields") else . end
-            | select(.isDraft == false) | .publishedAt as $stamp
-            | if (.tagName | type) != "string" or (try ($stamp | fromdateiso8601 | todateiso8601 == $stamp) catch false) != true
-              then error("release-fields") else . end)
+      releases="$(jq -rs --argjson merged "$merged" '
+        add | map(select(.isDraft == false))
         | map(. + {at: (.publishedAt | fromdateiso8601)} | select(.at > $merged)) | sort_by(.at)[]
         | "\(.at)\u001f\(.tagName | @uri)\u001f\(.tagName)"' <<<"$releases" 2>"$errf")" \
         || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }

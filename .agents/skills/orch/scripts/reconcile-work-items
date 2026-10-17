@@ -276,7 +276,7 @@ while IFS= read -r row; do
     fi
   fi
   rc=0
-  boxes="$(verifying_judge "$safe" "$merge_epoch" "$merged_repos" "$now_epoch" "$boxes" "$TMPD/release.err" 1000 "$GH_CLI" 2>"$TMPD/verifying.err")" || rc=$?
+  boxes="$(verifying_judge "$safe" "$merge_epoch" "$merged_repos" "$now_epoch" "$boxes" "$TMPD/release.err" "$GH_CLI" 2>"$TMPD/verifying.err")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     cat -- "$TMPD/verifying.err" >&2
     [ "$rc" -eq 1 ] || config_error scan-failed scan=verifying "issue=$iid"

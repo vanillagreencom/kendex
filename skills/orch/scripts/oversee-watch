@@ -5199,7 +5199,7 @@ verifying_read() { # SAFE_ITEMS
       || die state-read-failed "" "row=verifying-deadline" "issue=$id"
     prior="$LANE_ROW"
     rc=0
-    boxes="$(verifying_judge "$row" "$merged" "$merged_repos" "$PASS_NOW" "$boxes" "$WORK_DIR/verifying-release.err" "$MERGED_SEARCH_PAGE" gh "$read_dir" 2>"$errf")" || rc=$?
+    boxes="$(verifying_judge "$row" "$merged" "$merged_repos" "$PASS_NOW" "$boxes" "$WORK_DIR/verifying-release.err" gh "$read_dir" 2>"$errf")" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
       read -r key _ <"$errf" || key=verifying-invalid
       [[ "$rc" -eq 1 || "$rc" -eq 2 ]] || die "$key" "$(cat "$errf")" "issue=$id"

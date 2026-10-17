@@ -298,10 +298,14 @@ case "${1:-} ${2:-}" in
       | jq -r "${filter:-.}"
     [[ ! -f "$STUB_DIR/next-alert-token" ]] || mv -- "$STUB_DIR/next-alert-token" "$STUB_DIR/alert-token"
     exit ;;
-  "release list")
+  "release list"|"api repos/"*/releases\?*)
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ ! -f "$STUB_DIR/release-fail" ]] || { echo "HTTP 502" >&2; exit 1; }
-    repo=""; limit=30
+    repo=""; limit=30; page=1; rest=false
+    if [[ "$1" == api ]]; then
+      repo="${2#repos/}"; repo="${repo%/releases\?*}"
+      page="${2##*page=}"; limit=100; rest=true
+    fi
     while [[ $# -gt 0 ]]; do
       case "$1" in --repo) repo="$2"; shift ;; --limit) limit="$2"; shift ;; esac
       shift
@@ -309,7 +313,12 @@ case "${1:-} ${2:-}" in
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
     src="$STUB_DIR/releases.$slug.json"
     [[ -f "$src" ]] || src="$STUB_DIR/releases.json"
-    if [[ -f "$src" ]]; then jq -c --argjson limit "$limit" 'if type == "array" then .[:$limit] else . end' "$src"; else echo '[]'; fi
+    [[ ! -f "$STUB_DIR/release-fail-$page" ]] || { echo "HTTP 502" >&2; exit 1; }
+    if [[ -f "$src" ]]; then
+      jq -c --argjson limit "$limit" --argjson page "$page" --argjson rest "$rest" '
+        if type == "array" then .[(($page - 1) * $limit):($page * $limit)]
+          | if $rest then map({tag_name:.tagName,published_at:.publishedAt,draft:.isDraft}) else . end else . end' "$src"
+    else echo '[]'; fi
     exit ;;
   "pr view")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"

@@ -16,7 +16,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 # A direct run keeps every row; run-all bounds each measured group separately.
 PART="${1:-all}"
 case "$PART" in
-  all|development|membership|shared|release|bulk) ;;
+  all|development|membership|shared|pagination|release|bulk) ;;
   *) echo "oversee_watch_owed: part-invalid value=$PART" >&2; exit 1 ;;
 esac
 
@@ -733,7 +733,7 @@ release_world() {
 }
 # Both scripts read the same Linear boxes and GitHub evidence. The adapters
 # only translate each external API's row format; they do not judge boxes.
-if [[ "$PART" == all || "$PART" == shared ]]; then
+if [[ "$PART" == all || "$PART" == shared || "$PART" == pagination ]]; then
 RECONCILE_SCRIPTS="$(mutant_scripts shared-reconcile/orch)" || exit 1
 mkdir -p "$TMP_ROOT/shared-reconcile/linear/scripts"
 ln -s "$REPO_ROOT/skills/linear/scripts/lib" "$TMP_ROOT/shared-reconcile/linear/scripts/lib"
@@ -774,6 +774,7 @@ reconcile_same_world() {
     OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" RECONCILE_GH_CLI="$gh_command" \
     "$scripts/reconcile-work-items" 2>"$STUB_DIR/reconcile.err")" || RECONCILE_RC=$?
 }
+if [[ "$PART" != pagination ]]; then
 while IFS='|' read -r name trigger blockers now deadline status control merge_at; do
   verifying_one "shared_$name" "$trigger" "$blockers"
   gh_command="$TMP_ROOT/bin/reconcile-gh"
@@ -839,8 +840,8 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
   assert_eq "$(awk '/^verifying /' <<<"$RECONCILE_OUT")" "$expected" "$name callers print identical lines for readable local merge evidence" "$STUB_DIR/reconcile.err"
   if [[ "$control" == arguments ]]; then
     assert_eq "$RECONCILE_RC" 0 "command arguments reach a complete release judgement" "$STUB_DIR/reconcile.err"
-    assert_eq "$(cat "$STUB_DIR/command.calls")" $'pr list X=1\nrelease list X=1\napi repos/owner/repo/compare/1111111111111111111111111111111111111111...v2 X=1\napi repos/owner/repo/compare/1111111111111111111111111111111111111111...v3 X=1' \
-      "command arguments reach the probe, release list and containment calls" "$STUB_DIR/reconcile.err"
+    assert_eq "$(cat "$STUB_DIR/command.calls")" $'pr list X=1\napi repos/owner/repo/releases?per_page=100&page=1 X=1\napi repos/owner/repo/compare/1111111111111111111111111111111111111111...v2 X=1\napi repos/owner/repo/compare/1111111111111111111111111111111111111111...v3 X=1' \
+      "command arguments reach the probe, release page and containment calls" "$STUB_DIR/reconcile.err"
   fi
   if [[ "$control" == missing ]]; then
     assert_eq "$RECONCILE_RC" 1 "a missing local merge is an item finding" "$STUB_DIR/reconcile.err"
@@ -872,8 +873,7 @@ while IFS='|' read -r name trigger blockers now deadline status control merge_at
       missing) mutate_file "$MUTANT_RW" 'if [ "$merge_epoch" = none ]; then' 'if [ "$merge_epoch" = none ]; then config_error verifying-merge-unread "issue=$iid"' ;;
       containment) mutate_file "$MUTANT_RW" 'read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"' 'read -r open merged unmerged merged_at merged_repos merge_epoch <<<"$prs"; merged_repos="{}"' ;;
       arguments)
-        mutate_verifying "$MUTANT_RW" '$gh_cli release list' '"$gh_cli" release list'
-        mutate_verifying "$MUTANT_RW" '$gh_cli api' '"$gh_cli" api'
+        mutate_verifying "$MUTANT_RW" 'page_data="$($gh_cli api' 'page_data="$("$gh_cli" api'
         : >"$STUB_DIR/command.calls"
         ;;
     esac
@@ -931,7 +931,69 @@ missing_merge_then_due|merge|[]|2026-10-02T00:00:01Z|2026-10-03T00:00:00Z|due|mi
 release_contains_merge|release owner/repo v*|[]|2026-10-02T00:00:01Z|+24h|due|containment
 command_arguments|release owner/repo v*|[]|2026-10-02T00:00:01Z|+24h|due|arguments
 ROWS
+fi
 
+# Both consumers read the same 1200-release repository. A late matching tag
+# proves pagination; an old publication on page one proves the merge cutoff.
+while IFS='|' read -r name recent pages; do
+  release_world "release_pages_$name"
+  jq -n --argjson recent "$recent" '[range(1200) as $n
+    | {tagName:(if $n == ($recent - 1) then "v1" else "build-\($n)" end),
+       publishedAt:(if $n < $recent then "2026-10-01T12:00:00Z" else "2026-09-30T00:00:00Z" end),isDraft:false}]' \
+    >"$STUB_DIR/releases.owner_releases.json"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "$name: watch resolves the matching release" "$ERR"
+  assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "$name: watch uses the publication time" "$ERR"
+  assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" "$pages" "$name: watch reads only the required pages" "$ERR"
+  : >"$STUB_DIR/gh.calls"
+  reconcile_same_world
+  assert_eq "$RECONCILE_RC" 0 "$name: reconciliation completes" "$STUB_DIR/reconcile.err"
+  assert_contains "$RECONCILE_OUT" 'status=due deadline=2026-10-02T12:00:00Z' "$name: reconciliation resolves the matching publication"
+  assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" "$pages" "$name: reconciliation reads only the required pages"
+  MUTANT_DIR="$TMP_ROOT/release-pages-$name"
+  MUTANT_WATCH="$(mutant_scripts "release-pages-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+  ln -s "$TMP_ROOT/shared-reconcile/linear" "$MUTANT_DIR/linear"
+  if [[ "$name" == deep ]]; then
+    mutate_verifying "$MUTANT_WATCH" 'add | map(select(.isDraft == false))' 'add | if length >= 1000 then error("release-list-incomplete") else . end | map(select(.isDraft == false))'
+  else
+    mutate_verifying "$MUTANT_WATCH" 'length < 100 or any(.[]; .isDraft == false and (.publishedAt | fromdateiso8601) <= $merged)' 'length < 100'
+  fi
+  : >"$STUB_DIR/gh.calls"
+  WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
+  if [[ "$name" == deep ]]; then
+    assert_eq "$(verification_lines)" '' 'control: the old list cap loses the watch release result' "$ERR"
+  else
+    assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 'control: removing the merge cutoff reads the full history' "$ERR"
+  fi
+  : >"$STUB_DIR/gh.calls"
+  reconcile_same_world "${MUTANT_WATCH%/*}"
+  if [[ "$name" == deep ]]; then
+    assert_eq "$RECONCILE_RC" 2 'control: the old list cap refuses reconciliation' "$STUB_DIR/reconcile.err"
+  else
+    assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 13 'control: reconciliation without the cutoff reads the full history'
+  fi
+done <<'ROWS'
+deep|1100|12
+newest|1|1
+ROWS
+
+release_world release_pages_older_merge
+jq '[.[0], (.[0] | .id = "KEN-2")]' "$STUB_DIR/tracker.out" >"$STUB_DIR/older-items.json"
+mv -- "$STUB_DIR/older-items.json" "$STUB_DIR/tracker.out"
+printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-02T00:00:00Z"},{"number":2,"headRefName":"ken-2","mergedAt":"2026-10-01T00:00:00Z"}]' >"$STUB_DIR/merged.json"
+jq -n '[range(1200) as $n
+  | {tagName:(if $n == 50 then "v2" elif $n == 150 then "v1" else "build-\($n)" end),
+     publishedAt:(if $n < 100 then "2026-10-02T12:00:00Z" elif $n < 200 then "2026-10-01T12:00:00Z" else "2026-09-30T00:00:00Z" end),isDraft:false}]' \
+  >"$STUB_DIR/releases.owner_releases.json"
+jq -nr '"2026-10-02T13:00:00Z" | fromdateiso8601' >"$STUB_DIR/now.epoch"
+watch_pass -- --state "$STUB_DIR/state.json"
+assert_eq "$RC" 0 'an older merge extends the cached release pages' "$ERR"
+assert_contains "$(verification_lines)" 'verifying KEN-1 box=1 trigger="release owner/releases v*" status=due deadline=2026-10-03T12:00:00Z' 'the newer merge selects its first publication' "$ERR"
+assert_contains "$(verification_lines)" 'verifying KEN-2 box=1 trigger="release owner/releases v*" status=overdue deadline=2026-10-02T12:00:00Z' 'the older merge sees the earlier matching tag' "$ERR"
+assert_eq "$(grep -c '^api repos/owner/releases/releases?' "$STUB_DIR/gh.calls" || true)" 3 'the shared cache reads each required page once' "$ERR"
+
+if [[ "$PART" != pagination ]]; then
 release_world release_first
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status)" 'rc=0 status=due' "the first matching publication after merge fires" "$ERR"
@@ -939,6 +1001,7 @@ assert_contains "$(verification_lines)" 'deadline=2026-10-02T12:00:00Z' "the dea
 assert_eq "$(awk '/^api repos\/.*\/compare\// {n++} END {print n+0}' "$STUB_DIR/gh.calls")" 0 "a release in another repository makes no compare call" "$ERR"
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC $(box_status) events=$(verification_events)" 'rc=0 status=due events=' "release evidence stays due on every pass" "$ERR"
+fi
 fi
 
 # GitHub's compare response is the containment evidence. The older merged row
@@ -1064,7 +1127,9 @@ while IFS='|' read -r name setup key; do
     fail) touch "$STUB_DIR/release-fail" ;;
     invalid) echo '{}' >"$STUB_DIR/releases.owner_releases.json" ;;
     timestamp) echo '[{"tagName":"v1","publishedAt":"invalid","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
-    truncated) jq -n '[range(1000) | {tagName:"v1",publishedAt:"2026-10-01T12:00:00Z",isDraft:false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
+    later-page)
+      jq -n '[range(101) | {tagName:"v1",publishedAt:"2026-10-01T12:00:00Z",isDraft:false}]' >"$STUB_DIR/releases.owner_releases.json"
+      touch "$STUB_DIR/release-fail-2" ;;
     merge) echo '[]' >"$STUB_DIR/merged.json" ;;
   esac
   watch_pass -- --state "$STUB_DIR/state.json"
@@ -1073,7 +1138,7 @@ done <<'ROWS'
 read|fail|verifying-release-unread
 shape|invalid|verifying-release-unread
 time|timestamp|verifying-release-unread
-page|truncated|verifying-release-unread
+later-page|later-page|verifying-release-unread
 merge|merge|verifying-merge-unread
 ROWS
 # The controls keep the release read and violate its selection decisions.
@@ -1102,7 +1167,6 @@ while IFS='@' read -r name fixture status key old new; do
   release_world "release_guard_$name" "$trigger"
   case "$fixture" in
     shape) echo '{}' >"$STUB_DIR/releases.owner_releases.json" ;;
-    page) jq -n '[range(1000) | {tagName:"v1",publishedAt:"2026-10-01T12:00:00Z",isDraft:false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
     time) echo '[{"tagName":"v1","publishedAt":"2026-09-31T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
     tag) echo '[{"tagName":42,"publishedAt":"2026-10-01T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_releases.json" ;;
     draft) echo '[{"tagName":"v1","publishedAt":"2026-10-01T12:00:00Z"}]' >"$STUB_DIR/releases.owner_releases.json" ;;
@@ -1122,8 +1186,7 @@ while IFS='@' read -r name fixture status key old new; do
   fi
   assert_eq "rc=$RC $(box_status) key=$(grep -c "^$key " "$ERR" || true)" "rc=0 status=$status key=0" "control: $name fabricates $status from incomplete evidence" "$ERR"
 done <<'ROWS'
-shape@shape@waiting@verifying-release-unread@if type != "array" or length >= $limit then@if false or length >= $limit then
-page@page@due@verifying-release-unread@or length >= $limit@or false
+shape@shape@waiting@verifying-release-unread@if type != "array" then error("release-fields") else . end@if false then error("release-fields") else . end
 time@time@due@verifying-release-unread@todateiso8601 == $stamp@true
 draft@draft@waiting@verifying-release-unread@(.isDraft | type) != "boolean"@false
 tag@tag@waiting@verifying-release-unread@(.tagName | type) != "string"@false
@@ -1136,9 +1199,9 @@ MUTANT_DIR="$TMP_ROOT/release-read-mutant"
 MUTANT_WATCH="$(mutant_scripts "release-read-mutant/orch" oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
 ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-old='releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" \
-        || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }'
-new='releases="$($gh_cli release list --repo "$repo" --limit "$release_limit" --json tagName,publishedAt,isDraft 2>"$errf")" || :'
+old='page_data="$($gh_cli api "repos/$repo/releases?per_page=100&page=$page" 2>"$errf")" \
+            || { verifying_error verifying-release-unread "$(cat "$errf")" "issue=$id" "repo=$repo"; return 2; }'
+new='page_data="$($gh_cli api "repos/$repo/releases?per_page=100&page=$page" 2>"$errf")" || page_data="[]"'
 mutate_verifying "$MUTANT_WATCH" "$old" "$new"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
@@ -1253,8 +1316,8 @@ fi
 # box selection, the judge's box records, its results and the printed lines,
 # less the inventory read every pass makes: six jq. The merged index adds one
 # parse per repository. A release issue adds one merge record; a release box adds the
-# record pass over its own release list. No box field, release candidate or
-# box update starts a process. Only jq the watch starts is counted: the gh
+# record pass over its own release list and one validation per page. No box
+# field, release candidate or box update starts a process. Only jq the watch starts is counted: the gh
 # stub's own jq is not the stage's work.
 REAL_JQ="$(command -v jq)"
 if [[ "$PART" == all || "$PART" == bulk ]]; then
@@ -1315,10 +1378,10 @@ WORK_BASE="$WORK"
 WORK_ROWS='merge_one|1|KEN-30=t|6
 merge_boxes|1|KEN-30=t,t,t,t|6
 merge_issues|1|KEN-30=t KEN-31=t KEN-32=t|18
-release_one|1|KEN-30=r|9
-release_boxes|1|KEN-30=r,r,r|11
-release_candidates|5|KEN-30=r|9
-mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|24'
+release_one|1|KEN-30=r|10
+release_boxes|1|KEN-30=r,r,r|14
+release_candidates|5|KEN-30=r|10
+mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|27'
 while IFS='|' read -r name candidates issues want; do
   # shellcheck disable=SC2086 # ISSUES is a word list of ID=BOXES specs.
   work_world "work_$name" "$candidates" $issues
@@ -1349,7 +1412,7 @@ shared_reads_contract() {
   local count="${1:-1}" batches="${2:-4}"
   assert_eq "$RC" 0 'the shared repository reads complete verification' "$ERR"
   assert_eq "$(grep -c '^pr list .*--state merged' "$STUB_DIR/gh.calls" || true)" "$((count * batches))" 'Verifying items share each bounded merged batch per repository' "$ERR"
-  assert_eq "$(grep -c '^release list ' "$STUB_DIR/gh.calls" || true)" "$count" 'release boxes share one release read per repository' "$ERR"
+  assert_eq "$(grep -c '^api repos/.*/releases?' "$STUB_DIR/gh.calls" || true)" "$count" 'release boxes share one release read per repository' "$ERR"
   assert_eq "$(grep -c -- '--search merged:>=2026-09-01T00:00:00Z' "$STUB_DIR/gh.calls" || true)" "$((count * batches))" 'each repository batch includes the oldest Verifying creation floor' "$ERR"
 }
 shared_reads_world verifying_shared_reads
@@ -1372,7 +1435,7 @@ watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json
 shared_reads_contract 2
 for repo in owner/repo owner/other; do
   assert_eq "$(grep -c "^pr list --repo $repo .*--state merged" "$STUB_DIR/gh.calls" || true)" 4 "$repo shares its merged pull request batches" "$ERR"
-  assert_eq "$(grep -c "^release list --repo $repo " "$STUB_DIR/gh.calls" || true)" 1 "$repo has one release read" "$ERR"
+  assert_eq "$(grep -c "^api repos/$repo/releases?" "$STUB_DIR/gh.calls" || true)" 1 "$repo has one release read" "$ERR"
 done
 # GitHub can return complete batches whose combined repository cache exceeds
 # one search page. A capped batch still refuses the whole inventory.
@@ -1427,7 +1490,7 @@ MUTANT_WATCH="$(mutant_scripts shared-reads-base/orch oversee-watch)/oversee-wat
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
 ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
 mutate_verifying "$MUTANT_WATCH" 'merged_item_read "$id" "$repo" null null "$floor" "$read_dir" "$search"' 'merged_item_read "$id" "$repo" null'
-mutate_verifying "$MUTANT_WATCH" '"$MERGED_SEARCH_PAGE" gh "$read_dir"' '"$MERGED_SEARCH_PAGE" gh'
+mutate_verifying "$MUTANT_WATCH" '"$WORK_DIR/verifying-release.err" gh "$read_dir"' '"$WORK_DIR/verifying-release.err" gh'
 shared_reads_world verifying_shared_reads_base
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "$RC" 0 'control: the base callers reach the complete verification stage' "$ERR"

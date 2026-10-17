@@ -185,6 +185,10 @@ set -euo pipefail
 case "$1 $2" in
   'pr list') echo '[{"state":"MERGED","mergedAt":"2026-10-01T00:00:00.123Z","isCrossRepository":false,"mergeCommit":{"oid":"1111111111111111111111111111111111111111"},"url":"https://github.com/owner/repo/pull/1"}]' ;;
   'release list') cat "$RELEASES" ;;
+  'api repos/owner/repo/releases?'*)
+    page="${2##*page=}"
+    jq -c --argjson page "$page" '.[(($page - 1) * 100):($page * 100)]
+      | map({tag_name:.tagName,published_at:.publishedAt,draft:.isDraft})' "$RELEASES" ;;
   'api repos/owner/repo/compare/'*) echo ahead ;;
   *) exit 2 ;;
 esac
