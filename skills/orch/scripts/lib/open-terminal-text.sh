@@ -914,8 +914,9 @@ LINEAR_TEAM names in the overseer directory, read the same way with this
 launcher's LINEAR_TEAM dropped, as well as one of this checkout's own team;
 an item of any other team is refused as item-foreign. That team and its key
 are read only for an item this checkout's team does not take, the key in the
-overseer directory with this launcher's Linear credentials dropped, so the
-overseer checkout's Linear workspace answers.
+overseer directory with every Linear credential this checkout's settings added
+dropped, so the overseer checkout and the credentials this launcher inherited
+pick the Linear workspace, as they do for the overseer's own Linear calls.
 
 Exit codes:
   0   at least one lane launched or handed to a background job and none

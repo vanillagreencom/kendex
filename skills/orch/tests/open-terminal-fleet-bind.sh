@@ -140,21 +140,28 @@ fleet() {
   fi
 }
 
-# run_ot [SCRIPT=PATH] [CWD=PATH] [ENV=NAME=VALUE]... [WAKE] ARGS — one fleet
-# launch into $STATE; sets OUT, ERR and RC. ENV= adds a variable to the
-# launcher's environment, which otherwise carries no ORCH_CONNECTED_REPOS.
+# run_ot [SCRIPT=PATH] [CWD=PATH] [ENV=NAME=VALUE]... [UNSET=NAME]... [WAKE]
+# ARGS — one fleet launch into $STATE; sets OUT, ERR and RC. ENV= adds a
+# variable to the launcher's environment, which otherwise carries no
+# ORCH_CONNECTED_REPOS, and UNSET= removes one.
 # WAKE runs a --wake, which takes no custom command, in place of the launch.
 # Git looks for no checkout above $TMP_ROOT, so $TMP_ROOT/state, $NO_GIT and
 # $TMP_ROOT itself, where the state-dir walk ends for a state not yet made,
 # stay outside one wherever the scratch root sits.
 run_ot() {
-  local script="$OT" cwd="$PWD" extra=() mode=(--cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL")
-  while [[ "${1:-}" == SCRIPT=* || "${1:-}" == CWD=* || "${1:-}" == ENV=* || "${1:-}" == WAKE ]]; do
-    case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; CWD=*) cwd="${1#CWD=}" ;; ENV=*) extra+=("${1#ENV=}") ;; WAKE) mode=(--wake) ;; esac
+  local script="$OT" cwd="$PWD" extra=() unset_args=() mode=(--cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL")
+  while [[ "${1:-}" == SCRIPT=* || "${1:-}" == CWD=* || "${1:-}" == ENV=* || "${1:-}" == UNSET=* || "${1:-}" == WAKE ]]; do
+    case "$1" in
+      SCRIPT=*) script="${1#SCRIPT=}" ;;
+      CWD=*) cwd="${1#CWD=}" ;;
+      ENV=*) extra+=("${1#ENV=}") ;;
+      UNSET=*) unset_args+=(-u "${1#UNSET=}") ;;
+      WAKE) mode=(--wake) ;;
+    esac
     shift
   done
   set +e
-  OUT="$(cd "$cwd" && env -u ORCH_CONNECTED_REPOS PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
+  OUT="$(cd "$cwd" && env -u ORCH_CONNECTED_REPOS ${unset_args[@]+"${unset_args[@]}"} PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     GIT_CEILING_DIRECTORIES="$SCRATCH_PARENT" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$TMP_ROOT/home" LINEAR_TEAM= \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX= TMUX_PANE= GH_REPO= ${extra[@]+"${extra[@]}"} \
     "$script" --state-dir "$STATE" --ghostty --harness claude "${mode[@]}" "$@" 2>"$TMP_ROOT/err")"
@@ -263,21 +270,23 @@ printf '%s\n' "$CAP_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
 echo "=== a connected launch admits the overseer's own Linear team ==="
 # The launcher's LINEAR_TEAM names the launch checkout's team, CC; the
 # overseer checkout's settings name its own. The stub tracker answers from the
-# Linear workspace linear.sh would reach: the one an inherited LINEAR_APP_TOKEN
-# names, since that credential outranks the checkout's own, else the one of the
-# checkout it runs in, the target's in $TARGET and the overseer's anywhere
-# else. Both read Checkout team as CC. The overseer's workspace reads Fleet
-# team as FLT; the target's holds a team of that name keyed TGT. Every other
-# name fails.
+# Linear workspace linear.sh would reach: the one a LINEAR_APP_TOKEN in its
+# environment names, since that credential outranks the checkout's own, else
+# the one the .env.local of the checkout it runs in names. With neither it
+# fails as linear.sh does, naming the credential unset. Every workspace reads
+# Checkout team as CC. The overseer's workspace reads Fleet team as FLT; the
+# target's holds a team of that name keyed TGT. Every other name fails.
 TEAM_STUB="$TMP_ROOT/linear-teams.sh"
-cat > "$TEAM_STUB" <<EOF
+cat > "$TEAM_STUB" <<'EOF'
 #!/bin/sh
-workspace="\${LINEAR_APP_TOKEN:-}"
-if [ -z "\$workspace" ]; then
-  workspace=overseer
-  [ "\$(git rev-parse --show-toplevel)" != "$TARGET" ] || workspace=target
+workspace="${LINEAR_APP_TOKEN:-}"
+env_file="$(git rev-parse --show-toplevel)/.env.local"
+[ -n "$workspace" ] || [ ! -f "$env_file" ] || workspace="$(sed -n 's/^LINEAR_APP_TOKEN=//p' "$env_file")"
+if [ -z "$workspace" ]; then
+  printf 'linear-auth: credential=unset\n' >&2
+  exit 1
 fi
-case "\$workspace \$1 \$2 \$3" in
+case "$workspace $1 $2 $3" in
   *' teams get Checkout team') printf '{"team":{"key":"CC"}}\n' ;;
   'overseer teams get Fleet team') printf '{"team":{"key":"FLT"}}\n' ;;
   'target teams get Fleet team') printf '{"team":{"key":"TGT"}}\n' ;;
@@ -285,6 +294,8 @@ case "\$workspace \$1 \$2 \$3" in
 esac
 EOF
 chmod +x "$TEAM_STUB"
+printf 'LINEAR_APP_TOKEN=target\n' > "$TARGET/.env.local"
+printf 'LINEAR_APP_TOKEN=overseer\n' > "$OVERSEER_WT/.env.local"
 # team_tracker ROOT — installs the stub as the linear CLI an open-terminal in
 # ROOT/scripts resolves.
 team_tracker() {
@@ -300,29 +311,42 @@ overseer_team() {
   printf '[env]\nORCH_CONNECTED_REPOS = "acme/target"\n' > "$OVERSEER_REPO/kendex.settings.toml"
   [[ "$1" == absent ]] || printf 'LINEAR_TEAM = "%s"\n' "$1" >> "$OVERSEER_REPO/kendex.settings.toml"
 }
-# team_launch [SCRIPT=PATH] TEAM CWD ITEM [ENV=NAME=VALUE] — one launch of ITEM
-# from CWD under the launcher's Checkout team and no inherited LINEAR_APP_TOKEN
-# unless ENV= sets one, with the overseer checkout's team set to TEAM; sets
-# TEAM_RESULT.
+# team_launch [SCRIPT=PATH] [BARE] [LOADED=NAME=VALUE] [ENV=NAME=VALUE]... TEAM
+# CWD ITEM — one launch of ITEM from CWD under the launcher's Checkout team,
+# with the overseer checkout's team set to TEAM; sets TEAM_RESULT. The launcher
+# inherits no LINEAR_APP_TOKEN unless ENV= sets one, and the .env.local of the
+# checkout it is installed in exports LOADED alone, as a credential its load
+# hands to linear.sh must be exported. The overseer checkout's .env.local
+# holds the overseer's credential, or nothing under BARE.
 team_launch() {
-  local script=()
-  [[ "$1" != SCRIPT=* ]] || { script=("$1"); shift; }
-  local team="$1" cwd="$2" item="$3"
-  shift 3
+  local script="$OT" bare=false loaded="" env=()
+  while [[ "$1" == SCRIPT=* || "$1" == BARE || "$1" == LOADED=* || "$1" == ENV=* ]]; do
+    case "$1" in
+      SCRIPT=*) script="${1#SCRIPT=}" ;;
+      BARE) bare=true ;;
+      LOADED=*) loaded="${1#LOADED=}" ;;
+      ENV=*) env+=("$1") ;;
+    esac
+    shift
+  done
+  local team="$1" cwd="$2" item="$3" launcher_root="${script%/scripts/open-terminal}"
   overseer_team "$team"
+  rm -f -- "${OVERSEER_REPO:?}/.env.local" "${launcher_root:?}/.env.local"
+  [[ "$bare" == true ]] || printf 'LINEAR_APP_TOKEN=overseer\n' > "$OVERSEER_REPO/.env.local"
+  [[ -z "$loaded" ]] || printf 'export %s\n' "$loaded" > "$launcher_root/.env.local"
   fleet cwd "$OVERSEER_REPO"
-  run_ot ${script[@]+"${script[@]}"} CWD="$cwd" "ENV=LINEAR_TEAM=Checkout team" ENV=LINEAR_APP_TOKEN= "$@" "$item"
-  TEAM_RESULT="rc=$RC record=$(record "$item") foreign=$(refused 'item-foreign ') unresolved=$(grep -cxF 'open-terminal: item-repo-unresolved tracker=linear team=Gone team' <<<"$ERR" || true)"
+  run_ot SCRIPT="$script" CWD="$cwd" "ENV=LINEAR_TEAM=Checkout team" UNSET=LINEAR_APP_TOKEN ${env[@]+"${env[@]}"} "$item"
+  rm -f -- "${launcher_root:?}/.env.local"
+  TEAM_RESULT="rc=$RC record=$(record "$item") foreign=$(refused 'item-foreign ') unresolved=$(refused 'item-repo-unresolved tracker=linear ')"
 }
 # The overseer checkout's team, the launch directory (the target clone or a
-# worktree of the overseer's repository), the item, a variable the launcher
-# already holds, and the expected result.
-while IFS='|' read -r team where item extra want label; do
+# worktree of the overseer's repository), the item, team_launch's credential
+# and environment options, and the expected result.
+while IFS='|' read -r team where item opts want label; do
   cwd="$TARGET"
   [[ "$where" != overseer ]] || cwd="$OVERSEER_WT"
-  extra_args=()
-  [[ -z "$extra" ]] || extra_args=("ENV=$extra")
-  team_launch "$team" "$cwd" "$item" ${extra_args[@]+"${extra_args[@]}"}
+  read -ra opt_args <<<"$opts"
+  team_launch ${opt_args[@]+"${opt_args[@]}"} "$team" "$cwd" "$item"
   assert_eq "$TEAM_RESULT" "$want" "$label"
 done <<'ROWS'
 Fleet team|target|FLT-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a connected launch admits an item of the overseer checkout's team, keyed in the overseer's workspace
@@ -330,8 +354,10 @@ Fleet team|target|CC-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a co
 Fleet team|target|OTHER-1||rc=1 record=none foreign=1 unresolved=0|a connected launch refuses an item of a third team as item-foreign
 Fleet team|target|TGT-1||rc=1 record=none foreign=1 unresolved=0|the launch checkout's workspace's team of the overseer team's name is not admitted
 absent|target|FLT-1||rc=1 record=none foreign=1 unresolved=0|with no team in the overseer checkout a connected launch admits the launch checkout's team alone
-Fleet team|target|FLT-1|KENDEX_ENV_FILE=alt.env|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's private-file selector does not pick the overseer's private file for its team
-Fleet team|target|FLT-1|LINEAR_APP_TOKEN=target|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's Linear credential does not pick the workspace the overseer's team is keyed in
+Fleet team|target|FLT-1|ENV=KENDEX_ENV_FILE=alt.env|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's private-file selector does not pick the overseer's private file for its team
+Fleet team|target|FLT-1|LOADED=LINEAR_APP_TOKEN=target|rc=0 record=repo=acme/target foreign=0 unresolved=0|a credential the launcher's checkout load adds does not pick the workspace the overseer's team is keyed in
+Fleet team|target|FLT-1|BARE ENV=LINEAR_APP_TOKEN=overseer|rc=0 record=repo=acme/target foreign=0 unresolved=0|an inherited credential keys the overseer's team when the overseer checkout holds none
+Fleet team|target|FLT-1|ENV=LINEAR_APP_TOKEN=target|rc=1 record=none foreign=1 unresolved=0|an inherited credential keys the overseer's team in the workspace it names, as the overseer's own calls do
 Gone team|target|FLT-1||rc=1 record=none foreign=0 unresolved=1|an overseer team whose key cannot be read refuses as item-repo-unresolved
 Gone team|target|CC-1||rc=0 record=repo=acme/target foreign=0 unresolved=0|a launch of the launch checkout's team's item never reads the overseer's team
 Fleet team|overseer|FLT-1||rc=1 record=none foreign=1 unresolved=0|an own launch compares the launch checkout's team alone, as before
@@ -361,16 +387,21 @@ MUT="$(team_control item-team-cwd \
 team_launch SCRIPT="$MUT" "Fleet team" "$TARGET" FLT-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
   "control: the overseer's team keyed in the launch checkout's workspace refuses the overseer team's item"
-MUT="$(team_control item-team-credential \
-  'unset KENDEX_ENV_FILE LINEAR_TEAM LINEAR_APP_TOKEN ' 'unset KENDEX_ENV_FILE LINEAR_TEAM ')"
-team_launch SCRIPT="$MUT" "Fleet team" "$TARGET" FLT-1 ENV=LINEAR_APP_TOKEN=target
+CREDENTIAL_DROP='[[ "$inherited_linear_credentials" == *" $name "* ]] || unset "$name"'
+MUT="$(team_control item-team-loaded "$CREDENTIAL_DROP" '[[ "$inherited_linear_credentials" == *" $name "* ]] || true')"
+team_launch SCRIPT="$MUT" LOADED=LINEAR_APP_TOKEN=target "Fleet team" "$TARGET" FLT-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
-  "control: the launcher's inherited credential keys the overseer's team in the launch checkout's workspace"
+  "control: the credential the launcher's checkout load adds keys the overseer's team in the launch checkout's workspace"
+MUT="$(team_control item-team-inherited "$CREDENTIAL_DROP" 'unset "$name"')"
+team_launch SCRIPT="$MUT" BARE ENV=LINEAR_APP_TOKEN=overseer "Fleet team" "$TARGET" FLT-1
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=0 unresolved=1" \
+  "control: dropping the inherited credential leaves the overseer's team unread"
 MUT="$(team_control item-team-eager "$OVERSEER_TEAM_GATE" "${OVERSEER_TEAM_GATE/\"\$repo_match\" != true/true}")"
 team_launch SCRIPT="$MUT" "Gone team" "$TARGET" CC-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=0 unresolved=1" \
   "control: reading the overseer's team for every item refuses the launch checkout's own item when that read fails"
 printf '%s\n' "$TEAM_PRIVATE_SETTINGS" > "$OVERSEER_REPO/alt.env"
+rm -f -- "${TARGET:?}/.env.local" "${OVERSEER_WT:?}/.env.local" "${OVERSEER_REPO:?}/.env.local"
 
 echo "=== a binding that cannot be judged launches nothing ==="
 connected acme/target

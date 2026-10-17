@@ -122,6 +122,15 @@ CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export CLAIM_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
+# The Linear credentials this launcher inherited, named before its checkout's
+# load can add that checkout's: linear_team_key drops only the added ones. The
+# load keeps every inherited value, so the names are all it needs.
+linear_credentials=(LINEAR_APP_TOKEN LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET LINEAR_API_KEY)
+inherited_linear_credentials=" "
+for name in "${linear_credentials[@]}"; do
+  [[ -z "${!name+set}" ]] || inherited_linear_credentials+="$name "
+done
+unset name
 kendex_load_project_env "$PROJECT_ROOT"
 # shellcheck source=lib/gh-repo.sh
 source "$SCRIPT_DIR/lib/gh-repo.sh"
@@ -3804,15 +3813,20 @@ launch_blockers_gate() { # ITEM
 
 # linear_team_key TEAM [DIR] — prints the key of the Linear team named TEAM, or
 # refuses as item-repo-unresolved. With DIR the read runs there with this
-# launcher's Linear settings dropped, so DIR's checkout picks the workspace and
-# credential: linear.sh reads them from its working directory's checkout, and
-# an inherited credential or private-file selector outranks that checkout's.
+# launcher's team and private-file selectors dropped, and every credential its
+# checkout's load added, so DIR's checkout picks the workspace and credential:
+# linear.sh reads them from its working directory's checkout, and a value in
+# its environment can outrank that checkout's. A credential the launcher
+# inherited stays, as the overseer's own linear.sh calls there see it.
 linear_team_key() {
   local record
   record="$(
     if [[ -n "${2:-}" ]]; then
       cd -- "$2" || exit 1
-      unset KENDEX_ENV_FILE LINEAR_TEAM LINEAR_APP_TOKEN LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET LINEAR_API_KEY
+      unset KENDEX_ENV_FILE LINEAR_TEAM
+      for name in "${linear_credentials[@]}"; do
+        [[ "$inherited_linear_credentials" == *" $name "* ]] || unset "$name"
+      done
     fi
     "$linear_cli" teams get "$1" --format raw
   )" \
