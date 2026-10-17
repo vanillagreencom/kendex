@@ -1347,27 +1347,37 @@ LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT" --keep-sandbox
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=4$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped ' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 skipped=0 kill=0 status=running' 'under --keep-sandbox the removed-worktree answer refuses, since the kept sandbox keeps the harness'
 
-pi_unjudged_row() { # SCRIPT HARNESS CYCLE WHERE
+# MODE is the host's pane reading: local captures the tmux window, verb the
+# provider's capture verb, where every hosted Pi lane is read.
+pi_unjudged_row() { # SCRIPT HARNESS CYCLE WHERE MODE
   write_state running "$2" /host; write_panes "$2"
   printf 'Pi session\n' > "$SCREEN"
   if [[ "$3" != - ]]; then
     jq --argjson pr "$3" '.lanes[0].cycle = {pr: $pr}' "$STATE" > "$STATE.next" && mv -- "$STATE.next" "$STATE"
   fi
-  LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_HOST_GITFILE="$4" run_close "$1"
-  PI_UNJUDGED="rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=unjudged pane=%7$' <<<"$ERR" || true) close=$(close_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+  LANE_CLOSE_HOST_PANE="$5" LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_HOST_GITFILE="$4" run_close "$1"
+  PI_UNJUDGED="rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=unjudged pane=%7$' <<<"$ERR" || true) read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) close=$(close_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
 }
 for row in \
-  'pi|7|gone|rc=0 live=0 close=1 kill=1 status=done' \
-  'pi|7|standing|rc=1 live=1 close=0 kill=0 status=running' \
-  'pi|-|gone|rc=1 live=1 close=0 kill=0 status=running' \
-  'codex|7|gone|rc=1 live=1 close=0 kill=0 status=running'; do
-  IFS='|' read -r harness cycle where want <<<"$row"
-  pi_unjudged_row "$SCRIPT" "$harness" "$cycle" "$where"
-  assert_eq "$PI_UNJUDGED" "$want" "unjudged $harness cycle=$cycle worktree=$where: merged-and-gone close"
+  'local|pi|7|gone|rc=0 live=0 read=0 close=1 kill=1 status=done' \
+  'local|pi|7|standing|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'local|pi|-|gone|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'local|codex|7|gone|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'verb|pi|7|gone|rc=0 live=0 read=0 close=1 kill=1 status=done' \
+  'verb|pi|7|standing|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'verb|pi|-|gone|rc=1 live=1 read=0 close=0 kill=0 status=running' \
+  'verb|codex|7|gone|rc=1 live=0 read=1 close=0 kill=0 status=running' \
+  'verb|claude|7|gone|rc=1 live=0 read=1 close=0 kill=0 status=running'; do
+  IFS='|' read -r mode harness cycle where want <<<"$row"
+  pi_unjudged_row "$SCRIPT" "$harness" "$cycle" "$where" "$mode"
+  assert_eq "$PI_UNJUDGED" "$want" "unjudged $mode $harness cycle=$cycle worktree=$where: merged-and-gone close"
 done
 MUTANT="$(mutant lane-close-pi-unjudged '    state=idle ;;' '    message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;')"
-pi_unjudged_row "$MUTANT" pi 7 gone
-assert_eq "$PI_UNJUDGED" 'rc=1 live=1 close=0 kill=0 status=running' 'control: without Pi acceptance the merged-and-gone lane refuses as unjudged'
+pi_unjudged_row "$MUTANT" pi 7 gone local
+assert_eq "$PI_UNJUDGED" 'rc=1 live=1 read=0 close=0 kill=0 status=running' 'control: without Pi acceptance the merged-and-gone lane refuses as unjudged'
+MUTANT="$(mutant lane-close-pi-verb-unjudged ' || "$harness" == pi ]] || { message pane-read-failed' ' ]] || { message pane-read-failed')"
+pi_unjudged_row "$MUTANT" pi 7 gone verb
+assert_eq "$PI_UNJUDGED" 'rc=1 live=0 read=1 close=0 kill=0 status=running' 'control: the hosted unjudged refusal ahead of the switch strands a merged-and-gone Pi lane'
 
 echo '=== an idle lane whose merge cycle is recorded closes while its item stays open ==='
 # A merged lane whose item has been reopened after a later failed check.
