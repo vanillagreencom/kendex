@@ -68,7 +68,7 @@ class Browser(World):
                 result = self.run_tool("jarvis-browser", url)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(self.calls()[-1][-2:], ["--class=jarvis-assistant", url])
-                expected = {"download": {"default_directory": str(downloads)}}
+                expected = {"download": {"default_directory": str(downloads), "prompt_for_download": False}}
                 if state == "closed":
                     expected = dict(kept, download=dict(kept["download"], default_directory=str(downloads)))
                 elif state == "open":

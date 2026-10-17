@@ -29,7 +29,10 @@ def set_downloads(profile, downloads):
         values = json.loads(preferences.read_text())
     except FileNotFoundError:
         values = {}
-    values.setdefault("download", {})["default_directory"] = str(downloads)
+    download = values.setdefault("download", {})
+    download["default_directory"] = str(downloads)
+    # Keep a closed profile's explicit prompt choice; only a missing value defaults.
+    download.setdefault("prompt_for_download", False)
     temporary = preferences.with_name("Preferences." + uuid.uuid4().hex)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -48,11 +51,12 @@ def main():
         "JARVIS_BROWSER_PORT: loopback debugging port, default 9222. "
         "JARVIS_BROWSER_DOWNLOADS: optional absolute downloads directory, applied when the profile is not open. "
         "JARVIS_BROWSER_CLASS: optional window class, the Wayland app id on Linux. "
-        "Without --detach the browser replaces this process; background the first launch when needed. "
+        "The plain invocation is the service form: the browser replaces this process as the unit's main process. "
+        "Use --detach from a terminal, not from a service unit. "
         "The --shim launchers use --detach."))
     parser.add_argument("url", nargs="?", help="URL to open; required unless a report flag is given")
     parser.add_argument("--detach", action="store_true",
-                        help="check the request here, then start the browser in its own session with no output "
+                        help="terminal form: check the request, then start the browser in its own session with no output "
                              "and return once it has started")
     report = parser.add_mutually_exclusive_group()
     report.add_argument("--port", action="store_true", help="print the configured debugging port")

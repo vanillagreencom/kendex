@@ -21,6 +21,9 @@ class Controls(unittest.TestCase):
             ("browser-platform", "scripts/jarvis-browser", 'if sys.platform not in ("linux", "darwin"):', 'if False:', "browser_test.py", "Browser.test_platform_refusal"),
             ("browser-platform-wrong-cause", "scripts/jarvis-browser", 'if sys.platform not in ("linux", "darwin"):', 'if shutil.which("google-chrome"):', "browser_test.py", "Browser.test_platform_refusal"),
             ("human-input-operation", "scripts/human-input", '"0xC1"', '"0xC0"', "human_input_test.py", "HumanInput.test_input_commands"),
+            ("human-input-delay", "scripts/human-input", '["wtype", "-d", str(getattr(args, "delay", 70)), "-"]', '["wtype", "-"]', "human_input_test.py", "HumanInput.test_input_commands"),
+            ("human-input-typing-deadline", "scripts/human-input", 'timeout=None if args.verb == "type" else 30', 'timeout=30', "human_input_test.py", "HumanInput.test_typing_deadline"),
+            ("capture-rectangle", "scripts/human-input", '["-g", args.rectangle] if getattr(args, "rectangle", None) is not None else []', '["-g", args.rectangle] if False else []', "human_input_test.py", "HumanInput.test_capture_exclusive"),
             ("human-input-platform", "scripts/human-input", 'if sys.platform != "linux" or not os.environ.get("WAYLAND_DISPLAY"):', 'if False:', "human_input_test.py", "HumanInput.test_dependencies_platform_and_failed_capture"),
             ("input-platform-refusal", "scripts/human-input", 'if sys.platform != "linux" or not os.environ.get("WAYLAND_DISPLAY"):', 'if False:', "human_input_test.py", "HumanInput.test_platform_refusal"),
             ("input-platform-wrong-cause", "scripts/human-input", 'if sys.platform != "linux" or not os.environ.get("WAYLAND_DISPLAY"):', 'if shutil.which("wtype"):', "human_input_test.py", "HumanInput.test_platform_refusal"),
@@ -75,6 +78,7 @@ class Controls(unittest.TestCase):
             ("browser-profile-parents", "scripts/jarvis-browser", "profile.mkdir(mode=0o700, parents=True, exist_ok=True)", "profile.mkdir(mode=0o700, exist_ok=True)", "browser_test.py", "Browser.test_downloads_and_class"),
             ("browser-downloads-absolute", "scripts/jarvis-browser", "if downloads and not Path(downloads).is_absolute():", "if False:", "browser_test.py", "Browser.test_refused_inputs"),
             ("browser-downloads", "scripts/jarvis-browser", "        set_downloads(profile, Path(downloads))", "        pass", "browser_test.py", "Browser.test_downloads_and_class"),
+            ("browser-download-prompt", "scripts/jarvis-browser", 'download.setdefault("prompt_for_download", False)', 'download.setdefault("prompt_for_download", True)', "browser_test.py", "Browser.test_downloads_and_class"),
             ("browser-open-profile", "scripts/jarvis-browser", "if os.path.lexists(profile / \"SingletonLock\"):", "if False:", "browser_test.py", "Browser.test_downloads_and_class"),
             ("browser-class", "scripts/jarvis-browser", "*([\"--class=\" + window] if window else [])", "*([] if window else [])", "browser_test.py", "Browser.test_downloads_and_class"),
         ]
