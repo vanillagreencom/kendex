@@ -49,8 +49,9 @@ git -C "$NOSETTINGS" config maintenance.auto false
 BIN="$TMP_ROOT/bin"; mkdir -p "$BIN"
 virtual_clock_install "$BIN" "$TMP_ROOT/clock"
 # The fixture's default reset must use the same clock as the projection.
+export PATH="$BIN:$PATH"
 # shellcheck source=lib/lanes-fixture.sh
-PATH="$BIN:$PATH" source "$TEST_DIR/lib/lanes-fixture.sh"
+source "$TEST_DIR/lib/lanes-fixture.sh"
 make_fetcher "$FETCHER"
 virtual_clock_bash_env "$TMP_ROOT/elapsed-clock.env" || exit 1
 export BASH_ENV="$TMP_ROOT/elapsed-clock.env"
