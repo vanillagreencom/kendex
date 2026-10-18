@@ -262,6 +262,15 @@ rounds_case() { # NAME STATE [WATCH_BIN] [MODE]
   local root
   new_case "$1"
   root="$(worktree issue-1 status)"
+  printf 'dev-validate-runs-v1\n' > "$root/tmp/validation-runs"
+  case "$1" in
+    lane_long_separate_counts|lane_long_no_stages)
+      printf 'dev-validate-implement\ndev-validate-fix\ndev-validate-restack-a\ndev-validate-restack-b\n' >> "$root/tmp/validation-runs" ;;
+    lane_long_one_restack_range_run)
+      printf 'dev-validate-restack\n' >> "$root/tmp/validation-runs" ;;
+    lane_long_missing_index) rm "$root/tmp/validation-runs" ;;
+    lane_long_invalid_index) printf '{\n' > "$root/tmp/validation-runs" ;;
+  esac
   [[ -z "$2" ]] || printf '%s\n' "$2" > "$root/tmp/workflow-state-issue-1.json"
   case "${4:-}" in
     fileless)
@@ -279,13 +288,15 @@ COUNTS_STATE='{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_revie
 NO_STAGES_STATE="$(jq -c 'del(.stages)' <<<"$COUNTS_STATE")"
 # NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED
 for row in \
-  "separate_counts|$COUNTS_STATE|5|3|2|4|1" \
-  "no_stages|$NO_STAGES_STATE|5|unread|2|4|1" \
+  "separate_counts|$COUNTS_STATE|5|3|4|4|1" \
+  "no_stages|$NO_STAGES_STATE|5|unread|4|4|1" \
   "fileless|$COUNTS_STATE|unread|unread|unread|unread|unread" \
   "parked|$COUNTS_STATE|unread|unread|unread|unread|unread" \
   'no_validation_lists|{"stages":[]}|0|0|0|0|unread' \
   'one_restack_no_record|{"stages":[],"restacks":1}|0|0|0|1|unread' \
-  'one_restack_range_run|{"stages":[],"restacks":1,"validate_rounds":[{"kind":"restack"}]}|0|0|0|1|unread' \
+  'one_restack_range_run|{"stages":[],"restacks":1,"validate_rounds":[{"kind":"restack"}]}|0|0|1|1|unread' \
+  'missing_index|{"stages":[]}|0|0|unread|0|unread' \
+  'invalid_index|{"stages":[]}|0|0|unread|0|unread' \
   'one_restack_skipped|{"stages":[],"restacks":1,"restack_skips":[{}]}|0|0|0|1|unread' \
   'absent_state||unread|unread|unread|unread|unread' \
   "two_bot_rounds|$REPEATED_STATE|2|unread|0|0|1" \
@@ -316,6 +327,37 @@ for row in \
   esac
 done
 
+echo "=== validation counts every start before its round is accepted ==="
+validation_starts_case() { # NAME [WATCH_BIN]
+  local root
+  new_case "$1"
+  root="$(worktree issue-1 status)"
+  printf '{"stages":[{"kind":"dev","round_id":"pending","start":1,"end":null}]}\n' > "$root/tmp/workflow-state-issue-1.json"
+  validate_run_dir "$root/tmp/dev-validate-finished" full 0 >/dev/null
+  validate_run_dir "$root/tmp/dev-validate-bounded" full no-verdict >/dev/null
+  validate_run_dir "$root/tmp/dev-validate-running" range none >/dev/null
+  printf 'dev-validate-runs-v1\ndev-validate-finished\ndev-validate-bounded\ndev-validate-running\n' > "$root/tmp/validation-runs"
+  write_state "$(launched issue-1 "$root" claude)"
+  WATCH_BIN="${2:-}" watch 12601
+}
+validation_starts_case lane_long_validation_starts
+assert_validation_starts() {
+  assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=0 fix_receipts=0 validation_runs=3 restacks=0 repeated_class_rounds=unread stage=dev round 1" \
+    'one pending round counts its finished, bounded and running starts' "$STUB_DIR/err"
+}
+assert_validation_starts
+BASE_READER="$(mutant_scripts validation-base-reader/orch lib/lane-gitfile.sh)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/validation-base-reader/github"
+mutate_file "${BASE_READER%/oversee-watch}/lib/lane-gitfile.sh" \
+  '($validations | fromjson? // $validations)' \
+  '([ (.validate_rounds // [])[] | select(.kind == "implement" or .kind == "fix")] | length)'
+validation_starts_case lane_long_validation_base_reader "$BASE_READER"
+if (FAIL=0; assert_validation_starts; [[ "$FAIL" -eq 0 ]]) > "$STUB_DIR/control.out"; then
+  fail 'the base reader did not redden the run-count assertion'
+fi
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=0 fix_receipts=0 validation_runs=0 restacks=0 repeated_class_rounds=unread stage=dev round 1" \
+  'must-fail control: the base reader loses all starts in the unaccepted round' "$STUB_DIR/err"
+
 echo "=== lane-long reads hosted state and skips a parked disk ==="
 new_case lane_long_hosted_rounds
 REMOTE_DISK="$STUB_DIR/remote"
@@ -326,7 +368,7 @@ printf '%s\n' "$REPEATED_STATE" > "$REMOTE_DISK/srv/clone/tmp/workflow-state-iss
 write_state "$(launched issue-1 /srv/lane/issue-1 claude "$FIXTURE_HOST")"
 HOSTED_ENV=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK")
 watch 12601 "${HOSTED_ENV[@]}"
-assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=1 stage=review" \
+assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=2 fix_receipts=unread validation_runs=unread restacks=0 repeated_class_rounds=1 stage=review" \
   "the hosted lane reads its clone's state" "$STUB_DIR/err"
 new_case lane_long_parked_rounds
 : > "$STUB_DIR/host.log"

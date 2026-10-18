@@ -3315,8 +3315,11 @@ git -C "$FACTS_ROOT/local" config maintenance.auto false
 printf '[env]\nORCH_STATE_DIR = "records"\n' > "$FACTS_ROOT/host/kendex.settings.toml"
 printf 'ref: refs/heads/main\n' > "$FACTS_ROOT/host/.git/HEAD"
 FACTS_STATE='{"first_panel":{},"rereview_cycles":1,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa"},{"cause":"a","commit":"bbb"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"}],"restacks":4,"post_pr_stop":{"gate":"review","name":"review-round-cap","remaining":["private detail"]}}'
-FACTS_READ='{"item":"KEN-FACTS","status":"read","reason":null,"stage":"review","review_rounds":5,"fix_receipts":1,"validation_runs":2,"restacks":4,"repeated_class_rounds":1,"post_pr_stop":{"gate":"review","name":"review-round-cap"}}'
-FACTS_EMPTY='{"item":"KEN-FACTS","status":"read","reason":null,"stage":null,"review_rounds":0,"fix_receipts":"unread","validation_runs":0,"restacks":0,"repeated_class_rounds":"unread","post_pr_stop":null}'
+FACTS_READ='{"item":"KEN-FACTS","status":"read","reason":null,"stage":"review","review_rounds":5,"fix_receipts":1,"validation_runs":3,"restacks":4,"repeated_class_rounds":1,"post_pr_stop":{"gate":"review","name":"review-round-cap"}}'
+FACTS_EMPTY='{"item":"KEN-FACTS","status":"read","reason":null,"stage":null,"review_rounds":0,"fix_receipts":"unread","validation_runs":3,"restacks":0,"repeated_class_rounds":"unread","post_pr_stop":null}'
+mkdir -p "$FACTS_ROOT/host/tmp"
+printf 'dev-validate-runs-v1\ndev-validate-finished\ndev-validate-bounded\ndev-validate-running\n' > "$FACTS_ROOT/local/tmp/validation-runs"
+cp "$FACTS_ROOT/local/tmp/validation-runs" "$FACTS_ROOT/host/tmp/validation-runs"
 printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/local/tmp/workflow-state-KEN-FACTS.json"
 printf '%s\n' "$FACTS_STATE" > "$FACTS_ROOT/host/records/workflow-state-KEN-FACTS.json"
 # The caller's recorded facts are deliberately different. A gone-root fallback

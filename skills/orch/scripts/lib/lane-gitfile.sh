@@ -251,7 +251,7 @@ lane_archived_state() {
 # The fix writers append one patched_causes entry per finding. Distinct
 # commits distinguish patch rounds; several findings in one commit do not.
 # No class history can establish rounds that raised a cause but patched none.
-lane_state_rounds() { # STATE_JSON [ERRF]
+lane_state_rounds() { # STATE_JSON [ERRF] [VALIDATION_RUNS]
   local counts
   LANE_REVIEW_ROUNDS=unread
   LANE_FIX_RECEIPTS=unread
@@ -259,11 +259,10 @@ lane_state_rounds() { # STATE_JSON [ERRF]
   LANE_RESTACKS=unread
   LANE_REPEATED_CLASS_ROUNDS=unread
   [[ -n "$1" ]] || return 0
-  if ! counts="$(jq -L "$LANE_GITFILE_LIB" -r '
+  if ! counts="$(jq -L "$LANE_GITFILE_LIB" --arg validations "${3:-unread}" -r '
     include "cause-keys";
     ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0) + (.pr_comment_review.iterations // 0)) as $rounds
     | (if .stages == null then "unread" else [.stages[] | select(.kind == "fix")] | length end) as $fixes
-    | ([ (.validate_rounds // [])[] | select(.kind == "implement" or .kind == "fix")] | length) as $validations
     | (.restacks // 0) as $restacks
     | (.pr_comment_review.patched_causes // []) as $patches
     | (reduce $patches[] as $patch ({seen: [], repeated: []};
@@ -271,7 +270,7 @@ lane_state_rounds() { # STATE_JSON [ERRF]
             (.cause == $patch.cause or ([shared_cause_key(.; $patch)] | length > 0)))
           then .repeated += [$patch.commit] else . end
         | .seen += [$patch])) as $history
-    | [$rounds, $fixes, $validations, $restacks,
+    | [$rounds, $fixes, ($validations | fromjson? // $validations), $restacks,
         (if ($patches | length) == 0 then "unread" else ($history.repeated | unique | length) end)] | @tsv
   ' <<<"$1" 2>"${2:-/dev/stderr}")"; then
     return 2
@@ -312,6 +311,27 @@ lane_state_rounds() { # STATE_JSON [ERRF]
 # remaining an empty read for advisory callers. Cycle callers may try their PR
 # key after a state-absent refusal.
 LANE_ITEM_STATE=""
+LANE_ITEM_VALIDATION_RUNS=unread
+
+# The run owner publishes this inventory before reporting a start. Missing
+# older inventories cannot establish zero runs. A failed index read leaves
+# the other workflow-state counts available.
+lane_item_validation_runs() { # LANE_HOST_CLI ITEM HOST ROOT SCRATCH
+  local rc=0 count
+  LANE_ITEM_VALIDATION_RUNS=unread
+  [[ -n "$4" ]] || return 0
+  ORCH_LANE_HOST="$3" lane_host_fetch "$1" "$2" "$4/tmp/validation-runs" \
+    "$5/validation-runs" "$5/validation-runs.err" || rc=$?
+  [[ "$rc" -eq 0 ]] || return 0
+  count="$(jq -Rse '
+    split("\n") as $rows
+    | if $rows[0] == "dev-validate-runs-v1" and $rows[-1] == ""
+        and all($rows[1:-1][]; test("^dev-validate-[A-Za-z0-9-]+$"))
+        and ($rows[1:-1] | unique | length) == ($rows[1:-1] | length)
+      then $rows[1:-1] | length else error("invalid-run-index") end
+  ' "$5/validation-runs" 2>"$5/validation-runs.err")" || return 0
+  LANE_ITEM_VALIDATION_RUNS="$count"
+}
 LANE_ITEM_STATE_TRIED=()
 lane_item_state_absent() { # ITEM SCRATCH
   LANE_ITEM_STATE_REASON=state-absent
@@ -341,12 +361,14 @@ lane_item_saved_state() { # LANE_HOST_CLI ITEM CLONE SCRATCH SAVED_KEY
 lane_item_state() {
   local path files clone="${11:-}" saved_key="${12:-}" rc=0 state_key="${9:-$4}"
   LANE_ITEM_STATE="" LANE_ITEM_STATE_REASON=""
+  LANE_ITEM_VALIDATION_RUNS=unread
   LANE_ITEM_STATE_TRIED=()
   if [[ "${10:-false}" == true && -z "$6" ]]; then
     LANE_ITEM_STATE_REASON=root-unbound
     return 2
   fi
   if [[ -z "$5" ]]; then
+    lane_item_validation_runs "" "$4" "" "$6" "$7"
     if [[ -n "$6" && -d "$6" ]]; then
       if [[ "${10:-false}" == true ]]; then
         lane_hosted_state_dir "" "$4" "$6" "$7" || return $?
@@ -386,6 +408,7 @@ lane_item_state() {
     LANE_ITEM_STATE_REASON=files-none
     return 0
   fi
+  lane_item_validation_runs "$2" "$4" "$5" "$6" "$7"
   ORCH_LANE_HOST="$5" lane_hosted_item_state "$2" "$4" "$6" "$7" "$state_key" || rc=$?
   [[ "$rc" -eq 0 ]] || return "$rc"
   if [[ -n "$saved_key" && -z "$LANE_ITEM_STATE" && -n "$clone" ]]; then

@@ -485,7 +485,7 @@ lane_long_rounds() { # ITEM
     return 0
   fi
   [[ -n "$LANE_ITEM_STATE" ]] || return 0
-  if ! lane_state_rounds "$LANE_ITEM_STATE" "$WORK_DIR/state.err"; then
+  if ! lane_state_rounds "$LANE_ITEM_STATE" "$WORK_DIR/state.err" "$LANE_ITEM_VALIDATION_RUNS"; then
     ow_message lane-long-rounds-unread "item=$1" >&2
     cat -- "$WORK_DIR/state.err" >&2
     return 0

@@ -173,7 +173,7 @@ farm_path() { # NAME OMIT...
   mkdir -p "$dir"
   for name in bash sh env git date dirname basename mkdir mv rm cat sed grep cut tr awk \
     sleep kill ls head tail sort wc uname chmod ln find readlink realpath mktemp \
-    timeout gtimeout setsid ps; do
+    timeout gtimeout setsid ps rmdir; do
     for omit in "$@"; do
       [[ "$name" != "$omit" ]] || continue 2
     done
@@ -185,6 +185,37 @@ farm_path() { # NAME OMIT...
 }
 
 if [[ "$PART" != selection ]]; then
+echo "=== start inventories include legacy runs before round acceptance ==="
+INDEX_PROJ="$(make_proj index-runs 'echo index-run' 20)"
+validate_run_dir "$INDEX_PROJ/tmp/dev-validate-finished" full 0 >/dev/null
+validate_run_dir "$INDEX_PROJ/tmp/dev-validate-bounded" full no-verdict >/dev/null
+validate_run_dir "$INDEX_PROJ/tmp/dev-validate-running" range none >/dev/null
+run_script "$RUN" --worktree "$INDEX_PROJ" --poll 1
+INDEX_RUN="$(run_dir_of "$OUT")"
+assert_legacy_inventory() {
+  assert_file_contains "$INDEX_PROJ/tmp/validation-runs" 'dev-validate-finished' \
+    'the run inventory retains earlier starts'
+}
+assert_legacy_inventory
+assert_eq "$RC|$(cat "$INDEX_PROJ/tmp/validation-runs")" \
+  "0|dev-validate-runs-v1
+${INDEX_RUN##*/}
+dev-validate-bounded
+dev-validate-finished
+dev-validate-running" \
+  'the start inventory discovers every run without an accepted round'
+# Removing legacy discovery must redden the inventory assertion while the
+# current run still reaches its command and publishes its start record.
+mutant index-current-only 'for start in "$1"/tmp/dev-validate-*/start; do' 'for start in "$run_dir/start"; do'
+INDEX_PROJ="$(make_proj index-control 'echo index-control' 20)"
+validate_run_dir "$INDEX_PROJ/tmp/dev-validate-finished" full 0 >/dev/null
+run_script "$MUTANT" --worktree "$INDEX_PROJ" --poll 1
+INDEX_RUN="$(run_dir_of "$OUT")"
+if (FAIL=0; assert_legacy_inventory; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/index-control.out"; then
+  fail 'the missing-discovery control did not redden the inventory assertion'
+fi
+assert_eq "$RC|$(cat "$INDEX_PROJ/tmp/validation-runs")" "0|dev-validate-runs-v1
+${INDEX_RUN##*/}" 'must-fail control: omitting legacy discovery loses the earlier run'
 # The CI shard and exact local callers use the same registration. Tiny suites
 # report their received mode; the selection entry remains the shipped wrapper.
 split_world() { # NAME
@@ -960,6 +991,8 @@ cp -R "$SCRIPTS_DIR/lib/." "$LAYOUT/orch/scripts/lib/"
 # Exercise the installed PR lookup chain; only its external gh calls are stubs.
 mkdir -p "$LAYOUT/github"
 cp -R "$REPO_ROOT/skills/github/scripts" "$LAYOUT/github/scripts"
+mkdir -p "$LAYOUT/mailbox/scripts/lib"
+cp "$REPO_ROOT/skills/mailbox/scripts/lib/file-lock.sh" "$LAYOUT/mailbox/scripts/lib/"
 cat > "$LAYOUT/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$STUB_ARGS"

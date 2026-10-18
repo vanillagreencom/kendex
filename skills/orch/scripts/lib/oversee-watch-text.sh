@@ -502,6 +502,10 @@ The long pass's events, checked and reported in this order:
                              relaunch; a late pass reports the current interval
                              The counts are review_rounds, fix_receipts,
                              validation_runs, restacks, repeated_class_rounds.
+                             validation_runs counts each dev-validate-run start,
+                             including finished, bounded and running runs,
+                             before round acceptance. Restack runs count too.
+                             A missing or invalid run inventory reads unread.
                              A later distinct patch commit repeats an equal
                              cause or a shared location/owner key, once per
                              commit. Owner comes from the item's Owner: line.

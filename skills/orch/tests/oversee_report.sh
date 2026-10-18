@@ -135,8 +135,8 @@ Validation:
 - KEN-3: 62 min over 4 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint, restack range 1 selection=unreported, restack range 1 selection=unreported; restack re-test skipped 2 times
 
 Rounds:
-- KEN-2: review_rounds=0 fix_receipts=unread validation_runs=0 restacks=0 repeated_class_rounds=unread
-- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=2 restacks=4 repeated_class_rounds=1
+- KEN-2: review_rounds=0 fix_receipts=unread validation_runs=unread restacks=0 repeated_class_rounds=unread
+- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=unread restacks=4 repeated_class_rounds=1
 
 Use 1: none
 
@@ -193,9 +193,9 @@ item_state KEN-4 '{"stages": [], "restacks": 1, "restack_skips": [{}]}'
 for n in 2 3 4; do issue "KEN-$n" "Title $n" "Outcome $n"; done
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_contains "$OUT" 'Rounds:
-- KEN-2: review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread
-- KEN-3: review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread
-- KEN-4: review_rounds=0 fix_receipts=0 validation_runs=0 restacks=1 repeated_class_rounds=unread' \
+- KEN-2: review_rounds=0 fix_receipts=0 validation_runs=unread restacks=1 repeated_class_rounds=unread
+- KEN-3: review_rounds=0 fix_receipts=0 validation_runs=unread restacks=1 repeated_class_rounds=unread
+- KEN-4: review_rounds=0 fix_receipts=0 validation_runs=unread restacks=1 repeated_class_rounds=unread' \
   "one restack reads restacks=1 with no record, a range run or a skip beside it"
 
 echo "=== render: Waiting on you reads the overseer mailbox and nothing else ==="
@@ -763,12 +763,15 @@ new_case hosted_validation
 report -60
 fleet '' "$(lane KEN-7 running -86400 ssh-a)"
 issue KEN-7 "Title 7" "Outcome 7"
-mkdir -p "$CASE/host/w/KEN-7" "$CASE/host/clone/tmp"
+mkdir -p "$CASE/host/w/KEN-7/tmp" "$CASE/host/clone/tmp"
 echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
+printf 'dev-validate-runs-v1\ndev-validate-finished\ndev-validate-bounded\ndev-validate-running\n' > "$CASE/host/w/KEN-7/tmp/validation-runs"
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: 1 min over 1 run: implement full 1 selection=unreported" \
   "a hosted lane's validation minutes are read from the clone its worktree's .git names"
+assert_contains "$OUT" '- KEN-7: review_rounds=0 fix_receipts=unread validation_runs=3 restacks=0 repeated_class_rounds=unread' \
+  'the report counts hosted starts before their round receipts exist'
 # Reported selection is independent of full versus range invocation.
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89, "lanes": "test,lint", "selection": "subset"}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
@@ -819,7 +822,7 @@ assert_contains "$OUT" '- KEN-8: review_rounds=unread fix_receipts=unread valida
 ROW10='| KEN-10 (#14, parked) | Title 10 | Outcome 10 \| kept |'
 ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
 VAL3='- KEN-3: 62 min over 4 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint, restack range 1 selection=unreported, restack range 1 selection=unreported; restack re-test skipped 2 times'
-ROUND3='- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=2 restacks=4 repeated_class_rounds=1'
+ROUND3='- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=unread restacks=4 repeated_class_rounds=1'
 ROUND8='- KEN-8: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread'
 VAL8='- KEN-8: validation unread, its host unreachable'
 WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" round3="$ROUND3" round8="$ROUND8" awk '{ print }

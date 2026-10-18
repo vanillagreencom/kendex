@@ -10,7 +10,7 @@ def requests(entries):
     """Include clone fallback mail only where an earlier pass recorded it."""
     result = []
     for item, root, clone in zip(entries[::3], entries[1::3], entries[2::3]):
-        paths = [root + "/.git", root + "/.git/HEAD"]
+        paths = [root + "/.git", root + "/.git/HEAD", root + "/tmp/validation-runs"]
         for directory in dict.fromkeys((root, clone)):
             if not directory:
                 continue

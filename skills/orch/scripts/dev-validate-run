@@ -153,6 +153,11 @@
 # id), log (the runner line, then the command's output), own-exit (present
 # once the command returned by itself), timing (the command's wall time) and
 # exit (the sentinel).
+# Before reporting a start, the runner publishes tmp/validation-runs: a
+# dev-validate-runs-v1 header followed by one run directory name per start
+# record. It includes completed, bounded and unfinished runs, and restack
+# validation runs. Each start also discovers older start records. Lane facts,
+# lane-long and oversee-report read this inventory without round acceptance.
 #
 # timing holds three lines, written whole by write_verdict just before the
 # sentinel, so a run with a sentinel has one:
@@ -383,6 +388,28 @@ source "$SCRIPT_DIR/lib/change-class.sh"
 source "$SCRIPT_DIR/lib/job-unit.sh"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/file-lock.sh
+source "$SCRIPT_DIR/lib/file-lock.sh"
+
+# Readers on another host can fetch one file, but cannot enumerate this
+# worktree's run directories. Rebuild under the shared writer lock so a
+# concurrent start cannot publish an older inventory after a newer one.
+record_run_index() ( # WORKTREE
+  local index="$1/tmp/validation-runs" scratch start
+  exec 9>"$index.lock" || return 1
+  orch_take_lock 9 "$index.lock" 30 || return 1
+  scratch="$(mktemp "$1/tmp/.dev-validate-runs.XXXXXX")" || return 1
+  trap 'rm -f -- "$scratch"; orch_release_lock' EXIT
+  {
+    printf 'dev-validate-runs-v1\n'
+    for start in "$1"/tmp/dev-validate-*/start; do
+      [[ -f "$start" ]] || continue
+      start="${start%/start}"
+      printf '%s\n' "${start##*/}"
+    done
+  } >"$scratch" || return 1
+  mv -- "$scratch" "$index"
+)
 
 # The poll granularity, and with it the slack the cap carries over the command's
 # own limit: a command killed at its limit still has one interval in which to
@@ -1204,6 +1231,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     printf 'head=%s\n' "$head_sha"
     [[ -z "$snapshot_tree" ]] || printf 'tree=%s\n' "$snapshot_tree"
   } > "$run_dir/start"
+  record_run_index "$worktree" || die run-index-unwritten "path=$worktree/tmp/validation-runs"
 
   started_line() {
     printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s docs-only=%s%s\n' \

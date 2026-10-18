@@ -810,7 +810,7 @@ running_lanes() {
     fi
     [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'
     # A host that did not answer holds the hosted lane's state too.
-    LANE_ITEM_STATE="" rc=0
+    LANE_ITEM_STATE="" LANE_ITEM_VALIDATION_RUNS=unread rc=0
     [[ "$mail" == host-unreachable && -n "$host" ]] || lane_item_state \
       "$WORKFLOW_STATE" "$LANE_HOST" "$STATE_DIR_SETTING" "$item" "$host" "$root" "$WORK_DIR" \
       || rc=$?
@@ -819,7 +819,7 @@ running_lanes() {
       4) refuse lane-host-busy "$item" "$(cat "$WORK_DIR/state.err")" ;;
       *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
     esac
-    lane_state_rounds "$LANE_ITEM_STATE" "$WORK_DIR/state.err" \
+    lane_state_rounds "$LANE_ITEM_STATE" "$WORK_DIR/state.err" "$LANE_ITEM_VALIDATION_RUNS" \
       || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
     ROUNDS+="- $item: review_rounds=$LANE_REVIEW_ROUNDS fix_receipts=$LANE_FIX_RECEIPTS validation_runs=$LANE_VALIDATION_RUNS restacks=$LANE_RESTACKS repeated_class_rounds=$LANE_REPEATED_CLASS_ROUNDS"$'\n'
     if [[ -n "$LANE_ITEM_STATE" ]]; then

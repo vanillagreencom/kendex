@@ -4396,17 +4396,17 @@ cmd_facts() (
 		then .[0] else error("invalid item state") end' <<<"$LANE_ITEM_STATE")" || {
 		facts_result failed state-invalid; exit 2
 	}
-	lane_state_rounds "$state" "$scratch/state.err" || {
+	lane_state_rounds "$state" "$scratch/state.err" "$LANE_ITEM_VALIDATION_RUNS" || {
 		cat "$scratch/state.err" >&2
 		facts_result failed state-invalid; exit 2
 	}
 	result="$(jq -c --arg item "$LANE_ARG" \
 		--argjson review "$LANE_REVIEW_ROUNDS" --arg fix "$LANE_FIX_RECEIPTS" \
-		--argjson validation "$LANE_VALIDATION_RUNS" --argjson restacks "$LANE_RESTACKS" \
+		--arg validation "$LANE_VALIDATION_RUNS" --argjson restacks "$LANE_RESTACKS" \
 		--arg repeated "$LANE_REPEATED_CLASS_ROUNDS" '
 		{item: $item, status: "read", reason: null, stage: (.stages[-1].kind // null),
 		 review_rounds: $review, fix_receipts: ($fix | fromjson? // $fix),
-		 validation_runs: $validation, restacks: $restacks,
+		 validation_runs: ($validation | fromjson? // $validation), restacks: $restacks,
 		 repeated_class_rounds: ($repeated | fromjson? // $repeated),
 		 post_pr_stop: (if .post_pr_stop == null then null else .post_pr_stop | {gate, name} end)}
 	' <<<"$state")" || { facts_result failed state-invalid; exit 2; }
