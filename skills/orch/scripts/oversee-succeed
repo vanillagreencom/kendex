@@ -1274,7 +1274,7 @@ if (( JUDGES )); then
       caller_rc=0
       caller_record="$(ol_lanes "$CALLER_ACCOUNT_HARNESS" pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" --for-overseer \
         --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--model "$CALLER_ACCOUNT_MODEL"} \
-        --json 2>"$DEP_ERR")" || caller_rc=$?
+        --json)" || caller_rc=$?
     fi
     memo_fields=""
     if [[ "$caller_rc" == 0 || "$caller_rc" == 3 ]]; then

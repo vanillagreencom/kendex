@@ -71,8 +71,8 @@
 # kendex's model-resolution warning (ol_model_line), because
 # the caller owns its own refusal prefix and words: ol_checkout_notice and
 # ol_fleet_log_notice print theirs through the caller's `message`. Every
-# dependency writes its stderr to DEP_ERR, which the caller relays under its
-# keyed line.
+# failed dependency leaves its stderr in DEP_ERR for the caller's keyed
+# refusal. Account reads relay notices before record parsing replaces DEP_ERR.
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
 # directory), DEP_ERR (a file), lib/lane-launch.sh sourced by the caller,
@@ -445,17 +445,27 @@ ol_class_unread() { # ENTRY
   printf '%s\n' "$OL_CLASS_ERR" >"$DEP_ERR"
 }
 
-# Claude tokens can live with the lane provider without a local credentials
-# file. The seat pick and its account mark must use that provider's reading.
-# Other harnesses still spend this machine's copy of their account.
+# SSH providers can measure Claude tokens without a local credentials file.
+# Their plan pool also applies to the local overseer. Cloud-session policy
+# instead governs remote launches, so it cannot judge this local seat.
 ol_lanes() { # ACCOUNT_HARNESS ARGS...
-  local harness="$1"
+  local harness="$1" host=local launch pool rc=0
   shift
   if [[ "$harness" == claude ]]; then
-    "$SCRIPT_DIR/lanes" "$@"
-  else
-    ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
+    # shellcheck source=lane-capabilities.sh
+    source "$SCRIPT_DIR/lib/lane-capabilities.sh" || return 1
+    lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || return 1
+    lane_capability launch launch
+    lane_capability pool pool
+    [[ "$launch:$pool" != ssh:plan ]] || host="${ORCH_LANE_HOST:-local}"
   fi
+  ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lanes" "$@" 2>"$DEP_ERR" || rc=$?
+  # Pick records on these exits can carry a provider fallback notice. Relay
+  # it before a caller's JSON parsing replaces the dependency error file.
+  case "$rc" in
+    0|3|5) [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; : > "$DEP_ERR" ;;
+  esac
+  return "$rc"
 }
 
 # ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]: the one `lanes pick
@@ -480,7 +490,7 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
   [[ -z "${5:-}" ]] || scope=(--lane "$5")
   OL_PICK_RECORD="$(ol_lanes "$harness" pick --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
-    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--model "$model"} --json 2>"$DEP_ERR")" || rc=$?
+    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--model "$model"} --json)" || rc=$?
   return "$rc"
 }
 
@@ -656,7 +666,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
         # must still be unmeasured, and a retired account's unmeasured record
         # is not admission: the account policy owns that separate question.
         rc=0
-        ol_lanes "$OL_ACCOUNT_HARNESS" check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?
+        ol_lanes "$OL_ACCOUNT_HARNESS" check "$OL_WALK_CALLER_LANE" >/dev/null || rc=$?
         case "$rc" in
           0) ;;
           4) continue ;;

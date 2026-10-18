@@ -11,7 +11,7 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 | Key | Values | Caller that matches on it |
 |---|---|---|
 | `kind` | `local`, `ssh`, `claude-cloud`, `codex-cloud` | `open-terminal` writes it into the lane record |
-| `launch` | `window`, `ssh`, `cloud-session`, `cloud-task` | `open-terminal`; `lanes pick`, for repository access |
+| `launch` | `window`, `ssh`, `cloud-session`, `cloud-task` | `open-terminal`; `lanes pick`, for repository access; the local overseer's account reader |
 | `channel` | `mailbox`, `session`, `task` | `lane-mail send`, the `oversee-watch` mail pass |
 | `files` | `local`, `verb`, `none` | `lane-mail send` hosted mailbox requirement; `oversee-watch` status-file, workflow-state and mailbox reads; `lib/lane-gitfile.sh` `lane_item_state`, which reads no state for `none`, for `oversee-cycle record` and `oversee-report` |
 | `status` | `pane`, `verb`, `task`, `none` | `oversee-watch` lane judgement |
@@ -20,7 +20,7 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 | `relaunch` | `resume`, `fresh` | read by no caller in this build |
 | `park` | `verb`, `none` | read by no caller until the Daytona provider declares its line; `lane-close --park` keeps its `stop-sandbox --check` read |
 | `accounts` | `verb`, `none` | read by no caller until then; `lanes` keeps its exit-2 read of `accounts` |
-| `pool` | `plan`, `cloud-credit` | `lanes pick`, the tier of its expires-first rule |
+| `pool` | `plan`, `cloud-credit` | `lanes pick`, the tier of its expires-first rule; the local overseer's account reader |
 | `land` | `lane`, `handoff` | the overseer's `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md). Landing placement follows [oversee.md § 3 Placement](../workflows/oversee.md#3-launch). |
 
 | Kind | `launch` | `channel` | `files` | `status` | `stop` | `relaunch` | `park` | `accounts` | `pool` | `land` |
@@ -30,6 +30,8 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 | `ssh`, Daytona | `ssh` | `mailbox` | `verb` | `verb` | `verb` | `resume` | `verb` | `verb` | `plan` | `lane` |
 | `claude-cloud` | `cloud-session` | `session` | `none` | `none` | `none` | `fresh` | `none` | `none` | `cloud-credit` | `handoff` |
 | `codex-cloud` | `cloud-task` | `task` | `none` | `task` | `none` | `fresh` | `none` | `none` | `plan` | `handoff` |
+
+The local overseer's Claude account reader uses the configured provider only for `launch=ssh` with `pool=plan`. It keeps the optional `accounts` probe for older SSH providers. Other host capabilities use the local account reader, so a cloud worker's spending pool and repository access rules cannot refuse a local overseer seat.
 
 Local launches keep their existing state environment. SSH providers, static and Daytona, must carry the default `ORCH_STATE_DIR` in the harness session through `remote-prefix`, as `workflow-state --help` specifies. A fresh successor to a standing handoff uses the remote directory selected by its handoff judge, so it can continue an older configured-directory record. The Claude cloud session interface accepts a description and cannot set the remote harness environment.
 
