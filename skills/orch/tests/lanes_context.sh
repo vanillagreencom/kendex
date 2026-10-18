@@ -251,6 +251,33 @@ lanes_table "$OUT" \
   "account headroom still joins the row, and marks the lane at its own mark|ken-104|headroom_pct=3 handoff_required=true"
 assert_eq "$(grep -c 'capture-pane' "$TMUX_LOG" || true)" "0" "no pane is captured to read a context"
 
+echo "=== the controller owns a hosted Claude lane's account mark ==="
+HOST_ACCOUNT_FLEET="$TMP_ROOT/host-account-fleet"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$HOST_ACCOUNT_FLEET" init oversee >/dev/null
+HOST_ACCOUNT_STATE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$HOST_ACCOUNT_FLEET" path oversee)"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$HOST_ACCOUNT_FLEET" set oversee lanes "$(jq -nc \
+  --arg provider "$BIN/provider" --arg root "$HOSTED_ROOT/claude" --arg account "$H/.hostclaude" \
+  '[{item:"KEN-4296",window:"fleet:ken-4296",harness:"claude",model:"claude-opus-5-5",
+     host:$provider,mail_root:$root,account:$account,status:"running"}]')" >/dev/null
+write_claim hosted-account "%47" "$H/.hostclaude" ken-4296 "$HOST_ACCOUNT_STATE"
+record_reading "$HOSTED_DIR$HOSTED_ROOT/claude/tmp/lane-mail/KEN-4296" claude 1000 1000000 claude-opus-5-5
+HOST_ACCOUNT_ROWS="$TMP_ROOT/host-account-rows"
+for used in 97 98; do
+  printf 'account=%s\tharness=claude\tsession-pct=0\tweekly-pct=%s\n' "$H/.hostclaude" "$used" > "$HOST_ACCOUNT_ROWS"
+  lanes_table "$(CTX_FLEET="$HOST_ACCOUNT_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
+    CTX_PROVIDER_ACCOUNTS="$HOST_ACCOUNT_ROWS" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+    "the controller marks a hosted account at $((100 - used)) percent headroom|ken-4296|config_dir=$H/.hostclaude headroom_pct=$((100 - used)) context_handoff_due=false handoff_required=true"
+done
+HOST_ACCOUNT_CTRL="$(mutant_scripts mutant-host-account-mark lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$HOST_ACCOUNT_CTRL/lanes" \
+  'handoff_required: ($l.verdict == "walled" or $l.verdict == "seat-reserve" or $x.context_handoff_due == true)' \
+  'handoff_required: ($x.context_handoff_due == true)'
+lanes_table "$(CTX_FLEET="$HOST_ACCOUNT_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
+  CTX_PROVIDER_ACCOUNTS="$HOST_ACCOUNT_ROWS" CTX_LANES="$HOST_ACCOUNT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "control: ignoring account marks leaves the hosted lane unmarked|ken-4296|headroom_pct=2 context_handoff_due=false handoff_required=false"
+rm -f -- "$STATE/claims/hosted-account.claim"
+
 echo "=== only this fleet owns context rows; accounts keep global claims ==="
 FOREIGN_FLEET="$TMP_ROOT/other-fleet/oversee.json"
 # name|pane|account|window|fleet
