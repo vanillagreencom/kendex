@@ -67,7 +67,8 @@ cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
   "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
   "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$TEST_DIR/../scripts/lib/tmux-server.sh" \
-  "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$TEST_DIR/../scripts/lib/cloud-close-log.sh" "$SCRIPTS/lib/"
+  "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$TEST_DIR/../scripts/lib/cloud-close-log.sh" \
+  "$TEST_DIR/../scripts/lib/escapes.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 cat >"$SCRIPTS/lib/pane-write.sh" <<'EOF'
 pane_write() {
@@ -77,6 +78,7 @@ pane_write() {
       host:KEN-1:copilot:key:C-c|host:KEN-1:copilot:text:/exit|pane:%7:ssh:key:C-c|pane:%7:ssh:text:/exit) ;;
       *) return 1 ;;
     esac
+    [[ "$4:$5" != text:/exit ]] || : >"$LANE_CLOSE_PHASE.exit-sent"
     if [[ "$4:$5" == text:/exit && "$LANE_CLOSE_COPILOT_MODE" == exits ]]; then
       printf 'exited\n' >"$LANE_CLOSE_PHASE"
       awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
@@ -163,6 +165,9 @@ if [[ "$1" == capture ]]; then
   cat "$LANE_CLOSE_PROVIDER_SCREEN"; exit 0
 fi
 if [[ "$1" == status ]]; then
+  if [[ "$(cat "$LANE_CLOSE_PHASE")" == stopping || -f "$LANE_CLOSE_PHASE.exit-sent" ]]; then
+    [[ -z "${LANE_CLOSE_READ_DELAY:-}" ]] || sleep "$LANE_CLOSE_READ_DELAY"
+  fi
   [[ "${LANE_CLOSE_STATUS_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_STATUS_FAIL"
   if [[ "$(cat "$LANE_CLOSE_PHASE")" == stopping ]]; then
     [[ "${LANE_CLOSE_POST_STOP:-}" != status-failed ]] || exit 7
@@ -569,13 +574,14 @@ run_close() { # SCRIPT [ARGS...]
   local script="$1"
   shift
   : >"$CALLS"; : >"$HOST_CALLS"; : >"$GH_CALLS"; : >"$STATE_CALLS"; : >"$MAIL_CALLS"; : >"$LANE_CLOSE_PRWATCH_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/list-count"; : >"$TMP_ROOT/capture-count"
+  rm -f -- "$PHASE.exit-sent"
   set +e
   OUT="$(PATH="$BIN:$PATH" LANE_CLOSE_STATE="$STATE" LANE_CLOSE_ROWS="$ROWS" \
     LANE_CLOSE_SCREEN="$SCREEN" LANE_CLOSE_PHASE="$PHASE" \
     LANE_CLOSE_TMUX_LIST_COUNT="$TMP_ROOT/list-count" LANE_CLOSE_CAPTURE_COUNT="$TMP_ROOT/capture-count" \
     LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" LANE_CLOSE_GH_CALLS="$GH_CALLS" \
     LANE_CLOSE_STATE_CALLS="$STATE_CALLS" LANE_CLOSE_MAIL_CALLS="$MAIL_CALLS" \
-    LANE_CLOSE_LANE_PID="${LANE_CLOSE_LANE_PID:-}" ORCH_LANE_CLOSE_SECS=1 ORCH_CONNECTED_REPOS="${PARK_CONNECTED:-}" \
+    LANE_CLOSE_LANE_PID="${LANE_CLOSE_LANE_PID:-}" ORCH_LANE_CLOSE_SECS="${LANE_CLOSE_WAIT_SECS:-3}" ORCH_CONNECTED_REPOS="${PARK_CONNECTED:-}" \
     "$script" "$@" "$(jq -r '.lanes[0].item' "$STATE")" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -611,6 +617,7 @@ lib_mutant() { # NAME OLD NEW [APPEND] [LIBRARY]
   dir="$TMP_ROOT/libmut-$name"
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
   ln -s "$FIXTURE/skills/mailbox" "$dir/skills/mailbox"
+  ln -s "$FIXTURE/skills/github" "$dir/skills/github"
   for sibling in lane-close workflow-state lane-host dev-validate-run lanes; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
@@ -919,6 +926,8 @@ assert_eq "$SWITCH_CLOSE" 'rc=1 stop=0 close=0 status=running' 'control: without
 # A local lane: the same stop, run here against the launch identity its record
 # names, ends the harness process itself.
 if proc_table_readable; then
+  # Local signal and escalation waits now consume the same close budget.
+  LANE_CLOSE_WAIT_SECS=15
   # HARNESS:PROCESS: a copilot lane's pane reads node, its npm loader, and
   # its screen is Copilot's own idle composer.
   for harness_row in claude:claude codex:codex pi:pi copilot:MainThread; do
@@ -942,25 +951,31 @@ if proc_table_readable; then
       'exec 3<>"$LANE_CLOSE_COPILOT_INPUT"; printf "ready\n" >"$LANE_CLOSE_COPILOT_INPUT.ready"; while :; do if read -r command <&3 && [[ "$command" == /exit ]]; then if [[ "$LANE_CLOSE_COPILOT_MODE" == exits ]]; then printf "{\"type\":\"session.shutdown\"}\n" >>"$LANE_CLOSE_COPILOT_EVENTS"; exit 0; fi; fi; done'
     read -r ready <"$LANE_CLOSE_COPILOT_INPUT.ready"
     assert_eq "$ready" ready 'the Copilot stub has installed its TERM trap before close'
-    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+    local wait_secs="$LANE_CLOSE_WAIT_SECS"
+    [[ "$2" != ignores ]] || wait_secs=1
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" LANE_CLOSE_WAIT_SECS="$wait_secs" run_close "$1"
     COPILOT_RESULT="rc=$RC lane=$(proc_state_after "$LANE_PID") events=$(jq -r '.type' "$LANE_CLOSE_COPILOT_EVENTS" | tr '\n' ,) status=$(jq -r '.lanes[0].status' "$STATE")"
     unset LANE_CLOSE_COPILOT_INPUT LANE_CLOSE_COPILOT_EVENTS LANE_CLOSE_COPILOT_MODE
   }
   COPILOT_SKIP="$(mutant copilot-skip '  if [[ "$harness" == copilot && -n "$pane_id" ]]; then' '  if false && [[ "$harness" == copilot && -n "$pane_id" ]]; then')"
-  for row in "$SCRIPT|exits|session.shutdown," "$SCRIPT|ignores|TERM," "$COPILOT_SKIP|exits|TERM,"; do
-    IFS='|' read -r script mode events <<<"$row"
+  for row in "$SCRIPT|exits|session.shutdown,|0|done" "$SCRIPT|ignores|TERM,|1|running" "$COPILOT_SKIP|exits|TERM,|0|done"; do
+    IFS='|' read -r script mode events want_rc want_status <<<"$row"
     copilot_shutdown_row "$script" "$mode"
-    assert_eq "$COPILOT_RESULT" "rc=0 lane=gone events=$events status=done" \
+    assert_eq "$COPILOT_RESULT" "rc=$want_rc lane=gone events=$events status=$want_status" \
       "Copilot shutdown mode=$mode script=${script##*/} writes its event or falls back through TERM and KILL"
   done
 
   for row in 'local|exits|0' 'verb|exits|0' 'local|ignores|1' 'verb|ignores|1'; do
     IFS='|' read -r mode behavior stops <<<"$row"
     write_state running copilot /host; write_panes ssh; copilot_screen
-    LANE_CLOSE_HOST_PANE="$mode" LANE_CLOSE_COPILOT_INPUT=hosted LANE_CLOSE_COPILOT_MODE="$behavior" \
+    wait_secs=3
+    [[ "$behavior" != ignores ]] || wait_secs=1
+    LANE_CLOSE_HOST_PANE="$mode" LANE_CLOSE_COPILOT_INPUT=hosted LANE_CLOSE_COPILOT_MODE="$behavior" LANE_CLOSE_WAIT_SECS="$wait_secs" \
       LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" run_close "$SCRIPT"
+    want_rc=0 want_status=done
+    [[ "$behavior" != ignores ]] || { want_rc=1; want_status=running; }
     assert_eq "rc=$RC stops=$(stop_count KEN-1 copilot) status=$(jq -r '.lanes[0].status' "$STATE")" \
-      "rc=0 stops=$stops status=done" "hosted Copilot pane=$mode shutdown=$behavior uses exit before its provider stop"
+      "rc=$want_rc stops=$stops status=$want_status" "hosted Copilot pane=$mode shutdown=$behavior uses exit before its provider stop"
   done
 
   # The lane's own close-out (../workflows/merge-pr.md § 5 step 6) removed its
@@ -1182,7 +1197,7 @@ if proc_table_readable; then
   MAIL_ROOT="$LANE_ROOT" write_state running copilot ""; write_panes node; copilot_screen
   start_local_harness copilot MainThread
   MUTANT="$(lib_mutant copilot-name "    copilot) printf '%s\\n' '^(copilot|MainThread)\$' ;;" '')"
-  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" ORCH_LANE_CLOSE_SECS=1 run_close "$MUTANT"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" LANE_CLOSE_WAIT_SECS=1 run_close "$MUTANT"
   assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=copilot pane=%7 processes=0 identity=recorded$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 timeout=1 lane=alive status=running' "control: under its harness name alone a copilot lane's MainThread is never signalled"
   kill "$LANE_PID" 2>/dev/null || true
@@ -1226,6 +1241,7 @@ if proc_table_readable; then
 else
   printf '  skip  the local lane rows stage their process read through procfs\n'
 fi
+unset LANE_CLOSE_WAIT_SECS
 
 # A local stop with no identity to stop by refuses, naming the step, rather
 # than waiting the lane out: the record names none and no harness runs under
@@ -2194,6 +2210,59 @@ pi_post_stop_row "$MUTANT" delayed
 assert_eq "$PI_POST_STOP" 'rc=1 read=1 timeout=0 stop=1 kill=0 park=0 status=running pr=null' \
   'control: unconditional post-stop unjudged refusal prevents the delayed Pi park'
 
+# This checks real timer wiring. The parent bound also cuts off a production
+# mutant whose slow or hung provider read exceeds the close's one-second budget.
+READ_BOUND=""
+for candidate in timeout gtimeout; do
+  if command -v "$candidate" >/dev/null 2>&1; then READ_BOUND="$candidate"; break; fi
+done
+if [[ -n "$READ_BOUND" ]]; then
+  TIMED_CLOSE="$SCRIPTS/timed-close"
+  cat >"$TIMED_CLOSE" <<'EOF'
+#!/usr/bin/env bash
+exec "$LANE_CLOSE_TEST_BOUND" 3 "$LANE_CLOSE_TEST_OWNER" "$@"
+EOF
+  chmod +x "$TIMED_CLOSE"
+  PASS_WAIT="$(sed -n '/^await_pane_exit() {$/,/^}$/p' "$SCRIPT")"
+  PASS_CONTROL="$(mutant pass-count "$PASS_WAIT" 'await_pane_exit() {
+    local passes=$((close_secs * 5)) rc
+    while (( passes > 0 )); do
+      rc=0; pane_now_exited || rc=$?
+      case "$rc" in
+        0) return 0 ;;
+        1) ;;
+        *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+      esac
+      passes=$((passes - 1))
+      sleep 0.2
+    done
+    return 124
+  }')"
+  for row in 'pi|0.8' 'pi|5' 'copilot|0.8' 'copilot|5'; do
+    IFS='|' read -r timed_harness delay <<<"$row"
+    for owner in "$SCRIPT" "$PASS_CONTROL"; do
+      write_state running "$timed_harness" /host linear owner/repo; write_panes bash
+      if [[ "$timed_harness" == pi ]]; then printf '\n' >"$SCREEN"; else copilot_screen; fi
+      LANE_CLOSE_TEST_BOUND="$READ_BOUND" LANE_CLOSE_TEST_OWNER="$owner" LANE_CLOSE_READ_DELAY="$delay" LANE_CLOSE_WAIT_SECS=1 \
+        LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_POST_STOP=unjudged LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" \
+        LANE_CLOSE_COPILOT_INPUT=hosted LANE_CLOSE_COPILOT_MODE=ignores run_close "$TIMED_CLOSE" --park --pr 7
+      got="rc=$RC timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true) read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+      want='rc=1 timeout=1 read=0 status=running'
+      [[ "$owner" == "$SCRIPT" ]] || want='rc=124 timeout=0 read=0 status=running'
+      assert_eq "$got" "$want" "$timed_harness provider delay=$delay obeys the deadline; the pass-count control exceeds the parent bound"
+    done
+  done
+else
+  printf '  skip  timer wiring requires timeout or gtimeout, as the production read bound does\n'
+fi
+
+MUTANT="$(mutant pi-failed-read '  pane_state_readable "$current_state" || return 2' '  :')"
+for response in status-failed capture-failed; do
+  pi_post_stop_row "$MUTANT" "$response"
+  assert_eq "$PI_POST_STOP" 'rc=1 read=0 timeout=1 stop=1 kill=0 park=0 status=running pr=null' \
+    "control: accepting a failed $response read loses pane-read-failed"
+done
+
 # On a merge-queue base the arm converts to the queue entry once the checks
 # are green, so a queued pull request reads autoMergeRequest null for the whole
 # wait, and GitHub's merge state is not read for it: the queue's own admission
@@ -2593,6 +2662,7 @@ real_worktree_tree() { # NAME [LANE_CLOSE] — prints the tree's lane-close
   local dir="$TMP_ROOT/realwt-$1" sibling entry
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
   ln -s "$FIXTURE/skills/mailbox" "$dir/skills/mailbox"
+  ln -s "$FIXTURE/skills/github" "$dir/skills/github"
   for sibling in workflow-state lane-host dev-validate-run lanes; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done

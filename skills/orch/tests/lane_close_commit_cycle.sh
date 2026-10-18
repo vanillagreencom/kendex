@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Surface: lane-close. Inputs: scripts/lane-close, scripts/lib/, linear/scripts/lib/.
+# Surface: lane-close. Inputs: scripts/lane-close, scripts/lib/, linear/scripts/lib/, github/scripts/lib/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 TMP_ROOT="$(mktemp -d)" || { echo 'lane-close-commit: scratch=mktemp-failed' >&2; exit 1; }
@@ -13,6 +14,7 @@ SCRIPTS="$TMP_ROOT/skills/orch/scripts"
 mkdir -p "$SCRIPTS" "$TMP_ROOT/skills/linear/scripts" "$TMP_ROOT/skills/mailbox/scripts" "$TMP_ROOT/bin"
 cp -R "$TEST_DIR/../scripts/lib" "$SCRIPTS/lib"
 cp -R "$TEST_DIR/../../linear/scripts/lib" "$TMP_ROOT/skills/linear/scripts/lib"
+orch_fixture_shared_libs "$TMP_ROOT/skills/orch"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 
 export COMMIT_CLOSE_ROOT="$TMP_ROOT"

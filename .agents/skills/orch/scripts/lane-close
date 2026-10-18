@@ -25,6 +25,7 @@ source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 source "$SCRIPT_DIR/lib/cloud-close-log.sh"
+source "$SCRIPT_DIR/lib/escapes.sh"
 
 message() { # REASON FIELD=VALUE...
   local reason="$1" field branch_source_named=false
@@ -1403,6 +1404,30 @@ pane_now_exited() {
   [[ "$current_state" == exited ]]
 }
 
+# Bound the whole read, including the provider's status and capture calls.
+# Stock macOS without coreutils follows escapes_bounded's unbounded-read policy.
+await_pane_exit() {
+  local remaining rc
+  while :; do
+    remaining=$((close_deadline - SECONDS))
+    (( remaining > 0 )) || return 124
+    rc=0
+    escapes_bounded "$close_bound" "$remaining" "$BASH" -c '
+      set -euo pipefail
+      SCRIPT_DIR=$1 pane_id=$2 host_pane=$3 host=$4 hosted_item=$5 harness=$6
+      source "$SCRIPT_DIR/lib/lane-state.sh" || exit 2
+      '"$(declare -f pane_now_exited pane_state_readable)"'
+      pane_now_exited
+    ' _ "$SCRIPT_DIR" "$pane_id" "$host_pane" "$host" "$hosted_item" "$harness" || rc=$?
+    case "$rc" in
+      0|124) return "$rc" ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+    esac
+    sleep 0.2
+  done
+}
+
 # Copilot's /exit writes its session totals before the signal fallback.
 # A hosted lane is signalled by its provider, which alone reaches the
 # host's process table; a local lane by the same library stop against the
@@ -1432,16 +1457,7 @@ stop_harness() {
     elif [[ -n "$host" ]]; then expect=ssh; fi
     if ORCH_LANE_HOST="${host:-local}" pane_write "$kind" "$target" "$expect" key C-c; then
       ORCH_LANE_HOST="${host:-local}" pane_write "$kind" "$target" "$expect" text /exit || :
-      while [[ "$passes" -gt 0 ]]; do
-        rc=0; pane_now_exited || rc=$?
-        case "$rc" in
-          0) STOPPED_COUNT=0; return 0 ;;
-          1) ;;
-          *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-        esac
-        passes=$((passes - 1))
-        sleep 0.2
-      done
+      if await_pane_exit; then STOPPED_COUNT=0; return 0; fi
     fi
   fi
   rc=0
@@ -1502,22 +1518,14 @@ stop_and_await_exit() {
   close_secs="${ORCH_LANE_CLOSE_SECS:-15}"
   [[ "$close_secs" =~ ^[1-9][0-9]*$ ]] \
     || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
-  passes=$((close_secs * 5))
+  local close_deadline=$((SECONDS + close_secs)) close_bound="" candidate
+  for candidate in timeout gtimeout; do
+    if command -v "$candidate" >/dev/null 2>&1; then close_bound="$candidate"; break; fi
+  done
   stop_harness
   [[ "$STOP_SKIPPED" == false && -n "$pane_id" ]] || finish_close
-  while :; do
-    rc=0
-    pane_now_exited || rc=$?
-    case "$rc" in
-      0) break ;;
-      1) ;;
-      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-    esac
-    passes=$((passes - 1))
-    (( passes > 0 )) \
-      || { message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" "processes=$STOPPED_COUNT" ${STOP_IDENTITY:+"identity=$STOP_IDENTITY"} >&2; exit 1; }
-    sleep 0.2
-  done
+  await_pane_exit \
+    || { message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" "processes=$STOPPED_COUNT" ${STOP_IDENTITY:+"identity=$STOP_IDENTITY"} >&2; exit 1; }
 }
 
 # The window is closed as a close closes it, then the sandbox is stopped; an

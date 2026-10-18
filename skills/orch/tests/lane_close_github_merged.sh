@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Surface: lane-close. Inputs: scripts/lane-close and scripts/lib/*.sh.
+# Surface: lane-close. Inputs: scripts/lane-close, scripts/lib/*.sh, github/scripts/lib/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 TMP_ROOT="$(mktemp -d)" || { echo 'lane-close-merged: scratch=mktemp-failed' >&2; exit 1; }
@@ -13,6 +14,7 @@ SCRIPTS="$TMP_ROOT/skills/orch/scripts"
 mkdir -p "$SCRIPTS" "$TMP_ROOT/skills/worktree/scripts" "$TMP_ROOT/skills/mailbox/scripts" "$TMP_ROOT/bin"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp -R "$TEST_DIR/../scripts/lib" "$SCRIPTS/lib"
+orch_fixture_shared_libs "$TMP_ROOT/skills/orch"
 export MERGED_FIXTURE_ROOT="$TMP_ROOT"
 export PATH="$TMP_ROOT/bin:$PATH"
 
