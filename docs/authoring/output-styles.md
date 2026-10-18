@@ -14,9 +14,11 @@ Claude Code defaults `keep-coding-instructions` to `false` for custom styles. ke
 
 ## Declaration
 
+For a catalog named `my-marketplace` that ships `output-styles/concise.md`:
+
 ```toml
-[output-styles.STE]
-source = "kendex"
+[output-styles.concise]
+source = "my-marketplace"
 ```
 
 The declaration has the same fields as a skill. `[install] harnesses` and `[install] method` supply the defaults. One scope may declare only one style, including disabled declarations. No new setting selects the kind.

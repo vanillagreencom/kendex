@@ -182,6 +182,9 @@ doc-drift-check = ""
 skill-load-check = ""
 skill-load-record = ""
 
+[retired.output-styles]
+STE = "Install the communication skill package and follow its user instruction at .agents/skills/communication/SKILL.md."
+
 # Skill mappings per agent — always loaded into context.
 [agent-skills]
 cpa = ["jarvis"]
