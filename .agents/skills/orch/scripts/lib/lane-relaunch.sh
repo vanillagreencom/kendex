@@ -88,6 +88,30 @@ lane_model_recovery_result() { # RECORD STATE_DIR SCRIPTS SESSION RESULT
     ' --argjson record "$1" --arg session "$4" --arg result "$5" >/dev/null
 }
 
+# The detached native stop cannot return its failure to the callback. Keep it
+# on the same handoff the controller already reads, bound to this launch.
+lane_native_model_stop() { # RECORD STATE_DIR SCRIPTS ITEM SESSION
+  local record="$1" state_dir="$2" scripts="$3" item="$4" session="$5" pid start detail rc=0
+  pid="$(jq -er '.launch.pid' <<<"$record")" || return 1
+  start="$(jq -er '.launch.start' <<<"$record")" || return 1
+  lane_stop_identity "$pid" "$start" claude || rc=$?
+  [[ "$rc" -ne 0 ]] || return 0
+  printf 'lane-relaunch: native-stop=failed item=%s cause=%s pid=%s launch_pid=%s exit=%s\n' \
+    "$item" "$LANE_STOP_CAUSE" "${LANE_STOP_PID:-none}" "$pid" "$rc" >&2
+  detail="$("$scripts/workflow-state" --state-dir "$state_dir" update "$item" '
+    if .handoff.session_id == $session
+      and .model_checks[$session].launch_identity == ($record | {launch,launched_at})
+    then .handoff.stop_failure = {cause:$cause,pid:(if $pid == "" then null else $pid end),
+      launch:$record.launch,exit:$exit,at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}
+    else . end' --arg session "$session" --argjson record "$record" \
+      --arg cause "$LANE_STOP_CAUSE" --arg pid "$LANE_STOP_PID" --argjson exit "$rc" 2>&1)" || {
+    printf 'lane-relaunch: native-stop=record-failed item=%s\n' "$item" >&2
+    printf '%s\n' "$detail" >&2
+    return 1
+  }
+  return "$rc"
+}
+
 # The hook acquires one session's recovery under workflow-state's lock before
 # starting this outside the predecessor's process group. Check the recovery
 # arguments before stopping it; account selection and launch follow the stop.
