@@ -352,6 +352,20 @@ mkdir -p "$actual"
 git -C "$REPO" ls-files -z > "$TMP/aggregate-files"
 tar -C "$REPO" --null -T "$TMP/aggregate-files" -cf "$TMP/aggregate-tree.tar"
 tar -xf "$TMP/aggregate-tree.tar" -C "$actual"
+# Metadata supplies the real build graph for this selection fixture. Every
+# other Cargo call stays at the fixture boundary, including runtime tests.
+REPLAY_REAL_CARGO="$(command -v cargo)" || exit 2
+REPLAY_CARGO_LOG="$TMP/replay-cargo"
+mkdir -p "$TMP/replay-bin"
+cat >"$TMP/replay-bin/cargo" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$REPLAY_CARGO_LOG"
+if [ "${1:-}" = metadata ]; then exec "$REPLAY_REAL_CARGO" "$@"; fi
+SH
+chmod +x "$TMP/replay-bin/cargo"
+export REPLAY_REAL_CARGO REPLAY_CARGO_LOG
+export PATH="$TMP/replay-bin:$PATH"
 # Keep reader text and the shared runner for selection. Only the aggregate
 # assertion executes its real contract in this checkout.
 stub_replay_suite() { # REPOSITORY-RELATIVE-SUITE
@@ -423,12 +437,27 @@ for input in \
   printf '\n# KEN-3966 replay\n' >> "$actual/.agents/$input"
 done
 RC=0
+: >"$REPLAY_CARGO_LOG"
 OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
   DEV_VALIDATE_SCOPED=true "$GUARD" --selection --range "$replay_base" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && grep -Fxq 'test --manifest-path crates/core/Cargo.toml --quiet' "$REPLAY_CARGO_LOG" \
+  && ok 'the real runtime selector reaches the copied fixture cargo boundary' \
+  || bad 'the real runtime selector reaches the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
 for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-switch.test.sh refresh/tests/refresh-consumer.test.sh; do
   [ "$RC" -eq 0 ] && grep -Fxq "=== $suite" <<<"$OUT" \
     && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
 done
+if mutant_guard 's/\$1 == "manifest" \&\& /$1 == "include" \&\& /'; then
+  RC=0
+  : >"$REPLAY_CARGO_LOG"
+  OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    DEV_VALIDATE_SCOPED=true "$MUTANT_TOOLS/guard" --selection --range "$replay_base" 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] && ! grep -Fxq 'test --manifest-path crates/core/Cargo.toml --quiet' "$REPLAY_CARGO_LOG" \
+    && ok 'control: include-only selection misses the copied fixture cargo boundary' \
+    || bad 'control: include-only selection misses the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
+else
+  bad 'control: the copied fixture runtime selection could not be removed'
+fi
 
 # PR 5399's launch change includes the shared library, its source and render,
 # and the changed contract suites. Keep real reader text; the existing replay

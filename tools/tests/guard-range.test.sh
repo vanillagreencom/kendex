@@ -221,21 +221,31 @@ printf 'edit\n' >>"$R/skills/watched/SKILL.md"
 cp "$R/fake-bin/cargo" "$TMP/cargo.saved"
 printf '%s\n' '#!/usr/bin/env bash' 'echo "cargo $*" >>"$CALL_LOG"' \
   '[ "${1:-}" != test ]' >"$R/fake-bin/cargo"
-RC=0
-: >"$CALLS"
-OUT="$(cd "$R" && env DEV_VALIDATE_SCOPED=true PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" \
-  "$GUARD" --selection --range "$runtime_base" 2>&1 </dev/null)" || RC=$?
-[ "$RC" -eq 1 ] && grep -qFx "$TEST_CALL" "$CALLS" \
-  && ok "the configured scoped route fails when the manifest reader's test fails" \
-  || bad "the configured scoped route fails when the manifest reader's test fails" "rc=$RC out=$OUT"
-if mutant_guard 's/\$1 == "manifest" \&\& /$1 == "include" \&\& /'; then
+scoped_runtime_failure() { # GUARD — the configured route, with cargo test failing
   RC=0
   : >"$CALLS"
   OUT="$(cd "$R" && env DEV_VALIDATE_SCOPED=true PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" \
-    "$MUTANT_TOOLS/guard" --selection --range "$runtime_base" 2>&1 </dev/null)" || RC=$?
+    "$1" --selection --range "$runtime_base" 2>&1 </dev/null)" || RC=$?
+}
+scoped_runtime_failure "$GUARD"
+[ "$RC" -eq 1 ] && grep -qFx "$TEST_CALL" "$CALLS" \
+  && grep -qFx 'guard: cargo-test=crates/core/Cargo.toml' <<<"$OUT" \
+  && ok "the configured scoped route fails when the manifest reader's test fails" \
+  || bad "the configured scoped route fails when the manifest reader's test fails" "rc=$RC out=$OUT"
+if mutant_guard 's/\$1 == "manifest" \&\& /$1 == "include" \&\& /'; then
+  scoped_runtime_failure "$MUTANT_TOOLS/guard"
   [ "$RC" -eq 0 ] && [ ! -s "$CALLS" ] \
     && ok "control: include-only selection misses the failing runtime test in the scoped route" \
     || bad "control: include-only selection misses the failing runtime test in the scoped route" "rc=$RC out=$OUT"
+fi
+if mutant_guard 's/say cargo-test "\$manifest"/say tests "$manifest"/'; then
+  scoped_runtime_failure "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 1 ] && grep -qFx "$TEST_CALL" "$CALLS" \
+    && ! grep -qFx 'guard: cargo-test=crates/core/Cargo.toml' <<<"$OUT" \
+    && ok "control: an unregistered failure key loses the cargo-test machine category" \
+    || bad "control: an unregistered failure key loses the cargo-test machine category" "rc=$RC out=$OUT"
+else
+  bad "control: the cargo-test failure key could not be removed"
 fi
 cp "$TMP/cargo.saved" "$R/fake-bin/cargo"
 back_to_base

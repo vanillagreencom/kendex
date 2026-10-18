@@ -1325,7 +1325,7 @@ fi
 if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
   while IFS= read -r manifest; do
     [ -n "$manifest" ] || continue
-    cargo test --manifest-path "$manifest" --quiet || say tests "$manifest"
+    cargo test --manifest-path "$manifest" --quiet || say cargo-test "$manifest"
   done <<<"$runtime_tests"
 fi
 
