@@ -2,6 +2,13 @@
 # .github/workflows/ci.yml. .agents/skills/harness-ci/references/wiring.md
 # § The CI template says what to keep and what to change.
 #
+# A consumer with no required checks and an unprotected default branch needs
+# no consumer CI or change_class wiring before automatic refresh. The shared
+# refresh/refresh-consumer.sh selects direct merge only after successful
+# branch-rules and branch reads return an empty array and protected=false.
+# It accepts an unmeasured standard class. Failed reads keep auto-merge.
+# https://github.com/vanillagreencom/kendex/blob/main/refresh/refresh-consumer.sh
+#
 # Every repository under the standard reports the aggregate `CI` context on
 # pull_request and merge_group, which standard-ci-context checks, so its job
 # keeps that name and every lane reports into it. What the required-checks
