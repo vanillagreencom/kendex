@@ -96,8 +96,10 @@ jobs:
               assert len(main) == 1 and tags
               assert all(re.fullmatch('[0-9a-f]{40}', sha) for sha in (main[0], head, os.environ['WORKFLOW_SHA']))
               inputs = dict(catalog=main[0], workflow=os.environ['WORKFLOW_SHA'], tags=tags, consumer=head)
+              current = dict(inputs=inputs, run=int(os.environ['GITHUB_RUN_ID']), attempt=int(os.environ['GITHUB_RUN_ATTEMPT']))
+              assert current['run'] > 0 and current['attempt'] > 0
               record = pathlib.Path(tempfile.mkdtemp(prefix='kendex-refresh-', dir=os.environ['RUNNER_TEMP'])) / 'record.json'
-              record.write_text(json.dumps(inputs, sort_keys=True))
+              record.write_text(json.dumps(current, sort_keys=True))
               with output.open('a') as stream:
                   stream.write('record-path=' + str(record) + '\n')
               owner = os.environ['GH_REPO'].split('/')[0]
@@ -115,36 +117,63 @@ jobs:
                            a['workflow_run']['head_branch'] == os.environ['DEFAULT_BRANCH'] and
                            a['workflow_run']['head_repository_id'] == a['workflow_run']['repository_id']]
               latest = max(artifacts, key=lambda a: a['created_at'])
+              archive = command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/actions/artifacts/' + str(latest['id']) + '/zip')
+              with zipfile.ZipFile(io.BytesIO(archive)) as saved:
+                  previous = json.loads(saved.read('record.json'))
               run = api('actions/runs/' + str(latest['workflow_run']['id']))
               assert run['conclusion'] == 'success' and run['path'] == '.github/workflows/kendex-refresh.yml'
-              # The bounded page must reach the record run. Older evidence
-              # costs a full refresh instead of an ever-growing history walk.
-              query = urllib.parse.urlencode(dict(status='completed', branch=os.environ['DEFAULT_BRANCH'], per_page=10))
-              history = api('actions/workflows/kendex-refresh.yml/runs?' + query)['workflow_runs']
-              assert isinstance(history, list) and history
-              assert any(prior['id'] == run['id'] for prior in history)
-              for recent in history:
+              # Reruns keep their run ID and can retain earlier attempts' artifacts.
+              # A newer attempt without its own record cannot reuse that proof.
+              assert type(previous['attempt']) is int and previous['attempt'] > 0
+              assert previous['run'] == run['id'] and previous['attempt'] == run['run_attempt']
+              saved_at = datetime.datetime.fromisoformat(latest['created_at'].replace('Z', '+00:00'))
+              now = datetime.datetime.now(datetime.timezone.utc)
+              assert datetime.timedelta(0) <= now - saved_at <= datetime.timedelta(hours=24)
+              # GitHub allows rerun requests for 30 days, then waiting or running for 35.
+              # Read that whole window, independent of list order. Partition it
+              # so an hourly caller stays below GitHub's 1,000-result search cap.
+              split = saved_at - datetime.timedelta(days=30)
+              history = {}
+              for start, end in ((saved_at - datetime.timedelta(days=65), split), (split, now)):
+                  query = urllib.parse.urlencode(dict(branch=os.environ['DEFAULT_BRANCH'],
+                                                      created=start.isoformat() + '..' + end.isoformat(), per_page=100))
+                  pages = json.loads(command('gh', 'api', '--paginate', '--slurp',
+                                            'repos/' + os.environ['GH_REPO'] + '/actions/workflows/kendex-refresh.yml/runs?' + query))
+                  batch = [recent for page in pages for recent in page['workflow_runs']]
+                  assert 0 <= pages[0]['total_count'] == len(batch) < 1000
+                  assert len({recent['id'] for recent in batch}) == len(batch)
+                  for recent in batch:
+                      assert recent['id'] not in history or history[recent['id']] == recent
+                      history[recent['id']] = recent
+              assert run['id'] in history
+              assert current['attempt'] == 1
+              for recent in history.values():
+                  if recent['id'] == current['run']:
+                      assert recent['run_attempt'] == current['attempt']
+                      continue
                   if recent['id'] == run['id']:
-                      break
-                  # Every later run, across all conclusions, must prove a skip.
-                  assert recent['conclusion'] == 'success'
-                  report = api('actions/runs/' + str(recent['id']) + '/jobs?filter=latest&per_page=100')
+                      assert recent['run_attempt'] == previous['attempt']
+                      continue
+                  if datetime.datetime.fromisoformat(recent['updated_at'].replace('Z', '+00:00')) < saved_at:
+                      continue
+                  # Latest-attempt jobs cannot prove what an earlier attempt did.
+                  # Keep rerun history on the full path instead of walking attempts.
+                  assert type(recent['run_attempt']) is int and recent['run_attempt'] == 1
+                  assert recent['status'] == 'completed' and recent['conclusion'] == 'success'
+                  report = api('actions/runs/' + str(recent['id']) + '/attempts/1/jobs?per_page=100')
                   jobs = report['jobs']
                   assert report['total_count'] == len(jobs)
                   following = [job['steps'][index + 1]['conclusion'] for job in jobs
                                for index, step in enumerate(job['steps'])
                                if step['name'] == 'refresh-input-check' and step['conclusion'] == 'success']
                   assert following == ['skipped']
-              archive = command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/actions/artifacts/' + str(latest['id']) + '/zip')
-              with zipfile.ZipFile(io.BytesIO(archive)) as saved:
-                  previous = json.loads(saved.read('record.json'))
-              if previous == inputs:
+              if previous['inputs'] == inputs:
                   with output.open('a') as stream:
                       stream.write('run=false\n')
                   print('refresh-check=skip cause=current')
               else:
                   print('refresh-check=full cause=changed')
-          except (AssertionError, IndexError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
+          except (AssertionError, AttributeError, IndexError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
               # Missing grants, expired artifacts and failed reads cannot authorize a skip.
               print('refresh-check=full cause=unreadable')
           PY
