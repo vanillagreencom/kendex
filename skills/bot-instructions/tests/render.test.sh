@@ -336,18 +336,6 @@ else
   bad "the splice carries an edit the write phase itself read"
 fi
 
-# A flag a verb accepts and ignores is the shape this package refuses
-# everywhere else, and `adopt` is the one-time verb that writes: a run meant
-# to preview would have taken the files over.
-for verb in check adopt; do
-  bi_run "$verb" --dry-run --repo "$repo"
-  if [ "$bi_status" -eq 2 ] && printf '%s\n' "$bi_out" | grep -q -- '--dry-run is a render mode'; then
-    ok "--dry-run is refused on $verb, naming the verb"
-  else
-    bad "--dry-run is refused on $verb, naming the verb" "exit $bi_status: $bi_out"
-  fi
-done
-
 # The every-flag-false return, and a dry run, both write nothing and say so.
 nothing="$(bi_minimal_repo nothing-enabled)"
 printf '%s' "$BI_MIN_HEAD" > "$nothing/kendex.toml"
@@ -657,11 +645,11 @@ seen = []
 original = verbs._adopt_file
 
 
-def interrupting(ctx_, root_fd, path):
+def interrupting(ctx_, root_fd, path, dry_run=False):
     seen.append(path)
     if len(seen) == 3:
         raise KeyboardInterrupt
-    return original(ctx_, root_fd, path)
+    return original(ctx_, root_fd, path, dry_run)
 
 
 verbs._adopt_file = interrupting

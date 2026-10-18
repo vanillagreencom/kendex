@@ -517,7 +517,6 @@ install_world() {
 install_tree() { ( cd "$1" && find . -path ./.git -prune -o -type f -exec cksum {} + | sort ); }
 INSTALL_LAUNCH="$BI"
 empty_result='            self.config = Unconfigured(config_path)
-            self.build = render_mod.Build(None, {}, {}, None)
             return'
 INSTALL_REFUSES="$(bi_mutant install-refuses scripts/lib/run.py \
   "$empty_result" '            raise Unconfigured(config_path)')" || exit 1

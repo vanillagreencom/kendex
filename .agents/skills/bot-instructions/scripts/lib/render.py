@@ -14,7 +14,7 @@ from . import markdown, render_coderabbit, render_markdown, render_qodo
 
 
 class Build:
-    def __init__(self, model, files, data, region_body):
+    def __init__(self, model, files, data, region_body, output_mode="full"):
         self.model = model
         self.files = files              # repo-relative path -> text
         # The structure each of those paths was serialised FROM, for the
@@ -23,18 +23,27 @@ class Build:
         # itself, and would need a reader for every format this writes.
         self.data = data                # repo-relative path -> structure
         self.region_body = region_body  # None when [bot-instructions.bots] codex is false
+        self.remote = output_mode == "full"
+        self.schema = None
+        self.review_path = None
 
 
-def build(model, schema=None):
-    """The scratch tree. `schema` is the vendored CodeRabbit schema, already
-    read under `coderabbit-schema`'s own clause: reading it again here would
-    report a second failure as a `toml-schema` finding at
-    `[bot-instructions]`."""
+def build(model, schema=None, output_mode="full", schema_loader=None, local_review_path=None):
+    """The selected scratch tree. Load the remote schema only when needed;
+    the context's loader attributes its failures to `coderabbit-schema`."""
     bots = model.config.bots
     files, data = {}, {}
-    region = None
+    result = Build(model, files, data, None, output_mode)
+    # Local review reads the installed doctrine directly. It must not point
+    # at the remote doctrine file this output set deliberately leaves alone.
+    result.review_path = model.code_review_path if result.remote else local_review_path
     if bots["codex"]:
-        region = render_markdown.agents_region_body(model)
+        result.region_body = render_markdown.agents_region_body(model, result.review_path)
+    if not result.remote:
+        return result
+    if bots["coderabbit"] and schema is None and schema_loader is not None:
+        schema = schema_loader()
+    result.schema = schema
     if bots["copilot"]:
         files[".github/copilot-instructions.md"] = render_markdown.copilot_instructions(model)
         for surface in model.surfaces:
@@ -79,7 +88,7 @@ def build(model, schema=None):
                 "file, and only the later one would survive"
             )
         files[path] = render_markdown.code_review(model)
-    return Build(model, files, data, region)
+    return result
 
 
 def load_schema(tree):

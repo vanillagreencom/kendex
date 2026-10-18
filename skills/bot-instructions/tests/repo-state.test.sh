@@ -715,11 +715,11 @@ stranded_world() { # NAME WORLD
 }
 STRANDED_LAUNCH="$BI"
 STRANDED_UNWIRED="$(bi_mutant stranded-unwired scripts/lib/run.py \
-  '            stranded = vr.unconfigured_orphans(tree, config_path)' '            stranded = []')"
+  '            stranded = vr.unconfigured_orphans(tree, config_path, self.build.remote)' '            stranded = []')"
 STRANDED_NO_REGION="$(bi_mutant stranded-no-region scripts/lib/validators_repo.py \
   '    if _marked_region(tree):' '    if False:')"
 STRANDED_NO_FILES="$(bi_mutant stranded-no-files scripts/lib/validators_repo.py \
-  '             for path in _marked_files(tree, ())]' '             for path in []]')"
+  '             for path in (_marked_files(tree, ()) if remote else ())]' '             for path in []]')"
 STRANDED_ONE_REGION="$(bi_mutant stranded-one-region scripts/lib/validators_repo.py \
   'for body in render.section_bodies(text))' 'for body in [render.region_of(text)])')"
 echo '=== a manifest with no [bot-instructions] table ==='

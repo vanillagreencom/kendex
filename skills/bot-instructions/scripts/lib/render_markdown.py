@@ -67,17 +67,17 @@ def block_paragraphs(model, bid, text):
     return paragraphs(text)
 
 
-def agents_directive(model):
+def agents_directive(model, path=None):
     """The one line the owned region carries below its marker.
 
     Read twice: the render writes it, and `adopt` asks whether the region it
     found is already this. A second spelling there would let a region pass the
     adopt report and still differ from what `render` writes.
     """
-    return AGENTS_DIRECTIVE.format(path=model.code_review_path)
+    return AGENTS_DIRECTIVE.format(path=path or model.code_review_path)
 
 
-def agents_region_body(model):
+def agents_region_body(model, path=None):
     """The body the write phase splices under the `## Code Review Rules` line.
 
     The marker and the directive, and no doctrine at all. Every harness loads
@@ -85,7 +85,7 @@ def agents_region_body(model):
     the review rules, so what the region carries is the pointer to the file
     that does.
     """
-    return "\n".join([model.marker("html"), "", agents_directive(model), ""])
+    return "\n".join([model.marker("html"), "", agents_directive(model, path), ""])
 
 
 def code_review(model):

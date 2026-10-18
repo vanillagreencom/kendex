@@ -12,6 +12,7 @@ table no validator runs; `validators.md` § `orphan` says what the run reports.
 """
 
 import contextlib
+import os
 
 from .constants import CODERABBIT_SCHEMA_PATH
 from . import manifest
@@ -63,7 +64,8 @@ def _as_finding(validator, path, other=None, other_path=None):
 
 
 class Context:
-    def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names, launcher):
+    def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names, launcher,
+                 output_mode="full"):
         # `spec_paths` is how the spec copy is READ; `spec_names` is how the
         # marker records it. They differ under `--staged`, where the spec copy
         # is read from the index at its repo-relative path, and wherever the
@@ -82,14 +84,14 @@ class Context:
         config_path = resolved.chosen
         if "bot-instructions" not in resolved.data:
             # `validators.md` § `orphan`, the no-table case.
-            stranded = vr.unconfigured_orphans(tree, config_path)
+            self.build = render_mod.Build(None, {}, {}, None, output_mode)
+            stranded = vr.unconfigured_orphans(tree, config_path, self.build.remote)
             if stranded:
                 raise ValidationFailed(stranded)
             # The orphan scan proves this empty result. Keep it as the
             # configuration state so render and every check mode agree;
             # adopt still needs a configured set to take ownership of.
             self.config = Unconfigured(config_path)
-            self.build = render_mod.Build(None, {}, {}, None)
             return
         with _as_finding("toml-schema", config_path):
             self.config = config_mod.parse(
@@ -104,12 +106,16 @@ class Context:
         # asserts on the validator's own identity.
         with _as_finding("toml-schema", config_path, "exclusion-consistency"):
             self.model = model_mod.build(tree, self.config, self.doctrine, spec_names, resolved)
-        self.schema = None
-        if self.config.bots["coderabbit"]:
+        def schema_loader():
             with _as_finding("coderabbit-schema", CODERABBIT_SCHEMA_PATH):
-                self.schema = render_mod.load_schema(tree)
+                return render_mod.load_schema(tree)
         with _as_finding("toml-schema", config_path):
-            self.build = render_mod.build(self.model, self.schema)
+            self.build = render_mod.build(self.model, output_mode=output_mode,
+                                          schema_loader=schema_loader,
+                                          local_review_path=os.path.relpath(
+                                              os.path.join(spec_tree.root, spec_paths[0]), root
+                                          ).replace(os.sep, "/") + "#doctrine")
+        self.schema = self.build.schema
         self._tracked = None
 
     def read(self, rel):
@@ -127,9 +133,10 @@ class Context:
 def validate(ctx):
     """Every finding, from every validator the verb runs."""
     findings = []
-    for check in BYTE_VALIDATORS:
-        check(ctx, findings)
-    vr.exclusion_consistency(ctx, findings)
+    if ctx.build.remote:
+        for check in BYTE_VALIDATORS:
+            check(ctx, findings)
+        vr.exclusion_consistency(ctx, findings)
     for check in REPO_VALIDATORS:
         if ctx.verb == "render" and check in RENDER_SKIPS:
             ctx.skipped.append(RENDER_SKIPS[check])

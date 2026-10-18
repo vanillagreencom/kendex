@@ -418,7 +418,6 @@ expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a tabl
 # that result the run falls through to the schema, which is the control.
 printf 'schema = 7\n' > "$repo/kendex-local.toml"
 unconfigured_result='            self.config = Unconfigured(config_path)
-            self.build = render_mod.Build(None, {}, {}, None)
             return
 '
 for launcher in "$BI" "$(bi_mutant unconfigured scripts/lib/run.py "$unconfigured_result" '')"; do

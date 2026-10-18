@@ -120,7 +120,7 @@ def check_verb(ctx):
     return [f"check clean: {len(ctx.build.files)} generated path(s) agree with a fresh render"]
 
 
-def adopt_verb(ctx, root):
+def adopt_verb(ctx, root, dry_run=False):
     """Take hand-written files at generated paths over, and say what they held.
 
     A file it takes over keeps its bytes and gains the marker: the next render
@@ -128,26 +128,28 @@ def adopt_verb(ctx, root):
     survive in the TOML.
     """
     lines, pointers, findings = [], set(), []
+    action = "would adopt" if dry_run else "adopted"
     try:
         for path in sorted(ctx.build.files):
-            held = _adopt_file(ctx, root, path)
+            held = _adopt_file(ctx, root, path, dry_run)
             if held is None:
                 continue
-            lines.append(f"adopted {path} ({len(held.splitlines())} lines it held)")
+            lines.append(f"{action} {path} ({len(held.splitlines())} lines it held)")
             pointers |= points_at(held)
         if ctx.build.region_body is not None:
-            lines.extend(_adopt_region(ctx, root, pointers, findings))
+            lines.extend(_adopt_region(ctx, root, pointers, findings, dry_run))
     except BaseException as exc:
         # The report IS the output of this verb: what each file held is the
         # diff the TOML has to absorb, and the pointer list is what the
         # operator is told to read against it. A second adopt finishes the set
         # and finds neither, because those files now carry the marker.
+        state = ("preview wrote nothing" if dry_run else
+                 "the paths named above were taken over before the failure and "
+                 "nothing else was — re-run adopt to finish the set")
         raise RenderError("\n".join(
             lines
             + _pointer_lines(pointers)
-            + [f"adopt failed: {_cause(exc)}",
-               "the paths named above were taken over before the failure and "
-               "nothing else was — re-run adopt to finish the set"]
+            + [f"adopt failed: {_cause(exc)}", state]
         )) from exc
     lines.extend(_pointer_lines(pointers))
     if not lines:
@@ -162,7 +164,7 @@ def _pointer_lines(pointers):
     return [f"points at {t} — read it against the TOML" for t in sorted(pointers)]
 
 
-def _adopt_file(ctx, root, path):
+def _adopt_file(ctx, root, path, dry_run=False):
     """Take one generated path over, or leave it. Returns the bytes it held.
 
     Ownership is decided on the bytes being replaced rather than on an earlier
@@ -178,12 +180,12 @@ def _adopt_file(ctx, root, path):
         held.append(existing)
         return marker.insert(existing, ctx.model.marker(marker.style_for(path)))
 
-    if not writer.replace(root, path, transform=transform, require_marker=False):
+    if not writer.replace(root, path, transform=transform, require_marker=False, dry_run=dry_run):
         return None
     return held[0]
 
 
-def _adopt_region(ctx, root, pointers, findings):
+def _adopt_region(ctx, root, pointers, findings, dry_run=False):
     """The region form of `_adopt_file`, and it shares the reason: the region
     read, the ownership decision and the splice come from one open.
 
@@ -207,16 +209,18 @@ def _adopt_region(ctx, root, pointers, findings):
         body = ctx.model.marker("html") + ("\n\n" + current if current.strip() else "")
         return render.splice(existing, body)
 
-    wrote = writer.replace(root, "AGENTS.md", transform=transform, require_marker=False)
+    wrote = writer.replace(root, "AGENTS.md", transform=transform, require_marker=False,
+                           dry_run=dry_run)
     if seen:
-        _region_finding(ctx, seen[0], findings)
+        _region_finding(ctx, seen[0], findings, dry_run)
     if not wrote:
         return []
     pointers |= points_at(held[0])
-    return [f"adopted AGENTS.md § Code Review Rules ({len(held[0].splitlines())} lines it held)"]
+    action = "would adopt" if dry_run else "adopted"
+    return [f"{action} AGENTS.md § Code Review Rules ({len(held[0].splitlines())} lines it held)"]
 
 
-def _region_finding(ctx, current, findings):
+def _region_finding(ctx, current, findings, dry_run=False):
     """A region holding more than the directive line is a finding here.
 
     `adopt` runs no validator, so without this a repo could adopt eight blocks
@@ -233,13 +237,15 @@ def _region_finding(ctx, current, findings):
     # An empty region is the documented starting state, not a finding:
     # `references/checklist.md` step 6 adds a bare heading by hand and step 8
     # adopts it. There is nothing there for `render` to migrate.
-    if body in ([], [render_markdown.agents_directive(ctx.model)]):
+    if body in ([], [render_markdown.agents_directive(ctx.model, ctx.build.review_path)]):
         return
+    repair = ("Run `adopt` without --dry-run, then `render` to migrate it" if dry_run else
+              "The marker is in place, so `render` migrates it")
     findings.append(Finding(
         "agents-region",
         f"the `{render_markdown.AGENTS_HEADING}` region carries {len(body)} line(s) "
         f"below its marker; the managed region is the one directive line naming "
-        f"{ctx.model.code_review_path}. The marker is in place, so `render` migrates it",
+        f"{ctx.build.review_path}. {repair}",
         "AGENTS.md",
     ))
 

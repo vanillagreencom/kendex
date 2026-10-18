@@ -227,7 +227,7 @@ python3 - "$R/.agents/skills/bot-instructions/scripts/lib/run.py" <<'EDIT'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
-old = "stranded = vr.unconfigured_orphans(tree, config_path)"
+old = "stranded = vr.unconfigured_orphans(tree, config_path, self.build.remote)"
 assert s.count(old) == 1
 p.write_text(s.replace(old, "stranded = []"))
 EDIT

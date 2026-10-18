@@ -87,6 +87,8 @@ def _marked_region(tree):
 
 def orphan_files(ctx):
     """Every marked file the current TOML does not produce, sorted."""
+    if not ctx.build.remote:
+        return []
     return _marked_files(ctx.tree, ctx.build.files)
 
 
@@ -100,6 +102,8 @@ def removed_orphans(ctx, index):
     has come and gone, still stages the deletion `check --staged` asks for.
     `index` reads the staged blobs, the one place their marker still is.
     """
+    if not ctx.build.remote:
+        return []
     return [path for path in sorted(ctx.tracked_paths())
             if _retired(ctx.build.files, path) and ctx.read(path) is None
             and marker.carries_marker(index.read(path))]
@@ -127,7 +131,7 @@ def orphan_region(ctx, out):
                            "AGENTS.md"))
 
 
-def unconfigured_orphans(tree, manifest):
+def unconfigured_orphans(tree, manifest, remote=True):
     """Every marked render `tree` holds while `manifest` declares no
     `[bot-instructions]` table, as `orphan` findings: `validators.md`
     § `orphan`, the no-table case.
@@ -135,7 +139,7 @@ def unconfigured_orphans(tree, manifest):
     found = [Finding("orphan", f"carries this package's marker and {manifest} declares no "
                                "[bot-instructions] table. Restore the table, or delete the file",
                      path)
-             for path in _marked_files(tree, ())]
+             for path in (_marked_files(tree, ()) if remote else ())]
     if _marked_region(tree):
         found.append(Finding("orphan", "the `## Code Review Rules` region carries the marker and "
                                        f"{manifest} declares no [bot-instructions] table. Restore "

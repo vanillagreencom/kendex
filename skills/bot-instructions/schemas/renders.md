@@ -2,6 +2,8 @@
 
 One section per output. Each names the exact path, what the generator owns inside it, which doctrine blocks it carries and in what order, and how repo text from `[bot-instructions]` is escaped into that file's syntax.
 
+Whole-file outputs in this reference apply to full mode. SKILL.md documents local mode and its installed-doctrine pointer.
+
 Doctrine block ids are the `###` headings of the doctrine source, whose parse rule is SKILL.md § Doctrine. The routing table below is the only other place they are written down, and `doctrine-routing` holds the two to the same set.
 
 ## Common rules
@@ -119,9 +121,9 @@ If you are a review agent reviewing code, read <code_review_path> before you com
 
 No doctrine block reaches this region, so the routing table has no column for it. Every harness loads this file at the start of every session, in this repo and in every repo the package renders, and a working session never uses the review rules; what the region owes a review agent is the name of the file that holds them.
 
-**Any longer region is a finding**, so a repo cannot keep the doctrine here by hand. `adopt` reports one under `agents-region` and still writes the marker, because the marker is what makes the repair a single `render`. `check` reports one under `drift`, which holds the region against a fresh render and is that comparison's only owner. `render` replaces it, which is the migration.
+**Any longer region is a finding**, so a repo cannot keep the doctrine here by hand. `adopt` reports one under `agents-region` and writes the marker unless `--dry-run` is set, because the marker is what makes the repair a single `render`. `check` reports one under `drift`, which holds the region against a fresh render and is that comparison's only owner. `render` replaces it, which is the migration.
 
-**Escaping.** Nothing is interpolated but the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
+**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the installed spec copy's path and Doctrine anchor. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
 
 ## `code-review.md`
 

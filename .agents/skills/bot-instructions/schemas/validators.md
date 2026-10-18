@@ -4,6 +4,8 @@ Every bot in this set fails silently. A rejected config, a mistyped enum, an exc
 
 So each validator below names the silent failure it exists to catch, then what it rejects. A failure fails the run; none of them warns. Which tree each one reads, and which verb runs it, is § Where these run, and it is not the same answer for all of them.
 
+Remote-file validation below applies to full mode. Local mode judges the `AGENTS.md` region only, as SKILL.md defines.
+
 **No validator parses a render back.** One whose input is bytes this run emitted checks the emitter against itself and needs a reader for every format this package writes. The structure is in hand before it is serialised, so a validator that judges a document reads that structure. What is left to judge on bytes is size, which has no pre-emission form. A validator whose input is the REPO's own files is a different thing: `orphan`, `drift` and `agents-section` are it.
 
 ## Controls

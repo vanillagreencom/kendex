@@ -351,4 +351,91 @@ else
   bad 'the inside-project output-parent receives the rendered file'
 fi
 
+preview_repo="$(bi_new_repo adopt-preview)" || exit 1
+if python3 -B - "$BI" "$preview_repo" "$BI_TMP" <<'PY'
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+launcher, fixture, scratch = map(Path, sys.argv[1:])
+
+
+def snapshot(root):
+    return {p.relative_to(root).as_posix():
+            ("link", p.readlink().as_posix()) if p.is_symlink() else
+            ("file", p.read_bytes()) if p.is_file() else ("dir", None)
+            for p in root.rglob("*")}
+
+
+def adopt(root, *args):
+    return subprocess.run([str(launcher), "adopt", "--repo", str(root), *args],
+                          capture_output=True, text=True)
+
+
+def preview(root, *args):
+    before = snapshot(root)
+    result = adopt(root, "--dry-run", *args)
+    assert snapshot(root) == before, "adopt preview changed tree bytes"
+    return result
+
+
+# Real adoption and its preview report the same held content and divergence.
+for mode in ("full", "local"):
+    root = scratch / ("preview-" + mode)
+    shutil.copytree(fixture, root)
+    remote = root / ".github/copilot-instructions.md"
+    remote.parent.mkdir(parents=True)
+    remote.write_text("Hand edit: [guide](GUIDE.md)\n")
+    result = preview(root, "--output", mode)
+    assert result.returncode == 1 and "agents-region:" in result.stderr, result
+    actual = adopt(root, "--output", mode)
+    assert result.stdout.replace("would adopt ", "adopted ") == actual.stdout, (result, actual)
+    assert actual.returncode == result.returncode, actual
+    if mode == "local":
+        assert remote.read_text() == "Hand edit: [guide](GUIDE.md)\n"
+    print(f"  ok   adopt preview preserves every tree byte and reports divergence: {mode}")
+
+# The same preview path refuses links, including links inside the repository.
+for target in ("AGENTS.md", ".github/copilot-instructions.md"):
+    root = scratch / ("preview-link-" + target.replace("/", "-"))
+    shutil.copytree(fixture, root)
+    entry = root / target
+    held = root / "held.md"
+    held.write_bytes((root / "AGENTS.md").read_bytes())
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    if entry.exists():
+        entry.unlink()
+    entry.symlink_to(held)
+    assert entry.is_symlink()
+    result = preview(root)
+    assert result.returncode == 2, result
+    print(f"  ok   adopt preview refuses a symlinked target: {target}")
+
+# A writer that ignores the preview flag must fail the tree-identity assertion.
+package = launcher.parent.parent
+mutant = scratch / "preview-writes"
+shutil.copytree(package, mutant)
+writer = mutant / "scripts/lib/writer.py"
+text = writer.read_text()
+old = "    if dry_run:\n        return True\n"
+assert text.count(old) == 1
+writer.write_text(text.replace(old, "    if False:\n        return True\n"))
+launcher = mutant / "scripts/bot-instructions"
+root = scratch / "preview-writing-control"
+shutil.copytree(fixture, root)
+try:
+    preview(root)
+except AssertionError as exc:
+    assert str(exc) == "adopt preview changed tree bytes", exc
+    print("  ok   control: tree identity rejects a preview that writes a marker")
+else:
+    raise AssertionError("tree identity accepted a writing preview")
+PY
+then
+  ok 'adopt preview contracts and write control pass'
+else
+  bad 'adopt preview contracts and write control pass'
+fi
+
 bi_summary

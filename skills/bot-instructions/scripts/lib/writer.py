@@ -52,7 +52,7 @@ def remove(root, rel):
     os.unlink(os.path.join(root, rel))
 
 
-def replace(root, rel, data=None, transform=None, require_marker=True):
+def replace(root, rel, data=None, transform=None, require_marker=True, dry_run=False):
     """Replace `rel` with `data`, atomically, behind the marker gate.
 
     `transform` is the read-modify-write form: it is handed the file's current
@@ -68,6 +68,8 @@ def replace(root, rel, data=None, transform=None, require_marker=True):
             f"{rel}: writer.replace takes exactly one of data= and transform=; "
             f"got {'neither' if data is None else 'both'}"
         )
+    if dry_run and os.path.islink(os.path.join(root, rel)):
+        raise RenderError(f"{rel}: a symlink cannot be adopted")
     existing, owned = inspect(root, rel, require_marker=require_marker)
     if not owned:
         raise RenderError(
@@ -82,6 +84,8 @@ def replace(root, rel, data=None, transform=None, require_marker=True):
             return False
     if isinstance(data, str):
         data = data.encode("utf-8")
+    if dry_run:
+        return True
     target = os.path.join(root, rel)
     parent = os.path.dirname(target)
     if parent:

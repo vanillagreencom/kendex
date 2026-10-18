@@ -50,7 +50,9 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/bot-instructions/scripts/bot-instructions retire   # revoke kendex automatic rendering on removal
 ```
 
-Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
+Flags: `--repo`, `--spec`, `--staged`, `--output full|local`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
+
+`--output local` limits `render`, `check` and `adopt` to the `AGENTS.md` review region. Its pointer names the selected installed package's Doctrine section in `SKILL.md`, with the path resolved from that copy and the `#doctrine` anchor. Remote files are excluded from validation, adoption, writes, orphan removal and ownership reports. Local review reads the package doctrine directly; repository doctrine overrides remain in the full render. The default `--output full` keeps every enabled bot output. `adopt --dry-run` reports the content to take over and its divergence, writes no marker, and refuses symlinked targets.
 
 Exit codes: 0 clean, 1 findings, 2 could not complete. An unconfigured repository follows [schemas/validators.md](schemas/validators.md) § `orphan`, including its empty JSON ownership report. The `commit-guards` chain runs `check --staged` itself where this package is installed. A pre-commit lane blocks on nonzero codes, except an older check's `unconfigured` refusal carrying its `renders=none` attestation.
 
@@ -84,7 +86,7 @@ The generator owns only the `AGENTS.md` § Code Review Rules region and never cr
 
 ## The doctrine lives in one file per repo
 
-`[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and writes the `AGENTS.md` owned region as one directive line naming it. A longer region is a finding: `adopt` reports it under `agents-region` and still writes the marker, `check` reports it under `drift`, and `render` replaces it. A repo migrates by rendering. Body and bounds: [schemas/renders.md](schemas/renders.md) § `code-review.md`.
+In full mode, `[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and writes the `AGENTS.md` owned region as one directive line naming it. A longer region is a finding: `adopt` reports it under `agents-region` and still writes the marker unless `--dry-run` is set, `check` reports it under `drift`, and `render` replaces it. A repo migrates by rendering. Body and bounds: [schemas/renders.md](schemas/renders.md) § `code-review.md`.
 
 **No vendor page documents a bot following an in-file reference.** CodeRabbit's `code_guidelines.filePatterns` is a real load, so its doctrine is not at issue; Codex and Copilot reach the pointed file only by opening what the directive names, and a bot that does not reviews with no repo rules at all. A repo enabling `codex` renders a canary to find out — one harmless rule that is exclusive among the files the bot under test reads, so its appearance in a comment proves the comment was written against the pointed file. A `[bot-instructions.doctrine.append]` on a block the `copilot-instructions.md` routing column does not carry gives that exclusivity for Codex and Copilot, which read no other file carrying that block; [schemas/renders.md](schemas/renders.md) § Doctrine routing note (b) defines that column. An append to a block the column does carry, today `severity`, is not a Copilot canary: Copilot loads `copilot-instructions.md` itself, so the append can appear in its comments without Copilot following the pointer. No append is exclusive in general, since an append reaches every destination its block routes to, Qodo's and Macroscope's included. [references/limits.md](references/limits.md) § GitHub Copilot code review carries the evidence and the failure mode.
 
