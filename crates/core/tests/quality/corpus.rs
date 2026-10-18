@@ -139,7 +139,7 @@ fn the_guard_hooks_scan_clean() {
 /// still lists. The launch table's comment naming the switch is a mention,
 /// read off the file at the line the mention reports, wherever it stands.
 ///
-/// The open-terminal handoff and preference tests, oversee-succeed tests,
+/// The open-terminal handoff, lane-pick and preference tests, oversee-succeed tests,
 /// and overseer-watch test library hand the launch lines
 /// they check to their stubs and assertions: a quoted string a test assigns
 /// or prints, and an argument of a function the tests define, on the line
@@ -158,6 +158,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
         "skills/orch/tests/open-terminal-claude-handoff.sh",
         "skills/orch/tests/open-terminal-lane-hosted-pi.sh",
         "skills/orch/tests/open-terminal-lane-hosted.sh",
+        "skills/orch/tests/open-terminal-lane-pick.sh",
         "skills/orch/tests/open-terminal-preference.sh",
         "skills/orch/tests/oversee_succeed.sh",
         "skills/orch/tests/lib/overseer-watch-case.sh",
