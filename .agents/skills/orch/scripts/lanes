@@ -491,7 +491,10 @@
 #                    pick: judge NAME as the selector the harness runs.
 #                    Overseer and terminal launchers use this after resolving
 #                    a preference or reading the harness arguments. No class
-#                    override is applied again. All other --model rules hold.
+#                    override is applied again. This skips classification,
+#                    its warnings and the model-class-unread refusal. The
+#                    [1m] suffix, pi provider and pool selection, and shared
+#                    and model-scoped account window judging still apply.
 #                    The last --model or --native-model input wins.
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.

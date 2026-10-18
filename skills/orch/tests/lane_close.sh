@@ -1281,8 +1281,8 @@ while IFS='|' read -r model reset argv name; do
   assert_eq "rc=$RC lanes=$(cat "$LANE_CLOSE_LANES_CALLS") stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
     "rc=0 lanes=pick --lane /lane --harness claude$argv stop=1 status=done" "$name"
 done <<'ROWS'
-model|21:00| --model model|a lifted banner over an account reading room for the recorded model closes the finished lane
-model|Oct 7, 2020, 11:32am (UTC)| --model model|a dated banner whose reset is behind, over an account reading room, closes the finished lane
+model|21:00| --native-model model|a lifted banner over an account reading room for the recorded model closes the finished lane
+model|Oct 7, 2020, 11:32am (UTC)| --native-model model|a dated banner whose reset is behind, over an account reading room, closes the finished lane
 -|21:00||a record naming no model reads the whole account
 ROWS
 # The account is read under the record's own host, empty for a local lane, so
@@ -1302,23 +1302,46 @@ write_state running claude /host; write_panes python; walled_screen 21:00; : >"$
 ORCH_LANE_HOST=/other run_close "$MUTANT" </dev/null
 assert_eq "host=$(cat "$LANE_CLOSE_LANES_CALLS.host")" "host=/other" \
   "control: without the record's host the wall is read under the caller's setting"
-# The wall read's stderr is the cause the help points at, never a model line:
-# a lane's launch prints those only where its preference walk classified the
-# entry, and none where it named its model. The read is the real `lanes`
-# here, the tier-model fixture classifying `opus` on an account that does not
-# exist; the control drops lane-close's hold.
+# The launch record is already resolved. Another class override must not
+# redirect closure to a different model's still-spent window or refuse it.
 cp -- "$SCRIPTS/lanes" "$TMP_ROOT/lanes.stub"
-printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$TEST_DIR/../scripts/lanes" >"$SCRIPTS/lanes"
-MODEL_LINES=""
-for script in "$SCRIPT" "$(mutant lane-close-unheld 'export ORCH_MODEL_LINES_HELD=1' ':')"; do
-  write_state running claude ""; write_panes python; walled_screen 21:00
-  jq '.lanes[0].model = "opus"' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
-  PATH="$TEST_DIR/fixtures/tier-model:$PATH" ORCH_LANE_DIRS="$TMP_ROOT/no-account" run_close "$script" </dev/null
-  MODEL_LINES="$MODEL_LINES rc=$RC lines=$(grep -c -e '^model-resolution: ' -e '^preference-deprecated ' <<<"$ERR" || true)"
-done
+# The hosted stop stays staged; the account sample is the local fixture.
+printf '#!/usr/bin/env bash\nexport ORCH_LANE_HOST=""\nexec %q "$@"\n' "$TEST_DIR/../scripts/lanes" >"$SCRIPTS/lanes"
+WALL_PATH="$PATH"
+source "$TEST_DIR/lib/lanes-fixture.sh"
+PATH="$WALL_PATH"
+new_home close-model
+make_lane "$H" claude
+FETCHER="$TMP_ROOT/close-fetch"; make_fetcher "$FETCHER"
+recovered_model_row() { # SCRIPT MODEL HAIKU_PERCENT OPUS_PERCENT OVERRIDE
+  write_state running claude /host; write_panes python; walled_screen 21:00
+  jq --arg model "$2" --arg account "$H/.claude" '.lanes[0] += {model: $model, account: $account}' \
+    "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
+  jq -n --argjson h "$3" --argjson o "$4" '{
+    five_hour: {utilization: 0, resets_at: "2099-08-01T06:00:00Z"},
+    seven_day: {utilization: 0, resets_at: "2099-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $h, resets_at: "2099-08-01T06:00:00Z", scope: {model: {display_name: "Haiku"}}},
+             {kind: "weekly_scoped", percent: $o, resets_at: "2099-08-01T06:00:00Z", scope: {model: {display_name: "Opus"}}}]
+  }' >"$FIXTURE_DIR/.claude.json"
+  PATH="$TEST_DIR/fixtures/tier-model:$PATH" HOME="$H" XDG_CONFIG_HOME="$H/.config" \
+    KENDEX_TEST_STANDARD_OVERRIDE="$5" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$H/state-$2-$3-$4-${5%%/*}" run_close "$1" </dev/null
+  RECOVERED_MODEL="rc=$RC stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+while IFS='|' read -r model haiku opus override expected name; do
+  recovered_model_row "$SCRIPT" "$model" "$haiku" "$opus" "$override"
+  assert_eq "$RECOVERED_MODEL" "$expected" "$name"
+done <<'ROWS'
+opus|95|5|anthropic/claude-haiku-5-5|rc=0 stop=1 status=done|a recovered recorded Opus closes while its class override's Haiku window remains spent
+opus|5|95|anthropic/claude-haiku-5-5|rc=1 stop=0 status=running|a spent recorded Opus stays open while its class override's Haiku window has room
+opus|5|5|openai/gpt-6.2-sol|rc=0 stop=1 status=done|a cross-provider class override cannot refuse closure of a recovered recorded Opus
+haiku|5|95|openai/gpt-6.2-sol|rc=0 stop=1 status=done|a recovered recorded Haiku closes while the independent Opus window remains spent
+ROWS
+MUTANT="$(mutant lane-close-reclassifies 'model_args=(--native-model "$model")' 'model_args=(--model "$model")')"
+recovered_model_row "$MUTANT" opus 95 5 anthropic/claude-haiku-5-5
+assert_eq "$RECOVERED_MODEL" 'rc=1 stop=0 status=running' \
+  'control: reclassifying a recovered recorded model keeps its lane open on another model window'
 cp -- "$TMP_ROOT/lanes.stub" "$SCRIPTS/lanes"
-assert_eq "$MODEL_LINES" " rc=1 lines=0 rc=1 lines=1" \
-  "the wall read's refusal carries no model line, and without lane-close's hold it carries the model's"
 # Each reading the wall stands on refuses, naming it.
 while IFS='|' read -r lanes_status reset want name; do
   write_state running claude /host; write_panes python; walled_screen "$reset"
