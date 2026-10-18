@@ -31,4 +31,4 @@ Before adoption, choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION`
 
 `bot-instructions` is the temporary renderer, schema and validator dependency. KEN-2362 removes that dependency after the ownership transition. `review-gate` provides the existing settings reader. Install these required packages beside this package. The catalog must pass its dependency and render checks with the latest released kendex engine. Release any required engine support before adopting catalog content that needs it.
 
-This package declares no repository effects. Installation does not transfer the existing bot-instructions effects or change their callers.
+This package declares no repository effects. Installation does not transfer the existing bot-instructions effects. For staged review-file checker selection, follow `commit-guards/SKILL.md` § Git hooks.
