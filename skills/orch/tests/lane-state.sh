@@ -140,6 +140,7 @@ SCREEN
     # tmux capture-pane -pJ from fleet:gh-1326 pane %1656, after the refusals.
     # Full viewport/provenance: KEN-4109 attachment overseer215-pi-screen-capture-source.md.
     pi_current) cat "$CODEX_PANES/pi-current.txt" ;;
+    pi_hosted_startup) cat "$CODEX_PANES/pi-hosted-startup.txt" ;;
     pi_current_no_footer) sed '/^● fleet /d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_no_dashboard) sed '/^┏/,/^┗/d' "$CODEX_PANES/pi-current.txt" ;;
     pi_current_empty_bar) sed '/^● fleet /{s/─/ /g;s/[0-9][0-9]*%/0%/;}' "$CODEX_PANES/pi-current.txt" ;;
@@ -320,8 +321,10 @@ idle Pi with an empty bar and no dashboard is ready in C locale|pi_current_idle_
 idle Pi with an empty bar and no dashboard is ready in UTF-8 locale|pi_current_idle_empty_bar_no_dashboard|yes|C.UTF-8
 current Pi with unknown context and a child suffix is ready in C locale|pi_current_unknown_context_suffix|yes|C
 current Pi with unknown context and a child suffix is ready in UTF-8 locale|pi_current_unknown_context_suffix|yes|C.UTF-8
-idle Pi with an empty bar and no title is not ready in C locale|pi_current_idle_no_title|no|C
-idle Pi with an empty bar and no title is not ready in UTF-8 locale|pi_current_idle_no_title|no|C.UTF-8
+idle Pi with an empty bar and no title is ready in C locale|pi_current_idle_no_title|yes|C
+idle Pi with an empty bar and no title is ready in UTF-8 locale|pi_current_idle_no_title|yes|C.UTF-8
+hosted Pi startup without a session title is ready in C locale|pi_hosted_startup|yes|C
+hosted Pi startup without a session title is ready in UTF-8 locale|pi_hosted_startup|yes|C.UTF-8
 idle Pi with an empty bar and no footer is not ready in C locale|pi_current_idle_no_footer|no|C
 idle Pi with an empty bar and no footer is not ready in UTF-8 locale|pi_current_idle_no_footer|no|C.UTF-8
 idle Pi with an empty bar and no prompt is not ready in C locale|pi_current_idle_no_prompt|no|C
@@ -335,7 +338,7 @@ a blank screen is not the harness up|blank|no
 ROWS
 
 PI_CURRENT_MUTANT="$(mutant_scripts pi-current lib/lane-state.sh)" || exit 1
-mutate_file "$PI_CURRENT_MUTANT/lib/lane-state.sh" '|| { grep -Eq -- "$PI_CURRENT_TITLE_RE"' '|| { false && grep -Eq -- "$PI_CURRENT_TITLE_RE"'
+mutate_file "$PI_CURRENT_MUTANT/lib/lane-state.sh" '|| pane_pi_editor_ready "$1"' '|| { false && pane_pi_editor_ready "$1"; }'
 pi_up="$(export LC_ALL=C; source "$PI_CURRENT_MUTANT/lib/lane-state.sh"; if pane_harness_up "$(screen_for pi_current_idle_empty_bar_no_dashboard)"; then printf yes; else printf no; fi)"
 pi_current_red="$(FAIL=0; assert_eq "$pi_up" yes control >/dev/null; printf '%s' "$FAIL")"
 assert_eq "$pi_current_red" 1 'control: removing current Pi readiness rejects the idle empty-bar screen'

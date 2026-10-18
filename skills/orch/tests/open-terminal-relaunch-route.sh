@@ -101,7 +101,7 @@ run_ot() {
   local recorded="$1" screen="$2" harness="$3" flags="${4:---model opus --effort high}" prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
   if [[ "$harness" == pi ]]; then
-    flags='--model github-copilot/claude-sonnet-5 --thinking high'
+    flags="${4:---model github-copilot/claude-sonnet-5 --thinking high}"
     lane=auto pool="$TMP_ROOT/pi-pool=1/10"
     mkdir -p "$TMP_ROOT/pi-pool"
   fi
@@ -225,6 +225,20 @@ replay() {
   awk '/ --continue / { r = r s "continue"; s = "," ; next } /^-n KEN-1 .*\/orch start KEN-1 / { r = r s "fresh"; s = "," ; next } { r = r s "other"; s = "," } END { print (r == "" ? "none" : r) }' "$RUN/claude.log"
 }
 
+# Pi 1.3.0 with installed pi-qol, captured in the hosted KEN-4266 lane on
+# 2026-10-18, 80x24, at 5.265 s. The editor appeared at 4.227 s; main rejected
+# every frame through 46.684 s. Origin and full timing: KEN-4266 cause evidence.
+pi_switch_case() {
+  run_ot claude "$TEST_DIR/fixtures/oversee-watch/pi-hosted-startup.txt" pi \
+    '--model github-copilot/claude-opus-5.5 --thinking high'
+  assert_eq "rc=$RC launched=$(launched) missing=$(said 'harness-screen-missing') switched=$(said '^open-terminal: harness-switched item=KEN-1 harness=pi recorded=claude')" \
+    'rc=0 launched=1 missing=0 switched=1' 'hosted claude-to-pi relaunch accepts the captured unnamed editor' "$RUN/launcher.out"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN/pi-switch" pi none 0 KEN-1)" \
+    'rc=0 runs=1 resume=0 fresh=1 target=0' 'the switched command executes Pi with the start brief'
+  assert_eq "$(tr '\0' '\n' < "$RUN/pi-switch/harness.log" | sed -n '/^--model$/{n;p;}; /^--thinking$/{n;p;}')" \
+    $'github-copilot/claude-opus-5.5\nhigh' 'the executed Pi command retains the requested launch flags'
+}
+
 echo "=== a hosted claude relaunch continues, and runs the start brief where claude finds no session ==="
 run_ot claude "$HARNESS_SCREEN" claude
 assert_eq "rc=$RC launched=$(launched) continue=$(remote | grep -c -- "--continue '" ) fallback=$(remote | grep -cF "|| [ \$? -ne 1 ] || exec claude -n KEN-1 ")" \
@@ -319,6 +333,7 @@ assert_eq "rc=$RC unrecorded=$(said '^open-terminal: record-write-failed item=KE
   "a relaunch that took and could not be recorded keeps its window and its record"
 
 echo "=== a relaunch across a harness switch renders the start brief alone ==="
+pi_switch_case
 # This is the final builder and lane writer, beyond model recovery's captured
 # intermediate argv. The replay executes the command delivered to the host.
 NATIVE_SHIPPED="$OPEN_TERMINAL"
@@ -514,7 +529,7 @@ control() { # NAME OLD NEW [FILE]
   orch_fixture_shared_libs "$TMP_ROOT/ctl-$1/orch"
   mutate_file "$scripts/$file" "$2" "$3"
 }
-control pi-current '|| { grep -Eq -- "$PI_CURRENT_TITLE_RE"' '|| { false && grep -Eq -- "$PI_CURRENT_TITLE_RE"' lib/lane-state.sh
+control pi-current '|| pane_pi_editor_ready "$1"' '|| { false && pane_pi_editor_ready "$1"; }' lib/lane-state.sh
 RUN_ENV=(LC_ALL=C)
 SELECT_KIND=matching run_ot pi "$PI_SCREEN" pi
 RUN_ENV=()

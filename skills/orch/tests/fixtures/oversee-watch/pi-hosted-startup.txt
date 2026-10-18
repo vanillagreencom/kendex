@@ -1,0 +1,23 @@
+
+ ### Removed        
+
+ - Removed unavailable inherited GPT-5.4 and GPT-5.4 mini models from OpenAI    
+   Codex selection (#9394 (https://github.com/earendil-works/pi/issues/9394)).  
+
+────────────────────────────────────────────────────────────────────────────────
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set 
+ -g extended-keys on` to ~/.tmux.conf and restart tmux.                         
+
+
+ [kendex-drift]     
+
+ session-drift-check: lane=1            
+ This worktree changes nothing about the install. The overseer refreshes the    
+ base checkout after merge. kendex refresh and kendex apply are never run here. 
+
+
+kendex (🌳 ken-4266) Copilot / Opus 5.5 / high 1M ───────────────────────── 100%
+π                   
+
+
