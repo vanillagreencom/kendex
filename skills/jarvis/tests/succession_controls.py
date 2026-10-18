@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--main-ref", help="Also prove each succession case fails on this pre-change revision")
     args = parser.parse_args()
+    completed = 0
     with native_launcher() as native, tempfile.TemporaryDirectory() as allocation:
         scratch = Path(allocation).resolve()
         skills = scratch / "skills"
@@ -30,10 +31,12 @@ def main():
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
 
         def rejected(name, case):
+            nonlocal completed
             result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(ROOT / "skills/jarvis/tests/succession.test.sh"),
                                      "--failfast", "SuccessionContract." + case], env=env, capture_output=True, text=True, timeout=90)
             assert result.returncode != 0, name + " passed its planted defect"
             assert "FAILED (failures=" in result.stderr, result.stdout + result.stderr
+            completed += 1
             print("control: rejected=" + name + " case=" + case, flush=True)
 
         for name, relative, old, new, case in controls:
@@ -54,6 +57,7 @@ def main():
             source.write_text(result.stdout)
             for case in cases:
                 rejected("main=" + args.main_ref, case)
+    print(f"pass: {completed} fail: 0")
 
 
 if __name__ == "__main__":
