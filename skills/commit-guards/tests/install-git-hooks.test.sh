@@ -394,6 +394,52 @@ run_rows \
   "a symlinked hook whose target cannot be read fails the uninstall and keeps the helper|fx_dangling_shim||uninstall||rc=1 $WARN hook-symlink-unreadable=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/dangling-target[dangling] commit-msg=absent pre-push=absent hooksPath=<unset>" \
   "an unreadable managed hook fails the uninstall and keeps the helper|fx_unreadable_shim||uninstall||rc=1 $WARN hook-read=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=-wx------:unreadable commit-msg=absent pre-push=absent hooksPath=<unset>"
 
+echo "=== citation defaults in a real pre-commit ==="
+# skills scripts produce extensionless carriers. Unsupported comment grammars
+# stay unmeasured even when their bytes contain the same invalid citation.
+unset COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_SOURCE_PATHS \
+  COMMIT_GUARDS_MD_REFS_PATHS_EXTRA COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA \
+  COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE
+for row in \
+  'shell|#!/usr/bin/env bash|check|guide.md|1|citation-target' \
+  'python|#!/usr/bin/env python3|check|guide.md|1|citation-target' \
+  'ruby|#!/usr/bin/env ruby|check|guide.md|1|citation-target' \
+  'node|#!/usr/bin/env node|check|guide.md|1|citation-target' \
+  'valid|#!/usr/bin/env bash|check|docs/guide.md|0|clean' \
+  'unknown||check.txt|guide.md|0|grammar'; do
+  IFS='|' read -r name interpreter filename target expected category <<<"$row"
+  armed "citation-default-$name"
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
+  stage .gitignore '.agents/\n'
+  settings 'COMMIT_GUARDS_CHECKS = "md-refs"'
+  seed
+  mkdir -p "$R/docs" "$R/skills/x/scripts"
+  stage docs/guide.md '# Guide\n\n## Rules\n\nSee [Guide \302\247 Rules](guide.md#rules).\n'
+  marker='#'
+  [ "$name" != node ] || marker='//'
+  stage "skills/x/scripts/$filename" "$interpreter\n$marker $target \302\247 Rules\n"
+  commit_in "$R" 'fix: cite a rule'
+  assert_eq "$name: the commit result" "$expected" "$RC"
+  record=missing
+  case "$category:$OUT" in
+    citation-target:*"md-refs: citation-target=skills/x/scripts/$filename:2:"*) record=citation-target ;;
+    clean:*"md-refs: summary=violations=0 "*) record=clean ;;
+    grammar:*"grammar=1"*) record=grammar ;;
+  esac
+  assert_eq "$name: md-refs judged the carrier" "$category" "$record"
+  if [ "$category" = clean ]; then
+    unmeasured=absent
+    grammar=absent
+    case "$OUT" in *"unmeasured=docs/guide.md:"*) unmeasured=present ;; esac
+    while IFS= read -r line; do
+      case "$line" in "md-refs: summary="*"grammar="*) grammar=present ;; esac
+    done <<<"$OUT"
+    assert_eq "$name: the document target is measured" absent "$unmeasured"
+    assert_eq "$name: the summary has no grammar skip" absent "$grammar"
+  fi
+done
+
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

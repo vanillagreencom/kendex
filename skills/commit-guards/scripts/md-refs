@@ -28,8 +28,8 @@
 # left open or comment text the extractor cannot separate, is named unjudged
 # and counted as skipped, and a reference into the headings of one is
 # unjudged too, never dead.
-# The catalog-render test reads summary sources and skipped as the source
-# scan's admitted count, and markdown as its separately judged document count.
+# The catalog-render test selects every Markdown file for the document pass.
+# It adds summary markdown, sources and skipped to count all selected paths.
 set -euo pipefail
 set -f
 
@@ -51,9 +51,8 @@ source "$SCRIPT_DIR/lib/comment-text.sh"
 # at; each name spelled at the root and below it, as the prose lane spells
 # them.
 PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
-# The files whose comment text is read for the same citations: the extractor's
-# own list of what it has a grammar for.
-SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"
+# Discover all carriers; the extractor selects a grammar, including shebangs.
+SOURCE_PATHS_DEFAULT="*"
 SECTION_SIGN=$'\302\247'
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
 SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
@@ -117,8 +116,7 @@ kendex.settings.toml [env] > default):
                                 (default $PATHS_DEFAULT)
   COMMIT_GUARDS_MD_REFS_SOURCE_PATHS
                                 the same, for the files read for citations
-                                in comment text (default: the extensions in
-                                CHECKS.md § comments)
+                                in comment text (default $SOURCE_PATHS_DEFAULT)
   COMMIT_GUARDS_MD_REFS_PATHS_EXTRA
   COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA
                                 globs added to the list above, the default
@@ -390,6 +388,8 @@ GG_WALK_SKIPPED=0
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>", as gg_walk_configured_paths reads it.
   f="${rec#*"$GG_TAB"}"
+  # Markdown uses the document pass, never the comment extractor.
+  case "$f" in *.md) continue ;; esac
   gg_matches_path_glob "$f" || continue
   gg_is_excluded "$f" && continue
   mode="${rec%% *}"
