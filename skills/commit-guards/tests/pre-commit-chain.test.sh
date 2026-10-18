@@ -130,6 +130,69 @@ run_rows() {
   done
 }
 
+# Controls use private installs so each defect reaches the same row assertion.
+chain_mutant() { # NAME OLD NEW
+  install "$TMP/chain-mutant-$1"
+  python3 - "$TMP/chain-mutant-$1/commit-guards/scripts/pre-commit" "$2" "$3" <<'EDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+assert s.count(sys.argv[2]) == 1
+p.write_text(s.replace(sys.argv[2], sys.argv[3]))
+EDIT
+}
+
+echo "=== one review-file owner runs, with the selected package's announcement and status ==="
+NEW="pre-commit: step=github-repository-settings check --staged"
+NEW_OK="$NEW;fixture=new-review check --staged"
+OLD_OK="$BOT;fixture=old-review check --staged"
+NEW_BAD="$NEW;fixture=new-review check --staged"
+REVIEW_BOTH="rc=0 $NEW_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
+REVIEW_FAIL="rc=1 $NEW_BAD;$BATCH_OK;$LOCAL_NONE;$BLOCKED"
+REVIEW_RUN='    run_step "$REVIEW_PACKAGE check --staged" bot_instructions_check "$REVIEW_PACKAGE" "$REVIEW_SKILL"'
+review_control() { # LABEL EXPECT INSTALL — a mutant must fail the row's assertion
+  local result=accepted
+  [ "$2" = "$(run "" "$3" "")" ] || result=rejected
+  assert_eq "control: $1 fails its review-owner row" rejected "$result"
+}
+# label | old status (- means absent) | new status | executable | new record | expected
+# Exact records are consumed by Git hooks and CI logs. These assertions also
+# preserve every old-only record and reject a second checker execution.
+for review_row in \
+  "old-only|0|-|yes||rc=0 $OLD_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-only|-|0|yes|fixture=new-review|rc=0 $NEW_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "both-installed|0|0|yes|fixture=new-review|$REVIEW_BOTH" \
+  "new-failing|0|1|yes|fixture=new-review|$REVIEW_FAIL" \
+  "new-incomplete|0|2|yes|fixture=new-review|rc=2 $NEW_BAD;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
+  "new-unexecutable|0|0|no|fixture=new-review|rc=2 $NEW;$(broken github-repository-settings);$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
+  "neither-installed|-|-|yes||rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-unconfigured|0|0|yes|github-standard-check-location=local\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|rc=0 $NEW;github-standard-check-location=local;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-older-attested|0|2|yes|github-standard-check-location=unset\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|rc=0 $NEW;github-standard-check-location=unset;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-unattested|0|2|yes|github-standard-check-location=hosted\\nbot-instructions: unconfigured=kendex.toml|rc=2 $NEW;github-standard-check-location=hosted;bot-instructions: unconfigured=kendex.toml;pre-commit: unattested=github-repository-settings:kendex.toml;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"; do
+  IFS='|' read -r label old_status new_status executable new_record expect <<<"$review_row"
+  repo "review-$label"
+  [ "$old_status" = - ] || tree bot-instructions fixture=old-review "$old_status"
+  if [ "$new_status" != - ]; then
+    # The wrapper emits its location on stderr. The library emits records
+    # on stdout without command arguments, unlike the fixture identity line.
+    tree github-repository-settings fixture=new-review "$new_status"
+    if [[ "$new_record" == github-standard-check-location=* ]]; then
+      printf '#!/bin/sh\nprintf "%%b\\n" "%s" >&2\nprintf "%%b\\n" "%s"\nexit %s\n' \
+        "${new_record%%\\n*}" "${new_record#*\\n}" "$new_status" >"$R/.agents/skills/github-repository-settings/scripts/github-repository-settings"
+    fi
+    [ "$executable" = yes ] || chmod -x "$R/.agents/skills/github-repository-settings/scripts/github-repository-settings"
+  fi
+  assert_eq "$label" "$expect" "$(run "" "$BARE" "")"
+done
+R="$TMP/review-both-installed"
+chain_mutant double "$REVIEW_RUN" "$REVIEW_RUN"$'\n    "$PWD/.agents/skills/bot-instructions/scripts/bot-instructions" check --staged'
+review_control double-execution "$REVIEW_BOTH" chain-mutant-double
+R="$TMP/review-new-failing"
+chain_mutant fallback "$REVIEW_RUN" "$REVIEW_RUN"$'\n    if [ "$had_violations" -eq 1 ]; then "$PWD/.agents/skills/bot-instructions/scripts/bot-instructions" check --staged; fi'
+review_control failure-fallback "$REVIEW_FAIL" chain-mutant-fallback
+chain_mutant swallowed 'out="$("$check" check --staged 2>&1)" || status=$?' 'out="$("$check" check --staged 2>&1)" || status=0'
+review_control swallowed-status "$REVIEW_FAIL" chain-mutant-swallowed
+
 echo "=== the committing tree's copy of a sibling gate runs; the install's serves only a tree without one ==="
 fx_tree_two() { repo tree-two; tree doc-limits "fixture=worktree-doc-limits" 0; ROOT=.github/skills tree preflight "fixture=worktree-preflight" 0; }
 fx_tree_fails() { repo tree-fails; tree doc-limits "fixture=doc-limits-violation" 1; }
@@ -236,35 +299,25 @@ assert_eq "control: a package that never looks for marked renders passes the rem
 # Controls, each on a private install: without the not-adopted branch the
 # successful empty result prints raw advice, with the record's key unread every exit-2
 # refusal passes, and with the attestation unread the bare record passes.
-bot_mutant() { # NAME OLD NEW
-  install "$TMP/bot-mutant-$1"
-  python3 - "$TMP/bot-mutant-$1/commit-guards/scripts/pre-commit" "$2" "$3" <<'EDIT'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-s = p.read_text()
-assert s.count(sys.argv[2]) == 1
-p.write_text(s.replace(sys.argv[2], sys.argv[3]))
-EDIT
-}
-bot_mutant unread 'if { [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; } && [[' 'if false && [['
-bot_mutant keyless '"bot-instructions: unconfigured="*' '"bot-instructions: "*'
-bot_mutant unattested 'if [ "${rest' 'if true || [ "${rest'
+chain_mutant unread 'if { [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; } && [[' 'if false && [['
+chain_mutant keyless '"bot-instructions: unconfigured="*' '"bot-instructions: "*'
+chain_mutant unattested 'if [ "${rest' 'if true || [ "${rest'
 fx_bot_unadopted_control() { repo bot-unadopted-control; bot_real '[skills.orch]\n'; }
 # The attestation under another key, so only the key match stands between it
 # and a pass.
 fx_bot_refuses_control() { repo bot-refuses-control; tree bot-instructions $'bot-instructions: source=<repo>\nbot-instructions: renders=none\nfixture=attested' 2; }
 fx_bot_bare_control() { repo bot-bare-control; tree bot-instructions "bot-instructions: unconfigured=kendex.toml" 2; }
 fx_bot_unadopted_control
-uncollapsed="$(run "" bot-mutant-unread "")"
+uncollapsed="$(run "" chain-mutant-unread "")"
 case "$uncollapsed" in
   "rc=0 $BOT;bot-instructions: unconfigured=kendex.toml;bot-instructions: renders=none;"*) uncollapsed=raw ;;
 esac
 assert_eq "control: ignoring the successful empty record loses the collapsed not-adopted output" raw "$uncollapsed"
 fx_bot_refuses_control
-assert_eq "control: a lane that matches any refusal key passes an attested source refusal" "rc=0" "$(run "" bot-mutant-keyless "" | cut -d' ' -f1)"
+assert_eq "control: a lane that matches any refusal key passes an attested source refusal" "rc=0" "$(run "" chain-mutant-keyless "" | cut -d' ' -f1)"
 assert_eq "the real lane blocks the attested source refusal" "rc=2" "$(run "" "$BARE" "" | cut -d' ' -f1)"
 fx_bot_bare_control
-assert_eq "control: a lane that reads no attestation passes the bare record" "rc=0" "$(run "" bot-mutant-unattested "" | cut -d' ' -f1)"
+assert_eq "control: a lane that reads no attestation passes the bare record" "rc=0" "$(run "" chain-mutant-unattested "" | cut -d' ' -f1)"
 
 echo "=== the repo-local entry: announced, run last, and its status folded like every lane's ==="
 fx_local_ran() { repo local-ran; local_entry '#!/bin/sh\necho "fixture=local-clean"\nexit 0\n'; }

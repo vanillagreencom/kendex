@@ -26,8 +26,9 @@ repo-effects:
     - "doc-limits"
     - "preflight"
     - "bot-instructions"
+    - "github-repository-settings"
   notes:
-    - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit. A companion installed with its script missing or not executable is named unrun and blocks nothing; a bot-instructions check that reports `unconfigured` with its `renders=none` attestation at exit 0 or the older exit 2 is named not adopted and blocks nothing; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
+    - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit. A companion installed with its script missing or not executable is named unrun and blocks nothing, except the selected github-repository-settings owner, which blocks with exit 2. The selected review-file check's `unconfigured` record with its `renders=none` attestation at exit 0 or the older exit 2 is named not adopted and blocks nothing; every other companion or guard failure blocks the commit, a stale review-file render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
     - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged, and CI where its credential scan is."
     - "Git does not clone hooks; arm every clone once."
@@ -72,7 +73,7 @@ Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
 
 A pulled render does not re-arm the helper; `scripts/install-git-hooks --check` names an outdated helper and the installer to run from the main checkout.
 
-Pre-commit order: `doc-limits --staged` when installed -> `preflight --staged` when installed -> `bot-instructions check --staged` when installed -> `commit-guards all --staged` -> `COMMIT_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
+Pre-commit order: `doc-limits --staged` when installed -> `preflight --staged` when installed -> one review-file check -> `commit-guards all --staged` -> `COMMIT_GUARDS_PRE_COMMIT_LOCAL` when configured. The review-file step runs `github-repository-settings check --staged` when that package resolves, otherwise `bot-instructions check --staged` when installed. A failing or unrunnable selected owner never falls back to the other package. `commit-msg` runs the message gate.
 
 A repo-local entry names the paths it reads in `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS`. The chain runs it only when the commit touches one of those paths, a deletion or either side of a rename included, and otherwise prints `pre-commit: local-entry=skipped` and leaves the verdict to the other lanes. The chain reads the entry's exit as it reads every lane's: `0` clean, `1` violations, anything else a step that did not complete. It prints no install command of its own. An entry that needs a missing tool should print that tool's install command and exit `2`; with the paths set, that refusal blocks only a commit that touches them.
 

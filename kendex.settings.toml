@@ -243,6 +243,9 @@ REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
 # gate" leaves it: the CI jobs the ruleset lists, by name.
 REVIEW_GATE_STANDARD_CONTEXTS = "CI"
 
+# This repository uses remote review and keeps the full review output.
+GITHUB_STANDARD_BOT_REVIEW = "on"
+
 # The organization's standard admits no bypass actor on either ruleset
 # (docs/decisions/D029-owner-merges-ci-input-repair.md), so the
 # standard-bypass-actors row reports any bypass, the repository owner's
@@ -324,7 +327,7 @@ DEV_VALIDATE_TIMEOUT_SECS = "3600"
 GUARD_FULL_CROSS_DOC = "run"
 
 # The repo-root executable the guard chain runs last, after doc-limits, preflight,
-# the bot-instructions check and the commit-guards batch. tools/guard holds this repository's
+# the selected review-file check and the commit-guards batch. tools/guard holds this repository's
 # own scans and compile checks for changed crates or UI files.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 

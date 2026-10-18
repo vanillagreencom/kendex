@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-commit — the staged-scope guard chain, shaped for the git pre-commit
 # hook (the installed .git/hooks/kendex-guards shim execs it): doc-limits,
-# preflight and bot-instructions when the committing work tree or this
+# preflight and the selected review-file checker when the work tree or this
 # install carries those sibling skills, then `commit-guards all --staged`,
 # then the repo-local entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL, run only
 # when the commit touches a path COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS names,
@@ -12,7 +12,7 @@
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
 # else 1 if any found violations, else 0. Both nonzero verdicts block. A lane
 # a present package does not ship runnable is named unrun and blocks
-# nothing: the package's repair is not the committer's. The repo-local entry
+# nothing, except the selected github-repository-settings owner. The repo-local entry
 # is the committer's own setting, so a missing one still blocks.
 # Sibling resolution and the doc-limits lane, which the pre-push lane runs
 # too, are lib/siblings.sh's.
@@ -38,8 +38,9 @@ usage() {
   cat <<'EOF'
 usage: pre-commit
 
-Runs the staged-scope guard chain: doc-limits, preflight and bot-instructions
-check (each resolved from the committing work tree first, then from the
+Runs the staged-scope guard chain: doc-limits, preflight and one review-file
+check (github-repository-settings when installed, otherwise bot-instructions;
+each resolved from the committing work tree first, then from the
 install beside this skill), the commit-guards batch at commit scope, then the
 optional repo-local entry. Takes no arguments — git passes none to pre-commit. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
@@ -118,7 +119,7 @@ if PREFLIGHT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" preflight)"; then
 
 fi
 
-# Same sibling contract for the bot-instructions check: the rendered review
+# Same sibling contract for the selected review-file check: the rendered review
 # bot instruction files are judged against the staged doctrine and manifest,
 # one coherent staged state, so no consumer wires a wrapper of its own.
 # The package arrives as another package's dependency too, so its
@@ -126,15 +127,26 @@ fi
 # package's proof that no render remains. Collapse its successful empty
 # result, or an older exit-2 refusal, to not adopted. The package owns the
 # orphan judgment; a bare exit-2 record and every other refusal still block.
-bot_instructions_check() {
-  local out="" status=0 record rest unattested=""
-  out="$("$BOT_CHECK" check --staged 2>&1)" || status=$?
+bot_instructions_check() { # PACKAGE SKILL-DIR: both packages use the bot-instructions record protocol
+  local package="$1" skill="$2" out="" status=0 record rest unattested=""
+  local check="$skill/scripts/$package"
+  if [ ! -x "$check" ]; then
+    gg_lane_incomplete "$check" "$skill"
+    return 2
+  fi
+  out="$("$check" check --staged 2>&1)" || status=$?
+  # The wrapper reports its settings choice on stderr before the library's
+  # stdout record. Keep that record visible without treating it as doctrine.
+  if [ "$package" = github-repository-settings ] && [[ "$out" == github-standard-check-location=* ]]; then
+    printf '%s\n' "${out%%$'\n'*}"
+    out="${out#*$'\n'}"
+  fi
   record="${out%%$'\n'*}"
   rest="${out#"$record"}"
   rest="${rest#$'\n'}"
   if { [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; } && [[ "$record" == "bot-instructions: unconfigured="* ]]; then
     if [ "${rest%%$'\n'*}" = "bot-instructions: renders=none" ]; then
-      gg_message not-adopted "bot-instructions:${record#*=}" "=== pre-commit: bot-instructions is installed but ${record#*=} declares no [bot-instructions] table; nothing to check"
+      gg_message not-adopted "$package:${record#*=}" "=== pre-commit: $package is installed but ${record#*=} declares no [bot-instructions] table; nothing to check"
       return 0
     fi
     unattested=1
@@ -142,15 +154,23 @@ bot_instructions_check() {
   [ -z "$out" ] || printf '%s\n' "$out"
   # The package's own advice above, add the table or remove the package, is
   # not this case's fix.
-  [ -z "$unattested" ] || gg_message unattested "bot-instructions:${record#*=}" "bot-instructions refused as unconfigured without its renders=none attestation; this copy predates the orphan scan, so update bot-instructions"
+  [ -z "$unattested" ] || gg_message unattested "$package:${record#*=}" "$package refused as unconfigured without its renders=none attestation; this copy predates the orphan scan, so update $package"
   return "$status"
 }
-if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
-  BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
-  if [ -x "$BOT_CHECK" ]; then
-    run_step "bot-instructions check --staged" bot_instructions_check
+REVIEW_PACKAGE=""
+if REVIEW_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" github-repository-settings)"; then
+  REVIEW_PACKAGE=github-repository-settings
+elif REVIEW_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
+  REVIEW_PACKAGE=bot-instructions
+fi
+if [ -n "$REVIEW_PACKAGE" ]; then
+  REVIEW_CHECK="$REVIEW_SKILL/scripts/$REVIEW_PACKAGE"
+  # An installed new owner must never lose its gate or fall back to the old
+  # library. Keep the old package's unrun behavior for unadopted installs.
+  if [ -x "$REVIEW_CHECK" ] || [ "$REVIEW_PACKAGE" = github-repository-settings ]; then
+    run_step "$REVIEW_PACKAGE check --staged" bot_instructions_check "$REVIEW_PACKAGE" "$REVIEW_SKILL"
   else
-    gg_lane_incomplete "$BOT_CHECK" "$BOT_SKILL"
+    gg_lane_incomplete "$REVIEW_CHECK" "$REVIEW_SKILL"
   fi
 
 fi
