@@ -162,8 +162,10 @@
 #         and a monthly pool (5/720). The 5-hour session window is charged,
 #         whatever binds, per live claim, its session burn for each hour left
 #         to its reset, 1 to 5, or 1 where the reset is unknown: the measured
-#         rate where the session binds and one is measured,
-#         ORCH_LANE_BURN_PCT_PER_HOUR otherwise. Account-wide rates use claims
+#         rate where the session binds and one is measured; otherwise its
+#         used percentage divided by hours since its reset (at least one
+#         minute), then by claims at sample time (at least one). Only unread
+#         use or reset time takes ORCH_LANE_BURN_PCT_PER_HOUR. Account-wide rates use claims
 #         at sample time (at least one) as the divisor; model rates use one
 #         because claims omit models. So an
 #         account whose room the lanes already on it will spend is dropped the
@@ -606,10 +608,9 @@
 #                      it is not an integer 0-100.
 #   ORCH_LANE_BURN_PCT_PER_HOUR  Percentage points of the 5-hour session window
 #                      one live lane is expected to spend in an hour: the
-#                      burn `pick` charges a live claim wherever it charges
-#                      no measured rate. Which window it is charged on, and
-#                      for how long, is the PROJECTED wall under `pick`
-#                      (default 5; 0 charges nothing there). Refused, before any lane is measured,
+#                      fallback burn under the PROJECTED wall rule in `pick`
+#                      (default 5; 0 disables only this fallback charge).
+#                      Refused, before any lane is measured,
 #                      when it is not an integer 0-100.
 #   ORCH_LANE_CODEX_CREDIT_FLOOR  Credits, never a percentage, a Codex
 #                      account past the threshold must exceed (default 5000,

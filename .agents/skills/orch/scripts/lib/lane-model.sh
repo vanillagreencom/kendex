@@ -226,8 +226,8 @@ def with_lane_binding($model; $binding_floor):
 # claims live at the latest sample, floored at one. Missing counts and host
 # rows use one. The divisor stays fixed while the sample is cached, so a new
 # claim costs the share for another lane. A model rate uses one: claims omit
-# models, so claims on other models cannot dilute it. With no claims or no rate, use
-# ORCH_LANE_BURN_PCT_PER_HOUR.
+# models, so claims on other models cannot dilute it. The binding bucket uses
+# ORCH_LANE_BURN_PCT_PER_HOUR with no claims or no rate.
 #
 # The default is points of the 5-hour session window. A weekly window, the
 # plan-wide one or a model-scoped one, holds the same hour of work as the
@@ -237,10 +237,7 @@ def with_lane_binding($model; $binding_floor):
 # holds it as 5 of the 720 hours of a month, charged the default times 5/720.
 # The binding bucket is charged one hour of that burn per claim. The 5-hour
 # session window is projected beside it whatever binds, since it walls every
-# model: each claim is charged the session burn for the hours left until that
-# window resets, bounded to 1 to 5, or 1 where the reset is unknown. Its burn
-# is the binding one where the session binds and the default otherwise, since
-# only the binding bucket carries a measured rate. Once a session reset makes
+# model. The session charge follows `lanes --help`, pick. Once a session reset makes
 # the weekly window binding, its 5/168 charge alone lets an account carrying
 # many lanes read as roomy while those lanes spend the new session window
 # within hours; charging that window one hour, or charging the weekly window
@@ -265,7 +262,10 @@ def with_lane_projection($burn_default; $now):
   | ((.resets.session // null) | reset_epoch) as $session_reset
   | (if $session_reset == null then 1
      else [1, ([5, ($session_reset - $now) / 3600] | min)] | max end) as $session_hours
-  | (if .binding_bucket == "session" then $burn else $burn_default end) as $session_burn
+  | (if .binding_bucket == "session" and .usage_rate_state == "measured" then $burn
+     elif .session_5h_pct == null or $session_reset == null then $burn_default
+     else .session_5h_pct / ([1/60, ($now - ($session_reset - 18000)) / 3600] | max)
+          / ([._rate_sample_claims // 1, 1] | max) end) as $session_burn
   | (if .wall == null or .claims == null then null
      else 100 - .wall - .claims * $burn end) as $binding_room
   | (if $binding_room == null or .session_5h_pct == null then null

@@ -274,7 +274,7 @@ table \
   "a named lane judged without --projected reads the wall, as a lane's own handoff mark and a lane close ask|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=30|claim:a:4||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=0 wall=20 projected_headroom_pct=-40 key=none" \
   "--projected is refused without --lane, the chooser judging the projection always|$ALL_DIRS|||$PICK --projected|rc=1 key=unknown-option,arg1=--projected" \
   "a weekly-bound account is charged the default by its window's length and stays a candidate|ORCH_LANE_DIRS=$H/.wclaude|claim:w:2||$PICK|rc=0 config_dir=$H/.wclaude binding_bucket=weekly" \
-  "a burn of 0 charges a claim nothing|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=0|claim:a:3||pick --lane $H/.aclaude --harness claude --projected --json|rc=0 projected_headroom_pct=80" \
+  "a default burn of zero still derives the readable session rate|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=0|claim:a:3||pick --lane $H/.aclaude --harness claude --projected --json|rc=0 projected_headroom_pct=75.55555555555556" \
   "claims added after a one-claim sample each inherit its measured burn|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:15|pick --lane $H/.aclaude --harness claude --json|rc=0 usage_rate_state=measured burn_pct_per_lane_hour=30 projected_headroom_pct=20" \
   "a measured rate with nothing claimed charges nothing and names the default burn|ORCH_LANE_DIRS=$H/.aclaude||a:20:15|pick --lane $H/.aclaude --harness claude --json|rc=0 burn_pct_per_lane_hour=5 projected_headroom_pct=80" \
   "the listing carries the projection beside the verdict of the reading, whose wall lifts at its reset|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=30|claim:a:3||list --harness claude --json|rc=0 [0].verdict=room [0].projected_headroom_pct=-10"
@@ -362,15 +362,54 @@ mutate_file "$CTRL/lib/lane-model.sh" 'else $burn_default * 5 / 168 end' 'else $
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: charged whole, the weekly-bound account is dropped|ORCH_LANE_DIRS=$H/.wclaude|claim:w:2||$PICK|rc=3 walled=1"
 
+echo "=== an unmeasured session uses its own use since reset ==="
+NOW="$("$BIN/date" +%s)" || exit 1
+make_lane "$H" zclaude 3600
+SESSION_FALLBACK_PICK="$PICK --min-headroom-pct 15"
+SESSION_ACCEPT="3 percent used after 40 minutes with four claims qualifies|ORCH_LANE_DIRS=$H/.zclaude|claim:z:4||$SESSION_FALLBACK_PICK|rc=0 config_dir=$H/.zclaude claims=4 usage_rate_state=one-sample session_burn_pct_per_lane_hour=1.125 session_projected_headroom_pct=77.5"
+while IFS='|' read -r label used remaining claims rate burn room; do
+  jq -n --argjson now "$NOW" --argjson used "$used" --argjson remaining "$remaining" '
+    {five_hour: {utilization: $used,
+                resets_at: (if $remaining == null then null else $now + $remaining | todate end)},
+     seven_day: {utilization: 79, resets_at: ($now + 288000 | todate)}, limits: []}' \
+    > "$FIXTURE_DIR/.zclaude.json"
+  table "$label|ORCH_LANE_DIRS=$H/.zclaude|claim:z:$claims|$rate|pick --lane $H/.zclaude --harness claude --json|rc=0 session_burn_pct_per_lane_hour=$burn session_projected_headroom_pct=$room"
+done <<'SESSION_RATES'
+use since reset is shared by the sampled claims|3|15600|4||1.125|77.5
+zero use is a measured empty window|0|15600|4||0|100
+the elapsed floor bounds an integer reading just after reset|1|17999|4||15|-200.98333333333335
+an unread reset keeps the default rate|3|null|4||5|77
+zero sampled claims use one as divisor|3|15600|4|z:3:3:0|4.5|19
+missing sampled claims use one as divisor|3|15600|4|z:3:3:missing|4.5|19
+cached sampled claims keep their divisor after new claims|3|15600|4|z:3:3:2|2.25|58
+SESSION_RATES
+# This is the fleet acceptance case at a 15-percent room floor. Main charged
+# four claims at 5 points for 4 1/3 hours, leaving only 10 1/3 points.
+jq -n --argjson now "$NOW" '{five_hour: {utilization: 3, resets_at: ($now + 15600 | todate)},
+  seven_day: {utilization: 79, resets_at: ($now + 288000 | todate)}, limits: []}' > "$FIXTURE_DIR/.zclaude.json"
+table "$SESSION_ACCEPT"
+CTRL="$(mutant_scripts mutant-session-default lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" \
+  'elif .session_5h_pct == null or $session_reset == null then $burn_default' \
+  'elif true or .session_5h_pct == null or $session_reset == null then $burn_default'
+( FAIL=0
+  LANES_UNDER_TEST="$CTRL/lanes" table "$SESSION_ACCEPT"
+  [[ "$FAIL" == 0 ]]
+) > "$TMP_ROOT/session-default-control.log"
+assert_eq "$?" 1 "control: the default session rate fails the same acceptance case"
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: the chooser drops the acceptance account below its room floor|ORCH_LANE_DIRS=$H/.zclaude|claim:z:4||$SESSION_FALLBACK_PICK|rc=3 walled=1" \
+  "control: the named projection reports session room below 15 percent|ORCH_LANE_DIRS=$H/.zclaude|claim:z:4||pick --lane $H/.zclaude --harness claude --min-headroom-pct 15 --projected --json|rc=3 projected_window.bucket=session headroom_hundredths=1033"
+
 echo "=== the session window is charged to its reset whatever bucket binds ==="
-# r is weekly-bound at 46 used with its session at 2, resetting in 4 hours; q
+# r is weekly-bound at 46 used with its session at 20, resetting in 4 hours; q
 # is weekly-bound at 83 with its session at 5. Five claims on r charge its
-# weekly window 0.74 and its session 5 x 5 x 4 = 100, so r projects past the
+# weekly window 0.74 and its session 20 x 4 = 80, so r projects past the
 # threshold and the sixth lane goes to q. The resets are written against the
 # suite clock just before the rows that read them.
 NOW="$("$BIN/date" +%s)" || exit 1
 make_lane "$H" rclaude 3600
-jq -n --argjson now "$NOW" '{five_hour: {utilization: 2, resets_at: ($now + 14400 | todate)},
+jq -n --argjson now "$NOW" '{five_hour: {utilization: 20, resets_at: ($now + 14400 | todate)},
   seven_day: {utilization: 46, resets_at: ($now + 543600 | todate)}, limits: []}' > "$FIXTURE_DIR/.rclaude.json"
 make_lane "$H" qclaude 3600
 jq -n --argjson now "$NOW" '{five_hour: {utilization: 5, resets_at: ($now + 16200 | todate)},
@@ -378,7 +417,7 @@ jq -n --argjson now "$NOW" '{five_hour: {utilization: 5, resets_at: ($now + 1620
 RQ_DIRS="ORCH_LANE_DIRS=$H/.rclaude:$H/.qclaude"
 table \
   "the sixth lane is not stacked on a weekly-bound account whose session the five on it spend before its reset|$RQ_DIRS|claim:r:5||$PICK|rc=0 config_dir=$H/.qclaude binding_bucket=weekly" \
-  "the named projection refuses the stacked account on its session window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 binding_bucket=weekly projected_headroom_pct=-2 projected_window.bucket=session key=pick-lane-walled,lane=$H/.rclaude,wall=2,bucket=session,max-pct=95,projected-headroom=-2" \
+  "the named projection refuses the stacked account on its session window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 binding_bucket=weekly projected_headroom_pct=0 projected_window.bucket=session key=pick-lane-walled,lane=$H/.rclaude,wall=20,bucket=session,max-pct=95,projected-headroom=0" \
   "the same account with no claims keeps its room and is picked|$RQ_DIRS|||$PICK|rc=0 config_dir=$H/.rclaude"
 
 # The deciding window as the real output names it: the listing and the
@@ -454,14 +493,14 @@ LANES_UNDER_TEST="$CTRL/lanes" table \
 CTRL="$(mutant_scripts mutant-walled-binding lanes)" || exit 1
 mutate_file "$CTRL/lanes" "'if \$p and .projected_window != null then .projected_window.bucket else .binding_bucket end'" "'.binding_bucket'"
 LANES_UNDER_TEST="$CTRL/lanes" table \
-  "control: the named refusal read from the binding bucket names the weekly window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 key=pick-lane-walled,lane=$H/.rclaude,wall=2,bucket=weekly,max-pct=95,projected-headroom=-2"
+  "control: the named refusal read from the binding bucket names the weekly window|ORCH_LANE_DIRS=$H/.rclaude|claim:r:5||pick --lane $H/.rclaude --harness claude --projected --json|rc=3 key=pick-lane-walled,lane=$H/.rclaude,wall=20,bucket=weekly,max-pct=95,projected-headroom=0"
 # Control: projected on the binding bucket alone, the stacked account keeps
 # its weekly room and takes the sixth lane.
 CTRL="$(mutant_scripts mutant-session-unprojected lib/lane-model.sh)" || exit 1
 mutate_file "$CTRL/lib/lane-model.sh" 'else 100 - .session_5h_pct - .claims * $session_burn * $session_hours end) as $session_room' 'else null end) as $session_room'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: with no session projection the sixth lane stacks on the weekly-bound account|$RQ_DIRS|claim:r:5||$PICK|rc=0 config_dir=$H/.rclaude"
-# Control: the session charged one hour per claim projects 73, above the
+# Control: the session charged one hour per claim projects 60, above the
 # weekly room, so the account still takes the sixth lane.
 CTRL="$(mutant_scripts mutant-session-one-hour lib/lane-model.sh)" || exit 1
 mutate_file "$CTRL/lib/lane-model.sh" 'else [1, ([5, ($session_reset - $now) / 3600] | min)] | max end) as $session_hours' 'else 1 end) as $session_hours'
@@ -472,11 +511,11 @@ LANES_UNDER_TEST="$CTRL/lanes" table \
 # claims, so its rooms are its readings, 17 weekly and 95 session, and its
 # session charge runs the 4.5 hours to its reset; the score is 17 weighted by
 # the 80 hours to the weekly reset. A named lane keeps its judge's reading,
-# which no score ranks: two claims on r charge its session 2 x 5 x 4.
-SIXTH_RECORD="rc=0 record.account=$H/.qclaude record.pick.account=$H/.qclaude record.pick.binding_bucket=weekly record.pick.claims=0 record.pick.binding_projected_headroom_pct=17 record.pick.session_projected_headroom_pct=95 record.pick.session_burn_pct_per_lane_hour=5 record.pick.session_charge_hours=4.5 record.pick.projected_headroom_pct=17 score_hundredths=1721"
+# which no score ranks: r retains the earlier five-claim sample for two live claims.
+SIXTH_RECORD="rc=0 record.account=$H/.qclaude record.pick.account=$H/.qclaude record.pick.binding_bucket=weekly record.pick.claims=0 record.pick.binding_projected_headroom_pct=17 record.pick.session_projected_headroom_pct=95 record.pick.session_burn_pct_per_lane_hour=10 record.pick.session_charge_hours=4.5 record.pick.projected_headroom_pct=17 score_hundredths=1721"
 table \
   "the sixth lane's launch records the pick reading it was launched on|$RQ_DIRS|claim:r:5||launch-fleet auto|$SIXTH_RECORD" \
-  "a named lane's launch records the reading its judge took|ORCH_LANE_DIRS=$H/.rclaude|claim:r:2||launch-fleet $H/.rclaude|rc=0 record.account=$H/.rclaude record.pick.account=$H/.rclaude record.pick.claims=2 record.pick.session_projected_headroom_pct=58 record.pick.selection_score=null"
+  "a named lane's launch records the reading its judge took|ORCH_LANE_DIRS=$H/.rclaude|claim:r:2|r:20:20:5|launch-fleet $H/.rclaude|rc=0 record.account=$H/.rclaude record.pick.account=$H/.rclaude record.pick.claims=2 record.pick.session_projected_headroom_pct=48 record.pick.selection_score=null"
 # Control: a lane record that drops the pick turns the sixth-lane row red.
 CTRL="$(mutant_scripts mutant-pick-unrecorded open-terminal)" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/mutant-pick-unrecorded"
@@ -537,9 +576,9 @@ assert_eq "$rc" 1 'dropping exit 8 fails the same projected-refusal row'
 
 echo "=== selection charges projected room, not the reading ==="
 # a and b carry one claim each. a reads more room, 80 to b's 70, but its
-# measured rate of half a point a minute projects 50 against b's default 65.
+# measured rate of half a point a minute projects 50 against b's derived room.
 table \
-  "with claims tied, the projected room decides, not the reading|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:1;claim:b:1|a:20:15|$PICK|rc=0 config_dir=$H/.bclaude projected_headroom_pct=65"
+  "with claims tied, the projected room decides, not the reading|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:1;claim:b:1|a:20:15|$PICK|rc=0 config_dir=$H/.bclaude projected_headroom_pct=63.333333333333336"
 # The equal-room row stages b at a's 20 percent.
 claude_usage 20 10 5 Opus > "$FIXTURE_DIR/.bclaude.json"
 table \
@@ -614,7 +653,7 @@ LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: ignoring the malformed reserve measures and admits the seat|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=half|own:a||$PICK|rc=0 measurements=1"
 
 # Both windows and the live claim's projection share the judge's one bound.
-for row in "50:10:50:" "51:10:49:" "10:50:50:" "45:10:50:claim:a:1"; do
+for row in "50:10:50:" "51:10:49:" "10:50:50:" "45:10:45:claim:a:1"; do
   IFS=: read -r session weekly room claims <<<"$row"
   claude_usage "$session" "$weekly" 5 Opus > "$FIXTURE_DIR/.aclaude.json"
   table "session=$session weekly=$weekly claims=$claims refuses at the reserve|ORCH_LANE_DIRS=$H/.aclaude|own:a${claims:+;$claims}||$PICK|rc=3 walled=0 seats=1 walled_resets_at=null keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=$room,reserve=50" \

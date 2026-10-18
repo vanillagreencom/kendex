@@ -1,0 +1,1 @@
+- Lane selection derives an unmeasured session rate from use since the window reset. Fleet can use accounts with session room after a recent reset.
