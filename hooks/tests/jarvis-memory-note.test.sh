@@ -145,5 +145,5 @@ skill_load_control notebook-path "$HOOK" 'NotebookEdit) FIELD=notebook_path' 'FI
   'notebook edit: keyed first line'
 skill_load_control reader-cause "$HOOK" 'notice() { # KEY VALUE [DETAIL]' 'set -- "$1" "$2"' HOOK reader_rows \
   'failed cat: diagnostic below keyed line' 'failed target: diagnostic below keyed line'
-printf 'passed: %s failed: %s\n' "$PASS" "$FAIL"
+printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
