@@ -9,12 +9,10 @@
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-scratch_parent="$ROOT"
-mkdir -p "$scratch_parent/tmp"
 # HOOK_UNDER_TEST overrides the hook each fixture installs, so a must-fail
 # control runs against these same assertions.
 hook_source="${HOOK_UNDER_TEST:-$ROOT/hooks/command-safety.sh}"
-scratch="$(mktemp -d "$scratch_parent/tmp/command-safety-test.XXXXXX")" || { echo 'command-safety-test: scratch=mktemp-failed' >&2; exit 1; }
+scratch="$(mktemp -d)" || { echo 'command-safety-test: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $scratch && ! -L $scratch ]] || { echo 'command-safety-test: scratch=not-a-directory' >&2; exit 1; }
 scratch="$(cd -- "$scratch" && pwd -P)" || { echo 'command-safety-test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "$scratch"' EXIT
@@ -1158,6 +1156,62 @@ environment_rows() {
 [2,"bash -c 'cat /proc/$$/fd/$1 3</dev/null | cat' _ 3 3<<'EOF'\nenv\nEOF","final-input-unknown-body-data-control"]
 [2,"bash -c 'cat /proc/$BASH\u0050ID/fd/$1 3</dev/null | bash 3</dev/null' _ 3 3<<'EOF'\nenv\nEOF","final-input-unknown-current-body-cleared-receiver"]
 [2,"bash -c '{ cat /proc/$$/fd/3; } 3</proc/self/environ'","inner_source_candidate"]
+[0,"env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE node <<'NODE'\nconst fs=require('node:fs');\nconst rows=fs.readFileSync('tmp/evidence-VGS-1869/readability-before-edit.log','utf8').trim().split('\\n').map(JSON.parse);\nconst minima=new Map();\nfor(const row of rows){const key=row.fg+'/'+row.bg;if(!minima.has(key)||row.ratio<minima.get(key).ratio)minima.set(key,row);}\nfs.writeFileSync('tmp/evidence-VGS-1869/readability-minima.json',JSON.stringify([...minima.values()],null,2)+'\\n');\nconsole.log(JSON.stringify([...minima.values()].map(({name,fg,bg,ratio,floor})=>({name,fg,bg,ratio,floor}))));\nNODE","receiver-node-incident"]
+[0,"python - <<'PYTHON'\nexpected = {'name'}\nif set(['name']) != expected:\n    raise SystemExit('different keys')\nPYTHON","receiver-python-key-inventory"]
+[2,"python <<'CODE'\nimport os; print(os.environ)\nCODE","receiver-python-heredoc-whole-0"]
+[2,"python <<'CODE'\nimport os; print(dict(os.environ))\nCODE","receiver-python-heredoc-whole-1"]
+[0,"python <<'CODE'\nprint(set(['env']))\nCODE","receiver-python-heredoc-safe"]
+[0,"python <<'CODE'\nimport os; print(os.environ['HOME'])\nCODE","receiver-python-heredoc-named"]
+[2,"python -c 'import os; print(os.environ)'","receiver-python-inline-whole-0"]
+[2,"python -c 'import os; print(dict(os.environ))'","receiver-python-inline-whole-1"]
+[0,"python -c 'print(set(['\\''env'\\'']))'","receiver-python-inline-safe"]
+[0,"python -c 'import os; print(os.environ['\\''HOME'\\''])'","receiver-python-inline-named"]
+[2,"python <<CODE\nimport os; print(os.environ)\nCODE","receiver-python-unquoted-whole-0"]
+[2,"python <<CODE\nimport os; print(dict(os.environ))\nCODE","receiver-python-unquoted-whole-1"]
+[0,"python <<CODE\nprint(set(['env']))\nCODE","receiver-python-unquoted-safe"]
+[0,"python <<CODE\nimport os; print(os.environ['HOME'])\nCODE","receiver-python-unquoted-named"]
+[2,"python3 <<'CODE'\nimport os; print(os.environ)\nCODE","receiver-python3-heredoc-whole-0"]
+[0,"python3 <<'CODE'\nprint(set(['env']))\nCODE","receiver-python3-heredoc-safe"]
+[0,"python3 <<'CODE'\nimport os; print(os.environ['HOME'])\nCODE","receiver-python3-heredoc-named"]
+[2,"python3 -c 'import os; print(os.environ)'","receiver-python3-inline-whole-0"]
+[0,"python3 -c 'print(set(['\\''env'\\'']))'","receiver-python3-inline-safe"]
+[0,"python3 -c 'import os; print(os.environ['\\''HOME'\\''])'","receiver-python3-inline-named"]
+[2,"python3 <<CODE\nimport os; print(os.environ)\nCODE","receiver-python3-unquoted-whole-0"]
+[0,"python3 <<CODE\nprint(set(['env']))\nCODE","receiver-python3-unquoted-safe"]
+[0,"python3 <<CODE\nimport os; print(os.environ['HOME'])\nCODE","receiver-python3-unquoted-named"]
+[2,"node <<'CODE'\nconsole.log(JSON.stringify(process.env))\nCODE","receiver-node-heredoc-whole-0"]
+[0,"node <<'CODE'\nconst env=new Set(); env.add('set'); console.log(env)\nCODE","receiver-node-heredoc-safe"]
+[0,"node <<'CODE'\nconsole.log(process.env.HOME)\nCODE","receiver-node-heredoc-named"]
+[2,"node -e 'console.log(JSON.stringify(process.env))'","receiver-node-inline-whole-0"]
+[0,"node -e 'const env=new Set(); env.add('\\''set'\\''); console.log(env)'","receiver-node-inline-safe"]
+[0,"node -e 'console.log(process.env.HOME)'","receiver-node-inline-named"]
+[2,"node <<CODE\nconsole.log(JSON.stringify(process.env))\nCODE","receiver-node-unquoted-whole-0"]
+[0,"node <<CODE\nconst env=new Set(); env.add('set'); console.log(env)\nCODE","receiver-node-unquoted-safe"]
+[0,"node <<CODE\nconsole.log(process.env.HOME)\nCODE","receiver-node-unquoted-named"]
+[2,"ruby <<'CODE'\nputs ENV.to_h\nCODE","receiver-ruby-heredoc-whole-0"]
+[2,"ruby <<'CODE'\nENV.each { |k,v| puts v }\nCODE","receiver-ruby-heredoc-whole-1"]
+[0,"ruby <<'CODE'\nenv = [1].to_set; puts env\nCODE","receiver-ruby-heredoc-safe"]
+[0,"ruby <<'CODE'\nputs ENV['HOME']\nCODE","receiver-ruby-heredoc-named"]
+[2,"ruby -e 'puts ENV.to_h'","receiver-ruby-inline-whole-0"]
+[2,"ruby -e 'ENV.each { |k,v| puts v }'","receiver-ruby-inline-whole-1"]
+[0,"ruby -e 'env = [1].to_set; puts env'","receiver-ruby-inline-safe"]
+[0,"ruby -e 'puts ENV['\\''HOME'\\'']'","receiver-ruby-inline-named"]
+[2,"ruby <<CODE\nputs ENV.to_h\nCODE","receiver-ruby-unquoted-whole-0"]
+[2,"ruby <<CODE\nENV.each { |k,v| puts v }\nCODE","receiver-ruby-unquoted-whole-1"]
+[0,"ruby <<CODE\nenv = [1].to_set; puts env\nCODE","receiver-ruby-unquoted-safe"]
+[0,"ruby <<CODE\nputs ENV['HOME']\nCODE","receiver-ruby-unquoted-named"]
+[2,"perl <<'CODE'\nprint %ENV;\nCODE","receiver-perl-heredoc-whole-0"]
+[0,"perl <<'CODE'\nmy $env = 'set'; print $env;\nCODE","receiver-perl-heredoc-safe"]
+[0,"perl <<'CODE'\nprint $ENV{'HOME'};\nCODE","receiver-perl-heredoc-named"]
+[2,"perl -e 'print %ENV;'","receiver-perl-inline-whole-0"]
+[0,"perl -e 'my $env = '\\''set'\\''; print $env;'","receiver-perl-inline-safe"]
+[0,"perl -e 'print $ENV{'\\''HOME'\\''};'","receiver-perl-inline-named"]
+[2,"perl <<CODE\nprint %ENV;\nCODE","receiver-perl-unquoted-whole-0"]
+[0,"perl <<CODE\nmy \\$env = 'set'; print \\$env;\nCODE","receiver-perl-unquoted-safe"]
+[0,"perl <<CODE\nprint \\$ENV{'HOME'};\nCODE","receiver-perl-unquoted-named"]
+[2,"unknown <<'CODE'\nset([1])\nCODE","receiver-unknown-conservative"]
+[0,"cat > tmp/helper.sh <<'HELPER'\nshell_env=(env NAME=value)\nHELPER\nunknown <<'DATA'\nordinary\nDATA","receiver-unknown-after-file-data"]
+[2,"node <<CODE\nconsole.log('$(env)')\nCODE","receiver-node-shell-expansion"]
 ENVIRONMENT_ROWS
   ) || exit 1
   while IFS=$'\t' read -r expected command_json label world; do
@@ -1330,6 +1384,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
       defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
       defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; return; }", "[ -z \"$input_escaped\" ] || :") }
+      defect == "receiver-classification" && $0 == "  environment_receiver" { swap("  environment_receiver", "  receiver=unknown; receiver_pattern=; receiver_option=") }
+      defect == "receiver-evidence" { swap("[[ $1 =~ $receiver_pattern ]]", "[[ x == y ]]") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -1355,6 +1411,15 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
+receiver-classification|FAIL environment: receiver-node-incident: exit=2 expected=0
+receiver-classification|FAIL environment: receiver-python-key-inventory: exit=2 expected=0
+receiver-evidence|FAIL environment: receiver-python-heredoc-whole-0: exit=0 expected=2
+receiver-evidence|FAIL environment: receiver-python-heredoc-whole-1: exit=0 expected=2
+receiver-evidence|FAIL environment: receiver-python3-heredoc-whole-0: exit=0 expected=2
+receiver-evidence|FAIL environment: receiver-node-heredoc-whole-0: exit=0 expected=2
+receiver-evidence|FAIL environment: receiver-ruby-heredoc-whole-0: exit=0 expected=2
+receiver-evidence|FAIL environment: receiver-ruby-heredoc-whole-1: exit=0 expected=2
+receiver-evidence|FAIL environment: receiver-perl-heredoc-whole-0: exit=0 expected=2
 literal-source-veto|FAIL environment: fleet-literal-command-string-setup: exit=2 expected=0
 quoted-data-cut|FAIL environment: quoted-operator-with-heredoc-remains-data: exit=2 expected=0
 no-check|FAIL environment: incident: exit=0 expected=2
@@ -1467,7 +1532,7 @@ suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
 quoted-heredoc|FAIL environment: double-quoted-heredoc-data: exit=2 expected=0
-file-body-retained|FAIL environment: written-helper-followed-python-body: exit=2 expected=0
+file-body-retained|FAIL environment: receiver-unknown-after-file-data: exit=2 expected=0
 piped-file-body-mask|FAIL environment: redirected-cat-body-piped-to-interpreter: exit=0 expected=2
 heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
 unset-operand|FAIL environment: unset-without-program: exit=0 expected=2

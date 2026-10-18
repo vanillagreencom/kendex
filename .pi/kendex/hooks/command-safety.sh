@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The fixed environment-dump check reads literal producers, supported env, command and sudo prefixes, and direct named grep filters before cwd, Git or settings. Ordinary grep requires proven newline records; known raw NUL reads need a literal NUL-to-newline tr conversion. Flattened xargs output and unknown producer options cannot gain filter permission. A reserved word in shell-head position ends ordinary selection. The complete unsupported suffix receives conservative known-dump detection and no filter permission. Exec and builtin use the same conservative policy. Their unsupported context remains active across later list commands and registered bodies before body recursion. Command-like data in those contexts can refuse. Pathname basenames, ordinary arguments and argv arrays do not establish reserved-word syntax. The check executes no submitted text. Literal forwarded env assignments and repeated named -u removals select a target program in a proved shell-script invocation. Named removals in script arguments require no output redirection. Command-head -u removals retain target checking under timing, grouping and output redirection. Unsupported wrapper options and wrappers without a program refuse. The same producer owns these decisions and the grouped file-writing set receipt. Ordinary quoted argument data retains the existing literal argument class for the recorded shell-script receiver; no words inside that string are recognized. Single- and double-quoted heredocs retain the existing literal cat file-writing class when their recorded body, stage and redirect facts match. No delimiter quote subtype or body recognition is added. Ordinary shell invocations with proved literal options and a literal command string, and ordinary all-literal eval joins without a leading option operand, use recursive command parsing. That parser distinguishes shell setup, named reads and quoted argument data from environment output. Forwarded script arguments retain their selected program and operands during classification. Literal quoted command arguments after the forwarding operand also use recursive parsing when input and output are not redirected. Only existing named-read, assignment and literal set-action facts establish a clean producer result. Every remaining forwarded result retains its complete argv and known-read redirect evidence until supported shell handling finishes. Queued shell and eval source retain that classification requirement through recursive parsing. A registered heredoc in a forwarded executable string requires conservative known-read checking of the complete original source and supplied input before expansion or input interpretation. This refuses optional named reads and quoted command-like body data. Inherited bodies cross this check at their registering ancestor; queued source registers its own bodies. Body text without known-read evidence continues through all later checks. Commands that remain unclassified retain conservative known-read refusal across every argument, including command-like data. Unproved executable strings retain main's known-read refusal. Other conservative clean producer results, quoted data, removed bodies, syntax prefixes, redirected targets and inherited input return to main's known-read refusal. Direct-head main permissions and existing stricter refusals remain. Inherited heredoc input in a pipeline retains conservative known-read refusal across the complete original command. Merged pipes retain conservative refusal for known reads in literal input. Here-string input retains its existing execution checks. Recognized shells, eval and source commands check supplied literal input, including non-stdin descriptors. Outside forwarded executable strings, a direct literal cat receiver can treat one local quoted heredoc body as data, including when forwarded to another literal cat receiver. Other receivers retain the complete original-command fallback for that registered body. Outside forwarded executable strings, a direct literal python3 receiver can also treat one local unquoted heredoc body as data after expansion checks, outside a pipeline. These permissions require a plain default-input heredoc, a clean producer result, no inherited input and no unsupported or conservative receiving context. It bypasses only the registered-body fallback. All remaining command checks stay active. Other registered bodies use the complete command classification with proven quoted cat file-body data masked before receiving-body interpretation. The existing body registry owns the source offsets; interpreter body text remains unchanged. Their receiving stage does not replace the original token order. Outside forwarded executable strings, recognized receiving shells keep main's direct body decisions and their existing independent program checks. Unproved executable contexts, missing body identifiers and unread registered bodies refuse. Unquoted heredoc substitutions remain executable. Here-strings do not establish a heredoc body. Undecoded escaped delimiters refuse conservatively. ANSI-C escaped heads, producer operands and unsupported suffix words keep their existing refusal. Process substitutions, shell programs, transformed pipes and env split strings have no general interpretation guarantee. Unseen programs and runtime-built names remain outside the check. Missing payload readers or unreadable payloads warn and allow. Project-pattern matching still reads raw and continuation-joined text, including quoted examples and comments; unavailable policy tools, support, settings and invalid patterns warn and allow that check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, literal cat bodies retain their data contract, and unknown receivers retain conservative shell-word detection. Unquoted body expansions are checked independently, and unsupported forwarded contexts retain conservative refusal. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -652,12 +652,51 @@ environment_main_command() { # command kind; arguments are already decoded data
   return 1
 }
 
+# Receiving language is a local classification, not an exemption from the
+# independent shell expansion and unsupported forwarding checks.
+environment_receiver() {
+  receiver=unknown; receiver_pattern=""; receiver_option=""
+  case "$program" in
+    cat) receiver=data ;;
+    bash | sh | dash | zsh | ksh | eval | source | .) receiver=shell ;;
+    python | python3)
+      receiver=interpreter; receiver_option='^-c$'
+      receiver_pattern='(^|[^A-Za-z0-9_])os[[:space:]]*\.[[:space:]]*environ([[:space:]]*[^[:space:]A-Za-z0-9_[]|[[:space:]]*$)' ;;
+    node)
+      receiver=interpreter; receiver_option='^(-e|--eval)$'
+      receiver_pattern='(^|[^A-Za-z0-9_])process[[:space:]]*\.[[:space:]]*env([[:space:]]*[^[:space:]A-Za-z0-9_.[]|[[:space:]]*$)' ;;
+    ruby)
+      receiver=interpreter; receiver_option='^-e$'
+      receiver_pattern='(^|[^A-Za-z0-9_])ENV[[:space:]]*\.[[:space:]]*(to_h|each)([^A-Za-z0-9_]|$)' ;;
+    perl)
+      receiver=interpreter; receiver_option='^-e$'
+      receiver_pattern='%ENV([^A-Za-z0-9_]|$)' ;;
+  esac
+}
+
+environment_receiver_evidence() {
+  [[ $1 =~ $receiver_pattern ]]
+}
+
 # Shell invocation options precede the executable operand, including options
 # after -c. Known literal input stays conservative for every shell invocation;
 # script operands and redirects do not prove that the body is unused.
 environment_program_text() {
   local cursor=$pos source="" options_ended="" wants_string="" value text="" unproved=""
   stdin_program=""; source_pos=""
+  environment_receiver
+  if [ "$receiver" = interpreter ]; then
+    for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+      if [[ ${args[$cursor]} =~ $receiver_option ]]; then
+        cursor=$((cursor + 1))
+        if [ "${arg_kinds[$cursor]:-}" = literal ] &&
+           environment_receiver_evidence "${args[$cursor]:-}"; then mode=dump-unknown; fi
+        break
+      fi
+      case "${args[$cursor]}" in - | --) break ;; -*) ;; *) break ;; esac
+    done
+    return
+  fi
   [ -z "$unsupported$syntax_head" ] && [ -n "$program_pos" ] &&
     [ "${arg_roles[$program_pos]:-}" = command ] || unproved=1
   case "$program" in
@@ -737,6 +776,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
+  local receiver receiver_pattern receiver_option
   local unsupported="" scan candidate limit producer_end code incoming_sources="" file_output file_body redirect_evidence head_start main_start script_pos forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target="" main_text main_required="" body_start body_end
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
@@ -1036,7 +1076,7 @@ environment_dump() { # command kind; arguments are already decoded data
       [ "$doc" -lt "${#heredocs[@]}" ] || continue
       # A literal output redirect can still feed the next pipe receiver.
       if [ -z "${2:-}$unsupported$incoming_sources" ] && [ "$1" = shell ] &&
-         [ "$program" = cat ] && [ "$mode" = other ] && [ "${#args[@]}" -eq 1 ] &&
+         [ "$receiver" = data ] && [ "$mode" = other ] && [ "${#args[@]}" -eq 1 ] &&
          [ "${separators[$stage]}" != "|" ] &&
          [ "$file_output" = 1 ] && [ "$file_body" = 1 ] && [ -z "$redirect_evidence" ] &&
          [ "$program_pos" = 0 ] && [ "$head_start" -eq 0 ] && [ "${arg_kinds[0]}" = literal ] &&
@@ -1045,17 +1085,22 @@ environment_dump() { # command kind; arguments are already decoded data
         main_text=${main_text:0:body_start}${body//[!$'\n']/ }${main_text:body_end}
         continue
       fi
-      # Python data remains data after the independent expansion check.
-      # Cat uses the same quoted-data contract for registered pipe input.
+      # Known interpreter bodies are code in their receiving language. Mask
+      # only the registered range so later fallback still sees shell commands.
       if [ "$1" = shell ] && [ -z "${2:-}$unsupported$incoming_sources" ] &&
-         [ "$mode" = other ] && [ -z "$redirect_evidence$stdin_program" ] &&
-         [ "${#heredocs[@]}" -eq 1 ] && [ "$data_source" = " 0" ] &&
-         [ "$program_pos" = 0 ] && [ "$head_start" -eq 0 ] && [ "${arg_kinds[0]}" = literal ]; then
-        case "${args[0]}" in
-          cat)
-            if [ "$file_body" = 1 ] || { [ -z "$input_redirect" ] && [ -n "$piped_source" ] &&
-               [ -z "${heredoc_expand[$doc]}" ] && [ "${heredoc_tabs[$doc]}" = '<<' ]; }; then continue; fi ;;
-          python3) [ -n "$pipeline" ] || [ -z "$file_body" ] || continue ;;
+         [ "$mode" = other ] && [ -z "$redirect_evidence$stdin_program" ]; then
+        case "$receiver" in
+          interpreter)
+            if environment_receiver_evidence "${literal_inputs[$doc]}"; then return 0; fi
+            body=${heredoc_bodies[$doc]}; body_start=${heredoc_starts[$doc]}; body_end=$((body_start + ${#body}))
+            body=${body//[!$'\n']/ }
+            main_text=${main_text:0:body_start}$body${main_text:body_end}
+            continue ;;
+          data)
+            if [ "${#heredocs[@]}" -eq 1 ] && [ "$data_source" = " 0" ] &&
+               [ "$program_pos" = 0 ] && [ "$head_start" -eq 0 ] && [ "${arg_kinds[0]}" = literal ] &&
+               { [ "$file_body" = 1 ] || { [ -z "$input_redirect" ] && [ -n "$piped_source" ] &&
+                 [ -z "${heredoc_expand[$doc]}" ] && [ "${heredoc_tabs[$doc]}" = '<<' ]; }; }; then continue; fi ;;
         esac
       fi
       main_required=1
@@ -1063,7 +1108,7 @@ environment_dump() { # command kind; arguments are already decoded data
     done
     stage_stdin[stage]=$stdin_program; stage_sources[stage]=$data_source
     scan=$unsupported
-    case "$program" in opaque | bash | sh | dash | zsh | ksh | eval | source | .) scan=1 ;; esac
+    if [ "$receiver" = shell ] || [ "$program" = opaque ]; then scan=1; fi
     if [ -n "$scan" ]; then
       case "$mode" in dump-*) return 0 ;; esac
       [ -z "$redirect_evidence" ] || return 0
