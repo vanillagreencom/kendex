@@ -472,6 +472,56 @@ cat > "$TMP_ROOT/compaction-bin/account" <<'STUB'
 exec codex "$@"
 STUB
 chmod +x "$TMP_ROOT/compaction-bin/account"
+
+# Claude applies the --settings env object to its hooks. The managed-session
+# producer must establish that environment without relying on its parent.
+cat > "$TMP_ROOT/compaction-bin/claude" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+for word in "$@"; do
+  case "$word" in
+    --settings=*)
+      while IFS= read -r assignment; do export "$assignment"; done \
+        < <(jq -r '.env // {} | to_entries[] | "\(.key)=\(.value)"' <<<"${word#--settings=}") ;;
+  esac
+done
+jq -cn --args '{argv:$ARGS.positional,auto:(env.DISABLE_AUTO_COMPACT // ""),manual:(env.DISABLE_COMPACT // "")}' -- "$@"
+STUB
+chmod +x "$TMP_ROOT/compaction-bin/claude"
+managed_claude_launch() { # LIB RESUME_FILE
+  env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT PATH="$TMP_ROOT/compaction-bin:$PATH" \
+    "$BASH" -c 'source "$1"
+      lane_session_command claude "managed-session" "$2" || exit
+      line=$(lane_launch_line "$LANE_SESSION_CMD" claude "$LANE_SESSION_ACCOUNT_VAR" "$3" prefix) || exit
+      "$BASH" -c "$line"' _ "$1" "$2" "$TMP_ROOT/compaction-home"
+}
+managed_claude_reading() { # OBSERVED_ENV
+  env "DISABLE_AUTO_COMPACT=$(jq -r .auto <<<"$1")" "DISABLE_COMPACT=$(jq -r .manual <<<"$1")" \
+    "$BASH" -c 'source "$1"; lane_adapter_claude_reading unread' \
+    _ "$SCRIPTS_DIR/lib/adapters/claude.sh" <<'TRANSCRIPT'
+{"message":{"model":"sonnet","usage":{"input_tokens":180001}}}
+TRANSCRIPT
+}
+while IFS='|' read -r resume identity; do
+  observed=$(managed_claude_launch "$SCRIPTS_DIR/lib/lane-launch.sh" "$resume")
+  assert_eq "$(jq -c '[.argv[] | select(. == "-n" or . == "jarvis" or . == "--session-id" or . == "--resume" or . == "managed-session")]' <<<"$observed")" \
+    "[\"-n\",\"jarvis\",\"$identity\",\"managed-session\"]" "managed Claude $identity retains its native identity"
+  assert_eq "$(managed_claude_reading "$observed")" $'180001\t200000\tsonnet' \
+    "managed Claude $identity establishes its context window"
+done <<'ROWS'
+|--session-id
+history.jsonl|--resume
+ROWS
+
+# Removing only the managed policy reproduces the old setting-free launch:
+# the actual adapter still reads tokens, but cannot establish a window.
+MUTANT_MANAGED="$(mutant_scripts lane-launch-managed lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
+mutate_file "$MUTANT_MANAGED" 'compaction="$(launch_choice_compaction claude "")" || return 1' \
+  'compaction="$(launch_choice_compaction claude "")" || return 1; compaction=""'
+observed=$(managed_claude_launch "$MUTANT_MANAGED" "")
+assert_eq "$(managed_claude_reading "$observed")" $'180001\t\tsonnet' \
+  'control: a managed launch without its compaction policy leaves the context window empty'
+
 compaction_child() { # LIB FORM CMD
   PATH="$TMP_ROOT/compaction-bin:$PATH" ORCH_COMPACTION_OVERRIDES='stale-parent-value' \
     bash -c 'source "$1"; line=$(lane_launch_line "$3" codex CODEX_HOME "$4" "$2") || exit; bash -c "$line"' \

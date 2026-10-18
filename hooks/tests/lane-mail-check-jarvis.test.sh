@@ -53,7 +53,30 @@ jq -nc --arg home "$LANE" --arg account "$ACCOUNT" --arg socket "$JARVIS_SOCKET"
     state:"running",reason:"new-requested",generation:3,server_pid:$server,server_started_at:$start,
     terminal:{server:$socket,session:"jarvis",window:$window,pane:$pane},
     pending:{generation:3,native_session_id:"s1",started_at:1}}' > "$RECORD"
+
+# Read the environment Claude supplies to hooks from the actual managed
+# launch, with neither compaction setting inherited from the test runner.
+mkdir -p "$TMP_ROOT/managed-bin"
+cat > "$TMP_ROOT/managed-bin/claude" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+for word in "$@"; do
+  case "$word" in
+    --settings=*)
+      while IFS= read -r assignment; do export "$assignment"; done \
+        < <(jq -r '.env // {} | to_entries[] | "\(.key)=\(.value)"' <<<"${word#--settings=}") ;;
+  esac
+done
+jq -cn '{auto:(env.DISABLE_AUTO_COMPACT // ""),manual:(env.DISABLE_COMPACT // "")}'
+STUB
+chmod +x "$TMP_ROOT/managed-bin/claude"
+MANAGED_ENV=$(env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT PATH="$TMP_ROOT/managed-bin:$PATH" \
+  "$BASH" -c 'source "$1"
+    lane_session_command claude s1 "" || exit
+    line=$(lane_launch_line "$LANE_SESSION_CMD" claude "$LANE_SESSION_ACCOUNT_VAR" "$2" prefix) || exit
+    "$BASH" -c "$line"' _ "$REPO_ROOT/skills/orch/scripts/lib/lane-launch.sh" "$ACCOUNT")
 CALL_ENV=("HOME=$OFFLINE_HOME" "XDG_STATE_HOME=$STATE" "CLAUDE_CONFIG_DIR=$ACCOUNT"
+  "DISABLE_AUTO_COMPACT=$(jq -r .auto <<<"$MANAGED_ENV")" "DISABLE_COMPACT=$(jq -r .manual <<<"$MANAGED_ENV")"
   "JARVIS_RECORD=$RECORD" JARVIS_GENERATION=3 "TMUX=$JARVIS_SOCKET,$JARVIS_SERVER,0" "TMUX_PANE=$JARVIS_PANE")
 CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=90
 TAB=$'\t'

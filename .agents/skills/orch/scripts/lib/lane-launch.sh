@@ -75,7 +75,7 @@ lane_env_prefix() { # HARNESS DIR [MODEL]
 # is its agent directory, rather than a Claude seat selected for pi-claude.
 LANE_SESSION_KICKOFF='Jarvis Start: your Start brief is the next message. Reply only Waiting, and take no action until it arrives.'
 lane_session_command() { # HARNESS NATIVE_ID RESUME_FILE
-  local harness="$1" id="$2" file="$3" kickoff=""
+  local harness="$1" id="$2" file="$3" kickoff="" compaction
   case "$harness" in codex | copilot) kickoff="$(lane_single_quote "$LANE_SESSION_KICKOFF")" ;; esac
   LANE_SESSION_PROMPTED=false
   [[ -z "$kickoff" ]] || LANE_SESSION_PROMPTED=true
@@ -85,8 +85,10 @@ lane_session_command() { # HARNESS NATIVE_ID RESUME_FILE
   LANE_SESSION_CMD="$(
   case "$harness" in
     (claude)
-      if [[ -n "$file" ]]; then printf 'claude -n jarvis --resume %q' "$id"
-      else printf 'claude -n jarvis --session-id %q' "$id"; fi ;;
+      compaction="$(launch_choice_compaction claude "")" || return 1
+      printf 'claude %q -n jarvis' "$compaction"
+      if [[ -n "$file" ]]; then printf ' --resume %q' "$id"
+      else printf ' --session-id %q' "$id"; fi ;;
     (codex)
       launch_choice_lead_settings codex || return 1
       printf 'codex'
