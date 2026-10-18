@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # oversee-watch blocks until the fleet needs the overseer, reports every event
-# the pass found as one block, and exits. The workflow handles every EVENT line
+# the pass found as complete blocks, and exits after the pass ends. The workflow handles every EVENT line
 # and re-runs it.
 #
 # Two passes on one clock: the mail pass reads every mailbox and the lane
@@ -1548,7 +1548,23 @@ LONG_OUT="$WORK_DIR/long.out"
 LONG_ERR="$WORK_DIR/long.err"
 LONG_STATUS="$WORK_DIR/long.status"
 LONG_DONE="$WORK_DIR/long.done"
+LONG_READY="$WORK_DIR/long.ready"
+LONG_PRINTED=0
 CLOSE_PID_FILE="$WORK_DIR/close.pid"
+# Only the parent prints the protocol. The checkpoint ends at a complete
+# event block, and the saved line count keeps the final drain from replaying it.
+long_output() { # [ready]
+  local through
+  if [[ "${1:-}" == ready ]]; then
+    [[ -f "$LONG_READY" ]] || return 0
+    read -r through < "$LONG_READY" || die state-read-failed "" "path=$LONG_READY"
+    [[ "$through" -gt "$LONG_PRINTED" ]] || return 0
+    sed -n "$((LONG_PRINTED + 1)),${through}p" "$LONG_OUT" || return 2
+    LONG_PRINTED="$through"
+  else
+    tail -n "+$((LONG_PRINTED + 1))" "$LONG_OUT" || return 2
+  fi
+}
 # Waits for the long pass and prints what it said. The EXIT trap's half of
 # long_collect, so it prints and never exits.
 long_drain() {
@@ -1556,7 +1572,7 @@ long_drain() {
   [[ -n "$LONG_PID" ]] || return 0
   wait "$LONG_PID" || rc=$?
   LONG_PID=""
-  cat -- "$LONG_OUT" || return 2
+  long_output || return 2
   cat -- "$LONG_ERR" >&2
   return "$rc"
 }
@@ -5387,8 +5403,9 @@ heartbeat() {
 # items, triage, outside contributions, refresh failures, security alerts,
 # lane preparation,
 # the lane checks and the accounts, in a forked process. Mail passes go on while it runs, so it
-# spools its stdout and stderr and this process prints them whole once it
-# ends, staying the one writer of the event protocol. The fork has its own
+# spools its stdout and stderr. This process prints the complete prefix after
+# pr-watch, then the rest once it ends, staying the one event-protocol writer.
+# Later checks must not hold a ready refresh behind their own reads. The fork has its own
 # copy of every global: the ones the loop below needs back
 # are LONG_RETURNS, written to LONG_STATUS, and a global a long-pass check
 # sets for this process belongs there. The baselines it committed are what the
@@ -5424,6 +5441,10 @@ long_pass() {
     check_terminal_lanes
     observe_lanes
     check_pr_watch
+    if [[ "$PASS_EVENT" -eq 1 ]]; then
+      wc -l < "$LONG_OUT" > "$LONG_READY.tmp" || die state-write-failed "" "path=$LONG_READY"
+      mv -f -- "$LONG_READY.tmp" "$LONG_READY" || die state-replace-failed "" "path=$LONG_READY"
+    fi
     [[ "$TRACKER_STOP" != 0 ]] || check_triage
     check_outside_contribution
     check_refresh
@@ -5453,7 +5474,8 @@ long_pass() {
 # the credential check, and a run dying on that check leaves the pass due.
 long_start() {
   github_ready
-  rm -f -- "$LONG_STATUS" "$LONG_DONE"
+  rm -f -- "$LONG_STATUS" "$LONG_DONE" "$LONG_READY"
+  LONG_PRINTED=0
   mkdir -p -- "$WORK_DIR/long" || die state-directory-create-failed "" "path=$WORK_DIR/long"
   local started MAIL_ROW_MODE=1
   started="$(date -u +%s)" || die time-failed "" "clock=UTC"
@@ -5466,13 +5488,14 @@ long_start() {
     >"$LONG_OUT" 2>"$LONG_ERR" &
   LONG_PID=$!
 }
-# Takes an ended long pass in: its lines out, its answers back; `wait` blocks
-# until it ends. A pass that died has said why on its own stderr, and this
+# Prints a complete ready prefix while the pass runs, then takes its remaining
+# lines and answers once it ends. A pass that died has said why on its own stderr, and this
 # process exits with its status, as it did when the checks ran here.
-long_collect() { # [wait]
+long_collect() {
   local rc=0
   [[ -n "$LONG_PID" ]] || return 0
-  [[ "${1:-}" == wait || -e "$LONG_DONE" ]] || return 0
+  long_output ready || die event-write-failed "" "path=$LONG_OUT"
+  [[ -e "$LONG_DONE" ]] || return 0
   long_drain || rc=$?
   [[ "$rc" -eq 0 ]] || exit "$rc"
   long_status_load || die long-pass-unfinished "" "path=$LONG_STATUS"
@@ -5554,22 +5577,22 @@ tick_sleep() { # SECS
 }
 # Until the next mail pass or long pass is due, or the overseer mailbox moves
 # off BOX_SEEN. A long pass in flight and the mailbox are checked each second, so
-# a long pass's block goes out within a second of its end and a note within a
+# a completed prefix goes out while the remaining checks run and a note within a
 # second of landing. With no mail interval the mail pass runs once a turn: a
-# long pass in flight is waited for, and with none the turn waits for the next
+# long pass in flight is drained until it ends, and with none the turn waits for the next
 # one to come due.
 WATCH_EPOCH="$(date -u +%s)" || die time-failed "" "clock=UTC"
 WATCH_SECONDS="$SECONDS"
 tick_wait() {
   local now next size
   while :; do
-    if [[ -n "$LONG_PID" && "$MAIL_INTERVAL" -eq 0 ]]; then
-      long_collect wait
-      return 0
-    fi
     if [[ -n "$LONG_PID" ]]; then
       long_collect
       [[ -n "$LONG_PID" ]] || return 0
+      if [[ "$MAIL_INTERVAL" -eq 0 ]]; then
+        tick_sleep 0.1
+        continue
+      fi
     fi
     now=$((WATCH_EPOCH + SECONDS - WATCH_SECONDS))
     next="$MAIL_DUE"

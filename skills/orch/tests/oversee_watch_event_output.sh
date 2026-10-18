@@ -198,6 +198,75 @@ delivery_contract() {
 delivery_sequence failed_delivery
 delivery_contract
 
+# check_refresh's GitHub run listing is a real operation after pr-watch.
+# Its acknowledgement holds that operation until the consumer has inspected
+# the ready block, rather than treating a sleep as evidence of ordering.
+refresh_delivery_sequence() {
+  local name="$1" interval="$2" subject="${WATCH_BIN:-$REPO_ROOT/skills/orch/scripts/oversee-watch}" child rc=0 early=no
+  new_case "$name"
+  printf '{"lanes":[],"launch_queue":[]}\n' > "$STUB_DIR/fleet.json"
+  printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out"
+  printf '1\n' > "$STUB_DIR/prwatch.rc"
+  mkdir -p "$STUB_DIR/bin"
+  cat > "$STUB_DIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == 'run list --repo owner/repo --workflow kendex-refresh.yml --status completed '* ]]; then
+  : > "$STUB_DIR/held"
+  while [[ ! -f "$STUB_DIR/release" ]]; do sleep 0.05; done
+  : > "$STUB_DIR/finished"
+fi
+exec "$DELIVERY_GH" "$@"
+EOF
+  cat > "$STUB_DIR/bin/watch" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$DELIVERY_TIMEOUT" 30 "$DELIVERY_WATCH" "$@"
+EOF
+  chmod +x "$STUB_DIR/bin/gh" "$STUB_DIR/bin/watch"
+  (
+    WATCH_BIN="$STUB_DIR/bin/watch" run_watch LINEAR_TEAM= \
+      PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL="$interval" \
+      DELIVERY_GH="$TMP_ROOT/bin/gh" DELIVERY_WATCH="$subject" \
+      DELIVERY_TIMEOUT="$(command -v timeout || command -v gtimeout)" \
+      -- --state "$STUB_DIR/fleet.json" --max-loops 1 2> "$STUB_DIR/err" |
+      while IFS= read -r line; do
+        printf '%s\n' "$line" >> "$STUB_DIR/out"
+        [[ "$line" != $'owner/repo\t12\taaaa0000\trefresh-ready\tCI passed' ]] || : > "$STUB_DIR/delivered"
+      done
+  ) &
+  child=$!
+  if await_marker "$STUB_DIR/held"; then
+    if await_marker "$STUB_DIR/delivered"; then early=yes; fi
+    REFRESH_EARLY="$early|$(test -e "$STUB_DIR/finished" && echo finished || echo held)"
+  else
+    REFRESH_EARLY=operation-unreached
+  fi
+  : > "$STUB_DIR/release"
+  wait "$child" || rc=$?
+  REFRESH_DELIVERY_RC="$rc"
+}
+refresh_delivery_contract() {
+  assert_eq "$REFRESH_EARLY" 'yes|held' 'refresh-ready reaches the consumer before the later GitHub read finishes' "$STUB_DIR/err"
+  assert_eq "$REFRESH_DELIVERY_RC" 0 'the released long pass completes' "$STUB_DIR/err"
+  assert_eq "$(grep -c '^EVENT pr-watch ' "$STUB_DIR/out" || true)" 1 'the early event header is not repeated at completion'
+  assert_eq "$(grep -c $'\trefresh-ready\t' "$STUB_DIR/out" || true)" 1 'the early refresh row is not repeated at completion'
+  assert_eq "$(test -e "$STUB_DIR/finished" && echo finished || echo missing)" finished 'the later GitHub read completes after release'
+}
+for delivery_interval in 0 1; do
+  refresh_delivery_sequence "refresh_delivery_$delivery_interval" "$delivery_interval"
+  refresh_delivery_contract
+done
+
+scripts="$(mutant_scripts refresh-delivery-buffered/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-delivery-buffered/github"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/refresh-delivery-buffered/linear"
+mutate_file "$scripts/oversee-watch" '  long_output ready || die event-write-failed "" "path=$LONG_OUT"' '  :'
+WATCH_BIN="$scripts/oversee-watch" refresh_delivery_sequence refresh_delivery_buffered_control 1
+control_rc=0
+( FAIL=0; refresh_delivery_contract; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/refresh-delivery-buffered.log" || control_rc=$?
+assert_eq "$control_rc" 1 'control: main buffering withholds refresh-ready until the held read finishes'
+
 heartbeat_sequence() {
   output_world "$1"
   output_pass

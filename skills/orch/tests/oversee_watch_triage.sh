@@ -30,7 +30,14 @@ run() {
   done
   [[ "$since" == no ]] || args+=(--since "$SINCE")
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
-  OUT="$(run_watch "${args[@]}" 2>"$ERR")" && RC=0 || RC=$?
+  if [[ -f "$STUB_DIR/fail-delivery" ]]; then
+    # A consumer can close its output stream. Refuse the actual write so
+    # the failure does not depend on which command reads the parent spool.
+    OUT=""
+    run_watch "${args[@]}" >&- 2>"$ERR" && RC=0 || RC=$?
+  else
+    OUT="$(run_watch "${args[@]}" 2>"$ERR")" && RC=0 || RC=$?
+  fi
 }
 
 # watch EXPECT — prints the run's value of every `name=` field EXPECT names,
@@ -83,18 +90,6 @@ check() {
 
 tracker_items() { printf '%s\n' "$1" > "$STUB_DIR/tracker.out"; }
 verdicts() { printf '{"triaged":%s}\n' "$1" > "$STUB_DIR/oversee-state.json"; }
-
-# The parent sends the long-pass spool to stdout. Refuse that write alone;
-# every other cat is still the host command.
-REAL_CAT="$(command -v cat)"
-cat >"$TMP_ROOT/bin/cat" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" == -- && "${2:-}" == */long.out && -f "$STUB_DIR/fail-delivery" ]]; then exit 42; fi
-exec "$TRIAGE_REAL_CAT" "$@"
-STUB
-chmod +x "$TMP_ROOT/bin/cat"
-export TRIAGE_REAL_CAT="$REAL_CAT"
 
 echo "=== oversee-watch triage ==="
 
