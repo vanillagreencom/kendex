@@ -22,6 +22,8 @@ use kendex_core::process::Hardened;
 const CODEX_PACKAGE: &str = ".agents/skills/bot-instructions";
 const CLAUDE_PACKAGE: &str = ".claude/skills/bot-instructions";
 
+mod owner_selection;
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
@@ -101,14 +103,22 @@ fn fixture_at(manifest: &str, armed: bool, harness: HarnessId, package_rel: &str
 /// package, the record `installed_declaration` reads.
 #[allow(clippy::unwrap_used)]
 fn record_install(env: &Env, root: &Path, harness: HarnessId, package: PathBuf) {
-    let mut lock = Lock {
-        version: kendex_core::lock::LOCK_VERSION,
-        ..Lock::default()
-    };
+    record_named_install(env, root, harness, "bot-instructions", package);
+}
+
+#[allow(clippy::unwrap_used)]
+fn record_named_install(env: &Env, root: &Path, harness: HarnessId, name: &str, package: PathBuf) {
+    let path = kendex_core::lock::lock_path(
+        env,
+        &Scope::Project {
+            root: root.to_owned(),
+        },
+    );
+    let mut lock = kendex_core::lock::load(&path).unwrap();
     lock.entries.insert(
-        kendex_core::lock::entry_key(ItemKind::Skill, "bot-instructions", harness),
+        kendex_core::lock::entry_key(ItemKind::Skill, name, harness),
         LockEntry {
-            name: "bot-instructions".to_owned(),
+            name: name.to_owned(),
             kind: ItemKind::Skill,
             harness,
             source: "local".to_owned(),
@@ -125,7 +135,7 @@ fn record_install(env: &Env, root: &Path, harness: HarnessId, package: PathBuf) 
             upstream_skills: None,
             emitted: Some(EmittedArtifact {
                 kind: ItemKind::Skill,
-                name: "bot-instructions".to_owned(),
+                name: name.to_owned(),
                 paths: vec![package],
             }),
             registration: None,

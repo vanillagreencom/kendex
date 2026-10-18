@@ -65,7 +65,7 @@ Never derive manifest state from what is on disk, and never write a second copy 
 - Do commit only what kendex wrote; a file the person wrote is never staged and never committed. One deletion rule in `crates/core/src/commit_offer/paths.rs` serves every reader: a deleted path the committed inventory names is kendex's whole, unless `GeneratedPaths::beside` names it.
 - Do carry a file kendex does not own whole, the manifest, `kendex.settings.toml`, `.gitignore` and the shared edit targets, only where the action changed it from a clean state; `Scan::carried` in `crates/core/src/commit_offer/mod.rs` is the one answer every count, list and commit reads.
 - Do run the commit through `git commit`, so the repository's own hooks run on it, and hand a refusal from git, a hook or `gh` to the person in that program's own words, whole.
-- Do hold the offer where an armed package says the commit would carry its files stale, per [repo-effects.md](repo-effects.md), and offer its setup instead.
+- Do hold the offer where an armed package says the commit would carry its files stale, per [repo-effects.md](repo-effects.md), and offer its setup instead. For configuration effects, use that document's selected owner for both reported paths and the check; the superseded package runs no check.
 - Do ask at most once per run per project.
 - Do build a new surface for the offer on `Scan` in `crates/core/src/commit_offer/`: it reads `Scan` and formats, and decides nothing.
 - Never undo a commit: no revert, no moving a branch ref backwards, no reset, no stash. The one working-tree write, `restore` in `crates/core/src/commit_offer/restore.rs`, puts named paths back to what the last commit holds and touches no ref and no index.

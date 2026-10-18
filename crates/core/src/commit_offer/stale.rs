@@ -118,6 +118,9 @@ pub fn stale(
             continue;
         };
         let declared = *declared;
+        if crate::bot_instructions::superseded(env, scope, &declared)? {
+            continue;
+        }
         if crate::repo_effects::touches_git(&declared.effects) {
             continue;
         }
