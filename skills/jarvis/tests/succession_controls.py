@@ -22,7 +22,7 @@ def main():
         for package in ("jarvis", "orch", "mailbox"):
             shutil.copytree(ROOT / "skills" / package / "scripts", skills / package / "scripts")
         source = skills / "jarvis/scripts/lib/session.py"
-        controls = [("absent verb", "jarvis/scripts/lib/session.py", 'for verb in ("start", "status", "stop", "succeed"):',
+        controls = [("absent verb", "jarvis/scripts/lib/session.py", 'for verb in ("start", "status", "stop", "succeed", "report-due"):',
                      'for verb in ("start", "status", "stop"):', "test_succession_contract"),
                     ("process identity", "jarvis/scripts/lib/session-backend.sh", '    lane_stop_identity "$1" "$2" "$3" ;;',
                      '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" ;;', "test_succession_identity"),

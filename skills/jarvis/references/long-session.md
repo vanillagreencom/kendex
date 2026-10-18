@@ -28,7 +28,7 @@ The current handoff is `state/handoff.md` in the [home layout](home-layout.md). 
 
 | Section | Required content |
 |---|---|
-| State | The session: where it runs, its holds, its wake registrations and its next report. The user's open questions as ids. Each task and awaited item as a tracker id with one unresolved next action. The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log. |
+| State | The session: where it runs, its holds, its wake registrations and report coverage. Read the next report through `jarvis-session report-due`; retain no due row. The user's open questions as ids. Each task and awaited item as a tracker id with one unresolved next action. The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log. |
 | Sub-agents | Each running lane or attached agent: its identity, task source and result destination. For an attached agent, identify its launch prompt and harness reply by the available agent or message ids. For a lane, record its task file and result file paths. Keep unfinished ids, available output locations and unknown state or locations under the emergency rule above. |
 | Instructions in force | Each temporary instruction from the user, its source and the event that ends it. Link the home of a standing rule. |
 | Progress log | One decision record per action at the time it occurs, under the record contract below. |

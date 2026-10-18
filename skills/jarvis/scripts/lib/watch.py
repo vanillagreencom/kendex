@@ -127,6 +127,13 @@ def event(header, **fields):
     return "EVENT " + header + "".join(" %s=%s" % (key, line_value(value, True)) for key, value in fields.items()) + "\n"
 
 
+def report_key(text):
+    match = re.fullmatch(r"EVENT report-due reason=(minutes|issues) since=(\S+)( landed=\d+)?\n", text)
+    if not match:
+        raise Failure("report-due", "protocol", "due-unread", "due-unread")
+    return hashlib.sha256(match[2].encode()).hexdigest()
+
+
 def atomic_json(path, value):
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as out:
         temporary = Path(out.name)
@@ -399,6 +406,8 @@ class Watch:
         self.presence_pending = {}
         self.next_unanswered = 0
         self.unanswered_pending = None
+        self.report_pending = None
+        self.next_report = 0
 
     def save(self):
         if self.state != self._saved:
@@ -617,6 +626,28 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                 outputs.append(("host", None, failure("host-pass", error).record))
         return outputs
 
+    def report(self):
+        try:
+            result = checked([self.bash, LIB.parent / "jarvis-session", "report-due", "--home", self.home],
+                             self.home, operation="report-due")
+            if not result:
+                return None
+            result = "EVENT " + result
+            report_key(result)
+            return result
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("report-due", error)
+
+    def accept_report(self, result):
+        if isinstance(result, Failure):
+            self.failed_pass("report", result.record)
+        else:
+            self.state.pop("report_failure", None)
+            # Retain the emitted event's identity in the existing pass cursor,
+            # so restart reads only the uncheckpointed tail, never a due row.
+            if result and report_key(result) != self.cursors.get("report", {}).get("event"):
+                self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
+
     def accept(self, outputs):
         for side, output, failure in outputs:
             if failure is not None:
@@ -666,6 +697,13 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         if self.unanswered_pending is None and now >= self.next_unanswered:
             self.next_unanswered = now + UNANSWERED_EVERY_SECS
             self.unanswered_pending = passes.submit(self.unanswered)
+        report = self.report_pending
+        if report is not None and report.done():
+            self.accept_report(report.result())
+            self.report_pending = None
+        if self.report_pending is None and now >= self.next_report:
+            self.next_report = now + 30
+            self.report_pending = passes.submit(self.report)
         for side in ("local", "host") if self.settings["JARVIS_CONTROL_HOST"] else ("local",):
             work = self.presence_pending.get(side)
             if work is not None and work.done():

@@ -22,6 +22,8 @@ Mail text keeps ordinary quotes, backslashes, Unicode and LF line breaks. Other 
 
 ## Delivery
 
+The loop polls `jarvis-session report-due` every 30 seconds independently of mail acquisition. That command reuses orch's `oversee-report due` with the controller's session start as its floor. It appends each distinct `EVENT report-due reason=... since=...` once to the same event log and batches it through the mailbox. Restart recovers its emitted-event fingerprint through the existing pass cursor. Report cadence, quiet hours, time zone and paths use orch's existing consumer settings. A failed report send remains due until an owner notice receipt names the report attachment. No due time is stored in the producer or handoff.
+
 The first complete pending block starts one fixed settle. Later events do not move the deadline. At the deadline, local home-root blocks come first. Full path and transport side identify the home. Display names do not identify roots. Each priority group keeps log order. The serialized batch holds at most 60 KB and never cuts a block. Deferred blocks stay pending. A single consumer block larger than the cap reports `event-too-large`; split that check's output into complete smaller blocks.
 
 The home mailbox writer receives one directive with a retained delivery key. A restart retries the saved bytes with that key. Only a normal send receipt or the exact key's repeated-delivery receipt commits progress. The mailbox remains the delivery ledger. The loop prints one batch pointer without its body. Read the body through the installed deliver hook or `lane-mail inbox --item overseer` from the home.

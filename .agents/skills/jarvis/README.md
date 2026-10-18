@@ -43,7 +43,7 @@ Your assistant reads the Jarvis skill when you delegate a task. It follows the r
 
 ## Customise
 
-Use the [home layout](#home-layout) for your files. Name your decision owners, permitted work, reporting cadence and quiet hours in your standing instructions.
+Use the [home layout](#home-layout) for your files. Name your decision owners and permitted work in your standing instructions. Set reporting cadence, quiet hours, time zone and report paths through orch's consumer settings; the [settings example](kendex.settings.toml.example) shows the report keys. The event producer runs the [progress checkpoint](workflows/session.md#progress-checkpoint) when a report is due.
 
 For a skill you write, create a `my-task/SKILL.md` under the own-skills path in the [home layout](#home-layout). Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Run `kendex add ./skills/own/my-task --skill my-task --harness codex --yes` from your assistant home. Select the harnesses you use with `--harness`.
 

@@ -221,6 +221,18 @@ class Session:
         print(json.dumps(answer, separators=(",", ":")), flush=True)
         self.emitted = True
 
+    def report_due(self):
+        # The controller owns the session start; orch owns cadence and receipts.
+        record = self.read()
+        if not record or not record.get("report_started_at"):
+            raise Refusal("record-unreadable")
+        result = self.run([BASH, str(BACKEND.parents[3] / "orch/scripts/oversee-report"),
+                           "due", "--session-start", str(record["report_started_at"])], check=False, env=os.environ)
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        self.emitted = True
+        return None, result.returncode
+
     def _current_request(self, record, generation, intent):
         current = record and record["generation"] == generation and record.get("intent") == intent
         if not current:
@@ -341,6 +353,7 @@ class Session:
                               detail="Jarvis's launch worker ended before Start completed.")
                 self.write(record)
             if matching and record["state"] in ("starting", "running") and (self.worker_live(record) if record["state"] == "starting" else self.terminal(record)):
+                record.setdefault("report_started_at", int(time.time()))
                 record["app_off"] = False
                 if boot:
                     record["boot"] = boot
@@ -383,6 +396,7 @@ class Session:
                     raise Refusal("record-unreadable")
             generation = int(record.get("generation", 0)) + 1 if record else 1
             next_record = {"v": 1, "home": self.home, "harness": args.harness, "account": account,
+                           "report_started_at": int(time.time()),
                            "origin": args.origin, "boot": boot or (record.get("boot") if record else None),
                            "generation": generation, "state": "starting", "reason": "launching", "detail": "",
                            "app_off": False, "intent": "start", "terminal": None,
@@ -434,6 +448,7 @@ class Session:
                 raise Refusal("record-unreadable")
             transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
             next_record = {"v": 1, "home": self.home, "harness": choice["harness"], "account": choice["account"], "choice": choice,
+                           "report_started_at": record.get("report_started_at", int(time.time())),
                            "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
                            "generation": generation, "intent": "succeed", "state": "handing-over", "reason": "succession", "detail": "",
                            "terminal": None, "predecessor": predecessor, "transfer": transfer,
@@ -742,7 +757,7 @@ class Arguments(argparse.ArgumentParser):
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed"):
+    for verb in ("start", "status", "stop", "succeed", "report-due"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "start":
@@ -767,6 +782,8 @@ def main():
             answer, code = session.stop(args.origin)
         elif args.verb == "succeed":
             answer, code = session.succeed()
+        elif args.verb == "report-due":
+            answer, code = session.report_due()
         else:
             answer, code = session.answer(session.read()), 0
     except Refusal as failure:

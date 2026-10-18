@@ -40,7 +40,7 @@ class Producer(unittest.TestCase):
         self.packages = self.root / "producer"
         for name in ("jarvis", "mailbox"):
             shutil.copytree(REPO / "skills" / name / "scripts", self.packages / name / "scripts")
-        for name in ("orch", "slack"):
+        for name in ("orch", "slack", "github"):
             self.packages.joinpath(name).symlink_to(REPO / "skills" / name, target_is_directory=True)
         self.scripts = self.packages / "jarvis/scripts"
         self.mail_command = self.packages / "mailbox/scripts/lane-mail"
@@ -576,6 +576,64 @@ class Producer(unittest.TestCase):
             self.watch().batch(1)
             self.assertEqual(len(self.inbox()), 1)
 
+    def test_report_deadline_restart_and_receipt(self):
+        clock = self.root / "clock"
+        clock.write_text("1059\n")
+        real_date = shutil.which("date")
+        self.executable("date", '#!/bin/sh\nif [ "$*" = "-u +%s" ]; then cat ' +
+                        shlex.quote(str(clock)) + '\nelse exec ' + shlex.quote(real_date) + ' "$@"; fi\n')
+        self.home.joinpath("kendex.settings.toml").write_text(
+            '[env]\nORCH_REPORT_EVERY_MINUTES="1"\nORCH_REPORT_QUIET_HOURS=""\n')
+        with patch.dict(os.environ, self.env | {"JARVIS_BASH": BASH}, clear=True), \
+                contextlib.redirect_stdout(io.StringIO()):
+            session = load(self.scripts / "lib/session.py").Session(self.home)
+            session.path.parent.mkdir(parents=True)
+            session.write(dict(v=1, home=str(self.home), harness="claude", account=str(self.root),
+                               state="running", reason="existing", report_started_at=1000))
+            watch = self.watch()
+            watch.next_presence["local"] = 1000000
+            pending = Future()
+            # A queued acknowledgement proves the report read completed;
+            # injected clock changes, rather than sleeps, cross the deadline.
+            with ThreadPoolExecutor(max_workers=1) as passes:
+                for now, stamp in ((0, 1059), (30, 1060)):
+                    clock.write_text(str(stamp) + "\n")
+                    watch._poll(passes, pending, now)
+                    passes.submit(lambda: None).result(timeout=30)
+                    watch._poll(passes, pending, now)
+                    watch.batch(now + 15)
+                    if stamp == 1059:
+                        self.assertEqual(self.inbox(), [])
+            due = "EVENT report-due reason=minutes since=1970-01-01T00:16:40Z\n"
+            self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
+            with patch.dict(os.environ, ORCH_REPORT="off"):
+                self.assertIsNone(watch.report())
+            successor = self.watch()
+            for result in (successor.report(),
+                           "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=2\n",
+                           "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=3\n"):
+                successor.accept_report(result)
+            successor.batch(60)
+            self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
+            path = self.command([REPO / "skills/orch/scripts/workflow-state", "progress-report-path"])
+            self.assertEqual(path.returncode, 0, path.stderr)
+            report = Path(path.stdout.strip())
+            report.write_text("checkpoint readings\n")
+            os.utime(report, (1060, 1060))
+            summary = self.root / "summary"
+            summary.write_text("checkpoint\n")
+            self.intercept_mail("exit 1")
+            sent = self.command([BASH, self.mail_command, "notice", "--item", "overseer", "--to", "owner",
+                                 "--attach", report, "--file", summary])
+            self.assertNotEqual(sent.returncode, 0)
+            self.assertEqual(successor.report(), due)
+            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+            self.mail(self.home, "notice", "checkpoint", "--to", "owner", "--attach", str(report))
+            self.assertIsNone(self.watch().report())
+            clock.write_text("1120\n")
+            self.assertEqual(self.watch().report(),
+                             "EVENT report-due reason=minutes since=1970-01-01T00:17:40Z\n")
+
     def test_slow_acquisition_does_not_extend_settle(self):
         ready, release = self.root / "ready", self.root / "release"
         os.mkfifo(ready)
@@ -878,6 +936,23 @@ class Producer(unittest.TestCase):
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
     def test_instrument_control(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = (SCRIPTS / "lib/watch.py").read_text()
+            old = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, 'if False and ' + old[3:])
+            self.assertNotEqual(source, mutant)
+            path = Path(folder) / "watch.py"
+            path.write_text(mutant)
+            case = Producer(methodName="test_report_deadline_restart_and_receipt")
+            case.setUp()
+            try:
+                case.module = load(path)
+                case.module.LIB = case.scripts / "lib"
+                with self.assertRaises(AssertionError):
+                    case.test_report_deadline_restart_and_receipt()
+            finally:
+                case.doCleanups()
         # This uncompiled source control stays in the instrument. A zeroed
         # settle must fail the same five-event behavioral assertion.
         with tempfile.TemporaryDirectory() as folder:

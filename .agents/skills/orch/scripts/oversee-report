@@ -78,6 +78,7 @@ refuse() { # KEY VALUE [CAUSE]
 usage() {
   cat <<'EOF'
 Usage: oversee-report due    --state PATH --repo OWNER/REPO [--repo ...]
+       oversee-report due    --session-start EPOCH [--state PATH] [--repo ...]
        oversee-report render --state PATH --repo OWNER/REPO [--repo ...]
        oversee-report write  --state PATH --repo OWNER/REPO [--repo ...]
                              --summary-file PATH [--succession]
@@ -114,6 +115,11 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          Quiet hours do not silence due. Outside quiet hours, a quiet report
          newer than the last sent report makes the morning brief due even
          before the next cadence interval, unless both triggers are off.
+         --session-start supplies a Jarvis session's original start in epoch
+         seconds, retained across succession. It needs no lane or repository.
+         In this mode only a report with an owner notice receipt advances
+         cadence; an unsent file leaves it due. Quiet hours defer the event
+         until their end. --state and --repo optionally include fleet landings.
 render   prints the rows.
 write    prints the rows and writes the same bytes to the path
          `workflow-state progress-report-path` prints, with --succession
@@ -291,12 +297,14 @@ case "$1" in
   *) refuse args "$1" ;;
 esac
 STATE=""
+SESSION_START=""
 SUMMARY=""
 SUCCESSION=0
 REPOS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --state) [[ $# -ge 2 && -n "$2" ]] || refuse args "$1"; STATE="$2"; shift 2 ;;
+    --session-start) [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || refuse args "$1"; SESSION_START="$2"; shift 2 ;;
     --repo) [[ $# -ge 2 && -n "$2" ]] || refuse args "$1"; REPOS+=("$2"); shift 2 ;;
     --summary-file) [[ $# -ge 2 && -n "$2" ]] || refuse args "$1"; SUMMARY="$2"; shift 2 ;;
     --succession) SUCCESSION=1; shift ;;
@@ -304,8 +312,12 @@ while [[ $# -gt 0 ]]; do
     *) refuse args "$1" ;;
   esac
 done
-[[ -n "$STATE" ]] || refuse args missing-state
-[[ ${#REPOS[@]} -gt 0 ]] || refuse args missing-repo
+if [[ -n "$SESSION_START" ]]; then
+  [[ "$VERB" == due ]] || refuse args due-only-option
+else
+  [[ -n "$STATE" ]] || refuse args missing-state
+  [[ ${#REPOS[@]} -gt 0 ]] || refuse args missing-repo
+fi
 if [[ "$VERB" == write ]]; then
   [[ -n "$SUMMARY" ]] || refuse args missing-summary-file
 elif [[ -n "$SUMMARY" || "$SUCCESSION" -eq 1 ]]; then
@@ -376,7 +388,7 @@ case "$REPORT" in on | off) ;; *) refuse setting "ORCH_REPORT:$REPORT" ;; esac
 # The repositories ORCH_CONNECTED_REPOS lists, after the --repo values, as the
 # watch whose report-due event runs this reads them: a merge there can make a
 # report due, so the report lists it.
-CONNECTED="$(orch_connected_repos "${REPOS[@]}")" || refuse setting-read ORCH_CONNECTED_REPOS
+CONNECTED="$(orch_connected_repos ${REPOS[@]+"${REPOS[@]}"})" || refuse setting-read ORCH_CONNECTED_REPOS
 IFS=$'\n' read -ra CONNECTED_REPOS -d '' <<<"$CONNECTED" || true
 REPOS+=(${CONNECTED_REPOS[@]+"${CONNECTED_REPOS[@]}"})
 EVERY_MINUTES="${ORCH_REPORT_EVERY_MINUTES-120}"
@@ -475,7 +487,8 @@ fi
 
 # --- fleet state and the last report -----------------------------------------
 
-if ! STATE_JSON="$(jq -c 'select(type == "object" and ((.lanes // []) | type) == "array") | .lanes //= []' -- "$STATE" 2>/dev/null)"; then
+STATE_JSON='{"lanes":[]}'
+if [[ -n "$STATE" ]] && ! STATE_JSON="$(jq -c 'select(type == "object" and ((.lanes // []) | type) == "array") | .lanes //= []' -- "$STATE" 2>/dev/null)"; then
   refuse state "$STATE"
 fi
 [[ -n "$STATE_JSON" ]] || refuse state "$STATE"
@@ -538,12 +551,19 @@ for file in "$REPORT_DIR"/*; do
   fi
 done
 if [[ -z "$MARKER" || -z "$OWNER_MARKER" ]]; then
-  start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
+  start="$SESSION_START"
+  if [[ -z "$start" ]]; then
+    start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
+    [[ -z "$start" ]] || start="$(to_epoch "$start")" || refuse state "$STATE"
+  fi
   if [[ -n "$start" ]]; then
-    start="$(to_epoch "$start")" || refuse state "$STATE"
     [[ -n "$MARKER" ]] || MARKER="$start"
     [[ -n "$OWNER_MARKER" ]] || OWNER_MARKER="$start"
   fi
+fi
+if [[ -n "$SESSION_START" ]]; then
+  MARKER="$OWNER_MARKER"
+  [[ "$NOTICE_MODE" != quiet ]] || exit 0
 fi
 # Cadence counts from every written report. The report itself counts from
 # the last sent one. If retention removed that file, the fleet start is a
@@ -581,7 +601,7 @@ landed_read() {
     refuse state "$STATE"
   fi
   since="$(from_epoch "$LANDED_SINCE" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$LANDED_SINCE"
-  for repo in "${REPOS[@]}"; do
+  for repo in ${REPOS[@]+"${REPOS[@]}"}; do
     if ! list="$(gh pr list --repo "$repo" --state merged --search "merged:>=$since" --limit "$MERGED_PAGE" \
       --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body 2>"$WORK_DIR/gh.err")"; then
       refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"

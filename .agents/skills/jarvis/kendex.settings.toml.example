@@ -9,3 +9,9 @@ JARVIS_WAKE_SETTLE_SECS = "15"
 # Optional existing Slack hold. Set this in each root whose relay is held.
 # Accepts an absolute path, ~/path, or a path relative to that root.
 SLACK_JARVIS_SESSION_FILE = ""
+# Report cadence and delivery use orch's settings. Empty quiet hours permits
+# checkpoints at any hour; otherwise they arrive after the quiet window.
+ORCH_REPORT_EVERY_MINUTES = "120"
+ORCH_REPORT_QUIET_HOURS = "0-7"
+ORCH_OWNER_TIME_ZONE = "America/Los_Angeles"
+# ORCH_PROGRESS_REPORT_DIR uses orch's default tmp/progress-reports.

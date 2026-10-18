@@ -10,6 +10,7 @@ Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`. Use the Jarvis package installed in HOME. Supply the account directory for the selected app. Both modes follow [Start](#start).
 - A consumer can append `--brief-file PATH` with its private instructions on one printable line. The session command delivers those instructions with Start after the harness confirms its native identity. This route starts no repository overseer workflow.
 - Read `.agents/skills/jarvis/scripts/jarvis-session status --home HOME` for the recorded session. A `starting` answer means a fact Start waits for is still unconfirmed: the native identity, on Copilot CLI and Codex the end of the kickoff turn the launch submits before the brief, or the session's taking of the Start brief at its first tool call or, on Claude Code, Codex and Copilot CLI, its turn end. Status starts and stops nothing.
+- `.agents/skills/jarvis/scripts/jarvis-session report-due --home HOME` reads orch's derived schedule using the controller's original session start. Succession retains that start. When adopting this checkpoint in an already running session, repeat its Start command once to establish the start floor.
 - Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`. An app that turns Jarvis off uses `--origin app-off`. Only `start --origin app-on` clears that Off. A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
 
 ## Start
@@ -53,11 +54,20 @@ A consumer's own rule files keep their content. Its start instructions load only
 ## Event loop
 
 - Read each delivered event and connect it to an open item or create that item.
+- On `EVENT report-due`, follow [Progress checkpoint](#progress-checkpoint). The producer schedules this event; set no model timer and store no due row.
 - Load the action's sections under [Action routes](#action-routes) before acting.
 - Handle user decisions through [decisions.md:Authority](../references/decisions.md#authority). Use [communication.md:Message types](../references/communication.md#message-types) for replies, notices and scheduled reports.
 - Update the item's state after each action. Keep an unresolved obligation open until its acceptance check passes.
 - Run the verify pass after handling events and before waiting again. Select the checks under [Homes](../references/long-session.md#homes). Check each due box at its evidence source under [verification.md:Sources](../references/verification.md#sources). Record the outcome on the item and take the next action on failure.
 - Wait through the selected event source when no authorized work or due check remains.
+
+## Progress checkpoint
+
+- Read [Homes](../references/long-session.md#homes), the [Handoff contract](../references/long-session.md#handoff), [Message types](../references/communication.md#message-types) and [Delivery](../references/communication.md#delivery) through `jarvis-section`.
+- Read the tracker live through every page: Verifying counts, each item's entry time into that state, and open session checks. Read landings by their merge time since the event's `since` cutoff, and pending asks and their answers from the live mailboxes. Use the consumer's selected repositories and tracker project. A failed read is unavailable evidence; preserve that distinction in the report.
+- Refresh changed lines in the handoff's four required sections and its checkpoint coverage. Follow Handoff replacement before converting an older handoff. Run the consumer's registered checks from its standing instructions and record their results at their owning tracker items.
+- Write the report to the path `.agents/skills/orch/scripts/workflow-state progress-report-path` gives, and send it once through `.agents/skills/mailbox/scripts/lane-mail notice --item overseer --to owner --attach PATH --file SUMMARY`. Follow the consumer's report format and delivery settings. Keep the file on a failed send and retry that same attachment; do not claim delivery or advance coverage without the writer's receipt. Record an unresolved send as open work before waiting or handing over.
+- Read `jarvis-session report-due --home HOME` after delivery to confirm the schedule. The next checkpoint is derived from the receipted file, and succession inherits that schedule without copying a due time. Commit changed session state under the Handoff contract.
 
 ## Handoff replacement
 
