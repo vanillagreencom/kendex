@@ -244,6 +244,27 @@ pi|{"compaction":{"enabled":true}}|
 pi|{"compaction":{"enabled":false}}|200000
 ROWS
 
+# Read the custom launch's generated environment, then run the real adapter.
+mkdir -p "$TMP_ROOT/launch-bin"
+cat > "$TMP_ROOT/launch-bin/codex" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "${ORCH_COMPACTION_OVERRIDES:-}"
+STUB
+chmod +x "$TMP_ROOT/launch-bin/codex"
+while IFS='|' read -r cmd point; do
+  evidence=$(PATH="$TMP_ROOT/launch-bin:$PATH" "$BASH" -euo pipefail -c '
+    source "$1/lib/lane-launch.sh"
+    line=$(lane_launch_line "$2" codex CODEX_HOME "$3" custom)
+    "$BASH" -c "$line"
+  ' _ "$SCRIPTS_DIR" "$cmd" "$TMP_ROOT/launch-home")
+  answer=$(ORCH_COMPACTION_OVERRIDES="$evidence" reading "$LIB" codex "" < "$T/codex-last")
+  assert_eq "$answer" "rc=0 232560|$point|gpt-6-astra" "custom Codex command window: $cmd"
+done <<'ROWS'
+codex -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|258400
+codex prompt|
+codex -c model_auto_compact_token_limit=9223372036854775807; echo unknown|
+ROWS
+
 # Every harness reaches the common judge through its adapter. Sonnet's mark
 # must fit a supported 200K session even when its alias selects a larger one.
 while IFS='|' read -r harness model tokens expected full; do

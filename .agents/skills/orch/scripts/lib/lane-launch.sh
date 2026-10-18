@@ -817,8 +817,8 @@ launch_choice_compaction_off() { # HARNESS
 # quotes and backslashes removed as the shell removes them, and nothing
 # expanded, since TEXT is a caller's command and evaluating it would run it.
 LAUNCH_CHOICE_ARGV=()
-launch_choice_shell_words() { # TEXT
-  local text="$1" i=0 n c next word="" inword=false quote=""
+launch_choice_shell_words() { # TEXT [literal]
+  local text="$1" literal="${2:-}" i=0 n c next word="" inword=false quote="" braces=0
   LAUNCH_CHOICE_ARGV=()
   n=${#text}
   while (( i < n )); do
@@ -827,6 +827,7 @@ launch_choice_shell_words() { # TEXT
       if [[ "$c" == "'" ]]; then quote=""; else word+="$c"; fi
     elif [[ "$quote" == '"' ]]; then
       next="${text:i+1:1}"
+      [[ "$literal" != literal || ( "$c" != '$' && "$c" != '`' ) ]] || return 1
       if [[ "$c" == '"' ]]; then
         quote=""
       elif [[ "$c" == '\' && ( "$next" == '$' || "$next" == '`' || "$next" == '"' || "$next" == '\' ) ]]; then
@@ -836,11 +837,22 @@ launch_choice_shell_words() { # TEXT
         word+="$c"
       fi
     else
+      # Literal argv evidence cannot include shell operators or expansions.
+      if [[ "$literal" == literal ]]; then
+        case "$c" in
+          '$'|'`'|';'|'&'|'|'|'<'|'>'|'('|')'|'*'|'?'|'['|'~'|'#'|$'\n') return 1 ;;
+          '{') braces=$((braces + 1)) ;;
+          '}') [[ "$braces" -eq 0 ]] || braces=$((braces - 1)) ;;
+          ',') [[ "$braces" -eq 0 ]] || return 1 ;;
+          '.') [[ "$braces" -eq 0 || "${text:i:2}" != '..' ]] || return 1 ;;
+        esac
+        [[ "$c" != '\' || ( -n "${text:i+1:1}" && "${text:i+1:1}" != $'\n' ) ]] || return 1
+      fi
       case "$c" in
         ' ' | $'\t' | $'\n')
           if [[ "$inword" == true ]]; then
             LAUNCH_CHOICE_ARGV+=("$word")
-            word="" inword=false
+            word="" inword=false braces=0
           fi
           ;;
         "'" | '"') quote="$c" inword=true ;;
@@ -850,6 +862,7 @@ launch_choice_shell_words() { # TEXT
     fi
     i=$((i + 1))
   done
+  [[ "$literal" != literal || -z "$quote" ]] || return 1
   [[ "$inword" != true ]] || LAUNCH_CHOICE_ARGV+=("$word")
 }
 
@@ -1375,14 +1388,13 @@ lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
 }
 
 # Carry only compaction overrides from the normalized command we execute.
-# Custom shell commands have no verified argv. Clear inherited evidence for
-# those commands so the hook cannot reuse its parent's settings. No stored
-# default enters this value; the adapter judges whether it is complete.
-lane_launch_compaction_env() { # CMD HARNESS VERIFIED
-  local cmd="$1" harness="$2" verified="$3" word assignment overrides="" settings='{}'
-  if [[ "$harness" == codex && "$verified" == true ]]; then
-    launch_choice_shell_words "$cmd" || return 1
-    [[ "${LAUNCH_CHOICE_ARGV[0]:-}" == codex ]] || return 1
+# The launch check and child environment use this same reader, so accepting a
+# custom command also establishes its evidence. No stored default enters it.
+# Shell text with no literal Codex argv clears inherited evidence.
+lane_launch_compaction_env() { # CMD HARNESS
+  local cmd="$1" harness="$2" word assignment overrides="" settings='{}'
+  if [[ "$harness" == codex ]] && launch_choice_shell_words "$cmd" literal \
+      && [[ "${LAUNCH_CHOICE_ARGV[0]:-}" == codex ]]; then
     set -- "${LAUNCH_CHOICE_ARGV[@]}"
     shift
     while [[ "$#" -gt 0 ]]; do
@@ -1404,8 +1416,10 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
                 | if startswith("\"") and endswith("\"") then .[1:-1] else . end)}
           else $settings end') || return 1
     done
-    overrides=$(jq -cn --arg harness "$harness" --argjson settings "$settings" \
-      '{harness:$harness,settings:$settings}') || return 1
+    if [[ "$settings" != '{}' ]]; then
+      overrides=$(jq -cnS --arg harness "$harness" --argjson settings "$settings" \
+        '{harness:$harness,settings:$settings}') || return 1
+    fi
   fi
   printf 'ORCH_COMPACTION_OVERRIDES=%s' "$(lane_single_quote "$overrides")"
 }
@@ -1537,7 +1551,7 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" verified=true env_words scrub
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" env_words scrub
   [[ -z "${6:-}" ]] || form=custom
   printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
   scrub="env$scrub"
@@ -1546,8 +1560,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
   [[ -z "${7:-}" ]] || scrub+=" $7"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex && -n "$var" ]]; then
-    [[ "$form" != unchecked && "$form" != custom ]] || verified=false
-    launch_env=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
+    launch_env=$(lane_launch_compaction_env "$cmd" "$harness") || return 1
   fi
   if [[ "$harness" != copilot ]]; then
     case "$form" in

@@ -1319,9 +1319,11 @@ EFFORT_SCRIPTS="$(mutant_scripts effort-writer open-terminal)" || exit 1
 mutate_file "$EFFORT_SCRIPTS/open-terminal" '    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1 ;;' '    *) ;;'
 while IFS='|' read -r item harness flags want; do
   effort_ot="$OT"
+  effort_cmd=true
+  [[ "$harness" != codex ]] || effort_cmd=codex
   [[ "$harness" != opencode ]] || effort_ot="$EFFORT_SCRIPTS/open-terminal"
   PI_CODING_AGENT_DIR="$PI_LOCAL" COPILOT_HOME="$COP_RECORD_HOME" run_ot SCRIPT="$effort_ot" CWD="$REPO" --ghostty --harness "$harness" \
-    --cmd "true $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$item"
+    --cmd "$effort_cmd $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$item"
   assert_eq "rc=$RC effort=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$item"'") | [has("effort"), .effort]' | jq -c .)" \
     "rc=0 effort=[true,$want]" "$harness launch effort: $flags" "$TMP_ROOT/err"
 done <<'ROWS'
