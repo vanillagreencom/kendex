@@ -683,6 +683,10 @@ environment_rows() {
 [2,"sh wrapper.sh set","sh-wrapper-bare-set"]
 [2,"bash wrapper.sh set > out","wrapper-bare-set-redirect"]
 [0,"cat <<'EOF' > script.py\nif __name__ == \"__main__\":\n    options = 'set -euo pipefail'\n    launcher = \"env NAME=value command-name\"\n    print(options)\nEOF","quoted-heredoc-script"]
+[0,"cat > tmp/capture-helper.sh <<'HELPER'\nshell_env=(env NAME=value)\n# process env and export are data in this file\nHELPER\npython3 - <<'PY'\nfrom pathlib import Path\nsummary = Path('tmp/completion-summary.md')\nfor line in Path('tmp/screenshot-index').read_text().splitlines():\n    summary.write_text(summary.read_text() + '- ' + line + '\\n')\nPY","written-helper-followed-python-body"]
+[0,"cat > tmp/capture-helper.sh <<'HELPER'\nshell_env=(env NAME=value)\n# process env and export are data in this file\nHELPER\npython3 -c 'pass'","written-helper-followed-python-command-baseline"]
+[0,"cat > tmp/completion-summary.md <<'SUMMARY'\n## Completion summary\n- The page opens each file named by the user.\nSUMMARY\npython3 - <<'PY'\nfrom pathlib import Path\nsummary = Path('tmp/completion-summary.md')\nfor line in Path('tmp/screenshot-index').read_text().splitlines():\n    summary.write_text(summary.read_text() + '- ' + line + '\\n')\nPY","completion-summary-followed-python-body-baseline"]
+[0,"set -- \"$a\" \"$b\"","set-positional-reset-baseline"]
 [0,"cat <<\"EOF\" > script.py\nset -euo pipefail\nenv -u NAME -u OTHER command-name\n$(env)\nEOF","double-quoted-heredoc-data"]
 [0,"cat <<\\EOF\nenv\nEOF","escaped-heredoc-delimiter"]
 [0,"cat <<E'OF'\nenv\nEOF","split-quoted-heredoc-delimiter"]
@@ -1269,6 +1273,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
       defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
+      defect == "file-body-retained" { swap("main_text=${main_text:0:body_start}${body//[!$'\''\\n'\'']/ }${main_text:body_end}", ":") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
         block = $0; getline; block = block "\n" $0; getline; block = block "\n" $0; changed++; next
       }
@@ -1460,6 +1465,7 @@ suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
 quoted-heredoc|FAIL environment: double-quoted-heredoc-data: exit=2 expected=0
+file-body-retained|FAIL environment: written-helper-followed-python-body: exit=2 expected=0
 heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
 unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
 suffix-first-word|FAIL environment: unsupported-list-evidence: exit=0 expected=2
