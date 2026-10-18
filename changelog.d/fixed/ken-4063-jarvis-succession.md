@@ -1,1 +1,1 @@
-- Managed Jarvis sessions receive the context handoff mark without registering as a repository overseer.
+- Managed Jarvis sessions receive the context handoff mark without registering as a repository overseer, including Copilot sessions using SDK context readings. Registered overseers retain their existing turn-end checks.

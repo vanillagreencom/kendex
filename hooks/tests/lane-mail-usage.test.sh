@@ -332,7 +332,10 @@ assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
 
 # The earlier reading kept where the write failed: the turn end past the mark
 # judges the older figure as room.
-mutant usage-stale-kept -e 's@^    rm -f -- "\${BOX:?}/\$LANE_CONTEXT_RECORD" 2>>"\$WORK_DIR/record.err" || STALE_RECORD=stands$@    :@'
+STALE_REMOVAL_PATTERN='^[[:space:]]*rm -f -- "\${BOX:?}/\$LANE_CONTEXT_RECORD" 2>>"\$WORK_DIR/record.err" || STALE_RECORD=stands$'
+assert_eq "$(grep -c "$STALE_REMOVAL_PATTERN" "$HOOK")" 1 \
+  'control: the stale-reading removal matches once regardless of nesting'
+mutant usage-stale-kept -e "s@$STALE_REMOVAL_PATTERN@    :@"
 new_usage_lane control_stale KEN-418 "$MUTANT_PATH"
 usage 150000 272000
 usage 199000 272000 s1 "PATH=$TMP_ROOT/nodate:$PATH"
