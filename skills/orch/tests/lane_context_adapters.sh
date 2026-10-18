@@ -563,7 +563,7 @@ PANEL_HOME="$TMP_ROOT/panel-home"
 mkdir -p "$PANEL_BOX" "$PANEL_HOME"
 panel_read() { # HARNESS TRANSCRIPT
   local out rc=0
-  out=$(HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
+  out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
     DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
     "$BASH" "$LIB" "$1" s1 "$2" "$PANEL_BOX" "$T" "" 2>"$T/panel.err") || rc=$?
   printf 'rc=%s verdict=%s' "$rc" "$out"
