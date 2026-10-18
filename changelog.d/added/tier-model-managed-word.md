@@ -1,1 +1,0 @@
-- `tier-model claude --model WORD` returns a managed-launch family alias without runtime context and applies consumer model-class overrides. An override for another provider refuses with `unsupported-managed-model`.

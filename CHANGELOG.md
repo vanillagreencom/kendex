@@ -6,6 +6,24 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-10-18
+
+### Added
+
+- Automatic consumer refresh can update declared projects inside one checkout through `KENDEX_REFRESH_PROJECTS`. Their renders enter the same refresh pull request.
+
+  You do: set `KENDEX_REFRESH_PROJECTS` in the root `kendex.settings.toml` `[env]` table to the project paths separated by semicolons, such as `"packaging/jarvis-home;another/project"`.
+- `tier-model claude --model WORD` returns a managed-launch family alias without runtime context and applies consumer model-class overrides. An override for another provider refuses with `unsupported-managed-model`.
+
+### Fixed
+
+- Pi engineer agents omit scout from their default delegates when the consumer does not install scout for Pi. Body-only forks preserve that list. Explicit delegate overrides keep their configured values.
+- Refresh adoption accepts a kendex release checkout inside the consumer without recording its temporary template path in the generated-file inventory.
+- Hourly consumer refresh skips checkout, installation and app token creation when its saved inputs remain current and no rolling pull request needs review work. Consumers with other catalogs or revision overrides keep full update checks.
+
+  You do: adopt the current refresh caller to enable the input check's read permissions.
+- Refresh can commit updated bot-instructions package files when the offered commit has no bot-instructions configuration. Prior manifest edits left out of that commit do not bypass its setup requirement.
+
 ## [1.19.2] - 2026-10-16
 
 ### Changed
@@ -2947,7 +2965,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.19.2..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.20.0..HEAD
+[1.20.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.20.0
 [1.19.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.2
 [1.19.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.1
 [1.19.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.0

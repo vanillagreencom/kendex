@@ -1,1 +1,0 @@
-- Refresh can commit updated bot-instructions package files when the offered commit has no bot-instructions configuration. Prior manifest edits left out of that commit do not bypass its setup requirement.
