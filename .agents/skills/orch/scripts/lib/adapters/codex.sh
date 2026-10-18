@@ -44,6 +44,55 @@ lane_adapter_codex_reading() { # UNREAD
       else "\(.reading)\t\(.model // "")" end'
 }
 
+# The hook cannot call the session's collaboration tools. Codex 0.163.0
+# persists their calls and results in its rollout; read that ordered history
+# instead. A snapshot observes idle or returned agents. Later launches and
+# followups put them out again. /root is the lead, never its attached child.
+# The caller bounds the full read and discards output on a parse failure.
+# PreToolUse.tool_use_id names the invocation being judged, which is not an
+# earlier launch even where its call is already in the rollout:
+# https://learn.chatgpt.com/docs/hooks#pretooluse
+lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
+  jq -Rnr --arg current_call "${1:-}" '
+    def decoded: if type == "string" then fromjson else . end;
+    def status:
+      if type == "object" then keys | if length == 1 then .[0] else "unknown" end else . end
+      | if . == "idle" or . == "completed" then "completed"
+        elif . == "running" then "running" else error("unclassified agent status") end;
+    def name: if type == "string" and test("^/root(/[A-Za-z0-9_-]+)*$") then .
+      else error("invalid agent name") end;
+    reduce (inputs | fromjson | objects | select(.type == "response_item") | .payload
+        | select($current_call == "" or .call_id != $current_call)) as $r
+      ({calls: {}, agents: {}, observed: false};
+        if $r.type == "function_call" then
+          ($r.name | split(".") | last | sub("^collaboration"; "")) as $tool
+          | if $tool == "list_agents" or $tool == "spawn_agent" or $tool == "followup_task" then
+              ($r.arguments | decoded) as $args
+              | if $tool != "list_agents" or ($args.path_prefix // "") == ""
+                  or $args.path_prefix == "/root" then .observed = true else . end
+              | .calls[$r.call_id] = {tool: $tool}
+              | if $tool == "followup_task" then
+                  ($args.target | if startswith("/") then . else "/root/" + . end | name) as $target
+                  | .agents[$target] = "running"
+                else . end
+            else . end
+        elif $r.type == "function_call_output" and .calls[$r.call_id] != null then
+          .calls[$r.call_id].tool as $tool
+          | (if $tool == "followup_task" then null else $r.output | decoded end) as $out
+          | if $tool == "list_agents" then
+              if ($out.agents | type) != "array" then error("agent list is unreadable") else . end
+              | reduce $out.agents[] as $agent (. ; ($agent.agent_name | name) as $id
+                  | if $id == "/root" then . else .agents[$id] = ($agent.agent_status | status) end)
+            elif $tool == "spawn_agent" then
+              ($out.task_name | name) as $id | .agents[$id] = "running"
+            else . end
+          | del(.calls[$r.call_id])
+        else . end)
+    | (.agents | to_entries[] | [.key, .value] | @tsv),
+      (select(.observed | not) | ["?", "unread"] | @tsv),
+      (.calls[] | select(.tool == "spawn_agent" or .tool == "list_agents") | ["?", "pending"] | @tsv)'
+}
+
 # lane_adapter_codex_transcript_owned PATH SESSION HOME — whether PATH is the
 # rollout Codex writes for the session SESSION under the launch home HOME, the
 # directory CODEX_HOME carries: `HOME/sessions/<year>/<month>/<day>/rollout-
