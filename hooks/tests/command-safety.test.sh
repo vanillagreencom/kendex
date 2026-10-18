@@ -548,6 +548,7 @@ environment_rows() {
 [0,"bash wrapper.sh \"env -u NAME -u OTHER command-name args\"","wrapper-quoted-unset-data"]
 [0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A -u B VAR=1 bash test.sh' --build 'bash -n build.sh'","waiter-quoted-unset-command"]
 [0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'unset A B; export VAR=1; exec bash test.sh' --build 'bash -n build.sh'","waiter-quoted-setup-command"]
+[0,"env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE sh tmp/waiter.X/launch.sh bash -c 'scripts/validate logic --changed c18e; scripts/validate manifests --changed c18e; scripts/validate boundary --changed c18e; scripts/validate tools --changed c18e; scripts/validate repo --changed c18e'","outer-unset-waiter-literal-validation"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env' --build 'bash -n build.sh'","waiter-quoted-env-dump"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'printenv' --build 'bash -n build.sh'","waiter-quoted-printenv-dump"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'unset A B; export VAR=1; exec bash test.sh; env'","waiter-quoted-setup-followed-by-dump"]
@@ -588,6 +589,43 @@ environment_rows() {
 [2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 84ecebaad618841f58f67d71a1da25c9034280f2 --test 'true' --build 'true' --mutate 'eval \"timeout 5 printenv\"'","waiter-recursive-mutate-eval-printenv"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"eval \\\"timeout 5 env\\\"\"'","waiter-recursive-shell-eval-env"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"printf %s env\"'","waiter-recursive-command-data-refusal"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'cat <<EOF\n$(xargs env)\nEOF' --build 'true' --mutate 'true'","waiter-registry-test-expand-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'cat <<EOF\n$(timeout 5 env)\nEOF' --build 'true' --mutate 'true'","waiter-registry-test-expand-timeout"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'bash <<EOF\ntimeout 5 env\nEOF' --build 'true' --mutate 'true'","waiter-registry-test-execute-body"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'true' --build 'cat <<EOF\n$(xargs env)\nEOF' --mutate 'true'","waiter-registry-build-expand-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'true' --build 'cat <<EOF\n$(timeout 5 env)\nEOF' --mutate 'true'","waiter-registry-build-expand-timeout"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'true' --build 'bash <<EOF\ntimeout 5 env\nEOF' --mutate 'true'","waiter-registry-build-execute-body"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'true' --build 'true' --mutate 'cat <<EOF\n$(xargs env)\nEOF'","waiter-registry-mutate-expand-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'true' --build 'true' --mutate 'cat <<EOF\n$(timeout 5 env)\nEOF'","waiter-registry-mutate-expand-timeout"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha d770931eece9b9256c8cce59e1aa4cb46d8f54c2 --test 'true' --build 'true' --mutate 'bash <<EOF\ntimeout 5 env\nEOF'","waiter-registry-mutate-execute-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat <<EOF\n`xargs env`\nEOF'","waiter-registry-backticks"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat <<-EOF\n\t$(timeout 5 env)\n\tEOF'","waiter-registry-tabs"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat 0<<EOF\n$(xargs env)\nEOF'","waiter-registry-explicit-stdin"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat 3<<EOF\n$(xargs env)\nEOF'","waiter-registry-nonstdin-expansion"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-quoted-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<\"EOF\"\ntimeout 5 env\nEOF'","waiter-registry-double-quoted-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'sh <<EOF\ntimeout 5 env\nEOF'","waiter-registry-sh-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -s <<EOF\ntimeout 5 env\nEOF'","waiter-registry-shell-option-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash /dev/fd/3 3<<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-nonstdin-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'source /dev/fd/3 3<<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-source-descriptor"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c '\\''bash'\\'' <<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-inherited-queue"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"bash -c bash\" <<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-inherited-deep"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'eval '\\''bash'\\'' <<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-inherited-eval"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<'\\''OUTER'\\''\nbash <<'\\''INNER'\\''\ntimeout 5 env\nINNER\nOUTER'","waiter-registry-nested-executable"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<'\\''OUTER'\\''\ncat <<INNER\n$(xargs env)\nINNER\nOUTER'","waiter-registry-nested-expansion"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<'\\''FIRST'\\'' 3<<SECOND\ntimeout 5 env\nFIRST\n$(xargs env)\nSECOND'","waiter-registry-multiple-bodies"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c '\\''eval bash'\\'' <<'\\''EOF'\\''\ntimeout 5 env\nEOF'","waiter-registry-queued-to-eval"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c '\\''cat <<EOF\n$(xargs env)\nEOF'\\'''","waiter-registry-queued-shell-source"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'eval '\\''cat <<EOF\n$(xargs env)\nEOF'\\'''","waiter-registry-queued-eval-source"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat <<'\\''EOF'\\''\n$(xargs env)\nEOF'","waiter-registry-quoted-cat-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat <<EOF\ntimeout 5 env\nEOF'","waiter-registry-unquoted-cat-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat <<\"EOF\"\n$(timeout 5 env)\nEOF'","waiter-registry-double-quoted-cat-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'python3 <<'\\''EOF'\\''\nprint('\\''timeout 5 env'\\'')\nEOF'","waiter-registry-python-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<'\\''EOF'\\''\nprintenv NAME\nEOF'","waiter-registry-named-shell-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash <<'\\''EOF'\\''\nset -o pipefail\nEOF'","waiter-registry-set-action-body"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'printenv NAME; cat <<'\\''EOF'\\''\nordinary text\nEOF'","waiter-registry-complete-source"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'cat <<'\\''EOF'\\''\nordinary text\nEOF'","waiter-registry-plain-data"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'cat <<< ordinary'","waiter-registry-plain-here-string"]
 [2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'xargs env' --build 'true' --mutate 'true'","waiter-result-test-xargs-env"]
 [2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'xargs printenv' --build 'true' --mutate 'true'","waiter-result-test-xargs-printenv"]
 [2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'grep -a . /proc/self/environ' --build 'true' --mutate 'true'","waiter-result-test-grep-proc"]
@@ -1201,6 +1239,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[$program_pos]}\"; }; then mode=dump-unknown; fi") }
       defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
+      defect == "forwarded-registry-cut" { swap("[ -n \"$forwarded_argument\" ] && [ \"${#heredocs[@]}\" -gt 0 ] &&", "false &&") }
       defect == "recursive-context-loss" { swap("[ -z \"${forwarded_argument:-}\" ] || executable_contexts[cursor]=forwarded", ":") }
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
@@ -1387,6 +1426,9 @@ split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-proc-operand:
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-systemctl-operand: exit=0 expected=2
 unclassified-head-only|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
 recursive-context-loss|FAIL environment: waiter-recursive-test-bash-env: exit=0 expected=2
+forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-xargs: exit=0 expected=2
+forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-timeout: exit=0 expected=2
+forwarded-registry-cut|FAIL environment: waiter-registry-test-execute-body: exit=0 expected=2
 producer-implicit-clean|FAIL environment: waiter-result-test-xargs-env: exit=0 expected=2
 unresolved-redirect-loss|FAIL environment: waiter-result-grep-redirect: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
