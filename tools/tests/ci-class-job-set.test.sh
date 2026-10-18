@@ -47,6 +47,7 @@ micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
 micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
 micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +guards-tools-tail +rest
 micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks +guards-hooks-tail +guards-tools-tail
+micro|false|.bun-version|$SHARD_CODE|+node
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
@@ -71,6 +72,23 @@ micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
 ROWS
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
+
+awk '
+  $0 == "      .bun-version) want_shard node ;;" { sub(/want_shard node/, ":"); n++ }
+  { print }
+  END { if (n != 1) exit 1 }
+' "$JOB_SET" >"$TMP/rule/tools/ci-job-set" ||
+  { bad "the Bun-pin control matches one selection rule"; exit 1; }
+chmod +x "$TMP/rule/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" ||
+  { bad "the Bun-pin control changes the selector"; exit 1; }
+got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false .bun-version)"
+case "$got" in
+  exit=*) bad "the Bun-pin control runs the selector ($got)" ;;
+  *) check "control: omitting the Bun-pin dependency fails its node assertion" \
+    'missing=node ' "$(shards_miss +node "$(field shards <<<"$got")")" ;;
+esac
+
 # Each declared lane source runs every lane and each declared build name is a
 # build input; both lists are read from the scripts and pinned here.
 lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative

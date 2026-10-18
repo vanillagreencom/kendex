@@ -428,6 +428,7 @@ select_shards() { # BUILD(true|false)
   set --
   while IFS= read -r path; do
     case "$path" in
+      .bun-version) want_shard node ;;
       skills/*/* | .agents/skills/*/*)
         skill="${path#.agents/}"
         skill="${skill#skills/}"
