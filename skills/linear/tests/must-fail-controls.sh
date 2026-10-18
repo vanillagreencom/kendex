@@ -254,6 +254,7 @@ flush() {
 			for ((k = 1; k <= n; k++)); do
 				[[ -f "$WORK/$stem/mutation$k.rc" ]] || return 0
 			done
+			sed -n '/^BASELINE /p' "$WORK/$stem.log"
 			log=""
 			for ((k = n; k >= 1; k--)); do
 				[[ "$(cat "$WORK/$stem/mutation$k.rc")" -eq 0 ]] ||
@@ -264,7 +265,6 @@ flush() {
 			cat "$log"
 			FAILURES=$((FAILURES + 1))
 		else
-			sed -n '/^BASELINE /p' "$WORK/$stem.log"
 			printf 'ok       %s.test.sh\n' "$stem"
 		fi
 		NEXT=$((NEXT + 1))

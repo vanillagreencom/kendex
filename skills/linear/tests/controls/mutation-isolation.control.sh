@@ -131,3 +131,9 @@ control_expect "the baseline failure report names its exit status"
 control_replace tests/must-fail-controls.sh 1 \
 	$'\t\tprintf '\''UNSTAGED %-52s suite fails from an unmutated copy (exit %s%s)\n'\'' "$suite" "$rc" "$cap_note"' \
 	$'\t\tprintf '\''UNSTAGED %-52s suite fails from an unmutated copy\n'\'' "$suite"'
+
+# Restore the success-only delivery when the last mutation fails.
+control_expect "the misnamed report names the mutation and the assertion: baseline output"
+control_replace tests/must-fail-controls.sh 1 \
+	"			sed -n '/^BASELINE /p' \"\$WORK/\$stem.log\"" \
+	"			[[ \"\$(cat \"\$WORK/\$stem/mutation\$n.rc\")\" -ne 0 ]] || sed -n '/^BASELINE /p' \"\$WORK/\$stem.log\""
