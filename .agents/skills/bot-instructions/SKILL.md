@@ -4,6 +4,8 @@ description: "Load to render, check, or adopt a repo's GitHub review-bot instruc
 summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus the [bot-instructions] manifest table, with validators for the surfaces that fail silently."
 license: MIT
 user-invocable: true
+dependencies:
+  required: [reviewer]
 metadata:
   author: vanillagreen
   source: kendex
