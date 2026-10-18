@@ -477,9 +477,16 @@ compaction_child() { # LIB FORM CMD
     bash -c 'source "$1"; line=$(lane_launch_line "$3" codex CODEX_HOME "$4" "$2") || exit; bash -c "$line"' \
     _ "$1" "$2" "$3" "$TMP_ROOT/compaction-home"
 }
+# The shared --cmd fixture carries the launch producer's comma-separated tool
+# names and its printf %q unattended brief, rather than a copy of that prose.
+source "$TEST_DIR/lib/question-off.sh"
 # form|actual arguments|effective threshold,scope,post. Later overrides win;
 # an incomplete or unparseable command cannot borrow the parent evidence.
 while IFS='|' read -r form args want; do
+  if [[ "$form" == producer ]]; then
+    form=prefix
+    args="$args $QUESTION_OFF_ALL"
+  fi
   [[ "$form" != account ]] || form="launcher:$TMP_ROOT/compaction-bin/account"
   actual=$(compaction_child "$SCRIPTS_DIR/lib/lane-launch.sh" "$form" "codex $args" |
     jq -c '.evidence | if . == null then null else [.settings.model_auto_compact_token_limit,.settings.model_auto_compact_token_limit_scope,.settings.model_post_turn_compact_threshold_percent] end')
@@ -491,11 +498,16 @@ prefix|-c model_auto_compact_token_limit=300000|["300000",null,null]
 unchecked|-c model_auto_compact_token_limit=300000|["300000",null,null]
 custom|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|["9223372036854775807","body_after_prefix","0"]
 custom|--config=model_auto_compact_token_limit=9223372036854775807 --config 'model_auto_compact_token_limit_scope="body_after_prefix"' -cmodel_post_turn_compact_threshold_percent=0|["9223372036854775807","body_after_prefix","0"]
+producer|-c model_auto_compact_token_limit=300000 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|["300000","body_after_prefix","0"]
+custom|--cd ../project -c model_auto_compact_token_limit=300000|["300000",null,null]
+custom|-m gpt-6-astra -c model_reasoning_effort=high|null
+custom||null
 custom|-c model_auto_compact_token_limit=300000; :|null
 custom|-c model_auto_compact_token_limit=300000 "$(printf prompt)"|null
 custom|-c model_auto_compact_token_limit=300000 *|null
 custom|-c model_auto_compact_token_limit=300000 {-c,model_post_turn_compact_threshold_percent=80}|null
 custom|-c model_auto_compact_token_limit=300000 {1..3}|null
+custom|-c model_auto_compact_token_limit=300000 {{prompt},other}|null
 ROWS
 
 while IFS= read -r cmd; do
@@ -588,6 +600,13 @@ MUTANT_COMPACTION="$(mutant_scripts lane-launch-compaction lib/lane-launch.sh)/l
 mutate_file "$MUTANT_COMPACTION" '"$(lane_single_quote "$dir")" "${launch_env:+$launch_env }"' '"$(lane_single_quote "$dir")" ""'
 assert_eq "$(compaction_child "$MUTANT_COMPACTION" prefix 'codex -c model_auto_compact_token_limit=300000' | jq -c '.evidence')" \
   null 'control: the child loses evidence when the launch line omits transport'
+
+# Rejecting every comma loses evidence from the existing launch brief producer.
+MUTANT_LITERAL="$(mutant_scripts lane-launch-literal lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
+mutate_file "$MUTANT_LITERAL" \
+  "',') [[ \"\$braces\" -eq 0 ]] || return 1 ;;" "',') return 1 ;;"
+assert_eq "$(compaction_child "$MUTANT_LITERAL" prefix "codex -c model_auto_compact_token_limit=300000 $QUESTION_OFF_ALL" | jq -c '.evidence')" \
+  null 'control: rejecting literal commas loses producer evidence'
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
