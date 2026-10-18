@@ -19,7 +19,7 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 .agents/skills/linear/scripts/linear.sh issues get [PARENT_ID]
 ```
 
-In the sub-issue tree, complete blockers before the issues they block; entries marked `(completed)` are context only and are skipped in the § 4 loop.
+In the sub-issue tree, implement blockers before the issues they block. The delegation's group list marks earlier groups' implemented children `(completed)` regardless of tracker state; these entries are context only and are skipped in the § 4 loop.
 
 An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` record a previous round produced: the path, its bytes, the ceiling in bytes and the percent reached. Plan or perform a move to Git LFS, an asset store or generation before the blob grows further. If that remedy cannot be applied here, state why in the return. With no line, no binary blob is known to be within reach of the ceiling.
 
@@ -60,7 +60,7 @@ gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments,labels,u
 
 Ad-hoc: no tracker reads.
 
-**If bundled with completed siblings**, read their comments too, all of them in one `linear.sh comments bulk-list [COMPLETED_SIBLING_ID_1] [COMPLETED_SIBLING_ID_2]` call, for handoff notes. A refusal carrying `missing` names siblings Linear has no issue for, because they are deleted or mistyped: stop and report those identifiers.
+**If bundled with siblings marked `(completed)` in the delegation's group list**, read their comments too, all of them in one `linear.sh comments bulk-list [COMPLETED_SIBLING_ID_1] [COMPLETED_SIBLING_ID_2]` call, for handoff notes. Use the list, not tracker state, to select these implemented siblings. A refusal carrying `missing` names siblings Linear has no issue for, because they are deleted or mistyped: stop and report those identifiers.
 
 ### 2.2 Research Context
 
@@ -316,7 +316,7 @@ One `--qa-label` per § 8 signal, none if nothing triggered. One `--label` per e
 
 Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
-**Issue state.** A bundled Linear sub-issue is completed (`linear.sh issues complete [ISSUE_ID] --done-when-met [MET_BOXES] --evidence-file [EVIDENCE_FILE]`) and aggregated by the parent session in § 11. Prepare the verified box selections and evidence file under `tmp/` per the linear skill's `issues complete` contract. The worktree's top-level managed issue stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
+**Issue state.** A bundled Linear sub-issue stays In Progress through the dev round; make no tracker state write here. Its proof stays in its completion summary and the bundle artifact's `--item` result (§ 11). Orch's merge-pr workflow § 5 alone selects its proved boxes, writes its evidence file and completes it at merge. The worktree's top-level managed issue stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
 Carry a child with proved branch work and open post-merge checks into the parent summary in its current started state. The parent follows orch's submit-pr and merge-pr child handoff. Post-merge completion supplies the shared PR's merge time before moving the child to Verifying.
 
