@@ -192,6 +192,30 @@ check_pr_watch() {
     [[ -z "$event_out" ]] || printf '%s' "$event_out"
     [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
   fi
+  # A rolling refresh has no item. Read its state before clearing the ready
+  # key, since approval, merge and an unmerged close all clear that key.
+  local pr kind merged prior merge_key
+  for i in "${PW_REPO_INDICES[@]}"; do
+    repo="${REPOS[$i]}"
+    while IFS=$'\t' read -r pr kind; do
+      [[ "$pr" =~ ^[0-9]+$ && "$kind" == refresh-ready:* ]] || continue
+      grep -qxF -- "$pr"$'\t'"$kind" <<<"${pass_keys[$i]}" && continue
+      merged="$(gh api "repos/$repo/pulls/$pr" --jq .merged 2>"$errf")" \
+        || die pr-list-failed "$(cat "$errf")" "repo=$repo" "pr=$pr"
+      case "$merged" in
+        false) continue ;;
+        true) ;;
+        *) die pr-list-invalid "" "repo=$repo" "pr=$pr" ;;
+      esac
+      prior="$(lane_row_get merged "${pass_keys[$i]}" kendex/refresh)" \
+        || die state-read-failed "" "repo=$repo" "row=merged"
+      merge_key="$repo#$pr"
+      grep -qxF -- "$merge_key" <<<"${prior// /$'\n'}" && continue
+      echo "EVENT merged $pr kendex/refresh $repo"
+      event=1
+      pass_keys[$i]="$(lane_row_set merged "${pass_keys[$i]}" kendex/refresh "${prior:+$prior }$merge_key")"
+    done <<<"${PW_SEEN[$i]}"
+  done
   for i in "${PW_REPO_INDICES[@]}"; do
     pw_stage_state "$(pw_state_file "${REPOS[$i]}")" "${pass_keys[$i]}"
   done

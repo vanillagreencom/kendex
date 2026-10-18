@@ -1893,7 +1893,7 @@ check_merged() {
     fi
     parked_merged_line "$item" "$PARKED_KEY"
   done
-  state="$(lane_row_prune merged "$state" "${MERGED_ITEMS[@]}")"
+  state="$(lane_row_prune merged "$state" "${MERGED_ITEMS[@]}" kendex/refresh)"
   state="$(lane_row_prune parked-until "$state" ${PARKED_ITEMS[@]+"${PARKED_ITEMS[@]}"})"
   lane_row_commit "$state"
 }

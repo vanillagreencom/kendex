@@ -216,6 +216,13 @@ The long pass's events, checked and reported in this order:
                              refresh-ready wakes on the opening pass and
                              once per new head, including without a lane
   EVENT merged <PR> <branch> <repo>
+                             every refresh-ready PR gets this line at its
+                             merge, with branch kendex/refresh. It triggers
+                             the base-move check for open lane PRs whose files
+                             the refresh changed. When a saved ready key
+                             clears, one REST read distinguishes a merge from
+                             approval while open or an unmerged close. The
+                             merged row prevents repeats across restarts;
                              an --item PR merged at or after --since, in any
                              --repo, <branch> being the item's own, its key
                              lower-cased. The PR is the item's by
@@ -847,7 +854,7 @@ Options:
                       value names the state file, so a run given a different
                       one starts from no sightings and parks every walled lane
                       afresh; LINEAR_TEAM below arms the triage check
-  --item ISSUE_ID     live item; repeatable. No values skips merged and
+  --item ISSUE_ID     live item; repeatable. No values skips item merges and
                       handoff with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The first
                       repository and ORCH_CONNECTED_REPOS feed pr-watch.

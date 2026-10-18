@@ -145,6 +145,12 @@ if [[ "${1:-}" == api ]]; then
   [[ "$endpoint" != --paginate ]] || endpoint="${4:-}"
   src="" kind=""
   case "$endpoint" in
+    repos/*/pulls/*)
+      printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+      src="$STUB_DIR/pull-${endpoint##*/}.json"
+      if [[ -f "$src" ]]; then jq -r "$4" "$src"
+      else printf 'false\n'; fi
+      exit ;;
     repos/*/actions/workflows/skill-tests.yml/runs\?per_page=100\&page=*)
       kind=history; src="$STUB_DIR/budget-history" ;;
     repos/*/actions/runs/*/jobs\?per_page=100)
