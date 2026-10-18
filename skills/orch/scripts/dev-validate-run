@@ -390,6 +390,8 @@ source "$SCRIPT_DIR/lib/job-unit.sh"
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/file-lock.sh
 source "$SCRIPT_DIR/lib/file-lock.sh"
+# shellcheck source=lib/validation-verdict.sh
+source "$SCRIPT_DIR/lib/validation-verdict.sh"
 
 # Readers on another host can fetch one file, but cannot enumerate this
 # worktree's run directories. Rebuild under the shared writer lock so a
@@ -1396,12 +1398,7 @@ read_sentinel() {
   [[ "$SENTINEL_EXIT" =~ ^[0-9]+$ ]] || die sentinel-unreadable "path=$run_dir/exit" "line=$line"
   SENTINEL_AT="${line#* at=}"
   SENTINEL_AT="${SENTINEL_AT%% *}"
-  case "$line" in
-    *" verdict=no-verdict cause=host") SENTINEL_VERDICT=no-verdict ;;
-    *" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;
-    "guard-exit=0 "*) SENTINEL_VERDICT=pass ;;
-    *) SENTINEL_VERDICT=FAILING ;;
-  esac
+  SENTINEL_VERDICT="$(validation_verdict "$line")"
 }
 
 # --- Live: the run a start would refuse as run-live, read-only ---------------

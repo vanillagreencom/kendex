@@ -139,9 +139,11 @@ output_of() { # OUTPUT
 # count assertions are the edit's proof. The copy's path lands in MUTANT rather
 # than on stdout, which the assertions own.
 MUTANT=""
-mutant() { # NAME OLD NEW
-  MUTANT="$(mutant_scripts "$1" dev-validate-run)/dev-validate-run" || exit 1
-  mutate_file "$MUTANT" "$2" "$3"
+mutant() { # NAME OLD NEW [FILE]
+  local file="${4:-dev-validate-run}" dir
+  dir="$(mutant_scripts "$1" "$file")" || exit 1
+  MUTANT="$dir/dev-validate-run"
+  mutate_file "$dir/$file" "$2" "$3"
 }
 
 make_mode_proj() { # NAME RANGE_CMD
@@ -477,7 +479,7 @@ assert_eq "$(sed 's/ at=[^ ]*//' "$host_dir/exit")" 'guard-exit=3 verdict=no-ver
   'the writer records the unavailable host cause without a timeout proof'
 run_script "$RUN" --record --run-dir "$host_dir"
 assert_eq "$(record_field verdict "$OUT")" no-verdict 'the reader preserves the host no-verdict'
-mutant mutant-host-failing '*" verdict=no-verdict cause=host") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict cause=host") SENTINEL_VERDICT=FAILING ;;'
+mutant mutant-host-failing '*" verdict=no-verdict cause=host") printf '\''no-verdict\n'\'' ;;' '*" verdict=no-verdict cause=host") printf '\''FAILING\n'\'' ;;' lib/validation-verdict.sh
 run_script "$MUTANT" --record --run-dir "$host_dir"
 assert_eq "$(record_field verdict "$OUT")" FAILING 'control: losing the host result makes its record fail'
 mutant mutant-host-writer '"guard-exit=3 at="*) sentinel="$sentinel verdict=no-verdict cause=host" ;;' '"guard-exit=3 at="*) : ;;'
@@ -508,7 +510,7 @@ assert_eq "$OUT rc=$RC" "validate-mode=full selection=unreported verdict=no-verd
 
 # --record's control: a sentinel reader that files the bound's verdict with the
 # failures hands the receipt a FAILING for that same cut-off run.
-mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
+mutant mutant-cut-failing '*" verdict=no-verdict") printf '\''no-verdict\n'\'' ;;' '*" verdict=no-verdict") printf '\''FAILING\n'\'' ;;' lib/validation-verdict.sh
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
 assert_eq "$OUT" "validate-mode=full selection=unreported verdict=FAILING head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
