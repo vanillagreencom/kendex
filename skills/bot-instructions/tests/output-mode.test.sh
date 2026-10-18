@@ -44,7 +44,30 @@ def snapshot(root):
             for p in root.rglob("*") if ".git" not in p.relative_to(root).parts}
 
 
-def local_contract(root, launcher, *selection):
+def through_parent(root):
+    alias = scratch / f"parent-{root.name}"
+    alias.symlink_to(root.parent, target_is_directory=True)
+    assert alias.is_symlink()
+    selected = alias / root.name
+    assert selected != selected.resolve(), selected
+    return selected
+
+
+def pointer(root, filename, staged=False):
+    def read(path):
+        if staged:
+            return subprocess.check_output(["git", "-C", str(root), "show", ":" + path], text=True)
+        assert (root / path).is_file(), path
+        return (root / path).read_text()
+
+    agents = read("AGENTS.md")
+    target = next((word for word in agents.split() if word.startswith("catalog/review-tools/")), None)
+    assert target == f"catalog/review-tools/{filename}#doctrine", target
+    assert "## Doctrine\n" in read(target.split("#")[0]), target
+    return target, agents
+
+
+def local_contract(root, launcher, *selection, filename="SKILL.md"):
     before = snapshot(root)
     adopted = invoke(launcher, root, "adopt", "--output", "local", *selection)
     assert adopted.returncode == 1 and "agents-region:" in adopted.stderr, adopted
@@ -58,11 +81,7 @@ def local_contract(root, launcher, *selection):
     after = snapshot(root)
     changed = {p for p in before.keys() | after.keys() if before.get(p) != after.get(p)}
     assert changed == {"AGENTS.md"}, changed
-    agents = (root / "AGENTS.md").read_text()
-    assert "catalog/review-tools/SKILL.md#doc" in agents, agents
-    target = next(word for word in agents.split() if word.startswith("catalog/review-tools/"))
-    assert target.endswith("#doctrine") and (root / target.split("#")[0]).is_file(), target
-    assert "## Doctrine\n" in (root / target.split("#")[0]).read_text(), target
+    target, agents = pointer(root, filename)
     assert agents.split("## Code Review Rules")[0] == before["AGENTS.md"][1].decode().split("## Code Review Rules")[0]
     assert agents.split("## Something else")[1] == before["AGENTS.md"][1].decode().split("## Something else")[1]
     checked = invoke(launcher, root, "check", "--output", "local", "--json", *selection)
@@ -78,12 +97,15 @@ def local_contract(root, launcher, *selection):
     assert checked.returncode == 1 and "drift:" in checked.stderr, checked
 
 
-for world in ("absent", "remote-files", "remote-symlink", "installed-symlink", "named-symlink", "canonical-spec"):
+for world in ("absent", "remote-files", "remote-symlink", "installed-symlink", "named-symlink", "canonical-spec",
+              "disabled", "disabled-install-symlink",
+              "parent-symlink", "parent-installed-symlink", "parent-named-symlink"):
     root = scratch / world
     shutil.copytree(fixture, root)
     launcher = install(root)
     selection = ()
-    if world in ("installed-symlink", "named-symlink", "canonical-spec"):
+    if world in ("installed-symlink", "named-symlink", "canonical-spec", "disabled-install-symlink",
+                 "parent-installed-symlink", "parent-named-symlink"):
         package = scratch / f"package-{world}"
         shutil.move(str(launcher.parent.parent), package)
         (root / "catalog/review-tools").symlink_to(package, target_is_directory=True)
@@ -93,6 +115,16 @@ for world in ("absent", "remote-files", "remote-symlink", "installed-symlink", "
             launcher = source / "scripts/bot-instructions"
         elif world == "canonical-spec":
             selection = ("--spec", str(package))
+    if world.startswith("parent-"):
+        root = through_parent(root)
+        launcher = root / "catalog/review-tools/scripts/bot-instructions"
+        if world == "parent-named-symlink":
+            selection = ("--spec", str(root / "catalog/review-tools"))
+            launcher = source / "scripts/bot-instructions"
+    filename = "SKILL.md"
+    if world.startswith("disabled"):
+        filename = "SKILL.md.disabled"
+        (root / "catalog/review-tools/SKILL.md").rename(root / f"catalog/review-tools/{filename}")
     if world in ("remote-files", "remote-symlink"):
         full = invoke(launcher, root, "adopt")
         assert full.returncode == 1 and "agents-region:" in full.stderr, full
@@ -108,8 +140,66 @@ for world in ("absent", "remote-files", "remote-symlink", "installed-symlink", "
         if world == "remote-symlink":
             remote.unlink()
             remote.symlink_to(root / "README.md")
-    local_contract(root, launcher, *selection)
+    local_contract(root, launcher, *selection, filename=filename)
     print(f"  ok   local output contract: {world}")
+
+
+def filename_contract(root, launcher):
+    package = root / "catalog/review-tools"
+    current = "SKILL.md"
+
+    def select(filename):
+        nonlocal current
+        if filename != current:
+            assert not (package / filename).exists(), filename
+            (package / current).rename(package / filename)
+            current = filename
+
+    # Disabling the spec must not change full-mode render bytes or markers.
+    assert invoke(launcher, root, "adopt").returncode == 1
+    assert invoke(launcher, root, "render").returncode == 0
+    full_before = snapshot(root)
+    select("SKILL.md.disabled")
+    assert invoke(launcher, root, "check").returncode == 0
+    assert invoke(launcher, root, "render").returncode == 0
+    full_after = snapshot(root)
+    changed = {p for p in full_before.keys() | full_after.keys() if full_before.get(p) != full_after.get(p)}
+    assert changed == {"catalog/review-tools/SKILL.md", "catalog/review-tools/SKILL.md.disabled"}, changed
+    select("SKILL.md")
+
+    for indexed, on_disk in (("SKILL.md", "SKILL.md.disabled"), ("SKILL.md.disabled", "SKILL.md")):
+        select(indexed)
+        rendered = invoke(launcher, root, "render", "--output", "local")
+        assert rendered.returncode == 0, rendered
+        _, indexed_agents = pointer(root, indexed)
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        for flags in ((), ("--staged",)):
+            checked = invoke(launcher, root, "check", "--output", "local", *flags)
+            assert checked.returncode == 0, checked
+        select(on_disk)
+        checked = invoke(launcher, root, "check", "--output", "local")
+        assert checked.returncode == 1 and "drift:" in checked.stderr, checked
+        assert invoke(launcher, root, "render", "--output", "local").returncode == 0
+        pointer(root, on_disk)
+        pointer(root, indexed, staged=True)
+        for flags in ((), ("--staged",)):
+            checked = invoke(launcher, root, "check", "--output", "local", *flags)
+            assert checked.returncode == 0, checked
+        # The staged pointer must follow the index even when disk selects
+        # the other filename. Staging the disk's pointer alone must fail.
+        subprocess.run(["git", "-C", str(root), "add", "AGENTS.md"], check=True)
+        checked = invoke(launcher, root, "check", "--output", "local", "--staged")
+        assert checked.returncode == 1 and "drift:" in checked.stderr, checked
+        (root / "AGENTS.md").write_text(indexed_agents)
+        subprocess.run(["git", "-C", str(root), "add", "AGENTS.md"], check=True)
+        checked = invoke(launcher, root, "check", "--output", "local", "--staged")
+        assert checked.returncode == 0, checked
+
+
+root = scratch / "doctrine-filenames"
+shutil.copytree(fixture, root)
+filename_contract(root, install(root))
+print("  ok   enabled and disabled doctrine pointers follow the selected tree; full bytes stay unchanged")
 
 # A marked remote file is outside local ownership even with no bot table.
 root = scratch / "unconfigured-local"
@@ -189,13 +279,22 @@ for name, file, old, new, contract in (
     ("repair-mutant", "scripts/lib/render.py",
      'return verb if self.remote else f"{verb} --output local"', 'return verb', "local"),
     ("canonical-pointer-mutant", "scripts/lib/run.py",
-     'os.path.join(installed_spec, "SKILL.md"), root',
-     'os.path.join(os.path.realpath(installed_spec), "SKILL.md"), root', "symlink"),
+     'os.path.join(installed_spec, os.path.basename(self.doctrine.skill_path)), root',
+     'os.path.join(os.path.realpath(installed_spec), os.path.basename(self.doctrine.skill_path)), root', "symlink"),
     ("remote-pointer-mutant", "scripts/lib/render.py",
      "result.review_path = model.code_review_path if result.remote else local_review_path",
      "result.review_path = model.code_review_path", "local"),
     ("refusal-mutant", "scripts/lib/cli.py",
      "    return None\n", "    return spec_root\n", "refusal"),
+    ("filename-mutant", "scripts/lib/spec.py",
+     "return Doctrine(blocks, routing, positions, surfaces, skill_rel)",
+     'return Doctrine(blocks, routing, positions, surfaces, skill_rel.removesuffix(".disabled"))', "filename"),
+    ("index-filename-mutant", "scripts/lib/cli.py",
+     "if staged and inside.split(os.sep)[0] != os.pardir:",
+     "if False and staged and inside.split(os.sep)[0] != os.pardir:", "filename"),
+    ("parent-mutant", "scripts/lib/cli.py",
+     "candidate = os.path.join(os.path.realpath(os.path.dirname(candidate)), os.path.basename(candidate))",
+     "candidate = os.path.abspath(candidate)", "parent"),
 ):
     mutant = controlled_copy(name, file, old, new)
     root = scratch / f"control-{name}"
@@ -206,9 +305,14 @@ for name, file, old, new, contract in (
         shutil.move(str(launcher.parent.parent), package)
         (root / "catalog/review-tools").symlink_to(package, target_is_directory=True)
         assert (root / "catalog/review-tools").is_symlink()
+    if contract == "parent":
+        root = through_parent(root)
+        launcher = root / "catalog/review-tools/scripts/bot-instructions"
     try:
         if contract == "refusal":
             external_refusal(root, launcher, mutant)
+        elif contract == "filename":
+            filename_contract(root, launcher)
         else:
             local_contract(root, launcher)
     except AssertionError:

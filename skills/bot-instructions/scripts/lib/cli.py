@@ -104,6 +104,8 @@ def _installed_spec(repo, named, spec_root):
     """
     invoked = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     for candidate in (os.path.abspath(named) if named else invoked, invoked):
+        # Resolve checkout aliases while retaining the installation's own link.
+        candidate = os.path.join(os.path.realpath(os.path.dirname(candidate)), os.path.basename(candidate))
         relative = os.path.relpath(candidate, repo)
         if relative.split(os.sep)[0] != os.pardir and os.path.realpath(candidate) == spec_root:
             return candidate

@@ -31,7 +31,7 @@ _DASH = "–"
 
 
 class Doctrine:
-    def __init__(self, blocks, routing, positions, surfaces):
+    def __init__(self, blocks, routing, positions, surfaces, skill_path):
         self.blocks = blocks            # id -> text
         self.routing = routing          # column -> [block ids in order]
         # The `## Default surfaces` entries as the TOML parsed them. Validated
@@ -43,6 +43,9 @@ class Doctrine:
         # above: a sentinel key there makes any iteration over `routing` read
         # one entry that is not a column.
         self.positions = positions
+        # The loader's selected path belongs to the tree that supplied the
+        # doctrine. A pointer must not select a filename from another tree.
+        self.skill_path = skill_path
 
 
 def in_path_class(path):
@@ -230,7 +233,7 @@ def load(spec_tree, skill_rel, renders_rel):
         # command line holds the spec root it resolved and fills it in.
         exc.from_spec = True
         raise
-    return Doctrine(blocks, routing, positions, surfaces)
+    return Doctrine(blocks, routing, positions, surfaces, skill_rel)
 
 
 def frozen_ids():

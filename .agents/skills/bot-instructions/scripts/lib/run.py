@@ -101,7 +101,7 @@ class Context:
         local_review_path = None
         if output_mode == "local":
             if installed_spec is None:
-                external = os.path.join(spec_tree.root, spec_paths[0])
+                external = os.path.join(spec_tree.root, self.doctrine.skill_path)
                 error = SpecError(
                     f"{external}: local output needs an installation inside the checkout. "
                     "Use --output full, or install the package inside the checkout"
@@ -109,7 +109,7 @@ class Context:
                 error.subject = external
                 raise error
             local_review_path = os.path.relpath(
-                os.path.join(installed_spec, "SKILL.md"), root
+                os.path.join(installed_spec, os.path.basename(self.doctrine.skill_path)), root
             ).replace(os.sep, "/") + "#doctrine"
         self.frozen_ids = spec_mod.frozen_ids()
         # An unknown `[bot-instructions.doctrine.*]` block id is a `toml-schema` clause; a
