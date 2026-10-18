@@ -172,7 +172,9 @@
 #          and nothing else; a fix round's run, and a restack's run, as
 #          merge-pr-restack.md sets out. The command reads the base as
 #          DEV_VALIDATE_BASE, the commit REF resolved to when the run started,
-#          also recorded as the validate-base= line of start. A project that
+#          also recorded as the validate-base= line of start. The worktree's
+#          kendex-rebase-map projects a pre-rebase REF to its commit on the
+#          branch before ancestry is checked. A project that
 #          sets no DEV_VALIDATE_RANGE_CMD runs DEV_VALIDATE_CMD instead, and the
 #          run records full, the mode that ran. A REF a rebase left off the
 #          branch is recorded as the validate-base-orphaned= line of start in
@@ -397,6 +399,8 @@ source "$SCRIPT_DIR/lib/gh-auth.sh"
 source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/validation-verdict.sh
 source "$SCRIPT_DIR/lib/validation-verdict.sh"
+# shellcheck source=lib/rebase-map.sh
+source "$SCRIPT_DIR/lib/rebase-map.sh"
 
 # Readers on another host can fetch one file, but cannot enumerate this
 # worktree's run directories. Rebuild under the shared writer lock so a
@@ -1023,6 +1027,14 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   fi
   if [[ "$validate_mode" != full ]]; then
     base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
+    rebase_map="$(git rev-parse --git-path kendex-rebase-map)" \
+      || die rebase-map-unreadable "worktree=$worktree"
+    if [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
+      rebase_map_load "$rebase_map" && rebase_map_project "$base_sha" \
+        || die rebase-map-unreadable "path=$rebase_map" "${REBASE_MAP_FAIL_ARGS[@]}"
+      # A dropped commit has no replacement. Keep its original orphan route.
+      [[ "$REBASE_MAP_PROJECTED" == dropped:* ]] || base_sha="$REBASE_MAP_PROJECTED"
+    fi
     # A base a rebase left off the branch is recorded whichever mode runs: a
     # fix round's receipt names the run through it once the round's base is no
     # longer in HEAD.

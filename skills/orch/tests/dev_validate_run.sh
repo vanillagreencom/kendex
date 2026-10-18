@@ -773,22 +773,52 @@ rebased_b1="$(git -C "$proj_orphan" rev-parse HEAD)"
 orphan_commit "$proj_orphan" r1
 fork="$(git -C "$proj_orphan" rev-parse main)"
 
-# label|--base|files the range holds|validate-base|validate-base-orphaned|class-base
+assert_orphan_range() {
+  local dir
+  dir="$(run_dir_of "$OUT")"
+  assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
+  assert_eq "$(start_line "$dir" validate-base)|$(start_line "$dir" validate-base-orphaned)|$(start_line "$dir" class-base)" \
+    "$want_base|$want_orphaned|$want_class_base" "$label: the start record names the effective bases" "$ERR"
+}
+
+# label|--base|map target|files the range holds|validate-base|validate-base-orphaned|class-base
 ORPHAN_ROWS=(
-  "a base the rebase left off the branch validates the branch's own diff|$pre_rebase|b1 r1 |$fork|$pre_rebase|"
-  "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1||$rebased_b1"
+  "a base the rebase left off the branch validates the branch's own diff|$pre_rebase||b1 r1 |$fork|$pre_rebase|"
+  "a base still on the branch validates from that base, as before|$rebased_b1||r1 |$rebased_b1||$rebased_b1"
+  "a mapped base validates only the changes after its replacement|$pre_rebase|$rebased_b1|r1 |$rebased_b1||$rebased_b1"
+  "a base with no entry in an existing map keeps the orphan route|$pre_rebase|unrelated|b1 r1 |$fork|$pre_rebase|"
+  "a dropped base keeps the orphan route|$pre_rebase|dropped|b1 r1 |$fork|$pre_rebase|"
 )
 for row in "${ORPHAN_ROWS[@]}"; do
-  IFS='|' read -r label base want_range want_base want_orphaned want_class_base <<<"$row"
-  run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
+  IFS='|' read -r label base map_target want_range want_base want_orphaned want_class_base <<<"$row"
+  map_path="$(git -C "$proj_orphan" rev-parse --absolute-git-dir)/kendex-rebase-map"
+  if [[ -n "$map_target" ]]; then
+    map_source="$pre_rebase"
+    if [[ "$map_target" == unrelated ]]; then
+      map_source="$fork"
+      map_target="$fork"
+    fi
+    printf 'rebase-hop:\nrebase-map: %s %s\n' "$map_source" "$map_target" > "$map_path"
+  else
+    rm -f -- "$map_path"
+  fi
+  run_script "$RUN" --worktree "$proj_orphan" --poll 1 --fresh --validate-mode range --base "$base"
   orphan_dir="$(run_dir_of "$OUT")"
-  assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
-  assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
-    "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
+  assert_orphan_range
+  if [[ "$map_target" == "$rebased_b1" ]]; then
+    mutant mapped-base-unread '|| base_sha="$REBASE_MAP_PROJECTED"' '|| : "$REBASE_MAP_PROJECTED"'
+    run_script "$MUTANT" --worktree "$proj_orphan" --poll 1 --fresh --validate-mode range --base "$base"
+    if (FAIL=0; assert_orphan_range; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/mapped-base-control.out"; then
+      fail 'the unmapped-base control did not reject the repeated branch range'
+    fi
+    assert_eq "$RC $(start_line "$(run_dir_of "$OUT")" validate-base)|$(start_line "$(run_dir_of "$OUT")" validate-base-orphaned)" \
+      "0 $fork|$pre_rebase" 'the control substitutes the merge base and records the orphaned SHA' "$ERR"
+  fi
   run_script "$RUN" --record --run-dir "$orphan_dir"
   assert_eq "$RC $(record_field validate-base-orphaned "$OUT")|$(record_field class-base "$OUT")" "0 $want_orphaned|$want_class_base" \
     "$label — the record names the orphaned base a fix receipt binds through, and the base its class was read from" "$ERR"
 done
+rm -f -- "$map_path"
 
 # An orphaned base with no origin base branch to take a fork point from is
 # refused, never run over the orphaned range.
