@@ -9,7 +9,7 @@ Use the [home layout](../references/home-layout.md) for home paths.
 ## Steps
 
 1. **Jarvis**: Read the user's instructions and private account ledger for the intended Slack account and project. Resolve missing values with a decision request.
-2. **Jarvis**: Check for the installed `slack` package. Ask before running `kendex add --skill slack`. It also installs the required `orch` package. Read the installed Slack `SKILL.md` and `README.md` § Slack app and § Setup.
+2. **Jarvis**: Check for the installed `slack` package. Ask before running `kendex add --skill slack`. It also installs the required `mailbox` and `orch` packages and the packages they require. Get approval for the full package list `kendex add` prints before it installs them. Read the installed Slack `SKILL.md` and `README.md` § Slack app and § Setup.
 3. **Person**: In the intended Slack account, create an app from the installed `.agents/skills/slack/app-manifest.yaml`. Install it to the intended workspace. Create an app-level token with the `connections:write` scope under Basic Information.
 4. **Jarvis**: Resolve the project's private env file from `KENDEX_ENV_FILE`, including the project's settings layers. Use `.env.local` when no other file is selected. Check that Git ignores the file and does not track it. If needed, add its path to `.gitignore` and check again before writing. If Git tracks it or the checks fail, resolve that problem before accepting credentials. Create or protect the destination with mode 600 before the transfer.
 5. **Jarvis**: Send a private decision request for `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`. Request their password-manager references or a protected transfer file under Secret transfer.
