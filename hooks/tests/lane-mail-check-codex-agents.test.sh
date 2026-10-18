@@ -21,7 +21,7 @@ snapshot() { # STATUS
       {agent_name:"/root/reviewer",agent_status:$s}]}')"
 }
 # Status forms come from Codex 0.163.0 protocol/src/protocol.rs AgentStatus
-# and core/src/agent/status.rs. Interrupted remains unfinished there.
+# and core/src/agent/status.rs. Interrupted releases the reserve until followup.
 # The hook refusal is the real KEN-4292 PreToolUse output. A thread-limit
 # failure or a damaged result does not prove that dispatch launched no child.
 
@@ -46,7 +46,8 @@ codex_row() { # ROSTER RC KEY
     spawned | spawned-returned) snapshot '"completed"'
       codex_call collaboration.spawn_agent '{"task_name":"reviewer"}' '{"task_name":"/root/reviewer"}'
       [ "$roster" != spawned-returned ] || snapshot '"idle"' ;;
-    resumed | resumed-relative | resumed-returned) snapshot '"completed"'
+    resumed | resumed-relative | resumed-returned | interrupted-followup)
+      if [ "$roster" = interrupted-followup ]; then snapshot '"interrupted"'; else snapshot '"completed"'; fi
       target=/root/reviewer
       [ "$roster" != resumed-relative ] || target=reviewer
       codex_call collaborationfollowup_task "$(jq -nc --arg t "$target" '{target:$t,message:"Review again."}')" ''
@@ -130,7 +131,8 @@ errored|0|-
 shutdown|0|-
 not_found|0|-
 pending_init|2|agent-reserve
-interrupted|2|agent-reserve
+interrupted|0|-
+interrupted-followup|2|agent-reserve
 out|2|agent-reserve
 spawned|2|agent-reserve
 spawned-returned|0|-
@@ -228,6 +230,25 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     assert_eq "$control_rc" 1 "control $control fails the real hook assertions"
   done
   if command -v timeout >/dev/null 2>&1; then
+    new_lane codex-interrupted-control AGENT-1
+    mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
+    hole_install lib/adapters
+    cp -R "$REPO_ROOT/skills/orch/scripts/lib/adapters" "$LANE/.agents/skills/orch/scripts/lib/adapters"
+    wake_mutant interrupted-held \
+      '        elif . == "errored" or . == "shutdown" or . == "not_found" or . == "interrupted" then "completed"' \
+      '        elif . == "interrupted" then "running" elif . == "errored" or . == "shutdown" or . == "not_found" then "completed"' \
+      "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
+    cp "$MUTANT_PATH" "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
+    install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
+    ARM_ARGS=(halt)
+    control_rc=0
+    (PASS=0; FAIL=0
+      codex_row interrupted 0 -
+      [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/interrupted.control.log" 2>&1 || control_rc=$?
+    assert_eq "$control_rc" 1 'control interrupted fails its own hook row'
+    assert_eq "$(first_line)" \
+      'lane-mail-check: agent-reserve=collaborationspawn_agent tokens=119200 reserve=10000' \
+      'the interrupted control holds the reserve as main does'
     for control in current-call prior-pending; do
       case "$control" in
         current-call) wake_mutant no-current-exclusion '      lane_adapter_codex_agents "$2"' '      lane_adapter_codex_agents ""' ;;

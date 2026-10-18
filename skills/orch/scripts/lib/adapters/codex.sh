@@ -53,7 +53,8 @@ lane_adapter_codex_reading() { # UNREAD
 # earlier launch even where its call is already in the rollout:
 # https://learn.chatgpt.com/docs/hooks#pretooluse
 # AgentStatus and agent/status.rs in Codex 0.163.0 define the states below.
-# Interrupted is not final. A later full list replaces uncertain observations,
+# Interrupted releases the reserve until a followup puts the agent out again.
+# A later full list replaces uncertain observations,
 # but cannot settle a call that has not returned yet.
 # Codex dispatch scheduling can differ from result recording order. A list
 # that overlaps a launch or followup cannot establish the roster after it.
@@ -67,8 +68,8 @@ lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
         else "unknown" end
       else . end
       | if . == "idle" or . == "completed" then "completed"
-        elif . == "errored" or . == "shutdown" or . == "not_found" then "completed"
-        elif . == "running" or . == "pending_init" or . == "interrupted" then "running"
+        elif . == "errored" or . == "shutdown" or . == "not_found" or . == "interrupted" then "completed"
+        elif . == "running" or . == "pending_init" then "running"
         else "unknown" end;
     def name: if type == "string" and test("^/root(/[A-Za-z0-9_-]+)*$") then .
       else error("invalid agent name") end;
