@@ -119,21 +119,9 @@ container_close_message() {
       printf 'container-close: summary-state id=%s state-type=%s\n' "$id" "$state_type"
       printf '%s\n' "container-close: child $id has unexpected summary state: $state_type"
       ;;
-    completion-parent)
-      printf 'container-close: completion-parent parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: cannot read parent $PARENT_ID after completion failure"
-      ;;
-    completion-response)
-      printf 'container-close: completion-response parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: parent response is invalid for $PARENT_ID after completion failure"
-      ;;
     completion-failed)
       printf 'container-close: completion-failed parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: completion failed for $PARENT_ID"
-      ;;
-    already-completed)
-      printf 'container-close: already-completed parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: completion command failed after $PARENT_ID reached Done"
       ;;
     completion-diagnostics)
       printf 'container-close: completion-diagnostics parent-id=%s\n' "$PARENT_ID"
@@ -142,9 +130,9 @@ container_close_message() {
     completion-held)
       printf 'container-close: completion-held parent-id=%s requests-reset=%s hold-reset=%s summary=%s\n' "$PARENT_ID" "$REQUESTS_RESET" "$HOLD_RESET" "$HELD_SUMMARY_STATE"
       if [[ "$HOLD_RESET" == unavailable ]]; then
-        printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID and gave no reset time; it stays open"
+        printf '%s\n' "container-close: Linear rate-limited required completion work for $PARENT_ID and gave no reset time"
       else
-        printf '%s\n' "container-close: Linear rate-limited the completion of $PARENT_ID; it stays open until a run after $HOLD_RESET"
+        printf '%s\n' "container-close: Linear rate-limited required completion work for $PARENT_ID; retry after $HOLD_RESET"
       fi
       ;;
     held-release)
@@ -160,20 +148,20 @@ usage() {
 usage: container-close <REPOSITORY_CHECKOUT> <PARENT_ID>
 
 Derives the shared main repository and serializes closure across its containers.
-Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
-repeat. Prints `deferred` followed by pending child ids when closure
+Prints `closed <PARENT_ID>` after completion and its required supersession
+effects succeed, including a retry on a Done parent. Prints `deferred` followed by pending child ids when closure
 must wait. A bare `deferred` means the 120-second lock wait expired. Prints
 `held <PARENT_ID> <HOLD_RESET>` when Linear rate-limited the completion,
-HOLD_RESET being Linear's selected retry time or `unavailable`: the parent
-stays open, and the caller holds this command under the linear skill's
+HOLD_RESET being Linear's selected retry time or `unavailable`: required work
+is unfinished, and the caller holds this command under the linear skill's
 patterns/workflow-actions.md Quota Holds. The bundle summary that run built is
 kept under tmp/container-close-held/<PARENT_ID>/ in the shared repository,
 whether or not the limited completion had posted it. The next run posts it
 only when completion validation finds no bundle summary on the parent, and
 then unchanged while the children it was built from are unchanged, so the
 resumed completion needs no second PR lookup. Operational
-and validation failures exit 1, naming the cause on stderr; the parent is left
-open and the run is safe to repeat once the cause is gone -- including a `gh pr
+and validation failures exit 1, naming the cause on stderr; required work may
+remain after Done and the run is safe to repeat once the cause is gone -- including a `gh pr
 list` that failed or would not parse, whether the reason was a rate limit or an
 unauthenticated `gh`. A successful `closed` result may carry completion
 diagnostics on stderr; callers must preserve every one. The holder records the outcome Evidence line before this run. This helper
@@ -244,7 +232,7 @@ print_deferred() {
   printf '\n'
 }
 # The child's merged PR, for the summary line. The summary is written once:
-# a later run short-circuits on a completed parent and never rebuilds it, so
+# a later run resumes a completed parent without rebuilding the summary, so
 # whatever this prints is the permanent record. `unavailable` therefore states
 # one thing only — the lookup ran, was valid, and matched no PR.
 # A failed `gh pr list` or a response that will not parse is NOT retried here:
@@ -275,8 +263,7 @@ child_pr() {
   [[ -n "$number" ]] && printf '#%s\n' "$number" || printf 'unavailable\n'
 }
 
-# A Done parent has no use for held inputs. The close is true whether or not
-# they go, so a failed removal is a diagnostic beside it.
+# Required completion work has succeeded before held inputs are released.
 print_closed() {
   { rm -f -- "$HELD_SUMMARY" "$HELD_ROWS" && { [[ ! -d "$HELD_DIR" ]] || rmdir -- "$HELD_DIR"; }; } \
     || container_close_message held-release "$@" >&2
@@ -286,7 +273,8 @@ print_closed() {
 PARENT="$(parent_json)" || { container_close_message parent-unreadable "$@" >&2; exit 1; }
 PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { container_close_message parent-response "$@" >&2; exit 1; }
-if [[ "$PARENT_TYPE" == "completed" ]]; then print_closed "$@"; exit 0; fi
+COMPLETE_ARGS=("$PARENT_ID")
+if [[ "$PARENT_TYPE" != "completed" ]]; then
 
 PENDING="$("$LINEAR" issues children "$PARENT_ID" --recursive --pending --format=ids)" \
   || { container_close_message pending-unreadable "$@" >&2; exit 1; }
@@ -318,10 +306,7 @@ VALIDATED_PARENT_TYPE="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id ==
   || { container_close_message validation-state "$@" >&2; exit 1; }
 HAS_SUMMARY="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .has_summary' <<<"$VALIDATION")" \
   || { container_close_message validation-summary "$@" >&2; exit 1; }
-if [[ "$VALIDATED_PARENT_TYPE" == "completed" ]]; then print_closed "$@"; exit 0; fi
-
-COMPLETE_ARGS=("$PARENT_ID")
-if [[ "$HAS_SUMMARY" == "false" ]]; then
+if [[ "$VALIDATED_PARENT_TYPE" != "completed" && "$HAS_SUMMARY" == "false" ]]; then
   jq -r '.[] | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
     || { container_close_message summary-rows "$@" >&2; exit 1; }
   # A held summary is reused only for the exact children it was built from;
@@ -339,6 +324,7 @@ if [[ "$HAS_SUMMARY" == "false" ]]; then
     done < "$CHILD_ROWS"
   fi
   COMPLETE_ARGS+=(--summary-file "$SUMMARY")
+fi
 fi
 
 COMPLETE_RC=0
@@ -368,11 +354,7 @@ if [[ $COMPLETE_RC -ne 0 ]]; then
     printf 'held %s %s\n' "$PARENT_ID" "$HOLD_RESET"
     exit 0
   fi
-  # A completion another caller landed first reads as completed here.
-  PARENT="$(parent_json)" || { container_close_message completion-parent "$@" >&2; exit 1; }
-  PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
-    || { container_close_message completion-response "$@" >&2; exit 1; }
-  [[ "$PARENT_TYPE" == "completed" ]] || { container_close_message completion-failed "$@" >&2; exit 1; }
-  container_close_message already-completed "$@" >&2
+  container_close_message completion-failed "$@" >&2
+  exit 1
 fi
 print_closed "$@"

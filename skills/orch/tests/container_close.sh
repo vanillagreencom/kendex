@@ -136,6 +136,9 @@ case "$resource:$action" in
     rate_line="$(jq -cn --arg reset "$reset" --arg hold "$hold_reset" '{error:"Rate limited",code:"RATELIMITED",requests_reset:$reset,
       quota:{reset:$hold,status:(if $hold == "unavailable" then "missing" else "future" end),limit:"unknown",
         reset_epoch:(if $hold == "unavailable" then null else ($hold | fromdateiso8601) end)}}')"
+    printf 'invoke\n' >> "$root/complete.invocations"
+    already_done=false
+    [[ "$(cat "$root/parent.state")" != Done ]] || already_done=true
     if [[ "$ratelimit" == comment ]]; then
       printf 'ratelimit\n' >> "$root/complete.calls"
       printf '%s\n' "$rate_line" '{"error": "Completion summary comment failed for PARENT-1. Issue state unchanged."}' >&2
@@ -144,7 +147,7 @@ case "$resource:$action" in
     if [[ -n "$summary" ]]; then
       cp "$summary" "$root/summary.body"; printf 'summary\n' >> "$root/summary.calls"; touch "$root/summary.posted"; printf 'summary\n' >> "$root/complete.args"
     else printf 'state-only\n' >> "$root/complete.args"; fi
-    printf 'close\n' >> "$root/complete.calls"
+    $already_done || printf 'close\n' >> "$root/complete.calls"
     mkdir -p "$root/complete.entries"; : > "$root/complete.entries/$$"
     [[ ! -e "$root/fail.complete.once" ]] || { rm -f "$root/fail.complete.once"; exit 9; }
     if [[ "$ratelimit" == update ]]; then
@@ -155,6 +158,15 @@ case "$resource:$action" in
     printf 'Done\n' > "$root/parent.state"
     jq 'map(if .state_type == "canceled" then .state = "Done" | .state_type = "completed" else . end)' "$root/children.json" > "$root/children.next.$$"
     mv "$root/children.next.$$" "$root/children.json"
+    # Native issues complete can fail required effects after the Done update.
+    printf 'effect\n' >> "$root/supersession.calls"
+    post_done="$(cat "$root/post-done.mode" 2>/dev/null || true)"
+    if [[ "$post_done" == quota ]]; then printf '%s\n' "$rate_line" >&2; fi
+    if [[ -n "$post_done" ]]; then
+      printf '{"success":true,"identifier":"PARENT-1"}\n'
+      printf '{"error":"supersession-incomplete","issue":"PARENT-1","already_done":true,"state":"Done","retry":{"resource":"issues","action":"complete","issue":"PARENT-1","options":[]}}\n' >&2
+      exit 1
+    fi
     printf '{"success":true,"identifier":"PARENT-1"}\n'
     ;;
   comments:create)
@@ -183,6 +195,7 @@ reset_state() {
   printf 'In Progress\n' > "$FAKE_LINEAR_ROOT/parent.state"
   printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
   rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls" \
+    "$FAKE_LINEAR_ROOT/complete.invocations" "$FAKE_LINEAR_ROOT/supersession.calls" "$FAKE_LINEAR_ROOT/post-done.mode" \
     "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$FAKE_LINEAR_ROOT/ratelimit.hold-reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
   [[ ! -d "$HELD_DIR" ]] || rmdir "$HELD_DIR"
   rm -f -- "${FAKE_LINEAR_ROOT:?}"/comments.*
@@ -248,6 +261,56 @@ assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two — PR #1
 out="$(run_close)"
 assert_eq "$out" "closed PARENT-1" "completed parent returns idempotently"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "completed retry does not mutate again"
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.invocations" | tr -d ' ')" "2" "completed retry resumes the required completion verb"
+
+# The owner must distinguish completed state from successful required effects.
+while IFS='|' read -r initial effect first_result; do
+  reset_state
+  printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+  printf '%s\n' "$initial" > "$FAKE_LINEAR_ROOT/parent.state"
+  if [[ "$initial" == Done ]]; then
+    touch "$FAKE_LINEAR_ROOT/summary.posted"
+    printf 'summary\n' > "$FAKE_LINEAR_ROOT/summary.calls"
+  fi
+  printf '%s\n' "$effect" > "$FAKE_LINEAR_ROOT/post-done.mode"
+  rc=0; out="$(run_close 2>"$TMP_ROOT/post-done.err")" || rc=$?
+  assert_eq "$rc:$out" "$first_result" "$initial $effect never reports a completed required effect as closed" "$TMP_ROOT/post-done.err"
+  assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" Done "$initial $effect preserves the completed transition"
+  if [[ "$effect" == error ]]; then
+    rc=0; out="$(run_close 2>"$TMP_ROOT/post-done-retry.err")" || rc=$?
+    assert_eq "$rc:$out" '1:' "$initial error retry preserves the required failure" "$TMP_ROOT/post-done-retry.err"
+  fi
+  rm "$FAKE_LINEAR_ROOT/post-done.mode"
+  out="$(run_close)"
+  assert_eq "$out" 'closed PARENT-1' "$initial $effect resumes and closes after effects succeed"
+  assert_eq "$(cat "$FAKE_LINEAR_ROOT/summary.calls")" summary "$initial $effect retries without duplicating its summary"
+  [[ ! -e "$HELD_DIR" ]] && pass "$initial $effect releases held inputs only after success" || fail "$initial $effect releases held inputs only after success"
+done <<'ROWS'
+In Progress|error|1:
+Done|error|1:
+In Progress|quota|0:held PARENT-1 2026-10-05T16:00:00Z
+Done|quota|0:held PARENT-1 2026-10-05T16:00:00Z
+ROWS
+
+for defect in swallow short-circuit; do
+  mutant="$SANDBOX/skills/orch/scripts/container-close-$defect"
+  cp "$SCRIPT" "$mutant"
+  if [[ "$defect" == swallow ]]; then
+    mutate_file "$mutant" '  container_close_message completion-failed "$@" >&2' '  print_closed "$@"; exit 0'
+    initial='In Progress'
+  else
+    mutate_file "$mutant" 'if [[ "$PARENT_TYPE" != "completed" ]]; then' $'if [[ "$PARENT_TYPE" == "completed" ]]; then print_closed "$@"; exit 0; fi\nif [[ "$PARENT_TYPE" != "completed" ]]; then'
+    initial=Done
+  fi
+  reset_state
+  printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+  printf '%s\n' "$initial" > "$FAKE_LINEAR_ROOT/parent.state"
+  printf 'error\n' > "$FAKE_LINEAR_ROOT/post-done.mode"
+  rc=0; out="$("$mutant" "$SANDBOX" PARENT-1 2>"$TMP_ROOT/control.err")" || rc=$?
+  control_rc=0
+  ( FAIL=0; assert_eq "$rc:$out" '1:' 'required completion failure'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/control.log" || control_rc=$?
+  assert_eq "$control_rc" 1 "$defect control fails the required-completion assertion"
+done
 
 # The documented holder write leaves both newly-proved and already-proved
 # parents open. Only this helper may validate, summarize and complete them.

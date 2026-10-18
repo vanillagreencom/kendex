@@ -92,7 +92,7 @@ The filing renders only confirmed `when: at-completion` entries into the replace
 - PROJ-240 (at-completion): Replacement covers the old scope
 ```
 
-`issues complete` reads this block from its existing description read. An exact entry names an issue identifier and a nonblank one-line reason. On Done, it comments naming the replacement and cancels each named issue that is still open. A malformed line is reported and skipped. Neither `Related:` prose nor an ordinary related relation grants cancellation authority.
+`issues complete` reads this block from its existing description read. An exact entry names an issue identifier and a nonblank one-line reason. On Done, it reads each open named item's pending children before commenting and cancelling it. Open children require an explicit disposition: the command reports their identifiers and leaves the parent uncancelled. Required-effect failures stay nonzero after the replacement reaches Done, preserving the transition result and a structured retry without summary flags; repeating completion on that Done replacement resumes the same effects. A malformed line is reported and skipped. Neither `Related:` prose nor an ordinary related relation grants cancellation authority.
 
 ## Tracker
 

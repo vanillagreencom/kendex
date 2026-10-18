@@ -33,6 +33,7 @@ case "$query" in
     printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team","key":"CC","name":"Test"}]}}}' ;;
   *'issueUpdate(id:'*)
     id=$(jq -r '.variables.id' <<<"$payload")
+    if [[ "$SCENARIO" = retry && "$id" = CC-720 ]]; then touch "$TRACKER_STATE.done"; fi
     if [[ ( "$SCENARIO" = cancel-fail && "$id" = CC-721 ) || "$SCENARIO" = complete-fail ]]; then
       printf '%s' '{"data":{"issueUpdate":{"success":false}}}'
     else
@@ -40,16 +41,28 @@ case "$query" in
     fi ;;
   *'issue(id:'*)
     id=$(jq -r '.variables.id' <<<"$payload")
+    if [[ "$id" = CC-721 && ( "$SCENARIO" = unreadable-fail || ( "$SCENARIO" = retry && ! -e "$TRACKER_STATE.read" ) ) ]]; then
+      touch "$TRACKER_STATE.read"
+      printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200'
+      exit 0
+    fi
     type=started
+    [[ "$SCENARIO" != retry || "$id" != CC-720 || ! -e "$TRACKER_STATE.done" ]] || type=completed
     [[ "$SCENARIO" != terminal || "$id" != CC-721 ]] || type=completed
-    jq -cn --arg id "$id" --arg type "$type" --rawfile description "$DESCRIPTION_FILE" '{data:{issue:{id:$id,identifier:$id,title:"work",description:$description,state:{name:"In Review",type:$type},team:{id:"team",key:"CC",name:"Test"},children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"fixture-relation",type:"related",relatedIssue:{id:"CC-721",identifier:"CC-721",title:"old",state:{name:"Todo",type:"unstarted"}}},{id:"ordinary",type:"related",relatedIssue:{id:"CC-999",identifier:"CC-999",state:{name:"Todo",type:"unstarted"}}}]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' ;;
+    children='[]'
+    if [[ "$id" = CC-721 && ( "$SCENARIO" = children-fail || "$SCENARIO" = closed-children ) ]]; then
+      child_type=started
+      [ "$SCENARIO" != closed-children ] || child_type=completed
+      children=$(jq -cn --arg type "$child_type" '[{id:"CC-722",identifier:"CC-722",title:"child",state:{name:"child state",type:$type},children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}]')
+    fi
+    jq -cn --arg id "$id" --arg type "$type" --argjson children "$children" --rawfile description "$DESCRIPTION_FILE" '{data:{issue:{id:$id,identifier:$id,title:"work",description:$description,state:{name:"In Review",type:$type},team:{id:"team",key:"CC",name:"Test"},children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"fixture-relation",type:"related",relatedIssue:{id:"CC-721",identifier:"CC-721",title:"old",state:{name:"Todo",type:"unstarted"}}},{id:"ordinary",type:"related",relatedIssue:{id:"CC-999",identifier:"CC-999",state:{name:"Todo",type:"unstarted"}}}]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' ;;
   *) printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
 esac
 printf '___HTTP_CODE___200'
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-for scenario in done related-only malformed held terminal comment-fail cancel-fail complete-fail; do
+for scenario in done closed-children related-only malformed held terminal comment-fail cancel-fail complete-fail unreadable-fail children-fail retry; do
   description="$TMP_ROOT/description"
   printf '%s\n' 'Related: CC-999' '**Supersedes**:' '' '- CC-721 (at-completion): Replaced scope' >"$description"
   case "$scenario" in
@@ -60,17 +73,19 @@ for scenario in done related-only malformed held terminal comment-fail cancel-fa
   log="$TMP_ROOT/$scenario.jsonl"
   : >"$log"
   rc=0
+  summary_args=()
+  [ "$scenario" != retry ] || summary_args=(--summary 'completion fixture')
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
-    PAYLOAD_LOG="$log" DESCRIPTION_FILE="$description" SCENARIO="$scenario" \
-    "$BASH" .agents/skills/linear/scripts/linear.sh issues complete CC-720) >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+    PAYLOAD_LOG="$log" DESCRIPTION_FILE="$description" SCENARIO="$scenario" TRACKER_STATE="$TMP_ROOT/$scenario" \
+    "$BASH" .agents/skills/linear/scripts/linear.sh issues complete CC-720 "${summary_args[@]}") >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
   expected_rc=0
-  case "$scenario" in *-fail) expected_rc=1 ;; esac
+  case "$scenario" in *-fail|retry) expected_rc=1 ;; esac
   assert_eq "$scenario returns the completion result" "$rc" "$expected_rc"
   mutations=$(jq -sc '[.[] | select(.query | test("commentCreate|issueUpdate")) | {id:(.variables.input.issueId // .variables.id),state:.variables.input.stateId,body:.variables.input.body}]' "$log")
   case "$scenario" in
-    done)
-      assert_jq "done cancels the named item after its replacement completes" "$mutations" 'map({id,state}) == [{id:"CC-720",state:"Done"},{id:"CC-721",state:null},{id:"CC-721",state:"Canceled"}]'
-      assert_jq "done comments naming the replacement before cancellation" "$mutations" '.[1].body | contains("CC-720")' ;;
+    done|closed-children)
+      assert_jq "$scenario cancels the named item after its replacement completes" "$mutations" 'map({id,state}) == [{id:"CC-720",state:"Done"},{id:"CC-721",state:null},{id:"CC-721",state:"Canceled"}]'
+      assert_jq "$scenario comments naming the replacement before cancellation" "$mutations" '.[1].body | contains("CC-720")' ;;
     comment-fail|cancel-fail)
       assert_jq "$scenario reaches the old item comment" "$mutations" '.[1].id == "CC-721" and .[1].state == null'
       if [ "$scenario" = comment-fail ]; then
@@ -81,5 +96,25 @@ for scenario in done related-only malformed held terminal comment-fail cancel-fa
   esac
   if [ "$scenario" = malformed ]; then
     assert "malformed entry reports its structured category" jq -se 'any(.[]; .warning == "supersedes-malformed")' "$TMP_ROOT/err"
+  fi
+  case "$scenario" in
+    comment-fail|cancel-fail|unreadable-fail|children-fail|retry)
+      assert_jq "$scenario preserves the successful transition" "$(cat "$TMP_ROOT/out")" '.success == true and .identifier == "CC-720"'
+      diagnostic=$(jq -sc '[.[] | select(.error == "supersession-incomplete")] | last' "$TMP_ROOT/err")
+      assert_jq "$scenario reports Done and a summary-free retry" "$diagnostic" '.already_done == true and .state == "Done" and .retry == {resource:"issues",action:"complete",issue:"CC-720",options:[]}'
+      ;;
+  esac
+  if [ "$scenario" = children-fail ]; then
+    assert "open children are named for disposition" jq -se 'any(.[]; .error == "supersession-children" and .issue == "CC-721" and .children == ["CC-722"])' "$TMP_ROOT/err"
+  fi
+  if [ "$scenario" = retry ]; then
+    rc=0
+    # Retry is the public structured action and options, never summary flags.
+    (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
+      PAYLOAD_LOG="$log" DESCRIPTION_FILE="$description" SCENARIO="$scenario" TRACKER_STATE="$TMP_ROOT/$scenario" \
+      "$BASH" .agents/skills/linear/scripts/linear.sh "$(jq -r '.retry.resource' <<<"$diagnostic")" "$(jq -r '.retry.action' <<<"$diagnostic")" "$(jq -r '.retry.issue' <<<"$diagnostic")") >"$TMP_ROOT/retry.out" 2>"$TMP_ROOT/retry.err" || rc=$?
+    assert_eq "already-Done retry completes required effects" "$rc" 0
+    assert "retry posts one source summary and cancels the old item" jq -se '[.[] | select(.query | contains("commentCreate")) | .variables.input.issueId] == ["CC-720", "CC-721"] and any(.[]; .variables.id == "CC-721" and .variables.input.stateId == "Canceled")' "$log"
+    assert "already-Done retry does not repeat the transition" jq -se '[.[] | select((.query | contains("issueUpdate")) and .variables.id == "CC-720")] | length == 1' "$log"
   fi
 done
