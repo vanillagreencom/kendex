@@ -546,6 +546,16 @@ environment_rows() {
 [2,"bash wrapper.sh env NAME=value env","wrapper-launcher-env-chain"]
 [0,"bash wrapper.sh 'env NAME=value command-name args'","wrapper-quoted-launcher-data"]
 [0,"bash wrapper.sh \"env -u NAME -u OTHER command-name args\"","wrapper-quoted-unset-data"]
+[0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A -u B VAR=1 bash test.sh' --build 'bash -n build.sh'","waiter-quoted-unset-command"]
+[0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'unset A B; export VAR=1; exec bash test.sh' --build 'bash -n build.sh'","waiter-quoted-setup-command"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env' --build 'bash -n build.sh'","waiter-quoted-env-dump"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'printenv' --build 'bash -n build.sh'","waiter-quoted-printenv-dump"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'unset A B; export VAR=1; exec bash test.sh; env'","waiter-quoted-setup-followed-by-dump"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A -u B VAR=1'","waiter-quoted-unset-without-program"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u \"$@\" bash test.sh'","waiter-quoted-unproved-unset-operand"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A bash test.sh' > out","waiter-quoted-redirect-retains-refusal"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test \"env -u $NAME bash test.sh\"","waiter-expanded-command-retains-refusal"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'bash -c \"env\"'","waiter-quoted-nested-shell-dump"]
 [0,"bash wrapper.sh 'env'","wrapper-quoted-bare-env-data"]
 [2,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
 [2,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
@@ -1130,6 +1140,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
       defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$incoming_sources\" ]", "false") }
+      defect == "quoted-launcher-cut" { swap("[ -n \"$script_pos\" ] && [ \"$candidate\" -gt \"$((script_pos + 1))\" ]", "false") }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
       defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
@@ -1289,6 +1300,10 @@ unset-command-head|FAIL environment: timed-unset-command-redirect: exit=2 expect
 unset-command-head|FAIL environment: grouped-unset-command-recording: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-launcher-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-unset-data: exit=2 expected=0
+quoted-launcher-cut|FAIL environment: waiter-quoted-unset-command: exit=2 expected=0
+quoted-launcher-cut|FAIL environment: waiter-quoted-setup-command: exit=2 expected=0
+no-check|FAIL environment: waiter-quoted-env-dump: exit=0 expected=2
+no-check|FAIL environment: waiter-quoted-printenv-dump: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
