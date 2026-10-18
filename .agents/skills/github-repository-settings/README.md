@@ -6,7 +6,7 @@ Select local review instructions or enabled GitHub review files for a repository
 
 - `adopt --dry-run` previews takeover without writes and reports hand edits.
 - `render` writes the selected files through bot-instructions.
-- `check [--staged]` compares files without writes and reports the check location. With `--staged`, it reads tracked settings and review files from the index. Process, private-file and untracked nested settings keep their working values and normal precedence.
+- `check [--staged]` compares files without writes and reports the check location. With `--staged`, it reads tracked settings and review files from the index. Process and private-file settings keep their working values and normal precedence. A nested settings file keeps its working values only when it is absent from HEAD and the index. A staged deletion stays absent even if its working file remains.
 
 ## Setup
 

@@ -46,8 +46,9 @@ rg_settings_root_source=kendex.settings.toml
 # github-repository-settings supplies an owned scratch directory for a staged
 # check. Keep local-only nested settings live; a staged deletion stays absent.
 rg_settings_index_sources() { # DIR: snapshots for subsequent rg_setting calls
-  local dir="$1" file snapshot entries previous head status=0
+  local dir="$1" file snapshot entries entry previous head status=0
   local nested="$dir/nested.toml" root="$dir/root.toml"
+  [ -z "${REVIEW_GATE_SETTINGS_FILE:-}" ] || return 0
   head="$(git rev-parse --verify -q HEAD)" || status=$?
   if [ "$status" -gt 1 ]; then
     rg_message error settings-index HEAD 'Could not read the settings base.' >&2
@@ -60,6 +61,17 @@ rg_settings_index_sources() { # DIR: snapshots for subsequent rg_setting calls
       return 1
     fi
     if [ -n "$entries" ]; then
+      # Git records a tracked symlink's target path as its blob, not TOML.
+      # Only one regular stage-zero entry can supply a settings snapshot.
+      entry="${entries%%$'\t'*}"
+      case "$entry" in
+        "100644 "*" 0"|"100755 "*" 0") ;;
+        *) entry='' ;;
+      esac
+      if [ "$entries" != "$entry"$'\t'"$file" ]; then
+        rg_message error settings-index-mode "$file" 'Staged settings must be a regular file.' >&2
+        return 1
+      fi
       if ! git show ":$file" > "$snapshot"; then
         rg_message error settings-index "$file" 'Could not read the staged settings.' >&2
         return 1

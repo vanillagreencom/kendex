@@ -23,7 +23,7 @@ tags: [review, configuration]
 .agents/skills/github-repository-settings/scripts/github-repository-settings check --staged
 ```
 
-Use `adopt --dry-run` to preview takeover without writes. Keep the existing [bot-instructions manifest](../bot-instructions/schemas/repo-toml.md). The library reports hand edits and refuses symlinked preview targets. `render` writes the selected outputs. `check` compares them without writes. `check --staged` reads tracked settings and review files from the index. Process, private-file and untracked nested settings keep their working values and normal precedence. Exit codes: 0 clean, 1 findings, 2 could not complete. Options and the check report contract: `scripts/github-repository-settings --help`.
+Use `adopt --dry-run` to preview takeover without writes. Keep the existing [bot-instructions manifest](../bot-instructions/schemas/repo-toml.md). The library reports hand edits and refuses symlinked preview targets. `render` writes the selected outputs. `check` compares them without writes. `check --staged` reads tracked settings and review files from the index. Process and private-file settings keep their working values and normal precedence. A nested settings file keeps its working values only when it is absent from HEAD and the index. A staged deletion stays absent even if its working file remains. Exit codes: 0 clean, 1 findings, 2 could not complete. Options and the check report contract: `scripts/github-repository-settings --help`.
 
 Preview grants no write ownership. Use the existing [bot-instructions adoption operation](../bot-instructions/SKILL.md) to take unmanaged content over before rendering it.
 
