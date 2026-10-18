@@ -2725,19 +2725,48 @@ HOSTED_HOME="$H"; HOSTED_FIXTURE_DIR="$FIXTURE_DIR"
 new_home provider-absence
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-provider_absence_comparison() {
-  local extra="${1:-}" baseline_out baseline_rc baseline_err diagnostic
-  run_lanes "ORCH_LANE_HOST=local${extra:+;$extra}" list --harness claude --json
-  baseline_out="$OUT"; baseline_rc="$RC"; baseline_err="$ERR"
-  run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1${extra:+;$extra}" list --harness claude --json
+provider_absence_assertion() {
+  local baseline_out="$1" baseline_rc="$2" baseline_err="$3" compared_out diagnostic
+  # The fresh, claim-free fixture only varies session_burn_pct_per_lane_hour
+  # with the sample clock; compare every other field from both readings.
+  local normalize='map(del(.session_burn_pct_per_lane_hour))'
+  baseline_out="$(jq "$normalize" <<<"$baseline_out")" && compared_out="$(jq "$normalize" <<<"$OUT")" \
+    || { fail 'the provider-absence listings parse as JSON'; return 1; }
   diagnostic="$RUN/provider-absence-stderr"
   { printf 'no-provider-stderr:\n'; cat "$baseline_err"
     printf 'verb-absent-stderr:\n'; cat "$ERR"; } > "$diagnostic"
-  assert_eq "no-provider-rc=$baseline_rc verb-absent-rc=$RC json=$([[ "$OUT" == "$baseline_out" ]] && echo same || echo differs) no-provider-stderr=$([[ ! -s "$baseline_err" ]] && echo empty || echo nonempty) verb-absent-stderr=$([[ ! -s "$ERR" ]] && echo empty || echo nonempty)" \
+  assert_eq "no-provider-rc=$baseline_rc verb-absent-rc=$RC json=$([[ "$compared_out" == "$baseline_out" ]] && echo same || echo differs) no-provider-stderr=$([[ ! -s "$baseline_err" ]] && echo empty || echo nonempty) verb-absent-stderr=$([[ ! -s "$ERR" ]] && echo empty || echo nonempty)" \
     "no-provider-rc=0 verb-absent-rc=0 json=same no-provider-stderr=empty verb-absent-stderr=empty" \
     "a provider without the verb lists exactly what the no-provider reading lists, and says nothing" "$diagnostic"
 }
+provider_absence_comparison() {
+  local extra="${1:-}" advance="${2:-0}" baseline_out baseline_rc baseline_err control_rc=0
+  run_lanes "ORCH_LANE_HOST=local${extra:+;$extra}" list --harness claude --json
+  baseline_out="$OUT"; baseline_rc="$RC"; baseline_err="$ERR"
+  [[ "$advance" == 0 ]] || printf '%s' "$(( $(cat "$STUB_CLOCK") + advance ))" > "$STUB_CLOCK"
+  run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1${extra:+;$extra}" list --harness claude --json
+  provider_absence_assertion "$baseline_out" "$baseline_rc" "$baseline_err"
+  if [[ "$advance" != 0 ]]; then
+    assert_eq "$([[ "$OUT" != "$baseline_out" ]] && echo differs || echo same)" differs \
+      'the one-second pair differs before normalization'
+    ( FAIL=0
+      OUT="$(jq '.[0].measured_through = "host"' <<<"$OUT")" || exit 1
+      provider_absence_assertion "$baseline_out" "$baseline_rc" "$baseline_err"
+      [[ "$FAIL" == 0 ]]
+    ) > "$TMP_ROOT/provider-absence-nontime-control.log" 2>&1 || control_rc=$?
+    assert_eq "$control_rc" 1 'the provider-absence assertion rejects a non-time difference'
+    assert_file_contains "$TMP_ROOT/provider-absence-nontime-control.log" \
+      'no-provider-rc=0 verb-absent-rc=0 json=differs no-provider-stderr=empty verb-absent-stderr=empty' \
+      'the non-time control reaches unequal successful listings with empty stderr'
+  fi
+}
 provider_absence_comparison
+
+# Freeze epoch and elapsed time so the extra pair costs no real waiting.
+PROVIDER_CLOCK_ENV="$TMP_ROOT/provider-absence-clock"
+virtual_clock_bash_env "$PROVIDER_CLOCK_ENV"
+_virtual_clock_seed
+provider_absence_comparison "PATH=$CLOCK_BIN:$CLAIM_BIN:$PATH;BASH_ENV=$PROVIDER_CLOCK_ENV" 1
 
 # Control: identical failed renewals leave the listings equal, but the first
 # token request alone writes stderr. The same assertion must reject that pair.
