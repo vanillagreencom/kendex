@@ -2817,9 +2817,10 @@ account_claims() { # DIR [HARNESS [BUCKETS [SILENT]]]
 # row passes the same exclusion test. Each row is matched on the `_id`
 # host_lane_rows stamped on it; a host row discovery reaches is emitted from the
 # local loop, in the local dir's place, and the tail carries only the rows
-# naming a dir discovery does not reach.
+# naming a dir discovery does not reach. Context keeps the local row too:
+# a local worker and a hosted worker can spend different copies of one account.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x held_records i
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" keep_local="${5:-false}" excluded="" held="" reached="" id d h row x held_records i
 	local held_ids=() held_rows=()
 	while IFS= read -r x; do
 		[[ -n "$x" ]] || continue
@@ -2849,6 +2850,7 @@ collect_lanes() {
 					case $'\n'"$held"$'\n' in
 						*$'\n'"$id"$'\n'*)
 							reached+="$id"$'\n'
+							if [[ "$keep_local" == true ]]; then measure_lane "$h" "$d" || return 1; fi
 							# A helper failure must not restore shared host room
 							# when the requested model was never measured. This
 							# pipeline reports it as an unread candidate.
@@ -4690,7 +4692,7 @@ case "$SUB" in
 		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
 		pick_host_rows all || exit 1
-		usage="$(collect_lanes all "" "$HOSTED_ROWS")" || exit 1
+		usage="$(collect_lanes all "" "$HOSTED_ROWS" "" true)" || exit 1
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
 		while (( usage_i < usage_count )); do
 			usage_dir="$(jq -r --argjson i "$usage_i" '.[$i].config_dir' <<<"$usage")"
@@ -4699,11 +4701,21 @@ case "$SUB" in
 			usage_i=$((usage_i + 1))
 		done
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
-		# The handoff mark is the verdict a lane's own hook asks `pick --lane` for.
+		# A local worker spends this machine's credential even in a hosted fleet.
+		# Only an overseer without a worker record keeps the Claude provider policy.
+		# Stated Copilot pools belong to the non-provider account reading too.
 		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson max "$((100 - 10#$HANDOFF_HEADROOM_PCT))" \
+			--argjson records "$CONTEXT_LANES" \
 			--argjson credit_floor "$CREDIT_FLOOR" --arg seats "$SEATS" --argjson reserve "$SEAT_RESERVE" "$LANE_MODEL_JQ"'
           ($seats | split("\n") | map(select(. != ""))) as $seats
-          | $c | map(. as $x | ((($u | map(select(.config_dir == $x.config_dir)) | first) // {})
+          | $c | map(. as $x
+            | ($records | map(select(((.window // "") | sub("^.*:"; "")) == $x.lane)) | first) as $record
+            | ($u | map(select(.config_dir == $x.config_dir))) as $readings
+            | (if (($record.host // "local") | . != "local" and . != "")
+                  or ($record == null and $x.caller == true and any($readings[]; .harness == "claude"))
+               then "host" else "local" end) as $through
+            | ((($readings | map(select((.measured_through == "host") == ($through == "host"))) | first)
+                // ($readings | map(select(.measured_through != "host")) | first) // {})
             | with_lane_seat_verdict(.wall; $max; $credit_floor; (if $x.caller == true then [] else $seats end); $reserve)) as $l
             | . + {headroom_pct: ($l.headroom_pct // null), binding_bucket: ($l.binding_bucket // null),
                    binding_resets_at: ($l.binding_resets_at // null), credits: ($l.credits // null),

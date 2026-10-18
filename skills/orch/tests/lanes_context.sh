@@ -278,6 +278,60 @@ lanes_table "$(CTX_FLEET="$HOST_ACCOUNT_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtu
   "control: ignoring account marks leaves the hosted lane unmarked|ken-4296|headroom_pct=2 context_handoff_due=false handoff_required=false"
 rm -f -- "$STATE/claims/hosted-account.claim"
 
+echo "=== account readings retain the session's execution source ==="
+# open-terminal --host local records host:null even with an ambient provider.
+# Pi can spend a Claude account; Copilot fleet workers are local-only.
+SOURCE_FLEET="$TMP_ROOT/source-fleet"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$SOURCE_FLEET" init oversee >/dev/null
+SOURCE_STATE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$SOURCE_FLEET" path oversee)"
+SOURCE_ROWS="$TMP_ROOT/source-rows"
+mkdir -p "$H/.sourcecopilot/session-state"
+printf '%s\n' '{}' > "$H/.sourcecopilot/config.json"
+SOURCE_CTRL="$(mutant_scripts mutant-context-source lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$SOURCE_CTRL/lanes" \
+  'map(select((.measured_through == "host") == ($through == "host")))' 'map(select(.measured_through == "host"))'
+while IFS='|' read -r harness account account_harness model local_room local_due caller_room hosted; do
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$SOURCE_FLEET" set oversee lanes "$(jq -nc \
+    --arg h "$harness" --arg a "$account" --arg model "$model" --arg p "$BIN/provider" \
+    --arg root "$TMP_ROOT/source-local" --arg remote "$HOSTED_ROOT/source" --arg hosted "$hosted" '[
+    {item:"SOURCE-LOCAL",window:"fleet:source-local",harness:$h,model:$model,account:$a,host:null,mail_root:$root,status:"running"},
+    (if $hosted == "yes" then
+      {item:"SOURCE-HOST",window:"fleet:source-host",harness:$h,model:$model,account:$a,host:$p,mail_root:$remote,status:"running"}
+     else empty end)]')" >/dev/null
+  write_claim source-local "%41" "$account" source-local "$SOURCE_STATE"
+  if [[ "$hosted" == yes ]]; then write_claim source-host "%42" "$account" source-host "$SOURCE_STATE"; fi
+  record_reading "$TMP_ROOT/source-local/tmp/lane-mail/SOURCE-LOCAL" "$harness" 1000 1000000 "$model"
+  record_reading "$HOSTED_DIR$HOSTED_ROOT/source/tmp/lane-mail/SOURCE-HOST" "$harness" 1000 1000000 "$model"
+  printf 'account=%s\tharness=%s\tweekly-pct=10\n' "$account" "$account_harness" > "$SOURCE_ROWS"
+  SOURCE_OUT="$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.claude:$H/.codex:$H/.sourcecopilot" \
+    CTX_POOL="$H/.sourcecopilot=97/100" CTX_CONFIG_DIR="$account" CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer \
+    CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" \
+    ORCH_LANES_USAGE_TTL=0 run_ctx --json)"
+  lanes_table "$SOURCE_OUT" \
+    "$harness local worker retains its own account reading|source-local|headroom_pct=$local_room context_handoff_due=false handoff_required=$local_due" \
+    "$harness overseer follows its account's caller policy|overseer|caller=true headroom_pct=$caller_room"
+  if [[ "$hosted" == yes ]]; then
+    lanes_table "$SOURCE_OUT" "$harness hosted worker retains the provider reading|source-host|headroom_pct=90 context_handoff_due=false handoff_required=false"
+  fi
+  SOURCE_CALLER="$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.claude:$H/.codex:$H/.sourcecopilot" \
+    CTX_POOL="$H/.sourcecopilot=97/100" CTX_CONFIG_DIR="$account" CTX_TMUX_PANE=%41 CTX_WINDOW_NAME=source-local \
+    CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" \
+    ORCH_LANES_USAGE_TTL=0 run_ctx --json)"
+  lanes_table "$SOURCE_CALLER" "$harness caller that is a local worker keeps local usage|source-local|caller=true headroom_pct=$local_room"
+  if [[ "$harness" == claude ]]; then
+    lanes_table "$(CTX_FLEET="$SOURCE_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
+      CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" CTX_LANES="$SOURCE_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+      "control: selecting only provider readings suppresses the local account mark|source-local|headroom_pct=90 context_handoff_due=false handoff_required=false"
+  fi
+  rm -f -- "$STATE/claims/source-local.claim" "$STATE/claims/source-host.claim"
+done <<EOF
+claude|$H/.claude|claude|claude-opus-5-5|3|true|90|yes
+codex|$H/.codex|codex|gpt-6-astra|20|false|20|yes
+pi|$H/.claude|claude|anthropic/claude-opus-5-5|3|true|90|yes
+copilot|$H/.sourcecopilot|copilot|gpt-5|3|true|3|no
+EOF
+
 echo "=== only this fleet owns context rows; accounts keep global claims ==="
 FOREIGN_FLEET="$TMP_ROOT/other-fleet/oversee.json"
 # name|pane|account|window|fleet
