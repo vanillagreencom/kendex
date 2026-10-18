@@ -102,7 +102,8 @@ while IFS='|' read -r name credentials provider host accounts_rc cloud_repos hea
           "$name: $1 relays the reader's capacity fallback" ;;
     esac
     if [[ "$notice" == future ]]; then
-      if cmp -s -n "$FUTURE_NOTICE_BYTES" "$TMP_ROOT/future-notice" "$TMP_ROOT/err"; then
+      if head -c "$FUTURE_NOTICE_BYTES" "$TMP_ROOT/err" > "$TMP_ROOT/notice-prefix" \
+        && cmp -s "$TMP_ROOT/future-notice" "$TMP_ROOT/notice-prefix"; then
         pass "$name: $1 preserves unknown provider notice bytes"
       else
         fail "$name: $1 preserves unknown provider notice bytes" "$(cat "$TMP_ROOT/err")"
