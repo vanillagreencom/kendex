@@ -532,7 +532,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         # is still judged on its handoff marks.
         self.assertTrue((self.worktree_root() / "tmp/lane-mail/TEST-1").is_dir())
 
-    def native_model_switch(self, control="", stop_fault=""):
+    def native_model_switch(self, control="", recovery_fault=""):
         """SSH create, its native prefix, the installed hook and host state read."""
         hook = PACKAGE.parents[1] / "hooks/lane-mail-check.sh"
         hook_text = hook.read_text()
@@ -546,6 +546,10 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             guard = 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ]; then'
             self.assertEqual(hook_text.count(guard), 1)
             hook_text = hook_text.replace(guard, 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ] && false; then')
+        if control == "handoff-notice":
+            target = 'hand_over "lane-mail-check: model-unavailable=handoff-unwritten$NL$(cat -- "$WORK_DIR/model.err")"'
+            self.assertEqual(hook_text.count(target), 1)
+            hook_text = hook_text.replace(target, 'model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"')
         self.seed_source(".claude/hooks/lane-mail-check.sh", hook_text)
         made = self.create()
         self.assertEqual(made.returncode, 0, made.stderr)
@@ -567,22 +571,36 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             self.assertEqual(json.loads(reading.stdout), {"model": "claude-fable-5-1",
                                                   "identity_file": self.row["clone"] + "/.git/lane-host-pid"})
         stop_done = self.root / "stop-done"
-        stop_reached = self.root / "stop-reached"
-        if stop_fault:
+        fault_reached = self.root / "fault-reached"
+        if recovery_fault == "handoff":
+            # The writer's required clock read fails inside this invocation.
+            # Model-check and notice updates retain their real jq dependency.
+            library = path / ".agents/skills/orch/scripts/workflow-state"
+            text = library.read_text()
+            signature = "stamp_judge() {"
+            self.assertEqual(text.count(signature), 1)
+            wrapper = f'''stamp_judge() {{
+  date() {{ printf reached > {shlex.quote(str(fault_reached))}; return 1; }}
+  native_real_stamp_judge "$@"
+}}
+
+'''
+            library.write_text(text.replace(signature, wrapper + "native_real_" + signature))
+        elif recovery_fault:
             # A private wrapper keeps the real owner and fails its dependency.
             # Its exit receipt proves detached completion before state is read.
-            name = "lane-state.sh" if stop_fault == "stop" else "lane-launch.sh"
+            name = "lane-state.sh" if recovery_fault == "stop" else "lane-launch.sh"
             library = path / ".agents/skills/orch/scripts/lib" / name
             text = library.read_text()
-            function = "lane_stop_identity" if stop_fault == "stop" else "lane_run_detached"
+            function = "lane_stop_identity" if recovery_fault == "stop" else "lane_run_detached"
             signature = function + "() {"
             self.assertEqual(text.count(signature), 1)
             text = text.replace(signature, "native_real_" + signature)
-            if stop_fault == "stop":
+            if recovery_fault == "stop":
                 wrapper = f'''
 lane_stop_identity() {{
   trap 'printf done > {shlex.quote(str(stop_done))}' EXIT
-  lane_process_table() {{ printf reached > {shlex.quote(str(stop_reached))}; return 1; }}
+  lane_process_table() {{ printf reached > {shlex.quote(str(fault_reached))}; return 1; }}
   native_real_lane_stop_identity "$@"
 }}
 '''
@@ -592,7 +610,7 @@ lane_stop_identity() {{
                 wrapper = f'''
 lane_run_detached() {{
   local PATH={shlex.quote(str(no_commands))} rc=0
-  printf reached > {shlex.quote(str(stop_reached))}
+  printf reached > {shlex.quote(str(fault_reached))}
   native_real_lane_run_detached "$@" || rc=$?
   printf done > {shlex.quote(str(stop_done))}
   return "$rc"
@@ -631,20 +649,33 @@ signal.sigwait({signal.SIGTERM})
             reply = json.loads(child.stdout.readline())
             self.assertEqual(reply["exit"], 0, reply)
             self.assertTrue((path / "tmp/workflow-state-TEST-1.json").exists(), reply)
-            if stop_fault:
+            if recovery_fault == "handoff":
+                self.assertTrue(fault_reached.exists(), "the required clock fault was not reached")
+            elif recovery_fault:
                 deadline = time.monotonic() + 20
                 while not stop_done.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
                 self.assertTrue(stop_done.exists(), "stop attempt produced no completion receipt")
-                self.assertTrue(stop_reached.exists(), "stop fault was not reached")
+                self.assertTrue(fault_reached.exists(), "stop fault was not reached")
             state = json.loads((path / "tmp/workflow-state-TEST-1.json").read_text())
             read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh", "TEST-1")
             self.assertEqual(read.returncode, 0, read.stderr)
             self.assertEqual(json.loads(read.stdout), state)
-            if stop_fault:
+            if recovery_fault == "handoff":
+                self.assert_native_model_check(state)
+                self.assertIsNone(state.get("handoff"))
+                self.assertIsNone(child.poll(), "a failed handoff write ended its predecessor")
+                self.assertFalse((path / "tmp/model-recovery-TEST-1.log").exists(),
+                                 "a failed handoff write dispatched recovery")
+                if control == "handoff-notice":
+                    with self.assertRaises(AssertionError):
+                        self.assert_native_handoff_failure(reply)
+                else:
+                    self.assert_native_handoff_failure(reply)
+            elif recovery_fault:
                 self.assert_native_model_handoff(state)
                 self.assertIsNone(child.poll(), "a failed stop ended its predecessor")
-                if stop_fault == "stop":
+                if recovery_fault == "stop":
                     if control == "stop-record":
                         with self.assertRaises(AssertionError):
                             self.assert_native_stop_failure(state, child.pid)
@@ -676,6 +707,9 @@ signal.sigwait({signal.SIGTERM})
     def assert_native_model_handoff(self, state):
         self.assertEqual(state.get("handoff", {}).get("cause"), "model-switched")
         self.assertEqual(state["handoff"]["model"], "claude-fable-5-1")
+        self.assert_native_model_check(state)
+
+    def assert_native_model_check(self, state):
         check = state["model_checks"]["native-session"]
         self.assertEqual((check["outcome"], check["launched"], check["observed"]),
                          ("switched", "claude-fable-5-1", "claude-sonnet-4-6"))
@@ -690,24 +724,30 @@ signal.sigwait({signal.SIGTERM})
         self.assertEqual(failure["launch"]["pid"], str(predecessor))
         self.assertTrue(failure["launch"]["start"])
 
-    def test_native_model_stop_failures(self):
-        for fault in ("stop", "dispatch"):
+    def assert_native_handoff_failure(self, reply):
+        self.assertIn("lane-mail-check: model-unavailable=handoff-unwritten", reply["stdout"])
+        self.assertIn("workflow-state: clock-unreadable", reply["stdout"])
+
+    def test_native_model_recovery_failures(self):
+        for fault in ("handoff", "stop", "dispatch"):
             with self.subTest(fault=fault):
                 case = type(self)()
                 self.addCleanup(case.doCleanups)
                 case.setUp()
-                case.native_model_switch(stop_fault=fault)
+                case.native_model_switch(recovery_fault=fault)
 
-    def test_native_model_stop_failure_control(self):
-        # The same stop still fails and logs; losing its handoff field must
-        # fail the controller-facing assertion. Keep the defect outside the tree.
-        case = type(self)()
-        self.addCleanup(case.doCleanups)
-        scratch = tempfile.TemporaryDirectory()
-        self.addCleanup(scratch.cleanup)
-        case.control_scratch = Path(scratch.name)
-        case.setUp()
-        case.native_model_switch(control="stop-record", stop_fault="stop")
+    def test_native_model_recovery_failure_controls(self):
+        # Retain each required dependency failure. Losing its report must fail
+        # the same assertion. Keep the defects outside the tracked tree.
+        for control, fault in (("handoff-notice", "handoff"), ("stop-record", "stop")):
+            with self.subTest(control=control):
+                case = type(self)()
+                self.addCleanup(case.doCleanups)
+                scratch = tempfile.TemporaryDirectory()
+                self.addCleanup(scratch.cleanup)
+                case.control_scratch = Path(scratch.name)
+                case.setUp()
+                case.native_model_switch(control=control, recovery_fault=fault)
 
     def test_native_model_marker_handoff(self):
         self.native_model_switch()

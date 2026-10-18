@@ -3394,7 +3394,14 @@ handoff_check() {
     { [ -f "$handoff_sd/workflow-state-$ITEM.json" ] ||
       "$SCRIPTS/workflow-state" --state-dir "$handoff_sd" init "$ITEM" --worktree "$ROOT" >/dev/null 2>"$WORK_DIR/model.err"; } &&
       "$SCRIPTS/workflow-state" --state-dir "$handoff_sd" set "$ITEM" handoff "$handoff" >/dev/null 2>>"$WORK_DIR/model.err" ||
-      { model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"; [ "$native" != true ] || return 0; }
+      {
+        if [ "$native" = true ]; then
+          # The acquired switch check already occupies the notice slot.
+          hand_over "lane-mail-check: model-unavailable=handoff-unwritten$NL$(cat -- "$WORK_DIR/model.err")"
+          return 0
+        fi
+        model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"
+      }
     # Recovery owns the stop and runs outside this hook's process group.
     if [ "$native" = true ]; then
       # The controller reads this handoff through its existing host state
