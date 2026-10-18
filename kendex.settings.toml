@@ -158,6 +158,12 @@ ORCH_OVERSEER_HEADROOM_PCT = "5"
 ORCH_OVERSEER_WALL_MINUTES = "20"
 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
+# A seat account (one an overseer or Jarvis session runs on) takes lanes only
+# while its projected room stays above this percent of its window, and lanes on
+# it hand off at that line. Set by the owner's delegate on 2026-10-18 (note
+# 1792366002): 20 keeps a fifth of the window for the seat session.
+ORCH_OVERSEER_SEAT_RESERVE_PCT = "20"
+
 # A lane whose account reaches 97 percent used is marked, and the overseer asks
 # it for a handoff at the next safe point.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
