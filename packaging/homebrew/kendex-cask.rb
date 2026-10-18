@@ -8,9 +8,9 @@
 # Installs the app and links the kendex command out of it, so the two
 # update together.
 cask "kendex" do
-  version "1.19.2"
-  sha256 arm:   "eafbe4db5fe7e89772b78eb93ab97e7acf53d58b68e83652ce2b26d52cee8b59",
-         intel: "8dd0345e9c51c8bb5b6348de0b6a9ee733f5a8351f34e9e065fdb677b403c5cf"
+  version "1.20.0"
+  sha256 arm:   "ddcfd163235cefc9014707bcb5802d68588035a75ec242524324092283fc23f5",
+         intel: "3e58ca96ea7df2535576d260e9ee890f28f92c3ceb60d5119ef55d6846346bc3"
 
   # Tauri names the Intel disk image `x64` and the Apple-silicon one `aarch64`.
   arch arm: "aarch64", intel: "x64"
