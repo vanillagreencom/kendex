@@ -371,8 +371,9 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # as standard or top, or the name that harness's --model takes, in lowercase
 # letters, digits, dots and hyphens, starting with a letter; `kendex
 # tier-model` classifies it at launch, and the class of the entry the launch
-# picks prints its warning once. On claude a class runs its family alias,
-# standard as opus, and `model-classes` overrides do not apply yet. On codex
+# picks prints its warning once. On claude a class runs its family alias
+# after model-classes overrides. An Anthropic override selects its Claude
+# family alias. An override for another provider stops the preference walk. On codex
 # and copilot a class runs the harness default: codex until its model list
 # reaches the launch. On pi
 # it is provider/model, for example pi:github-copilot/claude-opus-5.5:high:

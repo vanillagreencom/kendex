@@ -166,8 +166,8 @@ while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"
 done <<<"$WORLD_ROWS"
 assert_eq "$(grep -E '^[^ ]+ (pick|list --json$)' "$STUB_DIR/lanes.hosts" | grep -v '^unset ' | sort)" \
-  "$(printf '%s\n' 'local pick --harness claude --json --model claude-opus-5' \
-      'local pick --harness claude --json --model claude-sonnet-5' 'local pick --harness codex --json' \
+  "$(printf '%s\n' 'local pick --harness claude --json --native-model claude-opus-5' \
+      'local pick --harness claude --json --native-model claude-sonnet-5' 'local pick --harness codex --json' \
       'provider-x list --json' 'provider-x pick --harness codex --json' | sort)" \
   "each host's accounts are listed once and its wall asked of lanes pick once per harness and model, under that host" "$ERR"
 assert_eq "$(grep -n '^owed ' <<<"$OUT" | head -1 | cut -d: -f1)" "$(($(grep -n '^account ' <<<"$OUT" | tail -1 | cut -d: -f1) + 1))" \
@@ -270,30 +270,6 @@ done <<'ROWS'
 unmeasured|3|{"walled":0,"unmeasured":2}|0
 failure|1||1
 ROWS
-
-# A failed wall read relays the pick's own words, never a model line: a lane's
-# launch prints those only where its preference walk classified the entry, and
-# none where it named its model, and the watch starts its reads under the orch
-# library's hold. The pick is the real `lanes`, the tier-model fixture
-# classifying `opus`, with its exit failed after it ran; the control drops the
-# library's export.
-HOLDCTL="$(mutant_scripts owed-holdctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$HOLDCTL/lib/overseer-launch.sh" 'export ORCH_MODEL_LINES_HELD=1' ':'
-OWED_LINES=""
-for bin in "" "$HOLDCTL/oversee-watch"; do
-  new_case owed_pick_model_lines
-  fleet '[]' "$(record KEN-14 stopped claude '{"model":"opus"}')"
-  printf '%s\n' "$(issue KEN-14 'In Progress' 1)" | jq -sc . > "$STUB_DIR/tracker.out"
-  printf '%s\n' "$(account claude claude room 2026-10-01T00:00:00Z)" | jq -sc . > "$STUB_DIR/lanes.json"
-  printf '#!/usr/bin/env bash\n[[ "$1" == pick ]] || exec %q "$@"\n%q "$@"\nexit 1\n' \
-    "$TMP_ROOT/bin/lanes-stub.sh" "$REPO_ROOT/skills/orch/scripts/lanes" > "$STUB_DIR/lanes"
-  chmod +x "$STUB_DIR/lanes"
-  WATCH_BIN="$bin" watch_pass "PATH=$REPO_ROOT/skills/orch/tests/fixtures/tier-model:$TMP_ROOT/bin:$PATH" \
-    OVERSEE_WATCH_LANES="$STUB_DIR/lanes" ORCH_LANE_DIRS="$STUB_DIR/no-account" -- --state "$STUB_DIR/state.json"
-  OWED_LINES+="$(grep -c '^oversee-watch: owed-wall-unjudged host=local harness=claude model=opus exit=1' "$ERR" || true)|$(grep -c -e '^model-resolution: ' -e '^preference-deprecated ' "$ERR" || true) "
-done
-assert_eq "$OWED_LINES" "1|0 1|1 " \
-  "a failed wall read relays the pick's words with no model line, and without the library's hold with the model's"
 
 # A fleet with no tracker team owes the item repository's open PRs on a GitHub
 # item's branch, and no other repository's, and reads no tracker.
@@ -1657,7 +1633,7 @@ world@without the in-flight exclusion an item with a running lane is owed@($rec 
 world@without the merged verdict a cycle record is judged for a wall@if [[ "$delivery" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
 world@the PR-only cycle filter aborts on a direct record@elif has("commit") and (has("pr") | not)@elif false and (has("pr") | not)@state-invalid@rc=2 heartbeat=0 key=1
 world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@pi-pick@requests=1
-world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
+world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--native-model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
 world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
 world@without the pick's own reset the wall goes undated@.walled_resets_at | if . == null then "-"@null | if . == null then "-"@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=-
 noisy@without forwarding a listing's notices are dropped@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1; then@jq -e 'type == "array"' <<<"$BOUNDED_OUT" >/dev/null 2>&1 && : >"$errf"; then@notices@local=1 provider-x=0

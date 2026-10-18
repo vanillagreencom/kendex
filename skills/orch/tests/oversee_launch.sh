@@ -516,11 +516,6 @@ run_oversee -- launch --wait-secs 5
 assert_eq "$RC|$(first_line)|$(overseers)|$(keyed no-lane-qualifies "$OUT" | grep -c -e '^model-resolution: ' -e '^preference-deprecated' -e 'class ladder' || :)" \
   "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0|0" \
   "no lane above the trigger: refused at 3 with the walk's counts and no kendex words beside them"
-HELDCTL="$(mutant_scripts heldctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$HELDCTL/lib/overseer-launch.sh" 'export ORCH_MODEL_LINES_HELD=1' ':'
-OVERSEE_BIN="$HELDCTL/oversee" run_oversee -- launch --wait-secs 5
-assert_eq "$RC|$(keyed no-lane-qualifies "$OUT" | grep -c '^model-resolution: ' || :)" "3|1" \
-  "control: a pick run without the latch relays its kendex line under the refusal"
 # Claude seats use the configured provider's reading while the overseer opens
 # locally. Run from a repository of its own, since lane-host takes its project
 # from the working directory.

@@ -2394,11 +2394,11 @@ assert_eq "$RC|$(head -n 1 "$ERR")|$(tail -n 1 "$ERR")" \
   "1|lanes: model-class-unread harness=claude model=top|Error: invalid manifest" \
   "a model kendex cannot classify refuses with kendex's words"
 class_scripts="$(mutant_scripts model-class lanes)" || exit 1
-mutate_file "$class_scripts/lanes" '		MODEL="$OL_CLASS_MODEL"' '		:'
+mutate_file "$class_scripts/lanes" '			MODEL="$OL_CLASS_MODEL"' '			:'
 LANES="$class_scripts/lanes" run_lanes "" $MODELPICK --model top
 assert_eq "$(observe rc=3)" rc=0 'control: a class judged as its own word misses its model wall'
 deprecated_scripts="$(mutant_scripts model-deprecated lanes)" || exit 1
-mutate_file "$deprecated_scripts/lanes" '			2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;' '			2) ;;'
+mutate_file "$deprecated_scripts/lanes" '				2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;' '				2) ;;'
 LANES="$deprecated_scripts/lanes" run_lanes "" $MODELPICK --model claude-opus-5
 assert_eq "$RC|$(deprecation_lines)" '0|' 'control: without the deprecation an old exact id warns nothing'
 

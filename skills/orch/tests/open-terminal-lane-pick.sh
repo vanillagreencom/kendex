@@ -997,4 +997,13 @@ assert_eq "$(observe "$LC_LAST")" "$LC_LAST" "control: judged at the launch thre
 H="$LC_SAVED_H" FIXTURE_DIR="$LC_SAVED_FIX"
 export FIXTURE_DIR
 
+# An explicit harness selector is already the launch's model. A second
+# class resolution would turn Opus into Haiku and judge Haiku's spent window.
+new_home native-selector
+make_lane "$H" claude
+claude_usage 0 0 95 Haiku > "$FIXTURE_DIR/.claude.json"
+table \
+  "auto checks the selector from harness flags without an override|KENDEX_TEST_STANDARD_OVERRIDE=anthropic/claude-haiku-5-5;$CHOICE_CMD|--harness claude --lane auto KEN-991|rc=0 launched=1 cmd_lane=claude" \
+  "named checks the selector from harness flags without an override|KENDEX_TEST_STANDARD_OVERRIDE=anthropic/claude-haiku-5-5;$CHOICE_CMD|--harness claude --lane $H/.claude KEN-992|rc=0 launched=1 cmd_lane=claude"
+
 lane_suite_end

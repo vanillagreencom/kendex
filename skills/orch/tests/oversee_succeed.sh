@@ -1728,7 +1728,7 @@ for pick_row in \
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "0|oversee-succeed: $pick_want" "qualifying pick row $pick_name"
   picks="$(grep '^pick ' "$TMP_ROOT/qualifying-picks.log")"
   assert_eq "$(sed -n 1p <<<"$picks")" \
-    "pick --lane $H/.claude --harness claude --for-overseer --min-headroom-pct $TRIGGER --model claude-fable-5-1 --json --provider-notices-fd3" \
+    "pick --lane $H/.claude --harness claude --for-overseer --min-headroom-pct $TRIGGER --native-model claude-fable-5-1 --json --provider-notices-fd3" \
     "qualifying $pick_name reads the caller first"
   if [[ "$pick_calls" == caller ]]; then
     assert_eq "$(wc -l <<<"$picks" | tr -d ' ')" 1 "an inert qualifying mark runs only the caller pick"

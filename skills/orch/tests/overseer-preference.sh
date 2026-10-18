@@ -51,24 +51,24 @@ while IFS= read -r row; do
   IFS='|' read -r preference caller expected <<<"$row"
   assert_eq "$(observe "$preference" "$caller")" "$expected" "parse $preference on caller $caller"
 done <<ROWS
-claude:1:high|fable|0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|fable
-claude:1:high|opus|0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus
+claude:1:high|fable|0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|
+claude:1:high|opus|0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|
 claude:1:high|claude-opus-5-5|0|1|claude:claude-opus-5-5:high|claude:1:high|||$NUMERIC|
 codex:12:medium|gpt-6-astra|0|1|codex:gpt-6-astra:medium|codex:12:medium|||entry=codex:12:medium form=harness:model:effort|
 copilot:2:high|fable|0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|
 pi:1:high|pi-claude/fable|0|1|pi:pi-claude/fable:high|pi:1:high|||entry=pi:1:high form=harness:model:effort|
-claude:1:high,codex:2:low|fable|0|2|claude:fable:high#top codex:fable:low#top|claude:1:high codex:2:low|||$NUMERIC|fable
+claude:1:high,codex:2:low|fable|0|2|claude:fable:high#top codex:fable:low#top|claude:1:high codex:2:low|||$NUMERIC|
 claude:fable:high|other|0|1|claude:fable:high#top|||||fable
 pi:pi-claude/fable:high|other|0|1|pi:pi-claude/fable:high|||||
 |fable|0|0||||||
 claude:0:high|fable|1|0|||claude:0:high|claude:0:high||
 claude::high|fable|0|1|claude::high|||||
 codex::high|fable|0|1|codex::high|||||
-claude:1:high,claude::high|fable|0|2|claude:fable:high#top claude::high|claude:1:high|||$NUMERIC|fable
+claude:1:high,claude::high|fable|0|2|claude:fable:high#top claude::high|claude:1:high|||$NUMERIC|
 claude:-1:high|fable|1|0|||claude:-1:high|claude:-1:high||
 claude:1x:high|fable|1|0|||claude:1x:high|claude:1x:high||
 claude:1:HIGH|fable|1|0|||claude:1:HIGH|claude:1:HIGH||
-bad,claude:1:high,codex::low|fable|1|2|claude:fable:high#top codex::low|claude:1:high|bad|bad|$NUMERIC|fable
+bad,claude:1:high,codex::low|fable|1|2|claude:fable:high#top codex::low|claude:1:high|bad|bad|$NUMERIC|
 claude:standard:high,codex:standard:high|other|0|2|claude:opus:high#standard codex::high#standard|||||opus
 codex:top:low,claude:fast:high|other|0|2|codex::low#top claude:haiku:high#fast|||||native-default
 copilot:standard:high,copilot:top:low|other|0|2|copilot::high#standard copilot::low#top|||||native-default
@@ -179,7 +179,7 @@ PY
     fail "control: $1 did not turn the $2 assertion red"
   fi
 }
-NUMERIC_GREEN="0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|fable"
+NUMERIC_GREEN="0|1|claude:fable:high#top|claude:1:high|||$NUMERIC|"
 CLASSES='claude:standard:high,codex:standard:high'
 CLASSES_GREEN='0|2|claude:opus:high#standard codex::high#standard|||||opus'
 control refusal claude:1:high fable "$NUMERIC_GREEN" \
@@ -192,14 +192,12 @@ control warning claude:1:high fable "$NUMERIC_GREEN" '  (( ! OL_DEPRECATION_WARN
 # harness-default line names a model the launch does not run.
 control numeric-line copilot:2:high fable '0|1|copilot:fable:high#top|copilot:2:high|||entry=copilot:2:high form=harness:model:effort|' \
   '    [[ "$OL_CLASS_MODEL" != "$OL_ENTRY_MODEL" ]] || OL_ENTRY_WARNING="$OL_CLASS_WARNING"' '    OL_ENTRY_WARNING="$OL_CLASS_WARNING"'
-control numeric-class claude:1:high opus "0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus" \
+control numeric-class claude:1:high opus "0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|" \
   '    OL_ENTRY_CLASS="$OL_CLASS"' '    :'
 control alias "$CLASSES" other "$CLASSES_GREEN" \
-  '    ol_claude_alias "$OL_CLASS" || return 1' '    :'
-# The runtime answer's warning in place of the rank answer's names the
-# harness default, not the alias the launch runs.
+  '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"' '    OL_CLASS_MODEL="$word$window" OL_CLASS_WARNING="$warning"'
 control alias-warning "$CLASSES" other "$CLASSES_GREEN" \
-  '    OL_CLASS_MODEL+="$window"' '    OL_CLASS_MODEL+="$window" OL_CLASS_WARNING="$warning"'
+  '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"' '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING=""'
 control resolution-warning "$CLASSES" other "$CLASSES_GREEN" \
   '  [[ -n "$1" ]] && (( ! OL_CLASS_WARNED )) || return 0' '  [[ -n "$1" ]] || return 0'
 OLD_ID_GREEN='0|2|claude:claude-opus-5-5:high codex:gpt-5.5:high||||entry=claude:claude-opus-5-5:high form=model-class|'
@@ -213,5 +211,64 @@ control exact-id-harness claude:opus:high,codex:gpt-6.1-sol:high other \
 control lines-held claude:standard:high,claude:claude-opus-5-5:high other \
   '0|2|claude:opus:high#standard claude:claude-opus-5-5:high|||||' \
   '[[ -z "${ORCH_MODEL_LINES_HELD:-}" ]] || OL_LINES_HELD=1' ':' held
+
+# The fixture records the actual argv of every dependency call. Each word
+# needs one decision. Claude's answer applies the managed override; the
+# other harnesses still receive their unsupported-list runtime context.
+resolve_word() { # HARNESS WORD OVERRIDE [LIB [numeric]]
+  : > "$TMP_ROOT/calls"
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" \
+    KENDEX_TEST_CALLS="$TMP_ROOT/calls" KENDEX_TEST_STANDARD_OVERRIDE="$3" \
+    "$BASH" -c '
+      set -euo pipefail
+      source "$1"
+      rc=0
+      if [[ "${4:-}" == numeric ]]; then
+        OL_WALK_CALLER_MODEL="$3"
+        ol_entry_model "$2:1:high" || rc=$?
+        OL_CLASS="$OL_ENTRY_CLASS" OL_CLASS_MODEL="$OL_ENTRY_MODEL"
+      else
+        ol_model_class "$2" "$3" || rc=$?
+      fi
+      code=""
+      if [[ "$rc" == 1 ]]; then code="$(jq -r ".resolution.code // empty" <<<"$OL_CLASS_ERR")"; fi
+      printf "%s|%s|%s|%s\n" "$rc" "$OL_CLASS" "$OL_CLASS_MODEL" "$code"
+    ' _ "${4:-$LIB}" "$1" "$2" "${5:-}"
+}
+while IFS='|' read -r harness word override status class model code context mode; do
+  assert_eq "$(resolve_word "$harness" "$word" "$override" "$LIB" "$mode")" "$status|$class|$model|$code" \
+    "managed word: $harness $word override=$override"
+  assert_eq "$(jq -sc 'length' "$TMP_ROOT/calls")" 1 "one kendex call: $harness $word override=$override"
+  assert_eq "$(jq -r 'index("--runtime-context-json") != null' "$TMP_ROOT/calls")" "$context" \
+    "runtime context: $harness $word override=$override"
+done <<'ROWS'
+claude|top||0|top|fable||false
+claude|standard|anthropic/claude-haiku-5-5|0|standard|haiku||false
+claude|opus[1m]|anthropic/claude-haiku-5-5|0|standard|haiku[1m]||false
+claude|standard|openai/gpt-6.2-sol|1||standard|unsupported-managed-model|false
+claude|opus|openai/gpt-6.2-sol|0|standard|opus||true|numeric
+claude|claude-opus-5-5||2||claude-opus-5-5||false
+codex|standard||0|standard|||true
+copilot|standard||0|standard|||true
+ROWS
+# A source copy that discards the managed alias must fail the override row.
+MUTANT="$(mutant_scripts managed-alias lib/overseer-launch.sh)"
+mutate_file "$MUTANT/lib/overseer-launch.sh" \
+  '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"' \
+  '    OL_CLASS_MODEL="$word$window" OL_CLASS_WARNING="$warning"'
+if [[ "$(resolve_word claude standard anthropic/claude-haiku-5-5 "$MUTANT/lib/overseer-launch.sh")" != '0|standard|haiku|' ]]; then
+  pass "control: discarding the managed alias fails the override assertion"
+else
+  fail "control: discarding the managed alias passes the override assertion"
+fi
+MUTANT="$(mutant_scripts numeric-managed lib/overseer-launch.sh)"
+mutate_file "$MUTANT/lib/overseer-launch.sh" \
+  '    ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" classify || OL_ENTRY_CLASS_RC=$?' \
+  '    ol_model_class "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" || OL_ENTRY_CLASS_RC=$?'
+if [[ "$(resolve_word claude opus openai/gpt-6.2-sol "$MUTANT/lib/overseer-launch.sh" numeric)" != '0|standard|opus|' ]]; then
+  pass "control: resolving the retained caller model fails numeric compatibility"
+else
+  fail "control: resolving the retained caller model passes numeric compatibility"
+fi
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -46,7 +46,7 @@ cat > "$BIN/lanes" <<'STUB'
 [[ "$1" == pick ]] || exit 0
 h="" m="" pct="" prev=""
 for a in "$@"; do
-  case "$prev" in --harness) h="$a" ;; --model) m="$a" ;; --max-pct) pct="$a" ;; esac
+  case "$prev" in --harness) h="$a" ;; --native-model) m="$a" ;; --max-pct) pct="$a" ;; esac
   prev="$a"
 done
 printf '%s:%s%s\n' "$h" "$m" "${pct:+@$pct}" >> "$PICK_LOG"

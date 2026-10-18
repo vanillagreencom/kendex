@@ -4549,7 +4549,7 @@ wall_route() { # LANE OBS_STATE SPENT PANE_KEY
   spent="${spent:-$account}"
   [[ -n "$spent" ]] || { ow_message wall-relaunch-refused "lane=$lane" reason=account-unknown >&2; return 1; }
   bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" \
-    pick --harness "$harness" --model "$model" --exclude-lane "$spent" --json || rc=$?
+    pick --harness "$harness" --native-model "$model" --exclude-lane "$spent" --json || rc=$?
   if [[ "$rc" -eq 0 ]] && to="$(jq -er '.config_dir | strings' <<<"$BOUNDED_OUT" 2>/dev/null)"; then
     WALL_PICK="pick lane=$to"
   elif [[ "$rc" -eq 3 ]]; then
@@ -5482,7 +5482,7 @@ owed_wall() { # HOST HARNESS MODEL
     OWED_VERDICT="verdict=queue"
     return 0
   fi
-  [[ "$model" == - ]] || args+=(--model "$model")
+  [[ "$model" == - ]] || args+=(--native-model "$model")
   bounded_account_read "" "$errf" env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args[@]}" || rc=$?
   case "$rc" in
     0) OWED_VERDICT="verdict=queue" ;;

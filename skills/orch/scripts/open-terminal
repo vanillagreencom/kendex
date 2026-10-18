@@ -242,7 +242,7 @@ pick_auto_lane() {
   if [[ "$PREFERENCE_ACTIVE" != true && "$(lane_pick_pool "$LAUNCH_HARNESS" "$LAUNCH_MODEL")" == api-credit ]]; then
     pick_harness="$LAUNCH_HARNESS"
   fi
-  [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
+  [[ -z "$LAUNCH_MODEL" ]] || model_args=(--native-model "$LAUNCH_MODEL")
   [[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")
   record="$(env ${state_env[@]+"${state_env[@]}"} ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$pick_harness" \
     ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"} "$@" --json)" || rc=$?
@@ -1161,7 +1161,7 @@ named_lane_judge() {
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
   lane_rc=0
   lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
-    --model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
+    --native-model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
   if [[ "$lane_rc" == 3 || "$lane_rc" == 5 ]]; then
     lane_refusal="$(jq -r 'if .refusal == null then empty
       elif .refusal.cause == "cloud-credit" or .refusal.cause == "api-credit" then [.refusal.cause, (.refusal.retry_at // "none")] | @tsv

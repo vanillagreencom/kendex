@@ -487,6 +487,12 @@
 #                    classify, kendex missing or refusing the manifest,
 #                    exits 1 as `model-class-unread`, kendex's words after
 #                    it.
+#   --native-model NAME
+#                    pick: judge NAME as the selector the harness runs.
+#                    Overseer and terminal launchers use this after resolving
+#                    a preference or reading the harness arguments. No class
+#                    override is applied again. All other --model rules hold.
+#                    The last --model or --native-model input wins.
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
@@ -3913,6 +3919,7 @@ parse_argv() {
 	LANE_ARG=""
 	EXCLUDE_LANE=""
 	MODEL=""
+	MODEL_INPUT=class
 	BINDING_FLOOR=false
 	FOR_OVERSEER=false
 	PROJECTED=false
@@ -3939,8 +3946,10 @@ parse_argv() {
 			--max-pct=*) PCT_OPTION=--max-pct; PCT_VALUE="${1#--max-pct=}"; need_val --max-pct "$PCT_VALUE"; shift ;;
 			--min-headroom-pct) need_val "$@"; PCT_OPTION=--min-headroom-pct; PCT_VALUE="$2"; shift 2 ;;
 			--min-headroom-pct=*) PCT_OPTION=--min-headroom-pct; PCT_VALUE="${1#--min-headroom-pct=}"; need_val --min-headroom-pct "$PCT_VALUE"; shift ;;
-			--model) need_val "$@"; MODEL="$2"; shift 2 ;;
-			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
+			--model) need_val "$@"; MODEL="$2"; MODEL_INPUT=class; shift 2 ;;
+			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; MODEL_INPUT=class; shift ;;
+			--native-model) need_val "$@"; MODEL="$2"; MODEL_INPUT=native; shift 2 ;;
+			--native-model=*) MODEL="${1#--native-model=}"; need_val --native-model "$MODEL"; MODEL_INPUT=native; shift ;;
 			--binding-floor) BINDING_FLOOR=true; shift ;;
 			--for-overseer) FOR_OVERSEER=true; shift ;;
 			--provider-notices-fd3) HOST_ACCOUNTS_ERR_FD=3; shift ;;
@@ -4480,15 +4489,18 @@ case "$SUB" in
 		;;
 	pick)
 		HARNESS="${HARNESS:-claude}"
-		# A class becomes its model before any window is matched to it.
-		model_rc=0
-		ol_model_class "$HARNESS" "$MODEL" || model_rc=$?
-		case "$model_rc" in
-			0) ol_model_line "$OL_CLASS_WARNING" ;;
-			2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;
-			*) die model-class-unread "$HARNESS" "$MODEL" "$OL_CLASS_ERR" ;;
-		esac
-		MODEL="$OL_CLASS_MODEL"
+		# Launchers pass the selector their harness runs. Classifying that
+		# alias again would apply a different class override to its account check.
+		if [[ "$MODEL_INPUT" == class ]]; then
+			model_rc=0
+			ol_model_class "$HARNESS" "$MODEL" || model_rc=$?
+			case "$model_rc" in
+				0) ol_model_line "$OL_CLASS_WARNING" ;;
+				2) ol_deprecated "harness=$HARNESS" "model=$MODEL" form=model-class ;;
+				*) die model-class-unread "$HARNESS" "$MODEL" "$OL_CLASS_ERR" ;;
+			esac
+			MODEL="$OL_CLASS_MODEL"
+		fi
 		# The accounts this launch spends, which both forms judge it on: a Pi
 		# launch on a Claude seat is a claude pick in every respect.
 		PICK_HARNESS="$(lane_pick_harness "$HARNESS" "$MODEL")"

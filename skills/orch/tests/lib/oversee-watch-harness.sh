@@ -861,9 +861,9 @@ EOF
 # lanes.notice present, a listing that answers also writes one keyed notice
 # naming the call's ORCH_LANE_HOST to stderr, as `lanes` does for a provider
 # it could not ask.
-# `lanes pick --harness H [--model M]` is answered apart and counts no list
+# `lanes pick --harness H [--native-model M]` is answered apart and counts no list
 # call: pick-<HOST>-<H>-<M>.rc and .json where the call's ORCH_LANE_HOST has
-# them, else pick-<H>-<M> (M `-` with no --model), default exit 0 and `{}`,
+# them, else pick-<H>-<M> (M `-` with no model), default exit 0 and `{}`,
 # and a harness but claude or codex refused exit 1 as the real one does.
 # Every call's ORCH_LANE_HOST and argv land in lanes.hosts, `unset` for none.
 cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
@@ -876,7 +876,7 @@ if [[ "${1:-}" == pick ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --harness) harness="$2"; shift ;;
-      --model) model="$2"; shift ;;
+      --model|--native-model) model="$2"; shift ;;
     esac
     shift
   done

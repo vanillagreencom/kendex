@@ -82,7 +82,8 @@ scripts = root / 'candidate/orch/scripts'
 stub = '#!' + bash + '''
 set -euo pipefail
 [[ "$1" == pick && "$2" == --lane && "$3" == "$FIXTURE_ACCOUNT" ]] || exit 2
-[[ -z "${FIXTURE_MODEL:-}" || " $* " == *" --model $FIXTURE_MODEL "* ]] || exit 2
+[[ -z "${FIXTURE_MODEL:-}" || " $* " == *" --model $FIXTURE_MODEL "* \
+  || " $* " == *" --native-model $FIXTURE_MODEL "* ]] || exit 2
 printf '%s\\n' "$FIXTURE_RECORD"
 '''
 (scripts / 'lanes').write_text(stub)
