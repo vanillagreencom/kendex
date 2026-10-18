@@ -939,6 +939,7 @@
   ".claude/skills/bot-instructions",
   ".claude/skills/code-quality",
   ".claude/skills/commit-guards",
+  ".claude/skills/communication",
   ".claude/skills/decider",
   ".claude/skills/deep-research",
   ".claude/skills/dep-radar",
