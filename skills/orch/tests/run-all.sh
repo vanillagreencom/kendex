@@ -66,8 +66,9 @@
 #
 #   ::warning::run-all-budget run=<id> attempt=<n> os=<name> shard=<name> suite=<name|job> seconds=<n> bound=<n> review=<n> margin-percent=<n>
 #
-# A warning means seconds exceed the review threshold, or seconds times
-# margin-percent exceed 100 times the bound. Job seconds count from the
+# A warning means seconds times margin-percent exceed 100 times the bound.
+# The review field stays in the annotation consumed by oversee-watch; it
+# does not trigger a warning. Job seconds count from the
 # caller's job-start epoch. Nonempty RUN_ALL_REVIEW_SECS enables warnings.
 # That input, RUN_ALL_MARGIN_PERCENT, RUN_ALL_JOB_SECS and
 # RUN_ALL_JOB_STARTED_EPOCH must all be positive whole numbers. A missing
@@ -219,7 +220,8 @@ fi
 
 budget_warning() { # SUITE SECONDS CAP
   [ -n "$REVIEW_SECS" ] || return 0
-  if [ "$2" -gt "$REVIEW_SECS" ] || [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then
+  # REVISIT(D030): review-only warnings return only with a separate action.
+  if [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then
     printf '::warning::run-all-budget run=%s attempt=%s os=%s shard=%s suite=%s seconds=%s bound=%s review=%s margin-percent=%s\n' \
       "${GITHUB_RUN_ID:-unknown}" "${GITHUB_RUN_ATTEMPT:-unknown}" "${RUNNER_OS:-unknown}" \
       "${RUN_ALL_SHARD:-$BATTERY}" "$1" "$2" "$3" "$REVIEW_SECS" "$RUN_ALL_MARGIN_PERCENT"

@@ -196,9 +196,9 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
   want_body="${RED_BODIES[i]}"
   [[ -z "${RED_ERR[i]}" ]] || want_body+=$'\n'"${RED_ERR[i]}"
   [[ -z "${RED_CAUSE[i]}" ]] || want_body+=$'\n'"${RED_CAUSE[i]}"
-  # A controlled report duration crosses the enabled review trigger. The
+  # A controlled report duration crosses the enabled margin warning. The
   # existing red fixtures still own their status and parsed failure count.
-  mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 2'
+  mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 721'
   variants=row
   [ "$i" -ne 0 ] || variants='row control'
   for variant in $variants; do
@@ -738,9 +738,9 @@ B="$TMP_ROOT/budget"
 battery "$B"
 for row in \
   'linux-at-review|300|900|300|125|quiet' \
-  'linux-over-review|301|900|300|125|warning' \
+  'linux-over-review|301|900|300|125|quiet' \
   'mac-at-review|600|1800|600|125|quiet' \
-  'mac-over-review|601|1800|600|125|warning' \
+  'mac-over-review|601|1800|600|125|quiet' \
   'at-margin|720|900|1000|125|quiet' \
   'over-margin|721|900|1000|125|warning' \
   'local-policy-absent|883|900||125|quiet'; do
@@ -753,22 +753,28 @@ for row in \
   assert_eq "$got" "$want" "$name annotation consumed by oversee-watch"
 done
 
-# Drop each independent comparison without removing its matched code.
-for row in 'review|301|900|300|125' 'margin|721|900|1000|125' 'annotation|301|900|300|125'; do
+# Restore the unchanged review rule, or drop the margin or annotation. Each
+# control drives the same budget oracle that oversee-watch consumes.
+for row in 'review-only|301|900|300|125' 'margin|721|900|1000|125' 'annotation|721|900|300|125'; do
   IFS='|' read -r rule seconds cap review percent <<<"$row"
   cp "$B/run-all.sh" "$B/control"
   case "$rule" in
-    review) mutate_file "$B/control" '[ "$2" -gt "$REVIEW_SECS" ]' '[ "$2" -gt "$REVIEW_SECS" ] && false' ;;
+    review-only) mutate_file "$B/control" \
+      'if [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then' \
+      'if [ "$2" -gt "$REVIEW_SECS" ] || [ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]; then' ;;
     margin) mutate_file "$B/control" '[ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ]' '[ "$(( $2 * RUN_ALL_MARGIN_PERCENT ))" -gt "$(( $3 * 100 ))" ] && false' ;;
     annotation) mutate_file "$B/control" "printf '::warning::run-all-budget" "printf '::notice::run-all-budget" ;;
   esac
   got="$(budget_of "$B/control" "$seconds" "$cap" "$review" "$percent")"
+  want="::warning::run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=slow seconds=$seconds bound=$cap review=$review margin-percent=$percent"
+  [ "$rule" != review-only ] || want=""
   CONTROL_RC=0
-  ( assert_eq "$got" "::warning::run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=slow seconds=$seconds bound=$cap review=$review margin-percent=$percent" "$rule budget oracle"; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
+  ( assert_eq "$got" "$want" "$rule budget oracle"; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
   assert_eq "$CONTROL_RC" 1 "$rule control turns budget oracle red"
 done
 
-printf '#!/usr/bin/env bash\nsleep 2\necho "pass: 1   fail: 0"\n' >"$B/slow.sh"
+printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$B/slow.sh"
+mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 721'
 run_battery "$B" 1 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
   RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
   GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
@@ -799,8 +805,8 @@ for epoch in 1310 1321 1333; do
   assert_eq "rc=$RC starts=$(started_of) jobs=$(awk '/^::warning::run-all-budget .*suite=job / {n++} END {print n+0}' <<<"$OUT")" \
     'rc=0 starts=green jobs=0' "battery completion $epoch reports no partial job time"
 done
-JOB_WARNING='::warning::run-all-budget run=202 attempt=2 os=Linux shard=linear suite=job seconds=333 bound=900 review=300 margin-percent=125'
-for row in 'review-boundary|1300|300|0|' "final-warning|1333|300|0|$JOB_WARNING" 'local-policy-absent|unread||0|' 'clock-unread|unread|300|1|'; do
+JOB_WARNING='::warning::run-all-budget run=202 attempt=2 os=Linux shard=linear suite=job seconds=721 bound=900 review=300 margin-percent=125'
+for row in 'review-boundary|1300|300|0|' 'review-only|1333|300|0|' 'margin-boundary|1720|300|0|' "final-warning|1721|300|0|$JOB_WARNING" 'local-policy-absent|unread||0|' 'clock-unread|unread|300|1|'; do
   IFS='|' read -r name epoch review want_rc want <<<"$row"
   run_battery "$B" 1 JOB_TEST_EPOCH="$epoch" REPORT_SUITE_TRACE="$TRACE" \
     RUN_ALL_REVIEW_SECS="$review" RUN_ALL_MARGIN_PERCENT=125 RUN_ALL_JOB_SECS=900 \
@@ -819,7 +825,7 @@ for rule in job-warning no-launch arguments partial; do
     arguments) mutate_file "$B/run-all.sh" '[ "$#" -eq 1 ] || { echo' '[ "$#" -ge 1 ] || { echo'; args+=(=green); expected='rc=1 starts= evidence=' ;;
     partial) mutate_file "$B/run-all.sh" $'if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then\n' $'if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then\n  now="$(date +%s)"\n  budget_warning job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"\n'; args=(); expected='rc=0 starts=green evidence=' ;;
   esac
-  run_battery "$B" 1 JOB_TEST_EPOCH=1333 REPORT_SUITE_TRACE="$TRACE" \
+  run_battery "$B" 1 JOB_TEST_EPOCH=1721 REPORT_SUITE_TRACE="$TRACE" \
     RUN_ALL_REVIEW_SECS=300 RUN_ALL_MARGIN_PERCENT=125 RUN_ALL_JOB_SECS=900 \
     RUN_ALL_JOB_STARTED_EPOCH=1000 RUN_ALL_SHARD=linear RUNNER_OS=Linux \
     GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 -- ${args[@]+"${args[@]}"}

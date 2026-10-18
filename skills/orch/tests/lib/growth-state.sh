@@ -21,7 +21,7 @@ _mutant_scripts_refuse() { # KEY VALUE
   exit 1
 }
 mutant_scripts() {
-  local src dir="$TMP_ROOT/$1/scripts" entry inventory
+  local src dir="$TMP_ROOT/$1/scripts" inventory
   src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)" \
     || _mutant_scripts_refuse no-scripts-dir "${BASH_SOURCE[0]}"
   local orch_src="$src" sibling="${dir%/scripts}/../mailbox" moved=0
@@ -41,13 +41,22 @@ mutant_scripts() {
   [[ -n "$inventory" ]] || _mutant_scripts_refuse inventory-empty "$src"
   rm -rf "${dir%/scripts}" || _mutant_scripts_refuse clear-failed "$dir"
   mkdir -p "$dir" || _mutant_scripts_refuse mkdir-failed "$dir"
-  while IFS= read -r entry; do
-    if [[ -d "$src/$entry" ]]; then
-      mkdir -p "$dir/$entry" || _mutant_scripts_refuse mkdir-failed "$dir/$entry"
-    else
-      ln -s "$src/$entry" "$dir/$entry" || _mutant_scripts_refuse link-failed "$dir/$entry"
-    fi
-  done <<<"$inventory"
+  # One process creates the discovered tree; a control needs the same layout
+  # whatever the number of scripts beside its private file.
+  perl -e '
+    use strict;
+    use warnings;
+    my ($src, $dir) = @ARGV;
+    while (my $entry = <STDIN>) {
+      chomp $entry;
+      if (-d "$src/$entry") {
+        mkdir "$dir/$entry" or die "mutant_scripts: mkdir-failed $dir/$entry: $!\n";
+      } else {
+        symlink "$src/$entry", "$dir/$entry"
+          or die "mutant_scripts: link-failed $dir/$entry: $!\n";
+      }
+    }
+  ' -- "$src" "$dir" <<<"$inventory" || _mutant_scripts_refuse tree-failed "$dir"
   if [[ -n "${2:-}" ]]; then
     [[ -f "$src/$2" ]] || _mutant_scripts_refuse no-such-script "$2"
     rm -- "$dir/$2" || _mutant_scripts_refuse unlink-failed "$dir/$2"

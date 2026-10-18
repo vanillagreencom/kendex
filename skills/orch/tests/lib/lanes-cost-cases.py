@@ -29,6 +29,29 @@ def warm(args, script=lanes):
     return cold, world.run(args, script)
 
 
+warm_records = {}
+
+
+def warm_count(args, settings, script=lanes):
+    # Growth and fork controls measure warm reads. Reuse records produced by
+    # the real reader for these exact inputs, keeping claims and walls fresh.
+    world.reset(**settings)
+    key = (tuple(args), tuple(sorted(settings.items())))
+    usage = world.state / "usage"
+    if key not in warm_records:
+        prepared = world.run(args)
+        assert prepared["exit"] == 0, ("warm fixture failed", args, settings, prepared)
+        warm_records[key] = {path.relative_to(usage): path.read_bytes()
+                             for path in usage.rglob("*") if path.is_file()}
+        assert warm_records[key], ("warm fixture has no usage records", args, settings)
+    else:
+        for relative, content in warm_records[key].items():
+            path = usage / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+    return world.run(args, script)["count"]
+
+
 def mutate(name, old, new, relative="lanes", source_script=lanes):
     directory = Path(root) / "controls" / name
     source = Path(source_script).resolve().parent
@@ -93,8 +116,7 @@ for kind, sizes in [("home", [16, 20, 24]), ("provider", [11, 15, 19]), ("claim"
         for size in sizes:
             settings = {"home_count": 16, "providers": 11, "claims": 22}
             settings[{"home": "home_count", "provider": "providers", "claim": "claims"}[kind]] = size
-            world.reset(**settings)
-            counts.append(warm(args)[1]["count"])
+            counts.append(warm_count(args, settings))
             if base:
                 shutil.rmtree(world.state / "usage")
                 old_counts.append(warm(args, base)[1]["count"])
@@ -211,15 +233,14 @@ controls = {
 }
 results["controls"] = {}
 for label, args in [("pick", PICK), ("list", ["list"])]:
-    world.reset()
-    results["controls"][f"total-{label}"] = warm(args, controls["total"])[1]["count"]
+    defaults = {"home_count": 16, "providers": 11, "claims": 22}
+    results["controls"][f"total-{label}"] = warm_count(args, defaults, controls["total"])
     for kind, sizes in [("home", [16, 20, 24]), ("provider", [11, 15, 19]), ("claim", [22, 26, 30])]:
         counts = []
         for size in sizes:
             settings = {"home_count": 16, "providers": 11, "claims": 22}
             settings[{"home": "home_count", "provider": "providers", "claim": "claims"}[kind]] = size
-            world.reset(**settings)
-            counts.append(warm(args, controls[kind])[1]["count"])
+            counts.append(warm_count(args, settings, controls[kind]))
         results["controls"][f"{kind}-{label}"] = {"sizes": sizes, "counts": counts}
 
 print(json.dumps(results))
