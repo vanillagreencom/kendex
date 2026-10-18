@@ -1881,6 +1881,24 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 "
     done
   done <<<"$touched"
+  # Bash defers this guard's trap while a foreground runner stops children.
+  # The active runner therefore reports its current and later batteries.
+  suite_index=0
+  suite_later=""
+  active_runner=0
+  unstarted_suites() {
+    local t pending
+    [ "$active_runner" -eq 0 ] || return 0
+    for ((pending = suite_index; pending < ${#suite_runs[@]}; pending++)); do
+      while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        printf 'guard-note: unstarted-suite=%s\n' "$t"
+      done <<<"${suite_runs[pending]}"
+    done
+  }
+  trap 'unstarted_suites; exit 143' TERM
+  trap 'unstarted_suites; exit 130' INT
+  trap 'unstarted_suites; exit 129' HUP
   npm_available=unchecked
   for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
     case "$d" in
@@ -1970,29 +1988,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         ;;
     esac
   done
-  # Publish every shell suite before execution, including later batteries.
-  # The active runner reports later batteries before its child-stop grace.
-  # Bash defers this guard's trap while a foreground runner stops children.
-  suite_index=0
-  suite_pending=""
-  suite_later=""
-  active_runner=0
-  unstarted_suites() {
-    local t
-    [ "$active_runner" -eq 0 ] || return 0
-    while IFS= read -r t; do
-      [ -n "$t" ] || continue
-      printf 'guard-note: unstarted-suite=%s\n' "$t"
-    done <<<"$suite_pending
-$suite_later"
-  }
-  trap 'unstarted_suites; exit 143' TERM
-  trap 'unstarted_suites; exit 130' INT
-  trap 'unstarted_suites; exit 129' HUP
   for ((suite_index = 0; suite_index < ${#suite_trees[@]}; suite_index++)); do
     d=${suite_trees[suite_index]}
     run=${suite_runs[suite_index]}
-    suite_pending=$run
     suite_later=""
     for ((pending = suite_index + 1; pending < ${#suite_runs[@]}; pending++)); do
       suite_later+="${suite_runs[pending]}"$'\n'
@@ -2004,16 +2002,16 @@ $suite_later"
       filters+=("=${t%.sh}")
     done <<<"$run"
     if [ -f "$d/tests/run-all.sh" ]; then
-      # Exact filters preserve the plan printed before execution.
+      # Family aliases can expand these filters; the runner publishes its selection.
       echo "=== $d/tests/run-all.sh" ${filters[@]+"${filters[@]}"}
-      suite_pending=""
       active_runner=1
-      RUN_ALL_PENDING_SUITES="$suite_later" bash "$d/tests/run-all.sh" ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
+      RUN_ALL_PENDING_SUITES="$run"$'\n'"$suite_later" bash "$d/tests/run-all.sh" ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
+      suite_runs[suite_index]=""
       active_runner=0
       continue
     fi
     while IFS= read -r t; do
-      suite_pending=${suite_pending#*"$t"}
+      suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
       [ -f "$t" ] || continue
       echo "=== $t"
       case "$t" in

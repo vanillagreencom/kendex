@@ -19,8 +19,14 @@ import sys
 import time
 
 source, root, bash = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-for variant in ("normal", "missing-report"):
-    battery = root / variant / "orch" / "tests"
+for phase, marker in (
+    ("loading", 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'),
+    ("discovery", "PROFILE_SELECTED=0"),
+    ("ready", "printf 'selected suite=%s\\n' \"${SUITES[@]}\""),
+    ("running", None),
+):
+  for variant in ("normal", "missing-report"):
+    battery = root / phase / variant / "orch" / "tests"
     (battery / "lib").mkdir(parents=True)
     (battery.parent / "scripts" / "lib").mkdir(parents=True)
     github = battery.parent.parent / "github" / "scripts" / "lib"
@@ -29,6 +35,9 @@ for variant in ("normal", "missing-report"):
     shutil.copy(source.parent / "scripts" / "lib" / "lane-state.sh", battery.parent / "scripts" / "lib")
     shutil.copy(source.parent.parent / "github" / "scripts" / "lib" / "group-leader.sh", github)
     text = (source / "run-all.sh").read_text()
+    if marker:
+        assert text.count(marker) == 1
+        text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
     if variant == "missing-report":
         needle = "    printf 'unstarted suite=%s\\n' \"$name\""
         assert text.count(needle) == 1
@@ -44,8 +53,9 @@ for variant in ("normal", "missing-report"):
     binary.mkdir()
     (binary / "nproc").write_text('#!/bin/sh\necho 1\n')
     (binary / "nproc").chmod(0o755)
+    caller_plan = [str(battery / "a-block.sh"), str(battery / "z-wait.sh"), "future/tests/later.sh"]
     env = {"PATH": str(binary) + os.pathsep + os.environ["PATH"], "HOME": os.environ["HOME"],
-           "ACK": str(ack), "FIFO": str(fifo), "RUN_ALL_PENDING_SUITES": "future/tests/later.sh\n"}
+           "ACK": str(ack), "FIFO": str(fifo), "RUN_ALL_PENDING_SUITES": "\n".join(caller_plan)}
     process = subprocess.Popen([bash, str(runner)], env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True, start_new_session=True)
     try:
@@ -54,17 +64,24 @@ for variant in ("normal", "missing-report"):
             assert process.poll() is None, "runner ended before the suite acknowledgement"
             assert time.monotonic() < deadline, "suite acknowledgement deadline"
             time.sleep(0.01)
-        process.send_signal(signal.SIGTERM)
-        output, _ = process.communicate(timeout=20)
+        os.killpg(process.pid, signal.SIGTERM)
+        # dev-validate-run's teardown sends KILL after the job-unit grace.
+        grace_text = (source.parent / "scripts/lib/job-unit.sh").read_text()
+        grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
+                         if line.startswith("JOB_UNIT_KILL_GRACE=")))
+        output, _ = process.communicate(timeout=grace)
         assert process.returncode == 143, output
         selected = [line for line in output.splitlines() if line.startswith("selected suite=")]
-        assert selected == ["selected suite=a-block", "selected suite=z-wait"], output
+        assert selected == (["selected suite=a-block", "selected suite=z-wait"] if phase == "running" else []), output
         unstarted = [line for line in output.splitlines() if line.startswith("unstarted suite=")]
-        contract = ["unstarted suite=z-wait", "unstarted suite=future/tests/later.sh"]
+        names = caller_plan if phase in ("loading", "discovery") else (
+            ["a-block", "z-wait", "future/tests/later.sh"] if phase == "ready" else
+            ["z-wait", "future/tests/later.sh"])
+        contract = ["unstarted suite=" + name for name in names]
         expected = contract if variant == "normal" else []
         assert unstarted == expected, output
         assert (unstarted == contract) == (variant == "normal"), output
-        print(f"pass: cancellation {variant}")
+        print(f"pass: cancellation {phase} {variant}")
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)

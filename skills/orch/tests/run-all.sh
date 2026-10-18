@@ -55,8 +55,9 @@
 # Before any suite starts, selected suite=<name> lists the whole selection.
 # On cancellation, unstarted suite=<name> names each selected suite the
 # worker pool did not launch. The lane can use these rows for its fallback.
-# tools/guard supplies later batteries as newline-separated paths in
-# RUN_ALL_PENDING_SUITES. Cancellation reports those paths before teardown too.
+# tools/guard supplies the current and later batteries as newline-separated
+# paths in RUN_ALL_PENDING_SUITES. Before discovery, cancellation reports that
+# plan. After discovery, runner names replace this battery's caller paths.
 #
 # A passing suite can print a warning after its report line. --report-job
 # prints final job evidence without running suites. The workflow calls it
@@ -117,6 +118,48 @@
 # never prints fail=0.
 
 set -uo pipefail
+# The guard owns the startup plan until discovery supplies runner names.
+# Report it before loading anything that can block past the caller's grace.
+next=0
+SUITES=()
+SLOT_PID=()
+QUEUE_OWNER=caller
+PENDING_SUITES="${RUN_ALL_PENDING_SUITES:-}"
+unset RUN_ALL_PENDING_SUITES
+LATER_SUITES=""
+stop_suites() {
+  local k=0 tree="" pending="" name
+  if [ "$QUEUE_OWNER" = runner ]; then
+    for ((k = next; k < ${#SUITES[@]}; k++)); do
+      pending+="${SUITES[k]}"$'\n'
+    done
+    pending+="$LATER_SUITES"
+  else
+    pending=$PENDING_SUITES
+  fi
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf 'unstarted suite=%s\n' "$name"
+  done <<<"$pending"
+  k=0
+  while [ "$k" -lt "${#SLOT_PID[@]}" ]; do
+    if [ -n "${SLOT_PID[k]:-}" ]; then
+      tree="$tree
+$(tree_of "${SLOT_PID[k]}")"
+    fi
+    k=$((k + 1))
+  done
+  [ -z "$tree" ] || stop_tree "$tree"
+  k=0
+  while [ "$k" -lt "${#SLOT_PID[@]}" ]; do
+    [ -z "${SLOT_PID[k]:-}" ] || wait "${SLOT_PID[k]}" 2>/dev/null
+    k=$((k + 1))
+  done
+}
+trap 'stop_suites; exit 130' INT
+trap 'stop_suites; exit 143' TERM
+trap 'stop_suites; exit 129' HUP
+
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # lane_process_table, lane_process_below, lane_process_state and
 # lane_process_start, for the stop.
@@ -300,7 +343,6 @@ alone() { # FILE
   return 1
 }
 
-SUITES=()
 SUITE_FILES=()
 LATER=()
 LATER_FILES=()
@@ -359,8 +401,6 @@ fi
 # Eligibility belongs to this invocation. A suite's nested fixture runner
 # has its own suite universe and must not inherit this repository profile.
 unset RUN_ALL_NATIVE_CONTRACTS
-PENDING_SUITES="${RUN_ALL_PENDING_SUITES:-}"
-unset RUN_ALL_PENDING_SUITES
 JOBS="$(nproc 2>/dev/null)" || JOBS=4
 case "$JOBS" in
   '' | *[!0-9]* | 0) echo "run-all.sh: nproc printed '$JOBS', not a worker count" >&2; exit 1 ;;
@@ -392,9 +432,6 @@ STOP_GRACE=10
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
 trap 'rm -rf -- "$OUT_DIR"' EXIT
-trap 'stop_suites; exit 130' INT
-trap 'stop_suites; exit 143' TERM
-trap 'stop_suites; exit 129' HUP
 
 # Prints "PASS FAIL ROWLESS" from a suite's output, per the shapes the header
 # names, ROWLESS being 1 where the suite printed the opt-out line.
@@ -512,35 +549,6 @@ stop_tree() { # TREE
   signal_tree KILL "$1"
 }
 
-# Each suite leads its own group and starts with INT and QUIT restored. A
-# signal to the runner must therefore stop each suite and its descendants
-# before the runner exits.
-stop_suites() {
-  local k=0 tree="" pending="" name
-  for ((k = next; k < RUN; k++)); do
-    pending+="${SUITES[k]}"$'\n'
-  done
-  pending+="$PENDING_SUITES"
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    printf 'unstarted suite=%s\n' "$name"
-  done <<<"$pending"
-  k=0
-  while [ "$k" -lt "$JOBS" ]; do
-    if [ -n "${SLOT_PID[k]:-}" ]; then
-      tree="$tree
-$(tree_of "${SLOT_PID[k]}")"
-    fi
-    k=$((k + 1))
-  done
-  stop_tree "$tree"
-  k=0
-  while [ "$k" -lt "$JOBS" ]; do
-    [ -z "${SLOT_PID[k]:-}" ] || wait "${SLOT_PID[k]}" 2>/dev/null
-    k=$((k + 1))
-  done
-}
-
 # Slot K's suite at its bound: its last line kept, then TERM to its tree and,
 # after STOP_GRACE, KILL to whatever of it still runs. A process that set up its
 # own process group, as GNU timeout does, is in the tree, which no group signal
@@ -573,9 +581,20 @@ while [ "$k" -lt "$JOBS" ]; do
   k=$((k + 1))
 done
 started=$SECONDS
-next=0
 finished=0
 running=0
+# Remove this battery's caller paths only after its complete selection exists.
+# The ownership change is one assignment, so a signal sees one complete plan.
+while IFS= read -r pending; do
+  [ -n "$pending" ] || continue
+  case "$pending" in /*) pending_path=$pending ;; *) pending_path="$PWD/$pending" ;; esac
+  current=0
+  for test_dir in "${TEST_DIRS[@]}"; do
+    case "$pending_path" in "$test_dir/"*) current=1; break ;; esac
+  done
+  [ "$current" -eq 1 ] || LATER_SUITES+="$pending"$'\n'
+done <<<"$PENDING_SUITES"
+QUEUE_OWNER=runner
 printf 'selected suite=%s\n' "${SUITES[@]}"
 while [ "$finished" -lt "$RUN" ]; do
   reaped=0

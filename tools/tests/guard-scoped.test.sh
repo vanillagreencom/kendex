@@ -66,6 +66,7 @@ cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/lane-state.sh"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
+printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
 printf '#!/bin/sh\necho 1\n' > "$TMP/serial-bin/nproc"
 chmod +x "$TMP/serial-bin/nproc"
 git -C "$R" add -A
@@ -82,14 +83,45 @@ import sys
 import time
 
 repo, guard, base, scratch = sys.argv[1:]
-ack, fifo = Path(scratch) / "ready", Path(scratch) / "hold"
-os.mkfifo(fifo)
-env = dict(os.environ, DEV_VALIDATE_SCOPED="true", ACK=str(ack), FIFO=str(fifo),
-           PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
-process = subprocess.Popen([guard, "--selection", "--range", base], cwd=repo, env=env,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                           start_new_session=True)
-try:
+runner = Path(repo) / "skills/orch/tests/run-all.sh"
+runner_text = runner.read_text()
+grace_text = (Path(guard).parent.parent / "skills/orch/scripts/lib/job-unit.sh").read_text()
+grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
+                 if line.startswith("JOB_UNIT_KILL_GRACE=")))
+for phase in ("running", "loading", "npm", "npm-missing-report"):
+  ack, fifo = Path(scratch) / (phase + "-ready"), Path(scratch) / (phase + "-hold")
+  os.mkfifo(fifo)
+  text = runner_text
+  if phase == "loading":
+    marker = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
+    assert text.count(marker) == 1
+    text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
+  runner.write_text(text)
+  selected_guard = guard
+  if phase.startswith("npm"):
+    package = Path(repo) / "pi-extensions/startup"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "package.json").write_text('{"scripts":{"test":"fixture"}}\n')
+    subprocess.run(["git", "add", "pi-extensions/startup/package.json"], cwd=repo, check=True)
+    npm = Path(scratch) / "serial-bin/npm"
+    npm.write_text('#!/usr/bin/env bash\nif [ "$1" = --version ]; then echo fixture; exit 0; fi\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n')
+    npm.chmod(0o755)
+    if phase == "npm-missing-report":
+        text = Path(guard).read_text()
+        needle = "        printf 'guard-note: unstarted-suite=%s\\n' \"$t\""
+        assert text.count(needle) == 1
+        changed = text.replace(needle, "        :")
+        assert changed != text
+        control = Path(scratch) / "mutant-tools/guard"
+        control.write_text(changed)
+        control.chmod(0o755)
+        selected_guard = str(control)
+  env = dict(os.environ, DEV_VALIDATE_SCOPED="true", ACK=str(ack), FIFO=str(fifo),
+             PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
+  process = subprocess.Popen([selected_guard, "--selection", "--range", base], cwd=repo, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                             start_new_session=True)
+  try:
     deadline = time.monotonic() + 20
     while not ack.exists():
         if process.poll() is not None:
@@ -97,21 +129,35 @@ try:
         assert time.monotonic() < deadline, "suite acknowledgement deadline"
         time.sleep(0.01)
     os.killpg(process.pid, signal.SIGTERM)
-    output, _ = process.communicate(timeout=20)
+    output, _ = process.communicate(timeout=grace)
     assert process.returncode == 143, output
     selected = [line for line in output.splitlines() if line.startswith("guard-note: selected-suite=")]
-    assert "guard-note: selected-suite=tools/tests/later.sh" in selected, output
+    if not phase.startswith("npm"):
+        assert "guard-note: selected-suite=tools/tests/later.sh" in selected, output
     unstarted = [line for line in output.splitlines() if line.startswith("unstarted suite=")]
-    assert unstarted == ["unstarted suite=helper", "unstarted suite=open-terminal.test",
-                         "unstarted suite=tools/tests/later.sh"], output
-    assert not any(line.startswith("guard-note: unstarted-suite=") for line in output.splitlines()), output
-finally:
+    if phase.startswith("npm"):
+        # The mapping loop published hooks before it reached npm.
+        published = [line.removeprefix("guard-note: selected-suite=") for line in selected]
+        queued = [line.removeprefix("guard-note: unstarted-suite=") for line in output.splitlines()
+                  if line.startswith("guard-note: unstarted-suite=")]
+        assert "hooks/tests/startup.sh" in published, output
+        assert queued == (published if phase == "npm" else []), output
+        assert (queued == published) == (phase == "npm"), output
+        assert not unstarted, output
+    else:
+        expected = (["helper", "open-terminal.test", "tools/tests/later.sh"] if phase == "running" else
+                    ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
+                     "skills/orch/tests/open-terminal.test.sh", "tools/tests/later.sh"])
+        assert unstarted == ["unstarted suite=" + name for name in expected], output
+        assert not any(line.startswith("guard-note: unstarted-suite=") for line in output.splitlines()), output
+    print("pass: guard cancellation " + phase)
+  finally:
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
 PY
-then ok 'guard cancellation reports unstarted suites in the current and later batteries'
-else bad 'guard cancellation reports unstarted suites in the current and later batteries'
+then ok 'guard cancellation reports queued suites during loading, npm and execution'
+else bad 'guard cancellation reports queued suites during loading, npm and execution'
 fi
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
