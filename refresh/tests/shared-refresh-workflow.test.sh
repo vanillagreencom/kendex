@@ -36,6 +36,8 @@ def check(text):
     block = text.split('    secrets:\n', 1)[1]
     actual = dict(re.findall(r'^      ([A-Za-z0-9_-]+): (.+)$', block, re.M))
     assert actual == expected, actual
+    permissions = text.split('  refresh:\n', 1)[1].split('    permissions:\n', 1)[1].split('    uses:', 1)[0]
+    assert dict(re.findall(r'^      ([a-z-]+): (.+)$', permissions, re.M)) == {'contents': 'read', 'actions': 'read', 'pull-requests': 'read'}
 for path in sys.argv[1:]:
     text = Path(path).read_text()
     check(text)
@@ -50,7 +52,7 @@ then ok 'default callers forward both fixed pairs; omitted same-name controls fa
 else bad 'default caller credential forwarding'; fi
 
 if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'
-import copy, json, pathlib, re, subprocess, sys
+import copy, datetime, io, json, os, pathlib, re, subprocess, sys, zipfile
 # Read the literal job keys, step inputs and run bodies. Full YAML syntax
 # belongs to preflight; this contract uses only block mappings.
 text = open(sys.argv[1]).read()
@@ -62,7 +64,7 @@ for block in re.split(r'^      - ', text, flags=re.M)[1:]:
     for line in block.splitlines():
         if current != 'run' and line.lstrip().startswith('#'):
             continue
-        match = re.match(r'^(?:        )?(name|uses|id|continue-on-error|working-directory): (.+)$', line)
+        match = re.match(r'^(?:        )?(name|uses|id|if|continue-on-error|working-directory): (.+)$', line)
         if match:
             k, v = match.groups(); step[k] = True if v == 'true' else v; current = None; continue
         if line in ('        with:', '        env:'):
@@ -70,7 +72,9 @@ for block in re.split(r'^      - ', text, flags=re.M)[1:]:
         if line == '        run: |':
             current = 'run'; step[current] = ''; continue
         if current == 'run':
-            step[current] += line.strip() + '\n'; continue
+            if line and not line.startswith('          '):
+                continue  # job-level comments between step bodies
+            step[current] += line[10:] + '\n'; continue
         if current in ('with', 'env'):
             match = re.match(r'^          ([a-zA-Z_-]+): (.+)$', line)
             assert match, line
@@ -182,8 +186,8 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
     if mutation == 'consumer-script':
         refresh['run'] = refresh['run'].replace('"$GITHUB_WORKSPACE/kendex/refresh/', '"$GITHUB_WORKSPACE/consumer/.agents/skills/review-gate/scripts/')
     elif mutation == 'consumer-cwd': refresh['working-directory'] = 'kendex'
-    elif mutation == 'kendex-ref': steps[1]['with']['ref'] = '${{ github.sha }}'
-    elif mutation == 'credentials': steps[1]['with']['persist-credentials'] = 'true'
+    elif mutation == 'kendex-ref': next(s for s in steps if s.get('with', {}).get('path') == 'kendex')['with']['ref'] = '${{ github.sha }}'
+    elif mutation == 'credentials': next(s for s in steps if s.get('with', {}).get('path') == 'kendex')['with']['persist-credentials'] = 'true'
     elif mutation == 'exposure': refresh['env']['TOKEN'] = '${{ steps.issues-token.outputs.token }}'
     elif mutation == 'repository': next(s for s in steps if s.get('id') == 'issues-token')['with']['repositories'] = 'kendex,consumer'
     elif mutation == 'early-token':
@@ -215,6 +219,238 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
             assert error.args[0][2] == expected, (mutation, error)
             print('  control rejected: ' + mutation)
     else: raise AssertionError('must-fail control missed ' + mutation)
+
+# Execute the first step unchanged. Only the git and REST transports are
+# recorded fixtures; all tuple, artifact and review decisions are production.
+check_step = job['steps'][0]
+assert check_step['id'] == 'inputs'
+assert check_step['env']['WORKFLOW_SHA'] == '${{ job.workflow_sha }}'
+assert 'permissions:' not in text.split('jobs:\n', 1)[1].split('    steps:', 1)[0]
+gate = "steps.inputs.outputs.run == 'true'"
+def check_gates(candidate):
+    save = next(s for s in candidate['steps'] if s.get('uses', '').startswith('actions/upload-artifact@'))
+    assert all(s.get('if') == gate for s in candidate['steps'][1:] if s is not save), 'later-step-ungated'
+    assert save['if'] == gate + " && steps.refresh.outputs.state == 'current' && steps.refresh.outputs.sources == 'covered' && steps.inputs.outputs.record-path != ''"
+    assert save['with'] == {'name': 'kendex-refresh-current', 'path': '${{ steps.inputs.outputs.record-path }}', 'if-no-files-found': 'error'}
+    assert next(s for s in candidate['steps'] if s.get('id') == 'refresh')['run'].endswith('refresh-consumer.sh"\n')
+check_gates(job)
+ungated = copy.deepcopy(job)
+ungated['steps'][1]['if'] += ' || true'
+try: check_gates(ungated)
+except AssertionError as error: assert error.args == ('later-step-ungated',)
+else: raise AssertionError('must-fail control missed later-step-ungated')
+
+bin_dir = workspace / 'check-bin'
+bin_dir.mkdir()
+# The wrapper fixes the check's clock without adding a production setting.
+(bin_dir / 'python3').write_text('#!' + sys.executable + '\n'
+    'import datetime, sys\n'
+    'class Clock(datetime.datetime):\n'
+    '    @classmethod\n'
+    '    def now(cls, tz=None): return cls(2026, 10, 17, tzinfo=datetime.timezone.utc)\n'
+    'datetime.datetime = Clock\n'
+    'exec(compile(sys.stdin.read(), "<production-step>", "exec"))\n')
+(bin_dir / 'python3').chmod(0o755)
+transport = '''#!@PYTHON@
+import datetime, io, json, os, pathlib, sys, urllib.parse, zipfile
+w = json.loads(pathlib.Path(os.environ['CHECK_WORLD']).read_text())
+args = sys.argv[1:]
+with open(os.environ['CHECK_CALLS'], 'a') as calls: calls.write(json.dumps([pathlib.Path(sys.argv[0]).name] + args) + '\\n')
+if pathlib.Path(sys.argv[0]).name == 'git':
+    if w.get('fail') == 'refs': sys.exit(41)
+    print(w['refs']); sys.exit(0)
+path = args[-1]
+if w.get('fail') and w['fail'] in path: sys.exit(42)
+if '/commits/' in path: result = {'sha': w['head']}
+elif '/pulls?' in path:
+    assert '--paginate' in args and '--slurp' in args
+    result = w.get('pages', [[]])
+elif '/actions/artifacts?' in path: result = {'artifacts': w['artifacts']}
+elif '/actions/workflows/' in path:
+    assert '--paginate' in args and '--slurp' in args
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+    since, until = [datetime.datetime.fromisoformat(value) for value in query['created'][0].split('..')]
+    history = [dict(dict(status='completed', created_at='2026-10-16T22:00:00Z',
+                         updated_at='2026-10-16T23:30:00Z'), **r) for r in w['history']]
+    history = [r for r in history if since <= datetime.datetime.fromisoformat(r['created_at'].replace('Z', '+00:00')) <= until]
+    if query.get('status') == ['success']: history = [r for r in history if r['conclusion'] == 'success']
+    size = w.get('history_page_size', int(query['per_page'][0]))
+    result = [dict(workflow_runs=history[start:start + size], total_count=w.get('history_count', len(history)))
+              for start in range(0, max(1, len(history)), size)]
+elif '/jobs?' in path:
+    jobs = w['jobs'][path.split('/runs/', 1)[1].split('/', 1)[0]]
+    result = dict(jobs=jobs, total_count=w.get('job_count', len(jobs)))
+elif '/actions/runs/' in path: result = w['run']
+elif path.endswith('/zip'):
+    if w.get('corrupt'): sys.stdout.buffer.write(b'broken'); sys.exit(0)
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, 'w') as archive: archive.writestr('record.json', json.dumps(w['record']))
+    sys.stdout.buffer.write(data.getvalue()); sys.exit(0)
+else: raise AssertionError(args)
+print(json.dumps(result))
+'''.replace('@PYTHON@', sys.executable)
+for name in ('git', 'gh'):
+    (bin_dir / name).write_text(transport)
+    (bin_dir / name).chmod(0o755)
+main, workflow, consumer = 'a'*40, 'b'*40, 'c'*40
+refs = f'{main}\trefs/heads/main\n{workflow}\trefs/tags/v1.2.3'
+tuple_record = dict(catalog=main, workflow=workflow, tags=[f'{workflow}\trefs/tags/v1.2.3'], consumer=consumer)
+world = dict(refs=refs, head=consumer,
+             artifacts=[dict(id=7, expired=False, created_at='2026-10-16T23:00:00Z',
+                             workflow_run=dict(id=8, head_branch='main', head_repository_id=1, repository_id=1))],
+             run=dict(id=8, run_attempt=1, conclusion='success', path='.github/workflows/kendex-refresh.yml'),
+             history=[dict(id=8, run_attempt=1, conclusion='success')])
+world['record'] = dict(inputs=tuple_record, run=8, attempt=1)
+now = datetime.datetime(2026, 10, 17, tzinfo=datetime.timezone.utc)
+recent = (now - datetime.timedelta(hours=1)).isoformat()
+old = (now - datetime.timedelta(hours=25)).isoformat()
+cases = [('unchanged', {}, False)]
+for field in tuple_record:
+    changed = copy.deepcopy(tuple_record)
+    changed[field] = [] if field == 'tags' else 'd'*40
+    cases.append(('changed-' + field, {'record': dict(world['record'], inputs=changed)}, True))
+cases += [('unreadable-record', {'fail': '/zip'}, True),
+          ('corrupt-record', {'corrupt': True}, True),
+          ('missing-record', {'artifacts': []}, True),
+          ('unreadable-refs', {'fail': 'refs'}, True),
+          ('unreadable-head', {'fail': '/commits/'}, True),
+          ('unreadable-reviews', {'fail': '/pulls?'}, True),
+          ('unreadable-history', {'fail': '/actions/workflows/'}, True),
+          ('old-caller-grants', {'fail': '/actions/artifacts?'}, True),
+          ('open-rolling-pr', {'pages': [[dict(state='open', merged_at=None)]]}, True),
+          ('recent-merge-next-page', {'pages': [[], [dict(state='closed', merged_at=recent)]]}, True),
+          ('old-merge', {'pages': [[dict(state='closed', merged_at=old)]]}, False),
+          ('closed-unmerged', {'pages': [[dict(state='closed', merged_at=None)]]}, False),
+          ('failed-run', {'run': dict(world['run'], conclusion='failure')}, True)]
+def job_steps(check='success', checkout='skipped'):
+    return [dict(steps=[dict(name='refresh-input-check', conclusion=check),
+                        dict(name='consumer checkout', conclusion=checkout)])]
+for conclusion in ('success', 'failure', 'cancelled', 'timed_out'):
+    for checkout in ('skipped', 'success'):
+        full = conclusion != 'success' or checkout != 'skipped'
+        cases.append(('intervening-' + conclusion + '-' + checkout,
+                      dict(history=[dict(id=9, run_attempt=1, conclusion=conclusion)] + world['history'],
+                           jobs={'9': job_steps(checkout=checkout)}), full))
+cases += [('skip-after-failed-full', dict(history=[dict(id=10, run_attempt=1, conclusion='success'),
+                                                 dict(id=9, run_attempt=1, conclusion='failure')] + world['history'],
+                                         jobs={'10': job_steps(), '9': job_steps(checkout='success')}), True),
+          ('repeated-skips', dict(history=[dict(id=10, run_attempt=1, conclusion='success'),
+                                          dict(id=9, run_attempt=1, conclusion='success')] + world['history'],
+                                 jobs={'10': job_steps(), '9': job_steps()}), False),
+          ('partial-jobs', dict(history=[dict(id=9, run_attempt=1, conclusion='success')] + world['history'],
+                               jobs={'9': job_steps()}, job_count=2), True),
+          ('history-bound', dict(history=[dict(id=n, run_attempt=1, conclusion='success',
+                                               created_at='2026-09-01T00:00:00Z', updated_at='2026-09-01T00:00:00Z')
+                                         for n in range(1000, 2000)] + world['history']), True)]
+# The same run ID can name several attempts. A record must bind the current
+# producer attempt; an intervening rerun has unproved earlier work.
+for location in ('record', 'intervening', 'older'):
+    for attempt in (None, 2):
+        for conclusion in ('success', 'failure', 'cancelled', 'timed_out'):
+            prior = dict(id=8 if location == 'record' else 7 if location == 'older' else 9, conclusion=conclusion)
+            if attempt is not None:
+                prior['run_attempt'] = attempt
+            if location == 'record':
+                overrides = dict(run=dict(world['run'], **prior), history=[prior])
+                if attempt is None:
+                    del overrides['run']['run_attempt']
+            elif location == 'intervening':
+                overrides = dict(history=[prior] + world['history'], jobs={'9': job_steps()})
+            else:
+                prior['created_at'] = '2026-09-17T23:00:00Z'
+                overrides = dict(history=world['history'] + [prior], history_page_size=1, jobs={'7': job_steps()})
+            cases.append((location + '-attempt-' + str(attempt) + '-' + conclusion, overrides, True))
+cases += [('rerun-current-record', dict(record=dict(world['record'], attempt=2),
+                                      run=dict(world['run'], run_attempt=2),
+                                      history=[dict(id=8, run_attempt=2, conclusion='success')]), False),
+          ('missing-record-attempt', dict(record=dict(inputs=tuple_record, run=8)), True),
+          ('wrong-record-run', dict(record=dict(world['record'], run=9)), True),
+          ('current-rerun', dict(current_attempt='2'), True),
+          ('current-in-progress', dict(history=[dict(id=100, run_attempt=1, status='in_progress',
+                                                    conclusion=None)] + world['history']), False),
+          ('partial-history', dict(history_count=2), True),
+          ('duplicate-history', dict(history=world['history'] + world['history']), True),
+          ('delayed-older-rerun', dict(history=world['history'] + [dict(id=6, run_attempt=2, conclusion='success',
+                                                                      created_at='2026-08-13T23:00:00Z')]), True),
+          ('older-rerun-before-record', dict(history=world['history'] + [dict(id=7, run_attempt=2,
+                                                                           updated_at='2026-10-16T22:00:00Z')]), False)]
+expired = copy.deepcopy(world['artifacts'])
+expired[0]['created_at'] = '2026-10-15T23:00:00Z'
+cases.append(('old-record', dict(artifacts=expired), True))
+for source in ('fork', 'feature'):
+    artifacts = copy.deepcopy(world['artifacts'])
+    artifacts[0]['workflow_run']['head_repository_id' if source == 'fork' else 'head_branch'] = 2 if source == 'fork' else 'feature'
+    cases.append((source + '-record', {'artifacts': artifacts}, True))
+
+def execute_check(body, name, overrides, full):
+    case = workspace / name
+    case.mkdir(exist_ok=True)
+    data = copy.deepcopy(world); data.update(overrides)
+    fixture = case / 'world.json'; fixture.write_text(json.dumps(data))
+    outputs = case / 'outputs'; outputs.write_text('')
+    calls = case / 'calls'; calls.write_text('')
+    env = dict(PATH=str(bin_dir) + os.pathsep + '/usr/bin:/bin', GH_TOKEN='read-token',
+               GH_REPO='acme/widgets', DEFAULT_BRANCH='main', WORKFLOW_SHA=workflow,
+               GITHUB_RUN_ID='100', GITHUB_RUN_ATTEMPT=data.get('current_attempt', '1'),
+               GITHUB_OUTPUT=str(outputs), RUNNER_TEMP=str(case), CHECK_WORLD=str(fixture), CHECK_CALLS=str(calls))
+    result = subprocess.run([sys.argv[3], '-c', body], env=env, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, (name, result.stderr)
+    values = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
+    assert values['run'] == str(full).lower(), ('refresh-decision', name, values, result.stdout)
+    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/')), ('complete-initial-tuple', name, values)
+    if 'record-path' in values:
+        assert json.loads(pathlib.Path(values['record-path']).read_text()) == dict(inputs=tuple_record, run=100, attempt=int(env['GITHUB_RUN_ATTEMPT']))
+    print('  executed check: ' + name + ' full=' + str(full).lower())
+
+for name, overrides, full in cases:
+    execute_check(check_step['run'], name, overrides, full)
+broken = check_step['run'].replace("if previous['inputs'] == inputs:", "if True: # if previous['inputs'] == inputs:")
+assert broken != check_step['run']
+try: execute_check(broken, 'control-ignore-input-change', cases[1][1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed tuple comparison')
+original = "assert following == ['skipped']"
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, 'assert True # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'intervening-success-success')
+try: execute_check(broken, 'control-reuse-stale-record', case[1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed intervening full run')
+original = next(line for line in check_step['run'].splitlines() if 'query = urllib.parse.urlencode(dict(branch=' in line)
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace('dict(branch=', "dict(status='success', branch=") + ' # ' + original.strip())
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'skip-after-failed-full')
+try: execute_check(broken, 'control-hide-failed-full', case[1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed success-only history')
+broken = check_step['run']
+for original in ("assert previous['run'] == run['id'] and previous['attempt'] == run['run_attempt']",
+                 "assert recent['run_attempt'] == previous['attempt']"):
+    assert broken.count(original) == 1
+    broken = broken.replace(original, 'assert True # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'record-attempt-2-success')
+try: execute_check(broken, 'control-ignore-producing-attempt', case[1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed producing attempt')
+original = "assert recent['run_attempt'] == previous['attempt']\n            continue"
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace('continue', 'break # continue'))
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'older-attempt-2-success')
+try: execute_check(broken, 'control-stop-at-record-run', case[1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed older rerun')
+original = next(line for line in check_step['run'].splitlines() if 'days=65' in line)
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace('days=65', 'days=30') + ' # ' + original.strip())
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'delayed-older-rerun')
+try: execute_check(broken, 'control-omit-delayed-rerun', case[1], True)
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed delayed rerun')
 PY
 then ok 'step bodies execute release scripts in the consumer cwd and propagate failure under the job and token boundaries; mutation controls'
 else bad 'shared workflow structure'; fi

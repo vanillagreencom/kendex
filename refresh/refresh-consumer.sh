@@ -378,6 +378,42 @@ if git diff --cached --quiet; then
     gh pr close "$pr" --repo "$GH_REPO"
   fi
   printf 'refresh-state=current pr=none class=none\n'
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf 'state=current\n' >>"$GITHUB_OUTPUT"
+    # The engine owns source resolution. Its subscription JSON identifies
+    # remotes but omits item overrides, so inspect TOML for any revision.
+    # No revision override can be covered by the main-only tuple.
+    # Missing evidence withholds the record, so a later run refreshes in full.
+    python3 - "$ROOT" >>"$GITHUB_OUTPUT" <<'SOURCE_COVERAGE'
+import json, pathlib, subprocess, sys
+try:
+    import tomllib
+    listed = json.loads(subprocess.check_output(
+        ['kendex', 'marketplace', 'list', '--scope', 'project', '--json'],
+        timeout=30, stderr=subprocess.PIPE))
+    assert listed['schema'] == 1
+    sources = listed['subscriptions']
+    assert isinstance(sources, list) and sources
+    assert all(row.get('enabled') is False or
+               (row.get('enabled') is True and row.get('repo') == 'vanillagreencom/kendex'
+                and 'path' not in row and 'rev' not in row) for row in sources)
+    def revision(value):
+        if isinstance(value, dict):
+            return 'rev' in value or any(revision(child) for child in value.values())
+        return isinstance(value, list) and any(revision(child) for child in value)
+    root = pathlib.Path(sys.argv[1])
+    manifests = [root / 'kendex.toml', root / 'kendex-local.toml']
+    assert manifests[0].is_file()
+    for manifest in manifests:
+        assert not manifest.is_symlink()
+        if manifest.exists():
+            assert not revision(tomllib.loads(manifest.read_text()))
+except (AssertionError, AttributeError, ImportError, KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
+    print('sources=uncovered')
+else:
+    print('sources=covered')
+SOURCE_COVERAGE
+  fi
   printf '%s\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   # A run with no render change opens no pull request; its settings report

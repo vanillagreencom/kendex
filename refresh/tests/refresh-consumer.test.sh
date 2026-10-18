@@ -26,6 +26,81 @@ done
 unset inherited
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 . "$TEST_DIR/lib/refresh-fixture.sh"
+if python3 - "$REFRESH_DIR/refresh-consumer.sh" "$TMP" <<'SOURCE_CASES'
+import copy, json, os, pathlib, re, subprocess, sys
+source = pathlib.Path(sys.argv[1]).read_text()
+body = re.search(r"<<'SOURCE_COVERAGE'\n(.*?)\nSOURCE_COVERAGE", source, re.S).group(1)
+root = pathlib.Path(sys.argv[2]) / 'source-coverage'
+root.mkdir()
+bin_dir = root / 'bin'
+bin_dir.mkdir()
+engine = bin_dir / 'kendex'
+engine.write_text('#!' + sys.executable + '\n'
+    'import os, pathlib, sys\n'
+    'assert sys.argv[1:] == ["marketplace", "list", "--scope", "project", "--json"]\n'
+    'if os.environ.get("SOURCE_READ") == "fail": sys.exit(47)\n'
+    'sys.stdout.write(pathlib.Path(os.environ["SOURCE_JSON"]).read_text())\n')
+engine.chmod(0o755)
+default = dict(schema=1, subscriptions=[dict(enabled=True, repo='vanillagreencom/kendex')])
+manifest = 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n'
+cases = [('default-main', default, manifest, True),
+         ('third-party', dict(schema=1, subscriptions=[dict(enabled=True, repo='owner/catalog')]), manifest, False),
+         ('local-path', dict(schema=1, subscriptions=[dict(enabled=True, path='../catalog')]), manifest, False),
+         ('disabled-remote', dict(schema=1, subscriptions=default['subscriptions'] + [dict(enabled=False, repo='owner/catalog')]), manifest, True),
+         ('unknown-schema', dict(schema=2, subscriptions=default['subscriptions']), manifest, False),
+         ('unknown-sources', dict(schema=1, subscriptions=[]), manifest, False),
+         ('unknown-row', dict(schema=1, subscriptions=[{}]), manifest, False),
+         ('unknown-enabled', dict(schema=1, subscriptions=[dict(enabled='true', repo='vanillagreencom/kendex')]), manifest, False),
+         ('unknown-json', None, manifest, False),
+         ('malformed-json', '{', manifest, False),
+         ('malformed-manifest', default, '[', False),
+         ('missing-manifest', default, None, False),
+         ('unreadable-owner', default, manifest, False)]
+for revision in ('topic', 'v1', 'd'*40):
+    listed = copy.deepcopy(default)
+    listed['subscriptions'][0]['rev'] = revision
+    cases.append(('source-revision-' + revision, listed, manifest, False))
+for table in ('agents', 'skills', 'hooks', 'commands', 'mcp-servers', 'bundles', 'pi-extensions'):
+    cases.append((table + '-override', default, manifest + '\n[' + table + '.probe]\nsource = "kendex"\nrev = "topic"\n', False))
+cases += [('inline-override', default, 'schema = 7\nskills = {probe = {source = "kendex", rev = "topic"}}\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n', False),
+          ('local-manifest-override', default, manifest, False)]
+def check_body(script, name, listed, text, covered):
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    if text is not None:
+        (folder / 'kendex.toml').write_text(text)
+    if name == 'local-manifest-override':
+        (folder / 'kendex-local.toml').write_text('[skills.probe]\nsource = "kendex"\nrev = "topic"\n')
+    payload = folder / 'sources.json'
+    payload.write_text(listed if isinstance(listed, str) else json.dumps(listed))
+    result = subprocess.run([sys.executable, '-c', script, str(folder)],
+        env=dict(PATH=str(bin_dir) + os.pathsep + '/usr/bin:/bin', SOURCE_JSON=str(payload),
+                 SOURCE_READ='fail' if name == 'unreadable-owner' else ''),
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, (name, result.stderr)
+    assert result.stdout == ('sources=covered\n' if covered else 'sources=uncovered\n'), ('source-coverage', name, result.stdout)
+for case in cases:
+    check_body(body, *case)
+    print('source-coverage: case=' + case[0] + ' pass')
+original = "assert all(row.get('enabled') is False or"
+assert body.count(original) == 1
+broken = body.replace(original, "assert True or all(row.get('enabled') is False or")
+assert broken != body
+case = next(row for row in cases if row[0] == 'third-party')
+try: check_body(broken, 'control-third-party', *case[1:])
+except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
+else: raise AssertionError('source coverage control missed other catalog')
+original = 'assert not revision(tomllib.loads(manifest.read_text()))'
+assert body.count(original) == 1
+broken = body.replace(original, 'assert True # ' + original)
+assert broken != body
+case = next(row for row in cases if row[0] == 'skills-override')
+try: check_body(broken, 'control-item-override', *case[1:])
+except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
+else: raise AssertionError('source coverage control missed item override')
+SOURCE_CASES
+then ok 'source coverage uses engine subscriptions and rejects revisions or unknown evidence; controls'
+else bad 'source coverage'; fi
 mkdir -p "$TMP/missing-bin"
 RC=0
 OUT="$(env -i PATH="$TMP/missing-bin" REVIEW_GATE_REQUIRE_KENDEX=1 \
@@ -555,6 +630,16 @@ reset_default
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary"; then ok 'current run summary reports the exact engine version'; else bad 'current run engine version missing'; fi
+current_record_matches() { [ "$RC" -eq 0 ] && grep -qxF state=current "$TMP/state/outputs"; }
+if current_record_matches; then ok 'current refresh publishes its record eligibility'; else bad 'current refresh record eligibility' "$OUT"; fi
+record_runner="$runner"
+runner="$TMP/catalog-fallback-control/refresh/refresh-consumer.sh"
+cp "$record_runner" "$runner"
+file_edit "$TMP/catalog-fallback-control" refresh/refresh-consumer.sh 1 '^    printf .*state=current' '/^    printf .*state=current/s/printf/: # printf/'
+reset_default
+run_refresh current pass render
+if [ "$RC" -eq 0 ] && ! current_record_matches; then ok 'control: removing the current output rejects record eligibility'; else bad 'current output control' "$OUT"; fi
+runner="$record_runner"
 # The refresh passes --prune where the installed kendex lists it, and leaves
 # it out under a release that predates the flag.
 for lists in yes no; do
@@ -573,6 +658,7 @@ for lists in yes no; do
 done
 reset_default
 run_refresh stale pass render
+if [ ! -s "$TMP/state/outputs" ]; then ok 'changed refresh publishes no current record'; else bad 'changed refresh current output' "$OUT"; fi
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'stale consumer opens one rolling pull request'; else bad 'stale consumer opens one rolling pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/body"; then ok 'pushed body reports the exact engine version'; else bad 'pushed body engine version missing'; fi
