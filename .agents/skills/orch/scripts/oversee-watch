@@ -3341,20 +3341,36 @@ LANE_OBS=""
 LANE_TURNS=()
 # The cycle can be recorded before the watch sees a wall end. Keep its start
 # as `walled.at` until this owner replaces it with the completed pause.
-# Keep the observed window with its item: a relaunch can replace .window.
-# A window no record names keeps nothing. A failed write is advisory.
-wall_pause() { # LANE SEEN_AT [null for a standing wall]
-  local errf="$WORK_DIR/wall-pause.err"
+# The persisted item record owns the wall across every watch entry point.
+WALL_RETIRED=""
+wall_pause() { # LANE SEEN_AT [null for a standing wall], or --reconcile
+  local errf="$WORK_DIR/wall-pause.err" report
+  local finish='def finish($from; $to):
+    .pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"} | select($from < $to)]
+    | del(.walled);'
+  if [[ "$1" == --reconcile ]]; then
+    # Commit old owners before a replacement observation can write .walled.
+    # The report names exactly the sightings this locked transition retired.
+    report="$("$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update-report oversee "$finish"'
+      [(.lanes // []) | to_entries[]
+        | select(.value.walled.window != null and .value.walled.window != .value.window)
+        | select((.value.walled.at | fromdate) <= $now) | .key] as $moved
+      | {state: (reduce $moved[] as $i (.; .lanes[$i] |= finish((.walled.at | fromdate); $now))),
+         report: [$moved[] as $i | .lanes[$i].walled.window]}' --argjson now "$PASS_NOW" 2>"$errf")" \
+      || die wall-reconcile-failed "$(cat -- "$errf")" "path=$FLEET_STATE_DIR/workflow-state-oversee.json" "phase=reconcile"
+    WALL_RETIRED="$(jq -r '.[]' <<<"$report" 2>"$errf")" \
+      || die wall-reconcile-failed "$(cat -- "$errf")" "path=$FLEET_STATE_DIR/workflow-state-oversee.json" "phase=reconcile-report"
+    return 0
+  fi
   [[ "$2" =~ ^[0-9]+$ && "$2" -le "$PASS_NOW" ]] || return 0
   "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update oversee \
-    --arg window "$1" --argjson from "$2" --argjson to "${3:-$PASS_NOW}" \
-    '((if $to == null then null else
+    --arg window "$1" --argjson from "$2" --argjson to "${3:-$PASS_NOW}" "$finish"'
+    ((if $to == null then null else
         [(.lanes // []) | to_entries[] | select(.value.walled.window == $window) | .key] | last end)
-       // ([ (.lanes // []) | to_entries[] | select(.value.window == $window) | .key] | last)) as $i
+       // ([(.lanes // []) | to_entries[] | select(.value.window == $window) | .key] | last)) as $i
      | if $i == null then . else .lanes[$i] |=
        (if $to == null then .walled = {at: ($from | todate), window: $window}
-        else .pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"} | select($from < $to)]
-          | del(.walled) end) end' \
+        else finish($from; $to) end) end' \
     >/dev/null 2>"$errf" || { ow_message wall-unrecorded "lane=$1" >&2; cat -- "$errf" >&2; }
 }
 
@@ -3423,17 +3439,17 @@ observe_lanes() {
   # One window listing per session answers membership for the whole snapshot.
   local LANE_WINDOW_CACHE=1 LANE_WINDOW_SESSIONS=() LANE_WINDOW_LISTINGS=()
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
-  local moved_windows=""
   # Healthy passes do not pay for a wall-owner lookup.
   if [[ $'\n'"$state" == *$'\nusage-limit\t'* ]]; then
-    moved_windows="$(jq -r '(.lanes // [])[] | select(.walled.window != null and .walled.window != .window) | .walled.window' \
-      <<<"${FLEET_STATE:-"{}"}")" || die state-invalid "" "path=$STATE_FILE" "field=walled"
+    wall_pause --reconcile
+    while IFS= read -r lane; do
+      [[ -n "$lane" ]] || continue
+      lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
+    done <<<"$WALL_RETIRED"
   fi
-  # Retire the old owner's sighting before a replacement can write a new wall.
-  # Its old window may still be listed because another item now uses it.
+  # An explicit watch list can also stop carrying an unchanged owner.
   while IFS=$'\t' read -r kind lane prior; do
-    [[ "$kind" == usage-limit ]] || continue
-    if window_listed "$lane" && ! grep -Fxq -- "$lane" <<<"$moved_windows"; then continue; fi
+    [[ "$kind" == usage-limit ]] && ! window_listed "$lane" || continue
     wall_pause "$lane" "${prior%%|*}"
     lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
   done <<<"$state"

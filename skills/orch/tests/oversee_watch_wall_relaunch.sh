@@ -70,7 +70,7 @@ stage() {
   mkdir -p "$STATE_DIR/claims"
   printf '900\t%%3\t%s\tgh-2\t2026-08-16T00:00:00Z\n' "$SPENT" > "$STATE_DIR/claims/a.claim"
   case "$profile" in
-    github|transition-tmux|transition-gui|transition-wall|transition-reuse) item=issue-2; tracker=github ;;
+    github|transition-tmux|transition-gui|transition-wall|transition-reuse|transition-direct-*) item=issue-2; tracker=github ;;
     hosted|hosted-local|hosted-verb|cap-unavailable|relative|hosted-legacy|stop-failed|stop-unconfirmed) host="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
       [[ "$profile" != hosted-verb ]] || { item=issue-2; tracker=github; }
       mkdir -p "$STUB_DIR/host/srv/lane/tmp/lane-mail/$item" "$STUB_DIR/host/srv/clone/tmp"
@@ -185,6 +185,8 @@ facts() {
       record) value=changed; cmp -s "$STUB_DIR/expected-wall-state.json" "$STUB_DIR/oversee-state.json" && value=retained ;;
       transition) value="$(jq -r '[.lanes[0].pauses[]? | "\(.from)-\(.to):\(.cause)"] | join(",")' "$STUB_DIR/oversee-state.json")" ;;
       other) value="$(jq -c '.lanes[1]' "$STUB_DIR/oversee-state.json")" ;;
+      transition_record) value=changed
+        [[ "$(jq -Sc '.lanes' "$STUB_DIR/oversee-state.json")" != "$(cat "$STUB_DIR/transition-record.json")" ]] || value=retained ;;
       standing) value="$(jq -r '.lanes[0].walled.at // "none"' "$STUB_DIR/oversee-state.json")" ;;
       windows) value=changed; cmp -s "$STUB_DIR/saved-windows.txt" "$STUB_DIR/windows.txt" && value=retained ;;
       cwd) relaunch_args >/dev/null; value="$(cat "$STUB_DIR/open-terminal.cwd")"; [[ "$value" != "$STUB_DIR/peer" ]] || value=peer ;;
@@ -202,8 +204,14 @@ facts() {
 # Run the real launcher's record rewrite, then let the watch see the old
 # sighting leave the fleet. A replacement can itself have a fresh wall.
 transition_passes() { # PROFILE
-  local mode=--tmux window=replacement:gh-2
-  [[ "$1" != transition-gui ]] || { mode=--ghostty; window=""; }
+  local profile="$1" entry=fleet mode=--tmux window=replacement:gh-2
+  local watch_args=(--max-loops 1) watch_env=(TZ=UTC ORCH_WALL_RELAUNCH=ask)
+  case "$profile" in transition-direct-*) entry=direct; profile="transition-${profile#transition-direct-}" ;; esac
+  case "$profile" in
+    transition-tmux|transition-wall|transition-reuse) ;;
+    transition-gui|transition-failure) mode=--ghostty; window="" ;;
+    *) printf 'transition_passes: unknown profile %s\n' "$profile" >&2; return 1 ;;
+  esac
   jq --arg cwd "$TMP_ROOT/repo" '.overseer = {cwd:$cwd}' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/workflow-state-oversee.json"
   (cd "$TMP_ROOT/repo" && env -i PATH="$LAUNCH_BIN:$PATH" HOME="$TMP_ROOT/launch-home" \
     STUB_DIR="$STUB_DIR" WORKTREE_CLI="$LAUNCH_BIN/worktree" LANES_CLI="$TMP_ROOT/bin/lanes-stub.sh" \
@@ -218,24 +226,47 @@ transition_passes() { # PROFILE
   if [[ -n "$window" ]]; then
     printf 'gh-2\n' > "$STUB_DIR/windows-replacement.txt"
     cp "$STUB_DIR/cmd-gh-2.txt" "$STUB_DIR/cmd-$window.txt"
-    if [[ "$1" == transition-wall || "$1" == transition-reuse ]]; then cp "$STUB_DIR/pane-gh-2.txt" "$STUB_DIR/pane-$window.txt"
+    if [[ "$profile" == transition-wall || "$profile" == transition-reuse ]]; then cp "$STUB_DIR/pane-gh-2.txt" "$STUB_DIR/pane-$window.txt"
     else printf '⏺ Working on the replacement.\n' > "$STUB_DIR/pane-$window.txt"; fi
   fi
-  if [[ "$1" == transition-reuse ]]; then
+  if [[ "$entry" == direct ]]; then
+    # The old pane remains visible after the real launch. The replacement
+    # precedes it so a new wall would overwrite an unreconciled owner first.
+    printf 'gh-2\n' >> "$STUB_DIR/windows.txt"
+    watch_args+=(gh-1)
+    [[ -z "$window" ]] || watch_args+=("$window")
+    watch_args+=(gh-2)
+  else watch_args+=(--state "$STUB_DIR/oversee-state.json"); fi
+  if [[ "$profile" == transition-reuse ]]; then
     jq '.lanes += [{item:"issue-3",window:"gh-2",status:"running"}]' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/edited"
     mv "$STUB_DIR/edited" "$STUB_DIR/oversee-state.json"
-    printf 'gh-2\n' >> "$STUB_DIR/windows.txt"
+    [[ "$entry" == direct ]] || printf 'gh-2\n' >> "$STUB_DIR/windows.txt"
     printf '⏺ Working on another item.\n' > "$STUB_DIR/pane-gh-2.txt"
   fi
-  run_watch TZ=UTC ORCH_WALL_RELAUNCH=ask -- --max-loops 1 --state "$STUB_DIR/oversee-state.json" >>"$ERR" 2>&1 || return
+  jq -Sc '.lanes' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/transition-record.json"
+  if [[ "$profile" == transition-failure ]]; then
+    # A failed workflow-state transaction cannot release the wall owner.
+    cat > "$STUB_DIR/reconcile-unavailable" <<'EOF'
+#!/usr/bin/env bash
+if [[ " $* " == *' update-report oversee '* ]]; then
+  printf 'workflow-state: lock-failed\n' >&2
+  exit 1
+fi
+exec "$WALL_REAL_WORKFLOW_STATE" "$@"
+EOF
+    chmod +x "$STUB_DIR/reconcile-unavailable"
+    watch_env+=(OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/reconcile-unavailable" WALL_REAL_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh")
+  fi
+  run_watch "${watch_env[@]}" -- "${watch_args[@]}" >>"$ERR" 2>&1 || return
   # A further pass must not append the completed stretch again.
-  run_watch TZ=UTC ORCH_WALL_RELAUNCH=ask -- --max-loops 1 --state "$STUB_DIR/oversee-state.json" >>"$ERR" 2>&1
+  run_watch "${watch_env[@]}" -- "${watch_args[@]}" >>"$ERR" 2>&1
 }
 
 # wall_table ROW... — `label|screen|pick|setting|expect`, setting the
 # ORCH_WALL_RELAUNCH value or `-` for none.
 CASE_SEQ=0
 RUN_SEQ=0
+WALL_CONTROL=false
 wall_table() {
   local row label screen pick setting expect env
   for row in "$@"; do
@@ -249,7 +280,12 @@ wall_table() {
     case "$screen" in
       walled:transition-*) transition_passes "${screen#*:}" || RC=$? ;;
     esac
-    assert_eq "$(facts "$expect")" "$expect" "$label" "$ERR"
+    if [[ "$WALL_CONTROL" == true ]]; then
+      assert_eq "$RC" 0 "control reaches the shipped transition: $label" "$ERR"
+      local rejected=false
+      [[ "$(facts "$expect")" == "$expect" ]] || rejected=true
+      assert_eq "$rejected" true "control: $label" "$ERR"
+    else assert_eq "$(facts "$expect")" "$expect" "$label" "$ERR"; fi
   done
 }
 
@@ -261,12 +297,20 @@ ROW_VERB="provider-owned recovery dispatches without caller retirement|walled:ho
 ROW_CAP_FAILED="unavailable absolute host capabilities leave the prior lane intact|walled:cap-unavailable|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%ehost-capabilities-unavailable+exit%e7=true err~lane-host-fixture:+capabilities-failed+exit%e7=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
 ROW_RELATIVE="relative provider recovery leaves the prior lane intact|walled:relative|fresh|auto|rc=0 first=$USAGE_LIMIT err~cause%erelative-provider-deferred:KEN-3996=true stopped=0 marker=false killed=none record=retained windows=retained out~lane-relaunched=false relaunch~--relaunch=false"
 
+TRANSITION_ROWS=(
+  "a different tmux session closes the original wall once|walled:transition-tmux|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=none"
+  "a GUI relaunch closes the original wall once|walled:transition-gui|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=none"
+  "a replacement wall starts after the original wall closes|walled:transition-wall|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=2026-09-02T16:10:00Z"
+  'a reused old window cannot take the original wall or overwrite its new wall|walled:transition-reuse|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=2026-09-02T16:10:00Z other={"item":"issue-3","window":"gh-2","status":"running"}'
+  "a direct list closes the old wall after a tmux-session move|walled:transition-direct-tmux|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=none"
+  "a direct list closes the old wall after a GUI move|walled:transition-direct-gui|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=none"
+  "a direct list closes the old wall before a replacement wall|walled:transition-direct-wall|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=2026-09-02T16:10:00Z"
+  'a direct list reconciles before a reused target can take the pause|walled:transition-direct-reuse|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=2026-09-02T16:10:00Z other={"item":"issue-3","window":"gh-2","status":"running"}'
+  "a failed reconciliation keeps the complete record before observation|walled:transition-direct-failure|none|ask|rc=2 transition= standing=2026-09-02T16:00:00Z transition_record=retained err~wall-reconcile-failed=true err~phase%ereconcile=true err~workflow-state:+lock-failed=true"
+)
+
 echo "=== the watch owns the usage-limit route ==="
-wall_table "$ROW_RELAUNCH" \
-  "a different tmux session closes the original wall once|walled:transition-tmux|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=none" \
-  "a GUI relaunch closes the original wall once|walled:transition-gui|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=none" \
-  "a replacement wall starts after the original wall closes|walled:transition-wall|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=2026-09-02T16:10:00Z" \
-  'a reused old window cannot take the original wall or overwrite its new wall|walled:transition-reuse|none|ask|rc=0 transition=2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled standing=2026-09-02T16:10:00Z other={"item":"issue-3","window":"gh-2","status":"running"}' \
+wall_table "$ROW_RELAUNCH" "${TRANSITION_ROWS[@]}" \
   "$ROW_VERB" "$ROW_CAP_FAILED" "$ROW_RELATIVE" \
   "a walled lane no account qualifies for is usage-limit with its reset, the pick's answer under it|walled|none|auto|rc=0 first=$USAGE_LIMIT second=pick+none pick=$SPENT killed=none relaunch~--relaunch=false" \
   "a working lane printing limit text is left alone: no event, no pick, no kill|working|fresh|auto|rc=0 out~EVENT+usage-limit=false out~lane-relaunched=false pick=none killed=none relaunch~--relaunch=false" \
@@ -295,6 +339,16 @@ mutate_file "$owner_scripts/oversee-watch" '.walled = {at: ($from | todate), win
   '.walled = {at: ($from | todate)} # window: $window'
 WATCH_BIN="$owner_scripts/oversee-watch" wall_table \
   'without the wall owner a real relaunch leaves its wall open|walled:transition-tmux|none|ask|rc=0 transition= standing=2026-09-02T16:00:00Z'
+
+# Each direct row keeps the same producer, entry point and expected record.
+# Removing owner reconciliation must make that row reject its result.
+reconcile_scripts="$(mutant_scripts wall-reconcile/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/wall-reconcile/github"
+mutate_file "$reconcile_scripts/oversee-watch" '    wall_pause --reconcile' '    : wall_pause --reconcile'
+for row in "${TRANSITION_ROWS[@]}"; do
+  [[ "$row" == *'|walled:transition-direct-'* ]] || continue
+  WALL_CONTROL=true WATCH_BIN="$reconcile_scripts/oversee-watch" wall_table "$row"
+done
 
 new_case wall_setting_invalid
 OUT="$(run_watch ORCH_WALL_RELAUNCH=maybe -- --max-loops 1 gh-1 gh-2 2>"$TMP_ROOT/invalid.err")" && RC=0 || RC=$?
