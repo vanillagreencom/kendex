@@ -56,7 +56,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` takes the recommended one | `auto-recommended` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges once every gate is green on authorization already given; `ask` requires it per merge | `auto` |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation: [project-management settings](../project-management/README.md#setup) | `ask`; `auto` under `ceo` |
-| `ORCH_VERIFY_SCHEDULE` | Free text naming where and how often `/orch verify` runs: a Claude Code routine, a cron job that starts a harness on the base checkout, or the overseer's watch. Names an existing schedule and starts nothing | empty |
+| `ORCH_VERIFY_SCHEDULE` | Free text naming where and how often `/orch verify` runs: a Claude Code routine, a cron job that starts a harness on the base checkout, or the overseer's watch while it runs. A Stop handoff requires a reader that survives Stop. Names an existing schedule and starts nothing | empty |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Fleet lane cap: `open-terminal --help` | `3` |
