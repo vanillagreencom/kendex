@@ -28,6 +28,39 @@ source "$SCRIPT_DIR/lib/copilot-session.sh"
 source "$SCRIPT_DIR/lib/lane-relaunch.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 case "$verb" in
+  select)
+    source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
+    jarvis_load "$3"
+    DEP_ERR="$(mktemp)" || exit 1
+    trap 'rm -f -- "$DEP_ERR"' EXIT
+    source "$SCRIPT_DIR/lib/overseer-launch.sh"
+    harness="$1" account="$2" model="$4" effort="$5"
+    trigger="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
+    rc=0
+    ol_pick_record "$harness" "$model" "$trigger" "" "$account" || rc=$?
+    case "$rc" in
+      0|4|5) ;; # An unmeasured account keeps the existing context-only route.
+      3)
+        ol_preference_entries "$(ol_preference)" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
+        OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
+        OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
+        # Select only. Jarvis launches native permission defaults and transfers
+        # no predecessor flags, so this asks the walk about harness rows alone.
+        OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
+        OL_WALK_REFUSE_ID="$(ol_account_id "$account")"
+        ol_walk "$trigger" "$account" ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"} caller || {
+          printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
+          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+          exit 1
+        }
+        harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
+        ;;
+      *) printf 'jarvis-session: selection-failed account=%s exit=%s\n' "$account" "$rc" >&2
+         [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+         exit 1 ;;
+    esac
+    jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" \
+      '{harness:$harness,account:$account,model:$model,effort:$effort}' ;;
   live)
     export TMUX="$1,0,0"
     tmux_pane_live "$2" "$3" "$4" || exit "$?"
@@ -56,6 +89,13 @@ case "$verb" in
     lane_trust_prepare "$harness" "$account" "$home" || exit 1
     lane_session_command "$harness" "$id" "$file" || exit 1
     cmd="$LANE_SESSION_CMD" var="$LANE_SESSION_ACCOUNT_VAR"
+    if [[ -n "${8:-}${9:-}" ]]; then
+      flags="$(launch_choice_write "$harness" "${8:-}" "${9:-}")" || exit 1
+      launch_choice_shell_words "$flags" || exit 1
+      launch_choice_lead_settings --model "${8:-}" "$harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1
+      flags="$(printf ' %q' ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})" || exit 1
+      cmd="$harness$flags${cmd#"$harness"}"
+    fi
     form="$(lane_launch_form "$cmd" "$harness" "$LANE_TRUST_HOME" "")"
     child_env="JARVIS_RECORD=$(lane_single_quote "$6") JARVIS_GENERATION=$(lane_single_quote "$7")"
     # Jarvis acts on the owner's desktop, so its session keeps the live display.

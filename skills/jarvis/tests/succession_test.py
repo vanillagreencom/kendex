@@ -14,6 +14,34 @@ from fixtures.harness import native_launcher
 
 
 class SuccessionContract(SessionContract):
+    def setUp(self):
+        super().setUp()
+        self.skills = self.root / "installed/skills"
+        for package in ("jarvis", "orch", "mailbox"):
+            shutil.copytree(SKILLS / package / "scripts", self.skills / package / "scripts")
+        # The dependency answers account readings. The production walk decides
+        # which entry to try, its exclusion, and the resulting launch identity.
+        lanes = self.skills / "orch/scripts/lanes"
+        lanes.write_text('''#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+args = sys.argv[1:]
+config = Path(".lane-fixture.json")
+if not config.exists():
+    print("{}")
+    sys.exit(5)
+row = json.loads(config.read_text())
+with Path(row["calls"]).open("a") as stream:
+    stream.write(json.dumps(args) + "\\n")
+if ("--lane" in args and row["headroom"] <= float(args[args.index("--min-headroom-pct") + 1])) or args[args.index("--harness") + 1] != row["harness"]:
+    print('{"walled":1,"unmeasured":0}')
+    sys.exit(3)
+print(json.dumps({"config_dir": row["account"]}))
+''')
+        self.script_patch = patch.object(session_test, "SCRIPT", self.skills / "jarvis/scripts/jarvis-session")
+        self.script_patch.start()
+        self.addCleanup(self.script_patch.stop)
+
     def handoff(self):
         path = self.home / "state/handoff.md"
         path.parent.mkdir(exist_ok=True)
@@ -70,6 +98,64 @@ class SuccessionContract(SessionContract):
         saved["process"] = identity
         self.record.write_text(json.dumps(saved))
 
+    def test_account_succession(self):
+        for state, headroom, target in (("walled", 0, "claude"), ("walled", 0, "codex"), ("low", 4, "codex")):
+            with self.subTest(state=state, target=target):
+                self.call("start", mode="new")
+                previous = self.wait()
+                before = json.loads(self.record.read_text())
+                contents = self.handoff()
+                account = self.root / ("next-" + state + "-" + target)
+                account.mkdir()
+                calls = self.root / ("picks-" + state + "-" + target)
+                (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom}))
+                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"\n')
+                # Model classification is kendex's external boundary. Preserve
+                # native defaults for these class entries, as its protocol does.
+                kendex = self.root / "bin/kendex"
+                kendex.write_text('#!/usr/bin/env python3\nimport json\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},"resolution":{"diagnostics":[],"native_selector":"sonnet"}}))\n')
+                kendex.chmod(0o755)
+                self.call("succeed")
+                current = self.wait()
+                after = json.loads(self.record.read_text())
+                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), target, str(account)))
+                self.assertNotEqual(current["terminal"]["window"], previous["terminal"]["window"])
+                self.assertEqual(Path(after["transfer"]["handoff"]).read_text(), contents)
+                self.assertEqual((self.home / "state/handoff.md").read_text(), contents)
+                queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                self.assertIn(str(self.account), queries[0])
+                for query in queries[1:]:
+                    self.assertEqual(query[query.index("--exclude-lane") + 1], str(self.account))
+                self.assertEqual(queries[-1][queries[-1].index("--harness") + 1], target)
+                self.assertEqual(after["transfer"]["phase"], "complete")
+                self.assertNotEqual(after["pending"]["native_session_id"], before["pending"]["native_session_id"])
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+                (self.home / ".lane-fixture.json").unlink()
+
+    def test_missing_orch_keeps_predecessor(self):
+        self.call("start")
+        self.wait()
+        before = self.record.read_bytes()
+        predecessor = json.loads(before)
+        self.handoff()
+        orch = self.skills / "orch"
+        moved = self.skills / "orch-absent"
+        orch.rename(moved)
+        try:
+            answer, code = self.call("succeed")
+            self.assertEqual((answer["state"], answer["reason"], code), ("failed", "handover-failed", 1))
+            self.assertEqual(answer["account"], str(self.account))
+            self.assertEqual(self.record.read_bytes(), before)
+            pid = predecessor["process"]
+            result = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"),
+                                     "worker-live", str(pid["pid"]), pid["started_at"]],
+                                    capture_output=True, env=self.env, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(len(self.started()), 1)
+        finally:
+            moved.rename(orch)
+
     def test_succession_foreign_session(self):
         self.handoff()
         self.call("start")
@@ -99,7 +185,7 @@ class SuccessionContract(SessionContract):
         # the disposable script copy gains barriers; operations stay production.
         skills = self.root / "instrumented/skills"
         for package in ("jarvis", "orch", "mailbox"):
-            shutil.copytree(SKILLS / package / "scripts", skills / package / "scripts")
+            shutil.copytree(self.skills / package / "scripts", skills / package / "scripts")
         source = skills / "jarvis/scripts/lib/session.py"
         original = source.read_text()
         marker = "            os.replace(name, self.path)"
@@ -207,4 +293,4 @@ class SuccessionContract(SessionContract):
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
-        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery"])
+        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_missing_orch_keeps_predecessor"])

@@ -25,8 +25,14 @@ def main():
         controls = [("absent verb", "jarvis/scripts/lib/session.py", 'for verb in ("start", "status", "stop", "succeed"):',
                      'for verb in ("start", "status", "stop"):', "test_succession_contract"),
                     ("process identity", "jarvis/scripts/lib/session-backend.sh", '    lane_stop_identity "$1" "$2" "$3" ;;',
-                     '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" ;;', "test_succession_identity")]
-        cases = ("test_succession_contract", "test_succession_identity", "test_succession_foreign_session", "test_succession_recovery")
+                     '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" ;;', "test_succession_identity"),
+                    ("walled account reused", "jarvis/scripts/lib/session.py",
+                     'choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,\n                                             choice.get("model", ""), choice.get("effort", "")).stdout)',
+                     'choice = {"harness": record["harness"], "account": record["account"], "model": "", "effort": ""}', "test_account_succession"),
+                    ("missing dependency status", "jarvis/scripts/lib/session.py",
+                     'if not (BACKEND.parents[3] / "orch/scripts").is_dir():',
+                     'if False:', "test_missing_orch_keeps_predecessor")]
+        cases = ("test_account_succession", "test_missing_orch_keeps_predecessor")
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
 

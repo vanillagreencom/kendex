@@ -393,6 +393,9 @@ class Session:
             return self.answer(next_record), 0
 
     def succeed(self):
+        if not (BACKEND.parents[3] / "orch/scripts").is_dir():
+            # Without the lifecycle owner, refuse before taking or ending control.
+            raise Refusal("handover-failed", "Orch is not installed. The recorded account cannot start a successor.", "failed")
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
@@ -410,6 +413,9 @@ class Session:
                     raise Refusal("record-unreadable")
                 predecessor = record
                 saved_handoff = None
+            choice = record.get("choice") or {}
+            choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
+                                             choice.get("model", ""), choice.get("effort", "")).stdout)
             generation = record["generation"] + 1
             handoff = Path(self.home) / "state/handoff.md"
             contents = handoff.read_bytes()
@@ -425,7 +431,7 @@ class Session:
             if saved.read_bytes() != contents:
                 raise Refusal("record-unreadable")
             transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
-            next_record = {"v": 1, "home": self.home, "harness": record["harness"], "account": record["account"],
+            next_record = {"v": 1, "home": self.home, "harness": choice["harness"], "account": choice["account"], "choice": choice,
                            "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
                            "generation": generation, "intent": "succeed", "state": "handing-over", "reason": "succession", "detail": "",
                            "terminal": None, "predecessor": predecessor, "transfer": transfer,
@@ -556,8 +562,10 @@ class Session:
                     self.write(record)
                 return
             launch = record["launch"]
+            choice = record.get("choice") or {}
             prepared = json.loads(self.backend("prepare", record["harness"], record["account"], self.home,
-                                               launch["id"], launch["file"], self.path, generation).stdout)
+                                               launch["id"], launch["file"], self.path, generation,
+                                               choice.get("model", ""), choice.get("effort", "")).stdout)
             with self.locked():
                 record = self.read()
                 if not self._current_request(record, generation, verb):
