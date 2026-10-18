@@ -4,6 +4,7 @@
 # in with `include_str!` and asserted to hold no carriage return, and the
 # authoring golden digest is over those same bytes.
 * -text
+hooks/jarvis-memory-note.sh text eol=lf
 skills/orch/workflows/submit-pr.md text eol=lf
 skills/orch/workflows/merge-pr.md text eol=lf
 skills/orch/workflows/micro.md text eol=lf

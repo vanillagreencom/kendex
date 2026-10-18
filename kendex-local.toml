@@ -664,6 +664,11 @@ harnesses = [
 ]
 enabled = true
 
+[hooks.jarvis-memory-note]
+source = "."
+harnesses = ["claude", "pi"]
+enabled = true
+
 [hooks.reviewer-stop-check]
 source = "."
 harnesses = ["claude", "codex", "copilot"]
