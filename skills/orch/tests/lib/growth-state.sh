@@ -58,6 +58,7 @@ mutant_scripts() {
     if [[ "$moved" -eq 1 ]]; then
       cp -R "$orch_src/." "$sibling/scripts/" || _mutant_scripts_refuse copy-failed "$sibling"
       ln -s "$orch_src/../schemas" "$sibling/schemas" || _mutant_scripts_refuse link-failed "$sibling"
+      [ -e "$sibling/../github" ] || cp -R "$orch_src/../../github" "$sibling/../github" || _mutant_scripts_refuse copy-failed "$sibling"
     else
       cp -R "$orch_src/../../mailbox/scripts/." "$sibling/scripts/" || _mutant_scripts_refuse copy-failed "$sibling"
     fi
@@ -70,10 +71,9 @@ mutant_scripts() {
       mkdir -p "$paired_orch/scripts" || _mutant_scripts_refuse mkdir-failed "$paired_orch"
       cp -R "$orch_src/." "$paired_orch/scripts/" || _mutant_scripts_refuse copy-failed "$paired_orch"
       ln -s "$orch_src/../schemas" "$paired_orch/schemas" || _mutant_scripts_refuse link-failed "$paired_orch"
+      [ -e "$paired_orch/../github" ] || cp -R "$orch_src/../../github" "$paired_orch/../github" || _mutant_scripts_refuse copy-failed "$paired_orch"
     fi
   fi
-  [ -e "${dir%/scripts}/../github" ] || cp -R "$orch_src/../../github" "${dir%/scripts}/../github" \
-    || _mutant_scripts_refuse copy-failed "${dir%/scripts}/../github"
   printf '%s\n' "$dir"
 }
 
