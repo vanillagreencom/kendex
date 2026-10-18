@@ -6,6 +6,9 @@
 * -text
 hooks/jarvis-memory-note.sh text eol=lf
 tools/guard text eol=lf
+tools/lane-setup text eol=lf
+.bun-version text eol=lf
+.github/workflows/skill-tests.yml text eol=lf
 skills/orch/tests/run-all.sh text eol=lf
 skills/orch/workflows/submit-pr.md text eol=lf
 skills/orch/workflows/merge-pr.md text eol=lf

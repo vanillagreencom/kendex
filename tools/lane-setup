@@ -2,11 +2,77 @@
 # Prepare a fleet clone before its worktree is created.
 set -euo pipefail
 
+owned_header='# Written by tools/lane-setup, rewritten on every run: edits here are lost.'
+
+# write_owned KEY PATH CONTENT: replaces a file this script wrote, refuses one
+# it did not, and announces KEY=write or KEY=skip.
+write_owned() {
+  local key=$1 path=$2 content="$owned_header" current=""
+  if [ -n "$3" ]; then
+    content="$content"$'\n'"$3"
+  fi
+  if [ -e "$path" ]; then
+    current="$(cat -- "$path")" || exit $?
+    if [ "${current%%$'\n'*}" != "$owned_header" ]; then
+      printf 'lane-setup: %s=foreign path=%s\n' "$key" "$path"
+      printf 'The file exists and tools/lane-setup did not write it; move it aside to let the lane configuration in.\n'
+      exit 1
+    fi
+  fi
+  if [ "$current" = "$content" ]; then
+    printf 'lane-setup: %s=skip\n' "$key"
+    return 0
+  fi
+  printf 'lane-setup: %s=write path=%s\n' "$key" "$path"
+  mkdir -p -- "${path%/*}"
+  printf '%s\n' "$content" >"$path.lane-setup"
+  mv -- "$path.lane-setup" "$path"
+}
+
+install_bun() (
+  local work="" release="https://github.com/oven-sh/bun/releases/download/bun-v$1"
+  work="$(mktemp -d)" || exit $?
+  [[ -d $work && ! -L $work ]] || exit 1
+  work="$(cd -- "$work" && pwd -P)" || exit $?
+  trap 'rm -rf -- "${work:?}"' EXIT
+  curl -fsSL --retry 3 -o "$work/bun-linux-x64.zip" "$release/bun-linux-x64.zip"
+  curl -fsSL --retry 3 -o "$work/SHASUMS256.txt" "$release/SHASUMS256.txt"
+  awk '$2 == "bun-linux-x64.zip"' "$work/SHASUMS256.txt" >"$work/bun.sha256"
+  (cd -- "$work" && sha256sum -c bun.sha256)
+  unzip -q "$work/bun-linux-x64.zip" bun-linux-x64/bun -d "$work"
+  mkdir -p -- "$HOME/.local/bin"
+  install -m 755 "$work/bun-linux-x64/bun" "$HOME/.local/bin/bun"
+)
+
+bun_pin="$(cat .bun-version)" || exit $?
+host_os="$(uname -s)" || exit $?
+host_arch="$(uname -m)" || exit $?
+bun_version=unavailable
+if [ "$host_os:$host_arch" = Linux:x86_64 ]; then
+  # Fleet starts the harness in a login shell. Its npm/Pi children inherit
+  # this PATH; an export inside lane-setup cannot change its parent's PATH.
+  if [ -n "${DAYTONA_SANDBOX_ID:-}" ]; then
+    write_owned shell-profile "$HOME/.bash_profile" '[ ! -f "$HOME/.profile" ] || . "$HOME/.profile"
+export PATH="$HOME/.local/bin:$PATH"'
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  bun_version="$(bun --version 2>/dev/null)" || bun_version=unavailable
+  if [ "$bun_version" = "$bun_pin" ]; then
+    printf 'lane-setup: bun=skip\n'
+  else
+    printf 'lane-setup: bun=install\n'
+    install_bun "$bun_pin"
+  fi
+else
+  printf 'lane-setup: bun=unsupported platform=%s:%s\n' "$host_os" "$host_arch"
+fi
+bun_version="$(bun --version 2>/dev/null)" || bun_version=unavailable
+
 node_version=""
 node_version="$(node --version)" || exit $?
 npm_version=""
 npm_version="$(npm --version)" || exit $?
-printf 'lane-setup: versions=node:%s npm:%s\n' "$node_version" "$npm_version"
+printf 'lane-setup: versions=node:%s npm:%s bun:%s\n' "$node_version" "$npm_version" "$bun_version"
 
 ui_inputs=""
 ui_inputs="$(git rev-parse HEAD:ui/package.json HEAD:ui/package-lock.json)" || exit $?
@@ -95,33 +161,6 @@ toml_string() {
   value=${value//\\/\\\\}
   value=${value//\"/\\\"}
   printf '"%s"' "$value"
-}
-
-owned_header='# Written by tools/lane-setup, rewritten on every run: edits here are lost.'
-
-# write_owned KEY PATH CONTENT: replaces a file this script wrote, refuses one
-# it did not, and announces KEY=write or KEY=skip.
-write_owned() {
-  local key=$1 path=$2 content="$owned_header" current=""
-  if [ -n "$3" ]; then
-    content="$content"$'\n'"$3"
-  fi
-  if [ -e "$path" ]; then
-    current="$(cat -- "$path")" || exit $?
-    if [ "${current%%$'\n'*}" != "$owned_header" ]; then
-      printf 'lane-setup: %s=foreign path=%s\n' "$key" "$path"
-      printf 'The file exists and tools/lane-setup did not write it; move it aside to let the lane configuration in.\n'
-      exit 1
-    fi
-  fi
-  if [ "$current" = "$content" ]; then
-    printf 'lane-setup: %s=skip\n' "$key"
-    return 0
-  fi
-  printf 'lane-setup: %s=write path=%s\n' "$key" "$path"
-  mkdir -p -- "${path%/*}"
-  printf '%s\n' "$content" >"$path.lane-setup"
-  mv -- "$path.lane-setup" "$path"
 }
 
 write_lane_cargo_config() {

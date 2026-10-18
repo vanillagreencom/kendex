@@ -25,7 +25,7 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 # linker or sccache installed on the host cannot answer for a row.
 SYS_BIN="$TMP/sys-bin"
 mkdir -p "$SYS_BIN"
-for tool in bash cat grep mkdir mv; do
+for tool in bash cat grep mkdir mv cp install mktemp rm awk sha256sum unzip; do
   tool_path="$(command -v "$tool")" || { bad "the host provides $tool"; exit 1; }
   ln -s "$tool_path" "$SYS_BIN/$tool"
 done
@@ -53,6 +53,7 @@ fixture() {
 printf '%s\\n' '$LANE_PATH'
 SH
   cp "$REPO/.fleet-setup" "$R/"
+  cp "$REPO/.bun-version" "$R/"
   cp "$TOOLS/lane-setup" "$R/tools/"
   [ $# -eq 1 ] || mutate "$R/tools/lane-setup" "$2" "$3"
   chmod +x "$R/.fleet-setup" "$R/tools/lane-setup"
@@ -64,6 +65,18 @@ SH
   cat >"$R/fake-bin/node" <<'SH'
 #!/usr/bin/env bash
 printf 'v22.19.0\n'
+SH
+  cat >"$R/fake-bin/bun" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${BUN_IMAGE_VERSION:-1.3.14}"
+SH
+  cat >"$R/fake-bin/uname" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  -s) printf '%s\n' "${BUN_OS:-Linux}" ;;
+  -m) printf '%s\n' "${BUN_ARCH:-x86_64}" ;;
+  *) exit 64 ;;
+esac
 SH
   # git answers the dependency-input read itself and hands `worktree`, which
   # the warm build takes, to the real git.
@@ -129,6 +142,91 @@ run_setup() {
   RC=0
   OUT="$(cd "$R" && env -i HOME="$R/home" PATH="${EXTRA_BIN:+$EXTRA_BIN:}$R/fake-bin:$SYS_BIN" REAL_GIT="$REAL_GIT" NPM_LOG="$NPM_LOG" RUSTUP_LOG="$RUSTUP_LOG" RUSTUP_STATE="$RUSTUP_STATE" NPM_FAIL="${NPM_FAIL:-0}" RUSTUP_FAIL="${RUSTUP_FAIL:-0}" "$@" "$command" 2>&1)" || RC=$?
 }
+
+# Bun's release archive is real ZIP data. Only the HTTP transport is fake.
+bun_release() {
+  mkdir -p "$R/release"
+  python3 - "$R" <<'PY'
+import hashlib
+import pathlib
+import sys
+import zipfile
+root = pathlib.Path(sys.argv[1])
+pin = (root / ".bun-version").read_text().strip()
+archive = root / "release/bun-linux-x64.zip"
+with zipfile.ZipFile(archive, "w") as release:
+    release.writestr("bun-linux-x64/bun", f"#!/usr/bin/env bash\nprintf '%s\\n' '{pin}'\n")
+(root / "release/SHASUMS256.txt").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  bun-linux-x64.zip\n")
+PY
+  cat >"$R/fake-bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[ "$1 $2 $3 $4" = '-fsSL --retry 3 -o' ]
+url=$6
+pin="$(cat .bun-version)"
+case "$url" in
+  "https://github.com/oven-sh/bun/releases/download/bun-v$pin/bun-linux-x64.zip" | "https://github.com/oven-sh/bun/releases/download/bun-v$pin/SHASUMS256.txt") ;;
+  *) exit 64 ;;
+esac
+printf '%s\n' "$url" >>curl.log
+cp "release/${url##*/}" "$5"
+SH
+  chmod +x "$R/fake-bin/curl"
+}
+
+BUN_ROWS=0
+proof_bun() { # STATE [FROM TO]
+  local state=$1 image="" resolved=""
+  shift
+  BUN_ROWS=$((BUN_ROWS + 1))
+  fixture "bun-$state-$BUN_ROWS" "$@"
+  bun_release || return 1
+  case "$state" in
+    install | corrupt | rerun | foreign) image=1.4.2 ;;
+    skip) image="$(cat "$R/.bun-version")" || return 1 ;;
+    unsupported | unsupported-os) image=1.4.2 ;;
+  esac
+  if [ "$state" = corrupt ]; then
+    printf 'corrupt' >>"$R/release/bun-linux-x64.zip"
+  fi
+  if [ "$state" = foreign ]; then
+    printf 'keep\n' >"$R/home/.bash_profile"
+  fi
+  run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" BUN_ARCH="$([ "$state" = unsupported ] && echo aarch64 || echo x86_64)" BUN_OS="$([ "$state" = unsupported-os ] && echo Darwin || echo Linux)" DAYTONA_SANDBOX_ID=test
+  case "$state" in
+    install | rerun)
+      [ "$RC" -eq 0 ] && [ -x "$R/home/.local/bin/bun" ] && [ -s "$R/curl.log" ] || return 1
+      # Read the owned startup file without the test host's /etc/profile,
+      # which can independently prepend ~/.local/bin and hide a broken file.
+      resolved="$(env -i HOME="$R/home" PATH="$R/fake-bin:$SYS_BIN" "$BASH" --noprofile --rcfile "$R/home/.bash_profile" -ic 'command -v bun; bun --version' 2>/dev/null)" || return 1
+      [ "$resolved" = "$R/home/.local/bin/bun"$'\n'"$(cat "$R/.bun-version")" ] || return 1
+      case "$OUT" in *" npm:10.9.3 bun:$(cat "$R/.bun-version")"*) ;; *) return 1 ;; esac
+      if [ "$state" = rerun ]; then
+        rm "$R/curl.log"
+        run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" DAYTONA_SANDBOX_ID=test
+        [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] || return 1
+        case "$OUT" in *'lane-setup: bun=skip'*) ;; *) return 1 ;; esac
+      fi
+      ;;
+    skip) [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.local/bin/bun" ] && case "$OUT" in *'lane-setup: bun=skip'*) true ;; *) false ;; esac ;;
+    corrupt) [ "$RC" -ne 0 ] && [ ! -e "$R/home/.local/bin/bun" ] ;;
+    foreign) [ "$RC" -ne 0 ] && [ "$(cat "$R/home/.bash_profile")" = keep ] && [ ! -e "$R/curl.log" ] ;;
+    unsupported | unsupported-os) [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.local/bin/bun" ] && [ ! -e "$R/home/.bash_profile" ] ;;
+  esac
+}
+
+echo "=== Bun release install, skip and startup ==="
+for state in install skip rerun corrupt foreign unsupported unsupported-os; do
+  proof_bun "$state" && ok "Bun $state" || bad "Bun $state" "rc=$RC out=$OUT"
+done
+proof_bun install '    install_bun "$bun_pin"' '    :' \
+  && bad 'control: missing Bun install is rejected' || ok 'control: missing Bun install is rejected'
+proof_bun skip '  if [ "$bun_version" = "$bun_pin" ]; then' '  if false; then' \
+  && bad 'control: redundant Bun install is rejected' || ok 'control: redundant Bun install is rejected'
+proof_bun corrupt '  (cd -- "$work" && sha256sum -c bun.sha256)' '  :' \
+  && bad 'control: unchecked archive is rejected' || ok 'control: unchecked archive is rejected'
+proof_bun install "export PATH=\"\$HOME/.local/bin:\$PATH\"'" "export PATH=\"\$PATH\"'" \
+  && bad 'control: missing startup PATH is rejected' || ok 'control: missing startup PATH is rejected'
 
 echo "=== a fresh clone installs both dependency sets ==="
 fixture fresh
