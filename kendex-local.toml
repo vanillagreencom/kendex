@@ -45,8 +45,8 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Owner messages
 
-- The owner's time zone is Pacific (America/Los_Angeles). Write a time in it as `9:29 pm`, per rule 3 of `skills/orch/references/communication-modes.md` § Owner messages.
-- The owner's night, for rule 7 there, is 11 pm to 8 am Pacific.
+- The owner's time zone is Pacific (America/Los_Angeles). Use the time format in `skills/communication/references/messages.md` § Times.
+- The owner's night, for `skills/orch/references/communication-modes.md` § Owner asks, is 11 pm to 8 am Pacific.
 
 ### Proposals
 

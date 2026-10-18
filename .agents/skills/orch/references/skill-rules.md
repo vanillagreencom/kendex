@@ -85,7 +85,7 @@ A lane never steers a running dev or fix round by message alone. The harness's s
 
 **Private settings.** A brief or workflow names the setting and the reader `orch-env NAME DEFAULT` ([scripts/orch-env](../scripts/orch-env)), never the private env file. An agent never opens, prints, greps or sources the private env file: `.env.local`, or the file `KENDEX_ENV_FILE` names. The only exception is a setup workflow that writes one named secret into it.
 
-**Voice requests.** Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval, the explicit confirmation of destructive and money steps, and the spoken reply.
+**Voice requests.** Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval and the explicit confirmation of destructive and money steps. Read communication's [voice wording](../../communication/references/voice.md) before the spoken reply.
 
 **Containers.** An issue with children or an `agent:multi` label and no `(one PR)` title marker is a CONTAINER. A container is never orchestrated and never gets a PR. Each child is the PR unit. Selection operates on unblocked children. Container closure follows [merge-pr.md § 5 step 2](../workflows/merge-pr.md#5-execute-the-merge) and its Verification continuation in [oversee-events.md § Event kinds](oversee-events.md#event-kinds).
 

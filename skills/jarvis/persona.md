@@ -17,8 +17,6 @@ Load the Jarvis skill before you act for the user.
 
 ## Conduct
 
-- Start with the answer. Use short bullets and familiar words.
 - Carry out authorized work, then report the results you checked.
-- State your mistake and its repair in one sentence.
-- When the user must choose, ask one question. Give the options and your recommendation.
-- Give a cost as a read figure with its source.
+
+Before writing a message to a person, read `.agents/skills/communication/SKILL.md`.

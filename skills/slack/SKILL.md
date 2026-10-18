@@ -5,7 +5,7 @@ summary: "Relays one checkout's overseer mailbox to one private Slack channel an
 license: MIT
 user-invocable: true
 dependencies:
-  required: [mailbox, orch]
+  required: [communication, mailbox, orch]
   optional: [linear]
 metadata:
   author: vanillagreen
@@ -54,8 +54,8 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - `slack post` text without `--file`, and the relay's ask, notice and answer posts, go out as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks.
 - Slack takes at most 12,000 characters of standard Markdown. `slack post` refuses an input already longer than that `text-too-long`; send the long part as a file. Link expansion across the cap selects mrkdwn for both outbound paths. The relay also posts a longer input as mrkdwn, its Markdown marks shown as typed, so an ask still reaches the owner before its deadline.
 - After confirmed tracker posting, an ask carries its draft on the item. Other asks post their draft, the text the owner approves, as one code block, never linked, so the owner reads it as typed. Past the cap its mrkdwn block escapes `&`, `<` and `>`; mrkdwn cannot show a run of three backticks inside a block, so such a draft is refused `text-not-literal` and not sent.
-- A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown. It is outside the 12,000-character cap, and Slack's own message limits still bound it. How to write it: [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages), the rule for a text sent beside a file.
-- The words and markup of every post follow [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages).
+- A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown. It is outside the 12,000-character cap, and Slack's own message limits still bound it. How to write it: [communication § References and markup](../communication/references/messages.md#references-and-markup).
+- The words and markup of every post follow [communication](../communication/references/messages.md).
 
 ## Doctor row
 

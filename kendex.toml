@@ -36,7 +36,7 @@ agents = [
   "reviewer-test",
 ]
 skills = [
-  "orch", "mailbox",
+  "orch", "mailbox", "communication",
   "dev",
   "github",
   "worktree",

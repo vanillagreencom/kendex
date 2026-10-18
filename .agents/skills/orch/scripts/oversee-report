@@ -147,7 +147,7 @@ write    prints the rows and writes the same bytes to the path
          These findings are advisory: write sends on the writer's word.
          Argument, setting and notice failures still refuse.
          Owner wording and the template live in
-         references/communication-modes.md § Owner messages.
+         ../communication/references/reports.md § Owner summary template.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, with a

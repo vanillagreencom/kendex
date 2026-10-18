@@ -5,7 +5,7 @@ summary: "Guides a delegated desktop assistant through user decisions, checked r
 license: MIT
 user-invocable: true
 dependencies:
-  required: [mailbox, orch, slack]
+  required: [communication, mailbox, orch, slack]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
     - command: agent-browser
@@ -152,7 +152,7 @@ Read the linked workflow or reference for the task before acting.
 | Draft product videos, posts or outreach | Launch `publicist` for drafting with a task file or attached prompt. Before a publisher setup launch, obtain the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
 | Choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
-| Reply, request a decision, report progress or use the user's input devices | [references/communication.md](references/communication.md) |
+| Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
 | Report committed Markdown growth for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
