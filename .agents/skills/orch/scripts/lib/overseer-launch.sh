@@ -139,8 +139,13 @@ ol_preference() {
 # which this parse does not run. ol_deprecated warns once per launch.
 # OL_REFUSED_ENTRIES holds every refused entry; a refusal returns 1 and keeps
 # the first in OL_BAD_ENTRY for launchers. Empty VALUE is no entries.
+# In lane mode the final entry alone may end in `:last`, the last-choice mark
+# open-terminal's preference_select reads from OL_LAST_CHOICE (1 marked, else
+# 0); the mark is stripped, so OL_ENTRIES holds the entry without it. The mark
+# on another entry, or in an overseer preference, is refused.
 OL_ENTRIES=()
 OL_NAMED=0
+OL_LAST_CHOICE=0
 OL_BAD_ENTRY=""
 OL_REFUSED_ENTRIES=()
 OL_DEPRECATED_ENTRIES=()
@@ -162,9 +167,10 @@ export ORCH_MODEL_LINES_HELD=1
 OL_DEPRECATION_WARNED=$OL_LINES_HELD
 OL_DEPRECATION_CONVERTED=0
 ol_preference_entries() { # VALUE [lane]
-  local rest="$1" entry parsed_entry host head LC_ALL=C status=0
+  local rest="$1" entry written parsed_entry host head LC_ALL=C status=0
   OL_ENTRIES=()
   OL_NAMED=0
+  OL_LAST_CHOICE=0
   OL_BAD_ENTRY=""
   OL_REFUSED_ENTRIES=()
   OL_DEPRECATED_ENTRIES=()
@@ -172,13 +178,26 @@ ol_preference_entries() { # VALUE [lane]
   while [[ -n "$rest" ]]; do
     entry="${rest%%,*}"
     rest="${rest#*,}"
+    written="$entry"
+    # Three colons: an entry has two, so `claude:opus:last` stays an effort
+    # word and is never read as the mark.
+    if [[ "${2:-}" == lane && "$entry" == *:*:*:last ]]; then
+      if [[ -n "$rest" ]]; then
+        (( status != 0 )) || OL_BAD_ENTRY="$written"
+        OL_REFUSED_ENTRIES+=("$written")
+        status=1
+        continue
+      fi
+      entry="${entry%:last}"
+      OL_LAST_CHOICE=1
+    fi
     parsed_entry="$entry"
     head="${entry%%:*}"
     if [[ "$head" == *@* ]]; then
       host="${head#*@}"
       if [[ "${2:-}" != lane || ! "$host" =~ ^[a-zA-Z0-9_./~-]+$ ]]; then
-        (( status != 0 )) || OL_BAD_ENTRY="$entry"
-        OL_REFUSED_ENTRIES+=("$entry")
+        (( status != 0 )) || OL_BAD_ENTRY="$written"
+        OL_REFUSED_ENTRIES+=("$written")
         status=1
         continue
       fi
@@ -189,8 +208,8 @@ ol_preference_entries() { # VALUE [lane]
       ol_deprecated "entry=$entry" form=harness:model:effort
     elif ! [[ "$parsed_entry" =~ ^(claude|codex|copilot):([a-z][a-z0-9.-]*)?:[a-z]+$ \
        || "$parsed_entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]; then
-      (( status != 0 )) || OL_BAD_ENTRY="$entry"
-      OL_REFUSED_ENTRIES+=("$entry")
+      (( status != 0 )) || OL_BAD_ENTRY="$written"
+      OL_REFUSED_ENTRIES+=("$written")
       status=1
       continue
     fi

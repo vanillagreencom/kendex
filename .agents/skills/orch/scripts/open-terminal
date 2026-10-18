@@ -395,13 +395,25 @@ export ORCH_MODEL_LINES_HELD=1
 
 # One owner chooses and rebuilds a preference launch from the original input.
 # Permission eligibility and flag translation belong to the overseer walk.
+# A last-choice entry (OL_LAST_CHOICE, always the final one) is spent only
+# when no earlier entry's account has projected room at all: an entry walled
+# at the launch threshold is asked again at --max-pct 100, which lanes reads
+# as any projected room or Codex credit above the floor, and one that has it
+# stops the walk before the marked entry. That entry stays walled for this
+# launch; only the marked entry's spend changes.
 preference_select() {
   local preference_entry preference_rc preference_word preference_record preference_mode="$TERMINAL_MODE"
+  local preference_index=0 preference_room="" preference_err
   if [[ -z "$preference_mode" ]]; then
     if tmux_server_named; then preference_mode=tmux; else preference_mode=gui; fi
   fi
   PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
   for preference_entry in "${OL_ENTRIES[@]}"; do
+    preference_index=$((preference_index + 1))
+    if [[ "$OL_LAST_CHOICE" == 1 && "$preference_index" -eq "${#OL_ENTRIES[@]}" && -n "$preference_room" ]]; then
+      ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" "last-choice=$preference_entry" "room=$preference_room" >&2
+      return 1
+    fi
     ol_entry_model "$preference_entry" || {
       ot_message preference-class-unread "entry=$preference_entry" >&2; printf '%s\n' "$OL_CLASS_ERR" >&2; return 1;
     }
@@ -434,8 +446,19 @@ preference_select() {
         PREFERENCE_LANE_ENV="$(pick_record_env "$preference_record")" || return 1
         LANE_PICK_RECORD="$preference_record" PREFERENCE_ENTRY="$preference_entry"
         break ;;
-      3) continue ;;
+      3) ;;
       *) ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; return 1 ;;
+    esac
+    [[ "$OL_LAST_CHOICE" == 1 && -z "$preference_room" && "$preference_index" -lt "${#OL_ENTRIES[@]}" ]] || continue
+    # The record is discarded: this pick only asks whether room is left.
+    preference_rc=0
+    preference_err="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"} --max-pct 100 2>&1 >/dev/null)" || preference_rc=$?
+    case "$preference_rc" in
+      0) preference_room="$preference_entry" ;;
+      3) ;;
+      *)
+        printf '%s\n' "$preference_err" >&2
+        ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" "step=last-choice" >&2; return 1 ;;
     esac
   done
   [[ -n "$PREFERENCE_ENTRY" ]] || { ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" >&2; return 1; }

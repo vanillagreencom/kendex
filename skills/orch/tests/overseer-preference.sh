@@ -120,6 +120,43 @@ done <<'ROWS'
 host-grammar|claude@:opus:high|lane|! "$host" =~ ^[a-zA-Z0-9_./~-]+$|claude:opus:high#standard
 overseer-host-refusal|claude@claude-cloud:opus:high||"${2:-}" != lane|claude@claude-cloud:opus:high#standard
 ROWS
+# The last-choice mark: lane mode, the final entry alone, stripped from the
+# entry it marks. A read is `rc|mark|entries|first refused`.
+cat >"$TMP_ROOT/mark" <<'SH'
+set -euo pipefail
+source "$1"
+rc=0
+ol_preference_entries "$2" "${3:-}" || rc=$?
+printf '%s|%s|%s|%s\n' "$rc" "$OL_LAST_CHOICE" "${OL_ENTRIES[*]-}" "$OL_BAD_ENTRY"
+SH
+mark_read() { # LIB PREFERENCE MODE
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" "$BASH" "$TMP_ROOT/mark" "$@" 2>"$TMP_ROOT/err"
+}
+while IFS='|' read -r label preference mode expected; do
+  assert_eq "$(mark_read "$LIB" "$preference" "$mode")" "$expected" "last-choice grammar: $label"
+done <<'ROWS'
+final lane entry marked|claude:opus:high,pi:github-copilot/gpt-6.1-sol:high:last|lane|0|1|claude:opus:high pi:github-copilot/gpt-6.1-sol:high|
+unmarked lane walk|claude:opus:high,codex:gpt-6.1-sol:high|lane|0|0|claude:opus:high codex:gpt-6.1-sol:high|
+hosted final entry marked|codex:gpt-6.1-sol:high,pi@local:github-copilot/gpt-6.1-sol:high:last|lane|0|1|codex:gpt-6.1-sol:high pi@local:github-copilot/gpt-6.1-sol:high|
+earlier entry marked|claude:opus:high:last,codex:gpt-6.1-sol:high|lane|1|0|codex:gpt-6.1-sol:high|claude:opus:high:last
+overseer preference marked|claude:opus:high,codex:gpt-6.1-sol:high:last||1|0|claude:opus:high|codex:gpt-6.1-sol:high:last
+effort word last is no mark|claude:opus:last|lane|0|0|claude:opus:last|
+another fourth field|claude:opus:high:first|lane|1|0||claude:opus:high:first
+ROWS
+# Each control drops one condition of the mark in a copy of the lib, and the
+# row that condition decides turns red.
+while IFS='|' read -r mutation preference mode old new green; do
+  MUTANT="$(mutant_scripts "mark-$mutation" lib/overseer-launch.sh)"
+  mutate_file "$MUTANT/lib/overseer-launch.sh" "$old" "$new"
+  if [[ "$(mark_read "$MUTANT/lib/overseer-launch.sh" "$preference" "$mode")" != "$green" ]]; then
+    pass "control: $mutation turns the $preference row red"
+  else
+    fail "control: $mutation leaves the $preference row green"
+  fi
+done <<'ROWS'
+final-only|claude:opus:high:last,codex:gpt-6.1-sol:high|lane|      if [[ -n "$rest" ]]; then|      if false; then|1|0|codex:gpt-6.1-sol:high|claude:opus:high:last
+lane-only|claude:opus:high,codex:gpt-6.1-sol:high:last||"${2:-}" == lane && "$entry" == *:*:*:last|"$entry" == *:*:*:last|1|0|claude:opus:high|codex:gpt-6.1-sol:high:last
+ROWS
 # Each control turns one row above red: its preference parsed by a copy of
 # the lib with one line replaced must no longer give that row's answer.
 control() { # MUTATION PREFERENCE CALLER GREEN OLD NEW [HELD]

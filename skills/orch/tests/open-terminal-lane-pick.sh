@@ -947,4 +947,54 @@ LINKED="$(marked "$OPEN_TERMINAL" linked "$LINKED_STUB")"
 assert_eq "$LINKED target=$([[ -e "$TMP_ROOT/linked-runs/marker-target" ]] && echo written || echo untouched)" \
   "rc=1 marker=none box=none refresh=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
 
+echo "=== a last-choice entry is spent only when no earlier account has room ==="
+# The real judge, in a private home: a Claude and a Codex account before a
+# Pi entry on the Copilot pool marked :last. Room is the projected use under
+# 100, Codex credit above the floor counting, so an account in the 1-5% band
+# above the launch threshold holds the last choice back; a live claim whose
+# burn takes that room does not. A Codex account on credit is picked itself.
+LC_SAVED_H="$H" LC_SAVED_FIX="$FIXTURE_DIR"
+new_home lastchoice
+make_lane "$H" claude 3600
+make_codex_lane "$H/.codex"
+mkdir -p "$H/.pi1"
+LC_PREF="ORCH_LANE_PREFERENCE=claude:opus:high,codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high:last"
+LC_SETTINGS="$LC_PREF;ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000;ORCH_LANE_CODEX_CREDIT_FLOOR=5000;ORCH_LANE_BURN_PCT_PER_HOUR=50;cmd=claude --dangerously-skip-permissions {brief}"
+# lc_world CLAUDE_WEEKLY CODEX_WEEKLY CODEX_BALANCE — the two earlier accounts'
+# binding readings, the Codex balance under or above the floor pinned at 5000.
+lc_world() {
+  claude_usage 10 "$1" 10 Opus > "$FIXTURE_DIR/.claude.json"
+  jq -n --argjson w "$2" --arg b "$3" '{rate_limit: {
+      primary_window: {used_percent: 10, reset_at: 4102444800, limit_window_seconds: 18000},
+      secondary_window: {used_percent: $w, reset_at: 4102444800, limit_window_seconds: 604800}},
+    credits: {has_credits: true, unlimited: false, overage_limit_reached: false, balance: $b},
+    spend_control: {reached: false, individual_limit: null}}' > "$FIXTURE_DIR/.codex.json"
+}
+# A Pi launch carries the unattended words in its brief.
+printf '%s\n' "$LAUNCH_UNATTENDED_TEXT" > "$TMP_ROOT/last-choice-brief"
+# claim_lanes names the account each launch spent; the prepped claim is Claude's.
+LC_LAST='rc=0 launched=1 claim_lanes=pi1 pickrefusal=none'
+LC_HELD='rc=1 launched=nolog claim_lanes=none pickrefusal=lane-unavailable,walk=claude:opus:high,codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high:last,last-choice=pi:github-copilot/gpt-6.1-sol:high'
+while IFS='|' read -r label claude_weekly codex_weekly balance extra expect; do
+  lc_world "$claude_weekly" "$codex_weekly" "$balance"
+  run_ot "$LC_SETTINGS${extra:+;$extra}" --harness claude --lane auto --brief-file "$TMP_ROOT/last-choice-brief" KEN-4030
+  assert_eq "$(observe "$expect")" "$expect" "last choice: $label"
+done <<ROWS
+every earlier account at 0% room and Codex credit under the floor|100|100|4999||$LC_LAST
+Claude at 1% room holds the last choice|99|100|0||$LC_HELD,room=claude:opus:high
+Claude at 5% room holds the last choice|95|100|0||$LC_HELD,room=claude:opus:high
+Codex at 1% room holds the last choice|100|99|0||$LC_HELD,room=codex:gpt-6.1-sol:high
+a live claim's burn takes Claude's 1% room|99|100|0|prep=claude_claim|rc=0 launched=1 claim_lanes=claude,pi1 pickrefusal=none
+Codex credit above the floor is spent before the last choice|100|100|62300||rc=0 launched=1 claim_lanes=codex pickrefusal=none
+ROWS
+# The base judged each earlier entry at the launch threshold alone, so the
+# 1% row lands on the last entry. The control puts that threshold back on
+# the room question in a copy of the launcher.
+lc_world 99 100 0
+pi_control ctl-last-choice open-terminal '--max-pct 100 2>&1' '--max-pct 95 2>&1' "$LC_SETTINGS" \
+  --harness claude --lane auto --brief-file "$TMP_ROOT/last-choice-brief" KEN-4030
+assert_eq "$(observe "$LC_LAST")" "$LC_LAST" "control: judged at the launch threshold, Claude's 1% room lands on the last entry"
+H="$LC_SAVED_H" FIXTURE_DIR="$LC_SAVED_FIX"
+export FIXTURE_DIR
+
 lane_suite_end

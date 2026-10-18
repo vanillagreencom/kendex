@@ -39,16 +39,21 @@ mv -- "$PREFERENCE_ARGV.part" "$PREFERENCE_ARGV"
 STUB
   chmod +x "$BIN/$harness"
 done
+# A pick passing --max-pct logs it as @N. claude walls Claude at every
+# threshold; claude-room walls it below 100 and claude-error fails it at 100.
 cat > "$BIN/lanes" <<'STUB'
 #!/usr/bin/env bash
 [[ "$1" == pick ]] || exit 0
-h="" m="" prev=""
+h="" m="" pct="" prev=""
 for a in "$@"; do
-  case "$prev" in --harness) h="$a" ;; --model) m="$a" ;; esac
+  case "$prev" in --harness) h="$a" ;; --model) m="$a" ;; --max-pct) pct="$a" ;; esac
   prev="$a"
 done
-printf '%s:%s\n' "$h" "$m" >> "$PICK_LOG"
-case "$WALL:$h" in all:*|pi:pi) exit 3 ;; error:*) exit 6 ;; esac
+printf '%s:%s%s\n' "$h" "$m" "${pct:+@$pct}" >> "$PICK_LOG"
+case "$WALL:$h:$pct" in
+  all:*|pi:pi:*|claude:claude:*|claude-room:claude:|claude-error:claude:) exit 3 ;;
+  error:*|claude-error:claude:100) exit 6 ;;
+esac
 case "$h" in claude) d="$HOME/.claude" ;; pi) d="$PI_CODING_AGENT_DIR" ;; codex) d="$CODEX_TEST_HOME" ;; *) exit 0 ;; esac
 jq -cn --arg d "$d" '{config_dir: $d}'
 STUB
@@ -194,6 +199,25 @@ while IFS='|' read -r mode flags want model entry; do
     assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
   fi
 done < "$TMP_ROOT/permission-rows"
+# The last-choice mark. A Claude caller's full bypass crosses to Codex, so
+# both entries are picked. Only a marked walk asks a walled entry again, at
+# 100, and spends the marked entry only where that answer is no room.
+LAST_PREF='claude:fable:high,codex:gpt-6.1-sol:high'
+CODEX_PICKED='0|none|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high|yes'
+while IFS='|' read -r label pref wall want; do
+  observe "$pref" "$wall" flags '--dangerously-skip-permissions' claude
+  assert_eq "$OBS" "$want" "last choice: $label" "$RUN/err"
+done <<ROWS
+an unmarked walk picks each entry once|$LAST_PREF|claude|$CODEX_PICKED|claude:fable,codex:gpt-6.1-sol
+an unmarked walk passes an entry with room only at 100|$LAST_PREF|claude-room|$CODEX_PICKED|claude:fable,codex:gpt-6.1-sol
+the marked entry is spent when no earlier account has room|$LAST_PREF:last|claude|$CODEX_PICKED|claude:fable,claude:fable@100,codex:gpt-6.1-sol
+the marked entry is held while an earlier account has room|$LAST_PREF:last|claude-room|1|lane-unavailable|none|none|none|no|claude:fable,claude:fable@100
+a failed room question stops the walk|$LAST_PREF:last|claude-error|1|lane-resolution-failed|none|none|none|no|claude:fable,claude:fable@100
+the mark on an earlier entry is refused|claude:fable:high:last,codex:gpt-6.1-sol:high|claude|1|invalid-preference|none|none|none|no|none
+ROWS
+observe "$LAST_PREF:last" claude-room flags '--dangerously-skip-permissions' claude
+assert_file_contains "$RUN/err" "open-terminal: lane-unavailable walk=$LAST_PREF:last last-choice=codex:gpt-6.1-sol:high room=claude:fable:high" \
+  'the held refusal names the marked entry and the entry with room'
 # The walk prints the model line of the entry it picks: the codex class is
 # classified, then skipped on the caller's posture, and the claude class picked
 # after it names the model its launch runs.
