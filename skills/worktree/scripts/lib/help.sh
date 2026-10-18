@@ -420,8 +420,11 @@ Failure semantics:
   manual 'git branch -D' recovery command.
 
 Session leases:
-  remove releases its own lease only when its recorded process is absent on
-  this host. A live process, remote host or unknown process state refuses.
+  Sessions on the same item share one lease; either may release it at close-out.
+  remove releases it only when its recorded guard writer PID is absent on this
+  host. A live recorded PID, remote host or unknown process state refuses.
+  The guard writer exits after claim/refresh. This check covers its write window
+  and does not establish whether the harness is still working.
   ID calls use the item ID; path calls use the private Git issue record.
   The session environment is a fallback identity. A foreign lease is left
   alone and refuses the removal, naming the owner.

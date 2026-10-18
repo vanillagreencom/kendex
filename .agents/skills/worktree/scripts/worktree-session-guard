@@ -59,7 +59,9 @@ Options (a flag a command does not take is a usage failure):
   --stale            release. Release a lease only when it is past the TTL.
   --force            release. Release a foreign lease regardless of age.
   --inactive         release. With --owner, release only when the recorded
-                     process is absent on this host. Unknown liveness refuses.
+                     guard writer PID is absent on this host. A live recorded
+                     PID or unknown process state refuses. The writer exits
+                     after claim/refresh; this does not prove harness inactivity.
                      Cannot combine with --stale or --force.
   --dry-run          sweep. Report results without releasing leases.
   --repo DIR         release, status, list, sweep. Repository checkout.
@@ -70,7 +72,8 @@ mutex otherwise; either refuses after waiting 60 seconds for it.
 
 Exit codes: 0 success, 1 usage/Git failure or a lock wait that ran out,
 3 no lock, 4 non-guard lock, 5 enumeration failure or a lease sweep could
-not evaluate, 75 foreign owner/lock or a lease not yet stale.
+not evaluate, 75 foreign owner/lock, a lease not yet stale, or an inactive
+release whose recorded writer PID is present or cannot be checked.
 EOF
 }
 
@@ -343,8 +346,8 @@ release_current() {
 		return "$EXIT_OWNED"
 	fi
 	if [[ "$inactive" == true ]]; then
-		# remove's close-out must not unlock another session on the same item.
-		# Only this host's process table can establish that its writer is gone.
+		# The lease records the short-lived guard writer, not the harness.
+		# This protects the writer window only, not a working harness session.
 		local pid='' host='' process='' process_rc=2
 		if pid="$(lease_field "$LEASE_TEXT" pid 2>/dev/null)" &&
 		   host="$(lease_field "$LEASE_TEXT" host 2>/dev/null)" &&

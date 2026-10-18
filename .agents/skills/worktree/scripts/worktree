@@ -2235,7 +2235,7 @@ probe_session_lease() {
   return "$rc"
 }
 
-# Release this session's OWN lease on a worktree it is about to remove. Without
+# Release the caller's item or environment lease before removal. Without
 # this a session that claimed its worktree cannot tear it down — the lease is a
 # native git lock, so `refuse_locked_worktree` and git itself both refuse. It
 # must therefore run BEFORE that precheck, and after the ownership guard so a
@@ -2243,12 +2243,19 @@ probe_session_lease() {
 #
 # The issue record uses the branch's lower-case spelling; the lease keeps the
 # workflow's spelling. Compare through the existing issue normalizer, then
-# release the exact recorded owner. The guard checks liveness under its mutex.
+# release the exact recorded owner. The guard checks its writer PID under its
+# mutex; that PID does not establish harness liveness.
 release_own_session_lease() {
-  local wt="$1" issue_owner="${2:-}" env_owner owner="" status
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" status status_rc=0
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
-  status="$("$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" 2>/dev/null)" || return 0
+  status="$("$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" 2>/dev/null)" || status_rc=$?
+  # status emits its JSON before reporting an inherited owner mismatch.
+  # Adoption changes the item owner while the session environment stays put.
+  case "$status_rc" in
+    0 | 75) ;;
+    *) return 0 ;;
+  esac
   owner="$(jq -er '.owner | select(type == "string" and length > 0)' <<<"$status")" || return 0
   if [[ "$owner" != "$env_owner" ]]; then
     [[ -n "$issue_owner" && "$(issue_branch_name "$owner")" == "$(issue_branch_name "$issue_owner")" ]] || return 0

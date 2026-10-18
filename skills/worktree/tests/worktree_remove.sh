@@ -73,6 +73,7 @@ ROOT=""
 MAIN=""
 WT=""
 ROW_PATH=""
+ROW_ENV=()
 
 step() {
   case "$1" in
@@ -133,14 +134,20 @@ step() {
       # create records the normalized issue ID, rather than the lease spelling.
       printf 'topic\n' >"$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-issue"
       ;;
+    kendex-session-owner)
+      ROW_ENV=(-u HT_SESSION_OWNER KENDEX_SESSION_OWNER=predecessor USER=fallback-session)
+      ;;
+    ht-session-owner)
+      ROW_ENV=(-u KENDEX_SESSION_OWNER HT_SESSION_OWNER=predecessor USER=fallback-session)
+      ;;
     live-process | remote-host | invalid-pid)
       local lease_file lease before old replacement
       lease_file="$(git -C "$WT" rev-parse --absolute-git-dir)/locked"
       before="$(cat -- "$lease_file")"
       case "$1" in
         live-process)
-          # Keep our child un-reaped until the row ends; never probe a made-up
-          # or reaped PID to establish liveness.
+          # Hold a PID for the recorded writer check. This fixture does not
+          # establish harness liveness or use a reaped child's PID.
           mkfifo "$ROOT/session.pipe"
           "$BASH" -c 'read -r token < "$1"' session "$ROOT/session.pipe" &
           LIVE_PID=$!
@@ -243,6 +250,7 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
   ROW_PATH="$TMP_ROOT/bin:$PATH"
+  ROW_ENV=(-u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=returning-session)
   MAP_FILE=""
   SIBLING_GIT_DIR=""
   LOCK_FILE=""
@@ -327,7 +335,7 @@ run_remove() {
     [[ "${argv[i]}" == @alias ]] && argv[i]="$ROOT/alias"
     [[ "${argv[i]}" == @path ]] && argv[i]="$WT"
   done
-  (cd "$MAIN" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=returning-session PATH="$ROW_PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
+  (cd "$MAIN" && env "${ROW_ENV[@]}" PATH="$ROW_PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
     "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
     "$(message_records <"$ROOT/out" | sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' | paste -s -d ';' -)" \
@@ -411,8 +419,8 @@ an absent worktree with an empty native lock stays registered|tree empty-lock lo
 an absent worktree with a foreign lease keeps its registration, branch and lease|tree foreign-lease lock-record vanished|TOPIC|1|-|locked|worktree=registered/no branch=present dirs=- links=- lock=intact
 an absent worktree releases its own lease and is removed|tree own-lease vanished|TOPIC|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
 a returning session removes its adopted item by path without the old environment|tree adopted-lease item-record absent-process|@path|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
-a live same-item lease refuses removal by issue ID|tree adopted-lease item-record live-process lock-record|TOPIC|1|-|live-process|worktree=registered/yes branch=present dirs=topic links=- lock=intact
-a live same-item lease refuses removal by path|tree adopted-lease item-record live-process lock-record|@path|1|-|live-process|worktree=registered/yes branch=present dirs=topic links=- lock=intact
+a live recorded writer PID refuses removal by issue ID|tree adopted-lease item-record live-process lock-record|TOPIC|1|-|live-process|worktree=registered/yes branch=present dirs=topic links=- lock=intact
+a live recorded writer PID refuses removal by path|tree adopted-lease item-record live-process lock-record|@path|1|-|live-process|worktree=registered/yes branch=present dirs=topic links=- lock=intact
 a foreign lease refuses item-record path removal|tree foreign-lease item-record absent-process lock-record|@path|1|-|locked|worktree=registered/yes branch=present dirs=topic links=- lock=intact
 a remote-host item lease stays locked|tree adopted-lease item-record remote-host absent-process lock-record|@path|1|-|unverified-process|worktree=registered/yes branch=present dirs=topic links=- lock=intact
 an unreadable process table keeps the item lease|tree adopted-lease item-record unread-process lock-record|@path|1|-|unverified-process|worktree=registered/yes branch=present dirs=topic links=- lock=intact
@@ -428,19 +436,33 @@ a carried answer leaves unread a line the main checkout mailbox had not read|tre
 a worktree tmp linked to the tmp of the main checkout leaves its mailbox where it is|tree shared-tmp mail|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:wt-1,wt-2+watch wt:absent staged=0
 '
 
-echo "=== worktree remove ==="
-n=0
-while IFS='|' read -r label fixture args rc out err want_state; do
-  [[ -n "$label$fixture$args$rc$out$err$want_state" ]] || continue
-  n=$((n + 1))
-  # shellcheck disable=SC2086
-  build "remove-$n" $fixture
-  want_state="${want_state//LINKS/$LINKS}"
-  check_remove_row "$label" "$args" "$rc" "$out" "$err" "$want_state"
-  finish_session
-done <<<"$REMOVE_ROWS"
+ADOPTED_OWNER_ROWS='
+an adopted item removes by ID with KENDEX_SESSION_OWNER set|tree adopted-lease item-record absent-process kendex-session-owner|TOPIC|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
+an adopted item removes by path with KENDEX_SESSION_OWNER set|tree adopted-lease item-record absent-process kendex-session-owner|@path|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
+an adopted item removes by ID with HT_SESSION_OWNER set|tree adopted-lease item-record absent-process ht-session-owner|TOPIC|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
+an adopted item removes by path with HT_SESSION_OWNER set|tree adopted-lease item-record absent-process ht-session-owner|@path|0|removed|released+deleted|worktree=absent/no branch=absent dirs=- links=-
+a foreign lease stays held with KENDEX_SESSION_OWNER set|tree foreign-lease item-record absent-process kendex-session-owner lock-record|@path|1|-|locked|worktree=registered/yes branch=present dirs=topic links=- lock=intact
+a foreign lease stays held with HT_SESSION_OWNER set|tree foreign-lease item-record absent-process ht-session-owner lock-record|@path|1|-|locked|worktree=registered/yes branch=present dirs=topic links=- lock=intact
+'
 
-# A copy without the inactive-only release must fail the live-session row.
+check_remove_rows() {
+  local rows="$1" prefix="$2" n=0 label fixture args rc out err want_state
+  while IFS='|' read -r label fixture args rc out err want_state; do
+    [[ -n "$label$fixture$args$rc$out$err$want_state" ]] || continue
+    n=$((n + 1))
+    # shellcheck disable=SC2086
+    build "$prefix-$n" $fixture
+    want_state="${want_state//LINKS/$LINKS}"
+    check_remove_row "$label" "$args" "$rc" "$out" "$err" "$want_state"
+    finish_session
+  done <<<"$rows"
+}
+
+echo "=== worktree remove ==="
+check_remove_rows "$REMOVE_ROWS
+$ADOPTED_OWNER_ROWS" remove
+
+# A copy without the inactive-only release must fail the recorded-PID row.
 # The copy also keeps the owner check, so this control reaches liveness.
 CLOSEOUT_CONTROL="$TMP_ROOT/closeout-control"
 cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$CLOSEOUT_CONTROL"
@@ -453,7 +475,21 @@ build live-control tree adopted-lease item-record live-process lock-record
 control_log="$(PASS=0 FAIL=0 WORKTREE_SCRIPT="$CLOSEOUT_CONTROL/worktree"; check_remove_row live-control TOPIC 1 - live-process 'worktree=registered/yes branch=present dirs=topic links=- lock=intact')"
 finish_session
 assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log")" live-control \
-  'control: the live-session row rejects an unconditional owner release'
+  'control: the recorded-PID row rejects an unconditional owner release'
+
+# status returns its JSON with owner-mismatch exit 75. Rejecting that result
+# must fail the same adopted-item rows while keeping foreign owners refused.
+STATUS_CONTROL="$TMP_ROOT/status-control"
+cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$STATUS_CONTROL"
+STATUS_CASE='0 | 75) ;;'
+[[ "$(grep -cF -- "$STATUS_CASE" "$STATUS_CONTROL/worktree")" == 1 ]] || { echo 'worktree_remove: control=status-target-count' >&2; exit 1; }
+CONTROL_TEXT="$(cat -- "$STATUS_CONTROL/worktree")"
+printf '%s\n' "${CONTROL_TEXT/"$STATUS_CASE"/'0) ;;'}" >"$STATUS_CONTROL/worktree"
+! cmp -s "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$STATUS_CONTROL/worktree" || { echo 'worktree_remove: control=status-unchanged' >&2; exit 1; }
+control_log="$(PASS=0 FAIL=0 WORKTREE_SCRIPT="$STATUS_CONTROL/worktree"; check_remove_rows "$ADOPTED_OWNER_ROWS" status-control)"
+expected_failures="$(awk -F '|' '$4 == 0 { print $1 }' <<<"$ADOPTED_OWNER_ROWS" | paste -s -d ';' -)"
+assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log" | paste -s -d ';' -)" "$expected_failures" \
+  'control: skipping owner-mismatch JSON rejects the adopted-item rows only'
 
 # Control: a remove that leaves the mailbox to git's deletion. The mailbox
 # state above must tell it apart, or no row there proves the move.
