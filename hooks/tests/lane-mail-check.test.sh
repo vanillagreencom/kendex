@@ -678,6 +678,47 @@ record_handoff KEN-54
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 0 - "a lane whose handoff record stands ends its turn at its account's mark"
 
+# The real pick returns exit 3 for both account walls and overseer reserves.
+# The fleet record below makes the account a seat without changing its usage.
+# NAME|USED|SEAT RESERVE (empty for an ordinary account)|RC|FIRST LINE
+HEADROOM_VERDICT_ROWS='room|55||0|-
+seat|55|50|2|lane-mail-check: seat-reserve=45 bucket=session reserve=50
+custom|55|60|2|lane-mail-check: seat-reserve=45 bucket=session reserve=60
+at|97||2|lane-mail-check: headroom=3 bucket=session mark=3
+below|98||2|lane-mail-check: headroom=2 bucket=session mark=3'
+headroom_verdict_rows() { # HOOK
+  local name used reserve status first account
+  while IFS='|' read -r name used reserve status first; do
+    account="headroom${name}claude"
+    make_lane "$H" "$account" 3600
+    claude_usage "$used" 0 0 Opus > "$FIXTURE_DIR/.$account.json"
+    new_handoff_lane "handoff_verdict_${name}_${1##*/}" KEN-54
+    install_hook "$1" "$LANE/.claude/hooks/lane-mail-check.sh"
+    if [ -n "$reserve" ]; then
+      (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+      (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
+        "$(jq -nc --arg a "$H/.$account" '{account:$a}')" >/dev/null)
+    fi
+    write_transcript "$TRANSCRIPT" 1000
+    # shellcheck disable=SC2046
+    stop_at "$TRANSCRIPT" false $(account_env ".$account") \
+      ORCH_HANDOFF_HEADROOM_PCT=3 "ORCH_OVERSEER_SEAT_RESERVE_PCT=${reserve:-50}"
+    expect "$status" "$first" "account verdict $name names its own mark"
+  done <<< "$HEADROOM_VERDICT_ROWS"
+}
+headroom_verdict_rows "$HOOK"
+
+# Keep the verdict read while disabling its seat arm. The same rows must fail
+# when the hook treats that answer as the ordinary headroom wall again.
+wake_mutant seat-verdict-unread '        seat-reserve)' '        unobserved-seat-reserve)'
+control_status=0
+(
+  FAIL=0
+  headroom_verdict_rows "$MUTANT_PATH"
+  [ "$FAIL" -eq 0 ]
+) > "$TMP_ROOT/seat-verdict.control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: the verdict rows reject an unread seat verdict"
+
 # lanes pick publishes wall as used percent for binding_bucket. Its exit-3
 # record can carry a different account-wide headroom. The same assertion
 # rejects a copy that restores the account field read.

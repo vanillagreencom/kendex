@@ -218,6 +218,8 @@ message() { # KEY VALUE [CAUSE]
   {
     if [ "$1" = headroom ] && [ "$ROLE" = lane ]; then
       printf 'lane-mail-check: headroom=%s bucket=%s mark=%s\n' "$2" "$BINDING_BUCKET" "$PCT"
+    elif [ "$1" = seat-reserve ]; then
+      printf 'lane-mail-check: seat-reserve=%s bucket=%s reserve=%s\n' "$2" "$BINDING_BUCKET" "$PCT"
     else
       printf 'lane-mail-check: %s=%s\n' "$1" "$2"
     fi
@@ -455,6 +457,10 @@ message() { # KEY VALUE [CAUSE]
           printf 'The binding bucket %s has %s percent headroom left. This is at or below the ORCH_HANDOFF_HEADROOM_PCT mark of %s. No handoff record stands. Hand this lane off at the next safe point before the account reaches its limit.\n%s\n' \
             "$BINDING_BUCKET" "$2" "$PCT" "$HANDOFF_INSTRUCTION"
         fi
+        ;;
+      seat-reserve=*)
+        printf 'The account picker requires handoff from this overseer seat. The binding bucket %s has %s percent headroom left. ORCH_OVERSEER_SEAT_RESERVE_PCT is %s. No handoff record stands. Hand this lane off at the next safe point.\n%s\n' \
+          "$BINDING_BUCKET" "$2" "$PCT" "$HANDOFF_INSTRUCTION"
         ;;
       rate=*)
         printf 'oversee-succeed projects that this overseer account will reach its wall in %s minutes, at or before the ORCH_OVERSEER_WALL_MINUTES mark of %s. Succeed this session yourself before the account walls.\n%s\n' \
@@ -3427,10 +3433,10 @@ handoff_check() {
   fi
 
   # The account the credential THIS session runs on still has, judged by the
-  # one script that measures a lane and against the one setting that marks a
-  # lane for handoff. `pick --lane` answers about that directory alone: 0 has
-  # room, 3 is at or below the mark, and 4 is a directory that is no configured
-  # lane of this harness. Every other exit, and a read that passes the ceiling,
+  # one script that measures a lane and judges its handoff marks.
+  # `pick --lane` answers about that directory alone: 0 has room, 3 reaches
+  # the headroom mark or overseer seat reserve, and 4 is a directory that is
+  # no configured lane of this harness. Every other exit, and a read that passes the ceiling,
   # is an account nothing measured: reported and passed, never read as room and
   # never held, because a setup with no usage endpoint must still end its turns.
   # `lanes` keeps an inventory for claude, codex and copilot, and a Pi lane is
@@ -3465,9 +3471,9 @@ handoff_check() {
     ${PICK_MODEL[@]+"${PICK_MODEL[@]}"} --min-headroom-pct "$PCT" --json 2>"$WORK_DIR/lanes.err") || PICK_RC=$?
   # `lanes` keeps a status-only contract where `workflow-state handoff-standing`
   # could not, and one reservation is what makes that safe here: every status
-  # with an arm of its own below — 3 for a lane at its mark, 4 for one this
-  # harness keeps no inventory for, 124 for a read the ceiling abandoned — is
-  # one no death before the verb can produce. `lanes` loads the same
+  # with an arm of its own below (3 for a lane at its mark or seat reserve,
+  # 4 for one this harness keeps no inventory for, 124 for a read the ceiling
+  # abandoned) is one no death before the verb can produce. `lanes` loads the same
   # `.env.local` through the same loader, and a file bash 3.2 cannot parse
   # kills it with 1 or 2; both fall to `*` and are reported as an account
   # nothing measured, which is as true of a script that died in its loader as
@@ -3479,10 +3485,22 @@ handoff_check() {
     3)
       # pick's wall is the binding bucket's used percent, including a scoped
       # model window. Account-wide headroom can still show room at that wall.
-      BINDING=$(jq -r '[.binding_bucket // "unknown",
+      # Only seat-reserve keeps its verdict in pick's public record; the
+      # ordinary wall omits it. Exit 3 alone cannot name the reached mark.
+      BINDING=$(jq -r '[.verdict // "walled", .binding_bucket // "unknown",
         (if .wall == null then "unknown" else 100 - .wall end)] | @tsv' <<<"$PICK" 2>/dev/null) ||
-        BINDING=$'unknown\tunknown'
-      IFS=$'\t' read -r BINDING_BUCKET HEADROOM <<<"$BINDING"
+        BINDING=$'unknown\tunknown\tunknown'
+      IFS=$'\t' read -r PICK_VERDICT BINDING_BUCKET HEADROOM <<<"$BINDING"
+      case "$PICK_VERDICT" in
+        seat-reserve)
+          PCT=$("$SCRIPTS/orch-env" ORCH_OVERSEER_SEAT_RESERVE_PCT 50 2>"$WORK_DIR/env.err") ||
+            refuse_handoff setting ORCH_OVERSEER_SEAT_RESERVE_PCT "$(cat -- "$WORK_DIR/env.err")"
+          percent_in_range "$PCT" || refuse_handoff setting-range "ORCH_OVERSEER_SEAT_RESERVE_PCT=$PCT"
+          refuse_handoff seat-reserve "$HEADROOM"
+          ;;
+        walled) ;;
+        *) message account unmeasured "lanes pick returned an unreadable refusal record"; return 0 ;;
+      esac
       refuse_handoff headroom "$HEADROOM"
       ;;
     4) message account unlisted "$(cat -- "$WORK_DIR/lanes.err")" ;;
