@@ -460,10 +460,12 @@ ol_lanes() { # ACCOUNT_HARNESS ARGS...
     [[ "$launch:$pool" != ssh:plan ]] || host="${ORCH_LANE_HOST:-local}"
   fi
   ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lanes" "$@" 2>"$DEP_ERR" || rc=$?
-  # Pick records on these exits can carry a provider fallback notice. Relay
-  # it before a caller's JSON parsing replaces the dependency error file.
+  # Refused picks leave their detail for the caller's own refusal. Their
+  # provider fallback key still reaches stderr before record parsing can
+  # replace DEP_ERR. lanes owns that diagnostic and its account decision.
   case "$rc" in
-    0|3|5) [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; : > "$DEP_ERR" ;;
+    0) [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; : > "$DEP_ERR" ;;
+    3|5) awk '/^lanes: host-accounts-unreadable /' "$DEP_ERR" >&2 || return 1 ;;
   esac
   return "$rc"
 }

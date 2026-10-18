@@ -126,6 +126,17 @@ while IFS='|' read -r name credentials provider host accounts_rc cloud_repos hea
     done
     SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
   fi
+  if [[ "$name" == provider-failed-unmeasured && -z "${OVERSEE_SUCCEED_UNDER_TEST:-}" ]]; then
+    CONTROL="$(mutant_scripts hidden-refusal-fallback lib/overseer-launch.sh)"
+    mutate_file "$CONTROL/lib/overseer-launch.sh" "awk '/^lanes: host-accounts-unreadable /'" \
+      ": awk '/^lanes: host-accounts-unreadable /'"
+    SUCCEED="$CONTROL/oversee-succeed"
+    rc=0
+    out="$(SEAT_CACHE=control-state run_seat --check-marks --harness claude --context 100:1000 2>"$TMP_ROOT/err")" || rc=$?
+    assert_eq "$rc" 0 'control: the unmeasured account mark still answers' "$TMP_ROOT/err"
+    assert_file_not_contains "$TMP_ROOT/err" 'lanes: host-accounts-unreadable' 'control: the unmeasured account mark loses the fallback notice'
+    SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
+  fi
 done <<'ROWS'
 local-file|yes|no|provider|0||80|0|no
 provider-token|no|yes|provider|0||90|0|no
@@ -133,6 +144,7 @@ unmeasured|no|no|provider|0||unknown|3|no
 cloud-no-repo|yes|no|claude-cloud|0||80|0|no
 cloud-repo|yes|no|claude-cloud|0|allowed|80|0|no
 provider-failed|yes|no|provider|1||80|0|yes
+provider-failed-unmeasured|no|no|provider|1||unknown|3|yes
 ROWS
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
