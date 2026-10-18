@@ -792,7 +792,8 @@ chmod +x "$TMP_ROOT/bin/fence-watch.sh" "$TMP_ROOT/bin/slow-close.sh"
 # The repeat delay a fifth of a second, so a pass follows a pass; a start with
 # LIFECYCLE_SLEEP_FAIL=1 ends after its first pass as sleep-failed. While the
 # case's hold file exists the delay notes that it is held and waits, so a case
-# can change the world between two passes.
+# can change the world between two passes. Other sleeps keep the real clock:
+# GitHub's bounded authentication counts its timer ticks.
 unit_sleep_stub() {
   mkdir -p "$STUB_DIR/bin"
   cat > "$STUB_DIR/bin/sleep" <<EOF
@@ -805,9 +806,38 @@ if [[ "\${OVERSEE_WATCH_SLEEP:-}" == repeat ]]; then
   fi
   exec "$REAL_SLEEP" 0.2
 fi
-exit 0
+exec "$REAL_SLEEP" "\$@"
 EOF
   chmod +x "$STUB_DIR/bin/sleep"
+}
+
+# Retry writes must follow the case's old-close snapshot. Releasing auth through
+# its timer also exposes a clock that drops sleeps and exhausts the auth bound.
+unit_auth_clock() {
+  cat > "$STUB_DIR/bin/gh" <<EOF
+#!/usr/bin/env bash
+if [[ -n "\${LIFECYCLE_SLEEP_FAIL:-}" && "\$*" == 'auth status' ]]; then
+  rm -f "\$STUB_DIR/auth-done"
+  touch "\$STUB_DIR/auth-held"
+  while [[ ! -e "\$STUB_DIR/auth-release" ]]; do "$REAL_SLEEP" 0.01; done
+  "$TMP_ROOT/bin/gh" "\$@"
+  rc=\$?
+  touch "\$STUB_DIR/auth-done"
+  exit \$rc
+fi
+exec "$TMP_ROOT/bin/gh" "\$@"
+EOF
+  cat > "$STUB_DIR/timer" <<EOF
+#!/usr/bin/env bash
+if [[ -n "\${LIFECYCLE_SLEEP_FAIL:-}" && -e "\$STUB_DIR/auth-held" && "\${1:-}" == 0.1 ]]; then
+  while [[ ! -e "\$STUB_DIR/old-close-observed" ]]; do "$REAL_SLEEP" 0.01; done
+  touch "\$STUB_DIR/auth-release"
+  while [[ ! -e "\$STUB_DIR/auth-done" ]]; do "$REAL_SLEEP" 0.01; done
+fi
+exec "$REAL_SLEEP" "\$@"
+EOF
+  chmod +x "$STUB_DIR/bin/gh" "$STUB_DIR/timer"
+  REAL_SLEEP="$STUB_DIR/timer" unit_sleep_stub
 }
 wait_file() { # PATH TRIES
   local i
@@ -885,10 +915,15 @@ unit_start_case() { # RUNNER
 # new start runs one pass. Sets TAKEN; AT_EXIT, close.log as the old watch's
 # exit status lands; OLD_EXIT; CLOSES, the closes made; and EVENT and FAILED,
 # the lane-closed and lane-close-failed lines the old watch's log carries.
-unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC
+unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC [CLOCK]
   local name="$1" runner="$2" target="$3" dir err host_env new_pid
   new_case "$name"
   unit_sleep_stub
+  unit_auth_clock
+  if [[ "${5:-real}" == broken ]]; then
+    mutate_file "$STUB_DIR/bin/sleep" "exec \"$STUB_DIR/timer\" \"\$@\"" \
+      "[[ -z \"\${LIFECYCLE_SLEEP_FAIL:-}\" ]] || exit 0"$'\n'"exec \"$STUB_DIR/timer\" \"\$@\""
+  fi
   fleet_state
   printf '7000 %%9\n' > "$STUB_DIR/panes.txt"
   mkdir -p "$STUB_DIR/remote/srv/clone/tmp/lane-mail/issue-1" "$STUB_DIR/remote/srv/lane/issue-1"
@@ -934,6 +969,7 @@ unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC
     wait_file "$dir/watch.exit" 100 || true
     AT_EXIT="$(tr '\n' ' ' < "$STUB_DIR/close.log")"
   fi
+  touch "$STUB_DIR/old-close-observed"
   OLD_EXIT="$(cat "$dir/watch.exit" 2>/dev/null || echo none)"
   wait "$new_pid" 2>/dev/null || true
   FINISHING="$(grep -c "^oversee-watch: watch-finishing pid=${OLD_LOOP:-none}\$" "$err" || true)"
@@ -941,6 +977,7 @@ unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC
   EVENT="$(grep -c '^EVENT lane-closed issue-1$' "$dir/watch.log" || true)"
   FAILED="$(grep -c "^oversee-watch: lane-close-failed item=issue-1 exit=$4\$" "$dir/watch.log" || true)"
   fence_stop "$dir"
+  cat "$dir/watch.log" >> "$err"
 }
 
 if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
@@ -958,9 +995,33 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
     assert_eq "taken=$TAKEN finishing=$FINISHING old=$OLD_EXIT at-exit=$AT_EXIT event=$EVENT" "taken=1 finishing=1 old=143 at-exit=started done  event=1" \
       "runner=$runner: a takeover during a lane-close outlasting the stop bound takes over, and the old watch reports the close before it exits" "$TMP_ROOT/e-takeover_$runner"
   done
-  unit_takeover_case takeover_failed setsid "$SHORT/oversee-watch" 5
-  assert_eq "taken=$TAKEN finishing=$FINISHING failed=$FAILED closes=$CLOSES" "taken=1 finishing=1 failed=1 closes=2" \
-    "a close that fails during a takeover is reported, and the watch that took over retries it" "$TMP_ROOT/e-takeover_failed"
+  for row in \
+    'failed|real|2|a close that fails during a takeover is reported, and the watch that took over retries it' \
+    'clock_control|broken|1|control: dropping auth timer sleeps prevents the same takeover close retry'; do
+    IFS='|' read -r name clock closes description <<<"$row"
+    unit_takeover_case "takeover_$name" setsid "$SHORT/oversee-watch" 5 "$clock"
+    assert_eq "taken=$TAKEN finishing=$FINISHING failed=$FAILED closes=$CLOSES" "taken=1 finishing=1 failed=1 closes=$closes" \
+      "$description" "$TMP_ROOT/e-takeover_$name"
+  done
+
+  # Hold the old close's caller after its fork until TERM arrives. A close
+  # already started at this point must be protected before the caller resumes.
+  rm -- "$SHORT/oversee-watch"
+  cp "$WATCH_SRC" "$SHORT/oversee-watch"
+  mutate_file "$SHORT/oversee-watch" '  close_pid=$!' $'  close_pid=$!\n  while [[ "${OVERSEE_WATCH_ORIGIN:-}" == succession && -z "$CLOSE_TERMED" ]]; do sleep 0.1; done'
+  for row in \
+    'before|taken=1 old=143 at-exit=started done  event=1|a takeover preserves a close whose caller is held after the fork' \
+    'after|taken=1 old=143 at-exit=started  event=0|control: publishing close state after the fork loses the same close outcome'; do
+    IFS='|' read -r order want description <<<"$row"
+    if [[ "$order" == after ]]; then
+      mutate_file "$SHORT/oversee-watch" '  : > "$CLOSE_ACTIVE_FILE" || return 1' '  : # : > "$CLOSE_ACTIVE_FILE" || return 1'
+      mutate_file "$SHORT/oversee-watch" $'  while [[ "${OVERSEE_WATCH_ORIGIN:-}" == succession && -z "$CLOSE_TERMED" ]]; do sleep 0.1; done' \
+        $'  while [[ "${OVERSEE_WATCH_ORIGIN:-}" == succession && -z "$CLOSE_TERMED" ]]; do sleep 0.1; done\n  : > "$CLOSE_ACTIVE_FILE" || return 1'
+    fi
+    unit_takeover_case "takeover_order_$order" setsid "$SHORT/oversee-watch" 0
+    assert_eq "taken=$TAKEN old=$OLD_EXIT at-exit=$AT_EXIT event=$EVENT" "$want" \
+      "$description" "$TMP_ROOT/e-takeover_order_$order"
+  done
 else
   printf '  skip  the job-unit rows need setsid and pgrep\n'
 fi
