@@ -121,24 +121,30 @@ await_polls() { # N
 
 # A long interval makes a delayed TERM observable. Keep the child unreaped
 # until cleanup: its process-group identity then cannot be reused while a
-# no-exec forwarder leaves its watch child alive. With `jq`, the TERM waits
-# until the first poll's jq has started and holds: bash runs a trapped signal
-# only once a foreground child returns, so this places the TERM in a poll step
-# rather than wherever the scheduler leaves it.
+# no-exec forwarder leaves its watch child alive. A PATH stub acknowledges
+# entry before holding a loop step, so TERM reaches that step deterministically.
 TERM_RUN=0
-term_row() { # BIN [jq] — TERMED records process exit and liveness withdrawal
-  local bin_path="$STUB_BIN:$PATH" entered=""
+TERM_STEPS="jq sleep date mv python3"
+term_row() { # BIN [STEP] — TERMED records process exit and liveness withdrawal
+  local bin_path="$STUB_BIN:$PATH" entered="" step="${2:-}" interval=30 real command phase
   TERM_RUN=$((TERM_RUN + 1))
   new_lane "term-$TERM_RUN"
-  if [ "${2:-}" = jq ]; then
-    entered="$TMP_ROOT/term-$TERM_RUN.jq-entered"
-    mkdir -p "$TMP_ROOT/term-$TERM_RUN.bin"
-    printf '#!/bin/sh\nif [ -e %q ]; then : >%q; exec sleep 30; fi\nexec %q "$@"\n' \
-      "$BOX/to-lane.watch" "$entered" "$(command -v jq)" >"$TMP_ROOT/term-$TERM_RUN.bin/jq"
-    chmod +x "$TMP_ROOT/term-$TERM_RUN.bin/jq"
-    bin_path="$TMP_ROOT/term-$TERM_RUN.bin:$bin_path"
-  fi
-  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$bin_path" "$WATCH_OUT" "$WATCH_ERR" "$entered" <<'PY_TERM'
+  phase="$TMP_ROOT/term-$TERM_RUN.phase"
+  [ -z "$step" ] || entered="$TMP_ROOT/term-$TERM_RUN.$step-entered"
+  mkdir -p "$TMP_ROOT/term-$TERM_RUN.bin"
+  case "$step" in date | mv) interval=1 ;; esac
+  # The snapshot runs while lm_locked holds the mailbox mutex. An empty
+  # mailbox reaches that real read without needing a sender in the fixture.
+  [ "$step" != python3 ] || : >"$BOX/to-lane.jsonl"
+  for command in $TERM_STEPS; do
+    real="$(command -v "$command")"
+    printf '#!/bin/sh\nprintf "%%s\\n" %q >%q\nif [ %q = %q ] && [ -e %q ] && { [ %q != python3 ] || [ "${2:-}" = snapshot ]; }; then : >%q; exec %q 30; fi\nexec %q "$@"\n' \
+      "$command" "$phase" "$command" "$step" "$BOX/to-lane.watch" "$command" \
+      "$entered" "$(command -v sleep)" "$real" >"$TMP_ROOT/term-$TERM_RUN.bin/$command"
+    chmod +x "$TMP_ROOT/term-$TERM_RUN.bin/$command"
+  done
+  bin_path="$TMP_ROOT/term-$TERM_RUN.bin:$bin_path"
+  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$bin_path" "$WATCH_OUT" "$WATCH_ERR" "$entered" "$interval" "$phase" "$step" <<'PY_TERM'
 import os
 from pathlib import Path
 import shutil
@@ -147,14 +153,30 @@ import subprocess
 import sys
 import time
 
-bash, script, lane, box, path, stdout, stderr, entered = sys.argv[1:]
+bash, script, lane, box, path, stdout, stderr, entered, interval, phase, step = sys.argv[1:]
 env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
 env["PATH"] = path
 ps = shutil.which("ps", path=path)
 assert ps is not None, "watch process reader is absent"
 marker = Path(box) / "to-lane.watch"
+mutex = Path(box) / "to-lane.jsonl.d"
+if step == "python3":
+    # Resolve tools from the inherited PATH in order, excluding flock so Linux
+    # exercises the mkdir lock that stock macOS uses.
+    noflock = Path(box).parent / "path-without-flock"
+    noflock.mkdir()
+    for directory in os.get_exec_path(env):
+        root = Path(directory)
+        if not root.is_dir():
+            continue
+        for command in root.iterdir():
+            target = noflock / command.name
+            if command.name != "flock" and command.is_file() and os.access(command, os.X_OK) and not target.is_symlink():
+                target.symlink_to(command.absolute())
+    env["PATH"] = str(noflock)
+    assert shutil.which("flock", path=env["PATH"]) is None, "mutex fixture still resolves flock"
 with open(stdout, "wb") as out, open(stderr, "wb") as err:
-    child = subprocess.Popen([bash, script, "watch", "--item", "KEN-1", "--interval", "30"],
+    child = subprocess.Popen([bash, script, "watch", "--item", "KEN-1", "--interval", interval],
                              cwd=lane, env=env, stdout=out, stderr=err, start_new_session=True)
     try:
         deadline = time.monotonic() + 5
@@ -163,7 +185,8 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
         assert marker.exists(), "watch did not publish its liveness record"
         while entered and not Path(entered).exists() and time.monotonic() < deadline:
             time.sleep(.02)
-        assert not entered or Path(entered).exists(), "the jq of the poll never started"
+        assert not entered or Path(entered).exists(), "the held loop step never started"
+        assert step != "python3" or mutex.is_dir(), "snapshot entered without holding the mkdir mutex"
         os.kill(child.pid, signal.SIGTERM)
         deadline = time.monotonic() + 3
         state = "running"
@@ -174,10 +197,13 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
             assert status, "owned watch has no process state"
             if status.startswith(b"Z"):
                 state = "exited"
-                break
+                if step != "python3" or not mutex.exists():
+                    break
             time.sleep(.02)
         record = "record-kept" if marker.exists() else "record-withdrawn"
-        if (state, record) != ("exited", "record-withdrawn"):
+        if (state, record) != ("exited", "record-withdrawn") or (step == "python3" and mutex.exists()):
+            sys.stderr.write("term-row: phase=%s held=%s\n" %
+                             (Path(phase).read_text().strip(), bool(entered and Path(entered).exists())))
             # The processes of the group name the step that held the exit.
             probe = subprocess.run([ps, "-A", "-o", "pid=,ppid=,pgid=,stat=,command="], env=env,
                                    capture_output=True, check=True, timeout=5)
@@ -188,7 +214,7 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
                     sys.stderr.write("  " + row.strip() + "\n")
             sys.stderr.write("term-row: record=%s %s\n" % (record,
                              marker.read_text().strip() if marker.exists() else "-"))
-        print(state + ":" + record)
+        print(state + ":" + record + ":" + ("held" if mutex.exists() else "released"))
     finally:
         try:
             os.killpg(child.pid, signal.SIGKILL)
@@ -206,13 +232,29 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
             child.wait(timeout=5)
 PY_TERM
 )"
+  TERM_MUTEX="${TERMED##*:}"
+  TERMED="${TERMED%:*}"
 }
 term_assertion() {
   assert_eq "$TERMED" "exited:record-withdrawn" \
     "a TERM ends a watch mid-wait within three seconds and withdraws its liveness record"
 }
+term_steps() { # BIN EXPECTED
+  local step expected_mutex
+  # sleep acknowledges entry after the first completed poll. date and mv
+  # hold the next heartbeat, after a record already exists.
+  for step in $TERM_STEPS; do
+    term_row "$1" "$step"
+    assert_eq "$TERMED" "$2" "TERM in held $step: process exit and record withdrawal"
+    if [ "$step" = python3 ]; then
+      expected_mutex=held
+      [ "$2" != exited:record-withdrawn ] || expected_mutex=released
+      assert_eq "$TERM_MUTEX" "$expected_mutex" "TERM in held snapshot: mkdir mutex cleanup"
+    fi
+  done
+}
 if [ "${1:-}" = --term-row ]; then
-  term_row "${2:-$LANE_MAIL}"
+  term_row "${2:-$LANE_MAIL}" "${3:-}"
   printf 'term=%s\n' "$TERMED"
   term_assertion
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
@@ -440,9 +482,7 @@ for term_entry in "$LANE_MAIL" "$REPO_ROOT/skills/orch/scripts/lane-mail"; do
   term_row "$term_entry"
   term_assertion
 done
-term_row "$LANE_MAIL" jq
-assert_eq "$TERMED" "exited:record-withdrawn" \
-  "a TERM while the poll's jq holds ends the watch within three seconds and withdraws its liveness record"
+term_steps "$LANE_MAIL" exited:record-withdrawn
 
 # A KILL runs no trap, so what the lane's messages leave behind is what the
 # poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.
@@ -470,7 +510,7 @@ assert_eq "$KILLED/$WORK_DIRS" "0/1" \
   "a watch killed in its wait leaves no copy of the lane's mailbox in the work directory it made under TMPDIR"
 
 # The controls, each a private copy of lane-mail beside links to the shipped
-# libraries and siblings it sources, with one line of it changed.
+# libraries and siblings it sources, with the behavior under test changed.
 mutant() { # NAME OLD NEW — MUTANT holds the copy
   local dir
   dir="$(mutant_scripts "mutant-$1" lane-mail)" || exit 1
@@ -498,10 +538,17 @@ once_row 15 "$MUTANT" notice
 assert_eq "$ONCE $(announced)" "running 0" \
   "control: excluding answers leaves the watch asleep after a reply to a notice"
 
-mutant foreground-poll '      } &' '      }'
-term_row "$MUTANT" jq
-assert_eq "$TERMED" "running:record-kept" \
-  "control: with the poll in the foreground a TERM waits out its jq and the record stays"
+mutant foreground-loop '      } &' '      }'
+mutate_file "$MUTANT" '      wait "$!"' '      :'
+# Bypassing the iteration owner returns each held step to the supervisor's
+# foreground, including the poll's jq and the interval's sleep.
+term_steps "$MUTANT" running:record-kept
+
+mutant kill-iteration '      kill -TERM %+ 2>/dev/null || :' '      kill -KILL %+ 2>/dev/null || :'
+term_row "$MUTANT" python3
+term_assertion
+assert_eq "$TERM_MUTEX" held \
+  "control: SIGKILL stops the iteration but leaves its mkdir mutex held"
 
 mutant wider-window 'now - at <= 2 * interval + 5' 'now - at <= 4 * interval + 5'
 LIVENESS=""

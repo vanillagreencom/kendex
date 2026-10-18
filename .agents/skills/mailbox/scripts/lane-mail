@@ -2534,27 +2534,35 @@ case "$VERB" in
     # resolved: the turn may run it from another checkout, where a read with
     # no root would open that checkout's mailbox instead.
     printf -v WATCH_READ '%q inbox --item %q --root %q' "$SCRIPT_DIR/lane-mail" "$ITEM" "$ROOT"
-    # A trapped signal ends a wait below at once, and the EXIT trap then
-    # withdraws the liveness record, so a send stops reading this monitor as
-    # live the moment it is stopped. Bash runs a trapped signal only once a
-    # foreground child returns, so the poll and the sleep both run in the
-    # background under a wait. A poll still running at the exit finishes alone
-    # and writes no record. A KILL runs no trap: the record then goes stale
-    # within its window, and the work directory stays.
+    # Bash defers a trapped signal during any foreground external command,
+    # including the heartbeat's date and mv. One job owns the whole iteration;
+    # this shell only waits and reads its completed result. Job control gives
+    # that job a group, so stopping it also stops a child that could republish
+    # the record after the EXIT trap withdraws it. The jobspec holds ownership
+    # without signalling a saved process number after it could be reused.
     trap 'rm -f -- "$WATCH_FILE"; lm_cleanup' EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
+    lm_watch_stop() {
+      trap '' HUP INT TERM
+      # The mkdir lock fallback needs TERM to run its release trap.
+      kill -TERM %+ 2>/dev/null || :
+      wait %+ 2>/dev/null || :
+      exit "$1"
+    }
+    trap 'lm_watch_stop 129' HUP
+    trap 'lm_watch_stop 130' INT
+    trap 'lm_watch_stop 143' TERM
     # Lines up to here are announced, or read before this watch started; the
     # cursor the lane's own `inbox` moves raises it, so mail already read is
     # never announced, and a fresh watch announces what stands unread.
     ANNOUNCED=0
+    set -m
     while :; do
-      [ -d "$BOX" ] || refuse mailbox-missing "$BOX"
-      printf 'at=%s interval=%s\n' "$(date -u +%s)" "$INTERVAL" >"$WORK_DIR/watch.rec" &&
-        mv -- "$WORK_DIR/watch.rec" "$WATCH_FILE" || refuse write-failed "$WATCH_FILE"
-      # The poll's subshell hands its counts back through the poll file.
       {
+        set +m
+        trap - EXIT
+        [ -d "$BOX" ] || refuse mailbox-missing "$BOX"
+        printf 'at=%s interval=%s\n' "$(date -u +%s)" "$INTERVAL" >"$WORK_DIR/watch.rec" &&
+          mv -- "$WORK_DIR/watch.rec" "$WATCH_FILE" || refuse write-failed "$WATCH_FILE"
         lm_cursor_read
         [ "$ANNOUNCED" -ge "$SEEN" ] || ANNOUNCED="$SEEN"
         lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
@@ -2571,15 +2579,13 @@ case "$VERB" in
         # watch killed there leaves none of the lane's messages behind.
         rm -f -- "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl" "$WORK_DIR/unread"
         printf '%s %s\n' "$ANNOUNCED" "$NEW" >"$WORK_DIR/poll" || refuse write-failed "$WORK_DIR/poll"
+        if [ "$ONCE" -eq 0 ] || [ "$NEW" -eq 0 ]; then sleep "$INTERVAL"; fi
       } &
       wait "$!"
       read -r ANNOUNCED NEW <"$WORK_DIR/poll"
-      # The exit is the wake, and the EXIT trap above withdraws the liveness
-      # record with it, so a send meanwhile reads the monitor as the none it
-      # is until the lane re-arms.
+      # The exit is the wake, and the EXIT trap withdraws the record until
+      # the lane re-arms its monitor.
       [ "$ONCE" -eq 0 ] || [ "$NEW" -eq 0 ] || exit 0
-      sleep "$INTERVAL" &
-      wait "$!"
     done
     ;;
 
