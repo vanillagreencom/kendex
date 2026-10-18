@@ -40,19 +40,19 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         harness,
         ..
     } = *of;
-    let Published {
-        bytes: published,
-        agent: publisher,
-        carry,
-        overrides,
-        read_at,
-    } = published(of)?;
     // What this scope's last install recorded. An absent record already
     // loads as an empty current one, which is the answer for a scope that
     // has installed nothing yet; a corrupt or too-new one is an error and
     // is raised, because reconstructing an agent from the manifest default
     // would rewrite its skill paths on a guess.
     let installed = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let Published {
+        bytes: published,
+        agent: publisher,
+        carry,
+        overrides,
+        read_at,
+    } = published(of, &installed)?;
     let required = carry.as_ref().map(AgentCarry::skills).unwrap_or_default();
     // A fork reads back an installation, so the record of what was
     // written is the authority: a set's members are in the lock under
@@ -171,7 +171,7 @@ struct Published {
     read_at: Option<String>,
 }
 
-fn published(of: &ForkOf) -> Result<Published> {
+fn published(of: &ForkOf, installed: &crate::lock::Lock) -> Result<Published> {
     let ForkOf {
         env,
         scope,
@@ -200,19 +200,33 @@ fn published(of: &ForkOf) -> Result<Published> {
         });
     };
     let bytes = sealed.read(&path)?;
+    let agent = parse_source_agent(&String::from_utf8_lossy(&bytes))
+        .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let in_scope = crate::engine::ScopeSkills::of(env, scope, manifest)?;
     let carry = agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope)?;
+    let mut overrides = merge_overrides(
+        carry.as_ref().and_then(|carry| carry.overrides(harness)),
+        manifest
+            .agent_frontmatter
+            .get(harness.name())
+            .and_then(|by_agent| by_agent.get(name)),
+    );
+    crate::engine::desired_agent::resolve_default_delegates(
+        harness,
+        agent.role,
+        config.role_policy.as_ref(),
+        &mut overrides,
+        |name| {
+            installed
+                .entries
+                .get(&crate::lock::entry_key(ItemKind::Agent, name, harness))
+                .is_some_and(|entry| entry.enabled)
+        },
+    );
     Ok(Published {
         read_at: commit,
-        agent: parse_source_agent(&String::from_utf8_lossy(&bytes))
-            .map_err(|problem| unreadable(name, &decl.source, problem))?,
-        overrides: merge_overrides(
-            carry.as_ref().and_then(|carry| carry.overrides(harness)),
-            manifest
-                .agent_frontmatter
-                .get(harness.name())
-                .and_then(|by_agent| by_agent.get(name)),
-        ),
+        agent,
+        overrides,
         carry,
         bytes,
     })

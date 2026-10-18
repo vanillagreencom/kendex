@@ -1,1 +1,1 @@
-- Pi engineer agents omit scout from their default delegates when the consumer does not install scout for Pi. Explicit delegate overrides keep their configured values.
+- Pi engineer agents omit scout from their default delegates when the consumer does not install scout for Pi. Body-only forks preserve that list. Explicit delegate overrides keep their configured values.

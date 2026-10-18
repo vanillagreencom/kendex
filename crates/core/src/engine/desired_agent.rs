@@ -444,12 +444,12 @@ fn effective_agent<'a>(
             .and_then(|by_agent| by_agent.get(ctx.name)),
         project.frontmatter,
     );
-    if harness == HarnessId::Pi
-        && ctx.config.role_policy.is_none()
-        && overrides.allowed_subagents.is_none()
-    {
-        let mut defaults = crate::render::agent::role_rule(None, harness, source.role);
-        defaults.allowed_subagents.retain(|name| {
+    resolve_default_delegates(
+        harness,
+        source.role,
+        ctx.config.role_policy.as_ref(),
+        &mut overrides,
+        |name| {
             ctx.expansion
                 .decl_of(ItemKind::Agent, name)
                 .is_some_and(|decl| decl.enabled)
@@ -457,9 +457,8 @@ fn effective_agent<'a>(
                     .expansion
                     .harnesses(ItemKind::Agent, name)
                     .contains(&harness)
-        });
-        overrides.allowed_subagents = Some(defaults.allowed_subagents);
-    }
+        },
+    );
     let permissions = EffectiveAgent::intent(source, &overrides);
     EffectiveAgent {
         model_classes: ctx.model_classes.clone(),
@@ -487,5 +486,21 @@ fn effective_agent<'a>(
         additional_instructions: project.additional_instructions,
         custom_hooks: project.custom_hooks,
         role_policy: ctx.config.role_policy.as_ref(),
+    }
+}
+
+/// Resolve only the built-in default. Installation supplies its expanded
+/// declarations; capture supplies the install record it is reading back.
+pub(super) fn resolve_default_delegates(
+    harness: HarnessId,
+    role: Option<crate::render::agent::Role>,
+    policy: Option<&crate::render::agent::RolePolicy>,
+    overrides: &mut FrontmatterOverrides,
+    installed: impl Fn(&str) -> bool,
+) {
+    if harness == HarnessId::Pi && policy.is_none() && overrides.allowed_subagents.is_none() {
+        let mut defaults = crate::render::agent::role_rule(None, harness, role);
+        defaults.allowed_subagents.retain(|name| installed(name));
+        overrides.allowed_subagents = Some(defaults.allowed_subagents);
     }
 }

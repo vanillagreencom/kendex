@@ -4,35 +4,51 @@ use std::fs;
 
 use crate::test_util::{rooted, source_path};
 use kendex_core::apply;
-use kendex_core::engine::audit;
+use kendex_core::engine::{audit, fork};
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::Scope;
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn pi_engineer_defaults_only_delegate_to_installed_agents() {
-    for (declaration, override_value, expected) in [
-        ("", "", None),
-        ("[agents.scout]\nsource = 'cat'\n", "", Some("scout")),
-        ("[bundles.team]\nsource = 'cat'\n", "", Some("scout")),
+    for (declaration, catalog_policy, override_value, expected) in [
+        ("", "", "", None),
+        ("[agents.scout]\nsource = 'cat'\n", "", "", Some("scout")),
+        ("[bundles.team]\nsource = 'cat'\n", "", "", Some("scout")),
         (
             "[agents.scout]\nsource = 'cat'\nenabled = false\n",
+            "",
             "",
             None,
         ),
         (
             "[agents.scout]\nsource = 'cat'\nharnesses = ['claude']\n",
             "",
+            "",
             None,
         ),
         (
+            "",
             "",
             "allowed-subagents = ['probe', 'scout']",
             Some("probe, scout"),
         ),
         (
             "[agents.scout]\nsource = 'cat'\n",
+            "",
             "allowed-subagents = []",
+            None,
+        ),
+        (
+            "",
+            "[role-policy.pi.engineer]\nallowed-subagents = ['probe']\n",
+            "",
+            Some("probe"),
+        ),
+        (
+            "[agents.scout]\nsource = 'cat'\n",
+            "[role-policy]\n",
+            "",
             None,
         ),
     ] {
@@ -44,7 +60,9 @@ fn pi_engineer_defaults_only_delegate_to_installed_agents() {
         fs::create_dir_all(&project).unwrap();
         fs::write(
             catalog.join("kendex.toml"),
-            "is_source_catalog = true\n[bundles.team]\nagents = ['scout']\n",
+            format!(
+                "is_source_catalog = true\n[bundles.team]\nagents = ['scout']\n{catalog_policy}"
+            ),
         )
         .unwrap();
         for name in ["iced", "maintainer", "rust", "runtime", "scout"] {
@@ -74,10 +92,8 @@ fn pi_engineer_defaults_only_delegate_to_installed_agents() {
         let report = audit(&env, &scope).unwrap();
         assert!(report.refused.is_empty());
         apply::execute(&env, &report.plan).unwrap();
-        for name in ["iced", "maintainer", "rust", "runtime"] {
-            let rendered =
-                fs::read_to_string(project.join(format!(".pi/agents/{name}.md"))).unwrap();
-            let (frontmatter, _) = kendex_core::frontmatter::split(&rendered).unwrap();
+        let check = |rendered: &str| {
+            let (frontmatter, _) = kendex_core::frontmatter::split(rendered).unwrap();
             let frontmatter = kendex_core::frontmatter::parse_tolerant(frontmatter)
                 .unwrap()
                 .map;
@@ -92,6 +108,48 @@ fn pi_engineer_defaults_only_delegate_to_installed_agents() {
                 denies.split(", ").any(|tool| tool == "delegate_subagent"),
                 expected.is_none()
             );
+        };
+        for (name, beside) in [
+            ("iced", false),
+            ("maintainer", true),
+            ("rust", false),
+            ("runtime", true),
+        ] {
+            let file = project.join(format!(".pi/agents/{name}.md"));
+            let rendered = fs::read_to_string(&file).unwrap();
+            check(&rendered);
+            assert!(rendered.contains("Body."));
+            fs::write(&file, rendered.replace("Body.", "My body.")).unwrap();
+            let fork_name = if beside {
+                format!("{name}-mine")
+            } else {
+                name.to_owned()
+            };
+            let plan = if beside {
+                fork::fork_beside(
+                    &env,
+                    &scope,
+                    ItemKind::Agent,
+                    name,
+                    HarnessId::Pi,
+                    &fork_name,
+                    None,
+                )
+            } else {
+                fork::fork(&env, &scope, ItemKind::Agent, name, HarnessId::Pi)
+            }
+            .unwrap();
+            apply::execute(&env, &plan).unwrap();
+            let report = audit(&env, &scope).unwrap();
+            assert!(report.refused.is_empty());
+            apply::execute(&env, &report.plan).unwrap();
+            let settled =
+                fs::read_to_string(project.join(format!(".pi/agents/{fork_name}.md"))).unwrap();
+            check(&settled);
+            assert!(settled.contains("My body."));
+            if beside {
+                check(&fs::read_to_string(file).unwrap());
+            }
         }
     }
 }

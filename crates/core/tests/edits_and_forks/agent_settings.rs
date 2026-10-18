@@ -510,7 +510,7 @@ fn a_deleted_pi_delegation_list_survives_the_fork() {
     let w = agent_world(
         "\"pi\"",
         "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nUpstream body.\n",
-        "",
+        "[agent-frontmatter.pi]\nrev = { allowed-subagents = [\"scout\"] }\n",
         "",
     );
     let file = rendered(&w, HarnessId::Pi, "rev");
