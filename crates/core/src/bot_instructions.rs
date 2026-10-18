@@ -18,11 +18,24 @@ const CONFIGURATION_PACKAGE: &str = "github-repository-settings";
 /// Select before checking consent: an unarmed new owner cannot license the
 /// old owner's code. Only these configuration effects run automatically.
 pub(crate) fn configuration_owner(env: &Env, scope: &Scope) -> Result<Option<DeclaredEffects>> {
-    if let Some(declared) = crate::engine::installed_declaration(env, scope, CONFIGURATION_PACKAGE)?
-    {
-        return Ok(Some(declared));
+    select_configuration_owner(|name| {
+        crate::engine::installed_declaration(env, scope, name).transpose()
+    })
+    .transpose()
+}
+
+/// Whole-scope checks keep unreadable declarations as rows so their local
+/// arming records can decide whether a failed read is a lapse. Selecting that
+/// row still prevents fallback to the superseded configuration checker.
+pub(crate) fn select_configuration_owner<T>(
+    mut find: impl FnMut(&'static str) -> Option<T>,
+) -> Option<T> {
+    for name in [CONFIGURATION_PACKAGE, PACKAGE] {
+        if let Some(declared) = find(name) {
+            return Some(declared);
+        }
     }
-    crate::engine::installed_declaration(env, scope, PACKAGE)
+    None
 }
 
 /// The selected effect also judges changes to its superseded dependency.

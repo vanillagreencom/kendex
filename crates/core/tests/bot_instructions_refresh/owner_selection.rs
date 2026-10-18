@@ -22,7 +22,7 @@ fn install(fixture: &Fixture, name: &str, armed: bool) -> PathBuf {
     fs::write(
         package.join("scripts/effect"),
         format!(
-            "#!/bin/sh\nprintf '%s\\n' '{name}' >> calls\ncase \"$1\" in\ncheck) exit 1 ;;\nrender)\n  if [ \"${{2-}}\" = --dry-run ]; then\n    printf 'would write {name}.md\\nwould write region {name}-shared.md\\t## Fixture\\n'\n  else\n    printf 'owned\\n' > {name}.md\n    printf 'wrote {name}.md\\nwrote region {name}-shared.md\\t## Fixture\\n'\n  fi ;;\nesac\n"
+            "#!/bin/sh\nprintf '%s\\n' '{name}' >> calls\ncase \"$1\" in\ncheck) test -f {name}.md ;;\nrender)\n  if [ \"${{2-}}\" = --dry-run ]; then\n    printf 'would write {name}.md\\nwould write region {name}-shared.md\\t## Fixture\\n'\n  else\n    printf 'owned\\n' > {name}.md\n    printf 'wrote {name}.md\\nwrote region {name}-shared.md\\t## Fixture\\n'\n  fi ;;\nesac\n"
         ),
     )
     .unwrap();
@@ -154,6 +154,84 @@ fn assert_selection(row: Selection, write: bool) {
             write && row.armed && row.selected == name,
         );
     }
+}
+
+/// Refresh checks lapses after rendering, and verify reads the same list.
+/// Installed transition declarations must select before consent even when
+/// the selected declaration cannot be read. Other effects still get checked.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn automatic_lapse_checks_use_only_the_selected_configuration_owner() {
+    for (row, unreadable_new) in SELECTIONS
+        .iter()
+        .copied()
+        .map(|row| (row, false))
+        .chain([(SELECTIONS[2], true), (SELECTIONS[3], true)])
+    {
+        assert_lapsed_owner(row, unreadable_new);
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_lapsed_owner(row: Selection, unreadable_new: bool) {
+    use kendex_core::repo_effects::{Lapse, lapsed};
+
+    let fixture = selected_fixture(row);
+    if unreadable_new {
+        fs::write(
+            fixture
+                .root
+                .join(".agents/skills")
+                .join(NEW)
+                .join("SKILL.md"),
+            "---\nrepo-effects:\n  checker: [invalid]\n---\n",
+        )
+        .unwrap();
+    } else {
+        bot_instructions::render(&fixture.env, &fixture.scope).unwrap();
+        if row.armed {
+            fs::remove_file(fixture.root.join("calls")).unwrap();
+        }
+    }
+    install(&fixture, "broken-effect", true);
+    for (name, armed) in [
+        ("unreadable-effect", true),
+        ("unarmed-unreadable-effect", false),
+    ] {
+        let package = install(&fixture, name, armed);
+        fs::write(
+            package.join("SKILL.md"),
+            "---\nrepo-effects:\n  checker: [invalid]\n---\n",
+        )
+        .unwrap();
+    }
+    let lapses = lapsed(&fixture.env, &fixture.scope).unwrap();
+    let mut expected = vec![
+        ("broken-effect", Lapse::NotInForce),
+        ("unreadable-effect", Lapse::Unchecked),
+    ];
+    if unreadable_new && row.armed {
+        expected.insert(1, (NEW, Lapse::Unchecked));
+    }
+    assert_eq!(
+        lapses
+            .iter()
+            .map(|lapse| (lapse.name.as_str(), lapse.lapse))
+            .collect::<Vec<_>>(),
+        expected,
+    );
+    let mut expected_calls = vec!["broken-effect"];
+    if row.armed && !unreadable_new {
+        expected_calls.push(row.selected);
+    }
+    expected_calls.sort_unstable();
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("calls"))
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        expected_calls,
+    );
 }
 
 #[test]

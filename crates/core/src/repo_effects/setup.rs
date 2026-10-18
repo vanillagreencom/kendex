@@ -320,6 +320,8 @@ pub enum Lapse {
 /// that reports the gate as standing has to have measured it, and one that
 /// could not measure it says so rather than passing. The reason travels in
 /// `said`.
+/// Only the selected configuration owner's checker runs; selection precedes
+/// consent and includes unreadable declarations so they cannot permit fallback.
 ///
 /// The same two answers for a declaration that will not read. Its reach is
 /// unknown, so the record is looked for in both of the repository's git
@@ -334,11 +336,30 @@ pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<
     let Scope::Project { root } = scope else {
         return Ok(Vec::new());
     };
+    let installed = crate::engine::installed_declarations(env, scope)?;
+    let configuration_owner = crate::bot_instructions::select_configuration_owner(|name| {
+        installed
+            .iter()
+            .any(|installed| {
+                let installed_name = match installed {
+                    crate::engine::InstalledDeclaration::Declared(declared) => &declared.name,
+                    crate::engine::InstalledDeclaration::Unreadable { name, .. } => name,
+                };
+                installed_name == name
+            })
+            .then_some(name)
+    });
     let mut lapsed = Vec::new();
-    for installed in crate::engine::installed_declarations(env, scope)? {
+    for installed in &installed {
         let (name, lapse, said) = match installed {
             crate::engine::InstalledDeclaration::Declared(declared) => {
-                let status = status(scope, &declared, Ask::Surface);
+                let configuration = crate::bot_instructions::select_configuration_owner(|name| {
+                    (name == declared.name).then_some(name)
+                });
+                if configuration.is_some() && configuration != configuration_owner {
+                    continue;
+                }
+                let status = status(scope, declared, Ask::Surface);
                 let lapse = match status.state {
                     SetupState::NeedsRepair => Lapse::NotInForce,
                     SetupState::CouldNotCheck => Lapse::Unchecked,
@@ -348,10 +369,10 @@ pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<
                     | SetupState::NotActive
                     | SetupState::Unavailable => continue,
                 };
-                (declared.name, lapse, status.said)
+                (declared.name.clone(), lapse, status.said)
             }
             crate::engine::InstalledDeclaration::Unreadable { name, at } => {
-                let said = match recorded_in_either(root, &name) {
+                let said = match recorded_in_either(root, name) {
                     Ok(true) => format!(
                         "its repo-effects declaration at {} will not read, so the check kendex owes this repository could not be run; a kendex that reads it, or the frontmatter repaired, is the way out",
                         at.display()
@@ -359,7 +380,11 @@ pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<
                     Ok(false) => continue,
                     Err(error) => error.to_string(),
                 };
-                (name, Lapse::Unchecked, vec![crate::names::shown(&said)])
+                (
+                    name.clone(),
+                    Lapse::Unchecked,
+                    vec![crate::names::shown(&said)],
+                )
             }
         };
         lapsed.push(Lapsed { name, lapse, said });
