@@ -544,6 +544,12 @@ case "${1:-}" in
       if [[ -f "$key" ]]; then cat "$key"; else printf '7000 %%%s\n' "$lane"; fi
       exit 0
     done
+    # These fixture panes remain live when the shared capture reads pane_dead.
+    for a in "$@"; do
+      [[ "$a" == '#{pane_dead}' ]] || continue
+      printf '0\n'
+      exit 0
+    done
     lane="$(dash_t "$@")"
     n=0; [[ -f "$STUB_DIR/cmd-$lane.calls" ]] && n="$(cat "$STUB_DIR/cmd-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/cmd-$lane.calls"
