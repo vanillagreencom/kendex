@@ -25,6 +25,13 @@ DEV_VALIDATE_RANGE_CMD = ""
 # Empty validates locally. dev-validate-run --help defines coverage.
 DEV_VALIDATE_CI_CONTEXT = ""
 
+# The optional command that previews selection=all or selection=subset.
+# It may also print expected-secs=N on a separate line, with its own margin.
+# Before launching a command, dev-validate-run refuses with over-bound when
+# N exceeds DEV_VALIDATE_TIMEOUT_SECS. It names both values and creates no
+# run directory. No estimate, or one within the bound, keeps existing behavior.
+DEV_VALIDATE_SELECTION_CMD = ""
+
 # The prefix both commands print each finding line with, such as "guard: ".
 # A run the timeout below stopped whose output holds no such line refuted
 # nothing: a later run over no fewer files is not run past the timeout again,

@@ -246,13 +246,18 @@
 # with one selection=all or selection=subset line. It receives the same class,
 # docs verdict, paths and base as validation, plus DEV_VALIDATE_MODE, the
 # requested mode. All attempts the existing ci route. A range subset also
-# attempts it: the selector reports no cost, so a subset can exceed the local
+# attempts it: a subset can exceed the local
 # time target. Full subsets keep local execution outside push-first, where a
 # full request takes CI under the coverage checks above. Unset, failed or
 # unreported selection keeps full and range requests local. For an explicit
 # ci request, an unset selector preserves the existing CI route. A configured
 # selector must report all or subset before CI admission, and the admitted
 # round then runs its scoped suites as ci mode states.
+# The selector may also print expected-secs=N on its own line. It owns the
+# estimate and its margin. Before launching a command, start refuses with
+# over-bound expected-secs=N bound=B when N exceeds DEV_VALIDATE_TIMEOUT_SECS.
+# It creates no run directory and never raises the bound. An absent estimate
+# or one within the bound keeps the existing behavior.
 # Its evidence is the current round from
 # --base, including uncommitted edits, rather than the whole pull request.
 # The whole branch still determines whether CI covers the change class.
@@ -842,12 +847,16 @@ resolve_range_mode() {
 # The repository entry point owns path selection for both local and CI
 # requests. A failed or ambiguous preview grants no permission to skip it.
 preview_selection() {
+  local preview
   selection=""
+  expected_secs=""
   selection="$(DEV_VALIDATE_CLASS="$class" DEV_VALIDATE_DOCS_ONLY="$docs_only" \
       DEV_VALIDATE_PATHS="$class_scratch/paths" DEV_VALIDATE_BASE="$base_sha" \
       DEV_VALIDATE_MODE="$requested_mode" DEV_VALIDATE_SCOPED=false \
       "$BASH" -c "$selection_cmd" 2>"$class_scratch/selection.log")" \
-    && selection="$(sed -n '/^selection=/p' <<<"$selection")" \
+    && preview="$selection" \
+    && selection="$(sed -n '/^selection=/p' <<<"$preview")" \
+    && expected_secs="$(sed -n 's/^expected-secs=\([0-9][0-9]*\)$/\1/p' <<<"$preview")" \
     || { selection=""; return 1; }
 }
 
@@ -1177,6 +1186,15 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     elif [[ -n "$BOUND_RUN_DIR" ]]; then
       bound_ended=true
     fi
+  fi
+
+  # The selector previews the work this command would launch. Reused verdicts
+  # and CI receipts without scoped execution launch no command.
+  if [[ "$bound_ended" == false && "$passed_before" == false ]] \
+    && [[ "$validate_mode" != ci || "$scoped" == true ]] \
+    && [[ "${expected_secs:-}" =~ ^[0-9]+$ ]] \
+    && (( 10#$expected_secs > 10#$timeout_secs )); then
+    die over-bound "expected-secs=$expected_secs" "bound=$timeout_secs"
   fi
 
   # Without a timeout command the run carries no bound, which is the unbounded

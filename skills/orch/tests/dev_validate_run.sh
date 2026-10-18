@@ -2728,6 +2728,74 @@ SH
     return 1
   fi
 }
+# The selector owns its estimate. The runner compares it with the same bound
+# before either the full command or the selector's scoped execution can start.
+selection_seconds_row() { # SCRIPT ESTIMATE PR_WORLD
+  local script="$1" estimate="$2" world="$3" proj dir result launch=absent run=absent selected=absent estimate_record=absent
+  proj="$(ci_proj proj-selection-seconds CI)"
+  sed -i.bak 's/^DEV_VALIDATE_CMD = .*/DEV_VALIDATE_CMD = "echo full >> tmp\/launched; echo validate: lanes=full selection=all"/' "$proj/kendex.settings.toml"
+  cat > "$proj/selection" <<'SH'
+#!/usr/bin/env bash
+if [[ "${DEV_VALIDATE_SCOPED:-false}" == true ]]; then
+  echo scoped >> tmp/launched
+  echo 'validate: lanes=scoped selection=subset'
+else
+  echo selection=all
+  [[ -z "$STUB_EXPECTED" ]] || printf 'expected-secs=%s\n' "$STUB_EXPECTED"
+fi
+SH
+  chmod +x "$proj/selection"
+  printf 'DEV_VALIDATE_SELECTION_CMD = "./selection"\n' >> "$proj/kendex.settings.toml"
+  ci_world "$world"
+  RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=standard STUB_DOCS=false STUB_MEASURED=true \
+    STUB_EXPECTED="$estimate" run_script "$script" --worktree "$proj" --poll 1
+  result="$RC|$(sed -n 's/^dev-validate-run: //p' "$ERR")"
+  [[ ! -e "$proj/tmp/launched" ]] || launch="$(cat "$proj/tmp/launched")"
+  # A refusal must leave no run directory, even if it printed no start line.
+  for dir in "$proj"/tmp/dev-validate-*; do
+    [[ -d "$dir" ]] || continue
+    run=created
+    [[ -z "$(start_line "$dir" expected-secs)" ]] || estimate_record=present
+    run_script "$script" --record --run-dir "$dir"
+    selected="$(record_field selection "$OUT")"
+    [[ -z "$(record_field expected-secs "$OUT")" ]] || estimate_record=present
+  done
+  printf '%s|%s|%s|%s|%s\n' "$result" "$launch" "$run" "$selected" "$estimate_record"
+  rm -rf -- "$proj"
+}
+SECONDS_ROWS=(
+  'missing||unrequired|0||full|created|all|absent'
+  'below|19|unrequired|0||full|created|all|absent'
+  'equal|20|unrequired|0||full|created|all|absent'
+  'above|21|unrequired|2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent'
+  'ci within|19|rules|0||scoped|created|subset|absent'
+  'ci above|21|rules|2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent'
+)
+for row in "${SECONDS_ROWS[@]}"; do
+  IFS='|' read -r label estimate world expected <<<"$row"
+  assert_eq "$(selection_seconds_row "$CI_SCRIPT" "$estimate" "$world")" "$expected" \
+    "selector expected seconds: $label"
+done
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.seconds-mutant"
+# shellcheck disable=SC2016 # private production mutation
+mutate_file "$CI_SCRIPT.seconds-mutant" '(( 10#$expected_secs > 10#$timeout_secs ))' false
+for world in unrequired rules; do
+  seconds_control="$(selection_seconds_row "$CI_SCRIPT.seconds-mutant" 21 "$world")"
+  case "$world" in unrequired) expected='0||full|created|all|absent' ;; rules) expected='0||scoped|created|subset|absent' ;; esac
+  assert_eq "$seconds_control" "$expected" "control: ignoring the estimate launches $world work above the bound"
+done
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.seconds-mutant"
+# A forced estimate turns both optional and within-bound compatibility red.
+# shellcheck disable=SC2016 # private production mutation
+mutate_file "$CI_SCRIPT.seconds-mutant" \
+  '&& expected_secs="$(sed -n '\''s/^expected-secs=\([0-9][0-9]*\)$/\1/p'\'' <<<"$preview")"' \
+  '&& expected_secs=21'
+for estimate in '' 19 20; do
+  assert_eq "$(selection_seconds_row "$CI_SCRIPT.seconds-mutant" "$estimate" unrequired)" \
+    '2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent' \
+    "control: a forced estimate turns compatibility red for [$estimate]"
+done
+
 SELECTION_GOT="$(selection_rows "$CI_SCRIPT")"
 for row in "${SELECTION_ROWS[@]}"; do
   IFS='|' read -r label _ _ _ _ want_mode want_scoped want_selection want_base want_launch want_rc want_fallback _ <<<"$row"
