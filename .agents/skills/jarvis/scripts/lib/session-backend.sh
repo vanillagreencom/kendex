@@ -48,6 +48,8 @@ case "$verb" in
     [[ -n "$state" && "$state" != Z ]] || exit 1
     at="$(lane_process_start "$1")" || exit 2
     [[ "$at" == "$2" ]] || exit 1 ;;
+  stop-process)
+    lane_stop_identity "$1" "$2" "$3" ;;
   history) recorded_session_file "$@" ;;
   prepare)
     harness="$1" account="$2" home="$3" id="$4" file="$5"

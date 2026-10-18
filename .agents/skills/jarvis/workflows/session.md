@@ -69,6 +69,8 @@ A consumer's own rule files keep their content. Its start instructions load only
 
 - Judge whether the remaining context permits continued work. Use the user's succession trigger when they set one.
 - Follow [Handoff replacement](#handoff-replacement) and the reconciliation and update rules in the [Handoff contract](../references/long-session.md#handoff), read through `jarvis-section`.
-- Start the successor with that handoff. Transfer control before it acts. Stop the predecessor after the successor accepts control. During the transfer, only the assistant that holds control acts.
-- Start the successor's log empty after replacement succeeds.
+- Wait for attached agents under the Handoff contract before calling the session command. Keep reconciliation and retention in this workflow; the command cannot read every harness's attached-agent state.
+- After replacement succeeds, leave the successor's progress log empty in `state/handoff.md`. Run `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME` from the Jarvis package installed in that home.
+- The command saves that handoff and opens a waiting runner in a new window of the same tmux session. It ends the predecessor by its recorded process identity before it starts the successor. Native identity confirmation precedes the successor's Start brief.
+- Read `jarvis-session status --home HOME` for the transfer. A transfer in progress answers `handing-over` with reason `succession`. If a worker ends before the predecessor ends, the predecessor keeps control. After the predecessor ends, a failed transfer answers `failed` with reason `handover-failed`. Retry `succeed` for that home. Boot and Start do not resume the retired predecessor.
 - Keep session state in the current handoff. Never move it into memory.

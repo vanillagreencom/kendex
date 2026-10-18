@@ -197,6 +197,21 @@ class Session:
                 if not terminal and state in ("running", "stopping"):
                     state = "off" if record.get("app_off") else "stopped"
                     reason = "app-off" if state == "off" else ("stopped" if record.get("intent") == "stop" else "ended")
+                if record.get("intent") == "succeed" and state in ("handing-over", "starting"):
+                    if self.worker_live(record):
+                        state, reason = "handing-over", "succession"
+                    else:
+                        # The worker can publish Running and exit while this
+                        # lock-free status read still holds its older snapshot.
+                        current = self.read()
+                        if current != record:
+                            return self.answer(current)
+                        if self.terminal(record.get("predecessor")):
+                            state, reason, detail = "running", "existing", ""
+                            view = record["predecessor"]
+                            terminal = self.terminal(view)
+                        else:
+                            state, reason, detail = "failed", "handover-failed", "Retry jarvis-session succeed for this home."
         return {"v": 1, "state": state, "reason": reason,
                 **{key: view.get(key) if view else None for key in ("home", "harness", "account", "origin")},
                 "boot": record.get("boot") if record else None,
@@ -274,6 +289,10 @@ class Session:
             boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip() + ":" + os.environ.get("XDG_SESSION_ID", "")
         with self.locked():
             record = self.read()
+            if record and record.get("intent") == "succeed" and record["state"] != "running":
+                # Boot reads the transition, never history from its retired owner.
+                answer = self.answer(record)
+                return answer, 1 if answer["state"] == "failed" else 0
             if boot and record and record.get("boot") == boot:
                 try:
                     return self.answer(record), 0
@@ -373,6 +392,92 @@ class Session:
             self.detach("start", next_record)
             return self.answer(next_record), 0
 
+    def succeed(self):
+        with self.locked():
+            record = self.read()
+            if not record or record.get("app_off"):
+                raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
+            if record.get("intent") == "succeed" and record["state"] != "running":
+                if self.worker_live(record):
+                    return self.answer(record), 0
+                # End an abandoned waiting or native successor before retrying.
+                # Its predecessor remains the only possible controller.
+                self.end_owned(record, window=True)
+                predecessor = record.get("predecessor")
+                saved_handoff = record["transfer"]["handoff"]
+            else:
+                if record["state"] != "running" or not self.terminal(record):
+                    raise Refusal("record-unreadable")
+                predecessor = record
+                saved_handoff = None
+            generation = record["generation"] + 1
+            handoff = Path(self.home) / "state/handoff.md"
+            contents = handoff.read_bytes()
+            if not contents.strip():
+                raise Refusal("record-unreadable")
+            archive = handoff.parent / "archive"
+            archive.mkdir(exist_ok=True)
+            saved = archive / ("handoff-" + str(generation) + "-" + uuid.uuid4().hex + ".md")
+            with saved.open("xb") as stream:
+                stream.write(contents)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if saved.read_bytes() != contents:
+                raise Refusal("record-unreadable")
+            transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
+            next_record = {"v": 1, "home": self.home, "harness": record["harness"], "account": record["account"],
+                           "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
+                           "generation": generation, "intent": "succeed", "state": "handing-over", "reason": "succession", "detail": "",
+                           "terminal": None, "predecessor": predecessor, "transfer": transfer,
+                           "launch": {"id": str(uuid.uuid4()), "file": "", "reason": "new-requested", "brief": START_BRIEF}}
+            next_record["worker"] = json.loads(self.backend("process", os.getpid()).stdout)
+            self.write(next_record)
+            self.detach("succeed", next_record)
+            return self.answer(next_record), 0
+
+    def successor(self, generation):
+        # This pane waits on the same record. It cannot start native work
+        # until the worker has saved the predecessor's end.
+        while time.monotonic() < self.deadline:
+            with self.locked():
+                record = self.read()
+                if not self._current_request(record, generation, "succeed"):
+                    return
+                if not self.worker_live(record):
+                    return
+                if record["transfer"]["phase"] == "predecessor-ended":
+                    command = record["launch"]["command"]
+                    break
+            time.sleep(0.2)
+        else:
+            return
+        # The waiting process is already inside its new pane. The native
+        # identity hook needs that pane's tmux binding, not the caller's.
+        native_env = dict(self.env, **{key: os.environ[key] for key in ("TMUX", "TMUX_PANE") if key in os.environ})
+        identity = json.loads(self.backend("process", os.getpid()).stdout)
+        native = subprocess.Popen([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"'],
+                                  cwd=self.home, env=native_env)
+        try:
+            while native.poll() is None:
+                record = self.read()
+                if record["generation"] != generation or record.get("intent") != "succeed" or record["transfer"]["phase"] == "complete":
+                    return native.wait()
+                if not self.worker_live(record):
+                    if self.read() != record:
+                        continue
+                    self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"])
+                    return
+                time.sleep(0.2)
+        finally:
+            if native.poll() is None:
+                native.terminate()
+                try:
+                    native.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    native.kill()
+                    native.wait(timeout=2)
+        return native.returncode
+
     def stop(self, origin):
         with self.locked():
             record = self.read()
@@ -403,7 +508,7 @@ class Session:
             self.write(record)
             return self.answer(record), 0
 
-    def end_owned(self, record):
+    def end_owned(self, record, *, window=False):
         if self.terminal(record):
             pane = record["terminal"]["pane"]
             # tmux evaluates ownership and closes the pane's session in one
@@ -413,7 +518,23 @@ class Session:
             if not record.get("process") and not (record.get("pending") or {}).get("started_at"):
                 binding = "#{||:" + binding + ",#{==:#{@jarvis-generation},}}"
             condition = "#{&&:" + binding + ",#{==:#{pid}," + str(record["server_pid"]) + "}}"
-            self.tmux("if-shell", "-F", "-t", pane, condition, "kill-session -t " + pane, socket=record["terminal"]["server"])
+            if window and record.get("process"):
+                identity = record["process"]
+                # The start-time check and pane binding both belong to this
+                # controller. A reused PID grants no right to close its pane.
+                stopped = self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"], check=False)
+                if stopped.returncode:
+                    raise Refusal("handover-failed", "The predecessor identity changed. Check the session record before retrying.", "failed")
+                if not self.terminal(record):
+                    return
+                condition = "#{&&:" + condition + ",#{==:#{pane_pid}," + str(identity["pid"]) + "}}"
+            action = "kill-window" if window else "kill-session"
+            self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=record["terminal"]["server"])
+            if window and self.terminal(record):
+                raise Refusal("handover-failed", "The predecessor window remains open. Retry jarvis-session succeed for this home.", "failed")
+            if window and record.get("process"):
+                while self.worker_live({"worker": identity}):
+                    time.sleep(0.1)
 
     def worker(self, verb, generation):
         self.deadline = time.monotonic() + CALL_SECONDS
@@ -439,15 +560,20 @@ class Session:
                                                launch["id"], launch["file"], self.path, generation).stdout)
             with self.locked():
                 record = self.read()
-                if not self._current_request(record, generation, "start"):
+                if not self._current_request(record, generation, verb):
                     return
-                self.end_owned(record.get("predecessor"))
+                succeeding = verb == "succeed"
+                if not succeeding:
+                    self.end_owned(record.get("predecessor"))
                 existing = self.tmux("has-session", "-t", "=jarvis", check=False)
                 if existing.returncode == 0:
-                    raise Refusal("name-conflict")
+                    if not succeeding or not self.terminal(record.get("predecessor")):
+                        raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
-                created = self.tmux("new-session", "-d", "-s", "jarvis", "-c", self.home,
-                                    "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", BASH, "--noprofile", "--norc")
+                creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
+                runner = [sys.executable, "-B", "-c", "import runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                created = self.tmux(*creation, "-c", self.home,
+                                    "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *runner)
                 socket, server, started, window, pane = created.stdout.strip().split("\t")
                 record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
                               server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
@@ -456,17 +582,28 @@ class Session:
                 # The acquisition remains locally owned until saved, including
                 # failures of the first ownership write or later setup writes.
                 acquired = record
+                if succeeding:
+                    process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
+                    record["process"] = json.loads(self.backend("process", process).stdout)
+                    record["launch"]["command"] = prepared["line"]
+                    record["transfer"]["phase"] = "waiting"
                 self.write(record)
                 transferred = True
-                self.tmux("set-option", "-t", pane, "@jarvis-generation", generation)
-                command = prepared["line"]
-                # The account observer reads descendants of the pane shell.
-                # A tail keeps that shell from exec-replacing itself.
-                self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
-                          BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"')
-                process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
-                record["process"] = json.loads(self.backend("process", process).stdout)
-                self.write(record)
+                self.tmux("set-option", "-p", "-t", pane, "@jarvis-generation", generation)
+                if succeeding:
+                    self.end_owned(record.get("predecessor"), window=True)
+                    record["transfer"]["phase"] = "predecessor-ended"
+                    record.update(state="starting", reason="launching")
+                    self.write(record)
+                else:
+                    command = prepared["line"]
+                    # The account observer reads descendants of the pane shell.
+                    # A tail keeps that shell from exec-replacing itself.
+                    self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
+                              BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"')
+                    process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
+                    record["process"] = json.loads(self.backend("process", process).stdout)
+                    self.write(record)
             # One bound covers native identity and the taking of the Start brief.
             # Backend operations share it; inspection never renews the launch.
             # The pane is read outside the record lock, which holds only each
@@ -477,7 +614,7 @@ class Session:
                 if time.monotonic() >= self.deadline:
                     raise Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
                 record = self.read()
-                if not self._current_request(record, generation, "start"):
+                if not self._current_request(record, generation, verb):
                     return
                 if not self.terminal(record):
                     raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
@@ -496,7 +633,7 @@ class Session:
                 with self.locked():
                     inspected = record
                     record = self.read()
-                    if not self._current_request(record, generation, "start"):
+                    if not self._current_request(record, generation, verb):
                         return
                     # The pane answered for the record it was read against.
                     if any(record.get(key) != inspected.get(key) for key in ("pending", "brief_delivered")):
@@ -508,6 +645,8 @@ class Session:
                     if observed == "trust":
                         raise Refusal("trust-required", dialog_question(dialog))
                     if identity.get("native_session_id") and identity.get("started_at") and observed in ("idle", "working"):
+                        if succeeding and not record.get("identity_verified"):
+                            record["transfer"]["phase"] = "confirmed"
                         record["identity_verified"] = True
                         record["history"] = self.confirmed_history(record)
                         self.write(record)
@@ -528,9 +667,13 @@ class Session:
                         finally:
                             prompt.unlink()
                         record["brief_delivered"] = True
+                        if succeeding:
+                            record["transfer"]["phase"] = "brief-delivered"
                         self.write(record)
                     elif record.get("brief_delivered") and (taken or (observed == "working" and not prepared["kickoff"])):
                         record.update(state="running", reason=launch["reason"], detail="")
+                        if succeeding:
+                            record["transfer"]["phase"] = "complete"
                         record.pop("predecessor", None)
                         record.pop("launch", None)
                         record.pop("controller_state", None)
@@ -545,16 +688,16 @@ class Session:
             with self.locked():
                 if acquired and not transferred:
                     try:
-                        self.end_owned(acquired)
+                        self.end_owned(acquired, window=verb == "succeed")
                     except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
                         self.failure_log("cleanup-failed", teardown)
                 record = self.read()
                 if not self._current_request(record, generation, verb):
                     raise
                 record["history"] = self.confirmed_history(record)
-                if verb == "start" and (not acquired or transferred):
+                if verb in ("start", "succeed") and (not acquired or transferred):
                     try:
-                        self.end_owned(acquired or record)
+                        self.end_owned(acquired or record, window=verb == "succeed")
                     except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
                         self.failure_log("cleanup-failed", teardown)
                 if acquired and self.terminal(acquired):
@@ -572,6 +715,9 @@ class Session:
                                   reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
                                   detail=failure.detail if isinstance(failure, Refusal) else "Jarvis could not start. Check the session log.",
                                   terminal=None)
+                    if verb == "succeed":
+                        record.update(state="failed", reason="handover-failed", history=None,
+                                      detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
                 record.pop("worker", None)
                 self.write(record)
             raise
@@ -586,7 +732,7 @@ class Arguments(argparse.ArgumentParser):
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop"):
+    for verb in ("start", "status", "stop", "succeed"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "start":
@@ -609,6 +755,8 @@ def main():
             answer, code = session.start(args)
         elif args.verb == "stop":
             answer, code = session.stop(args.origin)
+        elif args.verb == "succeed":
+            answer, code = session.succeed()
         else:
             answer, code = session.answer(session.read()), 0
     except Refusal as failure:

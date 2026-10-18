@@ -173,9 +173,10 @@ class SessionContract(unittest.TestCase):
             # cleanup. Unknown ownership is a refusal until the final write.
             transient_cleanup = reason != "record-unreadable" and (answer["state"], answer["reason"]) == ("blocked", "record-unreadable")
             if answer["state"] in ("blocked", "failed") and not transient_cleanup:
-                self.fail(str(answer) + "\n" + self.session_log())
+                self.fail(str(answer) + "\n" + self.record.read_text() + "\n" + self.session_log())
             time.sleep(0.05)
-        screen = subprocess.run(["tmux", "-L", self.label, "capture-pane", "-p"], capture_output=True, text=True).stdout
+        target = (json.loads(self.record.read_text()).get("terminal") or {}).get("pane", "")
+        screen = subprocess.run(["tmux", "-L", self.label, "capture-pane", "-p", "-t", target], capture_output=True, text=True).stdout
         self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n" + self.session_log())
 
     def session_log(self):
