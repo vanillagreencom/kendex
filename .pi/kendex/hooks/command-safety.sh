@@ -655,16 +655,18 @@ environment_main_command() { # command kind; arguments are already decoded data
 # Receiving language is a local classification, not an exemption from the
 # independent shell expansion and unsupported forwarding checks.
 environment_receiver() {
-  receiver=unknown; receiver_pattern=""; receiver_option=""
+  receiver=unknown; receiver_pattern=""; receiver_option=""; receiver_named=""
   case "$program" in
     cat) receiver=data ;;
     bash | sh | dash | zsh | ksh | eval | source | .) receiver=shell ;;
     python | python3)
       receiver=interpreter; receiver_option='^-c$'
-      receiver_pattern='(^|[^A-Za-z0-9_])os[[:space:]]*\.[[:space:]]*environ([[:space:]]*[^[:space:]A-Za-z0-9_[]|[[:space:]]*$)' ;;
+      receiver_pattern='(^|[^A-Za-z0-9_])os[[:space:]]*\.[[:space:]]*environ'
+      receiver_named='^[[:blank:]]*(\[|\.[[:blank:]]*(get|pop|setdefault|__getitem__|__contains__)[[:blank:]]*\()' ;;
     node)
       receiver=interpreter; receiver_option='^(-e|--eval)$'
-      receiver_pattern='(^|[^A-Za-z0-9_])process[[:space:]]*\.[[:space:]]*env([[:space:]]*[^[:space:]A-Za-z0-9_.[]|[[:space:]]*$)' ;;
+      receiver_pattern='(^|[^A-Za-z0-9_])process[[:space:]]*\.[[:space:]]*env'
+      receiver_named='^[[:blank:]]*(\[|\.)' ;;
     ruby)
       receiver=interpreter; receiver_option='^-e$'
       receiver_pattern='(^|[^A-Za-z0-9_])ENV[[:space:]]*\.[[:space:]]*(to_h|each)([^A-Za-z0-9_]|$)' ;;
@@ -675,7 +677,21 @@ environment_receiver() {
 }
 
 environment_receiver_evidence() {
-  [[ $1 =~ $receiver_pattern ]]
+  local remaining=$1 matched
+  while [[ $remaining =~ $receiver_pattern ]]; do
+    matched=${BASH_REMATCH[0]}
+    remaining=${remaining#*"$matched"}
+    [ -n "$receiver_named" ] || return 0
+    # Identifier suffixes are not this object. A newline ends the reference;
+    # only same-line key selection proves a named value instead of a mapping.
+    if [[ $remaining =~ ^[A-Za-z0-9_]+ ]]; then
+      matched=${BASH_REMATCH[0]}
+      remaining=${remaining#"$matched"}
+      continue
+    fi
+    [[ $remaining =~ $receiver_named ]] || return 0
+  done
+  return 1
 }
 
 # Shell invocation options precede the executable operand, including options
@@ -776,7 +792,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
-  local receiver receiver_pattern receiver_option
+  local receiver receiver_pattern receiver_option receiver_named
   local unsupported="" scan candidate limit producer_end code incoming_sources="" file_output file_body redirect_evidence head_start main_start script_pos forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target="" main_text main_required="" body_start body_end
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$'
@@ -784,6 +800,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() heredoc_starts=() body_ids=() stage_sources=() stage_stdin=() executable_texts=() executable_stages=()
+  local body_decisions=()
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() file_outputs=() executable_contexts=()
   if [ "${2:-}" = forwarded ]; then
     forwarded_argument=1
@@ -1085,16 +1102,14 @@ environment_dump() { # command kind; arguments are already decoded data
         main_text=${main_text:0:body_start}${body//[!$'\n']/ }${main_text:body_end}
         continue
       fi
-      # Known interpreter bodies are code in their receiving language. Mask
-      # only the registered range so later fallback still sees shell commands.
+      # Input can execute downstream. A later fallback needs the original
+      # body even when an earlier interpreter classifies it in its own language.
       if [ "$1" = shell ] && [ -z "${2:-}$unsupported$incoming_sources" ] &&
          [ "$mode" = other ] && [ -z "$redirect_evidence$stdin_program" ]; then
         case "$receiver" in
           interpreter)
             if environment_receiver_evidence "${literal_inputs[$doc]}"; then return 0; fi
-            body=${heredoc_bodies[$doc]}; body_start=${heredoc_starts[$doc]}; body_end=$((body_start + ${#body}))
-            body=${body//[!$'\n']/ }
-            main_text=${main_text:0:body_start}$body${main_text:body_end}
+            [ "${body_decisions[$doc]:-}" = fallback ] || body_decisions[doc]=interpreter
             continue ;;
           data)
             if [ "${#heredocs[@]}" -eq 1 ] && [ "$data_source" = " 0" ] &&
@@ -1104,7 +1119,7 @@ environment_dump() { # command kind; arguments are already decoded data
         esac
       fi
       main_required=1
-      break
+      body_decisions[doc]=fallback
     done
     stage_stdin[stage]=$stdin_program; stage_sources[stage]=$data_source
     scan=$unsupported
@@ -1179,8 +1194,15 @@ environment_dump() { # command kind; arguments are already decoded data
     piped_source=$data_source
   done
   if [ -n "$main_required" ]; then
-    # Every receiver has now classified its input. Spaces retain source order
-    # without treating a proved cat file write as another body's executable text.
+    # Mask interpreter bodies only after every consumer has had its turn.
+    # A fallback consumer retains the original bytes instead of an earlier
+    # language-local decision. Spaces preserve the registry's source offsets.
+    for ((doc=0; doc<${#heredocs[@]}; doc++)); do
+      [ "${body_decisions[$doc]:-}" = interpreter ] || continue
+      body=${heredoc_bodies[$doc]}; body_start=${heredoc_starts[$doc]}; body_end=$((body_start + ${#body}))
+      body=${body//[!$'\n']/ }
+      main_text=${main_text:0:body_start}$body${main_text:body_end}
+    done
     local command_text=$main_text
     if environment_main_command "$1"; then return 0; fi
   fi
