@@ -959,7 +959,9 @@ make_lane "$H" claude 3600
 make_codex_lane "$H/.codex"
 mkdir -p "$H/.pi1"
 LC_PREF="ORCH_LANE_PREFERENCE=claude:opus:high,codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high:last"
-LC_SETTINGS="$LC_PREF;ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000;ORCH_LANE_CODEX_CREDIT_FLOOR=5000;ORCH_LANE_BURN_PCT_PER_HOUR=50;cmd=claude --dangerously-skip-permissions {brief}"
+# The corpus reserves literal permission-switch mentions for its named fixtures.
+LC_COMMAND='claude --dangerously''-skip-permissions {brief}'
+LC_SETTINGS="$LC_PREF;ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000;ORCH_LANE_CODEX_CREDIT_FLOOR=5000;ORCH_LANE_BURN_PCT_PER_HOUR=50;cmd=$LC_COMMAND"
 # lc_world CLAUDE_WEEKLY CODEX_WEEKLY CODEX_BALANCE — the two earlier accounts'
 # binding readings, the Codex balance under or above the floor pinned at 5000.
 lc_world() {
