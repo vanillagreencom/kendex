@@ -379,7 +379,7 @@ while IFS='|' read -r label used remaining claims rate burn room control; do
   if [[ "$control" == age ]]; then
     CTRL="$(mutant_scripts mutant-session-age lib/lane-model.sh)" || exit 1
     mutate_file "$CTRL/lib/lane-model.sh" \
-      '$now - (.usage_age_s // 0) - ($session_reset - 18000)' \
+      '._rate_sample_at - ($session_reset - 18000)' \
       '$now - ($session_reset - 18000)'
     ( FAIL=0
       TMP_ROOT="$TMP_ROOT/session-age-control" LANES_UNDER_TEST="$CTRL/lanes" table "$SESSION_ROW"

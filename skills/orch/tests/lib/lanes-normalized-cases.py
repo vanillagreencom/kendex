@@ -56,17 +56,17 @@ def refreshed(rows):
     return rows[0]["session_5h_pct"] == 2 and (world.root / "fetch.log").read_text().splitlines() == [".aclaude"]
 
 
-def mutate(name, old, new):
+def mutate(name, old, new, relative="lanes"):
     directory = Path(root) / name
     source = Path(lanes).resolve().parent
     for package in ("orch", "mailbox", "github"):
         scripts = source if package == "orch" else source.parent.parent / package / "scripts"
         shutil.copytree(scripts, directory / package / "scripts")
-    target = directory / "orch" / "scripts" / "lanes"
+    target = directory / "orch" / "scripts" / relative
     before = target.read_text()
     assert before.count(old) == 1, (name, before.count(old))
     target.write_text(before.replace(old, new))
-    return str(target)
+    return str(directory / "orch" / "scripts" / "lanes")
 
 
 # run-all.sh reads a suite's rows from its closing tally; each case line here
@@ -78,6 +78,90 @@ def report(line):
     global cases_reported
     cases_reported += 1
     print("normalized: " + line, flush=True)
+
+
+# Both the raw host reader and normalized decoder serve the provider's cached
+# sample with no public age. Selection must use its private fetch stamp.
+def sample_projection(script, through, route, age, used, remaining):
+    world.reset(home_count=1, providers=int(through == "host"), claims=4)
+    sample_at = int(world.clock.read_text())
+    reset_at = sample_at + age + remaining if remaining is not None else None
+    reset_text = datetime.datetime.fromtimestamp(reset_at, datetime.timezone.utc).isoformat() if reset_at is not None else None
+    stage(used)
+    usage = world.fixture / ".aclaude.json"
+    body = json.loads(usage.read_text())
+    body["five_hour"]["resets_at"] = reset_text
+    body["seven_day"]["utilization"] = 79
+    usage.write_text(json.dumps(body))
+    directory = str(world.home / ".aclaude")
+    provider = f"account={directory}\tharness=claude\tsession-5h-pct={used}\tweekly-pct=79\tmodel-pct=5\tmodel-label=Opus"
+    if reset_text is not None:
+        provider += "\tsession-resets=" + reset_text
+    (world.fixture / "provider.tsv").write_text(provider + "\n")
+    settings = {**env, "ORCH_LANE_HOST": str(world.provider) if through == "host" else "local"}
+    if route != "fresh":
+        warm = world.run(["list", "--json"], script, settings)
+        assert warm["exit"] == 0, warm
+        if route == "legacy":
+            cache = next((world.state / "usage").glob(("host-accounts" if through == "host" else "claude") + "-*.json"))
+            record = json.loads(cache.read_text())
+            del record["normalized"]
+            cache.write_text(json.dumps(record))
+    world.clock.write_text(str(sample_at + age) + "\n")
+    if route == "refused":
+        refused = world.run(["list", "--local", "--no-cache", "--json"], script, {**settings, "FETCH_STATUS": "429"})
+        assert refused["exit"] == 0 and json.loads(refused["stdout"])[0]["status"] == "rate_limited", refused
+    if route != "fresh":
+        (world.root / "fetch.log").write_text("")
+    entry = ["pick", "--harness", "claude", "--model", "claude-opus-5-5", "--min-headroom-pct", "15", "--for-overseer", "--json"]
+    selection = world.run(entry, script, settings)
+    projection = world.run(entry + ["--lane", directory, "--projected"], script, settings)
+    return {"selection": selection, "projection": projection,
+            "fetches": (world.root / "fetch.log").read_text().splitlines(),
+            "through": through, "route": route, "age": age}
+
+
+def assert_sample_projection(result, expected_burn, expected_room, expected_exit):
+    selection, projection = result["selection"], result["projection"]
+    assert selection["exit"] == expected_exit and projection["exit"] == expected_exit, result
+    row = json.loads(projection["stdout"])
+    assert abs(row["session_burn_pct_per_lane_hour"] - expected_burn) < 1e-9, result
+    assert abs(row["session_projected_headroom_pct"] - expected_room) < 1e-9, result
+    assert row["measured_through"] == result["through"], result
+    assert row["usage_age_s"] == (None if result["through"] == "host" else result["age"]), result
+    assert "_rate_sample_at" not in row, result
+    if result["route"] != "fresh":
+        assert not result["fetches"], result
+
+
+sample_rows = [
+    ("local", "fresh", 0, 3, 15600, 1.125, 77.5, 0),
+    ("local", "normalized", 150, 3, 15600, 1.2, 76.2, 0),
+    ("local", "legacy", 150, 3, 15600, 1.2, 76.2, 0),
+    # The refusal writer retains no sample claim count, so its divisor is one.
+    ("local", "refused", 150, 3, 15600, 4.8, 13.8, 3),
+    ("host", "fresh", 0, 3, 15600, 4.5, 19, 0),
+    ("host", "normalized", 150, 3, 15600, 4.8, 13.8, 3),
+    ("host", "legacy", 150, 3, 15600, 4.8, 13.8, 3),
+    ("host", "normalized", 150, 0, 15600, 0, 100, 0),
+    ("host", "normalized", 150, 1, 17820, 60, -1089, 3),
+    ("host", "normalized", 150, 3, None, 5, 77, 0),
+]
+sample_control = mutate("sample-time-control", '._rate_sample_at - ($session_reset - 18000)',
+                        '$now - (.usage_age_s // 0) - ($session_reset - 18000)', "lib/lane-model.sh")
+for through, route, age, used, remaining, burn, room, expected_exit in sample_rows:
+    result = sample_projection(lanes, through, route, age, used, remaining)
+    assert_sample_projection(result, burn, room, expected_exit)
+    report(f"sample-time {through}/{route} used={used} reset={remaining} age={age}=pass")
+    if through == "host" and route in ("normalized", "legacy") and used == 3 and remaining == 15600:
+        result = sample_projection(sample_control, through, route, age, used, remaining)
+        try:
+            assert_sample_projection(result, burn, room, expected_exit)
+        except AssertionError:
+            assert_sample_projection(result, 4.5, 19, 0)
+            report(f"sample-time {through}/{route} control=red")
+        else:
+            raise AssertionError("the cached selection assertion accepted its public-age control")
 
 
 prepare()
