@@ -21,7 +21,7 @@
 #   ol_pi_model            a pi session's model, out of the sources naming it
 #   ol_entry_model         one entry's harness, model, class and effort, a
 #                          class resolved to its model
-#   ol_lanes               `lanes` on this machine's copy of each account
+#   ol_lanes               `lanes` through the overseer's account reader
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
 #                          own counts
 #   ol_pick_lane           one `lanes pick` for one entry, with the counts a
@@ -445,14 +445,17 @@ ol_class_unread() { # ENTRY
   printf '%s\n' "$OL_CLASS_ERR" >"$DEP_ERR"
 }
 
-# ol_lanes ARGS... — `lanes` as every overseer read of an account asks it,
-# under ORCH_LANE_HOST=local: an overseer opens through overseer-host on this
-# machine, under this machine's copy of the account, so a provider's reading
-# of that account is not the one its session spends. The successor walk and
-# the caller's own headroom mark both read through here, so the two never
-# judge one account on two copies.
-ol_lanes() { # ARGS...
-  ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
+# Claude tokens can live with the lane provider without a local credentials
+# file. The seat pick and its account mark must use that provider's reading.
+# Other harnesses still spend this machine's copy of their account.
+ol_lanes() { # ACCOUNT_HARNESS ARGS...
+  local harness="$1"
+  shift
+  if [[ "$harness" == claude ]]; then
+    "$SCRIPT_DIR/lanes" "$@"
+  else
+    ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
+  fi
 }
 
 # ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]: the one `lanes pick
@@ -476,7 +479,7 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
   [[ -z "${5:-}" ]] || scope=(--lane "$5")
-  OL_PICK_RECORD="$(ol_lanes pick --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
+  OL_PICK_RECORD="$(ol_lanes "$harness" pick --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--model "$model"} --json 2>"$DEP_ERR")" || rc=$?
   return "$rc"
 }
@@ -653,7 +656,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
         # must still be unmeasured, and a retired account's unmeasured record
         # is not admission: the account policy owns that separate question.
         rc=0
-        ol_lanes check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?
+        ol_lanes "$OL_ACCOUNT_HARNESS" check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?
         case "$rc" in
           0) ;;
           4) continue ;;

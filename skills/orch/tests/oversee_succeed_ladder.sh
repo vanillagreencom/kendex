@@ -661,8 +661,8 @@ STUB
 chmod +x "$RECOVER_FETCH"
 POLICYCTL="$(mutant_scripts retained-policy lib/overseer-launch.sh)" || exit 1
 mutate_file "$POLICYCTL/lib/overseer-launch.sh" \
-  '        ol_lanes check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?' \
-  '        : ol_lanes check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?'
+  '        ol_lanes "$OL_ACCOUNT_HARNESS" check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?' \
+  '        : ol_lanes "$OL_ACCOUNT_HARNESS" check "$OL_WALK_CALLER_LANE" >/dev/null 2>"$DEP_ERR" || rc=$?'
 MEASURECTL="$(mutant_scripts retained-account lib/overseer-launch.sh)" || exit 1
 mutate_file "$MEASURECTL/lib/overseer-launch.sh" \
   '        ol_pick_record "$OL_HARNESS" "$OL_PICK_MODEL" "$trigger" "" "$OL_WALK_CALLER_LANE" || rc=$?' \
