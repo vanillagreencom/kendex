@@ -58,6 +58,7 @@ change_class_location_load() { # REPO
   fi
   CHANGE_CLASS_CAUSE=base-settings-unreadable
   root="$("$CHANGE_CLASS_LIB_DIR/../git-context" common-root "$1")" || return 1
+  CHANGE_CLASS_SETTINGS_ROOT="$root"
   # The lane and its inherited settings cannot choose their own review depth.
   CHANGE_CLASS_STANDARD_PATHS="$(
     unset HARNESS_CI_STANDARD_PATHS
@@ -70,6 +71,21 @@ change_class_location_load() { # REPO
     [ "${#globs[@]}" -eq 0 ] || printf '%s\n' "${globs[@]}"
   )" || return 1
   CHANGE_CLASS_CAUSE=""
+}
+
+# An unreadable or absent verdict keeps the inventory under the path rules.
+change_class_inventory_rendered() { # BASE HEAD REPO STDERR_FILE
+  local reader="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/harness-only" inventory_change
+  [ -x "$reader" ] || return 1
+  "$reader" --mode harness --event pull_request --base "$1" --head "$2" --repo "$3" \
+    --output /dev/null > /dev/null 2>"$4" || return 1
+  inventory_change="$(sed -n 's/^inventory-change: //p' "$4" | tail -1)" || return 1
+  case "$inventory_change" in
+    names-only\ *\ roots=*)
+      names_only_roots_rendered "${inventory_change##* roots=}" \
+        branch_growth_render_roots "$CHANGE_CLASS_SETTINGS_ROOT" ;;
+    *) return 1 ;;
+  esac
 }
 
 change_class_read() { # BASE HEAD REPO STDERR_FILE

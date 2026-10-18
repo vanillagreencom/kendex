@@ -1280,24 +1280,9 @@ load_measurement() {
 # the measurement's render roots, or roots this script cannot load, keep the
 # inventory on the diff, where the list below refuses it. Any other change to
 # it, a changed entry or an entry for a path that stays, keeps it there too.
-names_only_roots_rendered() { # ROOTS
-  local root listed
-  [ "$1" != - ] || return 0
-  load_measurement || return 1
-  set -f
-  for root in ${1//,/ }; do
-    for listed in $BRANCH_GROWTH_RENDER_ROOTS; do
-      [ "$root" = "$listed" ] && continue 2
-    done
-    set +f
-    echo "inventory-kept: cause=root-not-rendered root=$root" >&2
-    return 1
-  done
-  set +f
-}
 case "$inventory_change" in
   names-only\ *\ roots=*)
-    if names_only_roots_rendered "${inventory_change##* roots=}"; then
+    if names_only_roots_rendered "${inventory_change##* roots=}" load_measurement; then
       changed="$(awk '$0 != ".kendex-generated.json"' <<<"$changed")" ||
         answer standard "cause=path-set-unreadable"
     fi ;;

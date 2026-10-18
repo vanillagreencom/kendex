@@ -195,6 +195,10 @@ if [ -n "$base" ]; then
     consider micro branch-paths
     while IFS= read -r -d '' path; do
       change_class_path "$path" launch
+      if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
+        change_class_inventory_rendered "$base" "$head" "$repo" "$scratch/inventory-err"; then
+        continue
+      fi
       [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done <"$range_paths"
   fi

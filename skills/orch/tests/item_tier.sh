@@ -10,7 +10,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ORCH_DIR="$(cd "$TEST_DIR/.." && pwd)"
+ORCH_DIR="${ITEM_TIER_PACKAGE_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)}"
 TMP_ROOT="$(mktemp -d)" || { echo "item-tier: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "item-tier: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "item-tier: scratch=resolve-failed" >&2; exit 1; }
@@ -25,6 +25,7 @@ mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
 cp "$ORCH_DIR/../mailbox/scripts/lib/common-root.sh" "$LAYOUT/mailbox/scripts/lib/"
 cp "$ORCH_DIR/scripts/git-context" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scripts/lib/"
+cp "$ORCH_DIR/../harness-ci/scripts/harness-only" "$LAYOUT/harness-ci/scripts/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" "$ORCH_DIR/scripts/lib/kendex-env.sh" \
   "$LAYOUT/orch/scripts/lib/"
@@ -526,6 +527,77 @@ assert_eq "$(run_tier - --production 1 --base "$BASE" --head HEAD --repo "$RANGE
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: losing range path rules misses the instruction file"
 assert_eq "$(run_tier - --production 1 --base "$SKILL_BASE" --head HEAD --repo "$RANGE")" \
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "control: losing range path rules misses the SKILL.md version line"
+unset TIER_BIN
+
+# Catalog additions carry their render and its inventory name in the same diff.
+INVENTORY_RANGE="$TMP_ROOT/inventory-range"
+mkdir -p "$INVENTORY_RANGE"
+git -C "$INVENTORY_RANGE" init -q -b main
+git -C "$INVENTORY_RANGE" config user.email test@example.com
+git -C "$INVENTORY_RANGE" config user.name test
+git -C "$INVENTORY_RANGE" config gc.auto 0
+git -C "$INVENTORY_RANGE" config maintenance.auto false
+printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"}]\n' 0 \
+  >"$INVENTORY_RANGE/.kendex-generated.json"
+mkdir -p "$INVENTORY_RANGE/.agents/skills/x/scripts" "$INVENTORY_RANGE/skills/x/scripts"
+printf 'kept\n' >"$INVENTORY_RANGE/.agents/skills/x/scripts/kept"
+printf 'kept\n' >"$INVENTORY_RANGE/skills/x/scripts/kept"
+git -C "$INVENTORY_RANGE" add -A
+git -C "$INVENTORY_RANGE" commit -qm inventory-base
+INVENTORY_BASE="$(git -C "$INVENTORY_RANGE" rev-parse HEAD)"
+assert_inventory_ranges() {
+  local edit expected root
+  while IFS='|' read -r edit expected; do
+    [ -z "${INVENTORY_ONLY:-}" ] || [ "$INVENTORY_ONLY" = "$edit" ] || continue
+    git -C "$INVENTORY_RANGE" reset -q --hard "$INVENTORY_BASE"
+    git -C "$INVENTORY_RANGE" clean -qfd
+    root=.agents
+    [ "$edit" != unrendered-root ] || root=.other
+    if [ "$edit" = repository-standard ]; then
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = ".kendex-generated.json"\n' >"$INVENTORY_RANGE/kendex.settings.toml"
+    fi
+    mkdir -p "$INVENTORY_RANGE/$root/skills/x/scripts"
+    printf 'added\n' >"$INVENTORY_RANGE/skills/x/scripts/added"
+    printf 'added\n' >"$INVENTORY_RANGE/$root/skills/x/scripts/added"
+    jq --arg added "$root/skills/x/scripts/added" '. + [$added]' \
+      "$INVENTORY_RANGE/.kendex-generated.json" >"$TMP_ROOT/next-inventory"
+    case "$edit" in
+      hash-edited)
+        jq --arg hash "sha256:$(printf '%064d' 1)" \
+          'map(if type == "object" then .templateHash = $hash else . end)' \
+          "$TMP_ROOT/next-inventory" >"$INVENTORY_RANGE/.kendex-generated.json" ;;
+      kept-unlisted)
+        jq 'map(select(type != "object"))' "$TMP_ROOT/next-inventory" \
+          >"$INVENTORY_RANGE/.kendex-generated.json" ;;
+      *) cp "$TMP_ROOT/next-inventory" "$INVENTORY_RANGE/.kendex-generated.json" ;;
+    esac
+    git -C "$INVENTORY_RANGE" add -A
+    git -C "$INVENTORY_RANGE" commit -qm "$edit"
+    assert_eq "$(run_tier - --floor small --base "$INVENTORY_BASE" --head HEAD --repo "$INVENTORY_RANGE")" \
+      "$expected" "inventory range: $edit"
+  done <<'ROWS'
+added|tier=small brief=small cause=floor class=small rc=0
+hash-edited|tier=standard brief=start cause=excluded-path rc=0
+kept-unlisted|tier=standard brief=start cause=excluded-path rc=0
+unrendered-root|tier=standard brief=start cause=excluded-path rc=0
+repository-standard|tier=standard brief=start cause=repository-standard-path rc=0
+ROWS
+}
+assert_inventory_ranges
+
+# Retain the inventory check but restore main's unconditional exclusion.
+cp -R "$LAYOUT" "$TMP_ROOT/no-inventory-exception"
+awk '/^        change_class_inventory_rendered / {hits++; print "        false; then # " $0; next} {print}
+  END {exit hits == 1 ? 0 : 3}' "$TIER" >"$TMP_ROOT/no-inventory-exception/orch/scripts/item-tier"
+if cmp -s "$TIER" "$TMP_ROOT/no-inventory-exception/orch/scripts/item-tier"; then
+  echo 'FAIL: inventory control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/no-inventory-exception/orch/scripts/item-tier"
+if (PASS=0; FAIL=0; INVENTORY_ONLY=added assert_inventory_ranges >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "control inventory exception: the names-only assertion stays green"
+else
+  pass "control inventory exception: the names-only assertion turns red"
+fi
 unset TIER_BIN
 
 printf '\npass: %s fail: %s\n' "$PASS" "$FAIL"

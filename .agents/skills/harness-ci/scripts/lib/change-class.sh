@@ -18,6 +18,26 @@
 # configuration. Candidacy permits proof setup; release comparison owns it.
 HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
 
+# harness-only owns the names-only verdict. Its roots must also belong to
+# the caller's measurement roots before the inventory can leave the path set.
+# LOAD_ROOTS sets BRANCH_GROWTH_RENDER_ROOTS from the caller's trusted settings.
+names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
+  local roots="$1" root listed
+  shift
+  [ "$roots" != - ] || return 0
+  "$@" || return 1
+  set -f
+  for root in ${roots//,/ }; do
+    for listed in $BRANCH_GROWTH_RENDER_ROOTS; do
+      [ "$root" = "$listed" ] && continue 2
+    done
+    set +f
+    echo "inventory-kept: cause=root-not-rendered root=$root" >&2
+    return 1
+  done
+  set +f
+}
+
 change_class_path_match() { # PATH GLOBS
   local glob
   PATH_MATCH_HIT=""
