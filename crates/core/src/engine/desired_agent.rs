@@ -437,13 +437,29 @@ fn effective_agent<'a>(
     upstream_skills: &[String],
     project: Project<'a>,
 ) -> EffectiveAgent<'a> {
-    let overrides = merge_overrides(
+    let mut overrides = merge_overrides(
         ctx.config
             .frontmatter
             .get(harness.name())
             .and_then(|by_agent| by_agent.get(ctx.name)),
         project.frontmatter,
     );
+    if harness == HarnessId::Pi
+        && ctx.config.role_policy.is_none()
+        && overrides.allowed_subagents.is_none()
+    {
+        let mut defaults = crate::render::agent::role_rule(None, harness, source.role);
+        defaults.allowed_subagents.retain(|name| {
+            ctx.expansion
+                .decl_of(ItemKind::Agent, name)
+                .is_some_and(|decl| decl.enabled)
+                && ctx
+                    .expansion
+                    .harnesses(ItemKind::Agent, name)
+                    .contains(&harness)
+        });
+        overrides.allowed_subagents = Some(defaults.allowed_subagents);
+    }
     let permissions = EffectiveAgent::intent(source, &overrides);
     EffectiveAgent {
         model_classes: ctx.model_classes.clone(),

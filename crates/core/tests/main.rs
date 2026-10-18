@@ -95,6 +95,7 @@ mod package_versions;
 mod permissions;
 mod pi_carrier;
 mod pi_commands;
+mod pi_default_delegates;
 mod plugin_registry;
 mod plugin_targets;
 mod process_guard_env;
