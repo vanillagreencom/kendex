@@ -1,0 +1,1 @@
+- Refresh can commit updated bot-instructions package files when the repository has no bot-instructions configuration.

@@ -28,6 +28,7 @@ fn declared(writes: &[&str], companions: &[&str]) -> DeclaredEffects {
             removal: None,
             notes: Vec::new(),
             companions: companions.iter().map(|s| (*s).to_owned()).collect(),
+            configured_by: None,
             unknown_keys: Vec::new(),
         },
     }

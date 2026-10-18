@@ -13,7 +13,7 @@ use std::process::{Command, Output};
 
 use kendex_core::process::Hardened;
 
-const DECLARATION: &str = "---\nname: bot-instructions\ndescription: fixture review rules\nrepo-effects:\n  summary: \"Renders the fixture review file in this repository.\"\n  writes:\n    - \".github/copilot-instructions.md\"\n  installer: \"scripts/bot-instructions render\"\n  checker: \"scripts/bot-instructions check\"\n---\nFixture.\n";
+const DECLARATION: &str = "---\nname: bot-instructions\ndescription: fixture review rules\nrepo-effects:\n  configured-by: bot-instructions\n  summary: \"Renders the fixture review file in this repository.\"\n  writes:\n    - \".github/copilot-instructions.md\"\n  installer: \"scripts/bot-instructions render\"\n  checker: \"scripts/bot-instructions check\"\n---\nFixture.\n";
 
 /// Writes the review file and says so on stdout, as the package's render does.
 const RENDERS: &str = "#!/bin/sh\nmkdir -p .github\necho rules >.github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n";
@@ -67,6 +67,8 @@ fn installed(home: &Path, launcher: &str) -> PathBuf {
     write(&script, launcher);
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     git(&project, &["init", "-q", "-b", "main"]);
+    git(&project, &["config", "gc.auto", "0"]);
+    git(&project, &["config", "maintenance.auto", "false"]);
     let applied = kendex(home, &project, &["apply", "--yes", "--leave"]);
     assert!(
         applied.status.success(),
@@ -146,4 +148,46 @@ fn a_project_without_the_package_says_it_is_absent() {
         String::from_utf8_lossy(&ran.stdout).trim_end(),
         "bot-instructions-render=absent"
     );
+}
+
+/// Refresh changes the installed package without enabling its repository
+/// effect. Neither refresh nor the commit offer may execute the installer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_commits_an_unconfigured_packages_changed_files_without_a_terminal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp).join("home");
+    let project = installed(&home, "#!/bin/sh\ntouch package-code-ran\nexit 1\n");
+    let source = project.join("catalog/skills/bot-instructions/SKILL.md");
+    let declared = fs::read_to_string(&source).unwrap();
+    for args in [
+        &["config", "user.name", "t"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "commit.gpgsign", "false"],
+        &["add", "-A"],
+        &["commit", "-qm", "installed"],
+    ] {
+        git(&project, args);
+    }
+    let updated = format!("{declared}\nUpdated package documentation.\n");
+    write(&source, &updated);
+
+    let ran = kendex(&home, &project, &["refresh", "--yes", "--commit"]);
+
+    assert_eq!(
+        ran.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let committed = Hardened::git(
+        &["show", "HEAD:.claude/skills/bot-instructions/SKILL.md"],
+        Some(&project),
+    )
+    .run()
+    .unwrap();
+    assert!(committed.status.success());
+    assert_eq!(committed.stdout, updated.as_bytes());
+    assert!(!armed(&project));
+    assert!(!project.join("package-code-ran").exists());
 }

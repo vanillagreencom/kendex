@@ -77,6 +77,8 @@ fn fixture_at(manifest: &str, armed: bool, harness: HarnessId, package_rel: &str
     );
     fs::write(root.join("kendex.toml"), manifest).unwrap();
     git(&root, &["init", "--quiet"]);
+    git(&root, &["config", "gc.auto", "0"]);
+    git(&root, &["config", "maintenance.auto", "false"]);
     git(&root, &["add", "-A"]);
     record_install(&env, &root, harness, package);
     if armed {
@@ -956,6 +958,61 @@ enum Holds {
     OutOfDate,
     Unchecked(&'static str),
     Nothing,
+}
+
+/// A package with no enabling table has nothing to set up. A table in a
+/// catalog definition does not enable the effect in that catalog's checkout.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unconfigured_package_skips_only_its_not_set_up_hold() {
+    for (catalog, configured) in [(false, false), (false, true), (true, false), (true, true)] {
+        let manifest = if configured {
+            "schema = 7\n[bot-instructions]\n"
+        } else {
+            "schema = 7\n"
+        };
+        let fixture = fixture_with_arming(manifest, false);
+        if catalog {
+            fs::rename(
+                fixture.root.join("kendex.toml"),
+                fixture.root.join("kendex-local.toml"),
+            )
+            .unwrap();
+            fs::write(
+                fixture.root.join("kendex.toml"),
+                if configured {
+                    "is_source_catalog = true\n"
+                } else {
+                    "is_source_catalog = true\n[bot-instructions]\n"
+                },
+            )
+            .unwrap();
+            git(&fixture.root, &["add", "-A"]);
+        }
+        commit_fixture(&fixture.root);
+        let mut generated = GeneratedPaths::default();
+        generated.whole.insert(change_doctrine(&fixture.root));
+        let scan = offer_scan(&fixture, &generated);
+
+        let held = commit_offer::stale(
+            &fixture.env,
+            &fixture.scope,
+            &scan,
+            &generated,
+            &scan.carried(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            held.iter().map(|held| &held.why).collect::<Vec<_>>(),
+            if configured {
+                vec![&Staleness::NotSetUp]
+            } else {
+                vec![]
+            },
+            "catalog={catalog}, configured={configured}"
+        );
+    }
 }
 
 /// One standing a package can have when the offer touches it.

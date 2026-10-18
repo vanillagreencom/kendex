@@ -6,6 +6,34 @@ fn block(field: &str) -> String {
     format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n")
 }
 
+/// Package authors can name a known table. Typos and non-table keys must
+/// not silently disable the hold for a package that needs setup.
+#[test]
+fn configured_by_names_a_manifest_table() {
+    for (value, accepted) in [
+        ("bot-instructions", true),
+        ("install", true),
+        ("bot-instruction", false),
+        ("schema", false),
+        ("custom-hooks", false),
+        ("bot-instructions.bots", false),
+        ("''", false),
+        ("~", false),
+        ("[bot-instructions]", false),
+    ] {
+        let read = declaration(&block(&format!("  configured-by: {value}\n")));
+        match read {
+            Declaration::Effects(effects) => {
+                assert!(accepted, "{value}");
+                assert_eq!(effects.configured_by.as_deref(), Some(value));
+                assert!(effects.unknown_keys.is_empty());
+            }
+            Declaration::Unreadable => assert!(!accepted, "{value}"),
+            Declaration::Absent => panic!("configured-by declaration was lost: {value}"),
+        }
+    }
+}
+
 /// Every declaration that reads, whole. A summary alone is a
 /// declaration, and an explicit null is an absent field, not a shape
 /// kendex cannot read; the ordinary written paths read, `.git/` included,
@@ -26,6 +54,7 @@ fn a_declaration_reads_whole() {
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
+        configured_by: None,
         unknown_keys: Vec::new(),
     };
     let rows = [
@@ -41,6 +70,7 @@ fn a_declaration_reads_whole() {
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
+                configured_by: None,
                 unknown_keys: Vec::new(),
             },
         ),
@@ -222,6 +252,7 @@ fn the_checker_is_a_script_field_like_the_others() {
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
+        configured_by: None,
         unknown_keys: Vec::new(),
     };
     let read = [
@@ -335,6 +366,7 @@ fn a_key_this_kendex_does_not_know_is_read_past_and_named() {
                 notes: Vec::new(),
                 companions: Vec::new(),
                 unknown_keys: vec!["writse".to_owned()],
+                configured_by: None,
             },
         ),
     ];

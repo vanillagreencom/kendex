@@ -82,6 +82,11 @@ const TOP_LEVEL: &[&str] = &[
 /// a remote to read — a commit id pins, a tag or branch tracks.
 const SOURCE_KEYS: &[&str] = &["repo", "path", "rev", "enabled"];
 
+/// Whether a name denotes a top-level manifest table rather than a scalar or array.
+pub(crate) fn table_key(key: &str) -> bool {
+    TOP_LEVEL.contains(&key) && !matches!(key, "schema" | "custom-hooks")
+}
+
 /// The tools a manifest may name: the ones kendex writes to. Read from the
 /// capability table rather than listed here, so a tool can never be
 /// accepted as a target before anything it declares would be installed.

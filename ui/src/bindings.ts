@@ -4433,6 +4433,11 @@ export type RepoEffects = {
 	/**  Repo-relative paths the package writes outside the managed trees. */
 	writes: string[],
 	/**
+	 *  The top-level manifest table that enables this effect. Without it,
+	 *  an unarmed package does not hold the commit offer.
+	 */
+	configuredBy?: string | null,
+	/**
 	 *  The script, relative to the package directory, that applies the
 	 *  effect. Absent means kendex has nothing to run and the disclosure
 	 *  ends with what the reader should run themselves.

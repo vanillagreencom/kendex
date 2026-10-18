@@ -22,6 +22,10 @@ pub struct RepoEffects {
     pub summary: String,
     /// Repo-relative paths the package writes outside the managed trees.
     pub writes: Vec<String>,
+    /// The top-level manifest table that enables this effect. Without it,
+    /// an unarmed package does not hold the commit offer.
+    #[serde(default)]
+    pub configured_by: Option<String>,
     /// The script, relative to the package directory, that applies the
     /// effect. Absent means kendex has nothing to run and the disclosure
     /// ends with what the reader should run themselves.
@@ -159,6 +163,7 @@ fn effects(map: &Map) -> Option<RepoEffects> {
     Some(RepoEffects {
         summary: scalar(map, "summary")?,
         writes: writes(map)?,
+        configured_by: configured_by(map)?,
         installer: script(map, "installer")?,
         uninstaller: script(map, "uninstaller")?,
         checker: script(map, "checker")?,
@@ -171,9 +176,10 @@ fn effects(map: &Map) -> Option<RepoEffects> {
 }
 
 /// The fields this kendex reads. Every one of them is read above.
-const FIELDS: [&str; 9] = [
+const FIELDS: [&str; 10] = [
     "summary",
     "writes",
+    "configured-by",
     "installer",
     "uninstaller",
     "checker",
@@ -182,6 +188,14 @@ const FIELDS: [&str; 9] = [
     "notes",
     "companions",
 ];
+
+fn configured_by(map: &Map) -> Option<Option<String>> {
+    let Some(value) = map.get("configured-by") else {
+        return Some(None);
+    };
+    let key = value.as_str()?;
+    crate::manifest::table_key(key).then(|| Some(key.to_owned()))
+}
 
 /// The keys in the declaration this kendex does not read.
 ///

@@ -84,7 +84,7 @@ pub enum Staleness {
 /// changes, or under one of the paths it declares it writes. A package
 /// declaring no installer holds nothing, since no setup could clear the
 /// hold. One not set up here holds the commit without any of its code
-/// running.
+/// running, unless its declared configuring table is absent.
 ///
 /// One set up here that declares a staged checker is judged by it, run
 /// over the commit itself, built once per call in an index of its own. It
@@ -131,7 +131,14 @@ pub fn stale(
             continue;
         }
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
-            false => Staleness::NotSetUp,
+            false => {
+                if let Some(key) = &declared.effects.configured_by
+                    && !configured(env, scope, key)?
+                {
+                    continue;
+                }
+                Staleness::NotSetUp
+            }
             true => {
                 let working = || crate::repo_effects::status(scope, &declared, Ask::Surface);
                 let holds = match &declared.effects.staged_checker {
@@ -167,6 +174,23 @@ pub fn stale(
         candidate.close()?;
     }
     disclosed(env, scope, held)
+}
+
+/// Read presence from the package's selected manifest. Serializing the
+/// model would erase an explicitly empty table and incorrectly lift the hold.
+fn configured(env: &Env, scope: &Scope, key: &str) -> crate::error::Result<bool> {
+    let path = crate::manifest::manifest_path(env, scope);
+    let Some(text) = crate::fs::read_if_exists(&path)? else {
+        return Ok(false);
+    };
+    let table: toml::Table =
+        text.parse().map_err(
+            |error: toml::de::Error| crate::error::CoreError::TomlParse {
+                path,
+                message: error.to_string(),
+            },
+        )?;
+    Ok(table.contains_key(key))
 }
 
 /// What one reading of a set-up package's check holds the commit with,

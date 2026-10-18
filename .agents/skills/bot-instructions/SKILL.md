@@ -13,6 +13,7 @@ metadata:
   bugs: "https://github.com/vanillagreencom/kendex/issues"
 tags: [review]
 repo-effects:
+  configured-by: bot-instructions
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
   writes:
     - ".github/copilot-instructions.md"

@@ -11,6 +11,7 @@ fn the_disclosure_keeps_every_write_shared_mark_and_unread_key_in_both_rendering
             effects: RepoEffects {
                 summary: "arms hooks".into(),
                 writes: vec![],
+                configured_by: None,
                 installer: None,
                 uninstaller: None,
                 checker: None,
