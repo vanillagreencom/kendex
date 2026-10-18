@@ -1100,8 +1100,6 @@ environment_dump() { # command kind; arguments are already decoded data
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
         environment_producer shell "$scan"
         environment_program_text
-        if [ "$mode" = unclassified-forwarded ] && [ -z "$stdin_program" ] &&
-           { [ -n "$redirect_evidence" ] || environment_main_evidence "${args[@]}"; }; then mode=dump-unknown; fi
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
         case "$mode" in dump-*) return 0 ;; esac
         if [ "$candidate" -gt "$((script_pos + 1))" ] && [ -z "$output" ] &&
