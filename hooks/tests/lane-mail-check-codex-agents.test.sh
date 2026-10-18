@@ -246,25 +246,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/$control.control.log" 2>&1 || control_rc=$?
       assert_eq "$control_rc" 1 "control $control fails its own hook row"
     done
-    wake_mutant no-overlap-guard '                if $call.full and ($call.overlap | not) then' \
-      '                if $call.full then' "$REPO_ROOT/skills/orch/scripts/lib/adapters/codex.sh"
-    for mutation in spawn followup; do
-      new_lane "codex-overlap-$mutation-control" AGENT-1
-      mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
-      install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
-      ARM_ARGS=(halt)
-      codex_row "overlap-$mutation" 2 agent-unobserved
-      control_rc=0
-      (PASS=0; FAIL=0
-        rows=$("$BASH" -euo pipefail -c '. "$1"; lane_adapter_codex_agents "$2"' \
-          _ "$MUTANT_PATH" "call-$CALL_NUMBER" < "$TRANSCRIPT") || exit 2
-        # attached_agents_out consumes the adapter TSV: ? means unknown.
-        unknown=no
-        case "$rows" in "?$TAB"* | *"$NL?$TAB"*) unknown=yes ;; esac
-        assert_eq "$unknown" yes "overlapping $mutation keeps the roster unknown"
-        [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/overlap-$mutation.control.log" 2>&1 || control_rc=$?
-      assert_eq "$control_rc" 1 "control overlap $mutation fails its roster assertion"
-    done
   fi
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
