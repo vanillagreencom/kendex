@@ -480,7 +480,7 @@ case "${1:-}" in
     # other case is unaffected.
     w=0; [[ -f "$STUB_DIR/width-$lane.txt" ]] && w="$(cat "$STUB_DIR/width-$lane.txt")"
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
-    [[ "$format" != $'\036''#{pane_dead}' ]] || printf '\0360\n'
+    [[ "$format" != 'kendex-pane-dead=#{pane_dead}' ]] || printf '\nkendex-pane-dead=0\n'
     exit 0 ;;
   display-message)
     # `-p [-t <pane>] '#S'` asks which session the caller is in.

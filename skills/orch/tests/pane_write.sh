@@ -82,6 +82,54 @@ PAIR_PANE="$(tm display-message -p -t '=w:pair' '#{pane_id}')"
 printf 'hello' > "$TMP_ROOT/hello"
 HELLO="$TMP_ROOT/hello"
 
+# The capture owner shares pane-write's real tmux boundary. Job units can
+# supply no locale, so both clients must preserve the screen and dead proof.
+CAPTURE_PANE="$(tm new-window -d -P -F '#{pane_id}' -t w -n capture "printf 'capture-ready\\nkendex-pane-dead=1\\n'; exec cat")"
+tm set-window-option -t "$CAPTURE_PANE" remain-on-exit on
+capture_wait=0
+until [[ "$(tm capture-pane -pJ -t "$CAPTURE_PANE")" == *capture-ready* ]]; do
+  capture_wait=$((capture_wait + 1))
+  [[ "$capture_wait" -lt 100 ]] || { echo 'pane_write: capture-not-ready' >&2; exit 1; }
+  sleep 0.1
+done
+capture_locale() { # DIRECTORY LOCALE EXPECTED_SCREEN
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" TMUX_TMPDIR="$SOCK_DIR" ${2:+LANG="$2"} "$BASH" -c '
+    source "$1/lib/lane-state.sh"
+    rc=0
+    lane_pane_capture screen local local capture "$3" || rc=$?
+    preserved=no; [[ "$screen" != "$2" ]] || preserved=yes
+    lane_state state listed copilot "" "$screen" "" "" "" "" copilot "$LANE_PANE_SOURCE"
+    printf "rc=%s source=%s screen=%s state=%s" "$rc" "$LANE_PANE_SOURCE" "$preserved" "$state"
+  ' _ "$1" "$3" "$CAPTURE_PANE"
+}
+while IFS='|' read -r phase locale source state; do
+  if [[ "$phase" == dead && "$(tm display-message -p -t "$CAPTURE_PANE" '#{pane_dead}')" != 1 ]]; then
+    tm send-keys -t "$CAPTURE_PANE" C-d
+    capture_wait=0
+    until [[ "$(tm display-message -p -t "$CAPTURE_PANE" '#{pane_dead}')" == 1 ]]; do
+      capture_wait=$((capture_wait + 1))
+      [[ "$capture_wait" -lt 100 ]] || { echo 'pane_write: capture-not-dead' >&2; exit 1; }
+      sleep 0.1
+    done
+  fi
+  capture_expected="$(tm capture-pane -pJ -t "$CAPTURE_PANE")"
+  assert_eq "$(capture_locale "$REF" "$locale" "$capture_expected")" \
+    "rc=0 source=$source screen=yes state=$state" "real tmux capture: $phase pane with locale [$locale]"
+done <<'ROWS'
+live|C.UTF-8|local|unjudged
+live||local|unjudged
+dead|C.UTF-8|local-dead|exited
+dead||local-dead|exited
+ROWS
+tm kill-window -t "$CAPTURE_PANE"
+# The mutation runner selects this instrument without repeating pane-write's
+# independent write, refusal and concurrency controls.
+if [[ "${1:-}" == --capture-only ]]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+
 # Directories a row puts ahead of PATH: a ps that fails, a tmux whose
 # paste-buffer fails, and a tmux that holds every paste-buffer for two seconds
 # before making it, so writers started together have all loaded their buffers

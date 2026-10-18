@@ -979,15 +979,18 @@ lane_pane_capture() { # OUT_VAR MODE HOST ITEM PANE [history]
       # pane read fails. The provider's mandatory unreadable rule is separate.
       LANE_PANE_SOURCE=local-unreadable
       [[ "${6:-}" != history ]] || _lpc_args+=(-S -)
-      # One client reads both values. The final record separator keeps a
-      # blank dead flag separate from screen text and trailing blank lines.
-      _lpc_args+=(-t "$5" \; display-message -p -t "$5" $'\036''#{pane_dead}')
+      # One client reads both values. A printable final record survives tmux
+      # clients without a UTF-8 locale, which replace control bytes with `_`.
+      _lpc_args+=(-t "$5" \; display-message -p -t "$5" 'kendex-pane-dead=#{pane_dead}')
       _lpc_screen="$(tmux capture-pane -pJ ${_lpc_args[@]+"${_lpc_args[@]}"})" || _lpc_rc=$?
-      if [[ "$_lpc_screen" == *$'\036'* ]]; then
-        _lpc_dead="${_lpc_screen##*$'\036'}"
-        _lpc_screen="${_lpc_screen%$'\036'*}"
-        _lpc_screen="${_lpc_screen%"${_lpc_screen##*[!$'\n']}"}"
-      fi ;;
+      _lpc_dead="${_lpc_screen##*$'\n'}"
+      case "$_lpc_dead" in
+        kendex-pane-dead=*)
+          _lpc_screen="${_lpc_screen%"$_lpc_dead"}"
+          _lpc_screen="${_lpc_screen%"${_lpc_screen##*[!$'\n']}"}"
+          _lpc_dead="${_lpc_dead#kendex-pane-dead=}" ;;
+        *) _lpc_dead="" ;;
+      esac ;;
     *) return 1 ;;
   esac
   [[ "$_lpc_rc" == 0 ]] || return "$_lpc_rc"

@@ -555,7 +555,7 @@ case "${1:-}" in
     [[ -f "$STUB_DIR/pane-$target.txt" ]] || exit 1
     cat "$STUB_DIR/pane-$target.txt"
     dead="${PANE_DEAD:-0}"; [[ "$dead" != unreadable ]] || dead=""
-    [[ "$format" != $'\036''#{pane_dead}' ]] || printf '\036%s\n' "$dead"
+    [[ "$format" != 'kendex-pane-dead=#{pane_dead}' ]] || printf '\nkendex-pane-dead=%s\n' "$dead"
     exit 0 ;;
 esac
 exit 1
@@ -575,14 +575,14 @@ lane_pane_observe CC-1
 assert_eq "$LANE_PANE_CMD/$LANE_PANE_PID/${LANE_PANE_SCREEN:+screen}" "claude/100/screen" \
   "the window's own pane is what the observer hands the judge"
 
-for capture_text in '' $'first\nsecond' $'first\n\n' $'first\0361\nsecond'; do
+for capture_text in '' $'first\nsecond' $'first\n\n' $'first\0361\nsecond' $'first\nkendex-pane-dead=1\nsecond' 'kendex-pane-dead=1'; do
   printf '%s' "$capture_text" > "$STUB_DIR/pane-%3.txt"
   capture_expected="$(cat "$STUB_DIR/pane-%3.txt")"
   lane_pane_capture capture_actual local local CC-1 %3
   assert_eq "$capture_actual" "$capture_expected" 'the combined pane read preserves screen text'
 done
 CAPTURE_TEXT_MUTANT="$(mutant_scripts capture-text lib/lane-state.sh)"
-mutate_file "$CAPTURE_TEXT_MUTANT/lib/lane-state.sh" '_lpc_screen="${_lpc_screen%$'"'"'\036'"'"'*}"' '_lpc_screen="${_lpc_screen%$'"'"'\036'"'"'*}"; _lpc_screen=""'
+mutate_file "$CAPTURE_TEXT_MUTANT/lib/lane-state.sh" '_lpc_screen="${_lpc_screen%"$_lpc_dead"}"' '_lpc_screen="${_lpc_screen%"$_lpc_dead"}"; _lpc_screen=""'
 capture_control="$(source "$CAPTURE_TEXT_MUTANT/lib/lane-state.sh"; lane_pane_capture capture_actual local local CC-1 %3; printf '%s' "$capture_actual")"
 capture_control_red="$(FAIL=0; assert_eq "$capture_control" "$capture_expected" control >/dev/null; printf '%s' "$FAIL")"
 assert_eq "$capture_control_red" 1 'control: the screen assertion rejects lost text'

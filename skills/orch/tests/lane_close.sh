@@ -452,7 +452,7 @@ case "$1" in
       exited) printf '\n' ;;
       *) cat -- "$LANE_CLOSE_SCREEN" ;;
     esac
-    [[ "${*: -1}" != $'\036''#{pane_dead}' ]] || printf '\0360\n'
+    [[ "${*: -1}" != 'kendex-pane-dead=#{pane_dead}' ]] || printf '\nkendex-pane-dead=0\n'
     ;;
   # Every verb that writes into a pane fails, logged first, so a close that
   # types anything is both a refusal and a line in the call log.
