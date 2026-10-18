@@ -131,6 +131,7 @@ Every kendex issue lives in one project below; the project-management skill's `r
     {"name": "CLI & Distribution", "kind": "standing", "role": "area", "admits": "The kendex CLI and engine under crates/ outside crates/app and crates/core/src/harness: manifest, lock, settings, apply, refresh, verify and install."},
     {"name": "Desktop App", "kind": "standing", "role": "area", "admits": "Work on the app's code and screens under crates/app and ui/ that advances no deliverable."},
     {"name": "Docs", "kind": "standing", "role": "area", "admits": "The root README.md and AGENTS.md, and docs/; a README or AGENTS.md under another area's path goes to that area."},
+    {"name": "Website", "kind": "standing", "role": "area", "admits": "The kendex website's pages and code in the kendex-web repository."},
     {"name": "Skills & Agents Library", "kind": "standing", "role": "area", "admits": "Catalog skills and agents under skills/ and agents/ that no other area's rule names."},
     {"name": "Tech Debt", "kind": "standing", "role": "concern", "admits": "Cleanup of past shortcuts and pre-existing defects no single area owns; an item that also fits Upkeep goes here."},
     {"name": "Upkeep", "kind": "standing", "role": "concern", "admits": "Recurring maintenance no single area owns: dependency and toolchain updates that span areas, renewals, rotations, refresh adoption and scheduled housekeeping. A change confined to one area's paths goes to that area."}
