@@ -160,7 +160,10 @@ Rows:
                   conventional-commit scope or right after Closes on a body
                   line, as a Claude cloud session's claude/ branch names no
                   item. The issue cell carries the
-                  PR number and the merge commit. Landed also lists each
+                  PR number and the merge commit, followed by the Linear
+                  item's live Done or Verifying state when available.
+                  GitHub items and reads with no state add no state.
+                  Landed also lists each
                   item with a direct-push cycle row recorded in fleet_log
                   since the last report. Its issue cell carries
                   `ITEM (direct push, SHA)`, with the commit's first 7
@@ -656,10 +659,12 @@ fi
 # guesses a tracker or a repo.
 TITLE=""
 WHY=""
+ITEM_STATE=""
 issue_cells() {
   local item="$1" fields tracker repo json
   TITLE=""
   WHY=""
+  ITEM_STATE=""
   if ! fields="$(jq -r --arg item "$item" '
     [.lanes[] | select(.item == $item)] | first // {}
     | "\(.tracker // "")\u001f\(.repo // "")"' <<<"$STATE_JSON")"; then
@@ -685,7 +690,9 @@ issue_cells() {
       # would otherwise nest the issue or drop its description.
       if ! json="$("$TRACKER" issues get "$item" --format=safe 2>"$WORK_DIR/tracker.err")"; then
         refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
-      fi ;;
+      fi
+      ITEM_STATE="$(jq -r '.state // "" | select(. == "Done" or . == "Verifying")' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
+        || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")" ;;
     *) TITLE="(tracker unknown)"; return 0 ;;
   esac
   # A read that answered with no title answered nothing this report can use.
@@ -724,6 +731,7 @@ table() {
   while IFS=$'\t' read -r item label; do
     [[ -n "$item" ]] || continue
     issue_cells "$item"
+    [[ "$name" != Landed* || -z "$ITEM_STATE" ]] || label+=" $ITEM_STATE"
     line="|"
     for column in "${COLUMNS[@]}"; do
       case "$column" in

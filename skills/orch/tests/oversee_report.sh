@@ -53,6 +53,37 @@ seed_fleet() {
 # the Escapes ones below, each on a later clock, reads a count.
 ESCAPES_UNREAD="Escapes: unread (the clock reads before the cap week 2026-09-28)"
 
+echo "=== render: Landed carries each Linear item's live state ==="
+landed_states() {
+  new_case "landed-states-$1"
+  report -3600
+  fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 done)" "$(lane KEN-3 done)" "$(lane issue-4 done '' '' github owner/repo)"
+  local n state
+  for n in 1 2 3; do
+    case "$n" in 1) state=Done ;; 2) state=Verifying ;; 3) state='' ;; esac
+    jq -n --arg state "$state" '{title: "Item", state: $state}' > "$CASE/linear-KEN-$n.json"
+    merged_pr "$n" "ken-$n" -60 abcdef1234
+  done > "$CASE/merged.jsonl"
+  echo '{"title":"Item","state":"CLOSED"}' > "$CASE/issue-4.json"
+  merged_pr 4 issue-4 -60 abcdef1234 >> "$CASE/merged.jsonl"
+  jq -s . "$CASE/merged.jsonl" > "$CASE/merged.json"
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$(awk '/^\| (KEN-|issue-)/ {print $2, $3, $4, $5}' <<<"$OUT")" \
+    '0|KEN-1 (#1, abcdef1) Done
+KEN-2 (#2, abcdef1) Verifying
+KEN-3 (#3, abcdef1) |
+issue-4 (#4, abcdef1) |' 'the report protocol names live Linear states and leaves absent or GitHub states empty'
+}
+landed_states shipped
+STATE_REPORT="$(mutant_scripts landed-states/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/landed-states/github"
+mutate_file "$STATE_REPORT" '|| label+=" $ITEM_STATE"' '|| :'
+if (FAIL=0; REPORT_UNDER_TEST="$STATE_REPORT" landed_states omitted; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/landed-states.out"; then
+  fail 'omitting the live state did not redden the Landed cells'
+else
+  assert_file_contains "$TMP_ROOT/landed-states.out" '  FAIL  ' 'the control rejects the previous state-free cells'
+fi
+
 echo "=== render: the cycle owner supplies lane and open medians beside Landed ==="
 # The report file is the overseer's protocol. Old records have no lane time;
 # new records carry both spans. Their stored verdicts cannot set miss share.
