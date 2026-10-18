@@ -157,7 +157,8 @@ Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, an idle lane whose tracker item is
 terminal, or whose record carries the cycle oversee-cycle writes at its pull
 request's merge and whose worktree, the record's mail_root, is gone, in a full
-close a record whose window no pane carries on a terminal item, or a record
+close a record whose window no pane carries on a terminal item or with the
+same merge cycle and absent worktree, or a record
 whose host kind declares stop=none, in any state, which the close ends on this
 machine alone (the stop=none paragraph below).
 Codex's rate-limit-switch reminder takes the same completion checks as idle.
@@ -171,7 +172,7 @@ refuses as lane-live state=idle. A local lane's worktree is read on this disk;
 a hosted lane's .git through lane-host cat, as oversee-watch reads it before
 its own close of a merged hosted lane, and a read that fails refuses as
 worktree-read-failed.
-A Pi lane read unjudged also closes when its record carries the merge cycle
+A lane read unjudged also closes when its record carries the merge cycle
 and its worktree is gone, on a host whose capture verb reads its pane too
 where that read and the harness status read both succeed. Every other
 unjudged lane refuses as lane-live, or as pane-read-failed where that
@@ -196,7 +197,7 @@ harness there either it refuses as stop-failed cause=identity-unread or
 cause=identity-stale. No directory is read, so a lane whose worktree its own
 close-out removed, or one recreated at the same path, stops all the same. The
 close then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read
-exited. A hosted Pi pane read as unjudged after successful provider status and
+exited. A hosted pane read as unjudged after successful provider status and
 capture reads keeps waiting. A failed read before the stop or during this wait
 refuses as pane-read-failed; a pane that never reads exited ends as exit-timeout.
 A hosted stop answering status 4 beside a stop-worktree-removed item=ITEM line
@@ -1244,10 +1245,10 @@ pane_cmd="$LANE_PANE_CMD"
 case "$pane_cmd" in
   claude|codex|pi|copilot) derive_identity harness "$pane_cmd" ;;
 esac
-# Pi can leave no idle marker in a successful provider capture, including
-# after its stop. Failed status or capture reads carry no provider source.
+# A successful provider capture can leave no idle marker. Failed status or
+# capture reads carry no provider source.
 pane_state_readable() { # STATE
-  [[ "$host_pane" != verb || "$1" != unjudged || ( "$harness" == pi && "$LANE_PANE_SOURCE" == provider ) ]]
+  [[ "$host_pane" != verb || "$1" != unjudged || ( "$LANE_PANE_SOURCE" == provider ) ]]
 }
 if [[ -n "$pane_id" ]]; then
   pane_screen="" hosted_source=""
@@ -1270,7 +1271,13 @@ else
   tracker_rc=0; [[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && tracker_terminal || tracker_rc=$?
   case "$tracker_rc" in
     0) [[ -n "$host" ]] || refuse_listed_launch_pane; state=windowless ;;
-    1) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;
+    1)
+      if [[ "$PARK" == false && "$KEEP_SANDBOX" == false ]] && record_merged && worktree_gone; then
+        [[ -n "$host" ]] || refuse_listed_launch_pane
+        state=windowless
+      else
+        message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1
+      fi ;;
     *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
   esac
 fi
@@ -1365,9 +1372,6 @@ case "$state" in
     if [[ "$state" != unjudged ]]; then
       tracker_rc=0
       tracker_terminal || tracker_rc=$?
-    elif [[ "$harness" != pi ]]; then
-      message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2
-      exit 1
     fi
     case "$tracker_rc" in
       0) ;;

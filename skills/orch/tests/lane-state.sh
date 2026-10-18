@@ -553,6 +553,10 @@ case "${1:-}" in
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && target="$2"; shift; done
     [[ -f "$STUB_DIR/pane-$target.txt" ]] || exit 1
     cat "$STUB_DIR/pane-$target.txt"; exit 0 ;;
+  display-message)
+    [[ "${*: -1}" == '#{pane_dead}' ]] || exit 1
+    [[ "${PANE_DEAD:-0}" != unreadable ]] || exit 1
+    printf '%s\n' "${PANE_DEAD:-0}"; exit 0 ;;
 esac
 exit 1
 EOF
@@ -570,6 +574,45 @@ printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-9\t%%4\t101\tbash\n' > "$PANE
 lane_pane_observe CC-1
 assert_eq "$LANE_PANE_CMD/$LANE_PANE_PID/${LANE_PANE_SCREEN:+screen}" "claude/100/screen" \
   "the window's own pane is what the observer hands the judge"
+
+# tmux retains the last command under remain-on-exit. The local dead flag
+# settles exit without a shell or a matching harness screen.
+dead_pane_row() { # LIBRARY HARNESS HOST DEAD [SCREEN SESSION ROWS]
+  (
+    source "$1"
+    printf 'kendex\tCC-1\t%%3\t100\t%s\n' "$2" > "$PANE_FIELDS"
+    screen_for "${5:-blank}" > "$STUB_DIR/pane-%3.txt"
+    export PANE_DEAD="$4"
+    if [[ "${3:-local}" == local ]]; then
+      lane_pane_observe CC-1
+    else
+      lane_pane_resolve CC-1
+      lane_pane_capture LANE_PANE_SCREEN local "$3" CC-1 "$LANE_PANE_ID"
+    fi
+    lane_state dead_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "${6:-}" '' "${7:-}" '' "$2" "$LANE_PANE_SOURCE"
+    printf '%s source=%s' "$dead_state" "$LANE_EXIT_SOURCE"
+  )
+}
+DEAD_MUTANT="$(mutant_scripts dead-pane lib/lane-state.sh)" || exit 1
+mutate_file "$DEAD_MUTANT/lib/lane-state.sh" 'LANE_PANE_SOURCE=local-dead' 'LANE_PANE_SOURCE=local'
+for harness in claude codex copilot pi; do
+  assert_eq "$(dead_pane_row "$SCRIPTS_DIR/lib/lane-state.sh" "$harness" local 1)" 'exited source=pane' \
+    "a dead local $harness pane reads exited"
+  assert_eq "$(dead_pane_row "$DEAD_MUTANT/lib/lane-state.sh" "$harness" local 1)" 'unjudged source=' \
+    "control: without dead proof the $harness pane reads unjudged"
+done
+while IFS='|' read -r host dead screen session rows want; do
+  assert_eq "$(dead_pane_row "$SCRIPTS_DIR/lib/lane-state.sh" copilot "$host" "$dead" "$screen" "$session" "$rows")" "$want" \
+    "dead flag $dead on $host with $screen screen, $session session and $rows rows"
+done <<'ROWS'
+local|0|blank|||unjudged source=
+local|unreadable|blank|||unjudged source=
+local|1|working|busy|working|exited source=pane
+|1|blank|||exited source=pane
+ssh|1|blank|||unjudged source=
+ROWS
+printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-9\t%%4\t101\tbash\n' > "$PANE_FIELDS"
+printf '%s\n' "⏺ Done." "$COMPOSER" > "$STUB_DIR/pane-%3.txt"
 mv "$STUB_DIR/pane-%3.txt" "$STUB_DIR/pane-%3.saved"
 for row in '|unjudged' 'idle|idle' 'busy|working' 'unjudged|unjudged'; do
   IFS='|' read -r session want <<< "$row"
