@@ -49,9 +49,9 @@
 # SessionStart fills the launch's pending row in the runtime record its
 # environment names, with no fleet and no mailbox (session_rows_jarvis_write),
 # and the lane-mail-check hook's own run at its first tool call, or on Claude
-# Code its turn end, after the Start brief stamps that row once as the brief
-# taken, and on Codex and Copilot CLI its turn end before the brief stamps it
-# once as the kickoff turn ended (session_rows_jarvis_taken): the facts the
+# Code, Codex and Copilot CLI its turn end, after the Start brief stamps that
+# row once as the brief taken, and on Codex and Copilot CLI its turn end before
+# the brief stamps it once as the kickoff turn ended (session_rows_jarvis_taken): the facts the
 # Jarvis launch worker reads.
 #
 # The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
@@ -427,12 +427,13 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
 # delivered. The worker writes `brief_delivered` under the same lock in the
 # hold that pastes the brief, so this stamp is ordered after the delivery
 # with no clock; a hook that met the lock held retries at the session's next
-# call that stamps. A turn end writes it on Claude Code alone, which fires
-# StopFailure in place of Stop on a turn that ended on an error
-# (docs/adapters/pi.md). Pi's carrier dispatches Stop on an errored run as
-# well, and Codex and Copilot have no turn-failure event to tell one apart
-# (hooks/stop-failure-row.sh), so there only a tool call says the session
-# took the brief.
+# call that stamps. A turn end writes it on Claude Code, Codex and Copilot
+# CLI. Claude Code fires StopFailure in place of Stop on an errored turn.
+# Codex Stop has no outcome field, and Copilot agentStop's stopReason is
+# always end_turn, so an errored brief turn that emits Stop also reads as
+# taken on those harnesses. The worker still refuses a sign-in wall, trust
+# question or wrong account before a stamp counts. Pi's carrier dispatches
+# Stop on an errored run too, so Pi still requires a tool call.
 #
 # `kickoff_ended`, the kickoff turn ended: a Codex or Copilot turn end where
 # the brief is not yet delivered. Those harnesses fire SessionStart only at
@@ -455,22 +456,26 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
 session_rows_jarvis_taken() { # RECORD GENERATION KEY HARNESS EVENT
   local session verdict due stamp
   case "$5:$4" in
-    PreToolUse:* | Stop:claude) due=own stamp=brief_taken ;;
-    Stop:codex | Stop:copilot) due=undelivered stamp=kickoff_ended ;;
+    PreToolUse:* | Stop:claude) due=own ;;
+    Stop:codex | Stop:copilot) due=turn ;;
     *) return 0 ;;
   esac
   session="$(jq -r '(.session_id // .sessionId) | strings')" || return 1
   [ -n "$session" ] || return 0
   verdict="$(session_rows_jarvis_due "$1" "$2" "$3" "$4" "$session")" || return 1
   case "$due:$verdict" in
-    own:own | own:undelivered | own:ended | undelivered:undelivered) ;;
+    own:own | own:undelivered | own:ended | turn:own | turn:undelivered) ;;
     *) return 0 ;;
   esac
   (
     exec 200>>"$1.lock" || exit 2
     orch_take_lock 200 "$1.lock" "$SESSION_ROWS_WAIT" || exit 3
     verdict="$(session_rows_jarvis_due "$1" "$2" "$3" "$4" "$session")" || exit 1
-    [ "$verdict" = "$due" ] || exit 0
+    case "$due:$verdict" in
+      own:own | turn:own) stamp=brief_taken ;;
+      turn:undelivered) stamp=kickoff_ended ;;
+      *) exit 0 ;;
+    esac
     jq -c --arg stamp "$stamp" '.pending[$stamp] = true' -- "$1" >"$1.$$" || { rm -f -- "$1.$$"; exit 2; }
     mv -f -- "$1.$$" "$1" || { rm -f -- "$1.$$"; exit 2; }
   )

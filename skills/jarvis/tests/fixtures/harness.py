@@ -232,9 +232,12 @@ def main():
         # composer once the turn ends.
         print(CLAUDE_SPINNER + "\n❯\u00a0", flush=True)
         brief_taken(fixture, harness, identity, "Stop")
+    elif fixture.get("turn") == "text-only":
+        print("Ready.\n❯\u00a0", flush=True)
+        brief_taken(fixture, harness, identity, "Stop")
     else:
         print("Working to interrupt", flush=True)
-    if deferred and auth_mode != "current":
+    if deferred and auth_mode != "current" and fixture.get("turn") != "text-only":
         if barrier:
             # A working pane after a kickoff turn is no proof of the brief:
             # the controller reads it twice before the stamp.

@@ -635,7 +635,7 @@ JARVISMISMATCH
 
 # The brief-taken stamp: a Jarvis launch whose identity started under the
 # session's id and whose Start brief the worker delivered takes the stamp
-# once, at the lead's first tool call (lane-mail-halt) or Claude Code turn end
+# once, at the lead's first tool call (lane-mail-halt) or Claude Code, Codex or Copilot CLI turn end
 # (lane-mail-check's own Stop run), and every other record stays as it stands.
 # Payloads are Claude Code's PreToolUse and Stop, Codex's, Copilot's
 # preToolUse and agentStop, and the pi-hooks carrier's.
@@ -675,9 +675,11 @@ claude-stop|.claude/hooks|5f0c|lane-mail-check|$STOP|.|true|JARVIS_GENERATION=3
 pi-tool|.pi/kendex/hooks|p1|lane-mail-halt|$PI_TOOL|.|true|JARVIS_GENERATION=3
 pi-stop|.pi/kendex/hooks|p1|lane-mail-check|$PI_STOP|.|none|JARVIS_GENERATION=3
 codex-tool|.codex/hooks|019a|lane-mail-halt|$CODEX_TOOL|.|true|JARVIS_GENERATION=3
-codex-stop|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.|none|JARVIS_GENERATION=3
+codex-stop|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.|true|JARVIS_GENERATION=3
 copilot-tool|.github/hooks|l1|lane-mail-halt|$COP_TOOL|.|true|JARVIS_GENERATION=3 ${COP_ENV[*]}
-copilot-stop|.github/hooks|l1|lane-mail-check|$COP_STOP|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
+copilot-stop|.github/hooks|l1|lane-mail-check|$COP_STOP|.|true|JARVIS_GENERATION=3 ${COP_ENV[*]}
+codex-other-session-stop|.codex/hooks|6a1d|lane-mail-check|$CODEX_STOP|.|none|JARVIS_GENERATION=3
+copilot-other-session-stop|.github/hooks|s9|lane-mail-check|$COP_STOP|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
 copilot-subagent|.github/hooks|l1|lane-mail-halt|$COP_SUB_TOOL|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
 undelivered|.claude/hooks|5f0c|lane-mail-halt|$TOOL|.brief_delivered = false|none|JARVIS_GENERATION=3
 running|.claude/hooks|5f0c|lane-mail-check|$STOP|.state = "running"|none|JARVIS_GENERATION=3
@@ -717,7 +719,6 @@ codex-tool|.codex/hooks|019a|lane-mail-halt|$CODEX_TOOL|.|none|JARVIS_GENERATION
 claude-stop|.claude/hooks|5f0c|lane-mail-check|$STOP|.|none|JARVIS_GENERATION=3
 pi-stop|.pi/kendex/hooks|p1|lane-mail-check|$PI_STOP|.|none|JARVIS_GENERATION=3
 unstarted|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.pending.started_at = null|none|JARVIS_GENERATION=3
-delivered|.codex/hooks|019a|lane-mail-check|$CODEX_STOP|.brief_delivered = true|none|JARVIS_GENERATION=3
 other-session|.codex/hooks|6a1d|lane-mail-check|$CODEX_STOP|.|none|JARVIS_GENERATION=3
 copilot-subagent|.github/hooks|l1|lane-mail-check|$COP_SUB_STOP|.|none|JARVIS_GENERATION=3 ${COP_ENV[*]}
 running|.github/hooks|l1|lane-mail-check|$COP_STOP|.state = "running"|none|JARVIS_GENERATION=3 ${COP_ENV[*]}

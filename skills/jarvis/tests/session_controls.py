@@ -33,6 +33,8 @@ CONTROLS = [
     ("worker acquisition cleanup", "jarvis/scripts/lib/session.py", '            child.terminate()\n            try:\n                child.wait(timeout=2)\n            except subprocess.TimeoutExpired:\n                child.kill()\n                child.wait(timeout=2)', '            if False:\n                child.terminate()\n                try:\n                    child.wait(timeout=2)\n                except subprocess.TimeoutExpired:\n                    child.kill()\n                    child.wait(timeout=2)', "test_start_acquisition_failure_releases_ownership"),
     ("working turn", "jarvis/scripts/lib/session.py", 'record.get("brief_delivered") and (taken or (observed == "working" and not prepared["kickoff"])):', 'record.get("brief_delivered"):', "test_idle_prompt_is_not_running"),
     ("brief taken", "jarvis/scripts/lib/session.py", '(taken or (observed == "working" and not prepared["kickoff"]))', '((observed == "working" and not prepared["kickoff"]))', "test_turn_end_takes_the_brief"),
+    ("Copilot text-only resume", "orch/scripts/lib/session-rows.sh", 'own:own | turn:own) stamp=brief_taken ;;', 'own:own | turn:own) [ "$due:$4" != turn:copilot ] || exit 0; stamp=brief_taken ;;', "test_resume_after_text_only_brief"),
+    ("Codex text-only resume", "orch/scripts/lib/session-rows.sh", 'own:own | turn:own) stamp=brief_taken ;;', 'own:own | turn:own) [ "$due:$4" != turn:codex ] || exit 0; stamp=brief_taken ;;', "test_resume_after_text_only_brief"),
     ("Pi tool call takes the brief", "jarvis/scripts/lib/session.py", '(taken or (observed == "working" and not prepared["kickoff"]))', '((observed == "working" and not prepared["kickoff"]))', "test_pi_contract"),
     ("Pi idle before the brief", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$harness" == pi && "$6" == confirmed && "$brief" == undelivered ]]; then', 'if false; then', "test_pi_contract"),
     ("trust refusal", "jarvis/scripts/lib/session-backend.sh", "0) printf 'trust\\n%s\\n' \"$dialog\"; exit ;;", '0) ;;', "test_trust_dialog_is_refused"),
@@ -68,6 +70,7 @@ CONTROLS = [
 # controls-2.test.sh part 2. A control runs in the part of its baseline case,
 # so each baseline runs once; a case this set does not name runs in part 2.
 PART_1_BASELINES = frozenset({
+    "test_resume_after_text_only_brief",
     "test_idle_prompt_is_not_running",
     "test_start_acquisition_failure_releases_ownership",
     "test_pi_contract",

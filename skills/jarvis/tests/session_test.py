@@ -517,6 +517,29 @@ class SessionContract(unittest.TestCase):
         self.assertIsNotNone(answer["terminal"])
         self.assertIs(json.loads(self.record.read_text())["pending"]["brief_taken"], True)
 
+    def test_resume_after_text_only_brief(self):
+        # Both kickoff harnesses must accept a resumed brief with no tool call.
+        fixture = self.home / ".fixture.json"
+        for harness in ("copilot", "codex"):
+            with self.subTest(harness=harness):
+                fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"turn": "tools"}))
+                self.call("start", harness, mode="new")
+                self.wait(seconds=70)
+                identity = self.started()[-1]["id"]
+                self.call("stop")
+                self.wait("stopped")
+                fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"turn": "text-only"}))
+                self.call("start", harness, mode="resume")
+                answer = self.wait(reason="resumed", seconds=70)
+                self.assertIsNotNone(answer["terminal"])
+                record = json.loads(self.record.read_text())
+                self.assertEqual(self.started()[-1]["id"], identity)
+                self.assertEqual(record["pending"]["native_session_id"], identity)
+                self.assertIs(record["pending"].get("brief_taken"), True)
+                self.assertIs(record["pending"].get("kickoff_ended"), True)
+                self.call("stop")
+                self.wait("stopped")
+
     def test_session_start_at_first_prompt(self):
         # Copilot CLI and Codex fire SessionStart only once the first prompt is
         # submitted. Their kickoff turn draws a working line before its stamp
