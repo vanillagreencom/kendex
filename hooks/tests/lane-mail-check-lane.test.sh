@@ -87,7 +87,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control unreported 's/^  true:\* | \*:halt | \*:row | \*:lane) REPORTED=true ;;$/  true:* | *:halt | *:row) REPORTED=true ;;/' \
     "a marker that is no plain file is reported with no answer, never read as no lane"
   # The arm's answer skipped outside a repository: nothing is printed there.
-  control unanswered 's/^  \[ -d "\$LANE_DIR\/tmp\/lane-mail" \] || { \[ "\$ARM" != lane \] || echo none; exit 0; }$/  [ -d "$LANE_DIR\/tmp\/lane-mail" ] || exit 0/' \
+  control unanswered 's/^[[:space:]]*\[ -d "\$LANE_DIR\/tmp\/lane-mail" \] || { \[ "\$ARM" != lane \] || echo none; exit 0; }$/  [ -d "$LANE_DIR\/tmp\/lane-mail" ] || exit 0/' \
     "a directory outside any repository is no lane"
   # The arm no longer skips the mailbox refusal: a boxless marked root refuses.
   control boxless 's/^if \[ "\$ARM" != row \] && \[ "\$ARM" != lane \] && /if [ "$ARM" != row ] \&\& /' \

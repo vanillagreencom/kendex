@@ -1,0 +1,1 @@
+- Managed Jarvis sessions receive the context handoff mark without registering as a repository overseer.
