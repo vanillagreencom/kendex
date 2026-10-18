@@ -25,7 +25,7 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 # linker or sccache installed on the host cannot answer for a row.
 SYS_BIN="$TMP/sys-bin"
 mkdir -p "$SYS_BIN"
-for tool in bash cat grep mkdir mv cp install mktemp rm awk sha256sum unzip; do
+for tool in bash cat grep mkdir mv cp cmp install mktemp rm awk sha256sum unzip; do
   tool_path="$(command -v "$tool")" || { bad "the host provides $tool"; exit 1; }
   ln -s "$tool_path" "$SYS_BIN/$tool"
 done
@@ -68,7 +68,11 @@ printf 'v22.19.0\n'
 SH
   cat >"$R/fake-bin/bun" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "${BUN_IMAGE_VERSION:-1.3.14}"
+if [ -n "${BUN_IMAGE_VERSION:-}" ]; then
+  printf '%s\n' "$BUN_IMAGE_VERSION"
+else
+  cat .bun-version
+fi
 SH
   cat >"$R/fake-bin/uname" <<'SH'
 #!/usr/bin/env bash
@@ -176,13 +180,13 @@ SH
 
 BUN_ROWS=0
 proof_bun() { # STATE [FROM TO]
-  local state=$1 image="" resolved=""
+  local state=$1 image="" resolved="" sandbox=test
   shift
   BUN_ROWS=$((BUN_ROWS + 1))
   fixture "bun-$state-$BUN_ROWS" "$@"
   bun_release || return 1
   case "$state" in
-    install | corrupt | rerun | foreign) image=1.4.2 ;;
+    install | corrupt | rerun | foreign | developer) image=1.4.2 ;;
     skip) image="$(cat "$R/.bun-version")" || return 1 ;;
     unsupported | unsupported-os) image=1.4.2 ;;
   esac
@@ -192,7 +196,14 @@ proof_bun() { # STATE [FROM TO]
   if [ "$state" = foreign ]; then
     printf 'keep\n' >"$R/home/.bash_profile"
   fi
-  run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" BUN_ARCH="$([ "$state" = unsupported ] && echo aarch64 || echo x86_64)" BUN_OS="$([ "$state" = unsupported-os ] && echo Darwin || echo Linux)" DAYTONA_SANDBOX_ID=test
+  if [ "$state" = developer ]; then
+    sandbox=""
+    mkdir -p "$R/home/.local/bin"
+    cp "$R/fake-bin/bun" "$R/home/.local/bin/bun"
+    cp "$R/home/.local/bin/bun" "$R/developer-bun"
+    EXTRA_BIN="$R/home/.local/bin"
+  fi
+  run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" BUN_ARCH="$([ "$state" = unsupported ] && echo aarch64 || echo x86_64)" BUN_OS="$([ "$state" = unsupported-os ] && echo Darwin || echo Linux)" DAYTONA_SANDBOX_ID="$sandbox"
   case "$state" in
     install | rerun)
       [ "$RC" -eq 0 ] && [ -x "$R/home/.local/bin/bun" ] && [ -s "$R/curl.log" ] || return 1
@@ -211,12 +222,16 @@ proof_bun() { # STATE [FROM TO]
     skip) [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.local/bin/bun" ] && case "$OUT" in *'lane-setup: bun=skip'*) true ;; *) false ;; esac ;;
     corrupt) [ "$RC" -ne 0 ] && [ ! -e "$R/home/.local/bin/bun" ] ;;
     foreign) [ "$RC" -ne 0 ] && [ "$(cat "$R/home/.bash_profile")" = keep ] && [ ! -e "$R/curl.log" ] ;;
+    developer)
+      [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.bash_profile" ] && cmp -s "$R/home/.local/bin/bun" "$R/developer-bun" || return 1
+      case "$OUT" in *"lane-setup: bun=not-sandbox found=$image pinned=$(cat "$R/.bun-version")"*) ;; *) return 1 ;; esac
+      ;;
     unsupported | unsupported-os) [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.local/bin/bun" ] && [ ! -e "$R/home/.bash_profile" ] ;;
   esac
 }
 
 echo "=== Bun release install, skip and startup ==="
-for state in install skip rerun corrupt foreign unsupported unsupported-os; do
+for state in skip rerun corrupt foreign developer unsupported unsupported-os; do
   proof_bun "$state" && ok "Bun $state" || bad "Bun $state" "rc=$RC out=$OUT"
 done
 proof_bun install '    install_bun "$bun_pin"' '    :' \
@@ -227,6 +242,8 @@ proof_bun corrupt '  (cd -- "$work" && sha256sum -c bun.sha256)' '  :' \
   && bad 'control: unchecked archive is rejected' || ok 'control: unchecked archive is rejected'
 proof_bun install "export PATH=\"\$HOME/.local/bin:\$PATH\"'" "export PATH=\"\$PATH\"'" \
   && bad 'control: missing startup PATH is rejected' || ok 'control: missing startup PATH is rejected'
+proof_bun developer 'if [[ -z ${DAYTONA_SANDBOX_ID:-} ]]; then' 'if false; then' \
+  && bad 'control: replacing a developer Bun is rejected' || ok 'control: replacing a developer Bun is rejected'
 
 echo "=== a fresh clone installs both dependency sets ==="
 fixture fresh

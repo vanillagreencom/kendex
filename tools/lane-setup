@@ -48,13 +48,14 @@ bun_pin="$(cat .bun-version)" || exit $?
 host_os="$(uname -s)" || exit $?
 host_arch="$(uname -m)" || exit $?
 bun_version=unavailable
-if [ "$host_os:$host_arch" = Linux:x86_64 ]; then
+if [[ -z ${DAYTONA_SANDBOX_ID:-} ]]; then
+  bun_version="$(bun --version 2>/dev/null)" || bun_version=unavailable
+  printf 'lane-setup: bun=not-sandbox found=%s pinned=%s\n' "$bun_version" "$bun_pin"
+elif [ "$host_os:$host_arch" = Linux:x86_64 ]; then
   # Fleet starts the harness in a login shell. Its npm/Pi children inherit
   # this PATH; an export inside lane-setup cannot change its parent's PATH.
-  if [ -n "${DAYTONA_SANDBOX_ID:-}" ]; then
-    write_owned shell-profile "$HOME/.bash_profile" '[ ! -f "$HOME/.profile" ] || . "$HOME/.profile"
+  write_owned shell-profile "$HOME/.bash_profile" '[ ! -f "$HOME/.profile" ] || . "$HOME/.profile"
 export PATH="$HOME/.local/bin:$PATH"'
-  fi
   export PATH="$HOME/.local/bin:$PATH"
   bun_version="$(bun --version 2>/dev/null)" || bun_version=unavailable
   if [ "$bun_version" = "$bun_pin" ]; then
