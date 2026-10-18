@@ -13,6 +13,23 @@
 # counts_of parses, and exits non-zero when FAIL is.
 PASS=0
 FAIL=0
+# Some suites change SECONDS. Resolve the wall-clock command before their
+# PATH fixtures can replace it.
+ASSERTION_DATE="$(type -P date)" || return 1
+ASSERTION_LAST_SECONDS="$("$ASSERTION_DATE" +%s)" || return 1
+
+# Each interval ends at an assertion. The first includes setup; subsequent
+# assertions for the same operation share its cost rather than count it twice.
+# run-all.sh adds the suite identity to these machine-readable records.
+assertion_timing() { # RESULT NAME
+  local now elapsed
+  now="$("$ASSERTION_DATE" +%s)" || return 1
+  elapsed=$((now - ASSERTION_LAST_SECONDS))
+  ASSERTION_LAST_SECONDS=$now
+  if [ "$elapsed" -ge 1 ]; then
+    printf 'case seconds=%s result=%s name=%s\n' "$elapsed" "$1" "$2"
+  fi
+}
 
 # Prepare a current handoff for suites that test other succession rules.
 # A fixture without identity starts with a registered predecessor generation.
@@ -39,12 +56,14 @@ dump_stderr() {
 pass() {
   PASS=$((PASS + 1))
   printf '  ok    %s\n' "$1"
+  assertion_timing ok "$1"
 }
 
 fail() {
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n' "$1"
   [[ -z "${2:-}" ]] || printf '        %s\n' "$2"
+  assertion_timing FAIL "$1"
 }
 
 # Every comparison takes GOT or its subject first and NAME third; the optional

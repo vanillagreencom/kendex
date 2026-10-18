@@ -52,6 +52,12 @@
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
 #
+# The shared assertion helper emits case records for intervals of at least
+# one whole second. Each ends at its named assertion, including setup before
+# the first assertion. Reports add the suite so job logs can group cases:
+#
+#   case suite=<name> seconds=<n> result=<ok|FAIL> name=<assertion name>
+#
 # Before any suite starts, selected suite=<name> lists the whole selection.
 # On cancellation, unstarted suite=<name> names each selected suite the
 # worker pool did not launch. The lane can use these rows for its fallback.
@@ -103,7 +109,7 @@
 # suite as `<tree>--<base>`. On a red run one `  - <name>` line per red suite
 # follows the verdict.
 #
-# `seconds` is the suite's own wall time, and the total's is the whole run's.
+# A suite report's `seconds` is its wall time; the total's is the whole run's.
 # `pass` and `fail` are the counts from the last summary line the suite
 # printed in any of the shapes the suites use (`pass: N  fail: M`,
 # `N passed, M failed`, `N pass, M fail`, or Python unittest's `Ran N tests`
@@ -467,7 +473,12 @@ TOTAL_FAIL=0
 report() { # BASE STATUS SECONDS [STOP LAST]
   local pass fail rowless counts
   printf '\n──── %s ────\n' "$1"
-  cat -- "$OUT_DIR/$1.out" 2>/dev/null ||
+  awk -v suite="$1" '
+    /^case seconds=[0-9]+ result=(ok|FAIL) name=/ {
+      $0 = "case suite=" suite " " substr($0, 6)
+    }
+    { print }
+  ' "$OUT_DIR/$1.out" 2>/dev/null ||
     echo "run-all.sh: $1 left no readable output"
   # A suite killed mid-line would otherwise glue its last line to the report.
   [[ ! -s "$OUT_DIR/$1.out" || -z "$(tail -c 1 -- "$OUT_DIR/$1.out")" ]] || echo
