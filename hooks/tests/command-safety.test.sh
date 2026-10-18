@@ -232,6 +232,16 @@ environment_rows() {
     [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
+[0,"bash scripts/lib/jarvis-env.sh DIR -- node FILE","operand-env-script"]
+[0,"unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE\nbash scripts/lib/jarvis-env.sh tmp/package-repair-VGS-1735-standins -- node \"$PWD/tmp/package-repair-VGS-1735.js\" > tmp/package-repair-VGS-1735.log 2>&1\nruntime_status=$?\ncat tmp/package-repair-VGS-1735.log\nprintf 'runtime-1 exit=%s\\n' \"$runtime_status\"\nexit \"$runtime_status\"","operand-env-reported-command"]
+[0,"bash wrapper.sh --path 'scripts/lib/jarvis-env.sh'","operand-env-quoted-path"]
+[0,"bash scripts/lib/jarvis-export.sh DIR -- node FILE","operand-export-script"]
+[0,"bash scripts/lib/jarvis-declare.sh DIR -- node FILE","operand-declare-script"]
+[2,"command env","operand-command-env"]
+[2,"command printenv","operand-command-printenv"]
+[2,"command export -p","operand-command-export"]
+[2,"command declare -x","operand-command-declare"]
+[2,"command systemctl --user show-environment","operand-command-systemctl"]
 [2,"set \"${!NO_SUCH_PREFIX@}\"","copilot-set-indirect-name-spread-empty"]
 [2,"eval \"$MAYBE_EMPTY\" 'env'","copilot-eval-empty-earlier-operand"]
 [2,"eval :; then env -u \"$@\" MISSING; fi","copilot-suffix-env-empty-spread-shipped-eval"]
@@ -1017,11 +1027,11 @@ environment_rows() {
 [2,"if TOKEN=env true; then :; fi","syntax-assignment-data"]
 [2,"function env { :; }","syntax-function-name"]
 [2,"coproc env { :; }","syntax-coproc-name"]
-[2,"time --env true","time-option-data"]
+[0,"time --env true","time-option-data"]
 [2,"if printf ok >env; then :; fi","redirect-target-data"]
 [2,"if printf ok >/proc/self/environ; then :; fi","redirect-proc-output-data"]
 [2,"if printf %s key=env; then :; fi","punctuated-argument-data"]
-[2,"if cat ./env.txt; then :; fi","punctuated-path-data"]
+[0,"if cat ./env.txt; then :; fi","punctuated-path-data"]
 [2,"if sudo -u env true; then :; fi","conservative-sudo-operand"]
 [2,"env -S \"printenv PATH\"","split-string-named-read"]
 [2,"env -S \"printf env\"","split-string-quoted-data"]
@@ -1236,6 +1246,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
+      defect == "operand-word-boundary" { swap("(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)", "(^|[^A-Za-z0-9_])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)") }
       defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[$program_pos]}\"; }; then mode=dump-unknown; fi") }
       defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
@@ -1340,6 +1351,22 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
 literal-source-veto|FAIL environment: fleet-literal-command-string-setup: exit=2 expected=0
 quoted-data-cut|FAIL environment: quoted-operator-with-heredoc-remains-data: exit=2 expected=0
 no-check|FAIL environment: incident: exit=0 expected=2
+no-check|FAIL environment: bare-env: exit=0 expected=2
+no-check|FAIL environment: bare-printenv: exit=0 expected=2
+no-check|FAIL environment: export-list: exit=0 expected=2
+no-check|FAIL environment: declare-export: exit=0 expected=2
+no-check|FAIL environment: operand-command-env: exit=0 expected=2
+no-check|FAIL environment: operand-command-printenv: exit=0 expected=2
+no-check|FAIL environment: operand-command-export: exit=0 expected=2
+no-check|FAIL environment: operand-command-declare: exit=0 expected=2
+no-check|FAIL environment: operand-command-systemctl: exit=0 expected=2
+operand-word-boundary|FAIL environment: operand-env-script: exit=2 expected=0
+operand-word-boundary|FAIL environment: operand-env-reported-command: exit=2 expected=0
+operand-word-boundary|FAIL environment: operand-env-quoted-path: exit=2 expected=0
+operand-word-boundary|FAIL environment: operand-export-script: exit=2 expected=0
+operand-word-boundary|FAIL environment: operand-declare-script: exit=2 expected=0
+operand-word-boundary|FAIL environment: time-option-data: exit=2 expected=0
+operand-word-boundary|FAIL environment: punctuated-path-data: exit=2 expected=0
 exec-context|FAIL environment: r12-exec-list-unnamed-declaration: exit=0 expected=2
 exec-context|FAIL environment: r12-builtin-list-unnamed-declaration: exit=0 expected=2
 exec-context|FAIL environment: r12-command-exec-list-unnamed-declaration: exit=0 expected=2
@@ -1372,11 +1399,9 @@ main-evidence-cut|FAIL environment: eval-quoted-argument-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: syntax-assignment-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: syntax-function-name: exit=0 expected=2
 main-evidence-cut|FAIL environment: syntax-coproc-name: exit=0 expected=2
-main-evidence-cut|FAIL environment: time-option-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: redirect-target-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: redirect-proc-output-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: punctuated-argument-data: exit=0 expected=2
-main-evidence-cut|FAIL environment: punctuated-path-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-group-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: split-string-named-read: exit=0 expected=2
