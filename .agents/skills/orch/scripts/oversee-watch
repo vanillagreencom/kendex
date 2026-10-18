@@ -291,6 +291,7 @@ PW_STATE_DIR="$(lane_watch_state_dir "$PROJECT_ROOT")"
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
 #   main-push-failing<TAB><repo>:<workflow><TAB>[<sorted failed jobs>,<sorted failure identities or null for unread logs>] as JSON
+#   main-push-budget<TAB><repo>:skill-tests.yml<TAB>{watermark,seen,pending} as raw compact JSON
 #   main-schedule-failing<TAB><repo>:<workflow><TAB>the same, for the nightly scheduled run
 #     (a row keyed <repo> alone is skill-tests.yml's, from before the workflow key)
 #   main-workflow-absent<TAB><repo>:<workflow><TAB><branch|unwatched>, for a workflow ORCH_MAIN_WORKFLOWS names that no run list reads
@@ -2179,7 +2180,7 @@ main_workflow_absent() {
 check_main_push() {
   local repo workflow workflows entry row_key event row failing runs run conclusion jobs log cause failures key prior changed rc i line
   local -a slots lists reads parsed
-  local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err" read_repos=" " watched=" ${REPOS[*]} "
+  local rows="${PW_SEEN[0]}" errf="$WORK_DIR/main-push.err" read_repos=" " watched=" ${REPOS[*]} " budget_absent=" "
   slots=() lists=() reads=() parsed=()
   # A record for an entry the setting no longer names would hold back the
   # report when the entry comes back with the same fault.
@@ -2252,6 +2253,7 @@ check_main_push() {
       if { [[ "$read_repos" == *" $repo "* ]] &&
           [[ "$line" == "HTTP 404: workflow $workflow not found on the default branch ("* ]]; } ||
         workflow_absent "$repo" "$workflow" "$WORK_DIR/main-runs-$i.err"; then
+        [[ "$workflow" != skill-tests.yml ]] || budget_absent+="$repo "
         lane_row_clear "$row" "$rows" "$row_key" >/dev/null \
           || die state-read-failed "" "repo=$repo" "row=$row"
         rows="$LANE_ROW"
@@ -2327,6 +2329,115 @@ check_main_push() {
     fi
     lane_row_set "$row" "$rows" "$row_key" "$key" >/dev/null \
       || die state-read-failed "" "repo=$repo" "row=$row"
+    rows="$LANE_ROW"
+  done
+  # All-status discovery retains late completions. The creation watermark
+  # stops history reads before retained pages; pending ids keep failed reads
+  # independent of that watermark. Bootstrap covers the first page only.
+  # GitHub limits a filtered workflow search to 1,000 runs.
+  local budget_state page page_data scan more fresh discovered candidates status check_url annotations warnings consumed
+  local watermark boundary next_watermark next_boundary
+  local -a annotation_pages
+  for repo in "${REPOS[@]}"; do
+    [[ "$budget_absent" != *" $repo "* ]] || continue
+    row_key="$repo:skill-tests.yml"
+    lane_row_get main-push-budget "$rows" "$row_key" >/dev/null
+    budget_state="$LANE_ROW"
+    [[ -n "$budget_state" ]] || budget_state='{"watermark":"","seen":[],"pending":[]}'
+    page=1 discovered='[]' next_watermark='' next_boundary='[]' rc=0
+    while :; do
+      # gh can filter an empty page without another parser process.
+      page_data="$(gh api "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100&page=$page" \
+        --jq 'if .workflow_runs == [] then empty else . end' 2>"$errf")" || { rc=$?; break; }
+      [[ -n "$page_data" ]] || break
+      # Commit and repository metadata can exceed command argument limits.
+      scan="$(jq -er --argjson state "$budget_state" '
+        if ($state.watermark | type) != "string" or ($state.seen | type) != "array" or
+           ($state.pending | type) != "array" or (.workflow_runs | type) != "array" or
+           any(.workflow_runs[]; (.id | type) != "number" or (.created_at | type) != "string" or
+             (.head_branch != null and (.head_branch | type) != "string") or (.event | type) != "string" or (.status | type) != "string")
+        then error("invalid budget history or state") else .workflow_runs end
+        | (map(.created_at) | max // "") as $newest
+        | [ .[] | select(
+            (.head_branch == "main" and .event == "push" and .created_at >= $state.watermark and
+              (.created_at > $state.watermark or (.id as $id | $state.seen | index($id) | not))) or
+            (.id as $id | $state.pending | index($id) != null)) ] as $fresh
+        | ((length == 100 and $state.watermark != "" and all(.[]; .created_at >= $state.watermark)) | tostring),
+          ($newest),
+          ([ .[] | select(.created_at == $newest) | .id ] | unique | tojson),
+          ($fresh | map({id,status}) | tojson)
+        ' <<<"$page_data" 2>"$errf")" || { rc=$?; break; }
+      { IFS= read -r more; IFS= read -r watermark; IFS= read -r boundary; IFS= read -r fresh; } <<<"$scan"
+      if (( page == 1 )); then next_watermark="$watermark" next_boundary="$boundary"
+      elif [[ "$watermark" == "$next_watermark" ]]; then next_boundary="${next_boundary%]},${boundary#[}"; fi
+      if [[ "$fresh" != '[]' ]]; then
+        if [[ "$discovered" == '[]' ]]; then discovered="$fresh"
+        else discovered="${discovered%]},${fresh#[}"; fi
+      fi
+      [[ "$more" == true ]] || break
+      page=$((page + 1))
+    done
+    if (( rc != 0 )); then
+      ow_message main-push-unread "repo=$repo" "workflow=skill-tests.yml" "read=budget-runs" "exit=$rc" >&2
+      continue
+    fi
+    [[ -n "$next_watermark" || "$budget_state" != '{"watermark":"","seen":[],"pending":[]}' ]] || continue
+    candidates="$(jq -r --argjson state "$budget_state" --argjson discovered "$discovered" '
+      ($discovered | unique_by(.id) | map({key:(.id | tostring), value:.status}) | from_entries) as $statuses
+      | ($state.pending + ($discovered | map(.id)) | unique)[]
+      | "\(.)\t\($statuses[tostring] // "unread")"' <<<null)" \
+      || die state-read-failed "" "repo=$repo" "row=main-push-budget"
+    consumed=' '
+    while IFS=$'\t' read -r run status; do
+      [[ -n "$run" ]] || continue
+      rc=0
+      if [[ "$status" == unread ]]; then
+        status="$(gh api "repos/$repo/actions/runs/$run" --jq '.status | if type == "string" then . else error("invalid budget run status") end' 2>"$errf")" || rc=$?
+      fi
+      if (( rc != 0 )); then
+        ow_message main-push-unread "repo=$repo" "workflow=skill-tests.yml" "read=budget-status" "run=$run" "exit=$rc" >&2
+        continue
+      fi
+      [[ "$status" == completed ]] || continue
+      jobs="$(gh api --paginate --slurp "repos/$repo/actions/runs/$run/jobs?per_page=100" 2>"$errf")" || rc=$?
+      if (( rc == 0 )); then
+        jobs="$(jq -r 'if type == "array" and length > 0 and all(.[];
+          (.jobs | type) == "array" and all(.jobs[]; (.check_run_url | type) == "string"))
+          then .[].jobs[].check_run_url else error("invalid budget jobs") end' <<<"$jobs" 2>"$errf")" || rc=$?
+      fi
+      annotation_pages=()
+      if (( rc == 0 )); then
+        while IFS= read -r check_url; do
+          [[ -n "$check_url" ]] || continue
+          annotations="$(gh api --paginate --slurp "${check_url#https://api.github.com/}/annotations?per_page=100" 2>"$errf")" || { rc=$?; break; }
+          annotations="$(jq -ec 'if type == "array" and length > 0 and all(.[];
+            type == "array" and all(.[]; (.message | type) == "string" and (.annotation_level | type) == "string"))
+            then [ .[][] | select(.annotation_level == "warning" and (.message | startswith("run-all-budget "))) | .message ]
+            else error("invalid budget annotations") end' <<<"$annotations" 2>"$errf")" || { rc=$?; break; }
+          annotation_pages+=("$annotations")
+        done <<<"$jobs"
+      fi
+      if (( rc != 0 )); then
+        ow_message main-push-unread "repo=$repo" "workflow=skill-tests.yml" "read=budget-annotations" "run=$run" "exit=$rc" >&2
+        continue
+      fi
+      warnings="$(jq -cn '$ARGS.positional | map(fromjson) | add // [] | unique' --args ${annotation_pages[@]+"${annotation_pages[@]}"})" \
+        || die state-read-failed "" "repo=$repo" "row=main-push-budget"
+      if [[ "$warnings" != '[]' ]]; then
+        printf 'EVENT main-push-budget %s workflow=skill-tests.yml run=%s warnings=%s\n' "$repo" "$run" "$warnings"
+        PASS_EVENT=1
+      fi
+      consumed+="$run "
+    done <<<"$candidates"
+    budget_state="$(jq -cn --argjson state "$budget_state" --argjson discovered "$discovered" \
+      --arg watermark "$next_watermark" --argjson boundary "$next_boundary" --arg consumed "$consumed" '
+      {watermark: ([$state.watermark, $watermark] | max),
+       seen: (if $watermark > $state.watermark then ($boundary | unique)
+              elif $watermark == $state.watermark then ($state.seen + $boundary | unique) else $state.seen end),
+       pending: (($state.pending + ($discovered | map(.id)) | unique) - ($consumed | split(" ") | map(select(length > 0) | tonumber)))}')" \
+      || die state-read-failed "" "repo=$repo" "row=main-push-budget"
+    lane_row_set main-push-budget "$rows" "$row_key" "$budget_state" >/dev/null \
+      || die state-read-failed "" "repo=$repo" "row=main-push-budget"
     rows="$LANE_ROW"
   done
   lane_row_commit "$rows"

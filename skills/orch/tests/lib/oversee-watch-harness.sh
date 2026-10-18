@@ -139,6 +139,55 @@ set -uo pipefail
 # These credentials are fixture values only. Record gh's documented token
 # precedence separately from the command log so authentication is testable.
 printf '%s\t%s\t%s\t%s\n' "${GH_TOKEN:-${GITHUB_TOKEN:-keyring}}" "${1:-}" "${2:-}" "${3:-}" >> "$STUB_DIR/gh.auth"
+# Budget REST fixtures use the same page size and pagination as GitHub.
+if [[ "${1:-}" == api ]]; then
+  endpoint="${2:-}"
+  [[ "$endpoint" != --paginate ]] || endpoint="${4:-}"
+  src="" kind=""
+  case "$endpoint" in
+    repos/*/actions/workflows/skill-tests.yml/runs\?per_page=100\&page=*)
+      kind=history; src="$STUB_DIR/budget-history" ;;
+    repos/*/actions/runs/*/jobs\?per_page=100)
+      kind=jobs; id="${endpoint%/jobs*}"; src="$STUB_DIR/budget-jobs.${id##*/}" ;;
+    repos/*/check-runs/*/annotations\?per_page=100)
+      kind=annotations; id="${endpoint%/annotations*}"; src="$STUB_DIR/budget-annotations.${id##*/}" ;;
+    repos/*/actions/runs/*)
+      kind=status; src="$STUB_DIR/budget-status.${endpoint##*/}" ;;
+  esac
+  if [[ -n "$kind" ]]; then
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+    case "$kind" in
+      history)
+        page="${endpoint##*page=}"
+        [[ ! -f "$src.$page.err" ]] || { cat "$src.$page.err" >&2; exit 1; }
+        if [[ -f "$src.json" ]]; then
+          response="$(jq -c --argjson page "$page" '{workflow_runs: .[(($page-1)*100):($page*100)]}' "$src.json")" || exit 1
+        else
+          # gh evaluates its built-in filter without an external jq process.
+          # The default empty page has no output under this supported query.
+          if [[ "${3:-}" == --jq && "${4:-}" == 'if .workflow_runs == [] then empty else . end' ]]; then exit; fi
+          response='{"workflow_runs":[]}'
+        fi
+        if [[ "${3:-}" == --jq ]]; then jq -c "$4" <<<"$response"
+        else printf '%s\n' "$response"; fi ;;
+      status)
+        [[ -f "$src.json" ]] || { printf 'HTTP 404: no fixture run\n' >&2; exit 1; }
+        jq -r .status "$src.json" ;;
+      jobs | annotations)
+        if [[ -f "$src.json" ]]; then
+          pages="$(jq 'length' "$src.json")" || exit 1
+          for ((page=1; page<=pages; page++)); do
+            (( page == 1 )) || printf '%s page=%s\n' "$*" "$page" >> "$STUB_DIR/gh.calls"
+            [[ ! -f "$src.$page.err" ]] || { cat "$src.$page.err" >&2; exit 1; }
+          done
+          cat "$src.json"
+        elif [[ "$kind" == jobs ]]; then printf '[{"jobs":[]}]\n'
+        else printf '[[]]\n'; fi ;;
+    esac
+    exit
+  fi
+fi
 case "${1:-} ${2:-}" in
   "auth status")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"

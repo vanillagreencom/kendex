@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: oversee-watch main-push-failing protocol consumed by oversee-events.md.
+# Surface: oversee-watch events for main pushes and scheduled runs, consumed by oversee-events.md.
 # Inputs: scripts/oversee-watch, scripts/lib/oversee-watch-text.sh and lib/oversee-watch-harness.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -275,28 +275,6 @@ CONTROL_RC=0
 ( assert_eq "rc=$MAIN_RC events=$MAIN_EVENTS" 'rc=0 events=' 'unchanged-suite event oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
 assert_eq "watch=$MAIN_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' 'control rejects raw diagnostics in failure identity' "$STUB_DIR/err"
 
-# The removed budget reader must make no workflow-history or full-log read.
-# A private current-watch mutation makes the forbidden history request.
-for code in current mutant; do
-  TARGET="$(mutant_scripts "main-push-cut-$code/orch" oversee-watch)/oversee-watch" || exit 1
-  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/main-push-cut-$code/github"
-  if [[ "$code" == mutant ]]; then
-    mutate_file "$TARGET" $'    IFS=\'|\' read -r run conclusion <<<"$runs"\n' \
-      $'    gh api --paginate "repos/$repo/actions/workflows/skill-tests.yml/runs?per_page=100" --slurp > /dev/null 2>"$errf" || :\n    IFS=\'|\' read -r run conclusion <<<"$runs"\n'
-  fi
-  new_case "main_push_cut_$code"
-  printf '[{"databaseId":202,"headBranch":"main","event":"push","status":"completed","conclusion":"success"}]\n' >"$STUB_DIR/main-push.owner_repo.json"
-  WATCH_BIN="$TARGET" main_watch
-  READS="$(awk '/^api .*actions\/workflows\/skill-tests.yml\/runs/ || /^run view .* --log$/ {n++} END {print n+0}' "$STUB_DIR/gh.calls")"
-  if [[ "$code" == current ]]; then
-    assert_eq "rc=$MAIN_RC reads=$READS events=$MAIN_EVENTS" 'rc=0 reads=0 events=' 'green main judgment makes no budget reads' "$STUB_DIR/err"
-  else
-    CONTROL_RC=0
-    ( assert_eq "rc=$MAIN_RC reads=$READS events=$MAIN_EVENTS" 'rc=0 reads=0 events=' 'cut budget-read oracle'; [[ "$FAIL" -eq 0 ]] ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
-    assert_eq "watch=$MAIN_RC reads=$READS oracle=$CONTROL_RC" 'watch=0 reads=2 oracle=1' 'restored history read fails the budget-read oracle' "$STUB_DIR/err"
-  fi
-done
-
 # The harness-ci template's ci.yml runs on main only on a push and on its
 # nightly schedule. A red one is its own incident beside skill-tests.yml's:
 # a newer pull-request or dispatch run on main never hides it, and either
@@ -459,6 +437,194 @@ new_case main_named_invalid
 main_watch 'ORCH_MAIN_WORKFLOWS=owner/repo:eas-build.yml owner/repo'
 assert_eq "rc=$MAIN_RC refusal=$(grep -cxF 'oversee-watch: main-workflows-invalid entry=owner/repo' "$STUB_DIR/err" || true) lists=$(grep -c '^run list' "$STUB_DIR/gh.calls" || true)" \
   'rc=2 refusal=1 lists=0' 'an entry with no workflow file is refused' "$STUB_DIR/err"
+
+# Budget records are consumed by oversee-events.md. Keep all distinct suite
+# and final-job annotations from every job of a completed run.
+budget_run() { # ID CREATED STATUS
+  jq -cn --argjson id "$1" --arg at "$2" --arg status "$3" \
+    '{id:$id,created_at:$at,status:$status,head_branch:"main",event:"push"}'
+}
+budget_fixture() {
+  new_case "$1"
+  printf '{"status":"completed"}\n' >"$STUB_DIR/budget-status.202.json"
+  budget_run 202 2026-10-18T00:00:00Z completed | jq -sc . >"$STUB_DIR/budget-history.json"
+  printf '[{"jobs":[{"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/902"},{"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/903"}]}]\n' >"$STUB_DIR/budget-jobs.202.json"
+  jq -cn --arg suite "$BUDGET_SUITE" --arg job "$BUDGET_JOB" \
+    '[[{annotation_level:"warning",message:$suite},{annotation_level:"warning",message:$job},
+       {annotation_level:"notice",message:$suite},{annotation_level:"warning",message:"another warning"}]]' >"$STUB_DIR/budget-annotations.902.json"
+  jq -cn --arg suite "$BUDGET_SUITE" '[[{annotation_level:"warning",message:$suite}]]' >"$STUB_DIR/budget-annotations.903.json"
+}
+budget_wide_fixture() {
+  budget_fixture "$1"
+  jq -cn '[range(202;302) | {id:.,created_at:"2026-10-18T00:00:00Z",status:"queued",head_branch:"main",event:"push",
+    head_commit:{message:("m"*4096)}}]' >"$STUB_DIR/budget-history.json"
+}
+budget_watch() {
+  main_watch
+  BUDGET_EVENTS="$(awk '/^EVENT main-push-budget /' "$STUB_DIR/out")"
+  BUDGET_CALLS="$(awk '/^api .*actions\/workflows\/skill-tests.yml\/runs/ || /^api .*actions\/runs/ || /^api .*check-runs/ { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
+  BUDGET_ROW=''
+  [[ ! -f "$STATE_DIR/owner_repo__none" ]] || \
+    BUDGET_ROW="$(awk -F '\t' '$1=="main-push-budget" {print $3}' "$STATE_DIR/owner_repo__none")"
+}
+BUDGET_SUITE='run-all-budget run=202 attempt=2 os=Linux shard=orch-state suite=slow seconds=301 bound=900 review=300 margin-percent=125'
+BUDGET_JOB='run-all-budget run=202 attempt=2 os=Linux shard=orch-state suite=job seconds=333 bound=900 review=300 margin-percent=125'
+BUDGET_WARNINGS="$(jq -cn --arg suite "$BUDGET_SUITE" --arg job "$BUDGET_JOB" '[$suite,$job] | sort')"
+BUDGET_EVENT="EVENT main-push-budget owner/repo workflow=skill-tests.yml run=202 warnings=$BUDGET_WARNINGS"
+
+budget_fixture budget_once
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" "rc=0 calls=4 events=$BUDGET_EVENT" 'all producer evidence emits one maintenance record' "$STUB_DIR/err"
+assert_eq "$BUDGET_ROW" '{"watermark":"2026-10-18T00:00:00Z","seen":[202],"pending":[]}' 'saved state is raw compact JSON'
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" 'rc=0 calls=1 events=' 'consumed run makes no evidence reads' "$STUB_DIR/err"
+SAVED_BUDGET_ROW="$BUDGET_ROW"
+for ((pass=0; pass<10; pass++)); do
+  budget_watch
+  assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS state=$BUDGET_ROW" \
+    "rc=0 calls=1 events= state=$SAVED_BUDGET_ROW" 'ten passes preserve saved bytes' "$STUB_DIR/err"
+done
+
+budget_wide_fixture budget_wide
+for row in 'queued|1|100|' "complete|5|99|$BUDGET_EVENT" 'repeat|2|99|'; do
+  IFS='|' read -r phase calls pending expected <<<"$row"
+  if [[ "$phase" == complete ]]; then
+    jq -c 'map(if .id==202 then .status="completed" else . end)' "$STUB_DIR/budget-history.json" >"$STUB_DIR/complete.json"
+    mv "$STUB_DIR/complete.json" "$STUB_DIR/budget-history.json"
+  fi
+  budget_watch
+  assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS pending=$(jq '.pending | length' <<<"$BUDGET_ROW") events=$BUDGET_EVENTS" \
+    "rc=0 calls=$calls pending=$pending events=$expected" "$phase: large metadata stays out of command arguments and pending status reads" "$STUB_DIR/err"
+done
+
+# Both jobs and annotations can span pages. A failed final annotation page
+# leaves all evidence unread until the next successful pass.
+budget_fixture budget_pages
+jq -c '[{jobs:[.[0].jobs[0]]},{jobs:[.[0].jobs[1]]}]' "$STUB_DIR/budget-jobs.202.json" >"$STUB_DIR/pages.json"
+mv "$STUB_DIR/pages.json" "$STUB_DIR/budget-jobs.202.json"
+jq -c '[.[0],.[0]]' "$STUB_DIR/budget-annotations.903.json" >"$STUB_DIR/pages.json"
+mv "$STUB_DIR/pages.json" "$STUB_DIR/budget-annotations.903.json"
+printf 'HTTP 502: unavailable\n' >"$STUB_DIR/budget-annotations.903.2.err"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" 'rc=0 calls=6 events=' 'partial annotation pagination stays unread' "$STUB_DIR/err"
+rm -- "${STUB_DIR:?}/budget-annotations.903.2.err"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" "rc=0 calls=6 events=$BUDGET_EVENT" 'complete pagination retries all annotation pages' "$STUB_DIR/err"
+
+# Old retained pages cause no per-run lookup after the creation watermark.
+budget_fixture budget_retained
+jq -cn '[range(1;501) | {id:.,created_at:"2026-10-17T00:00:00Z",status:"completed",head_branch:"main",event:"push"}]' >"$STUB_DIR/old.json"
+jq -cs '.[0]+.[1]' "$STUB_DIR/budget-history.json" "$STUB_DIR/old.json" >"$STUB_DIR/combined.json"
+mv "$STUB_DIR/combined.json" "$STUB_DIR/budget-history.json"
+mkdir -p "$STATE_DIR"
+printf 'main-push-budget\towner/repo:skill-tests.yml\t{"watermark":"2026-10-17T23:00:00Z","seen":[201],"pending":[]}\n' >"$STATE_DIR/owner_repo__none"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" "rc=0 calls=4 events=$BUDGET_EVENT" 'retained history takes four API calls' "$STUB_DIR/err"
+assert_eq "$(awk '/^api .*actions\/runs\// && !/\/202\// {print}' "$STUB_DIR/gh.calls")" '' 'retained runs cause no point lookup'
+
+budget_fixture budget_absent
+printf 'HTTP 404: workflow skill-tests.yml not found on the default branch (https://api.github.com/repos/owner/repo/actions/workflows/skill-tests.yml)\n' >"$STUB_DIR/main-push.owner_repo.err"
+printf 'HTTP 404: Not Found\n' >"$STUB_DIR/budget-history.err"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS notices=$MAIN_NOTICES events=$BUDGET_EVENTS" \
+  'rc=0 calls=0 notices=0 events=' 'a proven absent workflow has no budget read' "$STUB_DIR/err"
+
+# An older active run remains pending after newer runs move the watermark.
+budget_fixture budget_late
+budget_run 201 2026-10-17T00:00:00Z in_progress >"$STUB_DIR/active.json"
+jq -cs '.[0]+[.[1]]' "$STUB_DIR/budget-history.json" "$STUB_DIR/active.json" >"$STUB_DIR/both.json"
+mv "$STUB_DIR/both.json" "$STUB_DIR/budget-history.json"
+budget_watch
+assert_eq "$(jq -c .pending <<<"$BUDGET_ROW")" '[201]' 'active run remains pending'
+printf '{"status":"completed"}\n' >"$STUB_DIR/budget-status.201.json"
+printf 'HTTP 502: a listed status needs no point read\n' >"$STUB_DIR/budget-status.201.err"
+jq -c 'map(if .id==201 then .status="completed" else . end)' "$STUB_DIR/budget-history.json" >"$STUB_DIR/complete.json"
+mv "$STUB_DIR/complete.json" "$STUB_DIR/budget-history.json"
+cp "$STUB_DIR/budget-jobs.202.json" "$STUB_DIR/budget-jobs.201.json"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS pending=$(jq -c .pending <<<"$BUDGET_ROW") events=$BUDGET_EVENTS" \
+  "rc=0 calls=4 pending=[] events=${BUDGET_EVENT/run=202 warnings=/run=201 warnings=}" 'late completion reuses its listed status after the watermark advances' "$STUB_DIR/err"
+
+for dependency in history status jobs annotations; do
+  budget_fixture "budget_retry_$dependency"
+  case "$dependency" in
+    history) unread="$STUB_DIR/budget-history.err" ;;
+    status)
+      jq -cn '[{id:403,created_at:"2026-10-18T02:00:00Z",status:"completed",head_branch:"feature",event:"push"}] +
+        [range(303;402) | {id:.,created_at:"2026-10-18T01:00:00Z",status:"completed",head_branch:"feature",event:"push"}] +
+        [{id:202,created_at:"2026-10-18T00:00:00Z",status:"completed",head_branch:"main",event:"push"}]' >"$STUB_DIR/budget-history.json"
+      mkdir -p "$STATE_DIR"
+      printf 'main-push-budget\towner/repo:skill-tests.yml\t{"watermark":"2026-10-18T02:00:00Z","seen":[403],"pending":[202]}\n' >"$STATE_DIR/owner_repo__none"
+      unread="$STUB_DIR/budget-status.202.err" ;;
+    jobs) unread="$STUB_DIR/budget-jobs.202.err" ;;
+    annotations) unread="$STUB_DIR/budget-annotations.903.err" ;;
+  esac
+  printf 'HTTP 502: unavailable\n' >"$unread"
+  budget_watch
+  assert_eq "rc=$MAIN_RC events=$BUDGET_EVENTS" 'rc=0 events=' "$dependency read keeps partial evidence unread" "$STUB_DIR/err"
+  [[ "$dependency" != jobs ]] || printf '[]\n' >"$STUB_DIR/budget-history.json"
+  rm -- "${unread:?}"
+  budget_watch
+  assert_eq "rc=$MAIN_RC events=$BUDGET_EVENTS" "rc=0 events=$BUDGET_EVENT" "$dependency read retries unread evidence" "$STUB_DIR/err"
+  budget_watch
+  assert_eq "rc=$MAIN_RC events=$BUDGET_EVENTS" 'rc=0 events=' "$dependency recovery emits once" "$STUB_DIR/err"
+done
+
+# Same-second arrivals need every boundary id, including a later page.
+budget_fixture budget_boundary
+mkdir -p "$STATE_DIR"
+printf 'main-push-budget\towner/repo:skill-tests.yml\t{"watermark":"2026-10-18T00:00:00Z","seen":[202],"pending":[]}\n' >"$STATE_DIR/owner_repo__none"
+jq -cn '[range(202;307) | {id:.,created_at:"2026-10-18T00:00:00Z",status:"completed",head_branch:"feature",event:"push"}] +
+  [{id:100,created_at:"2026-10-17T00:00:00Z",status:"completed",head_branch:"main",event:"push"}]' >"$STUB_DIR/budget-history.json"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS boundary=$(jq '.seen | length' <<<"$BUDGET_ROW")" \
+  'rc=0 calls=2 events= boundary=105' 'same-second arrivals span two history pages' "$STUB_DIR/err"
+budget_watch
+assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS pending=$(jq -c .pending <<<"$BUDGET_ROW")" \
+  'rc=0 calls=2 events= pending=[]' 'all boundary ids stay consumed' "$STUB_DIR/err"
+
+# Failed later discovery pages do not advance any reader state.
+printf 'HTTP 502: unavailable\n' >"$STUB_DIR/budget-history.2.err"
+BEFORE_UNREAD="$BUDGET_ROW"
+budget_watch
+assert_eq "rc=$MAIN_RC state=$BUDGET_ROW events=$BUDGET_EVENTS" "rc=0 state=$BEFORE_UNREAD events=" 'a later unread history page preserves the watermark' "$STUB_DIR/err"
+
+for defect in dedup history quoting payload; do
+  BUDGET_MUTANT="$(mutant_scripts "budget-$defect/orch" oversee-watch)/oversee-watch"
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/budget-$defect/github"
+  case "$defect" in
+    dedup) mutate_file "$BUDGET_MUTANT" '$state.seen | index($id) | not' '$state.seen | index($id) | true' ;;
+    history) mutate_file "$BUDGET_MUTANT" 'all(.[]; .created_at >= $state.watermark)' 'all(.[]; true)' ;;
+    quoting) mutate_file "$BUDGET_MUTANT" '"$row_key" "$budget_state" >/dev/null' '"$row_key" "$(jq -cn --arg raw "$budget_state" '\''$raw'\'')" >/dev/null' ;;
+    payload) mutate_file "$BUDGET_MUTANT" 'map({id,status})' 'map(.)' ;;
+  esac
+  if [[ "$defect" == payload ]]; then budget_wide_fixture "budget_control_$defect"
+  else budget_fixture "budget_control_$defect"; fi
+  if [[ "$defect" == history ]]; then
+    jq -cn '[range(1;501) | {id:.,created_at:"2026-10-17T00:00:00Z",status:"completed",head_branch:"main",event:"push"}]' >"$STUB_DIR/old.json"
+    jq -cs '.[0]+.[1]' "$STUB_DIR/budget-history.json" "$STUB_DIR/old.json" >"$STUB_DIR/combined.json"
+    mv "$STUB_DIR/combined.json" "$STUB_DIR/budget-history.json"
+    mkdir -p "$STATE_DIR"
+    printf 'main-push-budget\towner/repo:skill-tests.yml\t{"watermark":"2026-10-17T23:00:00Z","seen":[201],"pending":[]}\n' >"$STATE_DIR/owner_repo__none"
+  fi
+  if [[ "$defect" == quoting ]]; then budget_watch
+  else WATCH_BIN="$BUDGET_MUTANT" budget_watch; fi
+  ORIGINAL_BUDGET_ROW="$BUDGET_ROW"
+  WATCH_BIN="$BUDGET_MUTANT" budget_watch
+  CONTROL_RC=0
+  ( FAIL=0
+    assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS state=$BUDGET_ROW notices=$MAIN_NOTICES" \
+      "rc=0 calls=1 events= state=$ORIGINAL_BUDGET_ROW notices=0" "$defect oracle"
+    [[ "$FAIL" -eq 0 ]]
+  ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" 1 "$defect control rejects repeated work or escaped state" "$STUB_DIR/err"
+  case "$defect" in
+    dedup) assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" "rc=0 calls=4 events=$BUDGET_EVENT" 'dedup control repeats the same run event' "$STUB_DIR/err" ;;
+    history) assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS" 'rc=0 calls=6' 'history control reads retained pages' "$STUB_DIR/err" ;;
+    quoting) assert_eq "rc=$MAIN_RC notices=$MAIN_NOTICES type=$(jq -r type <<<"$BUDGET_ROW")" 'rc=0 notices=0 type=string' 'the byte oracle rejects a JSON-escaping layer without an unread notice' "$STUB_DIR/err" ;;
+    payload) assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" 'rc=2 calls=1 events=' 'payload control reaches the argument limit after its history read' "$STUB_DIR/err" ;;
+  esac
+done
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
