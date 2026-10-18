@@ -1034,8 +1034,10 @@ environment_dump() { # command kind; arguments are already decoded data
     # File data must stay out of later bodies' complete-command fallback.
     for doc in $data_source; do
       [ "$doc" -lt "${#heredocs[@]}" ] || continue
+      # A literal output redirect can still feed the next pipe receiver.
       if [ -z "${2:-}$unsupported$incoming_sources" ] && [ "$1" = shell ] &&
          [ "$program" = cat ] && [ "$mode" = other ] && [ "${#args[@]}" -eq 1 ] &&
+         [ "${separators[$stage]}" != "|" ] &&
          [ "$file_output" = 1 ] && [ "$file_body" = 1 ] && [ -z "$redirect_evidence" ] &&
          [ "$program_pos" = 0 ] && [ "$head_start" -eq 0 ] && [ "${arg_kinds[0]}" = literal ] &&
          [ "$data_source" = " $doc" ]; then
