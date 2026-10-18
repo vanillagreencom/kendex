@@ -51,6 +51,169 @@ fn context() -> Value {
         "default":{"tag":"native-default"},"capacity":[{"tag":"known","selector":"openai/gpt-6.1-terra","account":"fixture","host":"host","source":"fixture:capacity","context_window":1000}],"rejected":[]})
 }
 
+const CLAUDE_MANAGED_WORD_CASES: &[(&str, Option<&str>, &str, &str, &str, &str, &str)] = &[
+    ("top", None, "class", "top", "deferred-class", "fable", ""),
+    (
+        "standard",
+        None,
+        "class",
+        "standard",
+        "deferred-class",
+        "opus",
+        "",
+    ),
+    (
+        "SONNET",
+        None,
+        "class",
+        "light",
+        "deferred-class",
+        "sonnet",
+        "",
+    ),
+    ("fast", None, "class", "fast", "deferred-class", "haiku", ""),
+    ("inherit", None, "inherit", "", "inherit", "", ""),
+    (
+        "anthropic/sonnet",
+        None,
+        "native-family",
+        "",
+        "native-alias",
+        "sonnet",
+        "",
+    ),
+    (
+        "claude-opus-5-5",
+        None,
+        "exact",
+        "",
+        "native-alias",
+        "claude-opus-5-5",
+        "",
+    ),
+    (
+        "Opus",
+        Some("anthropic/sonnet"),
+        "class",
+        "standard",
+        "native-alias",
+        "sonnet",
+        "",
+    ),
+    (
+        "standard",
+        Some("anthropic/claude-haiku-5-5"),
+        "class",
+        "standard",
+        "native-alias",
+        "haiku",
+        "",
+    ),
+    (
+        "standard",
+        Some("openai/gpt-6.2-sol"),
+        "class",
+        "standard",
+        "refused",
+        "",
+        "unsupported-managed-model",
+    ),
+    (
+        "standard",
+        Some("anthropic/gpt-6.2-sol"),
+        "class",
+        "standard",
+        "refused",
+        "",
+        "unsupported-managed-model",
+    ),
+    (
+        "standard",
+        Some("anthropic/unknown"),
+        "class",
+        "standard",
+        "refused",
+        "",
+        "unsupported-managed-model",
+    ),
+];
+
+#[test]
+fn claude_managed_words_apply_overrides_without_runtime_evidence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("consumer");
+    std::fs::create_dir_all(project.join(".claude")).unwrap();
+    // orch's managed-launch reader consumes these protocol fields. The rank
+    // answer is the old path: it ignores the same consumer override.
+    for (word, policy, request_tag, class, tag, selector, code) in
+        CLAUDE_MANAGED_WORD_CASES.iter().copied()
+    {
+        let manifest = match policy {
+            Some(value) => format!("schema = 7\n[model-classes]\nstandard = \"{value}\"\n"),
+            None => "schema = 7\n".into(),
+        };
+        std::fs::write(project.join("kendex.toml"), manifest).unwrap();
+        let output = invoke_at(
+            &home,
+            &project,
+            &["tier-model", "claude", "--model", word, "--json"],
+            None,
+            None,
+        );
+        assert_eq!(
+            output.status.success(),
+            code.is_empty(),
+            "{word}: {policy:?}"
+        );
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["protocol"], "model-resolution-v1");
+        assert_eq!(response["request"]["tag"], request_tag);
+        assert_eq!(response["request"]["class"].as_str().unwrap_or(""), class);
+        assert_eq!(response["resolution"]["tag"], tag);
+        assert_eq!(
+            response["resolution"]["native_selector"]
+                .as_str()
+                .unwrap_or(""),
+            selector
+        );
+        assert_eq!(response["resolution"]["code"].as_str().unwrap_or(""), code);
+        if request_tag == "exact" {
+            assert!(
+                response["resolution"]["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|d| d["code"] == "old-id")
+            );
+        }
+        if !selector.is_empty() {
+            let plain = invoke_at(
+                &home,
+                &project,
+                &["tier-model", "claude", "--model", word],
+                None,
+                None,
+            );
+            assert!(plain.status.success());
+            assert_eq!(String::from_utf8(plain.stdout).unwrap().trim(), selector);
+        }
+        if policy == Some("openai/gpt-6.2-sol") {
+            let old = invoke_at(
+                &home,
+                &project,
+                &["tier-model", "claude", "2", "--json"],
+                None,
+                None,
+            );
+            assert!(old.status.success());
+            let old: Value = serde_json::from_slice(&old.stdout).unwrap();
+            assert_eq!(old["resolution"]["native_selector"], "opus");
+            assert_ne!(old["resolution"]["tag"], response["resolution"]["tag"]);
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn codex_collector_process_failure_stays_failed_after_complete_protocol() {

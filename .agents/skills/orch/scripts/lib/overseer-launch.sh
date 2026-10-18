@@ -211,60 +211,50 @@ ol_deprecated() { # FIELD...
   OL_DEPRECATION_WARNED=1
 }
 
-# ol_model_class HARNESS MODEL — MODEL, as a preference entry or `lanes pick
-# --model` names it, classified by kendex: `kendex tier-model HARNESS --model
-# MODEL --json` under a runtime context with `unsupported` list evidence, core's
-# ModelRequest::parse the one judge of what is a class. Into OL_CLASS the
-# class MODEL names, a class or a legacy family alias such as opus, else
-# empty; into OL_CLASS_MODEL the model a launch runs; and into
-# OL_CLASS_WARNING the warning of the kendex answer that names that model,
-# which the caller prints once the launch runs that model (ol_model_line). A
-# claude class runs claude's
-# family alias for it, with the rank answer's warning (ol_claude_alias). A
-# codex or copilot class runs the runtime answer, which with no list evidence
-# is the harness default, an empty model, with that answer's warning. Any
-# other MODEL is an exact id, runs as written and prints no kendex line, since
-# the runtime answer's harness default is not what it launches. A trailing
-# Claude `[1m]` capacity annotation is read off before the read and put back
-# on the model a class runs, so the 1M window survives. A pi model is
-# `provider/id` and an empty MODEL the native default, so neither is read.
-# Returns 2 for a claude exact id kendex names old, which the caller warns on
-# (ol_deprecated), since a claude class replaces it. A codex or copilot exact
-# id is a supported form, since a class there runs no model in a lane, as
-# ../../references/lane-directive.md § Launch gate
-# states. Returns 1 where kendex refused or its answer could not be read, with
-# kendex's and jq's words in OL_CLASS_ERR, which the caller relays.
+# ol_model_class HARNESS MODEL: kendex classifies MODEL through
+# ModelRequest::parse. Claude uses the no-context managed-launch answer,
+# including model-classes overrides, and consumes its native_selector.
+# Codex and Copilot use an unsupported model-list runtime context until a
+# launch can supply their account's list. Their classes use the native default.
+# OL_CLASS names the requested class; OL_CLASS_MODEL names the launch model;
+# OL_CLASS_WARNING holds that answer's warning for ol_model_line.
+# Exact ids launch as written without the class warning. Claude old-id
+# diagnostics return 2 for ol_deprecated. Empty and Pi models need no read.
+# A trailing Claude [1m] annotation survives class resolution.
+# A failed kendex or jq read returns 1 with its output in OL_CLASS_ERR.
 OL_CLASS="" OL_CLASS_MODEL="" OL_CLASS_WARNING="" OL_CLASS_ERR=""
 ol_model_class() { # HARNESS MODEL
-  local word="$2" window="" context answer fields tag old_id warning
+  local word="$2" window="" context answer fields tag old_id warning selector
   OL_CLASS="" OL_CLASS_MODEL="$2" OL_CLASS_WARNING="" OL_CLASS_ERR=""
   [[ -n "$2" && "$1" =~ ^(claude|codex|copilot)$ ]] || return 0
   if [[ "$word" =~ ^(.+)(\[1[mM]\])$ ]]; then
     word="${BASH_REMATCH[1]}" window="${BASH_REMATCH[2]}"
   fi
-  # Claude Code has no model list interface and codex's list does not reach
-  # a launch yet, hence `unsupported`. The read comes before `lanes pick`
-  # names an account or a host, and that evidence binds neither.
-  printf -v context '{"protocol":"model-resolution-v1","harness":"%s","account":"unpicked","host":"unpicked","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"orch-launch"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}' "$1"
-  # kendex's stderr shares the capture: with --json a read that succeeds
-  # writes none, and a refusal's words are what the caller relays.
-  answer="$(kendex tier-model "$1" --model "$word" --json --runtime-context-json "$context" 2>&1)" \
-    || { OL_CLASS_ERR="$answer"; return 1; }
+  # A managed Claude launch has no runtime model list. Core owns the alias
+  # and override decision, so this read must carry no runtime context.
+  if [[ "$1" == claude ]]; then
+    answer="$(kendex tier-model "$1" --model "$word" --json 2>&1)" \
+      || { OL_CLASS_ERR="$answer"; return 1; }
+  else
+    printf -v context '{"protocol":"model-resolution-v1","harness":"%s","account":"unpicked","host":"unpicked","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"orch-launch"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}' "$1"
+    answer="$(kendex tier-model "$1" --model "$word" --json --runtime-context-json "$context" 2>&1)" \
+      || { OL_CLASS_ERR="$answer"; return 1; }
+  fi
   fields="$(jq -r 'if .protocol == "model-resolution-v1" and (.request.tag | type) == "string"
-      then [.request.tag, .request.class // "", any(.resolution.diagnostics[]?; .code == "old-id"), .warning // ""]
+      then [.request.tag, .request.class // "", any(.resolution.diagnostics[]?; .code == "old-id"), .warning // "", .resolution.native_selector // ""]
         | map(tostring) | join("\u001f")
       else error("no model-resolution answer") end' <<<"$answer" 2>&1)" \
     || { OL_CLASS_ERR="$answer"$'\n'"$fields"; return 1; }
   # A unit separator, not a tab, which read would fold with an empty class.
-  IFS=$'\x1f' read -r tag OL_CLASS old_id warning <<<"$fields"
+  IFS=$'\x1f' read -r tag OL_CLASS old_id warning selector <<<"$fields"
   if [[ "$tag" != class ]]; then
     OL_CLASS=""
     [[ "$old_id" != true || "$1" != claude ]] || return 2
     return 0
   fi
   if [[ "$1" == claude ]]; then
-    ol_claude_alias "$OL_CLASS" || return 1
-    OL_CLASS_MODEL+="$window"
+    [[ -n "$selector" ]] || { OL_CLASS_ERR="$answer"; return 1; }
+    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"
   else
     OL_CLASS_MODEL="" OL_CLASS_WARNING="$warning"
   fi
@@ -281,40 +271,6 @@ ol_model_line() { # WARNING
   [[ -n "$1" ]] && (( ! OL_CLASS_WARNED )) || return 0
   printf '%s\n' "$1" >&2
   OL_CLASS_WARNED=1
-}
-
-# ol_claude_alias CLASS — claude's family alias for CLASS into OL_CLASS_MODEL,
-# a managed launch's selector, since Claude Code takes family aliases and
-# never a versioned pin, and the warning of the answer naming it into
-# OL_CLASS_WARNING: what `kendex tier-model claude RANK --json` answers for
-# the rank whose class is CLASS, walked from the first rank until it names
-# CLASS, and read once per class per process. This walk stands in for the
-# core word-answer follow-up proposed on KEN-3372, one `kendex tier-model`
-# call that returns claude's managed-launch alias with `model-classes`
-# overrides applied; the rank form applies no override, so none applies on
-# claude yet. Returns 1 with kendex's and jq's words in OL_CLASS_ERR where no
-# rank answers CLASS with an alias.
-ol_claude_alias() { # CLASS
-  local alias="OL_CLAUDE_ALIAS_$1" warning="OL_CLAUDE_WARNING_$1" rank=1 answer fields class selector
-  if [[ -n "${!alias:-}" ]]; then
-    OL_CLASS_MODEL="${!alias}" OL_CLASS_WARNING="${!warning:-}"
-    return 0
-  fi
-  while answer="$(kendex tier-model claude "$rank" --json 2>&1)"; do
-    fields="$(jq -r '[.request.class, .resolution.native_selector // "", .warning // ""] | map(tostring) | join("\u001f")' \
-      <<<"$answer" 2>&1)" || { OL_CLASS_ERR="$answer"$'\n'"$fields"; return 1; }
-    IFS=$'\x1f' read -r class selector OL_CLASS_WARNING <<<"$fields"
-    if [[ "$class" == "$1" ]]; then
-      [[ -n "$selector" ]] || break
-      OL_CLASS_MODEL="$selector"
-      printf -v "$alias" '%s' "$selector"
-      printf -v "$warning" '%s' "$OL_CLASS_WARNING"
-      return 0
-    fi
-    rank=$((rank + 1))
-  done
-  OL_CLASS_WARNING="" OL_CLASS_ERR="$answer"
-  return 1
 }
 
 # ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,

@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
 # `kendex tier-model` for suites whose launches classify model words with no
-# kendex of their own, answering the two forms lib/overseer-launch.sh asks:
-# the runtime form, `tier-model HARNESS --model WORD --json
-# --runtime-context-json CTX`, for the context orch sends, with `unsupported`
-# list evidence, so every word resolves to the harness default; and claude's
-# rank form, `tier-model claude RANK --json`, for its family aliases. Both as
-# kendex answered them when this was written, in the fields ol_model_class
-# and ol_claude_alias read; tier-model-fixture.sh holds a real kendex to the
+# kendex of their own. Claude's no-context word form returns a managed alias;
+# Codex and Copilot's runtime-context form returns the native default with
+# unsupported model-list evidence. tier-model-fixture.sh holds real kendex to
 # same answers. A word is a class where it is a class name or a legacy alias,
 # in any case, as ModelRequest::parse reads it, and an exact id otherwise. One
 # process per call, as the kendex binary is, for the suites that count
@@ -22,16 +18,16 @@ if [[ "${1:-}" != tier-model ]]; then
   exit 127
 fi
 unexpected() { printf 'tier-model stub: unexpected=%s\n' "$*" >&2; exit 2; }
-if [[ $# -eq 4 && "$2" == claude && "$3" =~ ^[1-9]$ && "$4" == --json ]]; then
-  classes=(top standard light fast) aliases=(fable opus sonnet haiku)
-  (( $3 <= ${#classes[@]} )) || { printf 'Error: rank %s is not on the class ladder (1-%s)\n' "$3" "${#classes[@]}" >&2; exit 1; }
-  printf '{"protocol":"model-resolution-v1","harness":"claude","request":{"tag":"class","class":"%s"},"resolution":{"tag":"deferred-class","class":"%s","native_selector":"%s","diagnostics":[{"code":"render-only"}]},"warning":"model-resolution: requested=%s selected=%s causes=render-only source="}\n' \
-    "${classes[$3 - 1]}" "${classes[$3 - 1]}" "${aliases[$3 - 1]}" "${classes[$3 - 1]}" "${aliases[$3 - 1]}"
-  exit 0
+if [[ -n "${KENDEX_TEST_CALLS:-}" ]]; then
+  jq -cn --args '$ARGS.positional' -- "$@" >> "$KENDEX_TEST_CALLS"
 fi
-[[ $# -eq 7 && "$2" =~ ^(claude|codex|copilot)$ && "$3" == --model && -n "$4" && "$5" == --json \
-  && "$6" == --runtime-context-json && "$7" == *'"harness":"'"$2"'"'* \
-  && "$7" == *'"models":{"tag":"unsupported","source":"orch-launch"}'* ]] || unexpected "$*"
+if [[ "$2" == claude ]]; then
+  [[ $# -eq 5 && "$3" == --model && -n "$4" && "$5" == --json ]] || unexpected "$*"
+else
+  [[ $# -eq 7 && "$2" =~ ^(codex|copilot)$ && "$3" == --model && -n "$4" && "$5" == --json \
+    && "$6" == --runtime-context-json && "$7" == *'"harness":"'"$2"'"'* \
+    && "$7" == *'"models":{"tag":"unsupported","source":"orch-launch"}'* ]] || unexpected "$*"
+fi
 shopt -s nocasematch
 case "$4" in
   top|fable) class=top ;;
@@ -45,6 +41,35 @@ if [[ -n "$class" ]]; then
   request='{"tag":"class","class":"'"$class"'"}' requested="$class" old_id="" causes=""
 else
   request='{"tag":"exact","selector":"'"$4"'"}' requested="$4" old_id='{"code":"old-id"},' causes=old-id,
+fi
+if [[ "$2" == claude ]]; then
+  selector="$4" tag=exact diagnostics='{"code":"render-only"}' causes=render-only
+  if [[ -n "$class" ]]; then
+    case "$class" in
+      top) selector=fable ;;
+      standard) selector=opus ;;
+      light) selector=sonnet ;;
+      fast) selector=haiku ;;
+    esac
+    tag=deferred-class
+    # The suite declares the same override in its real-kendex project. This
+    # fixture answer does not implement manifest discovery or TOML parsing.
+    if [[ "$class" == standard && -n "${KENDEX_TEST_STANDARD_OVERRIDE:-}" ]]; then
+      case "$KENDEX_TEST_STANDARD_OVERRIDE" in
+        anthropic/claude-haiku-5-5) selector=haiku; tag=native-alias ;;
+        openai/gpt-6.2-sol)
+          printf '{"protocol":"model-resolution-v1","harness":"claude","request":%s,"resolution":{"tag":"refused","code":"unsupported-managed-model","diagnostics":[{"code":"render-only"},{"code":"unsupported-managed-model"}]}}\n' "$request"
+          exit 1
+          ;;
+        *) unexpected "override=$KENDEX_TEST_STANDARD_OVERRIDE" ;;
+      esac
+    fi
+  else
+    diagnostics+=',{"code":"old-id"}' causes+=,old-id
+  fi
+  printf '{"protocol":"model-resolution-v1","harness":"claude","request":%s,"resolution":{"tag":"%s","native_selector":"%s","diagnostics":[%s]},"warning":"model-resolution: requested=%s selected=%s causes=%s source="}\n' \
+    "$request" "$tag" "$selector" "$diagnostics" "$requested" "$selector" "$causes"
+  exit 0
 fi
 printf '{"protocol":"model-resolution-v1","harness":"%s","request":%s,"resolution":{"tag":"harness-default","request":%s,"path":{"tag":"native-default"},"diagnostics":[%s{"code":"model-availability-unknown","source":"orch-launch","cause":"model list interface is unavailable"}]},"warning":"model-resolution: requested=%s selected=native-default causes=%smodel-availability-unknown source=orch-launch detail=model list interface is unavailable"}\n' \
   "$2" "$request" "$request" "$old_id" "$requested" "$causes"

@@ -20,7 +20,7 @@ pub struct TierModelArgs {
     /// Legacy class rank, top first; selector-only output is not access evidence
     #[arg(conflicts_with_all = ["model", "agent", "runtime_context_stdin", "runtime_context_json"])]
     rank: Option<usize>,
-    /// Model class, native family, exact pin or inherit
+    /// Model class, native family, exact pin or inherit; Claude needs no runtime context for a managed-launch alias
     #[arg(long, conflicts_with = "agent")]
     model: Option<String>,
     /// Native declared Claude agent identity at the child working directory
@@ -51,6 +51,7 @@ pub fn run(env: &Env, args: TierModelArgs) -> CliResult {
             .unwrap_or_default();
     let overrides = kendex_core::manifest::model_class_overrides(env, &scope, &manifest)?;
     let mut unmanaged = false;
+    let managed_claude = harness == HarnessId::Claude && args.model.is_some();
     let request = if let Some(rank) = args.rank {
         let row = rank
             .checked_sub(1)
@@ -121,6 +122,8 @@ pub fn run(env: &Env, args: TierModelArgs) -> CliResult {
             ResolutionContext::SelectorHint(harness),
             &overrides,
         )
+    } else if managed_claude {
+        resolve_model(&request, ResolutionContext::ManagedClaudeLaunch, &overrides)
     } else {
         return Err(
             "runtime requests require --runtime-context-stdin or --runtime-context-json".into(),

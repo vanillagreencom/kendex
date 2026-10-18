@@ -5,11 +5,8 @@
 # old-id status and kendex's warning, must match word for word, so the suites
 # that classify through the fixture judge the real answers. CI builds that
 # kendex from this checkout, so the answers are core's as this tree holds them.
-# A project `model-classes.standard` override changes neither answer: claude's
-# family alias comes from the rank form, which applies no override, and codex
-# takes the harness default. The core word-answer follow-up proposed on
-# KEN-3372, one kendex tier-model call that returns claude's managed-launch
-# alias with model-classes overrides applied, would apply it.
+# Claude consumes the managed alias after the project override. A different
+# provider refuses. Codex and Copilot retain the runtime default decision.
 #
 # No kendex on PATH skips the suite unless ORCH_REQUIRE_KENDEX is set.
 set -euo pipefail
@@ -39,11 +36,17 @@ fi
 # Read from an empty directory under an empty home, so no project or personal
 # class override stands between core and the answer, then from a project
 # whose kendex.toml overrides the standard class.
-mkdir -p "$TMP_ROOT/home" "$TMP_ROOT/cwd" "$TMP_ROOT/project/.claude"
-printf 'schema = 7\n[model-classes]\nstandard = "openai/gpt-6.2-sol"\n' >"$TMP_ROOT/project/kendex.toml"
+mkdir -p "$TMP_ROOT/home" "$TMP_ROOT/cwd" "$TMP_ROOT/anthropic/.claude" "$TMP_ROOT/openai/.claude"
+printf 'schema = 7\n[model-classes]\nstandard = "anthropic/claude-haiku-5-5"\n' >"$TMP_ROOT/anthropic/kendex.toml"
+printf 'schema = 7\n[model-classes]\nstandard = "openai/gpt-6.2-sol"\n' >"$TMP_ROOT/openai/kendex.toml"
 answers() { # BIN_DIR_OR_EMPTY DIR HARNESS WORD...
+  local override=""
+  case "${2##*/}" in
+    anthropic) override=anthropic/claude-haiku-5-5 ;;
+    openai) override=openai/gpt-6.2-sol ;;
+  esac
   # shellcheck disable=SC2016 # expanded by the inner shell
-  (cd "$2" && HOME="$TMP_ROOT/home" XDG_CONFIG_HOME="$TMP_ROOT/home/.config" PATH="${1:+$1:}$PATH" bash -c '
+  (cd "$2" && HOME="$TMP_ROOT/home" XDG_CONFIG_HOME="$TMP_ROOT/home/.config" KENDEX_TEST_STANDARD_OVERRIDE="$override" PATH="${1:+$1:}$PATH" "$BASH" -c '
     set -euo pipefail
     source "$1"
     harness="$2"
@@ -55,7 +58,7 @@ answers() { # BIN_DIR_OR_EMPTY DIR HARNESS WORD...
     done' _ "$LIB" "$3" "${@:4}")
 }
 WORDS=(top standard light fast Opus fable SONNET haiku claude-opus-5-5 gpt-6.1-sol 'opus[1m]' codex:opus)
-for dir in cwd project; do
+for dir in cwd anthropic openai; do
   for harness in claude codex copilot; do
     real="$(answers "" "$TMP_ROOT/$dir" "$harness" "${WORDS[@]}")" || { fail "real kendex answers $harness in $dir"; continue; }
     fixture="$(answers "$FIXTURE" "$TMP_ROOT/$dir" "$harness" "${WORDS[@]}")" || { fail "the fixture answers $harness in $dir"; continue; }
@@ -63,19 +66,22 @@ for dir in cwd project; do
   done
 done
 # The ruled answers themselves, which the fixture and kendex agreeing on
-# another answer would not catch: claude's standard class runs Opus under the
-# override, `[1m]` kept; codex's runs the native default; each class's
+# another answer would not catch: Claude's standard class runs Haiku under an
+# Anthropic override, [1m] kept; another provider refuses. Codex's runs the native default; each class's
 # warning names the model it runs; an exact id stands as written with no
 # kendex line, deprecated on claude alone.
 selected() { sed -n 's/^\([^|]*\)|.* selected=\([^ ]*\) .*/\1 \2/p'; }
-assert_eq "$(answers "" "$TMP_ROOT/project" claude standard 'opus[1m]' claude-opus-5-5 | cut -d'|' -f1-4)" \
-  $'standard|0|standard|opus\nopus[1m]|0|standard|opus[1m]\nclaude-opus-5-5|2||claude-opus-5-5' \
-  "claude standard runs opus under a standard override, and an exact id stands"
-assert_eq "$(answers "" "$TMP_ROOT/project" codex standard gpt-6.1-sol | cut -d'|' -f1-4)" \
+assert_eq "$(answers "" "$TMP_ROOT/anthropic" claude standard 'opus[1m]' claude-opus-5-5 | cut -d'|' -f1-4)" \
+  $'standard|0|standard|haiku\nopus[1m]|0|standard|haiku[1m]\nclaude-opus-5-5|2||claude-opus-5-5' \
+  "claude standard runs the overridden managed alias, preserves capacity, and keeps exact ids"
+assert_eq "$(answers "" "$TMP_ROOT/openai" claude standard 'opus[1m]' | cut -d'|' -f1-4)" \
+  $'standard|1||standard\nopus[1m]|1||opus[1m]' \
+  "a cross-provider override refuses the Claude class and legacy alias"
+assert_eq "$(answers "" "$TMP_ROOT/openai" codex standard gpt-6.1-sol | cut -d'|' -f1-4)" \
   $'standard|0|standard|\ngpt-6.1-sol|0||gpt-6.1-sol' \
   "codex standard runs the native default under a standard override, and a codex exact id stands"
-assert_eq "$(answers "" "$TMP_ROOT/project" claude standard claude-opus-5-5 | selected)|$(answers "" "$TMP_ROOT/project" codex standard gpt-6.1-sol | selected)" \
-  'standard opus|standard native-default' \
+assert_eq "$(answers "" "$TMP_ROOT/anthropic" claude standard claude-opus-5-5 | selected)|$(answers "" "$TMP_ROOT/openai" codex standard gpt-6.1-sol | selected)" \
+  'standard haiku|standard native-default' \
   "a class's warning names the model it runs, and an exact id prints none"
 
 # Control: a fixture copy with one alias changed must fail the comparison.
@@ -86,9 +92,11 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 text = path.read_text()
-old = 'aliases=(fable opus sonnet haiku)'
+old = 'standard) selector=opus ;;'
 assert text.count(old) == 1
-path.write_text(text.replace(old, 'aliases=(fable opusx sonnet haiku)'))
+changed = text.replace(old, 'standard) selector=opusx ;;')
+assert changed != text
+path.write_text(changed)
 PY
 if [[ "$(answers "$TMP_ROOT/mutant" "$TMP_ROOT/cwd" claude standard)" != "$(answers "" "$TMP_ROOT/cwd" claude standard)" ]]; then
   pass "control: a changed fixture alias fails the comparison"

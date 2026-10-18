@@ -351,6 +351,8 @@ pub enum ResolutionContext<'a> {
     Render(HarnessId, &'a BTreeMap<String, BTreeMap<String, String>>),
     /// Deprecated positional CLI answer. A preferred id is explicitly not access proof.
     SelectorHint(HarnessId),
+    /// Claude managed-launch alias, with consumer overrides and no access claim.
+    ManagedClaudeLaunch,
     /// Bound account/host evidence supplied by the runtime owner.
     Runtime(&'a evidence::RuntimeContext),
 }
@@ -436,6 +438,44 @@ pub fn resolve_model(
                 }
             } else {
                 render(request, harness, &BTreeMap::new(), diagnostics)
+            }
+        }
+        ResolutionContext::ManagedClaudeLaunch => {
+            diagnostics.push(diagnostic("render-only"));
+            let override_value = request
+                .class()
+                .and_then(|class| overrides.get(class.row().name));
+            let Some(value) = override_value else {
+                return render(request, HarnessId::Claude, &BTreeMap::new(), diagnostics);
+            };
+            // Managed Claude launches accept family aliases only (D021), so a
+            // consumer override cannot silently launch a different provider.
+            let alias = value.strip_prefix("anthropic/").and_then(|id| {
+                TIERS
+                    .iter()
+                    .find(|row| {
+                        row.claude == Some(id)
+                            || (id.starts_with("claude-")
+                                && family::matches("anthropic", id, row).is_some())
+                    })
+                    .and_then(|row| row.claude)
+            });
+            match alias {
+                Some(alias) => ModelResolution::NativeAlias {
+                    native_selector: alias.into(),
+                    diagnostics,
+                },
+                None => {
+                    diagnostics.push(Diagnostic {
+                        code: "unsupported-managed-model".into(),
+                        source: Some(value.clone()),
+                        cause: None,
+                    });
+                    ModelResolution::Refused {
+                        code: "unsupported-managed-model".into(),
+                        diagnostics,
+                    }
+                }
             }
         }
         ResolutionContext::Runtime(context) => {
