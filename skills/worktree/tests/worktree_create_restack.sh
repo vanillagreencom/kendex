@@ -649,6 +649,7 @@ done <<<"$ROWS"
 # preparation aborts; guarded restack must retain the original remote lease.
 # The contained row reaches the fold without a rebase. A foreign head is
 # introduced either before admission or after preparation.
+# The plain row publishes directly after the fold.
 prepared_recovery() {
   local kind="$1" rc=0 original="" prepared="" expected="" authorized="" restored=""
   local retry_key="" restack_key="" continued="-" published="-" lease="-"
@@ -670,21 +671,27 @@ prepared_recovery() {
   case "$authorized" in "$prepared") authorized=prepared ;; "") authorized=absent ;; *) authorized=other ;; esac
   printf 'prepare=%s expected=%s authorized=%s remote=%s' "$rc" "$expected" "$authorized" \
     "$([[ "$(remote_oid)" == "$original" ]] && echo original || echo foreign)"
-  if [[ "$kind" == foreign ]]; then step cloud-push; fi
-  commit_main file.txt main-side
-  rc=0
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$ISSUE" --prepare-base >"$ROOT/retry.out" 2>"$ROOT/retry.err") || rc=$?
-  retry_key="$(message_records <"$ROOT/retry.err" | cut -d: -f1 | grep '^worktree-push-rebase-failed$' || true)"
-  restored="$([[ "$(git -C "$WT" rev-parse HEAD)" == "$prepared" ]] && echo yes || echo no)"
-  printf ' retry=%s:%s restored=%s' "$rc" "$retry_key" "$restored"
-  rc=0
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack >"$ROOT/recover.out" 2>"$ROOT/recover.err") || rc=$?
-  restack_key="$(message_records <"$ROOT/recover.err" | cut -d: -f1 | grep -E '^worktree-(rebase-conflicts|restack-remote-uncontained)$' || true)"
-  printf ' restack=%s:%s' "$rc" "$restack_key"
+  if [[ "$kind" == plain ]]; then
+    printf ' retry=- restored=- restack=-'
+  else
+    if [[ "$kind" == foreign ]]; then step cloud-push; fi
+    commit_main file.txt main-side
+    rc=0
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$ISSUE" --prepare-base >"$ROOT/retry.out" 2>"$ROOT/retry.err") || rc=$?
+    retry_key="$(message_records <"$ROOT/retry.err" | cut -d: -f1 | grep '^worktree-push-rebase-failed$' || true)"
+    restored="$([[ "$(git -C "$WT" rev-parse HEAD)" == "$prepared" ]] && echo yes || echo no)"
+    printf ' retry=%s:%s restored=%s' "$rc" "$retry_key" "$restored"
+    rc=0
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack >"$ROOT/recover.out" 2>"$ROOT/recover.err") || rc=$?
+    restack_key="$(message_records <"$ROOT/recover.err" | cut -d: -f1 | grep -E '^worktree-(rebase-conflicts|restack-remote-uncontained)$' || true)"
+    printf ' restack=%s:%s' "$rc" "$restack_key"
+  fi
   if [[ "$restack_key" == worktree-rebase-conflicts ]]; then
     step resolve
     continued=0
     (cd "$MAIN" && "$WORKTREE_SCRIPT" restack continue "$ISSUE" >"$ROOT/continue.out" 2>"$ROOT/continue.err") || continued=$?
+  fi
+  if [[ "$kind" == plain || "$restack_key" == worktree-rebase-conflicts ]]; then
     published=0
     (cd "$MAIN" && GIT_TRACE="$ROOT/push.trace" "$WORKTREE_SCRIPT" push "$ISSUE" >"$ROOT/publish.out" 2>"$ROOT/publish.err") || published=$?
     lease=no
@@ -699,14 +706,17 @@ echo "=== prepared handoff recovery retains exactly its admitted remote head ===
 prepared_good='prepare=0 expected=original authorized=prepared remote=original retry=1:worktree-push-rebase-failed restored=yes restack=1:worktree-rebase-conflicts continue=0 publish=0:head lease=original'
 prepared_foreign='prepare=0 expected=original authorized=prepared remote=original retry=1:worktree-push-rebase-failed restored=yes restack=1:worktree-restack-remote-uncontained continue=- publish=- lease=-'
 prepared_unadmitted='prepare=0 expected=absent authorized=absent remote=foreign retry=1:worktree-push-rebase-failed restored=yes restack=1:worktree-restack-remote-uncontained continue=- publish=- lease=-'
+prepared_plain='prepare=0 expected=original authorized=prepared remote=original retry=- restored=- restack=- continue=- publish=0:head lease=original'
 PREPARED_ROWS='rebase
 contained
 foreign
-unadmitted'
+unadmitted
+plain'
 for prepared_kind in $PREPARED_ROWS; do
   case "$prepared_kind" in
     foreign) prepared_want="$prepared_foreign" ;;
     unadmitted) prepared_want="$prepared_unadmitted" ;;
+    plain) prepared_want="$prepared_plain" ;;
     *) prepared_want="$prepared_good" ;;
   esac
   assert_eq "$(prepared_recovery "$prepared_kind" "prepared-$prepared_kind")" "$prepared_want" \
@@ -716,7 +726,7 @@ done
 # These private copies remove preparation admission, skip fold authorization
 # or bypass restack admission. The checks must detect each defect.
 saved_script="$WORKTREE_SCRIPT"
-for prepared_control in admission fold foreign; do
+for prepared_control in admission fold foreign plain; do
   mkdir -p "$TMP_ROOT/prepared-control-$prepared_control"
   cp -R "$PACKAGE_DIR" "$TMP_ROOT/prepared-control-$prepared_control/worktree"
   WORKTREE_SCRIPT="$TMP_ROOT/prepared-control-$prepared_control/worktree/scripts/worktree"
@@ -725,11 +735,15 @@ for prepared_control in admission fold foreign; do
     prepared_to=": # $prepared_from"
     prepared_kind=rebase
     prepared_want="$prepared_good"
-  elif [[ "$prepared_control" == fold ]]; then
+  elif [[ "$prepared_control" == fold || "$prepared_control" == plain ]]; then
     prepared_from='FOLD_FIRST="${FOLD_COMMITS%%$'"'"'\n'"'"'*}"'
     prepared_to="$prepared_from; LEASE_EXPECTED_OID=\"\""
     prepared_kind=rebase
     prepared_want="$prepared_good"
+    if [[ "$prepared_control" == plain ]]; then
+      prepared_kind=plain
+      prepared_want="$prepared_plain"
+    fi
   else
     prepared_from='if [[ -n "$expected_oid" ]] &&'
     prepared_to='if false && [[ -n "$expected_oid" ]] &&'
