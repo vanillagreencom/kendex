@@ -26,8 +26,6 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-# shellcheck source=lib/lanes-fixture.sh
-source "$TEST_DIR/lib/lanes-fixture.sh"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/virtual-clock.sh"
@@ -38,7 +36,6 @@ LANES="$(mutant_scripts spread-owner/orch)/lanes" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/spread-owner/orch"
 
 FETCHER="$TMP_ROOT/fetch"
-make_fetcher "$FETCHER"
 
 # Runs start in a repository carrying no settings, so neither the checkout's
 # kendex.settings.toml nor its fleet state reaches a row.
@@ -51,6 +48,10 @@ git -C "$NOSETTINGS" config maintenance.auto false
 # this process and a listed pane is live.
 BIN="$TMP_ROOT/bin"; mkdir -p "$BIN"
 virtual_clock_install "$BIN" "$TMP_ROOT/clock"
+# The fixture's default reset must use the same clock as the projection.
+# shellcheck source=lib/lanes-fixture.sh
+PATH="$BIN:$PATH" source "$TEST_DIR/lib/lanes-fixture.sh"
+make_fetcher "$FETCHER"
 virtual_clock_bash_env "$TMP_ROOT/elapsed-clock.env" || exit 1
 export BASH_ENV="$TMP_ROOT/elapsed-clock.env"
 # The exact projection rows below share this elapsed clock. An independently
@@ -367,13 +368,27 @@ NOW="$("$BIN/date" +%s)" || exit 1
 make_lane "$H" zclaude 3600
 SESSION_FALLBACK_PICK="$PICK --min-headroom-pct 15"
 SESSION_ACCEPT="3 percent used after 40 minutes with four claims qualifies|ORCH_LANE_DIRS=$H/.zclaude|claim:z:4||$SESSION_FALLBACK_PICK|rc=0 config_dir=$H/.zclaude claims=4 usage_rate_state=one-sample session_burn_pct_per_lane_hour=1.125 session_projected_headroom_pct=77.5"
-while IFS='|' read -r label used remaining claims rate burn room; do
+while IFS='|' read -r label used remaining claims rate burn room control; do
   jq -n --argjson now "$NOW" --argjson used "$used" --argjson remaining "$remaining" '
     {five_hour: {utilization: $used,
                 resets_at: (if $remaining == null then null else $now + $remaining | todate end)},
      seven_day: {utilization: 79, resets_at: ($now + 288000 | todate)}, limits: []}' \
     > "$FIXTURE_DIR/.zclaude.json"
-  table "$label|ORCH_LANE_DIRS=$H/.zclaude|claim:z:$claims|$rate|pick --lane $H/.zclaude --harness claude --json|rc=0 session_burn_pct_per_lane_hour=$burn session_projected_headroom_pct=$room"
+  SESSION_ROW="$label|ORCH_LANE_DIRS=$H/.zclaude|claim:z:$claims|$rate|pick --lane $H/.zclaude --harness claude --json|rc=0 session_burn_pct_per_lane_hour=$burn session_projected_headroom_pct=$room"
+  table "$SESSION_ROW"
+  if [[ "$control" == age ]]; then
+    CTRL="$(mutant_scripts mutant-session-age lib/lane-model.sh)" || exit 1
+    mutate_file "$CTRL/lib/lane-model.sh" \
+      '$now - (.usage_age_s // 0) - ($session_reset - 18000)' \
+      '$now - ($session_reset - 18000)'
+    ( FAIL=0
+      TMP_ROOT="$TMP_ROOT/session-age-control" LANES_UNDER_TEST="$CTRL/lanes" table "$SESSION_ROW"
+      [[ "$FAIL" == 0 ]]
+    ) > "$TMP_ROOT/session-age-control.log"
+    assert_eq "$?" 1 "control: ignoring sample age fails the same cached session assertion"
+    assert_file_contains "$TMP_ROOT/session-age-control.log" "FAIL  $label" \
+      "control: cached session age reaches the projection assertion"
+  fi
 done <<'SESSION_RATES'
 use since reset is shared by the sampled claims|3|15600|4||1.125|77.5
 zero use is a measured empty window|0|15600|4||0|100
@@ -382,6 +397,7 @@ an unread reset keeps the default rate|3|null|4||5|77
 zero sampled claims use one as divisor|3|15600|4|z:3:3:0|4.5|19
 missing sampled claims use one as divisor|3|15600|4|z:3:3:missing|4.5|19
 cached sampled claims keep their divisor after new claims|3|15600|4|z:3:3:2|2.25|58
+cached use is divided by elapsed time at fetch|3|15600|4|z:3:3:4:600:150|1.2|76.2|age
 SESSION_RATES
 # This is the fleet acceptance case at a 15-percent room floor. Main charged
 # four claims at 5 points for 4 1/3 hours, leaving only 10 1/3 points.

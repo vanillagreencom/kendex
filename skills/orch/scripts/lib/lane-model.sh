@@ -264,7 +264,7 @@ def with_lane_projection($burn_default; $now):
      else [1, ([5, ($session_reset - $now) / 3600] | min)] | max end) as $session_hours
   | (if .binding_bucket == "session" and .usage_rate_state == "measured" then $burn
      elif .session_5h_pct == null or $session_reset == null then $burn_default
-     else .session_5h_pct / ([1/60, ($now - ($session_reset - 18000)) / 3600] | max)
+     else .session_5h_pct / ([1/60, ($now - (.usage_age_s // 0) - ($session_reset - 18000)) / 3600] | max)
           / ([._rate_sample_claims // 1, 1] | max) end) as $session_burn
   | (if .wall == null or .claims == null then null
      else 100 - .wall - .claims * $burn end) as $binding_room

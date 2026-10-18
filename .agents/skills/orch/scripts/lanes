@@ -163,8 +163,9 @@
 #         whatever binds, per live claim, its session burn for each hour left
 #         to its reset, 1 to 5, or 1 where the reset is unknown: the measured
 #         rate where the session binds and one is measured; otherwise its
-#         used percentage divided by hours since its reset (at least one
-#         minute), then by claims at sample time (at least one). Only unread
+#         used percentage divided by hours from its reset to the sample's
+#         fetch time (at least one minute), then by claims at sample time
+#         (at least one). Only unread
 #         use or reset time takes ORCH_LANE_BURN_PCT_PER_HOUR. Account-wide rates use claims
 #         at sample time (at least one) as the divisor; model rates use one
 #         because claims omit models. So an
