@@ -16,7 +16,7 @@ Fail-open paths, silent failures, error propagation, fallback behavior, wrong-ca
 
 Error paths that quietly convert failure into success. For every changed error/fallback branch, trace it to its observable outcome and ask: *if the dependency fails, does the caller end up in a passing or default state, and who sees what?* "Nobody sees anything and the run continues" is a finding.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ### Fail-Open Catalogue
 

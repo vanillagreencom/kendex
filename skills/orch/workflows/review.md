@@ -101,7 +101,7 @@ Blockers or any `fix`/`issue` suggestion → § 4. Otherwise → § 5.
 
 ## 4. Present And Fix
 
-Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Read `patched_causes` and `frozen_causes` first, with the command [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) states; a finding sharing a cause there takes that section's disposition, never another patch. Decline anything that cannot affect real usage with a one-line reason, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → § 5.
+Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Read `patched_causes` and `frozen_causes` first, with the command [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) states; a finding sharing a cause there takes that section's disposition, never another patch. Decline anything that cannot affect real usage with a one-line reason, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → § 5.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -132,7 +132,7 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 </output_format>
 
-Omit empty categories. **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Disposition every finding per [references/finding-disposition.md](../references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. Every surviving blocker and `category == "fix"` suggestion is fixed; declines are reported in § 5. `ORCH_DECISION_MODE` does not reintroduce the menu; the ask set in [communication-modes.md](../references/communication-modes.md) § Ask set still applies.
+Omit empty categories. **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Disposition every finding per [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. Every surviving blocker and `category == "fix"` suggestion is fixed; declines are reported in § 5. `ORCH_DECISION_MODE` does not reintroduce the menu; the ask set in [communication-modes.md](../references/communication-modes.md) § Ask set still applies.
 
 **Never fix as the main agent.**
 
@@ -166,7 +166,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Apply [references/finding-disposition.md](../references/finding-disposition.md) § Filing bar to every candidate: `category == "issue"` suggestions and the escalated items from the fix round alike. What clears it builds an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (null for a minted local key, which names no issue), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
+Apply [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Filing bar to every candidate: `category == "issue"` suggestions and the escalated items from the fix round alike. What clears it builds an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (null for a minted local key, which names no issue), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
 Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before invoking `audit-issues`. A non-delegated primary session runs this wrapper itself; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 

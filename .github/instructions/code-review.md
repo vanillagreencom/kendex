@@ -62,6 +62,6 @@ Read approval from GitHub's formal review state under the repository's rulesets.
 
 ## reply-contract
 
-Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <KEN-n>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason.
+Render author replies as `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <KEN-n>`. Classify findings and supply decline reasons under `.agents/skills/reviewer/references/finding-disposition.md` § Decision flow.
 
-A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.
+A tracked reply can also name a GitHub issue.

@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# bash-runtime: 3.2
+# Surface: scripts/review-depth. Inputs: orch/scripts/lib/change-class.sh,
+# orch/tests/lib/assertions.sh. The classifier fixture supplies its public
+# stdout/stderr protocol; the real reader and depth command consume it.
+set -euo pipefail
+
+TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SKILL_DIR="$(cd -- "$TEST_DIR/.." && pwd -P)"
+source "$SKILL_DIR/../orch/tests/lib/assertions.sh"
+TMP_ROOT="$(mktemp -d)" || { echo 'review-depth.test: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'review-depth.test: scratch=not-a-directory' >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'review-depth.test: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+
+INSTALL="$TMP_ROOT/skills"
+mkdir -p "$INSTALL/reviewer/scripts" "$INSTALL/orch/scripts/lib" "$INSTALL/harness-ci/scripts"
+cp "$SKILL_DIR/scripts/review-depth" "$INSTALL/reviewer/scripts/"
+cp "$SKILL_DIR/../orch/scripts/lib/change-class.sh" "$INSTALL/orch/scripts/lib/"
+CLASSIFIER="$INSTALL/harness-ci/scripts/change-class"
+cat > "$CLASSIFIER" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "${DEPTH_FIXTURE_ARGS:?}"
+printf 'change_class=%s\n' "${DEPTH_FIXTURE_CLASS:?}"
+if [ -n "${DEPTH_FIXTURE_MEASURED:-}" ]; then
+  printf 'class: class=%s measured=%s cause=fixture\n' "$DEPTH_FIXTURE_CLASS" "$DEPTH_FIXTURE_MEASURED" >&2
+fi
+exit "${DEPTH_FIXTURE_EXIT:-0}"
+STUB
+chmod +x "$CLASSIFIER"
+export DEPTH_FIXTURE_ARGS="$TMP_ROOT/args"
+DEPTH="$INSTALL/reviewer/scripts/review-depth"
+
+# orch's review-pr workflow consumes the record. Each class retains the
+# approval field even when package review stands down.
+depth_table() {
+  local command="$1" class measured depth expected_status status output before
+  before="$FAIL"
+  while read -r class measured depth expected_status; do
+    status=0
+    output="$(DEPTH_FIXTURE_CLASS="$class" DEPTH_FIXTURE_MEASURED="$measured" \
+      "$command" --base base-ref --head head-ref --repo "$TMP_ROOT/judged tree" 2>"$TMP_ROOT/stderr")" || status=$?
+    assert_eq "$status" "$expected_status" "$class/$measured status" "$TMP_ROOT/stderr"
+    if [ "$expected_status" = 0 ]; then
+      assert_eq "$output" "change_class=$class review_depth=$depth native_approval=unchanged" "$class/$measured depth and native approval"
+    else
+      assert_eq "$output" '' "$class/$measured publishes no depth"
+    fi
+  done <<'ROWS'
+render true none 0
+trivial true none 0
+micro true none 0
+small true bot 0
+standard true full 0
+standard false absent 3
+ROWS
+  [ "$FAIL" -eq "$before" ]
+}
+depth_table "$DEPTH" || :
+expected_args="$(printf '%s\n' --event pull_request --base base-ref --head head-ref --repo "$TMP_ROOT/judged tree" --output /dev/null)"
+assert_eq "$(cat "$DEPTH_FIXTURE_ARGS")" "$expected_args" 'the real reader forwards the range and path as arguments'
+
+while read -r name marker classifier_exit expected_cause; do
+  [ "$marker" != absent ] || marker=''
+  status=0
+  output="$(DEPTH_FIXTURE_CLASS=standard DEPTH_FIXTURE_MEASURED="$marker" DEPTH_FIXTURE_EXIT="$classifier_exit" \
+    "$DEPTH" --base base-ref 2>"$TMP_ROOT/stderr")" || status=$?
+  assert_eq "$status" 2 "$name status"
+  assert_eq "$output" '' "$name publishes no depth"
+  diagnostic="$(cat "$TMP_ROOT/stderr")"
+  assert_contains "$diagnostic" "review-depth: cause=$expected_cause " "$name cause"
+done <<'ROWS'
+failed-classifier true 2 classifier-exit-2
+missing-marker absent 0 classifier-unreadable
+ROWS
+
+mv "$CLASSIFIER" "$CLASSIFIER.disabled"
+status=0
+output="$(PATH=/usr/bin:/bin "$DEPTH" --base base-ref 2>"$TMP_ROOT/stderr")" || status=$?
+assert_eq "$status" 2 'missing classifier refuses'
+assert_eq "$output" '' 'missing classifier publishes no depth'
+mv "$CLASSIFIER.disabled" "$CLASSIFIER"
+
+for option in --class --event; do
+  status=0
+  output="$("$DEPTH" "$option" small 2>"$TMP_ROOT/stderr")" || status=$?
+  assert_eq "$status" 2 "$option cannot supply a class or another event"
+  assert_eq "$output" '' "$option publishes no depth"
+done
+
+# The control changes a real depth decision in a disposable source copy.
+cp "$DEPTH" "$INSTALL/reviewer/scripts/review-depth-mutant"
+python3 - "$INSTALL/reviewer/scripts/review-depth-mutant" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert not p.is_symlink()
+before = p.read_text()
+old = 'small) DEPTH=bot ;;'
+assert before.count(old) == 1
+after = before.replace(old, 'small) DEPTH=full ;;')
+assert after != before
+p.write_text(after)
+PY
+status=0
+(depth_table "$INSTALL/reviewer/scripts/review-depth-mutant") >"$TMP_ROOT/control.log" 2>&1 || status=$?
+assert_eq "$status" 1 'must-fail control rejects the changed small depth'
+
+printf '\nreview-depth: %s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

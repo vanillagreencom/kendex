@@ -5,7 +5,7 @@ summary: "Strict review and QA workflows: reviewer ethos, code-review classifica
 license: MIT
 user-invocable: true
 dependencies:
-  required: [orch, github, code-quality, docs-writing]
+  required: [orch, github, code-quality, docs-writing, harness-ci, project-management]
   optional: [linear]
 metadata:
   author: vanillagreen
@@ -25,6 +25,12 @@ Shared contract for every review specialist; each agent's domain and probes live
 | `workflows/codebase-review.md` | Whole-codebase audit, no diff |
 | `workflows/qa-review.md` | QA label-triggered review of one PR |
 
+## Finding conduct and review depth
+
+Read [references/finding-disposition.md](references/finding-disposition.md) before classifying findings. It owns verification, dispositions, recurrence and the filing bar. Orch owns execution and counters. Project-management owns issue creation.
+
+Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted base checkout to select package review depth for a pull-request range. The command uses harness-ci through orch's existing reader. `review-depth --help` owns its class mapping, output and failure contract. Every result leaves GitHub's native approval requirements in force.
+
 ## Ethos
 
 - Verify before reporting: if the repo contains the caller, config, test, or doc that settles a suspicion, read it. Never file "maybe X handles this" when X is in the repo.
@@ -34,7 +40,7 @@ Shared contract for every review specialist; each agent's domain and probes live
 - **A post-merge box the merge can prove is a finding.** A `Post-merge:` box in the issue's Done-when whose check the PR's own tests, CI or diff already prove, or whose `Why after merge:` names none of the three classes the project-management skill's SKILL.md § Disposition admits, is a `fix` suggestion on that box. Tick it in the PR's completion only when recorded evidence proves its check, and cite that evidence. For an unproved check, follow that Disposition: make it a pre-merge test or correct its post-merge admission. Drop a check only when that Disposition permits it.
 - **Duplicated judgment is a finding.** Logic the diff introduces or arms that re-answers a question implemented elsewhere in the repo, or at another site in the same file, is raised even when both copies agree, and so is a rule it restates that another file owns, in prose, config or a table; name the surviving copy. Also raise a new script, watch, file, setting or rule added beside the owner of the same concern. Cite [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering) in the finding and name the owner the change should extend.
 - **A claim needs the line that makes it true.** For every sentence the diff adds to a `--help`, SKILL.md, CHANGELOG entry, comment, or diagnostic that states an order, a source set, an exit code, or a guarantee, find the code that makes it true. None found is a blocker; the claim is the defect, not the code.
-- **Plausible by default.** Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic, meaning reached by a producer you can name rather than merely conceivable: nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect. Whether a reach clears the filing bar is the dispositioner's call at [orch finding-disposition § Filing bar](../orch/references/finding-disposition.md#filing-bar), never the reviewer's.
+- **Plausible by default.** Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic, meaning reached by a producer you can name rather than merely conceivable: nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect. Whether a reach clears the filing bar is the dispositioner's call at [finding-disposition § Filing bar](references/finding-disposition.md#filing-bar), never the reviewer's.
 - Judge Markdown against [`../docs-writing/SKILL.md`](../docs-writing/SKILL.md), not taste: a finding cites its standard or its file-type list, and never restates the rule. Source comments stay [code-quality § Comments and Prose](../code-quality/SKILL.md#comments-and-prose).
 - Fewer high-conviction findings beat lists of nits.
 - A reviewer writes nothing but its artifact and leaves the reviewed worktree as it found it: the `reviewer-read-only` hook refuses an edit, a write into a repository, a commit, a push and Git discard commands, and the `reviewer-stop-check` hook checks the required report and attributes tracked edits from the reviewer's successful tool calls. Its stop instruction keeps the required report. Codex and Copilot CLI run `reviewer-stop-check` but not `reviewer-read-only`, so there the reviewer keeps the no-write half of this rule unaided. Another revision is measured in a copy, `git archive REV | tar -x -C [TMPDIR]` or `git show REV:PATH` redirected to a file, both under a temporary directory outside the worktree and the common Git directory, never by writing its bytes into the shared tree and restoring them by hand: the worktree is shared with the parallel review panel and the dev round, so the window belongs to their measurements as much as to this reviewer's.

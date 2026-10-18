@@ -18,7 +18,7 @@ Implementation maintainability of the reviewed scope: simplification, abstractio
 
 Is the changed implementation simple, direct, easy to reason about, and aligned with the codebase? Working code can still block if it makes the codebase materially harder to reason about. Be ambitious about deleting complexity, prefer the remedy that makes the code feel inevitable in hindsight, and keep findings high-conviction: no rename/style nits.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ### Probes
 
