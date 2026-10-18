@@ -2900,6 +2900,10 @@ run_handoff_writer() {
 REAL_WRITER_CAT="$(command -v cat)" || exit 1
 REAL_WRITER_DATE="$(command -v date)" || exit 1
 REAL_WRITER_MV="$(command -v mv)" || exit 1
+PROGRESSCTL="$(mutant_scripts progressctl oversee-succeed)" || exit 1
+mutate_file "$PROGRESSCTL/oversee-succeed" \
+  "'## Progress log') progress_log=1; continue ;;" \
+  "'## Progress log') progress_log=0; continue ;;"
 for row in \
   'same|handoff-body-invalid|reason=installed-handoff' \
   'relative|handoff-body-invalid|reason=installed-handoff' \
@@ -2910,13 +2914,22 @@ for row in \
   'empty|handoff-body-invalid|reason=not-nonempty-regular' \
   'missing|handoff-body-invalid|reason=not-nonempty-regular' \
   'header|handoff-body-invalid|reason=header' \
+  'progress-ruling|handoff-body-invalid|reason=progress-log-ruling line=5 home=fleet-log|- Rulings: KEN-3866 hold move; KEN-3797 bounded round for defect 1, defect 2 declined; KEN-4072 one extra rerun; KEN-4073 re-arm' \
+  'progress-rule|handoff-body-invalid|reason=progress-log-ruling line=5 home=fleet-log| * Ruling: keep the hold' \
+  'progress-filing|handoff-body-invalid|reason=progress-log-filing line=5 home=fleet-log|- KEN-4258 filed; KEN-4259 filed as its blocking fix' \
+  'progress-filed-label|handoff-body-invalid|reason=progress-log-filing line=5 home=fleet-log|- Launched: KEN-4078. Filed: KEN-4079' \
+  'progress-github-filing|handoff-body-invalid|reason=progress-log-filing line=5 home=fleet-log|- #4079 filed' \
+  'progress-verifying|handoff-body-invalid|reason=progress-log-verifying line=5 home=tracker-item|- KEN-3987 box 2 failed (comment d781a9ab)' \
+  'progress-passed|handoff-body-invalid|reason=progress-log-verifying line=5 home=tracker-item|- KEN-3987 box 2 passed' \
+  'progress-read|handoff-body-invalid|reason=progress-log-verifying line=5 home=tracker-item|- Verifying read: KEN-3987' \
+  'progress-reads|handoff-body-invalid|reason=progress-log-verifying line=5 home=tracker-item| * Verifying reads: KEN-3987' \
   'read|handoff-write-failed|step=body-read' \
   'date|handoff-write-failed|step=date' \
   'rename|handoff-write-failed|step=rename' \
   'generation|handoff-stale|expected=unknown' \
   'clock|success|' \
   ; do
-  IFS='|' read -r row_name row_key row_field <<<"$row"
+  IFS='|' read -r row_name row_key row_field row_text <<<"$row"
   fleet_state
   rm -f -- "$HANDOFF_FILE" "$TMP_ROOT/body-link" "$HANDOFF_BODY"
   printf 'Start here: 2026-10-01T00:00:00Z generation=0\n\nOld body\n' > "$HANDOFF_FILE"
@@ -2942,6 +2955,19 @@ for row in \
     empty) : > "$HANDOFF_BODY" ;;
     missing) rm -- "$HANDOFF_BODY" ;;
     header) printf '## State\nStart here: supplied metadata\n' > "$HANDOFF_BODY" ;;
+    progress-*)
+      # The gen271 reading on KEN-4040 supplies the observed bad records.
+      # The second bad record also proves that the first matching line wins.
+      printf '## State\nComplete new snapshot\n\n## Progress log\n%s\nFiled: KEN-4079\n' "$row_text" > "$HANDOFF_BODY" ;;
+    clock)
+      # KEN-4040 comment 3171efdf supplies gen271's excluded records only.
+      # This derived clean body uses constructed merge/launch input and the
+      # KEN-4276 requirement's explicit (Verifying) state line.
+      # Matching labels outside Progress log do not belong to this check.
+      printf '%s\n' '## State' 'Rulings: see fleet log' 'Filed: see fleet log' \
+        'Verifying reads: see tracker items' '' '## Progress log' \
+        '- Merged: KEN-4050 (Verifying)' '- Launched: KEN-4078' \
+        '## Instructions in force' 'box 2 failed: see tracker item' > "$HANDOFF_BODY" ;;
     generation)
       jq '.overseer.generation = "invalid"' "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
       mv -- "$FLEET_STATE.tmp" "$FLEET_STATE" ;;
@@ -2983,6 +3009,16 @@ STUB
   fi
   staging="$(find "$TMP_ROOT/work/tmp/handoffs" -maxdepth 1 -name '.handoff.*' -print)" || exit 1
   assert_eq "$staging" '' "writer $row_name: private staging is removed before return"
+  case "$row_name" in
+    progress-ruling|progress-filing|progress-verifying)
+      HANDOFF_FIXTURE=off SUCCEED_BIN="$PROGRESSCTL/oversee-succeed" run_handoff_writer \
+        --write-only --handoff-body "$row_body" --handoff "$row_dest"
+      sed '1,2d' "$HANDOFF_FILE" > "$TMP_ROOT/control-payload"
+      exact=no
+      if cmp -s -- "$HANDOFF_BODY" "$TMP_ROOT/control-payload"; then exact=yes; fi
+      assert_eq "$RC|$exact|$OUT" '0|yes|' \
+        "control: disabling Progress log detection admits the same $row_name body" ;;
+  esac
 done
 
 for row in \

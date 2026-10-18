@@ -25,6 +25,8 @@
 #   headerless file. The writer adds Start here with the current fleet generation
 #   and UTC write time. `--write-only` does this without a pane or launch choice,
 #   even when succession is off. The source is caller-owned session scratch.
+#   Progress log refuses labeled rulings and filing history (fleet log), and
+#   Verifying readings (tracker item); paraphrases are not detected.
 #   Plain succession only checks the installed handoff and never stamps it.
 #
 #   The launch modes share ONE launch path. The first is an overseer succeeding
@@ -513,7 +515,7 @@ message() { # KEY FIELD=VALUE...
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. found= names what the reader took from the handoff. Rewrite it before succession; no successor was launched.' ;;
-    handoff-body-invalid) text='Supply a separate nonempty regular body file with no Start here line.' ;;
+    handoff-body-invalid) text='Supply a separate nonempty regular body file with no Start here line. Move labeled Progress log records to the named home: rulings and filing history to the fleet log, Verifying readings to their tracker items.' ;;
     handoff-write-failed) text='The snapshot could not replace the handoff. The previous handoff remains in place.' ;;
     model-recovery-refused) text='The acquired model recovery could not complete for its recorded predecessor. Read the reason and recover that bound session or register its executable launch command before requesting recovery again.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
@@ -741,6 +743,7 @@ handoff_record_read() {
 # staged files and ends before succession can create the successor.
 handoff_write() (
   local source_parent destination_parent source_path destination_path stage now header_rc
+  local line line_number=0 progress_log=0 kind home
   HANDOFF="$HANDOFF_FILE"
   [[ ! -L "$HANDOFF_BODY" && -f "$HANDOFF_BODY" && -s "$HANDOFF_BODY" ]] \
     || die handoff-body-invalid "path=$HANDOFF_BODY" reason=not-nonempty-regular
@@ -775,6 +778,30 @@ handoff_write() (
     1) ;;
     *) die handoff-write-failed "path=$HANDOFF" step=body-check ;;
   esac
+  # Overseers supply these labeled records in their body payload. Recovery's
+  # retained predecessor snapshot is not current input and stays untouched.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    case "$line" in
+      '## Progress log') progress_log=1; continue ;;
+      '## '*) progress_log=0 ;;
+    esac
+    (( progress_log )) || continue
+    kind=""
+    home=fleet-log
+    if matches "$line" '^[-* ]*Rulings?:'; then
+      kind=ruling
+    elif matches "$line" '(^|[^[:alnum:]_])Filed:' \
+      || matches "$line" '([A-Z]+-[0-9]+|#[0-9]+) filed([^[:alnum:]_]|$)'; then
+      kind=filing
+    elif matches "$line" '^[-* ]*Verifying reads?:' \
+      || matches "$line" 'box [0-9]+ (failed|passed)([^[:alnum:]_]|$)'; then
+      kind=verifying
+      home=tracker-item
+    fi
+    [[ -z "$kind" ]] || die handoff-body-invalid "path=$HANDOFF_BODY" \
+      "reason=progress-log-$kind" "line=$line_number" "home=$home"
+  done < "$stage/payload"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     || die handoff-write-failed "path=$HANDOFF" step=date
   printf 'Start here: %s generation=%s\n\n' "$now" "$generation" > "$stage/complete" \
