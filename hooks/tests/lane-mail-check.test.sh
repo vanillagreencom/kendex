@@ -1586,7 +1586,9 @@ assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the rea
 # fields to recognize the measured resume result. Only assistant, user and
 # queued enqueue records contribute these fields. Other result text is read
 # only for launch/spawn openings and notification markers. Sent message text
-# is not read. Pin that one jq read site; a change to its fields, another site
+# is not read. Its internal queued/unconfirmed states preserve sends until a
+# running observation or completion; all state changes invalidate older lists.
+# Pin that one jq read site; a change to its fields, another site
 # in that function, or a read in another tracked hook must remain forbidden.
 # The block is a reviewed copy, not extracted from the hook at run time: an
 # extraction would admit whatever the hook's block becomes, so an unreviewed
@@ -1604,12 +1606,14 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
         (select(startswith("Spawned successfully"))
           | capture("\nagent_id: (?<id>[A-Za-z0-9_-]+)\nname: (?<name>[^\n]+)")?);
       def results: .content | if type == "array" then .[] else empty end | select(.type == "tool_result");
+      def changed($id; $status): .generation += 1 | .agents[$id] = $status;
+      def queued: . == "queued" or . == "unconfirmed";
       def noted($m): reduce ($m.content | said
             | scan("<task-notification>[\\s\\S]*?<task-id>([A-Za-z0-9_-]+)</task-id>[\\s\\S]*?<status>([a-z_]+)</status>[\\s\\S]*?</task-notification>")) as $n
-            (. ; if .agents | has($n[0]) then .agents[$n[0]] = $n[1] else . end)
+            (. ; if .agents | has($n[0]) then changed($n[0]; $n[1]) else . end)
           | reduce ($m.content | said
             | scan("<teammate-message teammate_id=\"([^\"]+)\"[^>]*>\\s*\\{\\s*\"type\"\\s*:\\s*\"idle_notification\"")) as $n
-            (. ; if .names | has($n[0]) then .agents[.names[$n[0]]] = "completed" else . end);
+            (. ; if .names | has($n[0]) then changed(.names[$n[0]]; "completed") else . end);
       reduce (inputs | fromjson | objects
           | select(.type == "assistant" or .type == "user" or .type == "queue-operation") | . as $record
           | if .type == "queue-operation" then select(.operation == "enqueue") | {role: "user", content: (.content | strings)}
@@ -1634,7 +1638,7 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
               else . end)
         elif $m.role == "user" then
           reduce ($m | results | [.content | text | launched][0] | objects) as $l
-            (. ; .agents[$l.id] = "running"
+            (. ; changed($l.id; "running")
               | if $l.name != null then .names[$l.name] = $l.id else . end)
           | noted($m)
           | reduce ($m | results) as $r
@@ -1645,12 +1649,14 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
                 elif $c | has("list") then
                   if $c.overlap or $c.list != .generation then .
                   elif ([$m | results] | length) != 1 or ($m.result.sections | type) != "array" then
-                    .agents |= with_entries(if .value == "running" then .value = "unknown" else . end)
+                    reduce (.agents | to_entries[] | select(.value == "running" or (.value | queued))) as $a
+                      (. ; changed($a.key; if $a.value | queued then "unconfirmed" else "unknown" end))
                   else reduce ($m.result.sections[] | select(.kind == "teammates") | .rows[]) as $a
                     (. ; if .names | has($a.name) then .names[$a.name] as $t
-                        | if $a.status == "idle" then .agents[$t] = "completed"
-                          elif $a.status == "running" then .agents[$t] = "running"
-                          else .agents[$t] = "unknown" end
+                        | if $a.status == "idle" then
+                            if .agents[$t] | queued then . else changed($t; "completed") end
+                          elif $a.status == "running" then changed($t; "running")
+                          else changed($t; if .agents[$t] | queued then "unconfirmed" else "unknown" end) end
                       else . end)
                   end
                 elif $c | has("to") then (.names[$c.to] // $c.to) as $t
@@ -1661,13 +1667,14 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
                         | if type == "object" then . else {} end) as $sent
                       | if $sent.success == true
                           and ((($sent.message | strings) // "") | test("^Teammate \"[^\"]+\" was not running; resumed it as an in-process teammate with [0-9]+ prior messages and your message as its next prompt\\.$"))
-                        then .agents[$t] = "running"
-                        else .agents[$t] = "unknown" end
-                    else .agents[$t] = $c.status end
+                        then changed($t; "queued")
+                        else changed($t; "unconfirmed") end
+                    else changed($t; if $c.status == "running" then "queued" else $c.status end) end
                 elif $c.sync then .
                 else .unclassified = true end)
         else . end)
-      | (.agents | to_entries[] | [.key, .value] | @tsv),
+      | (.agents | to_entries[] | [.key,
+          (if .value == "queued" then "running" elif .value == "unconfirmed" then "unknown" else .value end)] | @tsv),
         (select(.unclassified) | ["?", "agent-result"] | @tsv)
     ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || scan_rc=$?
 AGENT_ID_STATUS_READ

@@ -45,15 +45,26 @@ append_listed() { # STATUS [NAME] [IS_ERROR]
 append_report() {
   jq -nc '{type:"user",message:{role:"user",content:"Another Claude session sent a message:\n<teammate-message teammate_id=\"reviewer\" color=\"green\" summary=\"Correctness review complete\">\nThe report has returned.\n</teammate-message>"}}' >> "$TRANSCRIPT"
 }
-# A list that overlaps a resuming send cannot establish the resumed run ended.
-append_overlapping_list() { # list-first|send-first
+# Claude Code 2.1.302 captures a list before awaited peer reads. A send or
+# completion during those reads is newer than the returned snapshot.
+append_overlapping_list() { # list-first|send-first|queued-idle|queued-task|result-idle|result-block-idle
+  local mode="$1" status=idle note=''
   jq -nc --arg order "$1" '{type:"assistant",message:{role:"assistant",content:
     ([{type:"tool_use",id:"call-list",name:"ListAgents",input:{}},
       {type:"tool_use",id:"call-send",name:"SendMessage",input:{to:"reviewer",message:"Recheck the head."}}]
-      | if $order == "send-first" then reverse else . end)}}' >> "$TRANSCRIPT"
-  jq -nc '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-send",content:"{\"success\":true}"}]}}' >> "$TRANSCRIPT"
-  jq -nc '{type:"user",toolUseResult:{sections:[{kind:"teammates",rows:[{name:"reviewer",status:"idle"}]}]},
-    message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-list",content:"reviewer is idle"}]}}' >> "$TRANSCRIPT"
+      | if $order == "send-first" then reverse elif $order == "list-first" then . else .[:1] end)}}' >> "$TRANSCRIPT"
+  case "$mode" in
+    list-first | send-first)
+      jq -nc '{type:"user",message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-send",content:"{\"success\":true}"}]}}' >> "$TRANSCRIPT" ;;
+    queued-idle) status=running; append_queued "$(idle_text reviewer)" ;;
+    queued-task) status=running; append_queued "$(notice_text areviewer-t1 completed)" ;;
+    result-idle | result-block-idle) status=running; note=$(idle_text reviewer) ;;
+  esac
+  jq -nc --arg s "$status" --arg n "$note" --arg mode "$mode" \
+    '{type:"user",toolUseResult:{sections:[{kind:"teammates",rows:[{name:"reviewer",status:$s}]}]},
+      message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-list",
+        content:(if $mode == "result-block-idle" then [{type:"text",text:("reviewer is " + $s)},{type:"text",text:$n}]
+          else "reviewer is " + $s + "\n" + $n end)}]}}' >> "$TRANSCRIPT"
 }
 notice_text() { # ID STATUS
   printf '<task-notification><task-id>%s</task-id><status>%s</status></task-notification>' "$1" "$2"
@@ -144,6 +155,21 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if an
     listed-running) append_teammate; append_listed running ;;
     listed-resumed) append_teammate; append_listed idle
       append_call SendMessage '{"to":"reviewer","message":"Recheck the head."}' '{"success":true}' ;;
+    # SendMessage acknowledges the inbox write before the teammate's next
+    # poll clears isIdle. That sequential idle snapshot ends no sent turn.
+    listed-sent-idle | listed-sent-running-idle | listed-sent-unknown-idle | listed-sent-notified | listed-resent-idle | listed-sent-unknown-running-idle)
+      append_teammate; append_idle reviewer
+      append_call SendMessage '{"to":"reviewer","message":"Recheck the head."}' '{"success":true}'
+      case "$AGENTS" in
+        listed-sent-running-idle) append_listed running ;;
+        listed-sent-unknown-idle) append_listed unavailable ;;
+        listed-sent-unknown-running-idle) append_listed unavailable; append_listed running ;;
+        listed-resent-idle) append_listed running
+          append_call SendMessage '{"to":"reviewer","message":"Recheck again."}' '{"success":true}' ;;
+      esac
+      append_listed idle
+      [ "$AGENTS" != listed-sent-notified ] || append_idle reviewer ;;
+    stopped-unknown-listed-idle) append_stopped_resume '{"success":true}'; append_listed idle ;;
     listed-error) append_teammate; append_listed idle reviewer true ;;
     listed-unknown) append_teammate; append_listed unavailable ;;
     listed-unknown-returned) append_teammate; append_listed unavailable; append_idle reviewer ;;
@@ -152,6 +178,8 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if an
     listed-absent-returned) append_teammate; append_call ListAgents '{}' 'Listing is unavailable.'; append_idle reviewer ;;
     listed-overlap-first) append_teammate; append_overlapping_list list-first ;;
     listed-overlap-last) append_teammate; append_overlapping_list send-first ;;
+    listed-queued-idle | listed-queued-task | listed-result-idle | listed-result-block-idle)
+      append_teammate; append_overlapping_list "${AGENTS#listed-}" ;;
     # A refused stop ended nothing.
     stop-refused) append_teammate; append_call TaskStop '{"task_id":"reviewer"}' '<tool_use_error>No task found with ID: reviewer</tool_use_error>' true ;;
     # A foreground call's result is its finished child's output.
@@ -177,7 +205,7 @@ TRANSCRIPT="$TMP_ROOT/agent-launch.jsonl"
 # agent-unobserved where the roster is unknown, naming the lane's handoff.
 # Rows a scan reads as none are skipped where the scan is unavailable.
 while IFS='|' read -r agents tokens tool reserve rc key; do
-  case "$agents" in out | teammate | resumed | resume-noted | requeued | unclassified | stop-refused | stopped-resumed | stopped-unknown | stopped-resume-noted | reported | listed-running | listed-resumed | listed-error | listed-unknown | listed-unrelated | listed-absent | listed-overlap-first | listed-overlap-last) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
+  case "$agents" in out | teammate | resumed | resume-noted | requeued | unclassified | stop-refused | stopped-resumed | stopped-unknown | stopped-resume-noted | reported | listed-running | listed-resumed | listed-error | listed-unknown | listed-unrelated | listed-absent | listed-overlap-first | listed-overlap-last | listed-sent-idle | listed-sent-unknown-idle | listed-resent-idle | stopped-unknown-listed-idle) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
   key=$(scan_key "$key")
   AGENTS=$agents launch "$tokens" "$tool" "ORCH_HANDOFF_AGENT_RESERVE_TOKENS=$reserve"
   expect "$rc" "$key" "launch $tool at $tokens with reserve $reserve and agents $agents"
@@ -214,6 +242,13 @@ listed-idle|260000|Agent||0|-
 listed-replay|260000|Agent||0|-
 listed-running|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 listed-resumed|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+listed-sent-idle|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+listed-sent-running-idle|260000|Agent||0|-
+listed-sent-unknown-idle|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
+listed-sent-unknown-running-idle|260000|Agent||0|-
+listed-sent-notified|260000|Agent||0|-
+listed-resent-idle|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+stopped-unknown-listed-idle|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
 listed-error|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 listed-unknown|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
 listed-unknown-returned|260000|Agent||0|-
@@ -222,6 +257,10 @@ listed-absent|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260
 listed-absent-returned|260000|Agent||0|-
 listed-overlap-first|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 listed-overlap-last|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
+listed-queued-idle|260000|Agent||0|-
+listed-queued-task|260000|Agent||0|-
+listed-result-idle|260000|Agent||0|-
+listed-result-block-idle|260000|Agent||0|-
 stop-refused|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 foreground|260000|Agent||0|-
 unclassified|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
@@ -596,13 +635,13 @@ SCAN_TIMEOUT
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop killed-resume known-unknown killed-result listed list-overlap order remove register; do
+  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop killed-resume known-unknown killed-result listed list-overlap sent-idle order remove register; do
     case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
       children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
       native) variant agent-no-native -e 's/^  if jq -e '\''has("background_tasks")'\'' <<<"\$INPUT" >\/dev\/null; then$/  if false; then/' ;;
-      completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then \.agents\[\$n\[0\]\] = \$n\[1\] else \. end/. /' ;;
+      completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then changed(\$n\[0\]; \$n\[1\]) else \. end/. /' ;;
       capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
       # Main's rule: the reserve applies whether or not an agent is out.
       reserve) variant agent-reserve-always -e 's/^  attached_agents_out || return 0$/  attached_agents_out || :/' ;;
@@ -610,7 +649,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       # Main's refusal: the reserve alone names the handoff.
       wait) variant agent-reserve-handoff -e 's/^    out:\*) refuse agent-reserve /    out:*) refuse_handoff agent-launch /' ;;
       # Each measured transition the scan reads, removed in turn.
-      idle) variant agent-no-idle -e 's/then \.agents\[\.names\[\$n\[0\]\]\] = "completed" else/then . else/' ;;
+      idle) variant agent-no-idle -e 's/then changed(\.names\[\$n\[0\]\]; "completed") else/then . else/' ;;
       resume) variant agent-no-resume -e 's/if (\$c\.input\.message | type) == "string" then/if false then/' ;;
       shutdown) variant agent-no-shutdown -e 's/and \$c\.input\.message\.type == "shutdown_request" then/and false then/' ;;
       foreground) variant agent-no-foreground -e 's/elif \$c\.sync then \.$/elif false then ./' ;;
@@ -618,10 +657,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       queued) variant agent-no-queued -e 's/if \.type == "queue-operation" then/if false then/' ;;
       stop) variant agent-no-stop -e 's/elif \$c\.name == "TaskStop" and/elif false and/' ;;
       killed-resume) variant agent-unproved-resume -e 's/elif \$c\.status == "running" and \.agents\[\$t\] == "killed" then/elif false then/' ;;
-      known-unknown) variant agent-sticky-unknown -e 's/\.agents\[\$t\] = "unknown"/.agents[$t] = "unknown" | .unclassified = true/g' ;;
+      known-unknown) variant agent-sticky-unknown -e 's/else changed(\$t; "unconfirmed") end/else changed($t; "unconfirmed") | .unclassified = true end/' ;;
       killed-result) variant agent-unread-resume -e 's/and (\$m\.result | type) == "object" then \$m\.result/and false then $m.result/' ;;
       listed) variant agent-no-listed -e 's/elif \$c\.name == "ListAgents" then/elif false then/' ;;
       list-overlap) variant agent-stale-list -e 's/if \$c\.overlap or \$c\.list != \.generation then/if false then/' ;;
+      sent-idle) variant agent-idle-before-consumption -e 's/if \.agents\[\$t\] | queued then \. else changed/if false then . else changed/' ;;
       # A record's call results applied before its notifications.
       order) variant agent-results-first -e 's/^          | noted(\$m)$/          | ./' \
         -e 's/else \.unclassified = true end)$/else .unclassified = true end) | noted($m)/' ;;
@@ -629,7 +669,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       # A record's launches registered beside its call results, after its
       # notifications.
       register) variant agent-launch-after-notes -e 's/^          reduce (\$m | results | \[\.content | text | launched\]\[0\] | objects) as \$l$/          reduce empty as $l/' \
-        -e 's/| if \[\$r\.content | text | launched\]\[0\] != null or \$c == null or/| [$r.content | text | launched][0] as $l | if $l != null then .agents[$l.id] = "running" | if $l.name != null then .names[$l.name] = $l.id else . end elif $c == null or/' ;;
+        -e 's/| if \[\$r\.content | text | launched\]\[0\] != null or \$c == null or/| [$r.content | text | launched][0] as $l | if $l != null then changed($l.id; "running") | if $l.name != null then .names[$l.name] = $l.id else . end elif $c == null or/' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \

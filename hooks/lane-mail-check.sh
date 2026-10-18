@@ -2006,7 +2006,12 @@ claude_attached_agents() { # [emergency STATE_FILE]
     # only its measured resume result proves the stopped run started again.
     # ListAgents (2.1.302) records teammate states in toolUseResult.sections;
     # its idle rows end the named turn even when no idle notification arrived.
-    # A call that can change the roster invalidates an earlier pending list.
+    # Every roster transition invalidates an earlier pending list. Claude
+    # Code 2.1.302 captures list state before its awaited peer reads, so even
+    # a completion appended to that result is newer than the snapshot.
+    # SendMessage writes the inbox before the teammate consumes it. Keep a
+    # sent turn queued until a later running observation or completion;
+    # an idle snapshot alone can still describe the preceding turn.
     # A foreground Agent call (no run_in_background, no name) returns its
     # child's finished output, so its result puts nothing out. Any other
     # result of an async or named call is unclassified. Claude Code appends a
@@ -2030,12 +2035,14 @@ claude_attached_agents() { # [emergency STATE_FILE]
         (select(startswith("Spawned successfully"))
           | capture("\nagent_id: (?<id>[A-Za-z0-9_-]+)\nname: (?<name>[^\n]+)")?);
       def results: .content | if type == "array" then .[] else empty end | select(.type == "tool_result");
+      def changed($id; $status): .generation += 1 | .agents[$id] = $status;
+      def queued: . == "queued" or . == "unconfirmed";
       def noted($m): reduce ($m.content | said
             | scan("<task-notification>[\\s\\S]*?<task-id>([A-Za-z0-9_-]+)</task-id>[\\s\\S]*?<status>([a-z_]+)</status>[\\s\\S]*?</task-notification>")) as $n
-            (. ; if .agents | has($n[0]) then .agents[$n[0]] = $n[1] else . end)
+            (. ; if .agents | has($n[0]) then changed($n[0]; $n[1]) else . end)
           | reduce ($m.content | said
             | scan("<teammate-message teammate_id=\"([^\"]+)\"[^>]*>\\s*\\{\\s*\"type\"\\s*:\\s*\"idle_notification\"")) as $n
-            (. ; if .names | has($n[0]) then .agents[.names[$n[0]]] = "completed" else . end);
+            (. ; if .names | has($n[0]) then changed(.names[$n[0]]; "completed") else . end);
       reduce (inputs | fromjson | objects
           | select(.type == "assistant" or .type == "user" or .type == "queue-operation") | . as $record
           | if .type == "queue-operation" then select(.operation == "enqueue") | {role: "user", content: (.content | strings)}
@@ -2060,7 +2067,7 @@ claude_attached_agents() { # [emergency STATE_FILE]
               else . end)
         elif $m.role == "user" then
           reduce ($m | results | [.content | text | launched][0] | objects) as $l
-            (. ; .agents[$l.id] = "running"
+            (. ; changed($l.id; "running")
               | if $l.name != null then .names[$l.name] = $l.id else . end)
           | noted($m)
           | reduce ($m | results) as $r
@@ -2071,12 +2078,14 @@ claude_attached_agents() { # [emergency STATE_FILE]
                 elif $c | has("list") then
                   if $c.overlap or $c.list != .generation then .
                   elif ([$m | results] | length) != 1 or ($m.result.sections | type) != "array" then
-                    .agents |= with_entries(if .value == "running" then .value = "unknown" else . end)
+                    reduce (.agents | to_entries[] | select(.value == "running" or (.value | queued))) as $a
+                      (. ; changed($a.key; if $a.value | queued then "unconfirmed" else "unknown" end))
                   else reduce ($m.result.sections[] | select(.kind == "teammates") | .rows[]) as $a
                     (. ; if .names | has($a.name) then .names[$a.name] as $t
-                        | if $a.status == "idle" then .agents[$t] = "completed"
-                          elif $a.status == "running" then .agents[$t] = "running"
-                          else .agents[$t] = "unknown" end
+                        | if $a.status == "idle" then
+                            if .agents[$t] | queued then . else changed($t; "completed") end
+                          elif $a.status == "running" then changed($t; "running")
+                          else changed($t; if .agents[$t] | queued then "unconfirmed" else "unknown" end) end
                       else . end)
                   end
                 elif $c | has("to") then (.names[$c.to] // $c.to) as $t
@@ -2087,13 +2096,14 @@ claude_attached_agents() { # [emergency STATE_FILE]
                         | if type == "object" then . else {} end) as $sent
                       | if $sent.success == true
                           and ((($sent.message | strings) // "") | test("^Teammate \"[^\"]+\" was not running; resumed it as an in-process teammate with [0-9]+ prior messages and your message as its next prompt\\.$"))
-                        then .agents[$t] = "running"
-                        else .agents[$t] = "unknown" end
-                    else .agents[$t] = $c.status end
+                        then changed($t; "queued")
+                        else changed($t; "unconfirmed") end
+                    else changed($t; if $c.status == "running" then "queued" else $c.status end) end
                 elif $c.sync then .
                 else .unclassified = true end)
         else . end)
-      | (.agents | to_entries[] | [.key, .value] | @tsv),
+      | (.agents | to_entries[] | [.key,
+          (if .value == "queued" then "running" elif .value == "unconfirmed" then "unknown" else .value end)] | @tsv),
         (select(.unclassified) | ["?", "agent-result"] | @tsv)
     ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || scan_rc=$?
     if [ "$scan_rc" -ne 0 ]; then
