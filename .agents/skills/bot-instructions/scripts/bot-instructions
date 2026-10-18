@@ -9,7 +9,7 @@
 # check with what it already has.
 set -euo pipefail
 
-here="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+here="$(cd -- "$(dirname -- "$0")" && pwd -L)"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "bot-instructions: python3=missing" >&2

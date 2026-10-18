@@ -123,7 +123,7 @@ No doctrine block reaches this region, so the routing table has no column for it
 
 **Any longer region is a finding**, so a repo cannot keep the doctrine here by hand. `adopt` reports one under `agents-region` and writes the marker unless `--dry-run` is set, because the marker is what makes the repair a single `render`. `check` reports one under `drift`, which holds the region against a fresh render and is that comparison's only owner. `render` replaces it, which is the migration.
 
-**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the installed spec copy's path and Doctrine anchor. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
+**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the selected installation's checkout path and Doctrine anchor, under SKILL.md's `--output local` contract. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
 
 ## `code-review.md`
 

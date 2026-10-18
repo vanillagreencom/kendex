@@ -387,9 +387,14 @@ for mode in ("full", "local"):
     remote = root / ".github/copilot-instructions.md"
     remote.parent.mkdir(parents=True)
     remote.write_text("Hand edit: [guide](GUIDE.md)\n")
-    result = preview(root, "--output", mode)
+    args = ("--output", mode)
+    if mode == "local":
+        installed = root / "installed-package"
+        shutil.copytree(launcher.parent.parent, installed)
+        args += ("--spec", str(installed))
+    result = preview(root, *args)
     assert result.returncode == 1 and "agents-region:" in result.stderr, result
-    actual = adopt(root, "--output", mode)
+    actual = adopt(root, *args)
     assert result.stdout.replace("would adopt ", "adopted ") == actual.stdout, (result, actual)
     assert actual.returncode == result.returncode, actual
     if mode == "local":

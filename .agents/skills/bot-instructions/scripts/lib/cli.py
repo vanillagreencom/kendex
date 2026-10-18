@@ -96,6 +96,20 @@ def running_copy():
     return os.path.dirname(os.path.dirname(os.path.dirname(here)))
 
 
+def _installed_spec(repo, named, spec_root):
+    """Keep the selected checkout installation, including a package-store symlink.
+
+    The launcher can select that installation when an explicit canonical
+    --spec names the same package. Source reads still use spec_root.
+    """
+    invoked = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for candidate in (os.path.abspath(named) if named else invoked, invoked):
+        relative = os.path.relpath(candidate, repo)
+        if relative.split(os.sep)[0] != os.pardir and os.path.realpath(candidate) == spec_root:
+            return candidate
+    return None
+
+
 def _region_bounds(path):
     """Report the package-owned body span for one host-supplied snapshot."""
     try:
@@ -169,10 +183,14 @@ def main(argv=None):
     try:
         work = tree.open_tree(repo, args.staged)
         spec_tree, spec_paths = _spec_source(repo, spec_root, work, args.staged)
+        installed_spec = _installed_spec(repo, args.spec, spec_root)
         launcher = os.path.join(package_root, "scripts", "bot-instructions")
+        if args.output == "local" and installed_spec is not None:
+            launcher = os.path.join(installed_spec, "scripts", "bot-instructions")
         ctx = run.Context(repo, work, spec_tree, spec_paths,
                           "render" if args.verb == "render" else "check",
-                          spec_names=SPEC_FILES, launcher=launcher, output_mode=args.output)
+                          spec_names=SPEC_FILES, launcher=launcher, output_mode=args.output,
+                          installed_spec=installed_spec)
         if isinstance(ctx.config, Unconfigured):
             if args.verb == "adopt":
                 raise ctx.config

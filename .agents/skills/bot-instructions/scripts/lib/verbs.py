@@ -34,7 +34,8 @@ def render_verb(ctx, root, dry_run=False):
         paths = [path for path in paths if writer.inspect(root, path)[1]]
     region = ctx.build.region_body is not None and (not dry_run or _region_owned(root))
     nothing = [] if paths or region else [
-        "nothing to render: every [bot-instructions.bots] flag is false"
+        "nothing to render: every [bot-instructions.bots] flag is false" if ctx.build.remote else
+        "nothing to render: local output needs [bot-instructions.bots] codex = true"
     ]
     if dry_run:
         lines = [f"would write {p}" for p in paths]
@@ -65,7 +66,7 @@ def render_verb(ctx, root, dry_run=False):
             "replaced before the failure: " + (", ".join(written) or "none"),
             "removed before the failure: " + (", ".join(removed) or "none"),
             "every path above holds either its old bytes or its new ones — re-run "
-            "render to finish the set",
+            f"{ctx.build.command('render')} to finish the set",
         ])) from exc
     lines = [f"wrote {p}" for p in written]
     if region:
@@ -97,7 +98,7 @@ def _splice(ctx, root):
             # refuses. The bootstrap is adopt, then render.
             raise RenderError(
                 "AGENTS.md: the `## Code Review Rules` region carries no marker at its "
-                "canonical position, so it is the repo's own — run `adopt` to take it over"
+                f"canonical position, so it is the repo's own — run `{ctx.build.command('adopt')}` to take it over"
             )
         return render.splice(existing, ctx.build.region_body)
 
@@ -145,7 +146,7 @@ def adopt_verb(ctx, root, dry_run=False):
         # and finds neither, because those files now carry the marker.
         state = ("preview wrote nothing" if dry_run else
                  "the paths named above were taken over before the failure and "
-                 "nothing else was — re-run adopt to finish the set")
+                 f"nothing else was — re-run {ctx.build.command('adopt')} to finish the set")
         raise RenderError("\n".join(
             lines
             + _pointer_lines(pointers)
@@ -239,8 +240,9 @@ def _region_finding(ctx, current, findings, dry_run=False):
     # adopts it. There is nothing there for `render` to migrate.
     if body in ([], [render_markdown.agents_directive(ctx.model, ctx.build.review_path)]):
         return
-    repair = ("Run `adopt` without --dry-run, then `render` to migrate it" if dry_run else
-              "The marker is in place, so `render` migrates it")
+    adopt, render_cmd = ctx.build.command("adopt"), ctx.build.command("render")
+    repair = (f"Run `{adopt}` without --dry-run, then `{render_cmd}` to migrate it" if dry_run else
+              f"The marker is in place, so `{render_cmd}` migrates it")
     findings.append(Finding(
         "agents-region",
         f"the `{render_markdown.AGENTS_HEADING}` region carries {len(body)} line(s) "

@@ -162,7 +162,7 @@ def _drift_finding(ctx, message, path):
     relative = os.path.relpath(ctx.launcher, ctx.root)
     launcher = relative if relative.split(os.sep)[0] != os.pardir else ctx.launcher
     command = shlex.quote(launcher.replace(os.sep, "/"))
-    remedy = f"\n  remedy: run `{command} render`, then stage every file it changes"
+    remedy = f"\n  remedy: run `{command} {ctx.build.command('render')}`, then stage every file it changes"
     return Finding("drift", message + where + remedy)
 
 

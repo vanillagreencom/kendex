@@ -27,6 +27,10 @@ class Build:
         self.schema = None
         self.review_path = None
 
+    def command(self, verb):
+        """Keep repair and retry commands in this build's output selection."""
+        return verb if self.remote else f"{verb} --output local"
+
 
 def build(model, schema=None, output_mode="full", schema_loader=None, local_review_path=None):
     """The selected scratch tree. Load the remote schema only when needed;

@@ -16,7 +16,7 @@ import os
 
 from .constants import CODERABBIT_SCHEMA_PATH
 from . import manifest
-from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
+from .errors import (Finding, InputError, ManifestError, SourceUnavailable, SpecError,
                      Unconfigured, ValidationFailed)
 from . import config as config_mod
 from . import model as model_mod
@@ -65,7 +65,7 @@ def _as_finding(validator, path, other=None, other_path=None):
 
 class Context:
     def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names, launcher,
-                 output_mode="full"):
+                 output_mode="full", installed_spec=None):
         # `spec_paths` is how the spec copy is READ; `spec_names` is how the
         # marker records it. They differ under `--staged`, where the spec copy
         # is read from the index at its repo-relative path, and wherever the
@@ -98,6 +98,19 @@ class Context:
                 resolved.data.get("bot-instructions"), f"{config_path} [bot-instructions]"
             )
         self.doctrine = spec_mod.load(spec_tree, *spec_paths)
+        local_review_path = None
+        if output_mode == "local":
+            if installed_spec is None:
+                external = os.path.join(spec_tree.root, spec_paths[0])
+                error = SpecError(
+                    f"{external}: local output needs an installation inside the checkout. "
+                    "Use --output full, or install the package inside the checkout"
+                )
+                error.subject = external
+                raise error
+            local_review_path = os.path.relpath(
+                os.path.join(installed_spec, "SKILL.md"), root
+            ).replace(os.sep, "/") + "#doctrine"
         self.frozen_ids = spec_mod.frozen_ids()
         # An unknown `[bot-instructions.doctrine.*]` block id is a `toml-schema` clause; a
         # manifest that declares no install is an `exclusion-consistency` one.
@@ -112,9 +125,7 @@ class Context:
         with _as_finding("toml-schema", config_path):
             self.build = render_mod.build(self.model, output_mode=output_mode,
                                           schema_loader=schema_loader,
-                                          local_review_path=os.path.relpath(
-                                              os.path.join(spec_tree.root, spec_paths[0]), root
-                                          ).replace(os.sep, "/") + "#doctrine")
+                                          local_review_path=local_review_path)
         self.schema = self.build.schema
         self._tracked = None
 
