@@ -4,6 +4,12 @@ control_replace scripts/commands/issues.sh 1 \
     '        if [ "$state_type" = completed ]; then' \
     '        if false; then'
 
+# Restore the evidence bypass while retaining the open-box refusal.
+control_expect "blank-evidence refuses"
+control_replace scripts/commands/issues.sh 1 \
+    '            if [ "$missing_evidence_boxes" != '\''[]'\'' ]; then' \
+    '            if false; then'
+
 # Check each item only as it is written: the first eligible item changes before
 # a later open checklist refuses, which loses the whole-batch guarantee.
 control_expect "bulk writes nothing"

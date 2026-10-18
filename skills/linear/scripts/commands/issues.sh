@@ -173,7 +173,10 @@ Create Options:
   project in the team.
 
 Update Options:
-  --state <name>        New state
+  --state <name>        New state. Update and bulk-update refuse completed-type
+                        states with open Done-when boxes or checked boxes that
+                        lack a nonblank Evidence: line indented directly below.
+                        Refusals list the boxes with fix=issues complete.
   --label(s) <a,b,c>    Replace the whole label set (comma-separated).
                         Read current labels, apply the intended change, then
                         pass the full final set.
@@ -1735,7 +1738,7 @@ create_issue() {
 # FLT-1168 reached update from Verifying with an open post-merge box.
 resolve_issue_update_state() {
     local issue_result="$1" state="$2" description="$3"
-    local issue_id team_id resolved parsed open_boxes state_type
+    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes state_type
     issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
     team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
     if [ -z "$team_id" ]; then
@@ -1745,15 +1748,22 @@ resolve_issue_update_state() {
     resolved=$(resolve_state_id "$state" "$team_id" raw) || return 1
     parsed=$(done_when_parse "$description" '[]') || return 1
     open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
-    if [ "$open_boxes" != '[]' ]; then
+    missing_evidence_boxes=$(jq -c '.missing_evidence_boxes' <<<"$parsed") || return 1
+    if [ "$open_boxes" != '[]' ] || [ "$missing_evidence_boxes" != '[]' ]; then
         state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
         if [ -z "$state_type" ]; then
             printf 'linear: refused=state-type-unavailable issue=%s state=%s\n' "$issue_id" "$state" >&2
             return 1
         fi
         if [ "$state_type" = completed ]; then
-            printf 'linear: refused=done-when-open issue=%s open_boxes=%s fix=issues complete\n' "$issue_id" "$open_boxes" >&2
-            return 1
+            if [ "$open_boxes" != '[]' ]; then
+                printf 'linear: refused=done-when-open issue=%s open_boxes=%s fix=issues complete\n' "$issue_id" "$open_boxes" >&2
+                return 1
+            fi
+            if [ "$missing_evidence_boxes" != '[]' ]; then
+                printf 'linear: refused=done-when-evidence issue=%s missing_evidence_boxes=%s fix=issues complete\n' "$issue_id" "$missing_evidence_boxes" >&2
+                return 1
+            fi
         fi
     fi
     jq -r '.id' <<<"$resolved"

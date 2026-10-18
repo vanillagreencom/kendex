@@ -88,14 +88,20 @@ while IFS='|' read -r name action current state body expected; do
   rc=0
   run_case "${args[@]}" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
   requests="$(jq -s . "$TMP_ROOT/requests.jsonl")"
-  if [ "$expected" = refuse ]; then
+  if [ "$expected" != pass ]; then
+    refusal='done-when-open'
+    boxes='open_boxes=[1,3]'
+    if [ "$expected" = evidence ]; then
+      refusal='done-when-evidence'
+      boxes='missing_evidence_boxes=[1,3]'
+    fi
     assert_ne "$name refuses" "$rc" 0
-    assert_file_contains "$name identifies open boxes" "$TMP_ROOT/err" \
-      'linear: refused=done-when-open issue=CC-2 open_boxes=[1,3] fix=issues complete'
+    assert_file_contains "$name identifies refused boxes" "$TMP_ROOT/err" \
+      "linear: refused=$refusal issue=CC-2 $boxes fix=issues complete"
     assert_jq "$name writes nothing" "$requests" 'all(.[]; (.query | test("^\\s*mutation") | not))'
     if [ "$action" = bulk-update ]; then
       assert_file_contains "$name identifies the later refused item" "$TMP_ROOT/err" \
-        'linear: refused=done-when-open issue=CC-3 open_boxes=[1,3] fix=issues complete'
+        "linear: refused=$refusal issue=CC-3 $boxes fix=issues complete"
     fi
   else
     assert_eq "$name succeeds" "$rc" 0
@@ -112,10 +118,14 @@ attachment|update|Todo|Done|## Done when\n- [ ] first\n- [x] second\n- [ ] third
 bulk|bulk-update|Todo|Done|## Done when\n- [ ] first\n- [x] second\n- [ ] third|refuse
 bulk-custom|bulk-update|Verifying|Closed|## Done when\n- [ ] first\n- [x] second\n- [ ] third|refuse
 bulk-attachment|bulk-update|Todo|Done|## Done when\n- [ ] first\n- [x] second\n- [ ] third|refuse
-checked|update|Todo|Done|## Done when\n- [x] first\n- [X] second|pass
+missing-evidence|update|Todo|Done|## Done when\n- [x] first\n- [x] second\n  Evidence: read\n- [X] third|evidence
+blank-evidence|update|Todo|Done|## Done when\n- [x] first\n  Evidence:   \n- [x] second\n  Evidence: read\n- [X] third\n  Evidence:\t|evidence
+bulk-evidence|bulk-update|Verifying|Closed|## Done when\n- [x] first\n- [x] second\n  Evidence: read\n- [x] third\n  Evidence:   |evidence
+checked|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read first\n- [X] second\n  Evidence: read second|pass
 absent|update|Todo|Done|No checklist.\n- [ ] unrelated|pass
-other-section|update|Todo|Done|## Done when\n- [x] first\n## Notes\n- [ ] unrelated|pass
-bulk-checked|bulk-update|Todo|Closed|## Done when\n- [x] first|pass
+other-section|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read\n## Notes\n- [ ] unrelated|pass
+bulk-checked|bulk-update|Todo|Closed|## Done when\n- [x] first\n  Evidence: read|pass
 bulk-absent|bulk-update|Todo|Done|No checklist.|pass
 started|update|Todo|Verifying|## Done when\n- [ ] first|pass
+started-without-evidence|update|Todo|Verifying|## Done when\n- [x] first|pass
 ROWS
