@@ -85,13 +85,14 @@
 #
 # Usage:
 #   worktree-push --worktree PATH --issue ID [--state-dir DIR] [push flags...]
+#   worktree-push --checkpoint --worktree PATH --issue ID [--state-dir DIR] [push flags...]
 #   worktree-push --check-live-round --worktree PATH --issue ID [--state-dir DIR]
 #   worktree-push --record-restack-validation RUN_DIR --worktree PATH --issue ID [--state-dir DIR]
 #   worktree-push --prepare-base --worktree PATH --issue ID [--state-dir DIR]
 #   worktree-push --publish-base BASE_OID HEAD_OID --worktree PATH --issue ID [--state-dir DIR]
 #
 # Under pr delivery, every argument outside this wrapper's own namespace (--worktree, --issue,
-# --state-dir, --check-live-round, --record-restack-validation, --prepare-base,
+# --state-dir, --checkpoint, --check-live-round, --record-restack-validation, --prepare-base,
 # --publish-base, --help) is forwarded verbatim to
 # `worktree push`, which rejects
 # a flag it does not know. The push flag vocabulary lives there alone; see
@@ -103,7 +104,10 @@
 # validation run for its pre-push head through dev-validate-run --record,
 # once per run directory. A skipped re-test has no run for that head.
 # ORCH_DELIVERY is read through orch-env in the target checkout. Unset and pr
-# retain the branch push. push-base requires two separate calls. --prepare-base
+# retain the branch push. --checkpoint selects that same guarded branch push
+# under either delivery mode, with SHA reconciliation and no base publication.
+# It permits the pre-review handoff without entering base delivery.
+# push-base otherwise requires two separate calls. --prepare-base
 # prepares one guarded item commit through worktree push --prepare-base,
 # reconciles it and returns the prepared-base receipt without validation or
 # transport. The lane reloads changed rules before --publish-base BASE_OID HEAD_OID
@@ -241,7 +245,7 @@ issue=''
 state_dir=''
 check_live_round=false
 record_run_dir=''
-base_phase=''
+publication_phase=branch
 prepared_before=''
 prepared_head=''
 push_args=()
@@ -285,17 +289,22 @@ while [[ $# -gt 0 ]]; do
 		shift 2
 		;;
 	--prepare-base)
-		[[ -z "$base_phase" ]] || fail delivery-phase option="$1"
-		base_phase=prepare
+		[[ "$publication_phase" == branch ]] || fail delivery-phase option="$1"
+		publication_phase=prepare
 		shift
 		;;
 	--publish-base)
-		[[ -z "$base_phase" && $# -ge 3 ]] || fail delivery-phase option="$1"
+		[[ "$publication_phase" == branch && $# -ge 3 ]] || fail delivery-phase option="$1"
 		[[ "$2" =~ ^[0-9a-f]{40}$ && "$3" =~ ^[0-9a-f]{40}$ ]] || fail delivery-phase option="$1"
-		base_phase=publish
+		publication_phase=publish
 		prepared_before="$2"
 		prepared_head="$3"
 		shift 3
+		;;
+	--checkpoint)
+		[[ "$publication_phase" == branch ]] || fail delivery-phase option="$1"
+		publication_phase=checkpoint
+		shift
 		;;
 	-h | --help)
 		usage
@@ -323,8 +332,11 @@ if [[ "$check_live_round" == true || -n "$record_run_dir" ]] && (( ${#push_args[
 	fail check-argument "argument=${push_args[0]}"
 fi
 [[ "$check_live_round" != true || -z "$record_run_dir" ]] || fail check-argument argument=--record-restack-validation
-if [[ -n "$base_phase" ]]; then
-	[[ "$check_live_round" == false && -z "$record_run_dir" && ${#push_args[@]} == 0 ]] || fail delivery-phase "phase=$base_phase"
+if [[ "$publication_phase" != branch ]]; then
+	[[ "$check_live_round" == false && -z "$record_run_dir" ]] || fail delivery-phase "phase=$publication_phase"
+	if [[ "$publication_phase" != checkpoint ]]; then
+		[[ ${#push_args[@]} == 0 ]] || fail delivery-phase "phase=$publication_phase"
+	fi
 fi
 [[ -x "$WORKTREE_BIN" ]] || fail not-executable "path=$WORKTREE_BIN"
 command -v jq >/dev/null 2>&1 || fail missing-command command=jq
@@ -578,13 +590,13 @@ push_out="$(mktemp)" || fail temp-file command=mktemp
 delivery="$(cd -- "$worktree_abs" && "$SCRIPT_DIR/orch-env" ORCH_DELIVERY pr)" \
 	|| fail delivery-read "worktree=$worktree_abs"
 base_transport_args=()
-if [[ "$delivery" == push-base ]]; then
-	[[ -n "$base_phase" ]] || fail delivery-phase phase=missing
-fi
-if [[ -n "$base_phase" ]]; then
-	[[ "$delivery" == push-base ]] || fail delivery-phase "delivery=$delivery"
-fi
-if [[ "$base_phase" == prepare ]]; then
+case "$publication_phase" in
+branch) [[ "$delivery" != push-base ]] || fail delivery-phase phase=missing ;;
+checkpoint) ;;
+prepare | publish) [[ "$delivery" == push-base ]] || fail delivery-phase "delivery=$delivery" ;;
+*) fail delivery-phase "phase=$publication_phase" ;;
+esac
+if [[ "$publication_phase" == prepare ]]; then
 	prepare_rc=0
 	(cd -- "$worktree_abs" && "$WORKTREE_BIN" push "$worktree_abs" --prepare-base) >"$push_out" || prepare_rc=$?
 	cat "$push_out"
@@ -599,7 +611,7 @@ if [[ "$base_phase" == prepare ]]; then
 	fi
 	exit 0
 fi
-if [[ "$base_phase" == publish ]]; then
+if [[ "$publication_phase" == publish ]]; then
 	current_head="$(git -C "$worktree_abs" rev-parse HEAD)" || fail delivery-validate "commit=$prepared_head"
 	[[ "$current_head" == "$prepared_head" ]] || fail delivery-validate "commit=$prepared_head" "head=$current_head"
 	tier=standard
@@ -622,7 +634,7 @@ fi
 # Push stderr streams through live; stdout is captured and replayed below,
 # where the reason it is captured rather than passed through is written down.
 push_rc=0
-if [[ "$delivery" == push-base ]]; then
+if [[ "$publication_phase" == publish ]]; then
 	(cd -- "$worktree_abs" && "$WORKTREE_BIN" push "$worktree_abs" "${base_transport_args[@]}") >"$push_out" || push_rc=$?
 else
 	"$WORKTREE_BIN" push "$worktree_abs" ${push_args[@]+"${push_args[@]}"} >"$push_out" || push_rc=$?
@@ -657,7 +669,7 @@ if [[ "$push_rc" == 0 && -n "$restack_validation_head" ]]; then
 		message stage-unrecorded "issue=$issue" >&2
 	fi
 fi
-if [[ "$push_rc" == 0 && "$delivery" == push-base ]]; then
+if [[ "$push_rc" == 0 && "$publication_phase" == publish ]]; then
 	landed="$(sed -n 's/^pushed-base: //p' "$push_out")" || fail_post_push delivery-read push-exit=0
 	if [[ "$landed" =~ ^base=([^[:space:]]+)\ before=([0-9a-f]{40})\ commit=([0-9a-f]{40})\ at=([0-9TZ:-]+)$ ]]; then
 		printf 'delivery: mode=push-base base=%s commit=%s at=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Inputs: worktree-push, orch-env, dev-validate-run, worktree push, the submit
-# publication commands, micro's tier record, merge-pr's completion command and the mailbox writer.
+# publication commands, review-pr's checkpoint command, micro's tier record,
+# merge-pr's completion command and the mailbox writer.
 # Real Git transport and mailbox storage are exercised. GitHub PR creation and
 # Linear completion are service fixtures. The driver follows the workflow's
 # delivery receipt; it does not implement Git preparation or publication.
@@ -29,6 +30,8 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 SUBMIT="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 MERGE="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
+REVIEW="$REPO_ROOT/skills/orch/workflows/review-pr.md"
+CHECKPOINT_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/worktree-push --checkpoint / { print; exit }' "$REVIEW")"
 DELIVERY_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/orch-env ORCH_DELIVERY / { print; exit }' "$SUBMIT")"
 PUSH_COMMAND="$(awk '/^   \.agents\/skills\/orch\/scripts\/worktree-push / { sub(/^   /, ""); print; exit }' "$SUBMIT")"
 PREPARE_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/worktree-push --prepare-base / { print; exit }' "$SUBMIT")"
@@ -40,7 +43,7 @@ PR_COMMAND="$(awk '/^   \.agents\/skills\/github\/scripts\/github.sh .* pr-creat
 COMPLETE_COMMAND="$(awk '/^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/linear\/scripts\/linear.sh issues complete / { sub(/^   /, ""); print; exit }' "$MERGE")"
 NOTICE_COMMAND="$(awk '/^\.agents\/skills\/mailbox\/scripts\/lane-mail notice / { print; exit }' "$SUBMIT")"
 MICRO_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/workflow-state set .* tier micro$/ { print; exit }' "$REPO_ROOT/skills/orch/workflows/micro.md")"
-[[ -n "$DELIVERY_COMMAND" && -n "$PUSH_COMMAND" && -n "$PREPARE_COMMAND" && -n "$PUBLISH_COMMAND" && -n "$REVIEW_COMMAND" && -n "$ROOT_COMMAND" && -n "$GITHUB_COMMAND" && -n "$PR_COMMAND" && -n "$COMPLETE_COMMAND" && -n "$NOTICE_COMMAND" && -n "$MICRO_COMMAND" ]] || exit 1
+[[ -n "$CHECKPOINT_COMMAND" && -n "$DELIVERY_COMMAND" && -n "$PUSH_COMMAND" && -n "$PREPARE_COMMAND" && -n "$PUBLISH_COMMAND" && -n "$REVIEW_COMMAND" && -n "$ROOT_COMMAND" && -n "$GITHUB_COMMAND" && -n "$PR_COMMAND" && -n "$COMPLETE_COMMAND" && -n "$NOTICE_COMMAND" && -n "$MICRO_COMMAND" ]] || exit 1
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -194,6 +197,77 @@ publish_step() { # PUSH_SCRIPT
     workflow_command "$PR_COMMAND"
   fi
 }
+
+checkpoint_case() { # NAME SCRIPT MODE STATE PHASE
+  local script="$2" mode="$3" state="$4" phase="$5" map head base_now command rc=0 output
+  new_fixture "$1" "$mode"
+  if [[ "$state" == restack || "$state" == push-rebase ]]; then
+    (cd "$wt" && ORCH_WORKTREE_BIN="$WORKTREE" "$LIVE" --checkpoint --worktree "$wt" --issue KEN-1 --set-upstream) >"$root/initial.out" 2>"$root/publish.err"
+  fi
+  (cd "$wt" && "$STATE" update KEN-1 --arg old "$item_head" \
+    '.json_paths=[] | .fixed_items=[{commit:$old}] | .pr_comment_review.fixes=[{commit:$old}]' >/dev/null)
+  if [[ "$state" == restack || "$state" == push-rebase ]]; then
+    printf 'Updated rule\n' > "$main/AGENTS.md"
+    git -C "$main" add AGENTS.md
+    git -C "$main" commit -qm 'docs: update rule'
+    git -C "$main" push -q origin release
+    if [[ "$state" == restack ]]; then
+      (cd "$main" && "$WORKTREE" create KEN-1 --restack) >"$root/restack.out" 2>>"$root/publish.err"
+    fi
+  fi
+  map="$(git -C "$wt" rev-parse --git-path kendex-rebase-map)"
+  if [[ "$state" == unmapped ]]; then
+    printf 'rebase-unmapped: %s\n' "$item_head" > "$map"
+  fi
+  base_now="$(git --git-dir="$root/origin.git" rev-parse release)"
+  if [[ "$phase" == checkpoint ]]; then
+    command="${CHECKPOINT_COMMAND//.agents\/skills\/orch\/scripts\/worktree-push/$script}"
+  else
+    command="${PUSH_COMMAND//.agents\/skills\/orch\/scripts\/worktree-push/$script}"
+  fi
+  output="$(ORCH_WORKTREE_BIN="$WORKTREE" workflow_command "$command" 2>>"$root/publish.err")" || rc=$?
+  head="$(git -C "$wt" rev-parse HEAD)"
+  jq -cn --argjson rc "$rc" --arg head "$head" --arg old "$item_head" \
+    --arg remote "$(git --git-dir="$root/origin.git" rev-parse --verify refs/heads/ken-1 2>/dev/null || true)" \
+    --arg base "$base_now" --arg after "$(git --git-dir="$root/origin.git" rev-parse release)" \
+    --argjson record "$(cd "$wt" && "$STATE" get KEN-1)" \
+    --argjson map "$([[ -e "$map" ]] && echo true || echo false)" \
+    --argjson validated "$([[ -e "$wt/tmp/validated" ]] && echo true || echo false)" \
+    --arg receipt "$(sed -n 's/^delivery: //p' <<<"$output")" \
+    '{rc:$rc,published:($remote==$head),base_unchanged:($base==$after),
+      reconciled:($record.fixed_items[0].commit==$head and $record.pr_comment_review.fixes[0].commit==$head),
+      rewritten:($old!=$head),map:$map,validated:$validated,delivery:($receipt!="")}'
+}
+
+# The review handoff publishes a branch before review under both delivery
+# modes. Restack uses the shipped rewrite authorization, not a synthetic map.
+CHECKPOINT_CASES='unset-fresh|unset|fresh|checkpoint|0|true|false|false
+pr-fresh|pr|fresh|checkpoint|0|true|false|false
+base-fresh|push-base|fresh|checkpoint|0|true|false|false
+pr-restack|pr|restack|checkpoint|0|true|true|false
+base-restack|push-base|restack|checkpoint|0|true|true|false
+base-push-rebase|push-base|push-rebase|checkpoint|0|true|true|false
+base-unmapped|push-base|unmapped|checkpoint|1|false|false|true
+base-unphased|push-base|fresh|branch|1|false|false|false'
+while IFS='|' read -r name mode state phase want_rc published rewritten map; do
+  observed="$(checkpoint_case "checkpoint-$name" "$LIVE" "$mode" "$state" "$phase")"
+  expected="$(jq -cn --argjson rc "$want_rc" --argjson published "$published" \
+    --argjson rewritten "$rewritten" --argjson map "$map" \
+    '{rc:$rc,published:$published,base_unchanged:true,reconciled:true,rewritten:$rewritten,map:$map,validated:false,delivery:false}')"
+  assert_eq "$observed" "$expected" "$name keeps the checkpoint at guarded branch publication"
+done <<<"$CHECKPOINT_CASES"
+
+# Disable the guarded transport on a disposable source copy. The same real
+# published restack must then fail its published-head contract.
+CHECKPOINT_CONTROL="$(mutant_scripts checkpoint-plain-push worktree-push)"
+orch_fixture_shared_libs "${CHECKPOINT_CONTROL%/scripts}"
+mutate_file "$CHECKPOINT_CONTROL/worktree-push" \
+  '"$WORKTREE_BIN" push "$worktree_abs" ${push_args[@]+"${push_args[@]}"}' \
+  '"$WORKTREE_BIN" push "$worktree_abs" --no-rebase ${push_args[@]+"${push_args[@]}"}'
+observed="$(checkpoint_case checkpoint-control "$CHECKPOINT_CONTROL/worktree-push" push-base restack checkpoint)"
+assert_eq "$observed" \
+  '{"rc":1,"published":false,"base_unchanged":true,"reconciled":true,"rewritten":true,"map":false,"validated":false,"delivery":false}' \
+  'control: plain transport cannot publish the restacked checkpoint'
 
 for mode in push-base unset pr; do
   new_fixture "mode-$mode" "$mode"
