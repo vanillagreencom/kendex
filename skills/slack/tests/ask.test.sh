@@ -184,7 +184,15 @@ referenced_ask() {
   REF="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
   ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" 'Approve referenced action?')" --options approve,hold --recommend hold)"
   ASK="${ASK#id=}"
-  if [ -n "${2:-}" ]; then sk_ctl /_test/fault "$2" >/dev/null; fi
+  if [ -n "${2:-}" ]; then
+    if [ -n "${3:-}" ]; then
+      sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1-other" 'Other referenced action?')" --options approve,hold --recommend hold >/dev/null
+    fi
+    sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "$1-later" 'Later question?')" --options approve,hold --recommend hold >/dev/null
+    sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "$1-notice" 'Later notice.')" >/dev/null
+    sk_ctl /_test/fault "$2" >/dev/null
+    if [ -n "${3:-}" ]; then sk_ctl /_test/fault "$3" >/dev/null; fi
+  fi
   sk_poll "$ROOT"
   ASK_TS="$(sk_state "[.messages.${CH}[] | select(.text | contains(\"Approve referenced action?\")) | .ts][0] // \"\"")"
   POSTED="$(sk_state "[.messages.${CH}[] | select(.ts == \"$ASK_TS\") | .text][0] // \"\"")"
@@ -200,18 +208,47 @@ sk_poll "$ROOT"
 assert_eq "$(jq -cs --arg id "$ASK" '[.[] | select(.kind == "answer" and .re == $id) | .text]' "$(sk_box "$ROOT")/to-lane.jsonl")" \
   '["approve"]' 'an owner reply in the ask thread answers the ask'
 
-referenced_ask referenced-retry '{"method":"chat.getPermalink","drop":true}'
-assert_eq "$RC|$ASK_TS" '1|' 'a failed permalink read leaves the ask unposted'
-sk_poll "$ROOT"
-assert_eq "$RC" 0 'the next poll retries the failed permalink read'
-assert_eq "$(asks "$CH" 'Approve referenced action?')" 1 'the retry posts the ask once'
-assert_has "$(sk_state ".messages.${CH}[] | select(.text | contains(\"Approve referenced action?\")) | .text")" \
-  "$REF_LINK" 'the retry retains the referenced conversation link'
+# Slack can refuse a read or post, lose its response, or reject the token.
+# A lost post can have landed; a lost read cannot have posted the ask.
+while IFS='|' read -r name fault second poll_rc delivered state retried; do
+  referenced_ask "referenced-$name" "$fault" "$second"
+  assert_eq "$RC|$ASK_TS" "$poll_rc|" "$name leaves the failed ask unposted and reports its poll result"
+  assert_eq "$(asks "$CH" 'Later question?')|$(asks "$CH" 'Later notice.')" "$delivered|$delivered" \
+    "$name gives later asks and notices the per-message refusal behavior"
+  assert_eq "$(jq -sr --arg id "$ASK" '[.[] | select(.t == "out" and .id == $id)] | last | .state // "none"' "$(sk_journal "$ROOT")")" \
+    "$state" "$name records whether this ask can retry"
+  if [ "$poll_rc" -eq 1 ]; then
+    assert_eq "$(field "$ERR1" id)" "$ASK" "$name reports the first failed envelope"
+  fi
+  sk_poll "$ROOT"
+  assert_eq "$RC" 0 "$name succeeds on the next poll"
+  assert_eq "$(asks "$CH" 'Approve referenced action?')" "$retried" "$name retries only an ask whose post remains pending"
+  assert_eq "$(asks "$CH" 'Later question?')|$(asks "$CH" 'Later notice.')" '1|1' \
+    "$name delivers each later ask and notice once across polls"
+  if [ "$retried" -eq 1 ]; then
+    assert_has "$(sk_state ".messages.${CH}[] | select(.text | contains(\"Approve referenced action?\")) | .text")" \
+      "$REF_LINK" "$name retains the referenced conversation link on retry"
+  fi
+done <<'ROWS'
+post-api|{"method":"chat.postMessage","error":"internal_error"}||1|1|retry|1
+post-lost|{"method":"chat.postMessage","drop":true}||0|1|unknown|0
+post-auth|{"method":"chat.postMessage","error":"invalid_auth"}||2|0|retry|1
+read-lost|{"method":"chat.getPermalink","drop":true}||1|1|retry|1
+read-api|{"method":"chat.getPermalink","error":"message_not_found"}||1|1|retry|1
+read-auth|{"method":"chat.getPermalink","error":"invalid_auth"}||2|0|retry|1
+read-first|{"method":"chat.getPermalink","drop":true}|{"method":"chat.getPermalink","error":"message_not_found"}|1|1|retry|1
+ROWS
 
 sk_mutant ref-link relay.py '            pieces \+= \[f"\\n\\n\[Referenced conversation\]\(\{permalink\}\)"\]' '            pieces += []'
 referenced_ask referenced-control
 sk_assert_red "$(jq -cn --arg text "$POSTED" --arg link "$REF_LINK" '$text | contains($link)')" true \
   'control: dropping the link fails the referenced conversation assertion'
+sk_bin_reset
+
+sk_mutant ref-refusal relay.py 'self\.post_refused\(err, envelope, "ask", read=True\)' 'raise err'
+referenced_ask referenced-refusal-control '{"method":"chat.getPermalink","drop":true}'
+sk_assert_red "$(asks "$CH" 'Later question?')|$(asks "$CH" 'Later notice.')" '1|1' \
+  'control: propagating the read refusal blocks later asks and notices in the same poll'
 sk_bin_reset
 
 echo "=== slack reserved ask ==="

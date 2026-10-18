@@ -946,11 +946,12 @@ class RootRelay:
             t="out", channel=self.channel, id=str(envelope["id"]), kind=kind, state=state, at=str(envelope["at"]), **fields
         )
 
-    def post_refused(self, err: Refusal, envelope: Dict, kind: str) -> None:
-        """Slack's refusal of one post, by key: a lost response is journaled
-        unknown and never repeated; a dead token stops the relay; anything
-        else journals retry, fails this poll and leaves the envelope for the next."""
-        if err.key == "slack-response-lost":
+    def post_refused(self, err: Refusal, envelope: Dict, kind: str, *, read: bool = False) -> None:
+        """A failure preparing or sending one post: a lost write response is
+        journaled unknown and never repeated. A read cannot have posted the
+        envelope, so its lost response can retry. A dead token stops the relay;
+        anything else journals retry, fails this poll and leaves the envelope for the next."""
+        if not read and err.key == "slack-response-lost":
             self._out(envelope, kind, "unknown")
             print_refusal(err)
             return
@@ -1034,7 +1035,11 @@ class RootRelay:
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
         if thread_ts is not None:
-            permalink = self.api.get("chat.getPermalink", channel=self.channel, message_ts=thread_ts)["permalink"]
+            try:
+                permalink = self.api.get("chat.getPermalink", channel=self.channel, message_ts=thread_ts)["permalink"]
+            except Refusal as err:
+                self.post_refused(err, envelope, "ask", read=True)
+                return False
             # The ask needs its own thread so an owner reply answers this ask.
             pieces += [f"\n\n[Referenced conversation]({permalink})"]
         ts = self._send(envelope, "ask", pieces, None)
