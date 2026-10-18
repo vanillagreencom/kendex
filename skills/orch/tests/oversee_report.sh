@@ -59,10 +59,11 @@ landed_states() {
   report -3600
   fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 done)" "$(lane KEN-3 done)" "$(lane issue-4 done '' '' github owner/repo)"
   local n state
+  # Distinct merge times follow the report's oldest-first ordering contract.
   for n in 1 2 3; do
     case "$n" in 1) state=Done ;; 2) state=Verifying ;; 3) state='' ;; esac
     jq -n --arg state "$state" '{title: "Item", state: $state}' > "$CASE/linear-KEN-$n.json"
-    merged_pr "$n" "ken-$n" -60 abcdef1234
+    merged_pr "$n" "ken-$n" "$(( (n - 5) * 60 ))" abcdef1234
   done > "$CASE/merged.jsonl"
   echo '{"title":"Item","state":"CLOSED"}' > "$CASE/issue-4.json"
   merged_pr 4 issue-4 -60 abcdef1234 >> "$CASE/merged.jsonl"
