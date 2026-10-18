@@ -1355,19 +1355,34 @@ SH
   assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
 done
 
-build fold-refused pair fix
-commit_wt second.txt second
-fold_before="$(git -C "$WT" rev-parse HEAD)"
-cat > "$MAIN/.git/hooks/pre-commit" <<'SH'
+for fold_history in unpublished published authorized; do
+  build "fold-refused-$fold_history" pair fix
+  commit_wt second.txt second
+  if [[ "$fold_history" != unpublished ]]; then
+    git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
+  fi
+  if [[ "$fold_history" == authorized ]]; then
+    commit_main advanced.txt advanced
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack >"$ROOT/restack.out" 2>"$ROOT/restack.err")
+  fi
+  fold_before="$(git -C "$WT" rev-parse HEAD)"
+  fold_authorization="$(git -C "$WT" config --worktree --get-regexp '^kendex-restack\.' || true)"
+  fold_remote="$(remote_oid origin)"
+  cat > "$MAIN/.git/hooks/pre-commit" <<'SH'
 #!/usr/bin/env bash
 exit 23
 SH
-chmod +x "$MAIN/.git/hooks/pre-commit"
-fold_rc=0
-(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base >"$ROOT/out" 2>"$ROOT/err") || fold_rc=$?
-assert_eq "$fold_rc" 1 'a normal commit hook can refuse the fold'
-assert_eq "$(git -C "$WT" rev-parse HEAD)" "$fold_before" 'a refused fold restores the item branch head'
-assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$BASE" 'a refused fold publishes nothing'
+  chmod +x "$MAIN/.git/hooks/pre-commit"
+  fold_rc=0
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base >"$ROOT/out" 2>"$ROOT/err") || fold_rc=$?
+  assert_eq "$fold_rc" 1 "$fold_history: a normal commit hook can refuse the fold"
+  assert_eq "$(git -C "$WT" rev-parse HEAD)" "$fold_before" "$fold_history: a refused fold restores the item branch head"
+  assert_eq "$(git -C "$WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "$fold_authorization" \
+    "$fold_history: a refused fold restores the prior authorization"
+  assert_eq "$(remote_oid origin)" "$fold_remote" "$fold_history: a refused fold preserves the remote branch"
+  assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$(git -C "$MAIN" rev-parse HEAD)" \
+    "$fold_history: a refused fold publishes nothing"
+done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

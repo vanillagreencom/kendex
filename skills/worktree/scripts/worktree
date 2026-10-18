@@ -4006,8 +4006,13 @@ case "${1:-}" in
     PUSH_LEASE=()
     LEASE_EXPECTED_OID=""
     REPUBLISH_REWRITE=false
-    if [[ "$BASE_DELIVERY" != true && "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
-      if remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH"; then
+    if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" &&
+          ( "$BASE_DELIVERY" != true || "$PUSH_PREPARE_BASE" == true ) ]]; then
+      if [[ "$PUSH_PREPARE_BASE" == true ]]; then
+        # Preparation may proceed without an admitted branch head, but only
+        # the ordinary lease proof can authorize recovery after its rewrites.
+        remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" 2>/dev/null || true
+      elif remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH"; then
         PUSH_LEASE=("--force-with-lease=refs/heads/$CURRENT_BRANCH:$LEASE_EXPECTED_OID")
       else
         exit 1
@@ -4147,15 +4152,24 @@ case "${1:-}" in
           FOLD_COMMITS="$(git -C "$WT_PATH" rev-list --reverse "$BASE_PUSH_BEFORE..HEAD")" || exit 1
           FOLD_FIRST="${FOLD_COMMITS%%$'\n'*}"
           record_pending_rewrite "$WT_PATH" "$FOLD_HEAD" || exit 1
+          if [[ -n "$LEASE_EXPECTED_OID" ]]; then
+            record_pending_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" "$FOLD_HEAD" "$BASE_PUSH_BEFORE" || exit 1
+          fi
           git -C "$WT_PATH" reset --soft "$BASE_PUSH_BEFORE" || exit 1
           if ! without_committed_settings git -C "$WT_PATH" commit -C "$FOLD_FIRST"; then
             # Preserve hook edits in the index while restoring the item head.
             git -C "$WT_PATH" reset --soft "$FOLD_HEAD" || exit 1
             clear_pending_rewrite "$WT_PATH" || exit 1
+            if [[ -n "$LEASE_EXPECTED_OID" ]]; then
+              cancel_pending_restack_authorization "$WT_PATH"
+            fi
             worktree_message push-base-fold "$CURRENT_BRANCH" "A commit hook refused the fold. Repair its finding, then prepare again." >&2
             exit 1
           fi
           FOLD_NEW="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
+          if [[ -n "$LEASE_EXPECTED_OID" ]]; then
+            finalize_pending_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" || exit 1
+          fi
           FOLD_MAP=""
           while IFS= read -r FOLD_OLD; do
             [[ "$FOLD_OLD" == "$FOLD_NEW" ]] || FOLD_MAP+="rebase-map: $FOLD_OLD $FOLD_NEW"$'\n'
