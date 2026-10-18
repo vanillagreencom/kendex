@@ -19,8 +19,8 @@ Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--harness claude|codex|copilot|pi] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
-Blocks until the fleet needs the overseer, then prints every event it found
-as one block, each line prefixed with its kind, and exits once. Re-run after
+Prints complete event blocks when the fleet needs the overseer, each line
+prefixed with its kind, and exits once the active pass ends. Re-run after
 handling every line with the live fleet in scope.
 
 Two passes run on one clock. After each full read, including the heartbeat's
@@ -46,7 +46,8 @@ heartbeat's open-PR listing can also delay the next turn. The long pass reads ev
 every --interval seconds, counted start to start and kept across runs in the
 state directory, so a run ending on mail news brings the next one no nearer. A long pass runs apart from the mail pass: one that overruns its
 interval holds up no mail pass, the next one starts only once it has ended,
-and its lines are printed together when it ends. A run with news starts no
+and its complete output through pr-watch is delivered before later checks
+finish. The remaining lines print when the pass ends. A run with news starts no
 further long pass past one already due on the turn the news came, and exits
 once none is in flight. A block holding only mail news carries no pr-watch
 context. The heartbeat reads the mail once more when a long pass ended after
