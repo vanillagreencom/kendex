@@ -115,6 +115,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 Use the [home layout](references/home-layout.md) for the assistant home.
 
+Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
+
 kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`.
 
 ### Plain folder
@@ -123,7 +125,7 @@ On first load, check the folder's `AGENTS.md`. If it lacks the persona, offer on
 
 ### App-managed home
 
-The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.md` that routes to `persona.md` is the persona step here. Do not offer to paste the persona text into `AGENTS.md`. The text would load twice. `persona.md` must not exceed 3,072 bytes. An app that reads it directly can reject a larger file.
+The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.md` that routes to `persona.md` is the persona step here. Do not offer to paste the persona text into `AGENTS.md`. The text would load twice.
 
 ### Reachable repositories
 

@@ -47,7 +47,7 @@ Use the [home layout](#home-layout) for your files. Name your decision owners, p
 
 For a skill you write, create a `my-task/SKILL.md` under the own-skills path in the [home layout](#home-layout). Give it a frontmatter `name` that matches `my-task` and a `description` that says when the assistant must read it. Put the task instructions below the frontmatter. Run `kendex add ./skills/own/my-task --skill my-task --harness codex --yes` from your assistant home. Select the harnesses you use with `--harness`.
 
-Follow [Memory](references/memory.md) for personal facts and preferences. Put reading routes for those notes in your standing instructions. Follow the [session workflow](workflows/session.md) for unfinished work. Store secrets in a password manager rather than memory notes.
+Follow [Memory](references/memory.md) for personal facts and preferences. Follow the [home contract](references/home-contract.md) to find and read those notes. Follow the [session workflow](workflows/session.md) for unfinished work. Store secrets in a password manager rather than memory notes.
 
 ## Home layout
 
