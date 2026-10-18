@@ -67,6 +67,12 @@ fixture() {
     if [ "$mode" = broken ]; then
         printf 'A=2\n' >"$root/scripts/a.sh"
     fi
+    if [ "$mode" = baseline-timeout ]; then
+        printf 'A=1\nsleep 2\n' >"$root/scripts/a.sh"
+    fi
+    if [ "$mode" = baseline-exit ]; then
+        printf 'A=1\nexit 7\n' >"$root/scripts/a.sh"
+    fi
     if [ "$mode" = residue ]; then
         # shellcheck disable=SC2016  # the expansion belongs to the written script
         printf 'A=1\n: >"$(dirname "${BASH_SOURCE[0]}")/.alpha-scratch"\n' \
@@ -236,8 +242,10 @@ the residue a suite writes in its own copy is not read as the edit of its contro
 the trailing report names the expectation nothing claims|plain|trailing|-|verdicts|rc=1;NOEXPECT alpha.test.sh an expectation follows the last mutation and names none: c is one;1 controls, 1 failing, 0 orphaned
 the prefix report names the assertion the mutation did not redden|plain|prefix|-|verdicts|rc=1;WRONG alpha.test.sh mutation 1 did not redden: a is one;1 controls, 1 failing, 0 orphaned
 a suite with no control file is reported missing|plain|missing|-|verdicts|rc=1;MISSING alpha.test.sh no controls/alpha.control.sh;ok beta.test.sh;2 controls, 1 failing, 0 orphaned
-a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|verdicts|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy;1 controls, 1 failing, 0 orphaned
-the unstaged report shows the assertion the suite failed on|broken|clean|-|detail|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy; | FAIL: a is one; | FAIL: a is one;1 controls, 1 failing, 0 orphaned
+a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|verdicts|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 1);1 controls, 1 failing, 0 orphaned
+the unstaged report shows the assertion the suite failed on|broken|clean|-|detail|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 1); | FAIL: a is one; | FAIL: a is one;1 controls, 1 failing, 0 orphaned
+the baseline timeout report names its exit status and suite cap|baseline-timeout|clean|1|verdicts|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 124; hit the 1s suite cap);1 controls, 1 failing, 0 orphaned
+the baseline failure report names its exit status|baseline-exit|clean|-|verdicts|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 7);1 controls, 1 failing, 0 orphaned
 a control declaring no mutation changed nothing|plain|empty|-|verdicts|rc=1;NOOP alpha.test.sh control changed nothing;1 controls, 1 failing, 0 orphaned
 a mutation whose line the file lacks did not apply|plain|badctrl|-|verdicts|rc=1;BADCTRL alpha.test.sh mutation 1 did not apply cleanly;1 controls, 1 failing, 0 orphaned
 '

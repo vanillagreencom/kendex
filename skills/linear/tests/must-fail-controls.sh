@@ -264,6 +264,7 @@ flush() {
 			cat "$log"
 			FAILURES=$((FAILURES + 1))
 		else
+			sed -n '/^BASELINE /p' "$WORK/$stem.log"
 			printf 'ok       %s.test.sh\n' "$stem"
 		fi
 		NEXT=$((NEXT + 1))
@@ -366,7 +367,7 @@ prepare_one() {
 	local suite="$1" stem="$2"
 	local control="$CONTROLS_DIR/$stem.control.sh"
 	local root="$WORK/$stem/linear"
-	local mutations k shared trailing out rc snapshot="$WORK/$stem/staged"
+	local mutations k shared trailing out rc started cap_note snapshot="$WORK/$stem/staged"
 
 	if [[ ! -f "$control" ]]; then
 		printf 'MISSING  %-52s no controls/%s.control.sh\n' "$suite" "$stem"
@@ -381,11 +382,15 @@ prepare_one() {
 	# output, then the output's last 40 lines. assert.sh prints a failed
 	# assertion's detail after its FAIL: line, so a tail alone can hold
 	# detail and no FAIL: line.
+	started=$SECONDS
 	timed_suite "$root" "$suite" "$WORK/$stem/suite.out"
 	rc=$?
+	printf 'BASELINE %-52s elapsed=%ss exit=%s cap=%ss\n' "$suite" "$((SECONDS - started))" "$rc" "$SUITE_TIMEOUT"
 	out="$(<"$WORK/$stem/suite.out")" || die "cannot read the output of $suite"
 	if [[ "$rc" -ne 0 ]]; then
-		printf 'UNSTAGED %-52s suite fails from an unmutated copy\n' "$suite"
+		cap_note=""
+		[[ "$rc" -ne 124 ]] || cap_note="; hit the ${SUITE_TIMEOUT}s suite cap"
+		printf 'UNSTAGED %-52s suite fails from an unmutated copy (exit %s%s)\n' "$suite" "$rc" "$cap_note"
 		{
 			fail_names "$out" | sed 's/^/FAIL: /'
 			printf '%s\n' "$out" | tail -n 40

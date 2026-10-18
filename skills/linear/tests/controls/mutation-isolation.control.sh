@@ -124,3 +124,10 @@ control_expect "a mutation stops after all wanted names redden before the cap"
 control_replace tests/must-fail-controls.sh 1 \
 	'			if [[ "$remaining" -eq 0 ]]; then' \
 	'			if false; then'
+
+# Baseline diagnostics are consumed by the verdict table and CI triage.
+control_expect "the baseline timeout report names its exit status and suite cap"
+control_expect "the baseline failure report names its exit status"
+control_replace tests/must-fail-controls.sh 1 \
+	$'\t\tprintf '\''UNSTAGED %-52s suite fails from an unmutated copy (exit %s%s)\n'\'' "$suite" "$rc" "$cap_note"' \
+	$'\t\tprintf '\''UNSTAGED %-52s suite fails from an unmutated copy\n'\'' "$suite"'

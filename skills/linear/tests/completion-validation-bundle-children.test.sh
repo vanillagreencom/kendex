@@ -32,8 +32,15 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+git -C "$TMP_ROOT" init -q
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
+# Each command reads project configuration. Use the fixture's empty project
+# instead of reloading the caller's settings for every issue and comment.
+cd "$TMP_ROOT"
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -277,14 +284,27 @@ ROWS
 
 # A template-produced child can finish its branch work before its shared PR
 # merges. The parent accepts only qualified started children at that phase.
+# Expansion above covers the command wiring. The state matrix calls its real
+# result builder directly to avoid fetching the same parent for every row.
+# Compact rows retain the CLI read, which must request the safe issue format.
+# shellcheck source=../scripts/lib/issue-validation.sh
+source "$SKILL_DIR/scripts/lib/issue-validation.sh"
 export CHILD_CHECKLIST_FILE="$TMP_ROOT/child.md"
 while IFS='|' read -r name format state description expected; do
   printf '%b' "$description" >"$CHILD_CHECKLIST_FILE"
-  out="$(RUN_FORMAT="$format" CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
-  check "$name child controls bundle acceptance" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-912\") | .state == \"$state\" and .state_ok == $expected and .ok == $expected)"
+  if [[ "$format" == compact ]]; then
+    out="$(RUN_FORMAT="$format" CHILD_STATE="$state" run_validate CC-910 --include-children-of CC-910)"
+    result="$(jq -c '.results[] | select(.id == "CC-912")' <<<"$out")"
+    check "$name bundle aggregate follows child" "$out" ".all_ok == $expected"
+  else
+    state_type=started
+    [[ "$state" != Done ]] || state_type=completed
+    result="$(build_completion_validation_result CC-912 "$state" CC-910 true bundle-child "$state_type" "$(cat "$CHILD_CHECKLIST_FILE")")"
+  fi
+  check "$name child controls bundle acceptance" "$result" ".state == \"$state\" and .state_ok == $expected and .ok == $expected"
   if [[ "$state" != Done ]]; then
-    out="$(RUN_FORMAT="$format" CHILD_STATE="$state" run_validate CC-940 --include-children-of CC-940 --container)"
-    check "$name started child keeps container open" "$out" '.all_ok == false and (.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false)'
+    result="$(build_completion_validation_result CC-942 "$state" CC-940 true container-child started "$(cat "$CHILD_CHECKLIST_FILE")")"
+    check "$name started child keeps container open" "$result" '.state_ok == false and .ok == false'
   fi
 done <<'ROWS'
 qualified|safe|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
