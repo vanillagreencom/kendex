@@ -1830,6 +1830,7 @@ mapped_suites() { # DIR REL
 suite_selection=""
 suite_trees=()
 suite_runs=()
+suite_scripts=()
 if [ "$MODE" != default ] && lane_on shell_shards; then
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
   # it> TAB <path>`: a render reads as the source it renders.
@@ -1881,26 +1882,10 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 "
     done
   done <<<"$touched"
-  # Bash defers this guard's trap while a foreground runner stops children.
-  # The active runner therefore reports its current and later batteries.
-  suite_index=0
-  suite_later=""
-  active_runner=0
-  unstarted_suites() {
-    local t pending
-    [ "$active_runner" -eq 0 ] || return 0
-    for ((pending = suite_index; pending < ${#suite_runs[@]}; pending++)); do
-      while IFS= read -r t; do
-        [ -n "$t" ] || continue
-        printf 'guard-note: unstarted-suite=%s\n' "$t"
-      done <<<"${suite_runs[pending]}"
-    done
-  }
-  trap 'unstarted_suites; exit 143' TERM
-  trap 'unstarted_suites; exit 130' INT
-  trap 'unstarted_suites; exit 129' HUP
-  npm_available=unchecked
+  # Publish only a complete plan. Pi launch probes and tests execute below,
+  # after every later battery is available to cancellation reporting.
   for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
+    suite_script=""
     case "$d" in
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
@@ -1911,24 +1896,13 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           continue
         fi
         if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null; then
-          npm_args=(run test:ci)
+          suite_script=test:ci
         elif jq -e '.scripts.test' "$d/package.json" >/dev/null; then
-          npm_args=(test)
+          suite_script=test
         else
           continue
         fi
-        # Prove the npm launcher can start, including its Node interpreter,
-        # once for the selected Pi suites before interpreting suite output.
-        if [ "$npm_available" = unchecked ]; then
-          npm_available=ready
-          if ! command -v npm >/dev/null 2>&1 || ! npm --version >/dev/null 2>&1; then
-            unrun missing-tool npm
-            npm_available=unavailable
-          fi
-        fi
-        [ "$npm_available" = ready ] || continue
-        suite_out=$(cd "$d" && npm "${npm_args[@]}" 2>&1) || pi_suite_failed "$d" "$suite_out"
-        [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
+        run=$d
         ;;
       *)
         [ -d "$d/tests" ] || continue
@@ -1979,18 +1953,58 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           [ -n "$run" ] || continue
         fi
         if [ "$selection_only" -eq 1 ] && [ "$scoped_only" -eq 0 ]; then continue; fi
-        suite_trees+=("$d")
-        suite_runs+=("$run")
-        while IFS= read -r t; do
-          [ -n "$t" ] || continue
-          printf 'guard-note: selected-suite=%s\n' "$t"
-        done <<<"$run"
         ;;
     esac
+    suite_trees+=("$d")
+    suite_runs+=("$run")
+    suite_scripts+=("$suite_script")
   done
+  # Bash defers this guard's trap while a foreground runner stops children.
+  # The active runner therefore reports its current and later batteries.
+  suite_index=0
+  suite_later=""
+  active_runner=0
+  unstarted_suites() {
+    local t pending
+    [ "$active_runner" -eq 0 ] || return 0
+    for ((pending = suite_index; pending < ${#suite_runs[@]}; pending++)); do
+      while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        printf 'guard-note: unstarted-suite=%s\n' "$t"
+      done <<<"${suite_runs[pending]}"
+    done
+  }
+  trap 'unstarted_suites; exit 143' TERM
+  trap 'unstarted_suites; exit 130' INT
+  trap 'unstarted_suites; exit 129' HUP
+  for run in ${suite_runs[@]+"${suite_runs[@]}"}; do
+    while IFS= read -r t; do
+      [ -n "$t" ] || continue
+      printf 'guard-note: selected-suite=%s\n' "$t"
+    done <<<"$run"
+  done
+  npm_available=unchecked
   for ((suite_index = 0; suite_index < ${#suite_trees[@]}; suite_index++)); do
     d=${suite_trees[suite_index]}
     run=${suite_runs[suite_index]}
+    if [ -n "${suite_scripts[suite_index]}" ]; then
+      # Prove the npm launcher can start, including its Node interpreter,
+      # once for the selected Pi suites before interpreting suite output.
+      if [ "$npm_available" = unchecked ]; then
+        npm_available=ready
+        if ! command -v npm >/dev/null 2>&1 || ! npm --version >/dev/null 2>&1; then
+          unrun missing-tool npm
+          npm_available=unavailable
+        fi
+      fi
+      [ "$npm_available" = ready ] || continue
+      npm_args=(test)
+      [ "${suite_scripts[suite_index]}" != test:ci ] || npm_args=(run test:ci)
+      suite_runs[suite_index]=""
+      suite_out=$(cd "$d" && npm "${npm_args[@]}" 2>&1) || pi_suite_failed "$d" "$suite_out"
+      [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
+      continue
+    fi
     suite_later=""
     for ((pending = suite_index + 1; pending < ${#suite_runs[@]}; pending++)); do
       suite_later+="${suite_runs[pending]}"$'\n'
