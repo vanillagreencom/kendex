@@ -506,33 +506,57 @@ assert_eq "$(jq -r "$PAUSES" "$STUB_DIR/oversee-state.json") $(grep -c wall-unre
 # so this case runs the real workflow-state over two directories, the fleet
 # record only in the fleet one. It prints the fleet record's pauses and the
 # ORCH_STATE_DIR state whole.
-wall_in_fleet_dir() { # NAME
-  local orch fleet
+wall_in_fleet_dir() { # NAME INPUT END
+  local orch fleet input end="${3:-cleared}"
   new_case "$1"
   orch="$STUB_DIR/orch" fleet="$STUB_DIR/fleet"
   mkdir -p -- "$orch" "$fleet"
   printf '{"triaged":[]}\n' > "$orch/workflow-state-oversee.json"
   printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1","status":"running"},{"item":"KEN-2","window":"gh-2","status":"running"}]}\n' > "$fleet/workflow-state-oversee.json"
+  input="$fleet/workflow-state-oversee.json"
+  if [[ "${2:-canonical}" == alias ]]; then
+    input="$fleet/watch-input.json"
+    cp "$fleet/workflow-state-oversee.json" "$input"
+  fi
   set -- TZ=UTC ORCH_STATE_DIR="$orch" \
     OVERSEE_WATCH_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
   screen banner_idle
   printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-  run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
+  run_watch "$@" -- --max-loops 1 --state "$input" > /dev/null 2>"$ERR" || return
   # Preserve the sighting across restart and repair a missing lane stamp.
   "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$fleet" update oversee 'del(.lanes[1].walled)' >/dev/null
   next_pass
   printf '%s' "$((RESET_NOW + 300))" > "$STUB_DIR/now.epoch"
-  run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
+  run_watch "$@" -- --max-loops 1 --state "$input" > /dev/null 2>"$ERR" || return
   jq -r '.lanes[1].walled.at' "$fleet/workflow-state-oversee.json"
-  screen healthy
+  case "$end" in
+    cleared) screen healthy ;;
+    moved|done)
+      "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$fleet" update oversee \
+        --arg end "$end" 'if $end == "moved" then .lanes[1].window = "replacement:gh-2"
+          else .lanes[1].status = "done" end' >/dev/null ;;
+  esac
   next_pass
   printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
-  run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
+  run_watch "$@" -- --max-loops 1 --state "$input" > /dev/null 2>"$ERR" || return
   printf '%s | %s\n' "$(jq -r "$PAUSES" "$fleet/workflow-state-oversee.json")" "$(jq -c . "$orch/workflow-state-oversee.json")"
 }
-assert_eq "$(wall_in_fleet_dir wall_fleet_dir)" "2026-09-02T16:00:00Z
+while IFS='|' read -r input end; do
+  assert_eq "$(wall_in_fleet_dir "wall_fleet_${input}_${end}" "$input" "$end")" "2026-09-02T16:00:00Z
 $WALL_PAUSE | {\"triaged\":[]}" \
-  "a wall that ends is kept in the fleet state directory, never in ORCH_STATE_DIR" "$ERR"
+    "a $input input keeps first-seen repair and $end completion in the canonical fleet record" "$ERR"
+done <<'ROWS'
+canonical|cleared
+alias|cleared
+alias|moved
+alias|done
+ROWS
+wall_mutant wall-snapshot-only oversee-watch \
+  '[[ "$changed" == true || ( -n "$STATE_FILE" && ( "$standing" == true || "$prior_wall" -eq 1 ) ) ]] || exit 0' \
+  '[[ "$changed" == true ]] || exit 0'
+assert_eq "$(WATCH_BIN="$WALL_WATCH" wall_in_fleet_dir wall_alias_control alias cleared)" "2026-09-02T16:00:00Z
+KEN-1: KEN-2: | {\"triaged\":[]}" \
+  'control: an unchanged input alias cannot decide canonical wall completion' "$ERR"
 
 # Exercise optional fleet state through the direct-list CLI outside tmux.
 # The real state owner must refuse required state and leave absent optional

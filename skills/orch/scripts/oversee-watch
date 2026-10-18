@@ -892,6 +892,7 @@ MERGED_FIELDS_FILTER='
 FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
+FLEET_WALLED=false
 fleet_merge() { # [quiet]
   local state rows dropped line item window host root harness running launched kept carried parked recorded merged tag
   # Check the open before substitution expansion; keep that inode for the read.
@@ -904,7 +905,8 @@ fleet_merge() { # [quiet]
     (('"$PREPARE_ROWS_FILTER"') | "prepare\u001e\(.)"),
     (('"$PARKED_ROWS_FILTER"') | "parked\u001e\(.)"),
     ((.lanes // [])[] | objects | .item | strings | "recorded\u001e\(.)"),
-    (('"$MERGED_FIELDS_FILTER"') | "merge\u001e\(.)")' <<<"$state" 2>&1)" \
+    (('"$MERGED_FIELDS_FILTER"') | "merge\u001e\(.)"),
+    "walled\u001e\(any(.lanes[]?; .walled != null))"' <<<"$state" 2>&1)" \
     || die state-invalid "$merged" "option=--state" "path=$STATE_FILE"
   rows=""; PREPARE_ROWS=""; parked=""; recorded=""; MERGED_FIELDS=""
   while IFS= read -r line; do
@@ -916,6 +918,7 @@ fleet_merge() { # [quiet]
       parked) parked+="$line"$'\n' ;;
       recorded) recorded+="$line"$'\n' ;;
       merge) MERGED_FIELDS+="$line"$'\n' ;;
+      walled) FLEET_WALLED="$line" ;;
     esac
   done <<<"$merged"
   rows="${rows%$'\n'}"; PREPARE_ROWS="${PREPARE_ROWS%$'\n'}"
@@ -3344,6 +3347,11 @@ LANE_TURNS=()
 # The persisted item record owns the wall across every watch entry point.
 wall_pause() { # WINDOW<TAB>FIRST_SEEN|clear|unavailable observations
   local observations="$1" errf="$WORK_DIR/wall-pause.err"
+  local prior_wall=0
+  [[ $'\n'"${PW_SEEN[0]}" != *$'\nusage-limit\t'* ]] || prior_wall=1
+  # Healthy passes reuse the fleet reader's wall presence. Direct lists need
+  # their optional accounting read only for a current or retained sighting.
+  [[ "$FLEET_WALLED" == true || "$prior_wall" -eq 1 || "$observations" == *$'\t'[0-9]* ]] || return 0
   local transition="$LANE_RUNNING_JQ"'
     ($observations | split("\n") | map(select(length > 0) | fromjson)
       | map({key: .item, value: .}) | from_entries) as $seen
@@ -3364,13 +3372,16 @@ wall_pause() { # WINDOW<TAB>FIRST_SEEN|clear|unavailable observations
   # Observations select current running records. Completion stays on each
   # item's own standing start, even after its launch or status changes.
   if (
-    rc=0
-    "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" exists oversee >/dev/null 2>"$errf" || rc=$?
-    [[ "$rc" -ne 1 ]] || exit 0
-    [[ "$rc" -eq 0 ]] || exit 1
-    records="$("$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" get oversee 2>"$errf")" || exit 1
-    standing="$(jq -r 'any(.lanes[]?; .walled != null)' <<<"$records" 2>"$errf")" || exit 1
-    [[ "$standing" == true || "$observations" == *$'\t'[0-9]* ]] || exit 0
+    if [[ -n "$STATE_FILE" ]]; then
+      records="$FLEET_STATE" standing="$FLEET_WALLED"
+    else
+      rc=0
+      "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" exists oversee >/dev/null 2>"$errf" || rc=$?
+      [[ "$rc" -ne 1 ]] || exit 0
+      [[ "$rc" -eq 0 ]] || exit 1
+      records="$("$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" get oversee 2>"$errf")" || exit 1
+      standing="$(jq -r 'any(.lanes[]?; .walled != null)' <<<"$records" 2>"$errf")" || exit 1
+    fi
     seen=""
     while IFS=$'\t' read -r window reading; do
       [[ -n "$window" ]] || continue
@@ -3382,7 +3393,9 @@ wall_pause() { # WINDOW<TAB>FIRST_SEEN|clear|unavailable observations
     done <<<"$observations"
     changed="$(jq -r --arg observations "$seen" --argjson now "$PASS_NOW" \
       '. as $before | '"$transition"' | . != $before' <<<"$records" 2>"$errf")" || exit 1
-    [[ "$changed" == true ]] || exit 0
+    # An input alias or a terminal action can leave the snapshot unchanged
+    # while the canonical record needs completion. Recheck in its transaction.
+    [[ "$changed" == true || ( -n "$STATE_FILE" && ( "$standing" == true || "$prior_wall" -eq 1 ) ) ]] || exit 0
     "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update oversee \
       --arg observations "$seen" --argjson now "$PASS_NOW" "$transition" >/dev/null 2>"$errf" || exit 1
   ); then return 0; fi
