@@ -562,6 +562,13 @@ environment_rows() {
 [2,"bash wrap.sh step TOOL '/proc/self/environ'","waiter-forwarded-unresolved-proc-operand"]
 [2,"bash wrap.sh step TOOL 'show-environment'","waiter-forwarded-unresolved-systemctl-operand"]
 [0,"sh LAUNCH.sh WAIT 'env' VAR=1 TOOL --test 'env -u A -u B VAR=1 bash test.sh'","waiter-forwarded-quoted-env-head"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'timeout 5 env' --build 'true' --mutate 'true'","waiter-unclassified-test-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'timeout 5 printenv' --build 'true' --mutate 'true'","waiter-unclassified-test-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'true' --build 'timeout 5 env' --mutate 'true'","waiter-unclassified-build-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'true' --build 'timeout 5 printenv' --mutate 'true'","waiter-unclassified-build-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'true' --build 'true' --mutate 'timeout 5 env'","waiter-unclassified-mutate-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'true' --build 'true' --mutate 'timeout 5 printenv'","waiter-unclassified-mutate-printenv"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"printf %s env\"'","waiter-supported-shell-data"]
 [0,"bash wrapper.sh 'env'","wrapper-quoted-bare-env-data"]
 [2,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
 [2,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
@@ -1140,6 +1147,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
+      defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[$program_pos]}\"; then mode=dump-unknown; fi") }
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
         print "    if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++
@@ -1323,6 +1331,7 @@ split-forwarded-argv|FAIL environment: waiter-forwarded-systemctl-quoted-verb: e
 split-forwarded-argv|FAIL environment: waiter-forwarded-quoted-cat-and-path: exit=0 expected=2
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-proc-operand: exit=0 expected=2
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-systemctl-operand: exit=0 expected=2
+unclassified-head-only|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
