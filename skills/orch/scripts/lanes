@@ -4690,7 +4690,7 @@ case "$SUB" in
 		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
 		pick_host_rows all || exit 1
-		usage="$(collect_lanes all)" || exit 1
+		usage="$(collect_lanes all "" "$HOSTED_ROWS")" || exit 1
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
 		while (( usage_i < usage_count )); do
 			usage_dir="$(jq -r --argjson i "$usage_i" '.[$i].config_dir' <<<"$usage")"
