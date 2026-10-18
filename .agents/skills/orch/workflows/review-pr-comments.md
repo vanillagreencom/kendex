@@ -106,7 +106,7 @@ Blocking: [true/false]
 URL: [URL]
 ---
 
-1. Read `.agents/skills/orch/references/finding-disposition.md` and apply its verification prerequisite and decision flow to every finding — read the actual source files before classifying any comment.
+1. Read `.agents/skills/reviewer/references/finding-disposition.md` and apply its verification prerequisite and decision flow to every finding — read the actual source files before classifying any comment.
 2. Classify into arrays per `../../reviewer/schemas/review-finding.md`:
    - `blockers[]`: verified and blocking, or P1/P2
    - `suggestions[]`: verified, non-blocking
@@ -136,7 +136,7 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 Read every report and aggregate across agents preserving attribution. Keep every review-body item with its source identity and verified reply draft through § 6.3; do not deduplicate it away. Deduplicate other items by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions. Show verified body declines in SKIPPING with their draft reason. These reply-only items never enter the fix set.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
 Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), carries a root cause § Recurrence dispositions (→ `RECURRENCE`, never an auto-fix), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
 
@@ -251,7 +251,7 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 
-Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
+Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
 Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
@@ -334,7 +334,7 @@ With workflow state `pr_order` reading `open-first-returned` or `push-first-retu
 
 ### 6.2 Create Issues
 
-**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, skipped items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `source: "pr-comments"` and `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
+**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../../reviewer/references/finding-disposition.md). Blocked items, skipped items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `source: "pr-comments"` and `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
 
 ### 6.3 Re-Triage Or Exit
 
@@ -350,7 +350,7 @@ With workflow state `pr_order` reading `open-first-returned` or `push-first-retu
 
 A `Tracked:` reply names the issue it filed, and a decline is a decline — say so. Resolving a thread is not a reply.
 
-`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out.
+`[REASON]` takes one of the forms [../references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow sets out.
 
 Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_ID].md` and bind that path as `[BODY_FILE]`.
 

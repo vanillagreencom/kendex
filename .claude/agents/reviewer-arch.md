@@ -28,7 +28,7 @@ The user's facts about their entity, accounts and people live in the user's own 
 
 Compliance criteria come from the project's architecture docs. Do not invent design rules the project never adopted. Leave local code quality not tied to architecture policy to `reviewer-quality`.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 If the code-quality or orch instructions are unavailable, apply the project's adopted architecture and review rules and keep the same `blockers[]` and `suggestions[]` output.
 

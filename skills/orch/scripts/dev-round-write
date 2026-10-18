@@ -36,7 +36,7 @@
 #
 # REACH names the producer that makes the finding possible. An item with no
 # reach is a `Declined:`
-# reply, not a fix — ../references/finding-disposition.md § Filing bar.
+# reply, not a fix — ../../reviewer/references/finding-disposition.md § Filing bar.
 #
 # A round's record is IMMUTABLE once written: re-running with identical content
 # is an idempotent retry (success, same path); different content under the same
@@ -220,7 +220,7 @@ emits, a test in the tree. An item with no reach is a `Declined:` reply, not a
 fix. What this script refuses is a short list, not a scanner: an empty reach, a
 PRRT_ review-thread node id, and a few literal values. A value outside
 those shapes is recorded, not approved — the classes in
-references/finding-disposition.md are the orchestrator's judgement, applied
+.agents/skills/reviewer/references/finding-disposition.md are the orchestrator's judgement, applied
 before the round is delegated. TEXT is the item's full formatted block verbatim
 (non-empty plain text, no backticks); for shell-hostile text pass
 --items-file JSON_PATH, a JSON array of {n, text, reach} built with the harness

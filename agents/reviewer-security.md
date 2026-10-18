@@ -23,7 +23,7 @@ Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, pr
 
 Application security and trust boundaries (memory/thread safety belongs to `reviewer-safety`; general correctness to `reviewer-correctness` unless security impact is central). Project security policies outrank generic standards; include a CWE reference when applicable.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

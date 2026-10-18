@@ -18,7 +18,7 @@ include-custom-instructions: true
 
 Validate performance with evidence: benchmarks against baselines, project-defined thresholds and budgets, percentiles over averages. Thresholds and hot/cold-path definitions come from the project's docs. Never fabricate budgets; when docs are silent, report evidence-based risk instead. Classify every regression. Silent omission is forbidden. Leave style and architecture to their owners unless perf impact is demonstrated.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

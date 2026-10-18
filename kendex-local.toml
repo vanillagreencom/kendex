@@ -1345,7 +1345,7 @@ rounds = '''
 Open every review comment on this repository with the line `read: .github/instructions/code-review.md`, so a reader can tell which instruction file the comment was written against.
 '''
 reply-contract = '''
-A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.
+A tracked reply can also name a GitHub issue.
 '''
 severity = '''
 Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. The conditions for that approval are the KEN-2067 design note, attached to that issue, § Copilot-down fallback.

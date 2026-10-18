@@ -200,7 +200,7 @@ Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull 
 
 Its § 3 is skipped, so nothing waits on a reviewer before § 5 step 1, and only that step's CI wait, ahead of its direct attempt, waits on CI. § 5 step 1 then attempts the prepared head and owns the queue wait to a terminal verdict. Read `ci-classify-refusal --help` for the output and retry contract. A refusal it marks `retry: same-head` is retried on that head by re-entering the step under [merge-attempt.md § Exit routing](../references/merge-attempt.md#exit-routing)'s bound and is not an escape; its limit stop ends the run as a merge-pr verdict. Any other refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 7).
 
-A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding there or at § 5 step 1's pre-arm [thread read](../references/thread-read.md) is answered by reply, per [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow): a fix push at either moves the head and escapes (§ Escape condition 8).
+A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding there or at § 5 step 1's pre-arm [thread read](../references/thread-read.md) is answered by reply, per [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow): a fix push at either moves the head and escapes (§ Escape condition 8).
 
 ## 5. Return
 

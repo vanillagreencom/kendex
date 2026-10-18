@@ -51,7 +51,7 @@ standing reply is its newest counted later comment that is
 `Fixed in <sha>`, `Declined: ...` or carries a track word. A decline
 opening with the word without the colon is still a decline for
 unreasoned-decline. What a decline must say is reviewer conduct:
-.agents/skills/orch/references/finding-disposition.md § Decision flow.
+.agents/skills/reviewer/references/finding-disposition.md § Decision flow.
 
 A body finding is answered by a counted PR-level comment whose first
 non-blank line opens `Dispositions at <sha>`, <sha> being 7 to 40 hex

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Package review depth for a pull-request range. Native approval stays with GitHub.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: review-depth --base REF [--head REF] [--repo DIR]
+
+Reads the range through orch's change_class_read and harness-ci's change-class.
+No argument accepts a class. Run the trusted base checkout's copy.
+
+The measured class selects package review depth:
+  render, trivial, micro: none
+  small:                  bot
+  standard:               full
+
+stdout is one record:
+  change_class=CLASS review_depth=none|bot|full native_approval=unchanged
+
+none skips package review; bot requires automatic review; full selects the
+normal specialist review. Orch owns the panel, execution and round counters.
+Every class keeps GitHub's native approval and thread requirements.
+This command reads no approval state and grants no approval exemption.
+
+Exit 0: measured depth. Exit 2: arguments, dependency or classifier failure.
+Exit 3: unmeasured class. Nonzero exits print no depth record.
+USAGE
+}
+
+fail() {
+  printf 'review-depth: cause=%s value=%q\n' "$1" "$2" >&2
+  exit 2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+BASE="" HEAD=HEAD REPO=.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --base|--head|--repo)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || fail arguments "$1"
+      case "$1" in
+        --base) BASE="$2" ;;
+        --head) HEAD="$2" ;;
+        --repo) REPO="$2" ;;
+      esac
+      shift 2 ;;
+    *) fail arguments "$1" ;;
+  esac
+done
+[ -n "$BASE" ] || fail arguments --base
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd -P)" || exit 2
+READER="$SCRIPT_DIR/../../orch/scripts/lib/change-class.sh"
+[ -r "$READER" ] || fail reader-absent "$READER"
+# shellcheck source=../../orch/scripts/lib/change-class.sh
+. "$READER" || exit 2
+CLASS_ERR="$(mktemp "${TMPDIR:-/tmp}/review-depth.XXXXXX")" || fail scratch "${TMPDIR:-/tmp}"
+trap 'rm -f -- "${CLASS_ERR:?}"' EXIT
+
+if ! change_class_read "$BASE" "$HEAD" "$REPO" "$CLASS_ERR"; then
+  cat -- "$CLASS_ERR" >&2
+  fail "$CHANGE_CLASS_CAUSE" "$REPO"
+fi
+cat -- "$CLASS_ERR" >&2
+case "$CHANGE_CLASS_MEASURED" in
+  true) ;;
+  false)
+    printf 'review-depth: cause=classifier-unmeasured value=%q\n' "$CHANGE_CLASS" >&2
+    exit 3 ;;
+  *) fail classifier-unreadable "$CHANGE_CLASS_MEASURED" ;;
+esac
+case "$CHANGE_CLASS" in
+  render|trivial|micro) DEPTH=none ;;
+  small) DEPTH=bot ;;
+  standard) DEPTH=full ;;
+  *) fail classifier-unreadable "$CHANGE_CLASS" ;;
+esac
+printf 'change_class=%s review_depth=%s native_approval=unchanged\n' "$CHANGE_CLASS" "$DEPTH"

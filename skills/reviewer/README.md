@@ -8,6 +8,8 @@ Review workflows and finding formats for AI review agents. Projects using orch c
 - Run additional review work selected by QA labels.
 - Record verified findings with their causes and effects.
 - Return a structured report to the primary agent.
+- Apply the [finding conduct](references/finding-disposition.md) shared by reviewers and implementers.
+- Select review depth for a change range with `scripts/review-depth`. GitHub keeps its approval requirements.
 
 ## Install
 
@@ -21,7 +23,7 @@ The primary agent assigns a review to a specialist. The specialist reads the cha
 
 ## Setup
 
-kendex also installs orch, github, code-quality and docs-writing. Add linear for Linear review work. The installed `scripts/mutation-stability` requires perl.
+kendex also installs the required skills declared in [SKILL.md](SKILL.md). Add linear for Linear review work. The installed `scripts/mutation-stability` requires perl.
 
 On Linux, `mutation-stability` also requires python3 (Python 3.9 or later) with [`os.pidfd_open`](https://docs.python.org/3/library/os.html#os.pidfd_open) and [`signal.pidfd_send_signal`](https://docs.python.org/3/library/signal.html#signal.pidfd_send_signal), plus Linux kernel 5.3 or later with pidfd support. If this support is unavailable, the run reports cleanup failure and keeps its scratch workspace.
 

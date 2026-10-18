@@ -125,7 +125,7 @@ Read the PR's decline replies and the repo's instruction files before reporting 
 
 ### reply-contract
 
-Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <issue>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason.
+Render author replies as `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <issue>`. Classify findings and supply decline reasons under `.agents/skills/reviewer/references/finding-disposition.md` § Decision flow.
 
 ### render-out-of-scope
 

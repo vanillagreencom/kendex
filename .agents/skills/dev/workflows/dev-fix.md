@@ -33,7 +33,7 @@ An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` recor
 
 - **Apply** when the item relates to the parent issue and adds no new risk. Unrelated changes are Skipped with the reason; the orchestrator files.
 - **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions. Before applying anything, search the decisions governing the affected area — `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue — and read the full file for any match. An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts [DECISION_ID]".
-- **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it. Disposition rules are orch's [references/finding-disposition.md](../../orch/references/finding-disposition.md).
+- **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it. Disposition rules are reviewer's [references/finding-disposition.md](../../reviewer/references/finding-disposition.md).
 - **Blocked** when the same fix fails three times — report rather than loop.
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).

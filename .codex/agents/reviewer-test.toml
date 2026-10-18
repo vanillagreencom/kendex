@@ -16,7 +16,7 @@ Judge protection against cost under `.agents/skills/code-quality/SKILL.md` § Te
 
 The highest-value question is not "is there a test?" but "**can this test still fail?**" Hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ### Probes
 
