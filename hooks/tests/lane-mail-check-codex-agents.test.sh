@@ -14,6 +14,19 @@ codex_result() { # CALL_ID OUTPUT
   jq -nc --arg o "$2" --arg id "$1" \
     '{type:"response_item",payload:{type:"function_call_output",call_id:$id,output:$o}}' >> "$TRANSCRIPT"
 }
+# Exact parent events measured after spawn_agent and followup_task on 0.163.0.
+codex_return() { # spawned | resumed
+  case "$1" in
+    spawned) cat <<'JSON' >> "$TRANSCRIPT"
+{"timestamp":"2026-10-18T11:35:46.698Z","ordinal":181,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a14ec9-b8b8-7823-8c1c-f937e13b0adf","turn_id":"01a14ec9-b976-7643-a76c-3d1d8af8ba7c","item":{"type":"SubAgentActivity","model":null,"reasoning_effort":null,"id":"subagent-completed-01a14eca-ec30-7af3-baf7-b715e459bfac","kind":"completed","agent_thread_id":"01a14eca-ec0a-7e52-8b43-a4674ef4d38e","agent_path":"/root/runtime"},"started_at_ms":1792323346698,"completed_at_ms":1792323346698}}
+JSON
+      ;;
+    resumed) cat <<'JSON' >> "$TRANSCRIPT"
+{"timestamp":"2026-10-18T11:36:14.744Z","ordinal":220,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a14ec9-b8b8-7823-8c1c-f937e13b0adf","turn_id":"01a14ec9-b976-7643-a76c-3d1d8af8ba7c","item":{"type":"SubAgentActivity","model":null,"reasoning_effort":null,"id":"subagent-completed-01a14ecc-0742-7171-8e53-c1a5a8109860","kind":"completed","agent_thread_id":"01a14eca-ec0a-7e52-8b43-a4674ef4d38e","agent_path":"/root/runtime"},"started_at_ms":1792323374744,"completed_at_ms":1792323374744}}
+JSON
+      ;;
+  esac
+}
 snapshot() { # STATUS
   codex_call list_agents '{}' "$(jq -nc --argjson s "$1" \
     '{agents:[{agent_name:"/root",agent_status:"running"},
@@ -31,7 +44,7 @@ install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
 TRANSCRIPT="$TMP_ROOT/codex.jsonl"
 ARM_ARGS=(halt)
 codex_row() { # ROSTER RC KEY
-  local roster="$1" rc="$2" key="$3" current_call mutation arguments result stale list_call mutation_call
+  local roster="$1" rc="$2" key="$3" current_call mutation arguments result stale list_call mutation_call expected_status=""
   CALL_NUMBER=0
   usage_line codex 119200 > "$TRANSCRIPT"
   case "$roster" in
@@ -46,6 +59,15 @@ codex_row() { # ROSTER RC KEY
     spawned | spawned-returned) snapshot '"completed"'
       codex_call collaboration.spawn_agent '{"task_name":"reviewer"}' '{"task_name":"/root/reviewer"}'
       [ "$roster" != spawned-returned ] || snapshot '"idle"' ;;
+    spawn-completed | spawn-return-removed | followup-completed | followup-return-removed)
+      codex_call spawn_agent '{"task_name":"runtime"}' '{"task_name":"/root/runtime"}'
+      [ "$roster" = spawn-return-removed ] || codex_return spawned
+      case "$roster" in
+        followup-*) codex_call followup_task '{"target":"/root/runtime","message":"Review again."}' ''
+          [ "$roster" != followup-completed ] || codex_return resumed ;;
+      esac
+      case "$roster" in *-completed) expected_status=completed ;; *) expected_status=running ;; esac ;;
+    unknown-completion) codex_return spawned ;;
     resumed | resumed-relative | resumed-returned | interrupted-followup)
       if [ "$roster" = interrupted-followup ]; then snapshot '"interrupted"'; else snapshot '"completed"'; fi
       target=/root/reviewer
@@ -105,6 +127,12 @@ codex_row() { # ROSTER RC KEY
       jq -nc '{type:"response_item",payload:{type:"message",content:("x" * 1048576)}}' >> "$TRANSCRIPT"
       usage_line codex 119200 >> "$TRANSCRIPT" ;;
   esac
+  if [ -n "$expected_status" ]; then
+    assert_eq "$(
+      . "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
+      lane_adapter_codex_agents < "$TRANSCRIPT"
+    )" "$(printf '/root/runtime\t%s' "$expected_status")" "Codex roster $roster reads $expected_status"
+  fi
   codex_call collaborationspawn_agent '{"task_name":"current"}'
   current_call="call-$CALL_NUMBER"
   if ! command -v timeout >/dev/null 2>&1; then rc=2; key=agent-unobserved; fi
@@ -136,6 +164,11 @@ interrupted-followup|2|agent-reserve
 out|2|agent-reserve
 spawned|2|agent-reserve
 spawned-returned|0|-
+spawn-completed|0|-
+spawn-return-removed|2|agent-reserve
+followup-completed|0|-
+followup-return-removed|2|agent-reserve
+unknown-completion|2|agent-unobserved
 resumed|2|agent-reserve
 resumed-relative|2|agent-reserve
 resumed-returned|0|-
@@ -230,6 +263,27 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     assert_eq "$control_rc" 1 "control $control fails the real hook assertions"
   done
   if command -v timeout >/dev/null 2>&1; then
+    new_lane codex-return-control AGENT-1
+    mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
+    hole_install lib/adapters
+    cp -R "$REPO_ROOT/skills/orch/scripts/lib/adapters" "$LANE/.agents/skills/orch/scripts/lib/adapters"
+    wake_mutant returns-ignored \
+      '        elif $r.type == "item_completed" then' \
+      '        elif false then' \
+      "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
+    cp "$MUTANT_PATH" "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
+    install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
+    ARM_ARGS=(halt)
+    for control in spawn-completed followup-completed; do
+      control_rc=0
+      (PASS=0; FAIL=0
+        codex_row "$control" 0 -
+        [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/$control.control.log" 2>&1 || control_rc=$?
+      assert_eq "$control_rc" 1 "control $control fails its roster and hook row"
+      assert_eq "$(first_line)" \
+        'lane-mail-check: agent-reserve=collaborationspawn_agent tokens=119200 reserve=10000' \
+        "control $control holds the reserve without completion handling"
+    done
     new_lane codex-interrupted-control AGENT-1
     mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
     hole_install lib/adapters

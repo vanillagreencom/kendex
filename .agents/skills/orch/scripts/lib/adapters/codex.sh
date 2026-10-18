@@ -46,8 +46,8 @@ lane_adapter_codex_reading() { # UNREAD
 
 # The hook cannot call the session's collaboration tools. Codex 0.163.0
 # persists their calls and results in its rollout; read that ordered history
-# instead. A snapshot observes idle or returned agents. Later launches and
-# followups put them out again. /root is the lead, never its attached child.
+# instead. A snapshot or named completion observes returned agents. Later
+# launches and followups put them out again. /root is the lead, never its child.
 # The caller bounds the full read and discards output on a parse failure.
 # PreToolUse.tool_use_id names the invocation being judged, which is not an
 # earlier launch even where its call is already in the rollout:
@@ -73,7 +73,10 @@ lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
         else "unknown" end;
     def name: if type == "string" and test("^/root(/[A-Za-z0-9_-]+)*$") then .
       else error("invalid agent name") end;
-    reduce (inputs | fromjson | objects | select(.type == "response_item") | .payload
+    reduce (inputs | fromjson | objects
+        | select(.type == "response_item" or (.type == "event_msg"
+            and .payload.type == "item_completed" and .payload.item.type == "SubAgentActivity"
+            and .payload.item.kind == "completed")) | .payload
         | select($current_call == "" or .call_id != $current_call)) as $r
       ({calls: {}, agents: {}, observed: false, unread: false};
         if $r.type == "function_call" then
@@ -117,6 +120,9 @@ lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
               end
             ) catch ($before | .unread = true)
           | del(.calls[$r.call_id])
+        elif $r.type == "item_completed" then
+          ($r.item.agent_path | name) as $id
+          | if .agents[$id] != null then .agents[$id] = "completed" else . end
         else . end)
     | (.agents | to_entries[] | if .value == "unknown" then ["?", "agent-status"]
         else [.key, .value] end | @tsv),
