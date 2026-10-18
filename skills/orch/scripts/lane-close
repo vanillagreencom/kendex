@@ -25,7 +25,6 @@ source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 source "$SCRIPT_DIR/lib/cloud-close-log.sh"
-source "$SCRIPT_DIR/lib/escapes.sh"
 
 message() { # REASON FIELD=VALUE...
   local reason="$1" field branch_source_named=false
@@ -1408,6 +1407,8 @@ pane_now_exited() {
 # Stock macOS without coreutils follows escapes_bounded's unbounded-read policy.
 await_pane_exit() {
   local remaining rc
+  # Other close paths do not need the bound helper's GitHub dependency.
+  source "$SCRIPT_DIR/lib/escapes.sh" || exit 1
   while :; do
     remaining=$((close_deadline - SECONDS))
     (( remaining > 0 )) || return 124
