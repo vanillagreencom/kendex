@@ -303,6 +303,7 @@ case "${1:-}" in
       '        cargo clippy for the crates they touch, any non-Markdown file inside' \
       '        one included (the workspace for a shared input or a file compiled code includes),' \
       '        the UI checks and suite when they touch a non-Markdown file under ui/, the' \
+      '        tests of crates whose literal manifest reads name a changed path or parent,' \
       '        skill, hook and tools suites their changed inputs map to' \
       '        (mapped_suites), and the suites of the Pi-package trees they' \
       '        touch. Tools suites can read inputs outside tools/.' \
@@ -1151,8 +1152,7 @@ ui_changed=0
 # Every repository path an include_str! or include_bytes! literal under
 # crates/ names: the files outside crates/ that compiled code reads at build
 # time. The derivation is tools/rust-reads' include rows, and a failed read of
-# them is a failure here. A file a test reads at run time is not here; the
-# full run's host test run reads it.
+# them is a failure here. Runtime reads select their owning crate separately.
 compiled_includes() {
   [ "$workspace_every" -eq 0 ] || return 1
   awk -F '\t' '$1 == "include" { print $2 }' <<<"$reads_rows"
@@ -1230,9 +1230,24 @@ if [ "$MODE" = range ]; then
   done <<<"$touched"
 fi
 
+# A literal manifest read is direct test input, including descendants of its
+# directory. The extractor marks unresolved chains with `.`, which proves no
+# direct coverage. Keep these out of the compiler set and the full run, whose
+# workspace test command already covers every reader.
+runtime_tests=""
+if [ "$MODE" = range ] && [ "$workspace_every" -eq 0 ]; then
+  runtime_tests=$(CHANGED="$touched" awk -F '\t' '
+    $1 == "manifest" && $2 != "." {
+      n = split(ENVIRON["CHANGED"], changed, "\n")
+      for (i = 1; i <= n; i++)
+        if (changed[i] == $2 || index(changed[i], $2 "/") == 1) print $3
+    }
+  ' <<<"$reads_rows" | LC_ALL=C sort -u)
+fi
+
 cargo_target="${CARGO_TARGET_DIR:-target}"
 cargo_available=1
-if [ -f Cargo.toml ] && { [ "$MODE" = full ] || [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; } && ! command -v cargo >/dev/null 2>&1; then
+if [ -f Cargo.toml ] && { [ "$MODE" = full ] || [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ] || [ -n "$runtime_tests" ]; } && ! command -v cargo >/dev/null 2>&1; then
   unrun missing-tool cargo
   cargo_available=0
 fi
@@ -1305,6 +1320,13 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
     fmt_out=$(cargo fmt --check 2>&1) || note cargo-fmt workspace
     [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
   fi
+fi
+
+if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
+  while IFS= read -r manifest; do
+    [ -n "$manifest" ] || continue
+    cargo test --manifest-path "$manifest" --quiet || say tests "$manifest"
+  done <<<"$runtime_tests"
 fi
 
 fi

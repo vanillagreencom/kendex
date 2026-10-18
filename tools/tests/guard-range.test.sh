@@ -165,6 +165,81 @@ for row in "${ARM_CONTROLS[@]}"; do
   back_to_base
 done
 
+echo "=== runtime manifest reads select only the reading crate's tests ==="
+# The corpus producer joins a literal directory onto CARGO_MANIFEST_DIR.
+# Keep the fixture read below a skill subtree to prove unrelated skill paths
+# remain outside coverage, and a root read to prove unresolved paths do not
+# widen that coverage.
+mkdir -p "$R/crates/core/tests/quality" "$R/skills/watched" "$R/skills/unread"
+printf '%s\n' 'let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/watched");' \
+  'let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");' \
+  >"$R/crates/core/tests/quality/corpus.rs"
+printf '# skill\n' >"$R/skills/watched/SKILL.md"
+printf '# skill\n' >"$R/skills/unread/SKILL.md"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: a runtime skill reader"
+runtime_base="$(git -C "$R" rev-parse HEAD)"
+TEST_CALL='cargo test --manifest-path crates/core/Cargo.toml --quiet'
+RUNTIME_ROWS=(
+  "skills/watched/SKILL.md|$TEST_CALL"
+  "skills/unread/SKILL.md|"
+  "docs/unread.md|"
+  "skills/watchedness/SKILL.md|"
+)
+for row in "${RUNTIME_ROWS[@]}"; do
+  IFS='|' read -r path want <<<"$row"
+  mkdir -p "$R/$(dirname "$path")"
+  printf 'edit\n' >>"$R/$path"
+  run_range "$runtime_base"
+  [ "$RC" -eq 0 ] && [ "$LOG" = "$want" ] \
+    && ok "manifest coverage for $path selects [$want]" \
+    || bad "manifest coverage for $path selects [$want]" "rc=$RC log=$LOG out=$OUT"
+  if [ -n "$want" ] && mutant_guard 's/\$1 == "manifest" \&\& /$1 == "include" \&\& /'; then
+    run_range "$runtime_base" "$MUTANT_TOOLS/guard"
+    [ "$RC" -eq 0 ] && [ -z "$LOG" ] \
+      && ok "control: include-only selection runs no cargo test for $path" \
+      || bad "control: include-only selection runs no cargo test for $path" "rc=$RC log=$LOG"
+  elif [ -n "$want" ]; then
+    bad "control: runtime read selection could not be removed"
+  fi
+  if [ -z "$want" ]; then
+    if mutant_guard 's/if (changed\[i\] == \$2 || index(changed\[i\], \$2 "\/") == 1)/if (1)/'; then
+      run_range "$runtime_base" "$MUTANT_TOOLS/guard"
+      [ "$RC" -eq 0 ] && [ "$LOG" = "$TEST_CALL" ] \
+        && ok "control: widening direct coverage wrongly selects tests for $path" \
+        || bad "control: widening direct coverage wrongly selects tests for $path" "rc=$RC log=$LOG"
+    else
+      bad "control: direct manifest coverage could not be widened"
+    fi
+  fi
+  git -C "$R" reset -q --hard "$runtime_base"
+  git -C "$R" clean -qfd -e fake-bin
+done
+# The configured ci-mode local route runs this same range with scoped=true.
+# A selected cargo test's failure must still fail that route.
+printf 'edit\n' >>"$R/skills/watched/SKILL.md"
+cp "$R/fake-bin/cargo" "$TMP/cargo.saved"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "cargo $*" >>"$CALL_LOG"' \
+  '[ "${1:-}" != test ]' >"$R/fake-bin/cargo"
+RC=0
+: >"$CALLS"
+OUT="$(cd "$R" && env DEV_VALIDATE_SCOPED=true PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" \
+  "$GUARD" --selection --range "$runtime_base" 2>&1 </dev/null)" || RC=$?
+[ "$RC" -eq 1 ] && grep -qFx "$TEST_CALL" "$CALLS" \
+  && ok "the configured scoped route fails when the manifest reader's test fails" \
+  || bad "the configured scoped route fails when the manifest reader's test fails" "rc=$RC out=$OUT"
+if mutant_guard 's/\$1 == "manifest" \&\& /$1 == "include" \&\& /'; then
+  RC=0
+  : >"$CALLS"
+  OUT="$(cd "$R" && env DEV_VALIDATE_SCOPED=true PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" \
+    "$MUTANT_TOOLS/guard" --selection --range "$runtime_base" 2>&1 </dev/null)" || RC=$?
+  [ "$RC" -eq 0 ] && [ ! -s "$CALLS" ] \
+    && ok "control: include-only selection misses the failing runtime test in the scoped route" \
+    || bad "control: include-only selection misses the failing runtime test in the scoped route" "rc=$RC out=$OUT"
+fi
+cp "$TMP/cargo.saved" "$R/fake-bin/cargo"
+back_to_base
+
 echo "=== a range keeps its own selection whatever class it is handed ==="
 # dev-validate-run hands every run the branch's change class; the lane
 # selection that reads it is the full run's, and a range selects from its own

@@ -42,7 +42,9 @@
 # Usage: tools/rust-reads [--cli-smoke] [ROOT]
 #   ROOT   the checkout to read; the current directory when omitted
 # stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
-# relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
+# relative to ROOT. A manifest row appends `<TAB><owning Cargo.toml>` so
+# guard can run the reading crate without a separate path map.
+# Exit 0 with the rows, 2 when the source could not be read
 # or the arguments are wrong, and a read that did not run is never printed as
 # an empty set: a crates/ tree holding no Cargo.toml is one that could not be
 # read. A refusal is one stderr line:
@@ -129,9 +131,12 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" find cra
     for (i = 2; i <= k; i++) out = out "/" seg[i]
     return out
   }
-  function emit(kind, path) {
+  function emit(kind, path, owner) {
     if (path == "") return
-    if (!compiling) printf "%s\t%s\n", kind, path
+    if (!compiling) {
+      if (kind == "manifest") printf "%s\t%s\t%s/Cargo.toml\n", kind, path, owner
+      else printf "%s\t%s\n", kind, path
+    }
     else if (kind == "include") printf "cli-include\t%s\n", path
   }
   function unquote(tok) {
@@ -183,9 +188,9 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" find cra
         }
         rest = substr(rest, RLENGTH + 1)
       }
-      emit("manifest", resolve(owner, chain))
+      emit("manifest", resolve(owner, chain), owner)
       # An argument the chain could not read may lead anywhere from there.
-      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".")
+      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
     }
   }
   function visit(file,   line, status, text) {
