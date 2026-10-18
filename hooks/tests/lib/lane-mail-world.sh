@@ -123,6 +123,10 @@ lay_out_lane() { # BRANCH
   ln -s -f -n ../../.agents/skills/orch "$LANE/.claude/skills/orch"
   ln -s -f -n ../../.agents/skills/mailbox "$LANE/.claude/skills/mailbox"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+  if [ -n "${CONTEXT_LIB_VARIANT:-}" ]; then
+    hole_install lib/lane-context.sh
+    cp -- "$CONTEXT_LIB_VARIANT" "$LANE/.agents/skills/orch/scripts/lib/lane-context.sh"
+  fi
   mark_lane "$1"
 }
 
@@ -486,8 +490,8 @@ variant() { # NAME SED-ARGUMENT...
   VARIANT_PATH="$TMP_ROOT/$1.sh"
   local name="$1"
   shift
-  sed "$@" "$HOOK" > "$VARIANT_PATH"
-  assert_eq "$(cmp -s "$VARIANT_PATH" "$HOOK" && echo same || echo differs)" "differs" \
+  sed "$@" "${VARIANT_SOURCE:-$HOOK}" > "$VARIANT_PATH"
+  assert_eq "$(cmp -s "$VARIANT_PATH" "${VARIANT_SOURCE:-$HOOK}" && echo same || echo differs)" "differs" \
     "the $name copy really differs from the hook"
 }
 

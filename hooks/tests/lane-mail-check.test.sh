@@ -555,16 +555,15 @@ assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx 'orch-env: broken' "$ERR_
 # recent megabyte is all tool results. Both halves need a transcript larger
 # than the window, so the copy shortens the window instead of the fixture
 # growing to a megabyte.
-variant short-window -e 's@^TRANSCRIPT_WINDOW=1048576$@TRANSCRIPT_WINDOW=512@'
-WINDOW_HOOK="$VARIANT_PATH"
+VARIANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" variant short-window -e 's@^TRANSCRIPT_WINDOW=1048576$@TRANSCRIPT_WINDOW=512@'
+WINDOW_LIB="$VARIANT_PATH"
 # filler PATH BYTES — lines the usage read skips, so a row can put a usage line
 # on either side of the window.
 filler() { # PATH BYTES
   jq -nc --arg p "$(head -c "$2" /dev/zero | tr '\0' 'x')" '{type:"user",text:$p}' >> "$1"
 }
 
-new_handoff_lane handoff_window KEN-83
-install_hook "$WINDOW_HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+CONTEXT_LIB_VARIANT="$WINDOW_LIB" new_handoff_lane handoff_window KEN-83
 write_transcript "$TRANSCRIPT" 600000
 filler "$TRANSCRIPT" 2000
 stop_at "$TRANSCRIPT" false
@@ -2004,20 +2003,18 @@ overseer_unlisted_untranscribed|.other|-|record=none unread=0 unlisted=0 unrecor
 overseer_copilot_unowned|.github|$(usage_line claude 600000)|record=null home-mismatch $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=0|a Copilot install writes the transcript gate's gap
 overseer_copilot_unrecorded|.github|-|record=null session-record $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=1|a Copilot agentStop with no extension reading and no statusLine record answering writes the gap session-record and reports reading-unrecorded
 INSTALLS
-variant unlisted-late -e '/^  if \[ -z "\$HARNESS" \]; then$/,/^  fi$/d'
-HOOK_SAVED="$HOOK"
-HOOK="$VARIANT_PATH"
+VARIANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" variant unlisted-late -e '/^  if \[ -z "\$HARNESS" \]; then$/,/^  fi$/d'
+CONTEXT_LIB_VARIANT="$VARIANT_PATH"
 assert_eq "$(overseer_gap_word control_unlisted_late - .other)" \
   "record=null transcript-unnamed $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=0" \
   "control: a hook that decides the harness after the transcript names a gap for an unnamed harness at every turn end"
-HOOK="$HOOK_SAVED"
-variant no-session-record-gap -e '/^      READ_GAP=session-record$/d'
-HOOK_SAVED="$HOOK"
-HOOK="$VARIANT_PATH"
+unset CONTEXT_LIB_VARIANT
+VARIANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" variant no-session-record-gap -e '/^      READ_GAP=session-record$/d'
+CONTEXT_LIB_VARIANT="$VARIANT_PATH"
 assert_eq "$(overseer_gap_word control_session_record_gap - .github)" \
   "record=none unread=0 unlisted=0 unrecorded=1" \
   "control: a Copilot arm that names no gap leaves an unanswered session record unrecorded"
-HOOK="$HOOK_SAVED"
+unset CONTEXT_LIB_VARIANT
 variant no-overseer-unread -e 's/^    \[ "\$READ_GAP" != usage-unread \] || message usage-unread "\$TRANSCRIPT"$/    :/'
 HOOK_SAVED="$HOOK"
 HOOK="$VARIANT_PATH"
@@ -3015,10 +3012,9 @@ expect 2 "lane-mail-check: context=600000" \
 
 # The whole-file fallback dropped: a session whose recent window is all tool
 # results reads as no context at all and runs to its wall.
-MUTANT_SOURCE="$WINDOW_HOOK" mutant no-window-fallback \
+MUTANT_SOURCE="$WINDOW_LIB" mutant no-window-fallback \
   -e 's@^    if \[ -z "\$READING" \] && ! READING=\$(lane_context_reading .*); then$@    if false; then@'
-new_handoff_lane control_window KEN-78
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_handoff_lane control_window KEN-78
 write_transcript "$TRANSCRIPT" 600000
 filler "$TRANSCRIPT" 2000
 stop_at "$TRANSCRIPT" false

@@ -555,14 +555,47 @@ done <<'ROWS'
 1|200000|90|abc|rc=2
 ROWS
 
+# review-pr consumes this command's room/due stdout. Start with no recorded
+# context, as lane-marker does for a new session, then refresh mid-turn from
+# the native transcript. Copilot has no status-line file in this home.
+PANEL_BOX="$TMP_ROOT/panel-box"
+PANEL_HOME="$TMP_ROOT/panel-home"
+mkdir -p "$PANEL_BOX" "$PANEL_HOME"
+panel_read() { # HARNESS TRANSCRIPT
+  local out rc=0
+  out=$(HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
+    DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
+    "$BASH" "$LIB" "$1" s1 "$2" "$PANEL_BOX" "$T" "" 2>"$T/panel.err") || rc=$?
+  printf 'rc=%s verdict=%s' "$rc" "$out"
+}
+for row in '249999|room' '250000|due' '250001|due'; do
+  IFS='|' read -r tokens want <<<"$row"
+  claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
+  assert_eq "$(panel_read claude "$T/panel-transcript")" "rc=0 verdict=$want" \
+    "pre-panel fresh transcript $tokens: $want" "$T/panel.err"
+  assert_eq "$(jq -r '.tokens' "$PANEL_BOX/context.json" 2>/dev/null || echo absent)" "$tokens" \
+    "pre-panel records the current $tokens reading without a prior record"
+done
+"$BASH" -c 'source "$1"; lane_context_record "$2" copilot 100000 800000 "" s1 "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' _ "$LIB" "$PANEL_BOX"
+assert_eq "$(panel_read copilot '')" 'rc=0 verdict=room' \
+  'pre-panel accepts a Copilot extension reading without a status-line record' "$T/panel.err"
+if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
+  mkdir -p "$PANEL_HOME/.cache/lane-mail/copilot-usage"
+  touch "$PANEL_HOME/.cache/lane-mail/copilot-usage/s1"
+  assert_eq "$(panel_read copilot '')" 'rc=2 verdict=' \
+    'pre-panel refuses a pending Copilot reading instead of accepting its older record' "$T/panel.err"
+  rm -- "$PANEL_HOME/.cache/lane-mail/copilot-usage/s1"
+fi
+
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   echo "=== must-fail controls ==="
   # control NAME FILE OLD NEW PATTERN — a copy of the library whose FILE has OLD
   # replaced by NEW, run through this suite; PATTERN is a FAIL line it must print.
   control() { # NAME FILE OLD NEW PATTERN
-    local copy="$TMP_ROOT/control-$1" out
+    local copy="$TMP_ROOT/control-$1/lib" out
     mkdir -p "$copy"
     cp -R "$SCRIPTS_DIR/lib/." "$copy/"
+    cp "$SCRIPTS_DIR/orch-env" "$copy/../orch-env"
     assert_eq "$(grep -c -F -e "$3" "$copy/$2" || true)" "1" "control $1 finds exactly one site to mutate"
     perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/g' -- "$3" "$4" "$copy/$2"
     out="$(LIB_UNDER_TEST="$copy/lane-context.sh" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
@@ -622,6 +655,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '232560 of 258400 at 90: rc=0 room'
   control agent-reserve lane-context.sh 'if [ "$#" -ge 4 ]; then' 'if false; then' \
     'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
+  control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false' \
+    'pre-panel fresh transcript 250001: due'
   control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
     '400000 of no window at 90: rc=0 due'
   control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \

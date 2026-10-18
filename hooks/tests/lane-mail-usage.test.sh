@@ -341,16 +341,16 @@ expect 0 "$GAP" "control: without the removal the turn end past the mark passes 
 
 # The pending check removed: the earlier record below the mark is read as
 # room while a reading is on its way.
-mutant usage-pending-unread -e 's@^  if copilot_reading_pending; then$@  if false; then@'
-new_usage_lane control_pending KEN-422 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-pending-unread -e 's@^  if copilot_reading_pending; then$@  if false; then@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_usage_lane control_pending KEN-422
 usage 150000 272000
 pend
 turn_end s1 "$MARK90"
 rm -f -- "${PENDING:?}"
 expect 0 "$GAP" "control: without the pending check the earlier record passes the turn end as room"
 # The wait removed: a run recording as the turn ends leaves it unmeasured.
-mutant usage-pending-unwaited -e 's@^PENDING_POLLS=25$@PENDING_POLLS=0@'
-new_usage_lane control_pending_wait KEN-423 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-pending-unwaited -e 's@^PENDING_POLLS=25$@PENDING_POLLS=0@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_usage_lane control_pending_wait KEN-423
 usage 195841 272000
 pend
 unpend_after 0.5
@@ -361,8 +361,8 @@ expect 0 "lane-mail-check: reading-pending=$PENDING" \
 
 # The session rule at the turn end removed: a successor is judged on its
 # predecessor's reading.
-mutant usage-any-session -e 's@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if@'
-new_usage_lane control_session KEN-414 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-any-session -e 's@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_usage_lane control_session KEN-414
 cop_lead_start "$JUDGE" s0
 usage 199000 272000 s0
 turn_end s1 "$MARK90"
@@ -396,8 +396,8 @@ assert_eq "RC=$RC record=$(record)" "RC=0 record=150000 217600 s1 null" \
 # The capacity-source rule at the turn end removed: a gap record is read as
 # the extension's reading of no figure, and the context goes unmeasured with
 # nothing said.
-mutant usage-gap-read -e '/^copilot_context_read() {/,/^}$/ s@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if [ "$LANE_CTX_SESSION" != "$SESSION" ]; then return 1; fi; if false \&\&@'
-lost_overseer control_gap_read "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-gap-read -e '/^copilot_context_read() {/,/^}$/ s@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if [ "$LANE_CTX_SESSION" != "$SESSION" ]; then return 1; fi; if false \&\&@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" lost_overseer control_gap_read
 assert_eq "unrecorded=$(grep -c '^lane-mail-check: reading-unrecorded=' "$ERR_FILE")" "unrecorded=0" \
   "control: without the capacity-source rule a gap record leaves the overseer's context unmeasured in silence"
 

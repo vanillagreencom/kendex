@@ -830,3 +830,241 @@ lane_context_render() {
   ' <<<"$recs" | lane_context_columns
   lane_context_message legend
 }
+# The live reader shared by the hook and the pre-panel check. The hook supplies
+# its session inputs, WORK_DIR and the message/refuse_handoff callbacks. Direct
+# execution below supplies the same contract for review-pr. Both use the
+# harness adapter and Copilot extension owner; neither reads a cached record
+# as a prerequisite to refreshing it.
+TRANSCRIPT_WINDOW=1048576
+
+# This session's context, read from the transcript the payload names through
+# the adapter for HARNESS, into TOKENS, WINDOW and MODEL, and recorded in BOX
+# for report readers. TOKENS is empty where there is nothing to read — no
+# transcript named, no usage line in it, or a harness no adapter reads — and
+# LANE_CONTEXT_UNREAD for a usage object the adapter does not read; neither is
+# recorded, and READ_GAP names which it was, `transcript-unnamed`,
+# `usage-absent`, `usage-unread` or, for a Copilot session with no extension
+# reading, `session-record`, empty where a reading was taken or the harness is
+# one no adapter reads. A transcript named and unreadable is
+# refused, since the record is
+# what clears it. A record that cannot be written is reported and the reading
+# still judged: the mark rests on this read, the record serves the others.
+#
+# A bounded tail first: a session transcript grows without limit and parsing
+# the whole of one at every turn end costs more than the rest of this hook
+# together. The full file answers only where that window holds no usage line —
+# a session on its first turns, or one whose recent lines are all tool results.
+# The tail's own words go to a file and are replayed under the refusal: an
+# adapter that stops reading leaves the tail a write error, which reaching
+# stderr ahead of the keyed line would take its place.
+#
+# A Copilot transcript holds no live count. A Copilot session is read first
+# from the reading the orch copilot-lane-context extension recorded
+# (copilot_context_read). Only where no such reading of this session stands is
+# it read from the session record its statusLine command writes, bound through
+# lib/copilot-session.sh to the payload's session id, its transcript where it
+# names one, and the account the session runs on, and held to the record's
+# freshness bound: the fallback for a home whose EXTENSIONS feature is off,
+# since the extension's usage event is the interface Copilot offers and the
+# statusLine is a display command. That reading is recorded with its own
+# capacity source, so no later turn end takes it for the extension's. A record
+# that does not answer leaves the context unmeasured under
+# `reading-unrecorded=<path>` and `session-record=<reason>` and the gap
+# `session-record`, reported and passed like a transcript that names no usage,
+# and never read as room. The record is read beside an extension reading too,
+# for its stop cause alone, reported as `stop-cause=<cause>`.
+context_read_and_record() { # BOX PANE_KEY
+  TOKENS=""
+  WINDOW=""
+  MODEL=""
+  READ_GAP=""
+  COMPACTED=false
+  SOURCE=""
+  # An install directory naming no harness has no adapter to read its context,
+  # so it is reported unmeasured where the payload names a transcript to go
+  # unread. No gap is named for it, whatever the payload carries: this hook
+  # never reads that context, so a gap would stand at every turn end for the
+  # life of the session, and the record stays as it was, the mark documented
+  # as unjudged there. Decided before anything else, so no path through such
+  # an install names one.
+  if [ -z "$HARNESS" ]; then
+    [ -z "$TRANSCRIPT" ] || message harness-unlisted "$HOOK_DIR"
+    return 0
+  fi
+  if [ "$HARNESS" = copilot ]; then
+    # The extension's reading is the session's own and is never overwritten
+    # here: the reader owns the record. The statusLine record alone carries
+    # allow_all_enabled, so it is read for the stop cause beside either reading.
+    EXTENSION_READ=true
+    copilot_context_read "$1" || EXTENSION_READ=false
+    [ "$COMPACTED" = false ] || return 0
+    if ! copilot_session_read "$(lane_context_caller_cfg copilot)" "$SESSION" "$TRANSCRIPT" "$(date +%s)"; then
+      [ "$EXTENSION_READ" = false ] || return 0
+      READ_GAP=session-record
+      message reading-unrecorded "$1/$LANE_CONTEXT_RECORD"
+      message session-record "$COPILOT_SESSION_REASON"
+      return 0
+    fi
+    ! STOP_CAUSE=$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD" "${COPILOT_ALLOW_ALL:-}") || message stop-cause "$STOP_CAUSE"
+    [ "$EXTENSION_READ" = false ] || return 0
+    READING=$(lane_context_reading copilot <<<"$COPILOT_SESSION_RECORD" 2>"$WORK_DIR/transcript.err") ||
+      refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
+    SOURCE=$LANE_ADAPTER_COPILOT_CAPACITY_SOURCE
+  else
+    READ_GAP=transcript-unnamed
+    [ -n "$TRANSCRIPT" ] || return 0
+    { [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; } || refuse_handoff transcript unreadable
+    if ! READING=$(tail -c "$TRANSCRIPT_WINDOW" -- "$TRANSCRIPT" 2>"$WORK_DIR/tail.err" |
+      lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" 2>"$WORK_DIR/transcript.err"); then
+      refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err" "$WORK_DIR/tail.err")"
+    fi
+    if [ -z "$READING" ] && ! READING=$(lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" <"$TRANSCRIPT" 2>"$WORK_DIR/transcript.err"); then
+      refuse_handoff transcript unread "$(cat -- "$WORK_DIR/transcript.err")"
+    fi
+  fi
+  if [ -s "$WORK_DIR/transcript.err" ]; then
+    message compaction-unread "$HARNESS" "$(cat -- "$WORK_DIR/transcript.err")"
+  fi
+  case "$READING" in
+    '')
+      READ_GAP=usage-absent
+      return 0
+      ;;
+    "$LANE_CONTEXT_UNREAD")
+      TOKENS=$READING
+      READ_GAP=usage-unread
+      return 0
+      ;;
+  esac
+  READ_GAP=""
+  TOKENS=${READING%%"$TAB"*}
+  READING=${READING#*"$TAB"}
+  WINDOW=${READING%%"$TAB"*}
+  MODEL=${READING#*"$TAB"}
+  lane_context_record "$1" "$HARNESS" "$TOKENS" "$WINDOW" "$MODEL" "$SESSION" "$2" "" "$SOURCE" \
+    2>"$WORK_DIR/record.err" ||
+    message context-unrecorded "$1/$LANE_CONTEXT_RECORD" "$(cat -- "$WORK_DIR/record.err")"
+  return 0
+}
+
+# A Copilot session's context at its turn end, from BOX, as the orch
+# copilot-lane-context extension recorded it: COMPACTED true where the
+# lane-mail-compact hook flagged this session's automatic compaction, and
+# TOKENS, WINDOW and MODEL from the reading the usage arm last recorded
+# for this session, WINDOW being the capacity it named, the limit Copilot
+# compacts at. 0 once either is taken; nothing is written here, since the
+# reader owns the record. 1 where no reading of the extension's stands for
+# this session: no record, one naming another session, a predecessor's in the
+# same mailbox included, and one whose capacity source is not the one the
+# usage arm writes, which a gap record, written by the turn end of an overseer
+# the fleet record lost, and a reading the statusLine fallback recorded both
+# are. The caller then takes the statusLine
+# fallback, and never reads that as room. A reading the extension handed on
+# and no run has recorded yet leaves the context unmeasured under
+# `reading-pending` (copilot_reading_pending), 0 with no fallback: the
+# extension runs for this session, and the record standing is older than the
+# reading on its way. A flag or a record that stands and cannot be read is
+# refused, since the handoff record is what clears that.
+copilot_context_read() { # BOX
+  FLAG_RC=0
+  lane_context_compaction_flagged "$1" "$SESSION" 2>"$WORK_DIR/flag.err" || FLAG_RC=$?
+  case "$FLAG_RC" in
+    0)
+      # Past the mark whatever the reading says: the refusal follows, and a
+      # report on the reading ahead of it would stand before its keyed line.
+      COMPACTED=true
+      return 0
+      ;;
+    1) ;;
+    *) refuse_handoff record "$1/$LANE_CONTEXT_COMPACTION" "$(cat -- "$WORK_DIR/flag.err")" ;;
+  esac
+  if copilot_reading_pending; then
+    message reading-pending "$PENDING_FILE"
+    return 0
+  fi
+  [ -e "$1/$LANE_CONTEXT_RECORD" ] || return 1
+  RECORD=$(cat -- "$1/$LANE_CONTEXT_RECORD" 2>"$WORK_DIR/record.err") ||
+    refuse_handoff record "$1/$LANE_CONTEXT_RECORD" "$(cat -- "$WORK_DIR/record.err")"
+  lane_context_record_fields "$RECORD" ||
+    refuse_handoff record "$1/$LANE_CONTEXT_RECORD" "it is neither a reading nor a gap record"
+  if [ "$LANE_CTX_SESSION" != "$SESSION" ] ||
+    [ "$LANE_CTX_SOURCE" != "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE" ]; then
+    return 1
+  fi
+  TOKENS=$LANE_CTX_TOKENS
+  WINDOW=$LANE_CTX_WINDOW
+  MODEL=$LANE_CTX_MODEL
+  return 0
+}
+
+# Whether a context reading of this session is on its way to the record: 0
+# where the extension's pending marker for SESSION, PENDING_FILE, still stands
+# after PENDING_POLLS polls of 0.2 s, 1 where it is gone or the payload names
+# no session. The extension hands each reading to a usage run apart from the
+# session and removes the marker once a run records the last one, so nothing
+# else orders that run before this turn end, and the record standing while it
+# goes is an earlier reading, which can lie below the mark this one crossed.
+# The wait covers a run that is recording as the turn ends; a marker that
+# outlives it is a run still going or one that failed, and neither is read.
+PENDING_POLLS=25
+PENDING_WAIT="5 seconds"
+PENDING_FILE=""
+copilot_reading_pending() {
+  local polls=0
+  [ -n "$SESSION" ] || return 1
+  PENDING_FILE="$COPILOT_USAGE/$SESSION"
+  while [ -e "$PENDING_FILE" ]; do
+    [ "$polls" -lt "$PENDING_POLLS" ] || return 0
+    sleep 0.2
+    polls=$((polls + 1))
+  done
+  return 1
+}
+
+# review-pr invokes this library with the same native session inputs a hook
+# payload supplies: HARNESS SESSION TRANSCRIPT BOX PROJECT WINDOW. WINDOW is
+# the harness payload's capacity where it carries one, empty otherwise. The
+# caller's launch home stays in the harness environment. The only stdout
+# result is the existing reserve judge's room/due answer; an unavailable read
+# exits nonzero. The hook keeps its own callbacks and never enters this arm.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  if [ "${1:-}" = --help ]; then
+    printf '%s\n' 'Usage: bash lib/lane-context.sh HARNESS SESSION TRANSCRIPT BOX PROJECT WINDOW' \
+      'Read current session context through the hook reader, then print room or due for attached review.'
+    exit 0
+  fi
+  if [ "$#" -ne 6 ]; then
+    printf '%s\n' 'lane-context: arguments=unavailable' >&2
+    exit 2
+  fi
+  HARNESS=$1 SESSION=$2 TRANSCRIPT=$3 BOX=$4 LANE_DIR=$5 PAYLOAD_WINDOW=$6
+  HOOK_DIR="${BASH_SOURCE[0]%/*}"
+  TAB=$(printf '\t')
+  COPILOT_USAGE=$(lane_context_copilot_pending_dir)
+  WORK_DIR="$(mktemp -d)" || { printf '%s\n' 'lane-context: scratch=mktemp-failed' >&2; exit 2; }
+  [[ -d $WORK_DIR && ! -L $WORK_DIR ]] || { printf '%s\n' 'lane-context: scratch=not-a-directory' >&2; exit 2; }
+  WORK_DIR="$(cd -- "$WORK_DIR" && pwd -P)" || { printf '%s\n' 'lane-context: scratch=resolve-failed' >&2; exit 2; }
+  trap 'rm -rf -- "${WORK_DIR:?}"' EXIT
+  message() {
+    printf 'lane-context: %s=%s\n' "$1" "${2:-}" >&2
+    [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
+    return 0
+  }
+  refuse_handoff() { message "$@"; exit 2; }
+  context_read_and_record "$BOX" ""
+  if [ "$COMPACTED" = true ]; then printf 'due\n'; exit 0; fi
+  if [ -z "$TOKENS" ] || [ "$TOKENS" = "$LANE_CONTEXT_UNREAD" ]; then
+    message context-unmeasured "${READ_GAP:-reading-unavailable}"
+    exit 2
+  fi
+  MARK=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90) || exit 2
+  AGENT_RESERVE=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_AGENT_RESERVE_TOKENS "") || exit 2
+  AGENT_RESERVE=${AGENT_RESERVE:-150000}
+  JUDGE_RC=0
+  VERDICT=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK" "$AGENT_RESERVE") || JUDGE_RC=$?
+  case "$JUDGE_RC" in
+    0) printf '%s\n' "$VERDICT" ;;
+    1) message context-unmeasured window-unavailable; exit 2 ;;
+    *) message context-judge invalid-input; exit 2 ;;
+  esac
+fi

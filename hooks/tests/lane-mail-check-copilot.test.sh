@@ -1166,8 +1166,8 @@ expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
 # transcript read, which holds no count, and a record at the cap no longer
 # holds it. Held to the context read, so the block answer refuse() writes for
 # Copilot stands.
-mutant copilot-no-record -e '/^context_read_and_record() {/,/^}/s@^  if \[ "\$HARNESS" = copilot \]; then$@  if false; then@'
-new_copilot_lane control_cop_record ken-217 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant copilot-no-record -e '/^context_read_and_record() {/,/^}/s@^  if \[ "\$HARNESS" = copilot \]; then$@  if false; then@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_record ken-217
 mkdir -p "$LANE/tmp/lane-mail/KEN-217"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-217 >/dev/null)
 REPORT_ITEM=KEN-217
@@ -1177,8 +1177,8 @@ assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the record read a Copilot lane at the cap ends its turn"
 # The extension's reading skipped: the status line's record past the mark
 # overrides a reading below it.
-mutant copilot-no-primary -e 's@^    copilot_context_read "\$1" || EXTENSION_READ=false$@    EXTENSION_READ=false@'
-new_copilot_lane control_cop_primary ken-256 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant copilot-no-primary -e 's@^    copilot_context_read "\$1" || EXTENSION_READ=false$@    EXTENSION_READ=false@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_primary ken-256
 mkdir -p "$LANE/tmp/lane-mail/KEN-256"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-256 >/dev/null)
 cop_record 400000 1000000
@@ -1189,8 +1189,8 @@ assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=block" \
 # A record that is no extension reading of this session reported unmeasured
 # where the fallback should be read: another session's reading then hides this
 # session's status-line record past the mark.
-mutant copilot-no-fallback -e '/^copilot_context_read() {/,/^}/s@^    return 1$@    if [ "$LANE_CTX_SESSION" != "$SESSION" ] || [ -n "$LANE_CTX_GAP" ]; then READ_GAP=session-record; message reading-unrecorded "$1/$LANE_CONTEXT_RECORD"; message session-record missing; return 0; fi; return 1@'
-new_copilot_lane control_cop_fallback ken-257 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant copilot-no-fallback -e '/^copilot_context_read() {/,/^}/s@^    return 1$@    if [ "$LANE_CTX_SESSION" != "$SESSION" ] || [ -n "$LANE_CTX_GAP" ]; then READ_GAP=session-record; message reading-unrecorded "$1/$LANE_CONTEXT_RECORD"; message session-record missing; return 0; fi; return 1@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_fallback ken-257
 mkdir -p "$LANE/tmp/lane-mail/KEN-257"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-257 >/dev/null)
 REPORT_ITEM=KEN-257
@@ -1201,8 +1201,8 @@ assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the fallback past another session's record a status-line record past the mark does not hold the turn end"
 # The stop-cause read cut: a record reporting allow-all blocked by policy ends
 # the turn with no cause reported.
-mutant copilot-no-stop-cause -e 's@STOP_CAUSE=\$(copilot_session_stop_cause @STOP_CAUSE=$(false @'
-new_copilot_lane control_cop_cause ken-258 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant copilot-no-stop-cause -e 's@STOP_CAUSE=\$(copilot_session_stop_cause @STOP_CAUSE=$(false @'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_cause ken-258
 mkdir -p "$LANE/tmp/lane-mail/KEN-258"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-258 >/dev/null)
 REPORT_ITEM=KEN-258
@@ -1212,8 +1212,8 @@ assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=account=unmeasured" \
   "control: without the stop-cause read a policy-blocked lane ends its turn with no cause"
 # The launch's grant cut: the hook hands the judge a grant whatever the launch
 # line set, so a lane launched without allow-all reports a policy stop.
-mutant copilot-grant-ignored -e 's@"\$COPILOT_SESSION_RECORD" "\${COPILOT_ALLOW_ALL:-}")@"$COPILOT_SESSION_RECORD" true)@'
-new_copilot_lane control_cop_grant ken-259 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant copilot-grant-ignored -e 's@"\$COPILOT_SESSION_RECORD" "\${COPILOT_ALLOW_ALL:-}")@"$COPILOT_SESSION_RECORD" true)@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_grant ken-259
 mkdir -p "$LANE/tmp/lane-mail/KEN-259"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-259 >/dev/null)
 REPORT_ITEM=KEN-259
@@ -1223,8 +1223,8 @@ assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=stop-cause=allow-all-blocked-b
   "control: without the launch's grant a lane launched without allow-all reports a policy stop"
 # The record read only where no extension reading stands: a fleet lane whose
 # extension records its context ends a policy-blocked turn with no cause.
-mutant copilot-cause-fallback-only -e 's@^    \[ "\$COMPACTED" = false \] || return 0$@    [ "$EXTENSION_READ" = false ] || return 0@'
-new_copilot_lane control_cop_cause_extension ken-260 "$MUTANT_PATH"
+MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant copilot-cause-fallback-only -e 's@^    \[ "\$COMPACTED" = false \] || return 0$@    [ "$EXTENSION_READ" = false ] || return 0@'
+CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_cause_extension ken-260
 mkdir -p "$LANE/tmp/lane-mail/KEN-260"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-260 >/dev/null)
 REPORT_ITEM=KEN-260
