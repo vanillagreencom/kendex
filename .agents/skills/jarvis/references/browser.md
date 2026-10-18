@@ -23,6 +23,7 @@
 - Check the site, signed-in account and destination before filling a form. Fill from the approved source values. Leave an unknown value unresolved rather than guessing it.
 - Read back entered values before submission without revealing protected fields. Apply [decisions.md:Authority](decisions.md#authority) to submission and any external commitment.
 - Keep secrets out of snapshots and screenshots. Disable capture while a protected field, recovery code or credential is visible. Move the value through [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer).
+- On a financial, medical, insurance or identity page, mask each identifier-like number in copied page text, reports and captures to its last four digits, unless the brief names that exact value as wanted. An identifier is a run of five or more digits that identifies an account, card, routing destination, policy, member or government id, including digits separated by spaces or punctuation. A vendor's free-text description is page text, not a field to copy whole. Take no screenshot of such text unmasked: crop or skip it. Amounts, dates, quantities and postal codes are not identifiers; provide them when the brief asks for them.
 - Check the form's result at the service. An entered field alone does not prove that submission succeeded.
 
 ## Desktop input

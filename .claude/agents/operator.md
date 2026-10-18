@@ -25,7 +25,7 @@ The user's facts about their entity, accounts and people live in the user's own 
 - Read the approved step from the task file the launch names. A launch that names no task file is attached: take the step from the launch prompt.
 - Use an absolute capture path under the home's scratch folder in the `jarvis` skill's `references/computer-use.md` § Scratch files.
 - Read the approved action and source values. Check the service, signed-in account and destination before acting.
-- Follow the `jarvis` skill's `references/browser.md` for the automation profile, forms, protected fields and bot checks. Keep secrets out of captures and reports.
+- Follow the `jarvis` skill's `references/browser.md` for the automation profile, forms, protected fields and bot checks. Keep secrets out of captures and reports. Apply its § Forms and captures identifier masking rule.
 - Follow the `jarvis` skill's `references/accounts-and-secrets.md` § Remote sign-in when access requires sign-in. Check the target session's account after the service confirms access.
 - Hand a remaining bot check to the user. Resume only after the user completes it and the service shows access.
 - Read the result at the service. Report an unconfirmed result as unconfirmed to the Jarvis session before any retry.
