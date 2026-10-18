@@ -75,8 +75,9 @@ READ_JQ = OBJECTS_JQ + r'''
 
 
 class StoreRefusal(ValueError):
-    def __init__(self, key, path):
+    def __init__(self, key, path, detail=""):
         self.key, self.path = key, path
+        self.detail = detail
         super().__init__(f"lane-mail: {key}={path}")
 
 
@@ -90,10 +91,26 @@ def validate_mailbox(box):
             raise StoreRefusal("mailbox-unsafe", path)
 
 
-def read_cursor(box, enabled=True):
+def cached_path(path, files):
+    if files is None:
+        return path
+    status, source = files[path]
+    if status == 2:
+        return None
+    if status:
+        detail = Path(str(source) + ".error").read_text()
+        raise StoreRefusal("mail-read-failed", path.parent.name,
+                           detail + f"lane-host-read: file-failed item={path.parent.name} path={path} status={status}\n")
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    return source
+
+
+def read_cursor(box, enabled=True, files=None):
     cursor = box / "to-lane.cursor"
-    absent = not cursor.exists()
-    value = (cursor.read_bytes().split(b"\n", 1)[0].decode(errors="replace")
+    source = cached_path(cursor, files) if enabled else cursor
+    absent = source is None or not source.exists()
+    value = (source.read_bytes().split(b"\n", 1)[0].decode(errors="replace")
              if enabled and not absent else "")
     if value and (not value.isascii() or not value.isdecimal()):
         raise StoreRefusal("cursor-invalid", cursor)
@@ -118,8 +135,9 @@ def validate_and_lock_pair(box, paths):
                 time.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
 
-def receipt_cursor(box, value, seen, absent, count):
-    if seen > 0 and count == 0 or absent and (box / "to-lane.cursor.lock").exists():
+def receipt_cursor(box, value, seen, absent, count, files=None):
+    lock = cached_path(box / "to-lane.cursor.lock", files) if absent else None
+    if seen > 0 and count == 0 or absent and lock is not None and lock.exists():
         return "missed"
     return str(count) if seen > count else value or "0"
 
@@ -214,9 +232,16 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30):
     return [dict(row) for row in previous["rows"]], receipt
 
 
-def read_snapshot(fd, path):
+def read_snapshot(fd, path, files=None):
     try:
-        rows, numbers, record, _ = read_box(fd, path)
+        if files is not None:
+            source = cached_path(path, files)
+            if source is None:
+                return {"raw": [], "numbers": [], "count": 0, "first": ""}
+            with source.open("rb") as stream:
+                rows, numbers, record, _ = read_box(stream.fileno(), path, files)
+        else:
+            rows, numbers, record, _ = read_box(fd, path)
     except (OSError, ValueError, KeyError, TypeError) as error:
         error.mailbox_path = path
         raise
@@ -236,16 +261,20 @@ def cursor_put(path, count):
             scratch.unlink(missing_ok=True)
 
 
-def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver):
+def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver, snapshot=None):
     """Read both inherited locked mailboxes and classify them with one jq."""
     cursor = box / "to-lane.cursor"
+    files = None
+    if snapshot is not None:
+        directory = Path(snapshot)
+        files = {}
+        for row in (directory / "index").read_text().splitlines():
+            lane, path, status, number = row.split("\t")
+            if lane == item:
+                files[Path(path)] = int(status), directory / number
     directives = verb == "pending" and not to and due == "0"
     reads_cursor = verb == "inbox" or directives or receipts == "1"
-    try:
-        value, seen, absent = read_cursor(box, reads_cursor)
-    except StoreRefusal as error:
-        print(f"error\x1f{error.key}\x1f{error.path}\x1f")
-        return
+    value, seen, absent = read_cursor(box, reads_cursor, files)
     if verb == "inbox" and not value:
         try:
             cursor_put(cursor, 0)
@@ -258,10 +287,10 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
             except OSError:
                 # A peek moves no cursor, so a failed touch changes no result.
                 pass
-    lane = read_snapshot(9, box / "to-lane.jsonl")
-    over = (read_snapshot(8, box / "to-overseer.jsonl") if verb != "inbox" else
+    lane = read_snapshot(9, box / "to-lane.jsonl", files)
+    over = (read_snapshot(8, box / "to-overseer.jsonl", files) if verb != "inbox" else
             {"raw": [], "numbers": [], "count": 0, "first": ""})
-    receipt = receipt_cursor(box, value, seen, absent, lane["count"])
+    receipt = receipt_cursor(box, value, seen, absent, lane["count"], files) if reads_cursor else "0"
     if verb == "pending" and directives and receipt == "missed":
         print(f"error\x1fmail-read-failed\x1f{item}\x1fcursor=missed")
         return
@@ -313,16 +342,16 @@ def envelope(raw):
     return value if isinstance(value, dict) else None
 
 
-def read_box(fd, path):
+def read_box(fd, path, files=None):
     """Read bytes and numbering while the caller holds this file's lock."""
     os.lseek(fd, 0, os.SEEK_SET)
     with os.fdopen(os.dup(fd), "rb") as stream:
         raw = stream.read()
     end = raw.rfind(b"\n") + 1
     rows = [line + b"\n" for line in raw[:end].split(b"\n")[:-1]]
-    record_path = Path(str(path) + ".numbering")
+    record_path = cached_path(Path(str(path) + ".numbering"), files)
     record = {"dropped": 0, "first": "", "lines": []}
-    if record_path.exists():
+    if record_path is not None and record_path.exists():
         record = json.loads(record_path.read_text())
         lines = record["lines"]
         if (type(record["dropped"]) is not int or record["dropped"] < 0
@@ -452,9 +481,14 @@ def main():
         snapshot(int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
     elif op == "cursor-put":
         cursor_put(Path(sys.argv[2]), int(sys.argv[3]))
-    elif op == "read":
+    elif op in ("read", "read-cached"):
+        args = sys.argv[2:]
+        snapshot_dir = args.pop(0) if op == "read-cached" else None
         try:
-            read_mail(Path(sys.argv[2]), *sys.argv[3:])
+            read_mail(Path(args[0]), *args[1:], snapshot=snapshot_dir)
+        except StoreRefusal as error:
+            print(f"error\x1f{error.key}\x1f{error.path}\x1f")
+            print(error.detail, end="")
         except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
             path = getattr(error, "mailbox_path", getattr(error, "filename", None)) or sys.argv[2]
             print(f"error\x1ffile-unreadable\x1f{path}\x1f")

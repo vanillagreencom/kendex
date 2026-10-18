@@ -59,6 +59,14 @@ pass_external = [
 ]
 want_passes = {"mail_turn.check_mail": 1, "long_pass.observe_lanes": 1, "long_pass.check_lanes": 2}
 assert counter.pass_counts(pass_trace, pass_external, {"100"}) == want_passes
+complete_rows = [
+    "101 100 0 mail_turn.fixture",
+    "102 101 0 mail_turn.fixture",
+    "103 102 0 outside",
+    "104 100 fixture mail_turn.fixture",
+    "105 104 0 outside",
+]
+assert counter.pass_counts([], complete_rows, {"100"}, True) == {"mail_turn.fixture": 4}
 text = source.read_text()
 old = 'if owner in existing and step.startswith('
 assert text.count(old) == 1
@@ -67,6 +75,13 @@ assert mutated != text
 path = Path(sys.argv[2]) / "pass-mutant.py"
 path.write_text(mutated)
 assert load(path).pass_counts(pass_trace, pass_external, {"100"}) != want_passes, "must-fail: dependency births counted as watch starts"
+old = "and parent not in fixtures"
+assert text.count(old) == 1
+mutated = text.replace(old, "")
+assert mutated != text
+path = Path(sys.argv[2]) / "fixture-mutant.py"
+path.write_text(mutated)
+assert load(path).pass_counts([], complete_rows, {"100"}, True) != {"mail_turn.fixture": 4}, "must-fail: fixture implementation counted as product work"
 
 scratch = Path(sys.argv[2])
 raw = scratch / "raw-steps"

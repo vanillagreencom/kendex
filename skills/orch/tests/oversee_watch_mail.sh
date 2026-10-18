@@ -2597,7 +2597,7 @@ else
   printf 'skip: real Linear close requires its supported Bash runtime\n'
 fi
 
-# The mailbox process ceilings use the same instrument as the reader suite.
+# The local and hosted mailbox ceilings use the reader suite's instrument.
 fi
 fi
 if [[ "$PART" == all || "$PART" == process ]]; then

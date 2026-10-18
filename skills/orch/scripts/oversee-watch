@@ -754,9 +754,13 @@ check_item_set() {
   for item in ${merge_items[@]+"${merge_items[@]}"}; do
     item_in "$item" ${MERGED_ITEMS[@]+"${MERGED_ITEMS[@]}"} && continue
     [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
-    ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
     MERGED_ITEMS+=("$item")
   done
+  if [[ "${#MERGED_ITEMS[@]}" -gt 0 ]]; then
+    ITEM_BRANCHES="$(printf '%s\n' "${MERGED_ITEMS[@]}" | tr '[:upper:]' '[:lower:]')" \
+      || die state-read-failed "" "row=item-branches"
+    ITEM_BRANCHES+=$'\n'
+  fi
   # `--hosted ITEM=REMOTE_ROOT` and `--root ITEM=PATH`, validated here so the
   # mail pass never composes a path out of a value nobody judged.
   check_root_entries hosted ${HOSTED[@]+"${HOSTED[@]}"}
@@ -1736,11 +1740,12 @@ MERGED_SEARCH_PAGE=1000
 # uses its mergedAt for the publication floor and its merge commit for containment.
 MERGED_ITEM_ROWS=""
 MERGED_ITEM_HITS=""
-merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [ITEM_SEARCH] [ITEMS_JSON]
+merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [ITEM_SEARCH] [ITEMS_JSON] [BRANCH]
   local item="$1" repo="$2" pr="$3" since="${4:-null}" floor="${5:-}"
   local branch list named search rows errf="$WORK_DIR/merged.err"
   local fields=number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body
-  branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+  branch="${9:-}"
+  [[ -n "$branch" ]] || branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
   if [[ -n "${6:-}" ]]; then
     local read_file="$6/${repo//\//%}.merged" key value
     if [[ ! -f "$read_file" ]]; then
@@ -1797,10 +1802,11 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [I
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo pr hit hits prior keys fresh key line until view dependency_state dependency_record own_pr own_repo state="${PW_SEEN[0]}"
-  local field recorded value
+  local field recorded value branches="$ITEM_BRANCHES"
   for item in "${MERGED_ITEMS[@]}"; do
     PARKED_MERGE_DEFERRED=0
-    branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+    branch="${branches%%$'\n'*}"
+    branches="${branches#*$'\n'}"
     PARKED_KEY=""
     item_parked "$item" || true
     until="" dependency_record="" own_pr="" own_repo=""
@@ -1853,7 +1859,7 @@ check_merged() {
           die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
         fi
       else
-        merged_item_read "$item" "$repo" "$pr" "$SINCE_EPOCH" "$SINCE"
+        merged_item_read "$item" "$repo" "$pr" "$SINCE_EPOCH" "$SINCE" "" "" "" "$branch"
         hit="$MERGED_ITEM_HITS"
       fi
       [[ -z "$hit" ]] || hits+="$hit"$'\n'
@@ -2724,12 +2730,13 @@ mail_host_reads() { # ITEMS...
     for item in "$@"; do
       hosted_root "$item"
       [[ -n "$HOSTED_ROOT" && "$HOSTED_HOST" == "$host" ]] || continue
-      clone="$(lane_row_get clone-root "$MAIL_SEEN" "$item")" || die state-read-failed "" "item=$item" "row=clone-root"
+      lane_row_get clone-root "$MAIL_SEEN" "$item" >/dev/null || die state-read-failed "" "item=$item" "row=clone-root"
+      clone="$LANE_ROW"
       entries+=("$item" "$HOSTED_ROOT" "$clone")
     done
     directory="$WORK_DIR/mail-host-${#MAIL_HOST_READS[@]}"
     mkdir -p -- "$directory" || die mail-read-failed "" "host=$host"
-    rm -f -- "${directory:?}/failed" "${directory:?}/index"
+    : >"$directory/failed" || die mail-read-failed "" "host=$host"
     python3 "$SCRIPT_DIR/lib/lane-host-read.py" request "${entries[@]}" >"$directory/request" \
       || die mail-read-failed "" "host=$host" "read=request"
     rc=0
@@ -2746,16 +2753,17 @@ mail_host_reads() { # ITEMS...
   done
 }
 mail_read() { # ITEM LANE_MAIL_ARGS...
-  local item="$1" rc=0 host_env=()
+  local item="$1" rc=0 host_read=0
   shift
   if [[ "$item" != overseer && -n "$HOSTED_HOST" ]]; then
     mail_host_read_dir "$HOSTED_HOST" || die mail-read-failed "" "host=$HOSTED_HOST" "read=snapshot"
-    host_env=("ORCH_LANE_HOST=$HOSTED_HOST" "LANE_HOST_READ_DIR=$MAIL_HOST_READ_DIR")
+    host_read=1
   fi
-  if [[ ${#host_env[@]} -eq 0 ]]; then
+  if [[ "$host_read" -eq 0 ]]; then
     "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?
   else
-    env "${host_env[@]}" "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?
+    ORCH_LANE_HOST="$HOSTED_HOST" LANE_HOST_READ_DIR="$MAIL_HOST_READ_DIR" \
+      "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?
   fi
   MAIL_OUT="$(<"$WORK_DIR/mail.out")"
   [[ "$rc" -ne 0 ]] || return 0
@@ -2833,6 +2841,9 @@ check_mail() { # [overseer]
       fi
     fi
     args=(--item "$item")
+    if [[ "$item" == overseer ]]; then
+      root="${OVERSEER_BOX%/tmp/lane-mail/overseer/to-lane.jsonl}"
+    fi
     [[ -z "$root" ]] || args+=(--root "$root" ${host_flag[@]+"${host_flag[@]}"})
     replaced=0
     hold=none
@@ -2993,7 +3004,9 @@ check_mail() { # [overseer]
       PASS_EVENT=1
     done <<<"$envelopes"
     if [[ "$item" == overseer ]]; then
-      if mail_read "$item" inbox "${args[@]}" --ack "$count"; then
+      # An empty peek has no delivered line to acknowledge. It already lowers
+      # a stale cursor, so another read cannot advance that cursor.
+      if [[ "$count" -eq 0 ]] || mail_read "$item" inbox "${args[@]}" --ack "$count"; then
         lane_row_clear lane-failed "$state" "$item" >/dev/null
         state="$LANE_ROW"
       else
@@ -3196,7 +3209,8 @@ wall_pause() { # LANE SEEN_AT
     >/dev/null 2>"$errf" || { ow_message wall-unrecorded "lane=$1" >&2; cat -- "$errf" >&2; }
 }
 
-lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
+LANE_PANE_FILE=""
+lane_pane_file() { LANE_PANE_FILE="$WORK_DIR/pane.$1"; printf '%s' "$LANE_PANE_FILE"; }
 
 # A Pi lane's rows (lib/session-rows.sh § session_rows_lane_verdict), read
 # from its mailbox on this disk or through lane-host for a hosted lane: the
@@ -3262,8 +3276,10 @@ observe_lanes() {
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
   for lane in ${LANES[@]+"${LANES[@]}"}; do
     i=$((i + 1))
-    capture="$(lane_pane_file "$i")"
-    rm -f "$capture" "$capture.$$.tmp"
+    lane_pane_file "$i" >/dev/null
+    capture="$LANE_PANE_FILE"
+    [[ ! -e "$capture" && ! -L "$capture" && ! -e "$capture.$$.tmp" && ! -L "$capture.$$.tmp" ]] \
+      || rm -f "$capture" "$capture.$$.tmp"
     if ! lane_window_listed "$lane"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       lane_row_clear lane-asking "$state" "$lane" >/dev/null; state="$LANE_ROW"

@@ -964,7 +964,11 @@ esac
 WORK_DIR=""
 FAST_READ=0
 case "$HOST:$VERB" in *:drain | *:pending | 0:inbox) FAST_READ=1 ;; esac
-if [ "$FAST_READ" -eq 0 ] || [ "$HOST" -eq 1 ]; then
+CACHED_READ=0
+if [ "$HOST:$FAST_READ" = 1:1 ] && [ -n "${LANE_HOST_READ_DIR:-}" ] && [ ! -s "$LANE_HOST_READ_DIR/failed" ]; then
+  CACHED_READ=1
+fi
+if [ "$FAST_READ" -eq 0 ] || { [ "$HOST" -eq 1 ] && [ "$CACHED_READ" -eq 0 ]; }; then
   WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")" || refuse write-failed "$TMP_ROOT"
 fi
 # orch_take_lock's mutex arm arms its own EXIT trap, so every caller below
@@ -2035,7 +2039,9 @@ if [ "$FAST_READ" -eq 1 ]; then
     READ_DELIVER=1
   fi
   READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
-  if [ "$HOST" -eq 1 ]; then
+  if [ "$CACHED_READ" -eq 1 ]; then
+    READ_OUT="$(exec python3 "$SCRIPT_DIR/lib/lane-mail-store.py" read-cached "$LANE_HOST_READ_DIR" "$BOX" "${READ_ARGS[@]}")" || exit "$?"
+  elif [ "$HOST" -eq 1 ]; then
     # read-many already fetched the host's files once. Copy its raw pair and
     # numbering into this helper's world, without starting a snapshot per file.
     LM_RAW_FETCH=1

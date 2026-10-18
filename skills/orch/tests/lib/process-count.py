@@ -6,7 +6,7 @@ import shlex
 import sys
 
 
-def install(root, search_path, bash, target=None, mode=None):
+def install(root, search_path, bash, target=None, mode=None, *fixtures):
     root = Path(root)
     (root / "bin").mkdir(parents=True)
     for directory in search_path.split(os.pathsep):
@@ -24,11 +24,16 @@ def install(root, search_path, bash, target=None, mode=None):
                             f">>{shlex.quote(str(root / 'external'))}; fi\n" +
                             (f"printf '%s %s %s %s\\n' \"$$\" \"$PPID\" \"${{_KENDEX_PROCESS_COUNT_OWNER:-0}}\" "
                              f"\"${{_KENDEX_PROCESS_COUNT_STEP:-outside}}\" >>{shlex.quote(str(root / 'steps'))}\n"
-                             if mode == "passes" else "") +
+                             if mode in ("passes", "complete") else "") +
                             "unset _KENDEX_PROCESS_COUNT_OWNER\n"
                             f"exec {shlex.quote(str(executable))} \"$@\"\n")
             dest.chmod(0o755)
     prefix = ""
+    if mode == "complete" and fixtures:
+        fixture_pattern = "|".join(shlex.quote(str(Path(path))) + "/*" for path in fixtures)
+        prefix = (f'case "$0" in {fixture_pattern})\n'
+                  f'printf "%s %s fixture %s\\n" "$BASHPID" "$PPID" "${{_KENDEX_PROCESS_COUNT_STEP:-outside}}" >>{shlex.quote(str(root / "steps"))}\n'
+                  'unset _KENDEX_PROCESS_COUNT_STEP _KENDEX_PROCESS_COUNT_OWNER\nset +x\nreturn ;; esac\n')
     if target:
         if mode == "passes":
             # Absolute Bash helpers bypass PATH wrappers. Record their entry,
@@ -47,8 +52,36 @@ def install(root, search_path, bash, target=None, mode=None):
         "BASH_XTRACEFD=19\nPS4='+count:${BASHPID:-$$}: '\nset -x\n")
     (root / "bash").write_text(bash)
     (root / "active").write_text("yes\n")
-    if mode == "passes":
+    if mode in ("passes", "complete"):
         (root / "steps").write_text("")
+    if mode == "complete":
+        with (root / "bash-env").open("a") as stream:
+            stream.write('''
+_pc_step() {
+  local i
+  case "$BASH_COMMAND" in
+    mail_turn|long_pass)
+      _KENDEX_PROCESS_COUNT_STEP=$BASH_COMMAND.fixture
+      export _KENDEX_PROCESS_COUNT_STEP
+      return ;;
+  esac
+  case "$0" in */oversee-watch)
+    _KENDEX_PROCESS_COUNT_STEP=outside
+    for ((i=1; i<${#FUNCNAME[@]}; i++)); do
+      case ${FUNCNAME[$i]} in
+        mail_turn|long_pass)
+          _KENDEX_PROCESS_COUNT_STEP=${FUNCNAME[$i]}.fixture
+          break ;;
+      esac
+    done
+    export _KENDEX_PROCESS_COUNT_STEP ;;
+  esac
+}
+set -T
+trap _pc_step DEBUG
+PS4='+count:${BASHPID:-$$}:${_KENDEX_PROCESS_COUNT_STEP:-outside}: '
+''')
+    elif mode == "passes":
         with (root / "bash-env").open("a") as stream:
             stream.write("""
 _pc_step() {
@@ -133,9 +166,8 @@ def count(root, command=None):
 
 
 
-def pass_counts(trace, external, existing):
+def pass_births(trace, external, existing, complete=False):
     """Attribute each target-owned birth to its pass and immediate step."""
-    from collections import Counter
     births = {}
     for line in trace:
         line = line.lstrip("+")
@@ -145,31 +177,61 @@ def pass_counts(trace, external, existing):
                 births.setdefault(pid, step)
     for line in external:
         pid, parent, owner, step = line.split()
+        if complete:
+            owner = next(iter(existing), "0")
         if owner in existing and step.startswith(("mail_turn.", "long_pass.")):
             if pid not in existing:
                 births[pid] = step
             if parent not in existing:
                 births.setdefault(parent, step)
-    return Counter(births.values())
+    if complete:
+        rows = [line.split() for line in external]
+        fixtures = {pid for pid, _, owner, _ in rows if owner == "fixture"}
+        for _ in rows:
+            changed = False
+            for pid, parent, _, _ in rows:
+                if pid not in births and parent in births and parent not in fixtures and pid not in existing:
+                    births[pid] = births[parent]
+                    changed = True
+            if not changed:
+                break
+    return births
 
 
-def steps(root):
+def pass_counts(trace, external, existing, complete=False):
+    from collections import Counter
+    return Counter(pass_births(trace, external, existing, complete).values())
+
+
+def steps(root, complete=False):
     root = Path(root)
     counts = pass_counts(
         read_trace(root),
         (root / "steps").read_text().splitlines(),
         set((root / "existing").read_text().splitlines()),
+        complete,
     )
     for step, value in sorted(counts.items()):
         print(f"{step}={value}")
     for name in ("mail_turn", "long_pass"):
         print(f"{name}={sum(value for step, value in counts.items() if step.startswith(name + '.'))}")
+    if complete:
+        from collections import Counter
+        names = {line.split()[1]: line.split()[3] for line in (root / "external").read_text().splitlines()}
+        commands = Counter()
+        for pid, step in pass_births(read_trace(root), (root / "steps").read_text().splitlines(),
+                                     set((root / "existing").read_text().splitlines()), True).items():
+            commands[step.split(".", 1)[0], names.get(pid, "bash")] += 1
+        for (step, name), value in sorted(commands.items()):
+            print(f"{step} command={name} starts={value}")
 
 if __name__ == "__main__":
     if sys.argv[1] == "install":
         install(*sys.argv[2:])
     elif sys.argv[1] == "steps":
         steps(sys.argv[2])
+    elif sys.argv[1] == "complete-steps":
+        steps(sys.argv[2], True)
     elif sys.argv[1] == "watch":
         watch(*sys.argv[2:])
     elif sys.argv[1] == "reset":

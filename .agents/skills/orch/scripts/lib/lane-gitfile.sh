@@ -14,19 +14,24 @@ source "$LANE_GITFILE_LIB/lane-capabilities.sh"
 # Print the absolute worktree git directory a worktree's `.git` file names.
 # Returns 1 on any other content, including a `.git` directory's own bytes and
 # a relative gitdir, neither of which names a path a remote caller can use.
+LANE_GITFILE_DIR=""
 lane_gitfile_git_dir() { # GITFILE_CONTENT
+  LANE_GITFILE_DIR=""
   case "$1" in
     "gitdir: /"*/.git/worktrees/*) ;;
     *) return 1 ;;
   esac
-  printf '%s\n' "${1#gitdir: }"
+  LANE_GITFILE_DIR="${1#gitdir: }"
+  printf '%s\n' "$LANE_GITFILE_DIR"
 }
 
 # Print the absolute common git directory that file names, under the same rule.
+LANE_GITFILE_COMMON=""
 lane_gitfile_common_dir() { # GITFILE_CONTENT
-  local dir
-  dir="$(lane_gitfile_git_dir "$1")" || return 1
-  printf '%s\n' "${dir%/worktrees/*}"
+  LANE_GITFILE_COMMON=""
+  lane_gitfile_git_dir "$1" >/dev/null || return 1
+  LANE_GITFILE_COMMON="${LANE_GITFILE_DIR%/worktrees/*}"
+  printf '%s\n' "$LANE_GITFILE_COMMON"
 }
 
 # ---------------------------------------------------------------------------
@@ -91,10 +96,21 @@ lane_host_fetch() {
 LANE_HOSTED_CLONE=""
 LANE_HOSTED_GITLINE=""
 lane_hosted_clone() {
-  local rc=0 common err
+  local rc=0 err gitfile="$4"
   LANE_HOSTED_CLONE=""
   LANE_HOSTED_GITLINE=""
-  lane_host_fetch "$1" "$2" "$3/.git" "$4" "$5" || rc=$?
+  if [[ -n "${LANE_HOST_READ_DIR:-}" && -n "$1" ]]; then
+    source "$LANE_GITFILE_LIB/lane-host-read.sh" || return 2
+    lane_host_cached_path "$LANE_HOST_READ_DIR" "$2" "$3/.git" "$5" || rc=$?
+    case "$rc" in
+      0) gitfile="$LANE_HOST_READ_FILE" ;;
+      2) rc=1 ;;
+      "$LANE_HOST_BUSY_EXIT") rc=4 ;;
+      *) rc=2 ;;
+    esac
+  else
+    lane_host_fetch "$1" "$2" "$3/.git" "$4" "$5" || rc=$?
+  fi
   if [[ "$rc" -eq 2 ]]; then
     err="$(cat "$5")"
     rc=0
@@ -107,9 +123,9 @@ lane_hosted_clone() {
     printf '%s\n' "$err" >"$5"
   fi
   [[ "$rc" -eq 0 ]] || return "$rc"
-  IFS= read -r LANE_HOSTED_GITLINE <"$4" || [[ -n "$LANE_HOSTED_GITLINE" ]] || return 3
-  common="$(lane_gitfile_common_dir "$LANE_HOSTED_GITLINE")" || return 3
-  LANE_HOSTED_CLONE="${common%/.git}"
+  IFS= read -r LANE_HOSTED_GITLINE <"$gitfile" || [[ -n "$LANE_HOSTED_GITLINE" ]] || return 3
+  lane_gitfile_common_dir "$LANE_HOSTED_GITLINE" >/dev/null || return 3
+  LANE_HOSTED_CLONE="${LANE_GITFILE_COMMON%/.git}"
 }
 
 # lane_hosted_state_path CLONE STATE_DIR STATE_KEY: sets LANE_HOSTED_STATE_PATH to
