@@ -100,6 +100,8 @@ make_repo() {
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
   printf 'orig\n' >"$repo/file.txt"
   # A second tracked file no rebase here touches, so a step can dirty the
   # worktree without touching the conflicting path.
@@ -254,6 +256,35 @@ step() {
     continue) tool restack continue "$ISSUE" ;;
     skip) tool restack skip "$ISSUE" ;;
     push) tool push "$ISSUE" ;;
+    push-other)
+      local push_rc=0 authorization
+      authorization="$(restack_keys)"
+      mkdir -p "$ROOT/hooks"
+      printf '#!/bin/sh\nprintf "pre-push: result=1\\n"\nexit 1\n' >"$ROOT/hooks/pre-push"
+      chmod +x "$ROOT/hooks/pre-push"
+      git -C "$WT" config core.hooksPath "$ROOT/hooks"
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$ISSUE" >"$ROOT/refused.out" 2>"$ROOT/refused.err") || push_rc=$?
+      assert_eq "$push_rc" "1" "the unrelated pre-push hook refuses A"
+      assert_eq "$(message_records <"$ROOT/refused.err" | grep '^worktree-push-hook-rejected:')" \
+        "worktree-push-hook-rejected: origin/topic" "A reaches the unrelated hook"
+      assert_eq "$(restack_keys)" "$authorization" "the refused push keeps A authorization"
+      rm -- "$ROOT/hooks/pre-push"
+      git -C "$WT" checkout -q -b interim origin/main
+      push_rc=0
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$ISSUE" >"$ROOT/interim.out" 2>"$ROOT/interim.err") || push_rc=$?
+      assert_eq "$push_rc" "0" "B pushes from the same worktree"
+      assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse refs/heads/interim)" \
+        "$(git -C "$WT" rev-parse HEAD)" "B reaches the remote"
+      git -C "$WT" checkout -q "$ISSUE"
+      ;;
+    retry-restack)
+      local restack_rc=0
+      RESTACKED="$(git -C "$WT" rev-parse HEAD)"
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack >"$ROOT/retry.out" 2>"$ROOT/retry.err") || restack_rc=$?
+      assert_eq "$restack_rc" "0" "A guarded restack still accepts its authorization after B pushes"
+      assert_eq "$(message_records <"$ROOT/retry.err" | grep '^worktree-restack-remote-uncontained:' || true)" \
+        "" "A keeps proof of its remote after B pushes"
+      ;;
     resolve)
       printf 'resolved\n' >"$WT/file.txt"
       git -C "$WT" add file.txt
@@ -484,6 +515,7 @@ map_lines() {
     unmapped-head) printf 'rebase-unmapped: <head>' ;;
     unmapped-head1) printf 'rebase-unmapped: <head~1>' ;;
     1r) printf 'rebase-map: <pre> <restacked>' ;;
+    1s) printf 'rebase-map: <restacked> <head>' ;;
     1x) printf 'rebase-map: <external> <head>' ;;
     2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
     2x) printf 'rebase-map: <pre> <head~1>;rebase-map: <end> <head>' ;;
@@ -568,6 +600,7 @@ continue over a clean index with unstaged changes names them and offers no skip|
 continue completes the resolved restack and authorizes its exact head|conflict publish restack resolve|restack continue topic|0|completed|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1
 an unpublished completion leaves no push authorization|conflict restack resolve|restack continue topic|0|completed|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=- map=1
 push after a completed restack publishes the head with the original lease|conflict publish restack resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=head map=1
+push of B preserves A authorization after a hook refusal so A can restack and publish|conflict publish restack resolve continue push-other advance-main retry-restack|push topic|0|-|skip-rebase|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,main-advanced-twice.txt:advanced twice,other.txt:orig restack=- remote=head map=1r+1s
 a completed restack cannot be controlled again|conflict publish restack resolve continue push|restack continue topic|1|-|refusal:no-paused-state|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=head map=1
 skip over a conflict drops that commit and completes|conflict publish restack|restack skip topic|0|completed|map:1d|engine=none branch=topic head=base ahead=0 dirty=- tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:base remote=pre map=1d
 skip drops the represented commit and replays the refresh-only commit|merged restack|restack skip topic|0|completed|map:2d|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=2d
@@ -611,6 +644,35 @@ while IFS='|' read -r label fixture command rc out err want_state; do
   want_state="${want_state% map=*} map=$(map_file_text "${want_state##* map=}")"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+
+echo
+echo "=== must-fail control: clearing A authorization when B pushes refuses A restack ==="
+
+build other-push-mutant conflict publish restack resolve continue
+mkdir -p "$ROOT/pkg"
+cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+other_push_mutant="$ROOT/pkg/worktree/scripts/worktree"
+clear_guard='if [[ "$(restack_state_get "$WT_PATH" branch)" == "$CURRENT_BRANCH" ]]; then'
+assert_eq "$(grep -cF "$clear_guard" "$other_push_mutant" || true)" "1" \
+  "control finds the branch-specific clear"
+F="$clear_guard" awk '
+  { if ($0 == "    " ENVIRON["F"]) print "    if :; then # " ENVIRON["F"]; else print }
+' "$other_push_mutant" >"$other_push_mutant.edit"
+cat -- "$other_push_mutant.edit" >"$other_push_mutant"
+rm -- "$other_push_mutant.edit"
+assert_eq "$(grep -cF "if :; then # $clear_guard" "$other_push_mutant" || true)" "1" \
+  "control restores the unconditional clear only in its private copy"
+saved_script="$WORKTREE_SCRIPT"
+WORKTREE_SCRIPT="$other_push_mutant"
+step push-other
+step advance-main
+other_push_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack \
+  >"$ROOT/other-push.out" 2>"$ROOT/other-push.err") || other_push_rc=$?
+assert_eq "$other_push_rc" "1" "control: A guarded restack refuses after B clears its authorization"
+assert_eq "$(message_records <"$ROOT/other-push.err" | grep '^worktree-restack-remote-uncontained:' || true)" \
+  "worktree-restack-remote-uncontained: origin/topic" "control: A refuses on its missing remote proof"
+WORKTREE_SCRIPT="$saved_script"
 
 # A git hook exports GIT_DIR and GIT_INDEX_FILE at the worktree it fires in,
 # and both outrank -C, so a sibling suite run from that context builds its

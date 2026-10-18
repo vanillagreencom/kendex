@@ -4225,7 +4225,9 @@ case "${1:-}" in
     if [[ "$REPUBLISH_REWRITE" == true ]]; then
       worktree_message republished-after-rewrite "remote_oid=$LEASE_EXPECTED_OID"
     fi
-    clear_restack_push_authorization "$WT_PATH"
+    if [[ "$(restack_state_get "$WT_PATH" branch)" == "$CURRENT_BRANCH" ]]; then
+      clear_restack_push_authorization "$WT_PATH"
+    fi
     if [[ -n "$PUSH_TO_BASE" ]]; then
       BASE_PUSH_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
       printf 'pushed-base: base=%s before=%s commit=%s at=%s\n' "$DEFAULT_BRANCH" "$BASE_PUSH_BEFORE" "$BASE_PUSH_HEAD" "$BASE_PUSH_AT"
