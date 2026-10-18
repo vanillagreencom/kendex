@@ -510,6 +510,17 @@ custom|-c model_auto_compact_token_limit=300000 {1..3}|null
 custom|-c model_auto_compact_token_limit=300000 {{prompt},other}|null
 ROWS
 
+# A bare renderer placeholder is literal data even when Codex reads that
+# argument as configuration. Caller-written shell expansions stay unverified.
+while IFS='|' read -r template brief want; do
+  assert_eq "$(lane_launch_compaction_env "$template" codex "$brief")" "$want" \
+    "renderer brief in parsed arguments: $template"
+done <<'ROWS'
+codex -c model_auto_compact_token_limit=300000 -c {brief}|model_auto_compact_token_limit=200000|ORCH_COMPACTION_OVERRIDES='{"harness":"codex","settings":{"model_auto_compact_token_limit":"200000"}}'
+codex -c model_auto_compact_token_limit={brief}|200000|ORCH_COMPACTION_OVERRIDES='{"harness":"codex","settings":{"model_auto_compact_token_limit":"200000"}}'
+codex -c model_auto_compact_token_limit=300000 "$(printf prompt)" {brief}|literal prompt|ORCH_COMPACTION_OVERRIDES=''
+ROWS
+
 while IFS= read -r cmd; do
   assert_eq "$(lane_launch_compaction_env "$cmd" codex)" "ORCH_COMPACTION_OVERRIDES=''" \
     "no literal Codex argv: $cmd"

@@ -1317,8 +1317,7 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # Prints one of:
 #   launcher:<path>  launch through that file, with no env prefix
 #   prefix           launch under the env prefix, and check the pane
-#   custom           keep the caller's command and check its account;
-#                    custom argv supplies no compaction evidence
+#   custom           keep the caller's command and check its account
 #   unchecked        launch under the env prefix where a lane was resolved;
 #                    nothing of ours to check either way
 #
@@ -1391,10 +1390,22 @@ lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
 # The launch check and child environment use this same reader, so accepting a
 # custom command also establishes its evidence. No stored default enters it.
 # Shell text with no literal Codex argv clears inherited evidence.
-lane_launch_compaction_env() { # CMD HARNESS
-  local cmd="$1" harness="$2" word assignment overrides="" settings='{}'
+lane_launch_compaction_env() { # CMD HARNESS [LITERAL_BRIEF]
+  local cmd="$1" harness="$2" word assignment overrides="" settings='{}' i text rendered
   if [[ "$harness" == codex ]] && launch_choice_shell_words "$cmd" literal \
       && [[ "${LAUNCH_CHOICE_ARGV[0]:-}" == codex ]]; then
+    # open-terminal quotes a bare {brief} as one literal value. Substitute
+    # after parsing so a large prompt never enters the shell-text scanner.
+    if [[ "$#" -ge 3 ]]; then
+      for ((i = 1; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
+        text="${LAUNCH_CHOICE_ARGV[i]}" rendered=""
+        while [[ "$text" == *"{brief}"* ]]; do
+          rendered+="${text%%\{brief\}*}$3"
+          text="${text#*\{brief\}}"
+        done
+        LAUNCH_CHOICE_ARGV[i]="$rendered$text"
+      done
+    fi
     set -- "${LAUNCH_CHOICE_ARGV[@]}"
     shift
     while [[ "$#" -gt 0 ]]; do
@@ -1550,7 +1561,7 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
 # because a launcher that exports COPILOT_HOME for its own name exports
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
-lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
+lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV] [COMPACTION_ENV]
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" env_words scrub
   [[ -z "${6:-}" ]] || form=custom
   printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
@@ -1560,7 +1571,10 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
   [[ -z "${7:-}" ]] || scrub+=" $7"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex && -n "$var" ]]; then
-    launch_env=$(lane_launch_compaction_env "$cmd" "$harness") || return 1
+    # open-terminal carries the shared reader's result through its file-brief
+    # rendering. The execution-only file read is not caller shell evidence.
+    if [[ -n "${8:-}" ]]; then launch_env="$8"
+    else launch_env=$(lane_launch_compaction_env "$cmd" "$harness") || return 1; fi
   fi
   if [[ "$harness" != copilot ]]; then
     case "$form" in

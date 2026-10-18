@@ -66,9 +66,11 @@ printf '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wak
 # rebuilt PATH cannot answer with another: it writes its last argument, the
 # brief, to RECEIVED byte for byte.
 RECEIVED="$TMP_ROOT/received"
+RECEIVED_EVIDENCE="$TMP_ROOT/received-evidence"
 HARNESS_STUB="$TMP_ROOT/harness"
-printf '#!/usr/bin/env bash\nprintf %%s "${!#}" > %q\n' "$RECEIVED" > "$HARNESS_STUB"
+printf '#!/usr/bin/env bash\nprintf %%s "${!#}" > %q\nprintf %%s "${ORCH_COMPACTION_OVERRIDES:-}" > %q\n' "$RECEIVED" "$RECEIVED_EVIDENCE" > "$HARNESS_STUB"
 chmod +x "$HARNESS_STUB"
+cp "$HARNESS_STUB" "$OT_STUB_BIN/codex"
 
 # The brief: an apostrophe, double quotes, a dollar sign, backticks, an
 # ampersand, a backslash, a printf directive and a placeholder word, each of
@@ -142,8 +144,9 @@ typed_line() {
 # harness received, or `unrun` when it received nothing. `clear` is a no-op
 # here: the pane line opens on it and the suite has no terminal to clear.
 received() {
-  rm -f -- "$RECEIVED"
-  env HOME="$TMP_ROOT/home" bash -c "clear() { :; }; $1" >/dev/null 2>&1
+  rm -f -- "$RECEIVED" "$RECEIVED_EVIDENCE"
+  env HOME="$TMP_ROOT/home" PATH="$OT_STUB_BIN:$PATH" ORCH_COMPACTION_OVERRIDES=stale-parent-value \
+    "$BASH" -c "clear() { :; }; $1" >/dev/null 2>&1
   if [[ -f "$RECEIVED" ]]; then cmp -s "$RECEIVED" "$BRIEF_WANT" && echo verbatim || echo altered; else echo unrun; fi
 }
 
@@ -193,6 +196,50 @@ done <<'ROWS'
 claude|--model opus --effort high
 pi|--model github-copilot/claude-sonnet-5 --thinking high
 ROWS
+
+# The custom Codex file-brief command passes the fleet check and must retain
+# its literal settings when the terminal-safe snapshot is read in the child.
+codex_brief_row() { # OT SURFACE ROUTE
+  local ot="$1" surface="$2" route="$3" env_words="CODEX_HOME=$TMP_ROOT/codex-home" line="" args=()
+  [[ "$route" != relaunch ]] || args=(--relaunch)
+  ot_fleet_state "$SCRIPTS_DIR/workflow-state" "$TMP_ROOT/fleet-$RUN_SEQ" "$PWD" || exit 1
+  if [[ "$surface" == tmux ]]; then env_words+=";TMUX=stub,1,0;ORCH_TMUX_SESSION=stub"
+  else env_words+=";TMUX="; fi
+  run_ot "$ot" "$env_words" "--$surface" ${args[@]+"${args[@]}"} \
+    --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness codex \
+    --cmd "codex -m gpt-6-astra -c model_reasoning_effort=high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" \
+    --brief-file "$BRIEF_FILE" KEN-2
+  if [[ "$surface" == tmux ]]; then line="$(typed_line 'clear; source ')" || line=""
+  else line="$(gui_line)" || line=""; fi
+  CODEX_BRIEF_GOT="rc=$RC harness=$(received "$line") evidence=$(jq -c '[.harness,.settings.model_auto_compact_token_limit,.settings.model_auto_compact_token_limit_scope,.settings.model_post_turn_compact_threshold_percent]' "$RECEIVED_EVIDENCE" 2>/dev/null)"
+}
+assert_codex_brief() {
+  assert_eq "$CODEX_BRIEF_GOT" 'rc=0 harness=verbatim evidence=["codex","9223372036854775807","body_after_prefix","0"]' \
+    "the custom Codex $CODEX_SURFACE $CODEX_ROUTE receives its brief and compaction settings" "$OUT"
+}
+while IFS='|' read -r CODEX_SURFACE CODEX_ROUTE; do
+  codex_brief_row "$OT" "$CODEX_SURFACE" "$CODEX_ROUTE"
+  assert_codex_brief
+done <<'ROWS'
+ghostty|fresh
+ghostty|relaunch
+tmux|fresh
+tmux|relaunch
+ROWS
+
+EVIDENCE_OT="$(mutant_scripts brief-codex-evidence lib/lane-launch.sh)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/brief-codex-evidence"
+mutate_file "${EVIDENCE_OT%/open-terminal}/lib/lane-launch.sh" 'then launch_env="$8"' \
+  'then launch_env=$(lane_launch_compaction_env "$cmd" "$harness") || return 1'
+CODEX_SURFACE=ghostty CODEX_ROUTE=fresh
+codex_brief_row "$EVIDENCE_OT" "$CODEX_SURFACE" "$CODEX_ROUTE"
+CONTROL_RC=0
+(
+  FAIL=0
+  assert_codex_brief
+  [[ "$FAIL" -eq 0 ]]
+) > "$RUN/evidence-assertion.out" 2>&1 || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 "control: reading the execution-only file expansion fails the same Codex evidence assertion" "$RUN/evidence-assertion.out"
 
 # The tmux command is caller shell text. A startup function must remain
 # callable, and a later command in that pane must inherit the launch origin.
