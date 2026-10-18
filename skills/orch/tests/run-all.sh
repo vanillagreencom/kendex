@@ -18,6 +18,12 @@
 #   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
 #   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
+#   bash skills/orch/tests/run-all.sh --local --suite FILE # guard's direct run
+#
+# --local gives each suite its CI leg's kendex environment. CI installs the
+# checkout build only on selected Linux legs; a local login PATH can contain
+# an unrelated installed kendex. Local suites retain other tools, but receive
+# only the checkout build or no kendex, as tools/ci-job-set reports.
 #
 # RUN_ALL_NATIVE_CONTRACTS, when set, names the repository's eligibility
 # command. It reads discovered suite paths and returns the native subset.
@@ -213,6 +219,17 @@ fi
 # The verdict line names the tree whose tests/ the battery is.
 BATTERY="$(basename "$(dirname "$TEST_DIR")")"
 [ "${#TEST_DIRS[@]}" -eq 1 ] || BATTERY=batteries
+LOCAL_SUITES=0
+DIRECT_SUITE=""
+if [ "${1-}" = --local ]; then
+  LOCAL_SUITES=1
+  shift
+  if [ "${1-}" = --suite ]; then
+    [ "$#" -eq 2 ] || exit 1
+    DIRECT_SUITE=$2
+    shift 2
+  fi
+fi
 
 # CI supplies its review policy. Local batteries have no timing policy.
 REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
@@ -298,6 +315,72 @@ shard_of() { # BASE
     *) OWNING_SHARD=orch-rest ;;
   esac
 }
+
+OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
+  { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
+trap 'rm -rf -- "$OUT_DIR"' EXIT
+SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd)" || exit 1
+CLEAN_PATH=""
+CHECKOUT_PATH=""
+suite_environment() { # FILE: set SUITE_PATH before either launch route
+  SUITE_PATH=$PATH
+  [ "$LOCAL_SUITES" -eq 1 ] || return 0
+  local dir entry mirror policy os shard="" file=$1
+  if [ -z "$CLEAN_PATH" ]; then
+    local dirs=()
+    IFS=: read -r -a dirs <<<"$PATH:__end__"
+    unset "dirs[$((${#dirs[@]} - 1))]"
+    for dir in "${dirs[@]}"; do
+      dir=${dir:-.}
+      [ -d "$dir" ] || continue
+      dir="$(cd -- "$dir" && pwd -P)" || return 1
+      if [ -e "$dir/kendex" ] || [ -L "$dir/kendex" ]; then
+        mirror="$OUT_DIR/path-${#CLEAN_PATH}"
+        mkdir "$mirror" || return 1
+        for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+          [ -e "$entry" ] || [ -L "$entry" ] || continue
+          [ "${entry##*/}" != kendex ] || continue
+          ln -s "$entry" "$mirror/${entry##*/}" || return 1
+        done
+        dir=$mirror
+      fi
+      CLEAN_PATH="${CLEAN_PATH:+$CLEAN_PATH:}$dir"
+    done
+  fi
+  case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
+  case "$file" in
+    "$SUITE_ROOT/skills/orch/tests/"*) entry=${file##*/}; shard_of "${entry%.sh}"; shard=$OWNING_SHARD ;;
+  esac
+  os=${RUNNER_OS:-}
+  if [ -z "$os" ]; then os="$(uname -s)" || return 1; fi
+  [ "$os" != Darwin ] || os=macOS
+  policy="$("$SUITE_ROOT/tools/ci-job-set" --suite-kendex "$os" "${file#"$SUITE_ROOT/"}" "$shard")" || return 1
+  case "$policy" in
+    checkout)
+      if [ -z "$CHECKOUT_PATH" ]; then
+        local executable
+        executable="$(cargo build --manifest-path "$SUITE_ROOT/Cargo.toml" -p kendex-cli --locked \
+          --message-format=json-render-diagnostics | jq -r \
+          'select(.reason == "compiler-artifact" and .target.name == "kendex" and .executable != null) | .executable')" || return 1
+        [ -x "$executable" ] || { echo 'run-all.sh: checkout-kendex=unbuilt' >&2; return 1; }
+        mkdir "$OUT_DIR/checkout-bin" || return 1
+        ln -s "$executable" "$OUT_DIR/checkout-bin/kendex" || return 1
+        CHECKOUT_PATH="$OUT_DIR/checkout-bin:$CLEAN_PATH"
+      fi
+      SUITE_PATH=$CHECKOUT_PATH ;;
+    none) SUITE_PATH=$CLEAN_PATH ;;
+    *) echo "run-all.sh: suite-kendex=$policy" >&2; return 1 ;;
+  esac
+}
+
+if [ -n "$DIRECT_SUITE" ]; then
+  suite_environment "$DIRECT_SUITE" || exit 1
+  case "$DIRECT_SUITE" in
+    *.mjs) PATH="$SUITE_PATH" node --test "$DIRECT_SUITE" ;;
+    *) PATH="$SUITE_PATH" "$BASH" "$DIRECT_SUITE" ;;
+  esac
+  exit "$?"
+fi
 
 matches() { # BASE FILTER
   # Exact callers select every part of the physical suite.
@@ -436,10 +519,6 @@ fi
 # How long a stopped suite's processes get to end on TERM, its EXIT trap's
 # cleanup among them, before KILL.
 STOP_GRACE=10
-
-OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
-  { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
-trap 'rm -rf -- "$OUT_DIR"' EXIT
 
 # Prints "PASS FAIL ROWLESS" from a suite's output, per the shapes the header
 # names, ROWLESS being 1 where the suite printed the opt-out line.
@@ -643,7 +722,8 @@ while [ "$finished" -lt "$RUN" ]; do
         "$ORCH_TEST_DIR/oversee_watch_owed.sh") suite_args+=(development) ;;
         "$ORCH_TEST_DIR/oversee_watch_mail.sh") suite_args+=(delivery) ;;
       esac
-      "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
+      suite_environment "$suite_file" || exit 1
+      PATH="$SUITE_PATH" "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS

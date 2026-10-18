@@ -204,7 +204,7 @@ while IFS='@' read -r edit paths; do
   [ "$got" != "$expected" ] && ok "control: $edit reddens $paths" ||
     bad "control: $edit reddens $paths (still '$got')"
 done <<'CONTROLS'
-/^    skills\/orch)/s/ orch-dev / /@skills/orch/tests/dev-future.sh
+/want_shard orch-terminal /s/ orch-dev / /@skills/orch/tests/dev-future.sh
 s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
 s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight

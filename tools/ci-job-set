@@ -141,6 +141,16 @@
 # not derive is another.
 set -euo pipefail
 
+# --suite-kendex OS PATH [ORCH_SHARD] reports checkout or none for one suite.
+# The shared suite runner supplies orch's owning shard from shard_of.
+suite_path="" suite_os="" suite_shard=""
+if [ "${1-}" = --suite-kendex ]; then
+  [ "$#" -ge 3 ] && [ "$#" -le 4 ] || exit 2
+  suite_os=$2 suite_path=$3 suite_shard=${4-}
+  case "$suite_os" in Linux | macOS) ;; *) exit 2 ;; esac
+  shift "$#"
+fi
+
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # A selection is one `name=value` word per lane: the two shell runner bits,
@@ -173,13 +183,13 @@ case "$#:${1-}" in
   *) die "unknown-argument value=$*" "the one argument is --event-parity" ;;
 esac
 
-[ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
-[ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
+[ -n "$suite_path" ] || [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
+[ -n "$suite_path" ] || [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
   "GITHUB_OUTPUT is unset, so no lane could read the selection"
 
 # Present-but-empty is a state of its own, and not the same as absent.
 paths="${CHANGED_PATHS-__unset__}"
-[ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
+[ -n "$suite_path" ] || [ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
 
 # The value SELECTION holds for NAME. A selection naming no value for a lane
 # ends the step, before any lane has read a selection with it missing.
@@ -365,9 +375,13 @@ want_shard() { # SHARD...
 want_package() { # PACKAGE
   local suite
   case "$1" in
-    skills/orch) want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest ;;
+    skills/orch)
+      if [ -n "$suite_path" ]; then want_shard "$suite_shard"
+      else want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest; fi ;;
     skills/github) want_shard orch-rest ;;
-    skills/review-gate | refresh) want_shard review-gate refresh ;;
+    skills/review-gate | refresh)
+      if [ -n "$suite_path" ]; then want_shard "${1#skills/}"
+      else want_shard review-gate refresh; fi ;;
     skills/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;
     skills/linear) want_shard linear linear-controls-a linear-controls-b ;;
     skills/bot-instructions | skills/preflight) want_shard linear ;;
@@ -376,7 +390,8 @@ want_package() { # PACKAGE
     skills/mailbox) want_shard mailbox ;;
     skills/deep-research)
       want_shard node
-      for suite in skills/deep-research/tests/*.sh; do
+      for suite in ${suite_path:-skills/deep-research/tests/*.sh}; do
+        case "$suite" in *.sh) ;; *) continue ;; esac
         [ ! -f "$suite" ] || { want_shard rest; break; }
       done ;;
     skills/*) want_shard rest ;;
@@ -389,6 +404,21 @@ want_package() { # PACKAGE
     pi-extensions) want_shard node ;;
   esac
 }
+
+if [ -n "$suite_path" ]; then
+  package=""
+  package="$(printf '%s\n' "$suite_path" | awk -v mode=package "$PACKAGE_AWK")" ||
+    die suite-package-unread "the suite path could not be mapped to its package"
+  [ -z "$package" ] || want_package "${package% *}"
+  kendex=none
+  if [ "$suite_os" = Linux ]; then
+    for shard in $want; do
+      case "$shard" in rest | orch-terminal | orch-rest | refresh) kendex=checkout ;; esac
+    done
+  fi
+  printf '%s\n' "$kendex"
+  exit 0
+fi
 
 # A skill whose behaviour the diff changes: its own shards, every skill
 # declaring it under dependencies.required, and its name queued for the

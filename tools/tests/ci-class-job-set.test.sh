@@ -197,5 +197,39 @@ check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
 # cli_smoke consumes its compiled CLI, fixture source and build settings.
 # The lanes intentionally take the union. Root README is a run-time Rust
 # read, which selects cargo but does not change these two jobs.
+# The local suite runner consumes this result, without the class selector's
+# conservative package unions. Orch supplies its existing shard decision.
+while IFS='|' read -r path shard expected; do
+  for os in Linux macOS; do
+    want=$expected
+    [ "$os" != macOS ] || want=none
+    check "suite kendex: $os $path $shard" "$want" \
+      "$("$JOB_SET" --suite-kendex "$os" "$path" "$shard")"
+  done
+done <<'ROWS'
+skills/orch/tests/lanes-pick-spread.sh|orch-state|none
+skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout
+skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
+skills/orch/tests/dev_return.sh|orch-dev|none
+skills/github/tests/pr-view.test.sh||checkout
+refresh/tests/refresh-consumer.test.sh||checkout
+skills/harness-ci/tests/change-class.test.sh||checkout
+skills/review-gate/tests/check.test.sh||none
+skills/commit-guards/tests/check.test.sh||none
+skills/linear/tests/check.test.sh||none
+skills/bot-instructions/tests/check.test.sh||none
+skills/preflight/tests/check.test.sh||none
+skills/worktree/tests/check.test.sh||none
+skills/slack/tests/check.test.sh||none
+skills/mailbox/tests/check.test.sh||none
+skills/deep-research/tests/deep-research.test.mjs||none
+tools/tests/guard-range.test.sh||none
+hooks/tests/check.test.sh||none
+ROWS
+sed 's/rest | orch-terminal | orch-rest | refresh/__no_checkout__/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+check 'control: removing checkout legs changes the same suite result' none \
+  "$("$TMP/rule/tools/ci-job-set" --suite-kendex Linux skills/harness-ci/tests/change-class.test.sh '')"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

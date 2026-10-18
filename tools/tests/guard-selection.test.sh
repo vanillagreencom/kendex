@@ -407,7 +407,8 @@ git -C "$actual" reset -q --hard "$actual_base"
 for suite in ci-aggregate.test.sh vendored-settings-libs.test.sh; do
   stub_replay_suite "tools/tests/$suite"
 done
-git -C "$actual" add tools/tests/ci-aggregate.test.sh tools/tests/vendored-settings-libs.test.sh
+guard_fixture_suite_environment "$actual"
+git -C "$actual" add tools/ci-job-set tools/tests/ci-aggregate.test.sh tools/tests/vendored-settings-libs.test.sh
 git -C "$actual" commit -q -m replay
 replay_base="$(git -C "$actual" rev-parse HEAD)"
 for input in \

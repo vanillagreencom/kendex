@@ -37,6 +37,19 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 R="$TMP/repo"
+# Copied runners ask the CI owner about their suites. These neutral worlds
+# have no checkout CLI; the environment contract suite installs the real
+# owner in its own world to exercise both query results.
+guard_fixture_suite_environment() { # ROOT
+  mkdir -p "$1/tools"
+  cat > "$1/tools/ci-job-set" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1-}" = --suite-kendex ] || exit 2
+printf 'none\n'
+SH
+  chmod +x "$1/tools/ci-job-set"
+}
 # tools/exec-bits refuses a skill script, skill test or hook test staged at
 # 100644. A world that plants one stages it, then calls this to give every
 # file the real tool names the bit on disk and in the index, so the roster
@@ -52,6 +65,7 @@ entry_points_executable() { # [DIR] — the world R when omitted
   done < <(printf '%s\n' "$listed" | sed -n 's/^not executable in git: //p')
 }
 mkdir -p "$R/.claude" "$R/tools"
+guard_fixture_suite_environment "$R"
 mkdir -p "$R/crates/core/tests"
 git -C "$R" init -q
 git -C "$R" symbolic-ref HEAD refs/heads/main
@@ -145,6 +159,8 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
 # of each sibling tool guard runs and under a link to the package tree,
 # because guard resolves its sibling tools and the packages next to itself.
 ln -s "$REPO/.agents" "$TMP/.agents"
+ln -s "$REPO/skills" "$TMP/skills"
+ln -s "$R/tools" "$TMP/tools"
 MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"

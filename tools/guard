@@ -2024,7 +2024,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       # Family aliases can expand these filters; the runner publishes its selection.
       echo "=== $d/tests/run-all.sh" ${filters[@]+"${filters[@]}"}
       active_runner=1
-      RUN_ALL_PENDING_SUITES="$run"$'\n'"$suite_later" bash "$d/tests/run-all.sh" ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
+      RUN_ALL_PENDING_SUITES="$run"$'\n'"$suite_later" bash "$d/tests/run-all.sh" --local ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
       suite_runs[suite_index]=""
       active_runner=0
       continue
@@ -2033,10 +2033,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
       [ -f "$t" ] || continue
       echo "=== $t"
-      case "$t" in
-        *.mjs) node --test "$t" || say suite "$t" ;;
-        *) bash "$t" || say suite "$t" ;;
-      esac
+      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" || say suite "$t"
     done <<<"$run"
   done
   trap - TERM INT HUP

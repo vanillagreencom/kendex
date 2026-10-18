@@ -403,7 +403,7 @@ for variant in normal signals-ignored; do
     printf '#!/usr/bin/env bash\ntrap "echo pass: 1 fail: 0; exit 0" %s\nkill -%s "$$"\nexit 1\n' "$sig" "$sig" > "$B/$sig.sh"
   done
   if [[ "$variant" == signals-ignored ]]; then
-    mutate_file "$B/run-all.sh" '      "${KENDEX_GROUP_LEADER[@]}" bash' '      bash'
+    mutate_file "$B/run-all.sh" '"${KENDEX_GROUP_LEADER[@]}" bash' 'bash'
   fi
   run_battery "$B" 2
   expected='rc=0 red='
