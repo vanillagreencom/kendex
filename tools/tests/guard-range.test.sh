@@ -326,41 +326,69 @@ else
 fi
 back_to_base
 
-echo "=== an include read that fails compiles the workspace ==="
-# Without the derivation no change can be shown to reach no included file, so
-# the range compiles everything and says why.
+echo "=== failed Rust read dependencies cannot pass the range ==="
+# find produces the extractor's source set; awk and sort produce the reading
+# manifest selection. Partial dependency output is not complete evidence.
 REAL_FIND="$(command -v find)"
+REAL_SORT="$(command -v sort)"
 cat >"$R/fake-bin/find" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${FAIL_FIND:-0}" -eq 1 ] && [ "${1:-}" = crates ] && [ "${4:-}" = -name ] && [ "${5:-}" = '*.rs' ]; then
+if [ "${FAIL_DEP:-}" = find ] && [ "${1:-}" = crates ] && [ "${4:-}" = -name ] && [ "${5:-}" = '*.rs' ]; then
   exit 1
 fi
 exec "$REAL_FIND" "$@"
 SH
-chmod +x "$R/fake-bin/find"
-range_find_fails() { # GUARD
+cat >"$R/fake-bin/awk" <<'SH'
+#!/usr/bin/env bash
+if [ "${FAIL_DEP:-}" = awk ] && [[ $* == *'ENVIRON["CHANGED"]'* ]]; then
+  printf 'crates/core/Cargo.toml\n'
+  exit 2
+fi
+exec "$REAL_AWK" "$@"
+SH
+cat >"$R/fake-bin/sort" <<'SH'
+#!/usr/bin/env bash
+data=$(cat) || exit 2
+if [ "${FAIL_DEP:-}" = sort ] && [ "$data" = crates/core/Cargo.toml ]; then
+  printf '%s\n' "$data"
+  exit 2
+fi
+exec "$REAL_SORT" "$@" <<<"$data"
+SH
+chmod +x "$R/fake-bin/find" "$R/fake-bin/awk" "$R/fake-bin/sort"
+range_dependency_fails() { # DEPENDENCY GUARD
   OUT=""
   RC=0
   : >"$CALLS"
-  OUT="$(cd "$R" && env FAIL_FIND=1 REAL_FIND="$REAL_FIND" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$1" --range "$BASE" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env FAIL_DEP="$1" REAL_FIND="$REAL_FIND" REAL_AWK="$REAL_AWK" REAL_SORT="$REAL_SORT" \
+    PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$2" --range "$runtime_base" 2>&1 </dev/null)" || RC=$?
   LOG="$(cat "$CALLS")"
 }
-printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
-printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
-range_find_fails "$GUARD"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] && [ "$LOG" = "$WORKSPACE_CALLS" ] \
-  && ok "a failed include read is a finding and the range checks the workspace" \
-  || bad "a failed include read is a finding and the range checks the workspace" "rc=$RC log=$LOG out=$OUT"
-if mutant_guard '/^  say rust-reads crates$/d'; then
-  range_find_fails "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: rust-reads="* ]] \
-    && ok "control: with the finding removed the failed read passes" \
-    || bad "control: with the finding removed the failed read passes" "rc=$RC out=$OUT"
-else
-  bad "control: the include-read finding could not be removed from a guard copy"
-fi
-rm -f -- "${R:?}/fake-bin/find"
+git -C "$R" reset -q --hard "$runtime_base"
+printf 'edit\n' >>"$R/skills/watched/SKILL.md"
+DEPENDENCY_ROWS=(
+  "find|$WORKSPACE_CALLS"
+  "awk|"
+  "sort|"
+)
+for row in "${DEPENDENCY_ROWS[@]}"; do
+  dependency="${row%%|*}"
+  want="${row#*|}"
+  range_dependency_fails "$dependency" "$GUARD"
+  [ "$RC" -eq 1 ] && grep -qFx 'guard: rust-reads=crates' <<<"$OUT" && [ "$LOG" = "$want" ] \
+    && ok "failed $dependency refuses Rust read selection with the expected cargo calls" \
+    || bad "failed $dependency refuses Rust read selection with the expected cargo calls" "rc=$RC log=$LOG out=$OUT"
+  if mutant_guard 's/^[[:space:]]*say rust-reads crates$/  :/'; then
+    range_dependency_fails "$dependency" "$MUTANT_TOOLS/guard"
+    [ "$RC" -eq 0 ] && ! grep -qFx 'guard: rust-reads=crates' <<<"$OUT" \
+      && ok "control: removing the failure verdict lets failed $dependency pass" \
+      || bad "control: removing the failure verdict lets failed $dependency pass" "rc=$RC log=$LOG out=$OUT"
+  else
+    bad "control: the Rust read failure verdict could not be removed"
+  fi
+done
+rm -f -- "${R:?}/fake-bin/find" "${R:?}/fake-bin/awk" "${R:?}/fake-bin/sort"
 back_to_base
 
 echo "=== the default rules read the range, not only the last commit ==="

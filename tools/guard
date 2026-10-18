@@ -180,7 +180,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     cross-doc-setting)
       echo "GUARD_FULL_CROSS_DOC is run or ci, and that value is neither or could not be read; the cross-target checks and cargo doc ran as under run." ;;
     rust-reads)
-      echo "tools/rust-reads could not read the Rust source, so every path counted as a shared compiler input and what its rows narrow ran whole: the workspace compile, and the cross-target checks and cargo doc under --full." ;;
+      echo "the Rust read inputs could not be evaluated, so this validation cannot pass with unread selection evidence." ;;
     cross-doc-skipped)
       case "$2" in
         ci) echo "GUARD_FULL_CROSS_DOC=ci leaves the cross-target checks and cargo doc to CI." ;;
@@ -199,7 +199,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     test-binary-signal)
       echo "a test binary died by that signal before any verdict; rebuild that artifact under target/ to rule out a corrupt binary before reading the suite as red. The death line follows." ;;
     cargo-test)
-      echo "the workspace test run failed." ;;
+      echo "the selected Cargo test run failed." ;;
     ui-check)
       printf 'npm run --prefix ui %s failed.\n' "$2" ;;
     argument)
@@ -307,8 +307,8 @@ case "${1:-}" in
       '        skill, hook and tools suites their changed inputs map to' \
       '        (mapped_suites), and the suites of the Pi-package trees they' \
       '        touch. Tools suites can read inputs outside tools/.' \
-      '        A Markdown file compiles nothing unless compiled code includes' \
-      '        it, and runs no UI check.' \
+      '        A Markdown file selects clippy only when compiled code includes it.' \
+      '        Literal manifest reads can select its reading crate tests; it runs no UI check.' \
       '        None of what --full adds beyond that: the workspace test run, cross-target' \
       '        checks, the documentation build, the Bash 3.2 parse, the working-tree' \
       '        bot-instructions check, the decision-ID check, the cargo free-space floor' \
@@ -1214,9 +1214,8 @@ fi
 # A range compiles what the commit chain's product paths leave out as well:
 # any other non-Markdown file inside a crate, which its build or its tests may
 # read, and any file compiled code includes, Markdown or not, through the full
-# run's derivation of them. classify_product turns every other Markdown file
-# away first, so one inside a crate compiles nothing and one under ui/ runs no
-# UI check.
+# run's derivation of them. This selects clippy; runtime test selection below
+# also covers Markdown, as --help describes.
 if [ "$MODE" = range ]; then
   range_includes=$(compiled_includes) || rust_all=1
   while IFS= read -r f; do
@@ -1242,7 +1241,10 @@ if [ "$MODE" = range ] && [ "$workspace_every" -eq 0 ]; then
       for (i = 1; i <= n; i++)
         if (changed[i] == $2 || index(changed[i], $2 "/") == 1) print $3
     }
-  ' <<<"$reads_rows" | LC_ALL=C sort -u)
+  ' <<<"$reads_rows" | LC_ALL=C sort -u) || {
+    say rust-reads crates
+    exit "$fail"
+  }
 fi
 
 cargo_target="${CARGO_TARGET_DIR:-target}"
