@@ -44,7 +44,8 @@ control_replace scripts/lib/issue-validation.sh 1 \
     '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
     '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or false or (.missing_evidence_boxes | length) > 0 then null'
 
-control_expect "bare missing-proof refuses"
+# The update guard also refuses missing proof. Check completion's own refusal.
+control_expect "bare missing-proof names its box"
 control_replace scripts/lib/issue-validation.sh 1 \
     '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
     '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or false then null'
