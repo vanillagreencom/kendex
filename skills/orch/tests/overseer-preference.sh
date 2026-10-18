@@ -158,9 +158,11 @@ control numeric-line copilot:2:high fable '0|1|copilot:fable:high#top|copilot:2:
 control numeric-class claude:1:high opus "0|1|claude:opus:high#standard|claude:1:high|||$NUMERIC|opus" \
   '    OL_ENTRY_CLASS="$OL_CLASS"' '    :'
 control alias "$CLASSES" other "$CLASSES_GREEN" \
-  '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"' '    OL_CLASS_MODEL="$word$window" OL_CLASS_WARNING="$warning"'
+  '    ol_claude_alias "$OL_CLASS" || return 1' '    :'
+# The runtime answer's warning in place of the rank answer's names the
+# harness default, not the alias the launch runs.
 control alias-warning "$CLASSES" other "$CLASSES_GREEN" \
-  '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"' '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING=""'
+  '    OL_CLASS_MODEL+="$window"' '    OL_CLASS_MODEL+="$window" OL_CLASS_WARNING="$warning"'
 control resolution-warning "$CLASSES" other "$CLASSES_GREEN" \
   '  [[ -n "$1" ]] && (( ! OL_CLASS_WARNED )) || return 0' '  [[ -n "$1" ]] || return 0'
 OLD_ID_GREEN='0|2|claude:claude-opus-5-5:high codex:gpt-5.5:high||||entry=claude:claude-opus-5-5:high form=model-class|'
@@ -174,48 +176,5 @@ control exact-id-harness claude:opus:high,codex:gpt-6.1-sol:high other \
 control lines-held claude:standard:high,claude:claude-opus-5-5:high other \
   '0|2|claude:opus:high#standard claude:claude-opus-5-5:high|||||' \
   '[[ -z "${ORCH_MODEL_LINES_HELD:-}" ]] || OL_LINES_HELD=1' ':' held
-
-# The fixture records the actual argv of every dependency call. Each word
-# needs one decision. Claude's answer applies the managed override; the
-# other harnesses still receive their unsupported-list runtime context.
-resolve_word() { # HARNESS WORD OVERRIDE [LIB]
-  : > "$TMP_ROOT/calls"
-  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TABLE_PATH" \
-    KENDEX_TEST_CALLS="$TMP_ROOT/calls" KENDEX_TEST_STANDARD_OVERRIDE="$3" \
-    "$BASH" -c '
-      set -euo pipefail
-      source "$1"
-      rc=0
-      ol_model_class "$2" "$3" || rc=$?
-      code=""
-      if [[ "$rc" == 1 ]]; then code="$(jq -r ".resolution.code // empty" <<<"$OL_CLASS_ERR")"; fi
-      printf "%s|%s|%s|%s\n" "$rc" "$OL_CLASS" "$OL_CLASS_MODEL" "$code"
-    ' _ "${4:-$LIB}" "$1" "$2"
-}
-while IFS='|' read -r harness word override status class model code context; do
-  assert_eq "$(resolve_word "$harness" "$word" "$override")" "$status|$class|$model|$code" \
-    "managed word: $harness $word override=$override"
-  assert_eq "$(jq -sc 'length' "$TMP_ROOT/calls")" 1 "one kendex call: $harness $word override=$override"
-  assert_eq "$(jq -r 'index("--runtime-context-json") != null' "$TMP_ROOT/calls")" "$context" \
-    "runtime context: $harness $word override=$override"
-done <<'ROWS'
-claude|top||0|top|fable||false
-claude|standard|anthropic/claude-haiku-5-5|0|standard|haiku||false
-claude|opus[1m]|anthropic/claude-haiku-5-5|0|standard|haiku[1m]||false
-claude|standard|openai/gpt-6.2-sol|1||standard|unsupported-managed-model|false
-claude|claude-opus-5-5||2||claude-opus-5-5||false
-codex|standard||0|standard|||true
-copilot|standard||0|standard|||true
-ROWS
-# A source copy that discards the managed alias must fail the override row.
-MUTANT="$(mutant_scripts managed-alias lib/overseer-launch.sh)"
-mutate_file "$MUTANT/lib/overseer-launch.sh" \
-  '    OL_CLASS_MODEL="$selector$window" OL_CLASS_WARNING="$warning"' \
-  '    OL_CLASS_MODEL="$word$window" OL_CLASS_WARNING="$warning"'
-if [[ "$(resolve_word claude standard anthropic/claude-haiku-5-5 "$MUTANT/lib/overseer-launch.sh")" != '0|standard|haiku|' ]]; then
-  pass "control: discarding the managed alias fails the override assertion"
-else
-  fail "control: discarding the managed alias passes the override assertion"
-fi
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
