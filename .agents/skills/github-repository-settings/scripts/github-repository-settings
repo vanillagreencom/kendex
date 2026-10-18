@@ -55,14 +55,9 @@ cd -- "$repo" || fail repository "$repo" 'Could not open the repository.'
 # shellcheck source=../../review-gate/scripts/lib/settings.sh
 source "$settings" || exit 2
 if [ "$staged" = true ]; then
-  staged_settings="$(mktemp)" || fail scratch settings 'Could not create the staged settings copy.'
-  trap 'rm -f -- "$staged_settings"' EXIT
-  indexed_settings="$(git ls-files --stage -- ':(top)kendex.settings.toml')" || fail index settings 'Could not read the settings index entry.'
-  if [ -n "$indexed_settings" ]; then
-    git show :kendex.settings.toml > "$staged_settings" || fail index settings 'Could not read the staged settings.'
-  fi
-  # Reuse the settings reader, including its process and private-file precedence.
-  export REVIEW_GATE_SETTINGS_FILE="$staged_settings"
+  staged_settings="$(mktemp -d)" || fail scratch settings 'Could not create the staged settings copies.'
+  trap 'rm -rf -- "$staged_settings"' EXIT
+  rg_settings_index_sources "$staged_settings" || exit 2
 fi
 private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
 private_file=${private_file:-.env.local}

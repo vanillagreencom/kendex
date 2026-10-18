@@ -162,15 +162,19 @@ def checking(root):
 
 def staged(root):
     # Expected output and exit classes are independent of the wrapper's selection.
-    for name, status, review, private, process, output in (
-        ("clean", 0, "off", "", {}, "local"),
-        ("stale", 1, "off", "", {}, "local"),
-        ("incomplete", 2, "off", "", {}, "local"),
-        ("absent-settings", 0, None, "", {}, "local"),
-        ("private", 0, "on", "GITHUB_STANDARD_BOT_REVIEW=off\n", {}, "local"),
+    for name, status, review, private, process, output, nested, location in (
+        ("clean", 0, "off", "", {}, "local", None, "hosted"),
+        ("stale", 1, "off", "", {}, "local", None, "hosted"),
+        ("incomplete", 2, "off", "", {}, "local", None, "hosted"),
+        ("absent-settings", 0, None, "", {}, "local", None, "unset"),
+        ("private", 0, "on", "GITHUB_STANDARD_BOT_REVIEW=off\n", {}, "local", None, "hosted"),
         ("process", 0, "off", "GITHUB_STANDARD_BOT_REVIEW=off\n",
          {"GITHUB_STANDARD_BOT_REVIEW": "on", "GITHUB_STANDARD_CHECK_LOCATION": "hosted",
-          "KENDEX_ENV_FILE": "process.env"}, "full"),
+          "KENDEX_ENV_FILE": "process.env"}, "full", None, "hosted"),
+        ("nested-tracked", 0, "off", "", {}, "full", "tracked", "local"),
+        ("nested-untracked", 0, "off", "", {}, "full", "untracked", "local"),
+        ("nested-private", 0, "off", "", {}, "local", "private", "local"),
+        ("nested-deleted", 0, "off", "", {}, "local", "deleted", "hosted"),
     ):
         config = root / "kendex.settings.toml"
         if review is None:
@@ -182,11 +186,31 @@ def staged(root):
         (root / "staged.env").write_text(private)
         (root / "tree.env").write_text("GITHUB_STANDARD_BOT_REVIEW=on\nGITHUB_STANDARD_CHECK_LOCATION=local\n")
         (root / "process.env").write_text("GITHUB_STANDARD_BOT_REVIEW=off\nGITHUB_STANDARD_CHECK_LOCATION=local\n")
+        nested_config = root / ".kendex/settings.toml"
+        if nested is not None:
+            nested_config.parent.mkdir(exist_ok=True)
+            nested_config.write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "on"\n'
+                                     'GITHUB_STANDARD_CHECK_LOCATION = "local"\n'
+                                     'KENDEX_ENV_FILE = "nested.env"\n')
+            (root / "nested.env").write_text("GITHUB_STANDARD_BOT_REVIEW=off\n" if nested == "private" else "")
+        else:
+            nested_config.unlink(missing_ok=True)
         rendered(root, "on" if output == "full" else "off")
         if name == "stale":
             path = root / "AGENTS.md"
             path.write_text(path.read_text().replace("SKILL.md#doctrine", "missing.md"))
         subprocess.run(["git", "-C", str(root), "add", "-A"], env=environment, check=True)
+        if nested == "deleted":
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=Fixture", "-c",
+                            "user.email=fixture@example.invalid", "commit", "-qm", "nested settings"],
+                           env=environment, check=True, capture_output=True)
+        if nested in ("untracked", "deleted"):
+            subprocess.run(["git", "-C", str(root), "rm", "--cached", ".kendex/settings.toml"],
+                           env=environment, check=True, capture_output=True)
+        elif nested is not None:
+            nested_config.write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "off"\n'
+                                     'GITHUB_STANDARD_CHECK_LOCATION = "hosted"\n'
+                                     'KENDEX_ENV_FILE = "tree.env"\n')
         if name == "incomplete":
             # A staged package deletion leaves the doctrine unavailable.
             subprocess.run(["git", "-C", str(root), "rm", "--cached", "catalog/bot-instructions/SKILL.md"],
@@ -200,7 +224,6 @@ def staged(root):
         assert result.returncode == expected.returncode == status, (name, result, expected)
         assert result.stdout == expected.stdout, (name, result, expected)
         # The check-report protocol is consumed by command callers.
-        location = "unset" if review is None else "hosted"
         assert result.stderr == f"github-standard-check-location={location}\n" + expected.stderr, (name, result)
         assert snapshot(root) == before, name
     for verb, args in (("render", ()), ("adopt", ("--dry-run",))):
@@ -276,7 +299,9 @@ for name, contract, path, old, new in (
     ("check-write", checking, "bot-instructions/scripts/lib/verbs.py",
      'def check_verb(ctx):\n', 'def check_verb(ctx):\n    open(ctx.root + "/check-write", "w").close()\n'),
     ("staged-settings", staged, "github-repository-settings/scripts/github-repository-settings",
-     'export REVIEW_GATE_SETTINGS_FILE="$staged_settings"', 'unset REVIEW_GATE_SETTINGS_FILE'),
+     'rg_settings_index_sources "$staged_settings" || exit 2', ':'),
+    ("nested-settings", staged, "review-gate/scripts/lib/settings.sh",
+     'rg_settings_nested_source=$nested', 'rg_settings_nested_source="$dir/absent.toml"'),
     ("staged-option", staged, "github-repository-settings/scripts/github-repository-settings",
      'staged=true; args+=("$1")', 'staged=true'),
     ("staged-status", staged, "github-repository-settings/scripts/github-repository-settings",

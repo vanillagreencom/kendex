@@ -40,6 +40,49 @@ fi
 }
 unset rg_settings_script_dir
 
+rg_settings_nested_source=.kendex/settings.toml
+rg_settings_root_source=kendex.settings.toml
+
+# github-repository-settings supplies an owned scratch directory for a staged
+# check. Keep local-only nested settings live; a staged deletion stays absent.
+rg_settings_index_sources() { # DIR: snapshots for subsequent rg_setting calls
+  local dir="$1" file snapshot entries previous head status=0
+  local nested="$dir/nested.toml" root="$dir/root.toml"
+  head="$(git rev-parse --verify -q HEAD)" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rg_message error settings-index HEAD 'Could not read the settings base.' >&2
+    return 1
+  fi
+  for file in .kendex/settings.toml kendex.settings.toml; do
+    case "$file" in .kendex/*) snapshot=$nested ;; *) snapshot=$root ;; esac
+    if ! entries="$(git ls-files --stage -- ":(top)$file")"; then
+      rg_message error settings-index "$file" 'Could not read the settings index entry.' >&2
+      return 1
+    fi
+    if [ -n "$entries" ]; then
+      if ! git show ":$file" > "$snapshot"; then
+        rg_message error settings-index "$file" 'Could not read the staged settings.' >&2
+        return 1
+      fi
+    else
+      previous=''
+      if [ -n "$head" ]; then
+        if ! previous="$(git ls-tree --name-only "$head" -- "$file")"; then
+          rg_message error settings-index "$file" 'Could not read the settings base entry.' >&2
+          return 1
+        fi
+      fi
+      if [ "$file" = .kendex/settings.toml ] && [ -z "$previous" ]; then
+        nested=$file
+      else
+        : > "$snapshot" || return 1
+      fi
+    fi
+  done
+  rg_settings_nested_source=$nested
+  rg_settings_root_source=$root
+}
+
 # A source is skipped only when it is ABSENT. A path that exists as
 # something else — directory, FIFO, socket, device — fails -f exactly like
 # an absent one, and a symlink that does not resolve fails -e as well as -f,
@@ -242,7 +285,7 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
     if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
       set -- "$REVIEW_GATE_SETTINGS_FILE"
     else
-      set -- ".kendex/settings.toml" "kendex.settings.toml"
+      set -- "$rg_settings_nested_source" "$rg_settings_root_source"
     fi
     for file in "$@"; do
       rg_settings_usable "$file" || return 1
