@@ -395,12 +395,13 @@ export ORCH_MODEL_LINES_HELD=1
 
 # One owner chooses and rebuilds a preference launch from the original input.
 # Permission eligibility and flag translation belong to the overseer walk.
-# A last-choice entry (OL_LAST_CHOICE, always the final one) is spent only
-# when no earlier entry's account has projected room at all: an entry walled
-# at the launch threshold is asked again at --max-pct 100, which lanes reads
-# as any projected room or Codex credit above the floor, and one that has it
-# stops the walk before the marked entry. That entry stays walled for this
-# launch; only the marked entry's spend changes.
+# A last-choice entry (OL_LAST_CHOICE, always the final one) is held back
+# while an earlier entry whose pick exited 3 has room at --max-pct 100: each
+# such entry is asked again with the same pick arguments, so its seat reserve
+# and unmeasured refusal still apply, and the first with room stops the walk
+# before the marked entry. An entry skipped before any pick is not asked. The
+# entry with room stays walled for this launch; only the marked entry's spend
+# changes.
 preference_select() {
   local preference_entry preference_rc preference_word preference_record preference_mode="$TERMINAL_MODE"
   local preference_index=0 preference_room="" preference_err
