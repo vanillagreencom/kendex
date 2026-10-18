@@ -1939,9 +1939,10 @@ handoff_instruction() {
 # Stop's task registry is the documented input. Older Claude versions, an
 # unreachable registry and every tool call omit it; only then use the measured
 # Agent-call results, task-notification status lines, teammate idle
-# notifications, SendMessage calls and TaskStop calls. A tool result is read
-# for those notification markers alone; no other part of a child result body
-# is interpreted.
+# notifications, SendMessage calls, TaskStop calls and ListAgents observations.
+# The hook cannot call ListAgents itself; its recorded structured teammate
+# rows supply the idle state when no notification arrived. SendMessage results
+# prove a stopped agent resumed. Child reports supply notification markers.
 # AGENT_ROWS names each child still out, and AGENT_STATE says whether any may
 # be: none, out, or unknown where the roster could not be read or holds an
 # entry neither read classifies, which callers never read as none.
@@ -2001,6 +2002,11 @@ claude_attached_agents() { # [emergency STATE_FILE]
     # sent shutdown_request ends it, since the lead's transcript never
     # receives the approval and the lead is owed no further result. A
     # TaskStop call that did not fail ends the child it names by id or name.
+    # SendMessage can resume that stopped child as an in-process teammate;
+    # only its measured resume result proves the stopped run started again.
+    # ListAgents (2.1.302) records teammate states in toolUseResult.sections;
+    # its idle rows end the named turn even when no idle notification arrived.
+    # A call that can change the roster invalidates an earlier pending list.
     # A foreground Agent call (no run_in_background, no name) returns its
     # child's finished output, so its result puts nothing out. Any other
     # result of an async or named call is unclassified. Claude Code appends a
@@ -2031,21 +2037,26 @@ claude_attached_agents() { # [emergency STATE_FILE]
             | scan("<teammate-message teammate_id=\"([^\"]+)\"[^>]*>\\s*\\{\\s*\"type\"\\s*:\\s*\"idle_notification\"")) as $n
             (. ; if .names | has($n[0]) then .agents[.names[$n[0]]] = "completed" else . end);
       reduce (inputs | fromjson | objects
+          | select(.type == "assistant" or .type == "user" or .type == "queue-operation") | . as $record
           | if .type == "queue-operation" then select(.operation == "enqueue") | {role: "user", content: (.content | strings)}
-            else .message? | objects end) as $m ({calls: {}, agents: {}, names: {}, unclassified: false};
+            else .message? | objects | . + {result: $record.toolUseResult} end) as $m
+          ({calls: {}, agents: {}, names: {}, generation: 0, unclassified: false};
         if $m.role == "assistant" then
           reduce ($m.content | if type == "array" then .[] else empty end
             | select(.type == "tool_use" and (.id | type) == "string")) as $c
             (. ; if $c.name == "Agent" or $c.name == "Task" then
-                .calls[$c.id] = {sync: (($c.input.run_in_background | tostring) != "true"
+                .generation += 1 | .calls[$c.id] = {pending: true, sync: (($c.input.run_in_background | tostring) != "true"
                   and (($c.input.name | type) != "string" or $c.input.name == ""))}
               elif $c.name == "SendMessage" and ($c.input.to | type) == "string" then
-                if ($c.input.message | type) == "string" then .calls[$c.id] = {to: $c.input.to, status: "running"}
+                .generation += 1
+                | if ($c.input.message | type) == "string" then .calls[$c.id] = {pending: true, to: $c.input.to, status: "running"}
                 elif ($c.input.message | type) == "object"
-                  and $c.input.message.type == "shutdown_request" then .calls[$c.id] = {to: $c.input.to, status: "completed"}
+                  and $c.input.message.type == "shutdown_request" then .calls[$c.id] = {pending: true, to: $c.input.to, status: "completed"}
                 else . end
               elif $c.name == "TaskStop" and ($c.input.task_id | type) == "string" then
-                .calls[$c.id] = {to: $c.input.task_id, status: "killed"}
+                .generation += 1 | .calls[$c.id] = {pending: true, to: $c.input.task_id, status: "killed"}
+              elif $c.name == "ListAgents" then
+                .calls[$c.id] = {list: .generation, overlap: any(.calls[]; .pending == true)}
               else . end)
         elif $m.role == "user" then
           reduce ($m | results | [.content | text | launched][0] | objects) as $l
@@ -2054,9 +2065,31 @@ claude_attached_agents() { # [emergency STATE_FILE]
           | noted($m)
           | reduce ($m | results) as $r
             (. ; .calls[$r.tool_use_id | if type == "string" then . else "" end] as $c
+              | if $c != null then .calls[$r.tool_use_id].pending = false
+                  | .generation += (if $c.pending then 1 else 0 end) else . end
               | if [$r.content | text | launched][0] != null or $c == null or $r.is_error == true then .
+                elif $c | has("list") then
+                  if $c.overlap or $c.list != .generation then .
+                  elif ([$m | results] | length) != 1 or ($m.result.sections | type) != "array" then
+                    .agents |= with_entries(if .value == "running" then .value = "unknown" else . end)
+                  else reduce ($m.result.sections[] | select(.kind == "teammates") | .rows[]) as $a
+                    (. ; if .names | has($a.name) then .names[$a.name] as $t
+                        | if $a.status == "idle" then .agents[$t] = "completed"
+                          elif $a.status == "running" then .agents[$t] = "running"
+                          else .agents[$t] = "unknown" end
+                      else . end)
+                  end
                 elif $c | has("to") then (.names[$c.to] // $c.to) as $t
-                  | if .agents | has($t) then .agents[$t] = $c.status else . end
+                  | if (.agents | has($t)) == false then .
+                    elif $c.status == "running" and .agents[$t] == "killed" then
+                      (if ([$m | results] | length) == 1 and ($m.result | type) == "object" then $m.result
+                        else [$r.content | text | fromjson?][0] end
+                        | if type == "object" then . else {} end) as $sent
+                      | if $sent.success == true
+                          and ((($sent.message | strings) // "") | test("^Teammate \"[^\"]+\" was not running; resumed it as an in-process teammate with [0-9]+ prior messages and your message as its next prompt\\.$"))
+                        then .agents[$t] = "running"
+                        else .agents[$t] = "unknown" end
+                    else .agents[$t] = $c.status end
                 elif $c.sync then .
                 else .unclassified = true end)
         else . end)
@@ -2077,7 +2110,7 @@ claude_attached_agents() { # [emergency STATE_FILE]
   while IFS="$TAB" read -r id status; do
     [ -n "$id" ] || continue
     if [ "$id" = '?' ]; then unclassified=$status; continue; fi
-    case "$status" in completed | failed | killed) continue ;; esac
+    case "$status" in completed | failed | killed) continue ;; unknown) unclassified=agent-status ;; esac
     AGENT_STATE=out
     output=unknown
     # https://code.claude.com/docs/en/hooks#subagentstop
