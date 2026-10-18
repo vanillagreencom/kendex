@@ -324,15 +324,6 @@ The long pass's events, checked and reported in this order:
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
-  EVENT main-push-budget <repo> workflow=skill-tests.yml run=<run-id> warnings=<JSON array>
-                             a completed main push carries run-all-budget
-                             warning annotations. warnings= holds every
-                             distinct suite and final-job warning message.
-                             Reported once per run after all job annotations
-                             are read. Failed reads remain pending for retry.
-                             History stops at the saved creation watermark;
-                             active runs remain pending after it advances.
-                             The first pass reads one history page.
   EVENT main-push-failing <repo> workflow=<file> event=<push|schedule> run=<run-id> jobs=<JSON array> cause=<line>
                              the latest completed push on main of that
                              workflow failed or timed out, or the latest
@@ -363,6 +354,19 @@ The long pass's events, checked and reported in this order:
                              jobs are unchanged. A first unread log reports
                              cause=unread. Recovered logs update the recorded
                              failures without repeating the event
+  EVENT main-push-budget <repo> workflow=skill-tests.yml run=<run-id> warnings=<JSON array>
+                             a completed Skill Tests run carries run-all-budget
+                             warning annotations. Selected runs are main pushes,
+                             merge groups for main, and scheduled or manually
+                             dispatched runs on main. Queue runs use the
+                             gh-readonly-queue/main/ head-branch prefix.
+                             warnings= holds each distinct suite and final-job
+                             warning message.
+                             Reported once per run after all job annotations
+                             are read. Failed reads remain pending for retry.
+                             History stops at the saved creation watermark;
+                             active runs remain pending after it advances.
+                             The first pass reads one history page.
   EVENT main-workflow-absent <repo> workflow=<file> cause=<branch|unwatched>
                              a workflow ORCH_MAIN_WORKFLOWS names is read by
                              nothing: cause=branch, the repository's

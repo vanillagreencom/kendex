@@ -2351,7 +2351,13 @@ check_main_push() {
         --jq 'if .workflow_runs == [] then empty else . end' 2>"$errf")" || { rc=$?; break; }
       [[ -n "$page_data" ]] || break
       # Commit and repository metadata can exceed command argument limits.
+      # GitHub queue head branches encode the target after gh-readonly-queue/.
       scan="$(jq -er --argjson state "$budget_state" '
+        def budget_producer:
+          if .event == "merge_group" then
+            ((.head_branch // "") | startswith("gh-readonly-queue/main/"))
+          else .head_branch == "main" and
+            (.event == "push" or .event == "schedule" or .event == "workflow_dispatch") end;
         if ($state.watermark | type) != "string" or ($state.seen | type) != "array" or
            ($state.pending | type) != "array" or (.workflow_runs | type) != "array" or
            any(.workflow_runs[]; (.id | type) != "number" or (.created_at | type) != "string" or
@@ -2359,7 +2365,7 @@ check_main_push() {
         then error("invalid budget history or state") else .workflow_runs end
         | (map(.created_at) | max // "") as $newest
         | [ .[] | select(
-            (.head_branch == "main" and .event == "push" and .created_at >= $state.watermark and
+            (budget_producer and .created_at >= $state.watermark and
               (.created_at > $state.watermark or (.id as $id | $state.seen | index($id) | not))) or
             (.id as $id | $state.pending | index($id) != null)) ] as $fresh
         | ((length == 100 and $state.watermark != "" and all(.[]; .created_at >= $state.watermark)) | tostring),

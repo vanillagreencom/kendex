@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: oversee-watch events for main pushes and scheduled runs, consumed by oversee-events.md.
+# Surface: oversee-watch failed-run and budget events, consumed by oversee-events.md.
 # Inputs: scripts/oversee-watch, scripts/lib/oversee-watch-text.sh and lib/oversee-watch-harness.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -440,14 +440,14 @@ assert_eq "rc=$MAIN_RC refusal=$(grep -cxF 'oversee-watch: main-workflows-invali
 
 # Budget records are consumed by oversee-events.md. Keep all distinct suite
 # and final-job annotations from every job of a completed run.
-budget_run() { # ID CREATED STATUS
-  jq -cn --argjson id "$1" --arg at "$2" --arg status "$3" \
-    '{id:$id,created_at:$at,status:$status,head_branch:"main",event:"push"}'
+budget_run() { # ID CREATED STATUS [EVENT BRANCH]
+  jq -cn --argjson id "$1" --arg at "$2" --arg status "$3" --arg event "${4:-push}" --arg branch "${5:-main}" \
+    '{id:$id,created_at:$at,status:$status,head_branch:$branch,event:$event}'
 }
 budget_fixture() {
   new_case "$1"
   printf '{"status":"completed"}\n' >"$STUB_DIR/budget-status.202.json"
-  budget_run 202 2026-10-18T00:00:00Z completed | jq -sc . >"$STUB_DIR/budget-history.json"
+  budget_run 202 2026-10-18T00:00:00Z completed "${2:-push}" "${3:-main}" | jq -sc . >"$STUB_DIR/budget-history.json"
   printf '[{"jobs":[{"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/902"},{"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/903"}]}]\n' >"$STUB_DIR/budget-jobs.202.json"
   jq -cn --arg suite "$BUDGET_SUITE" --arg job "$BUDGET_JOB" \
     '[[{annotation_level:"warning",message:$suite},{annotation_level:"warning",message:$job},
@@ -471,6 +471,40 @@ BUDGET_SUITE='run-all-budget run=202 attempt=2 os=Linux shard=orch-state suite=s
 BUDGET_JOB='run-all-budget run=202 attempt=2 os=Linux shard=orch-state suite=job seconds=333 bound=900 review=300 margin-percent=125'
 BUDGET_WARNINGS="$(jq -cn --arg suite "$BUDGET_SUITE" --arg job "$BUDGET_JOB" '[$suite,$job] | sort')"
 BUDGET_EVENT="EVENT main-push-budget owner/repo workflow=skill-tests.yml run=202 warnings=$BUDGET_WARNINGS"
+
+# Skill Tests suite jobs run on merge groups, schedules and manual runs.
+# Main pushes remain compatible. Queue branches encode their target base.
+BUDGET_BROAD="$(mutant_scripts budget-broad/orch oversee-watch)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/budget-broad/github"
+mutate_file "$BUDGET_BROAD" 'budget_producer and .created_at >= $state.watermark' 'true and .created_at >= $state.watermark'
+while IFS='|' read -r label event branch selected; do
+  budget_fixture "budget_$label" "$event" "$branch"
+  budget_watch
+  expected='rc=0 calls=1 events='
+  [[ "$selected" != yes ]] || expected="rc=0 calls=4 events=$BUDGET_EVENT"
+  assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" "$expected" "$label: selects the producer event and base" "$STUB_DIR/err"
+  budget_watch
+  assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" 'rc=0 calls=1 events=' "$label: repeat stays quiet" "$STUB_DIR/err"
+  if [[ "$selected" == no ]]; then
+    budget_fixture "budget_control_$label" "$event" "$branch"
+    WATCH_BIN="$BUDGET_BROAD" budget_watch
+    CONTROL_RC=0
+    ( FAIL=0
+      assert_eq "rc=$MAIN_RC calls=$BUDGET_CALLS events=$BUDGET_EVENTS" "$expected" "$label oracle"
+      [[ "$FAIL" -eq 0 ]]
+    ) >"$STUB_DIR/control.out" || CONTROL_RC=$?
+    assert_eq "$CONTROL_RC" 1 "$label: a broadened selector fails the refusal oracle" "$STUB_DIR/control.out"
+  fi
+done <<'ROWS'
+push-main|push|main|yes
+merge-main|merge_group|gh-readonly-queue/main/pr-5421-c7012cfbf29daef1a5bc63c0ccf179f23a859bc1|yes
+schedule-main|schedule|main|yes
+manual-main|workflow_dispatch|main|yes
+manual-feature|workflow_dispatch|feature|no
+merge-release|merge_group|gh-readonly-queue/release/pr-7-abc|no
+merge-main-other|merge_group|gh-readonly-queue/main-other/pr-7-abc|no
+pull-request|pull_request|main|no
+ROWS
 
 budget_fixture budget_once
 budget_watch
