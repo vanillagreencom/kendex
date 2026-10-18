@@ -150,44 +150,77 @@ fn a_project_without_the_package_says_it_is_absent() {
     );
 }
 
-/// Refresh changes the installed package without enabling its repository
-/// effect. Neither refresh nor the commit offer may execute the installer.
+/// A prior manifest edit stays out of the refresh commit. Only the
+/// candidate manifest decides whether the unarmed package holds that commit.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn refresh_commits_an_unconfigured_packages_changed_files_without_a_terminal() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp).join("home");
-    let project = installed(&home, "#!/bin/sh\ntouch package-code-ran\nexit 1\n");
-    let source = project.join("catalog/skills/bot-instructions/SKILL.md");
-    let declared = fs::read_to_string(&source).unwrap();
-    for args in [
-        &["config", "user.name", "t"][..],
-        &["config", "user.email", "t@t"],
-        &["config", "commit.gpgsign", "false"],
-        &["add", "-A"],
-        &["commit", "-qm", "installed"],
-    ] {
-        git(&project, args);
+fn refresh_commits_package_changes_only_when_the_candidate_is_unconfigured() {
+    for (committed_table, working_table, expected_code) in
+        [(false, false, 0), (true, false, 1), (false, true, 0)]
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp).join("home");
+        let project = installed(&home, "#!/bin/sh\ntouch package-code-ran\nexit 1\n");
+        let source = project.join("catalog/skills/bot-instructions/SKILL.md");
+        let declared = fs::read_to_string(&source).unwrap();
+        let manifest = project.join("kendex.toml");
+        let original = fs::read_to_string(&manifest).unwrap();
+        let configured = format!("{original}\n[bot-instructions]\n");
+        if committed_table {
+            write(&manifest, &configured);
+        }
+        for args in [
+            &["config", "user.name", "t"][..],
+            &["config", "user.email", "t@t"],
+            &["config", "commit.gpgsign", "false"],
+            &["add", "-A"],
+            &["commit", "-qm", "installed"],
+        ] {
+            git(&project, args);
+        }
+        write(
+            &manifest,
+            if working_table {
+                &configured
+            } else {
+                &original
+            },
+        );
+        let updated = format!("{declared}\nUpdated package documentation.\n");
+        write(&source, &updated);
+
+        let ran = kendex(&home, &project, &["refresh", "--yes", "--commit"]);
+
+        assert_eq!(
+            ran.status.code(),
+            Some(expected_code),
+            "committed={committed_table}, working={working_table}: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let committed = Hardened::git(
+            &["show", "HEAD:.claude/skills/bot-instructions/SKILL.md"],
+            Some(&project),
+        )
+        .run()
+        .unwrap();
+        assert!(committed.status.success());
+        let expected = if committed_table { &declared } else { &updated };
+        assert_eq!(committed.stdout, expected.as_bytes());
+        let head_manifest = Hardened::git(&["show", "HEAD:kendex.toml"], Some(&project))
+            .run()
+            .unwrap();
+        assert!(head_manifest.status.success());
+        assert_eq!(
+            String::from_utf8(head_manifest.stdout)
+                .unwrap()
+                .contains("[bot-instructions]"),
+            committed_table
+        );
+        assert_eq!(
+            fs::read_to_string(&manifest).unwrap(),
+            if working_table { configured } else { original }
+        );
+        assert!(!armed(&project));
+        assert!(!project.join("package-code-ran").exists());
     }
-    let updated = format!("{declared}\nUpdated package documentation.\n");
-    write(&source, &updated);
-
-    let ran = kendex(&home, &project, &["refresh", "--yes", "--commit"]);
-
-    assert_eq!(
-        ran.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    let committed = Hardened::git(
-        &["show", "HEAD:.claude/skills/bot-instructions/SKILL.md"],
-        Some(&project),
-    )
-    .run()
-    .unwrap();
-    assert!(committed.status.success());
-    assert_eq!(committed.stdout, updated.as_bytes());
-    assert!(!armed(&project));
-    assert!(!project.join("package-code-ran").exists());
 }

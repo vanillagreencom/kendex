@@ -24,15 +24,26 @@ pub enum ManifestFile {
 /// Whether a project root's kendex.toml marks itself the canonical catalog
 /// (`is_source_catalog = true`), so install state routes to the sibling.
 pub fn is_source_catalog(root: &Path) -> bool {
-    std::fs::read_to_string(root.join(super::MANIFEST_FILE))
+    project_manifest_name(root) == super::LOCAL_MANIFEST_FILE
+}
+
+fn project_manifest_name(root: &Path) -> &'static str {
+    let table = std::fs::read_to_string(root.join(super::MANIFEST_FILE))
         .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok())
-        .and_then(|table| {
-            table
-                .get("is_source_catalog")
-                .and_then(toml::Value::as_bool)
-        })
+        .and_then(|text| text.parse::<toml::Table>().ok());
+    project_manifest_from(table.as_ref())
+}
+
+/// Select a project's manifest from its root table, including an index snapshot.
+pub(crate) fn project_manifest_from(root: Option<&toml::Table>) -> &'static str {
+    match root
+        .and_then(|table| table.get("is_source_catalog"))
+        .and_then(toml::Value::as_bool)
         .unwrap_or(false)
+    {
+        true => super::LOCAL_MANIFEST_FILE,
+        false => super::MANIFEST_FILE,
+    }
 }
 
 /// Where this scope's manifest lives. Off the canonical root, like every
@@ -84,10 +95,7 @@ pub fn refuse_output_styles(env: &Env, scope: &Scope, count: usize) -> Result<()
 /// scope: the answer to which file a project declares in is decided here,
 /// once.
 pub fn project_manifest_path(root: &Path) -> std::path::PathBuf {
-    match is_source_catalog(root) {
-        true => root.join(super::LOCAL_MANIFEST_FILE),
-        false => Env::project_manifest_file(root),
-    }
+    root.join(project_manifest_name(root))
 }
 
 pub fn load(path: &Path) -> Result<ManifestFile> {

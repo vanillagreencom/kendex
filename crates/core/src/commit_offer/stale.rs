@@ -132,10 +132,11 @@ pub fn stale(
         }
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
             false => {
-                if let Some(key) = &declared.effects.configured_by
-                    && !configured(env, scope, key)?
-                {
-                    continue;
+                if let Some(key) = &declared.effects.configured_by {
+                    let built = Candidate::ensure(&mut candidate, &scan.root, generated, carried)?;
+                    if !built.configured(&scan.root, key)? {
+                        continue;
+                    }
                 }
                 Staleness::NotSetUp
             }
@@ -144,14 +145,8 @@ pub fn stale(
                 let holds = match &declared.effects.staged_checker {
                     None => standing(working(), Staleness::OutOfDate),
                     Some(_) => {
-                        let candidate = match &mut candidate {
-                            Some(built) => built,
-                            None => candidate.insert(Candidate::build(
-                                &scan.root,
-                                generated,
-                                &carried.iter().cloned().collect::<Vec<_>>(),
-                            )?),
-                        };
+                        let candidate =
+                            Candidate::ensure(&mut candidate, &scan.root, generated, carried)?;
                         standing(candidate.status(scope, &declared), |said| {
                             standing(working(), Staleness::OutOfDate).unwrap_or_else(|| {
                                 Staleness::Split {
@@ -174,23 +169,6 @@ pub fn stale(
         candidate.close()?;
     }
     disclosed(env, scope, held)
-}
-
-/// Read presence from the package's selected manifest. Serializing the
-/// model would erase an explicitly empty table and incorrectly lift the hold.
-fn configured(env: &Env, scope: &Scope, key: &str) -> crate::error::Result<bool> {
-    let path = crate::manifest::manifest_path(env, scope);
-    let Some(text) = crate::fs::read_if_exists(&path)? else {
-        return Ok(false);
-    };
-    let table: toml::Table =
-        text.parse().map_err(
-            |error: toml::de::Error| crate::error::CoreError::TomlParse {
-                path,
-                message: error.to_string(),
-            },
-        )?;
-    Ok(table.contains_key(key))
 }
 
 /// What one reading of a set-up package's check holds the commit with,

@@ -13,6 +13,7 @@
 //! directory of its own under the git directory, removed when the
 //! [`Candidate`] is dropped, whichever way the reading ends.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::engine::GeneratedPaths;
@@ -21,6 +22,8 @@ use crate::repo_effects::{DeclaredEffects, SetupStatus};
 
 use super::Failed;
 use super::regions::{Carrying, index_path};
+use super::{Step, git};
+use crate::process::Hardened;
 
 /// The prefix of the directory a candidate index is written in.
 const PREFIX: &str = "kendex-candidate-";
@@ -32,8 +35,25 @@ pub(super) struct Candidate {
 }
 
 impl Candidate {
+    /// Reuse the same proposed commit for configuration reads and package checks.
+    pub(super) fn ensure<'a>(
+        cached: &'a mut Option<Self>,
+        root: &Path,
+        generated: &GeneratedPaths,
+        carried: &BTreeSet<String>,
+    ) -> crate::error::Result<&'a Self> {
+        match cached {
+            Some(built) => Ok(built),
+            None => Ok(cached.insert(Self::build(
+                root,
+                generated,
+                &carried.iter().cloned().collect::<Vec<_>>(),
+            )?)),
+        }
+    }
+
     /// Write the index the commit of `carried` would hand its hooks.
-    pub(super) fn build(
+    fn build(
         root: &Path,
         generated: &GeneratedPaths,
         carried: &[String],
@@ -65,6 +85,53 @@ impl Candidate {
     /// The package's declared check, asked of this commit.
     pub(super) fn status(&self, scope: &Scope, declared: &DeclaredEffects) -> SetupStatus {
         crate::repo_effects::setup::status_of_index(scope, declared, &self.index)
+    }
+
+    /// Read only the manifest bytes this commit would hand its hooks.
+    pub(super) fn configured(&self, root: &Path, key: &str) -> crate::error::Result<bool> {
+        let primary = self.manifest(root, crate::manifest::MANIFEST_FILE)?;
+        let selected = crate::manifest::project_manifest_from(primary.as_ref());
+        let table = if selected == crate::manifest::MANIFEST_FILE {
+            primary
+        } else {
+            self.manifest(root, selected)?
+        };
+        Ok(table.is_some_and(|table| table.contains_key(key)))
+    }
+
+    fn manifest(&self, root: &Path, name: &str) -> crate::error::Result<Option<toml::Table>> {
+        let command = |args: &[&str]| {
+            git::run(
+                Hardened::git(args, Some(root))
+                    .env("GIT_INDEX_FILE", &self.index.to_string_lossy()),
+                Step::Read,
+            )
+            .map_err(|failed| {
+                crate::repo_effects::err(format!(
+                    "manifest-read={name}\nthe offered commit's manifest could not be read: {}",
+                    failed.said().join("\n")
+                ))
+            })
+        };
+        // A missing entry and a failed read both make `show` exit nonzero.
+        // Listing first proves absence without hiding a corrupt index or blob.
+        let listed = command(&["ls-files", "--", &super::pathspec::literal(name)])?;
+        if listed.is_empty() {
+            return Ok(None);
+        }
+        let bytes = command(&["show", &format!(":./{name}")])?;
+        let path = root.join(name);
+        let text =
+            std::str::from_utf8(&bytes).map_err(|error| crate::error::CoreError::TomlParse {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+        text.parse().map(Some).map_err(|error: toml::de::Error| {
+            crate::error::CoreError::TomlParse {
+                path,
+                message: error.to_string(),
+            }
+        })
     }
 
     /// Remove the candidate, reporting a removal that failed rather than

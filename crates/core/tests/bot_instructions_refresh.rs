@@ -957,72 +957,48 @@ enum Holds {
     NotSetUp,
     OutOfDate,
     Unchecked(&'static str),
+    InvalidManifest,
     Nothing,
 }
 
-/// A package with no enabling table has nothing to set up. A table in a
-/// catalog definition does not enable the effect in that catalog's checkout.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unconfigured_package_skips_only_its_not_set_up_hold() {
-    for (catalog, configured) in [(false, false), (false, true), (true, false), (true, true)] {
-        let manifest = if configured {
-            "schema = 7\n[bot-instructions]\n"
-        } else {
-            "schema = 7\n"
-        };
-        let fixture = fixture_with_arming(manifest, false);
-        if catalog {
-            fs::rename(
-                fixture.root.join("kendex.toml"),
-                fixture.root.join("kendex-local.toml"),
-            )
-            .unwrap();
-            fs::write(
-                fixture.root.join("kendex.toml"),
-                if configured {
-                    "is_source_catalog = true\n"
-                } else {
-                    "is_source_catalog = true\n[bot-instructions]\n"
-                },
-            )
-            .unwrap();
-            git(&fixture.root, &["add", "-A"]);
-        }
-        commit_fixture(&fixture.root);
-        let mut generated = GeneratedPaths::default();
-        generated.whole.insert(change_doctrine(&fixture.root));
-        let scan = offer_scan(&fixture, &generated);
-
-        let held = commit_offer::stale(
-            &fixture.env,
-            &fixture.scope,
-            &scan,
-            &generated,
-            &scan.carried(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            held.iter().map(|held| &held.why).collect::<Vec<_>>(),
-            if configured {
-                vec![&Staleness::NotSetUp]
-            } else {
-                vec![]
-            },
-            "catalog={catalog}, configured={configured}"
-        );
-    }
+/// Manifest bytes at HEAD and an optional edit the offer may carry.
+struct ManifestInput {
+    primary: &'static str,
+    local: Option<&'static str>,
+    edit: Option<(&'static str, &'static str)>,
+    carry: bool,
 }
+
+const UNCONFIGURED: &str = "schema = 7\n";
+const CONFIGURED: &str = "schema = 7\n[bot-instructions]\n";
+const CATALOG: &str = "is_source_catalog = true\n";
+const CONFIGURED_CATALOG: &str = "is_source_catalog = true\n[bot-instructions]\n";
 
 /// One standing a package can have when the offer touches it.
 struct StaleRow {
     what: &'static str,
+    manifest: Option<ManifestInput>,
     armed: bool,
     doctrine_changed: bool,
     rendered: bool,
     declares: fn(&Path, String) -> String,
     holds: Holds,
+}
+
+impl StaleRow {
+    #[allow(clippy::unwrap_used)]
+    fn fixture(&self) -> Fixture {
+        match &self.manifest {
+            None => enabled_fixture_with_arming(self.armed),
+            Some(input) => {
+                let fixture = fixture_with_arming(input.primary, self.armed);
+                if let Some(local) = input.local {
+                    fs::write(fixture.root.join("kendex-local.toml"), local).unwrap();
+                }
+                fixture
+            }
+        }
+    }
 }
 
 /// The declaration edits a row applies to the installed copy before the
@@ -1109,17 +1085,21 @@ fn replaced(text: String, from: &str, to: &str) -> String {
     text.replacen(from, to, 1)
 }
 
-const STALE_ROWS: [StaleRow; 9] = [
-    StaleRow {
-        what: "not set up here",
-        armed: false,
-        doctrine_changed: true,
-        rendered: false,
-        declares: as_shipped,
-        holds: Holds::NotSetUp,
-    },
+const UNARMED_ROW: StaleRow = StaleRow {
+    what: "not set up here",
+    manifest: None,
+    armed: false,
+    doctrine_changed: true,
+    rendered: false,
+    declares: as_shipped,
+    holds: Holds::NotSetUp,
+};
+
+const STALE_ROWS: &[StaleRow] = &[
+    UNARMED_ROW,
     StaleRow {
         what: "set up, its files not rendered",
+        manifest: None,
         armed: true,
         doctrine_changed: true,
         rendered: false,
@@ -1128,6 +1108,7 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "set up and rendered",
+        manifest: None,
         armed: true,
         doctrine_changed: true,
         rendered: true,
@@ -1136,6 +1117,7 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "set up, its check cannot answer",
+        manifest: None,
         armed: true,
         doctrine_changed: true,
         rendered: false,
@@ -1144,6 +1126,7 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "set up and rendered, a checker that takes no --staged",
+        manifest: None,
         armed: true,
         doctrine_changed: true,
         rendered: true,
@@ -1152,6 +1135,7 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "not touched by the offer",
+        manifest: None,
         armed: false,
         doctrine_changed: false,
         rendered: false,
@@ -1160,6 +1144,7 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "no installer to set it up with",
+        manifest: None,
         armed: false,
         doctrine_changed: true,
         rendered: false,
@@ -1168,6 +1153,7 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "an effect inside .git",
+        manifest: None,
         armed: false,
         doctrine_changed: true,
         rendered: false,
@@ -1176,27 +1162,222 @@ const STALE_ROWS: [StaleRow; 9] = [
     },
     StaleRow {
         what: "set up, no check to ask",
+        manifest: None,
         armed: true,
         doctrine_changed: true,
         rendered: false,
         declares: no_checker,
         holds: Holds::Nothing,
     },
+    StaleRow {
+        what: "consumer: table absent",
+        manifest: Some(ManifestInput {
+            primary: UNCONFIGURED,
+            local: None,
+            edit: None,
+            carry: false,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "consumer: table added, edit left out",
+        manifest: Some(ManifestInput {
+            primary: UNCONFIGURED,
+            local: None,
+            edit: Some(("kendex.toml", CONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "consumer: table added, edit carried",
+        manifest: Some(ManifestInput {
+            primary: UNCONFIGURED,
+            local: None,
+            edit: Some(("kendex.toml", CONFIGURED)),
+            carry: true,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "consumer: empty table present",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED,
+            local: None,
+            edit: None,
+            carry: false,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "consumer: table removed, edit left out",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED,
+            local: None,
+            edit: Some(("kendex.toml", UNCONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "consumer: table removed, edit carried",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED,
+            local: None,
+            edit: Some(("kendex.toml", UNCONFIGURED)),
+            carry: true,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: table absent",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED_CATALOG,
+            local: Some(UNCONFIGURED),
+            edit: None,
+            carry: false,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: table added, edit left out",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED_CATALOG,
+            local: Some(UNCONFIGURED),
+            edit: Some(("kendex-local.toml", CONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: table added, edit carried",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED_CATALOG,
+            local: Some(UNCONFIGURED),
+            edit: Some(("kendex-local.toml", CONFIGURED)),
+            carry: true,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: empty table present",
+        manifest: Some(ManifestInput {
+            primary: CATALOG,
+            local: Some(CONFIGURED),
+            edit: None,
+            carry: false,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: table removed, edit left out",
+        manifest: Some(ManifestInput {
+            primary: CATALOG,
+            local: Some(CONFIGURED),
+            edit: Some(("kendex-local.toml", UNCONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: table removed, edit carried",
+        manifest: Some(ManifestInput {
+            primary: CATALOG,
+            local: Some(CONFIGURED),
+            edit: Some(("kendex-local.toml", UNCONFIGURED)),
+            carry: true,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "candidate catalog uses its local table despite a working ordinary manifest",
+        manifest: Some(ManifestInput {
+            primary: CATALOG,
+            local: Some(CONFIGURED),
+            edit: Some(("kendex.toml", UNCONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "candidate ordinary manifest keeps its table despite a working catalog marker",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED,
+            local: Some(UNCONFIGURED),
+            edit: Some(("kendex.toml", CATALOG)),
+            carry: false,
+        }),
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "candidate catalog ignores its root table despite a working ordinary manifest",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED_CATALOG,
+            local: Some(UNCONFIGURED),
+            edit: Some(("kendex.toml", CONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "candidate ordinary manifest ignores the local table despite a working catalog marker",
+        manifest: Some(ManifestInput {
+            primary: UNCONFIGURED,
+            local: Some(CONFIGURED),
+            edit: Some(("kendex.toml", CONFIGURED_CATALOG)),
+            carry: false,
+        }),
+        holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "malformed candidate root cannot become proven absence",
+        manifest: Some(ManifestInput {
+            primary: "[broken\n",
+            local: None,
+            edit: Some(("kendex.toml", UNCONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::InvalidManifest,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "malformed candidate local manifest cannot become proven absence",
+        manifest: Some(ManifestInput {
+            primary: CATALOG,
+            local: Some("[broken\n"),
+            edit: Some(("kendex-local.toml", UNCONFIGURED)),
+            carry: false,
+        }),
+        holds: Holds::InvalidManifest,
+        ..UNARMED_ROW
+    },
 ];
 
-/// Each package the offer touches is asked before the commit is offered,
-/// and one kendex cannot vouch for holds it. One row per standing: not set
-/// up, set up with its files not rendered, set up and rendered, set up
-/// with a check that cannot answer, and the five that hold nothing: set up
-/// and rendered with only a working-tree checker that refuses any
-/// argument, not touched by the offer, no installer to set it up with, an
-/// effect inside `.git`, and set up with no check to ask.
+/// Each touched package is judged against the offered commit. Manifest
+/// rows distinguish carried changes from prior edits and keep source-catalog
+/// selection tied to that same commit.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
     for row in STALE_ROWS {
         let what = row.what;
-        let fixture = enabled_fixture_with_arming(row.armed);
+        let fixture = row.fixture();
         let package = fixture.root.join(CODEX_PACKAGE);
         let skill = package.join("SKILL.md");
         let declared = (row.declares)(&package, fs::read_to_string(&skill).unwrap());
@@ -1216,17 +1397,53 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
                 .add_to(&mut generated);
         }
 
-        let scan = offer_scan(&fixture, &generated);
+        let edit = row
+            .manifest
+            .as_ref()
+            .and_then(|input| input.edit.map(|edit| (input, edit)));
+        if let Some((input, (name, text))) = edit
+            && !input.carry
+        {
+            fs::write(fixture.root.join(name), text).unwrap();
+        }
+        let before = Before::read(
+            &fixture.scope,
+            &generated,
+            edit.map(|(_, (name, _))| fixture.root.join(name)),
+        );
+        if let Some((input, (name, text))) = edit
+            && input.carry
+        {
+            fs::write(fixture.root.join(name), text).unwrap();
+        }
+        let scan = commit_offer::scan(&fixture.scope, &generated, &before)
+            .unwrap()
+            .unwrap();
+        if let Some((input, (name, _))) = edit {
+            assert_eq!(
+                scan.carried().contains(name),
+                input.carry,
+                "{what}: manifest carry premise"
+            );
+        }
         let stale = commit_offer::stale(
             &fixture.env,
             &fixture.scope,
             &scan,
             &generated,
             &scan.carried(),
-        )
-        .expect("the packages are asked");
+        );
+        if let Holds::InvalidManifest = row.holds {
+            assert!(
+                matches!(stale, Err(kendex_core::error::CoreError::TomlParse { .. })),
+                "{what}: {stale:?}"
+            );
+            continue;
+        }
+        let stale = stale.expect("the packages are asked");
 
         match row.holds {
+            Holds::InvalidManifest => unreachable!("handled above"),
             Holds::Nothing => assert!(stale.is_empty(), "{what}: {stale:?}"),
             Holds::NotSetUp => {
                 assert_eq!(stale.len(), 1, "{what}: {stale:?}");
