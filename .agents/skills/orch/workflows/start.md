@@ -65,7 +65,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
 ```
 
-Verifying → stop development preparation. Its post-merge readings belong to the overseer under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
+Verifying → stop development preparation. Its post-merge readings belong to the verification pass in [verify.md](verify.md).
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) from this live read, including any further reads the gate requires.
 

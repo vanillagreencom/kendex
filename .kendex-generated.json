@@ -774,6 +774,7 @@
   ".agents/skills/orch/workflows/start-worktree.md",
   ".agents/skills/orch/workflows/start.md",
   ".agents/skills/orch/workflows/submit-pr.md",
+  ".agents/skills/orch/workflows/verify.md",
   ".agents/skills/preflight/README.md",
   ".agents/skills/preflight/SKILL.md",
   ".agents/skills/preflight/kendex.settings.toml.example",

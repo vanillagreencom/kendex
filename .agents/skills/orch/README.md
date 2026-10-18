@@ -34,6 +34,8 @@ The primary agent opens the PR and, by the merge policy, arms auto-merge where t
 
 Requires jq, Bash 3.2, Python 3.8+, flock, setsid and timeout or gtimeout. Local lane-mail and the included SSH host provider use Python on the controlling machine. kendex installs the required skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
 
+For Linear, add the started states `In Review` and `Verifying` in the team settings. Name where and how often `/orch verify` runs with `ORCH_VERIFY_SCHEDULE`. Use an existing scheduler to start an agent on the base checkout. orch supplies no scheduler.
+
 Set defaults in `kendex.settings.toml` `[env]` and secrets in `.env.local`; installation adds no settings ([guide](kendex.settings.toml.example)).
 
 Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` and prints one warning per run.
@@ -54,6 +56,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` takes the recommended one | `auto-recommended` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges once every gate is green on authorization already given; `ask` requires it per merge | `auto` |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation: [project-management settings](../project-management/README.md#setup) | `ask`; `auto` under `ceo` |
+| `ORCH_VERIFY_SCHEDULE` | Free text naming where and how often `/orch verify` runs: a Claude Code routine, a cron job that starts a harness on the base checkout, or the overseer's watch. Names an existing schedule and starts nothing | empty |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Fleet lane cap: `open-terminal --help` | `3` |

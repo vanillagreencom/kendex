@@ -196,6 +196,11 @@ ORCH_REPORT_UPCOMING = "5"
 # choices are: issue, what it is, why it matters.
 ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
 
+# Where and how often an existing scheduler runs /orch verify on the base
+# checkout: a Claude Code routine, a cron line that starts a harness, or the
+# overseer's watch. Free text only; this setting starts no scheduler.
+ORCH_VERIFY_SCHEDULE = ""
+
 # --- Fleet ---------------------------------------------------------------------
 
 # Seconds allowed for each check that a lane received its instructions.

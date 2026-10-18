@@ -95,6 +95,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Push, create PR, gates, merge |
 | `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify conditions and merge |
 | `post-summary` | `[ISSUE_ID]` | `workflows/post-summary.md` | Post summary and handoff comments |
+| `verify` | none | `workflows/verify.md` | Read and complete due verification checks |
 | `oversee` | none | `workflows/oversee.md` | Fleet mode: one session per unblocked item, shepherd every PR to merge |
 
 **`start` routing.** `github OWNER/REPO#N` → `TRACKER=github`, `ISSUE_ID=issue-N`, keep `OWNER/REPO` for the API; otherwise Linear unless the id starts with `issue-`. A cwd whose git common dir differs from `.git` is a worktree → `workflows/start-worktree.md`; otherwise `workflows/start.md`.
