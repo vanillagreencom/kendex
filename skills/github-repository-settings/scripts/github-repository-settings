@@ -8,7 +8,7 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: github-repository-settings <adopt --dry-run|render|check> [options]
+Usage: github-repository-settings <adopt --dry-run|render|check [--staged]> [options]
 
 Options: --repo PATH, --dry-run, --json, --help
 The bot-instructions library owns render, preview and check semantics.
@@ -24,6 +24,7 @@ case "${1:-}" in
 esac
 repo=.
 preview=false
+staged=false
 args=("$verb")
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -33,6 +34,9 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --dry-run) preview=true; args+=("$1"); shift ;;
+    --staged)
+      [ "$verb" = check ] || fail usage --staged 'Only check accepts --staged.'
+      staged=true; args+=("$1"); shift ;;
     --json) args+=("$1"); shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail usage "$1" 'Use --help for supported options.' ;;
@@ -50,6 +54,16 @@ settings="$skills_dir/review-gate/scripts/lib/settings.sh"
 cd -- "$repo" || fail repository "$repo" 'Could not open the repository.'
 # shellcheck source=../../review-gate/scripts/lib/settings.sh
 source "$settings" || exit 2
+if [ "$staged" = true ]; then
+  staged_settings="$(mktemp)" || fail scratch settings 'Could not create the staged settings copy.'
+  trap 'rm -f -- "$staged_settings"' EXIT
+  indexed_settings="$(git ls-files --stage -- ':(top)kendex.settings.toml')" || fail index settings 'Could not read the settings index entry.'
+  if [ -n "$indexed_settings" ]; then
+    git show :kendex.settings.toml > "$staged_settings" || fail index settings 'Could not read the staged settings.'
+  fi
+  # Reuse the settings reader, including its process and private-file precedence.
+  export REVIEW_GATE_SETTINGS_FILE="$staged_settings"
+fi
 private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
 private_file=${private_file:-.env.local}
 location="$(rg_setting GITHUB_STANDARD_CHECK_LOCATION '' "$private_file")" || exit 2
@@ -69,4 +83,6 @@ fi
 if [ "$verb" = check ]; then
   printf 'github-standard-check-location=%s\n' "${location:-unset}" >&2
 fi
-exec "$library" "${args[@]}" --repo "$PWD" --output "$output"
+status=0
+"$library" "${args[@]}" --repo "$PWD" --output "$output" || status=$?
+exit "$status"

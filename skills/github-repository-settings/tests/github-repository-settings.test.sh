@@ -64,12 +64,13 @@ def launcher(root):
     return root / "catalog/github-repository-settings/scripts/github-repository-settings"
 
 
-def invoke(root, verb, *args, setting="off", location="local", library=False):
+def invoke(root, verb, *args, setting="off", location="local", library=False, extra_env=None):
     env = dict(environment)
     if setting is not None:
         env["GITHUB_STANDARD_BOT_REVIEW"] = setting
     if location is not None:
         env["GITHUB_STANDARD_CHECK_LOCATION"] = location
+    env.update(extra_env or {})
     command = ([str(root / "catalog/bot-instructions/scripts/bot-instructions")]
                if library else [bash, str(launcher(root))])
     return subprocess.run([*command, verb, "--repo", str(root), *args],
@@ -157,10 +158,56 @@ def checking(root):
         if not stale:
             assert json.loads(result.stdout) == {"version": 1, "paths": []}
         assert snapshot(root) == before
-    before = snapshot(root)
-    result = invoke(root, "check", "--staged")
-    assert result.returncode == 2 and "github-repository-settings: usage=--staged\n" in result.stderr, result
-    assert snapshot(root) == before
+
+
+def staged(root):
+    # Expected output and exit classes are independent of the wrapper's selection.
+    for name, status, review, private, process, output in (
+        ("clean", 0, "off", "", {}, "local"),
+        ("stale", 1, "off", "", {}, "local"),
+        ("incomplete", 2, "off", "", {}, "local"),
+        ("absent-settings", 0, None, "", {}, "local"),
+        ("private", 0, "on", "GITHUB_STANDARD_BOT_REVIEW=off\n", {}, "local"),
+        ("process", 0, "off", "GITHUB_STANDARD_BOT_REVIEW=off\n",
+         {"GITHUB_STANDARD_BOT_REVIEW": "on", "GITHUB_STANDARD_CHECK_LOCATION": "hosted",
+          "KENDEX_ENV_FILE": "process.env"}, "full"),
+    ):
+        config = root / "kendex.settings.toml"
+        if review is None:
+            config.unlink()
+        else:
+            config.write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "hosted"\n'
+                              f'GITHUB_STANDARD_BOT_REVIEW = "{review}"\n'
+                              'KENDEX_ENV_FILE = "staged.env"\n')
+        (root / "staged.env").write_text(private)
+        (root / "tree.env").write_text("GITHUB_STANDARD_BOT_REVIEW=on\nGITHUB_STANDARD_CHECK_LOCATION=local\n")
+        (root / "process.env").write_text("GITHUB_STANDARD_BOT_REVIEW=off\nGITHUB_STANDARD_CHECK_LOCATION=local\n")
+        rendered(root, "on" if output == "full" else "off")
+        if name == "stale":
+            path = root / "AGENTS.md"
+            path.write_text(path.read_text().replace("SKILL.md#doctrine", "missing.md"))
+        subprocess.run(["git", "-C", str(root), "add", "-A"], env=environment, check=True)
+        if name == "incomplete":
+            # A staged package deletion leaves the doctrine unavailable.
+            subprocess.run(["git", "-C", str(root), "rm", "--cached", "catalog/bot-instructions/SKILL.md"],
+                           env=environment, check=True, capture_output=True)
+        config.write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "local"\n'
+                          'GITHUB_STANDARD_BOT_REVIEW = "on"\nKENDEX_ENV_FILE = "tree.env"\n')
+        before = snapshot(root)
+        result = invoke(root, "check", "--staged", "--json", setting=None,
+                        location=None, extra_env=process)
+        expected = invoke(root, "check", "--staged", "--json", "--output", output, library=True)
+        assert result.returncode == expected.returncode == status, (name, result, expected)
+        assert result.stdout == expected.stdout, (name, result, expected)
+        # The check-report protocol is consumed by command callers.
+        location = "unset" if review is None else "hosted"
+        assert result.stderr == f"github-standard-check-location={location}\n" + expected.stderr, (name, result)
+        assert snapshot(root) == before, name
+    for verb, args in (("render", ()), ("adopt", ("--dry-run",))):
+        before = snapshot(root)
+        result = invoke(root, verb, "--staged", *args)
+        assert result.returncode == 2 and "usage=--staged\n" in result.stderr, result
+        assert snapshot(root) == before
 
 
 def locations(root):
@@ -195,7 +242,7 @@ def settings(root):
 
 
 contracts = {"preview": preview, "symlink": symlink, "selection": selection,
-             "equality": equality, "checking": checking, "locations": locations,
+             "equality": equality, "checking": checking, "staged": staged, "locations": locations,
              "settings": settings}
 completed = 0
 for name, contract in contracts.items():
@@ -228,8 +275,12 @@ for name, contract, path, old, new in (
      '--output "$output"', '--output full'),
     ("check-write", checking, "bot-instructions/scripts/lib/verbs.py",
      'def check_verb(ctx):\n', 'def check_verb(ctx):\n    open(ctx.root + "/check-write", "w").close()\n'),
-    ("staged-option", checking, "github-repository-settings/scripts/github-repository-settings",
-     '    --json)', '    --staged|--json)'),
+    ("staged-settings", staged, "github-repository-settings/scripts/github-repository-settings",
+     'export REVIEW_GATE_SETTINGS_FILE="$staged_settings"', 'unset REVIEW_GATE_SETTINGS_FILE'),
+    ("staged-option", staged, "github-repository-settings/scripts/github-repository-settings",
+     'staged=true; args+=("$1")', 'staged=true'),
+    ("staged-status", staged, "github-repository-settings/scripts/github-repository-settings",
+     'exit "$status"', 'exit 0'),
     ("location-gate", locations, "github-repository-settings/scripts/github-repository-settings",
      '[ "$verb" = adopt ] && [ -z "$location" ]', '[ "$verb" = never ] && [ -z "$location" ]'),
 ):

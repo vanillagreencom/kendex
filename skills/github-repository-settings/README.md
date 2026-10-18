@@ -6,7 +6,7 @@ Select local review instructions or enabled GitHub review files for a repository
 
 - `adopt --dry-run` previews takeover without writes and reports hand edits.
 - `render` writes the selected files through bot-instructions.
-- `check` compares files without writes and reports the check location.
+- `check [--staged]` compares files without writes and reports the check location. With `--staged`, it reads settings and review files from the index. Process and private-file settings keep their precedence.
 
 ## Setup
 
