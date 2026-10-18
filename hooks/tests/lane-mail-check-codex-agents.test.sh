@@ -17,6 +17,10 @@ snapshot() { # STATUS
       {agent_name:"/root/runtime",agent_status:"idle"},
       {agent_name:"/root/reviewer",agent_status:$s}]}')"
 }
+# Status forms come from Codex 0.163.0 protocol/src/protocol.rs AgentStatus
+# and core/src/agent/status.rs. Interrupted remains unfinished there.
+# The hook refusal is the real KEN-4292 PreToolUse output. A thread-limit
+# failure or a damaged result does not prove that dispatch launched no child.
 
 new_lane codex_agents AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
@@ -28,10 +32,13 @@ codex_row() { # ROSTER RC KEY
   CALL_NUMBER=0
   usage_line codex 119200 > "$TRANSCRIPT"
   case "$roster" in
-    empty) codex_call list_agents '{}' '{"agents":[{"agent_name":"/root","agent_status":"running"}]}' ;;
+    empty | bad-call-id) codex_call list_agents '{}' '{"agents":[{"agent_name":"/root","agent_status":"running"}]}' ;;
     filtered) codex_call list_agents '{"path_prefix":"/root/reviewer"}' '{"agents":[]}' ;;
     returned | current-call) snapshot '"completed"' ;;
     returned-object) snapshot '{"completed":"Review complete."}' ;;
+    completed-null) snapshot '{"completed":null}' ;;
+    errored) snapshot '{"errored":"Agent turn failed."}' ;;
+    shutdown | not_found | pending_init | interrupted) snapshot "\"$roster\"" ;;
     out) snapshot '"running"' ;;
     spawned | spawned-returned) snapshot '"completed"'
       codex_call collaboration.spawn_agent '{"task_name":"reviewer"}' '{"task_name":"/root/reviewer"}'
@@ -39,15 +46,37 @@ codex_row() { # ROSTER RC KEY
     resumed | resumed-relative) snapshot '"completed"'
       target=/root/reviewer
       [ "$roster" != resumed-relative ] || target=reviewer
-      codex_call collaborationfollowup_task "$(jq -nc --arg t "$target" '{target:$t,message:"Review again."}')" 'delivered' ;;
-    waited) snapshot '"running"'
-      codex_call wait_agent '{}' '{"summary":"agent updates available"}' ;;
+      codex_call collaborationfollowup_task "$(jq -nc --arg t "$target" '{target:$t,message:"Review again."}')" '' ;;
+    waited | waited-returned) snapshot '"running"'
+      codex_call wait_agent '{}' '{"summary":"agent updates available"}'
+      [ "$roster" != waited-returned ] || snapshot '"completed"' ;;
+    refused | refused-returned | refused-running) snapshot '"running"'
+      codex_call spawn_agent '{"task_name":"later"}' 'Tool call blocked by PreToolUse hook: lane-mail-check: agent-reserve=collaborationspawn_agent tokens=251134 reserve=150000'
+      [ "$roster" != refused-returned ] || snapshot '"completed"'
+      [ "$roster" != refused ] || snapshot '"idle"' ;;
+    refused-only) codex_call spawn_agent '{"task_name":"later"}' \
+      'Tool call blocked by PreToolUse hook: lane-mail-check: agent-unobserved=collaborationspawn_agent tokens=251134 reserve=150000' ;;
+    failed-spawn | recovered-spawn | missing-name | recovered-name) snapshot '"completed"'
+      output='Agent thread limit reached'
+      case "$roster" in missing-name | recovered-name) output='{}' ;; esac
+      codex_call spawn_agent '{"task_name":"later"}' "$output"
+      case "$roster" in recovered-*) snapshot '"completed"' ;; esac ;;
+    pending-followup | resolved-followup) snapshot '"completed"'
+      codex_call followup_task '{"target":"/root/reviewer","message":"Review again."}'
+      pending_call="call-$CALL_NUMBER"
+      snapshot '"completed"'
+      [ "$roster" != resolved-followup ] || jq -nc --arg id "$pending_call" \
+        '{type:"response_item",payload:{type:"function_call_output",call_id:$id,output:""}}' >> "$TRANSCRIPT" ;;
     pending | prior-pending) snapshot '"completed"'; codex_call spawn_agent '{"task_name":"later"}' ;;
     concurrent) snapshot '"completed"'; codex_call spawn_agent '{"task_name":"pending"}'
       codex_call spawn_agent '{"task_name":"later"}' '{"task_name":"/root/later"}' ;;
-    unknown-status) snapshot '"paused"' ;;
+    unknown-status | recovered-status | filtered-recovery) snapshot '"paused"'
+      [ "$roster" != recovered-status ] || snapshot '"completed"'
+      [ "$roster" != filtered-recovery ] || codex_call list_agents '{"path_prefix":"/root/runtime"}' '{"agents":[]}' ;;
+    malformed-status) snapshot '{"completed":false}' ;;
     malformed) snapshot '"completed"'; printf '{broken\n' >> "$TRANSCRIPT" ;;
-    bad-result) codex_call list_agents '{}' '{"agents":null}' ;;
+    bad-result | recovered-result) codex_call list_agents '{}' '{"agents":null}'
+      [ "$roster" != recovered-result ] || snapshot '"completed"' ;;
     history) snapshot '"running"'
       jq -nc '{type:"response_item",payload:{type:"message",content:("x" * 1048576)}}' >> "$TRANSCRIPT"
       usage_line codex 119200 >> "$TRANSCRIPT" ;;
@@ -55,8 +84,9 @@ codex_row() { # ROSTER RC KEY
   codex_call collaborationspawn_agent '{"task_name":"current"}'
   current_call="call-$CALL_NUMBER"
   if ! command -v timeout >/dev/null 2>&1; then rc=2; key=agent-unobserved; fi
-  run_payload "$(jq -nc --arg p "$TRANSCRIPT" --arg id "$current_call" \
-    '{session_id:"s1",transcript_path:$p,tool_use_id:$id,tool_name:"collaborationspawn_agent",tool_input:{}}')" \
+  run_payload "$(jq -nc --arg p "$TRANSCRIPT" --arg id "$current_call" --arg row "$roster" \
+    '{session_id:"s1",transcript_path:$p,tool_use_id:(if $row == "bad-call-id" then false else $id end),
+      tool_name:"collaborationspawn_agent",tool_input:{}}')" \
     ORCH_HANDOFF_AGENT_RESERVE_TOKENS=10000
   if [ "$rc" = 0 ]; then
     expect 0 - "Codex roster $roster admits the launch past the reserve"
@@ -72,21 +102,70 @@ filtered|2|agent-unobserved
 returned|0|-
 current-call|0|-
 returned-object|0|-
+completed-null|0|-
+errored|0|-
+shutdown|0|-
+not_found|0|-
+pending_init|2|agent-reserve
+interrupted|2|agent-reserve
 out|2|agent-reserve
 spawned|2|agent-reserve
 spawned-returned|0|-
 resumed|2|agent-reserve
 resumed-relative|2|agent-reserve
 waited|2|agent-reserve
+waited-returned|0|-
+refused|0|-
+refused-returned|0|-
+refused-running|2|agent-reserve
+refused-only|2|agent-unobserved
+failed-spawn|2|agent-unobserved
+recovered-spawn|0|-
+missing-name|2|agent-unobserved
+recovered-name|0|-
+pending-followup|2|agent-unobserved
+resolved-followup|2|agent-reserve
 pending|2|agent-unobserved
 prior-pending|2|agent-unobserved
 concurrent|2|agent-unobserved
 unknown-status|2|agent-unobserved
+recovered-status|0|-
+filtered-recovery|2|agent-unobserved
+malformed-status|2|agent-unobserved
 malformed|2|agent-unobserved
 bad-result|2|agent-unobserved
+recovered-result|0|-
+bad-call-id|2|agent-unobserved
 history|2|agent-reserve
 ROWS
 ARM_ARGS=()
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  # Clock injection represents earlier hook work spending the scan budget.
+  # Clearing the bound and adapter represents hosts without timeout and
+  # installations with an older adapter, without changing the roster reader.
+  for cause in timeout-unavailable budget-exhausted adapter-unloaded tool-use-id; do
+    row=empty
+    case "$cause" in
+      timeout-unavailable) wake_mutant codex-no-timeout \
+        '! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$ACCOUNT_CEILING")' 'BOUND_BY=()' ;;
+      budget-exhausted) wake_mutant codex-budget \
+        '    local agents scan_seconds scan_rc=0 id status current_call' \
+        '    local agents scan_seconds scan_rc=0 id status current_call; HOOK_AGENT_DEADLINE=$SECONDS' ;;
+      adapter-unloaded) wake_mutant codex-old-adapter \
+        '    local agents scan_seconds scan_rc=0 id status current_call' \
+        '    local agents scan_seconds scan_rc=0 id status current_call; unset -f lane_adapter_codex_agents' ;;
+      tool-use-id) MUTANT_PATH="$HOOK"; row=bad-call-id ;;
+    esac
+    if [ "$cause" = budget-exhausted ] && ! command -v timeout >/dev/null 2>&1; then continue; fi
+    install_hook "$MUTANT_PATH" "$LANE/.codex/hooks/lane-mail-check.sh"
+    ARM_ARGS=(halt)
+    codex_row "$row" 2 agent-unobserved
+    assert_eq "$(sed -n 's/^lane-mail-check: agent-scan=//p' "$ERR_FILE")" "$cause" "Codex $cause reports its scan cause"
+  done
+  install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
+  ARM_ARGS=()
+fi
 
 # The same unknown-roster refusal must give the fleet overseer a route even
 # below its plain handoff mark, where succession would refuse.

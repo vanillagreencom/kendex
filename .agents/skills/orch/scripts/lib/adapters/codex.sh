@@ -52,45 +52,69 @@ lane_adapter_codex_reading() { # UNREAD
 # PreToolUse.tool_use_id names the invocation being judged, which is not an
 # earlier launch even where its call is already in the rollout:
 # https://learn.chatgpt.com/docs/hooks#pretooluse
+# AgentStatus and agent/status.rs in Codex 0.163.0 define the states below.
+# Interrupted is not final. A later full list replaces uncertain observations,
+# but cannot settle a call that has not returned yet.
 lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
   jq -Rnr --arg current_call "${1:-}" '
     def decoded: if type == "string" then fromjson else . end;
     def status:
-      if type == "object" then keys | if length == 1 then .[0] else "unknown" end else . end
+      if type == "object" then
+        if keys == ["completed"] and (.completed == null or (.completed | type) == "string") then "completed"
+        elif keys == ["errored"] and (.errored | type) == "string" then "errored"
+        else "unknown" end
+      else . end
       | if . == "idle" or . == "completed" then "completed"
-        elif . == "running" then "running" else error("unclassified agent status") end;
+        elif . == "errored" or . == "shutdown" or . == "not_found" then "completed"
+        elif . == "running" or . == "pending_init" or . == "interrupted" then "running"
+        else "unknown" end;
     def name: if type == "string" and test("^/root(/[A-Za-z0-9_-]+)*$") then .
       else error("invalid agent name") end;
     reduce (inputs | fromjson | objects | select(.type == "response_item") | .payload
         | select($current_call == "" or .call_id != $current_call)) as $r
-      ({calls: {}, agents: {}, observed: false};
+      ({calls: {}, agents: {}, observed: false, unread: false};
         if $r.type == "function_call" then
           ($r.name | split(".") | last | sub("^collaboration"; "")) as $tool
           | if $tool == "list_agents" or $tool == "spawn_agent" or $tool == "followup_task" then
               ($r.arguments | decoded) as $args
-              | if $tool != "list_agents" or ($args.path_prefix // "") == ""
-                  or $args.path_prefix == "/root" then .observed = true else . end
-              | .calls[$r.call_id] = {tool: $tool}
+              | .calls[$r.call_id] = {tool: $tool,
+                  full: (($args.path_prefix // "") == "" or $args.path_prefix == "/root")}
               | if $tool == "followup_task" then
                   ($args.target | if startswith("/") then . else "/root/" + . end | name) as $target
-                  | .agents[$target] = "running"
+                  | .calls[$r.call_id].target = $target
                 else . end
             else . end
         elif $r.type == "function_call_output" and .calls[$r.call_id] != null then
-          .calls[$r.call_id].tool as $tool
-          | (if $tool == "followup_task" then null else $r.output | decoded end) as $out
-          | if $tool == "list_agents" then
-              if ($out.agents | type) != "array" then error("agent list is unreadable") else . end
-              | reduce $out.agents[] as $agent (. ; ($agent.agent_name | name) as $id
-                  | if $id == "/root" then . else .agents[$id] = ($agent.agent_status | status) end)
-            elif $tool == "spawn_agent" then
-              ($out.task_name | name) as $id | .agents[$id] = "running"
-            else . end
+          .calls[$r.call_id] as $call
+          | . as $before
+          | try (
+              # PreToolUse refuses before dispatch. Other plain text, including
+              # a tool failure after dispatch, proves no such absence of work.
+              if ($r.output | type) == "string"
+                  and ($r.output | startswith("Tool call blocked by PreToolUse hook: ")) then .
+              elif $call.tool == "list_agents" then
+                if $call.full then
+                  ($r.output | decoded) as $out
+                  | if ($out.agents | type) != "array" then error("agent list is unreadable") else . end
+                  | .agents = (reduce $out.agents[] as $agent ({}; ($agent.agent_name | name) as $id
+                      | if $id == "/root" then . else .[$id] = ($agent.agent_status | status) end))
+                  | .unread = false | .observed = true
+                else . end
+              elif $call.tool == "spawn_agent" then
+                ($r.output | decoded | .task_name | name) as $id
+                | .agents[$id] = "running" | .observed = true
+              else
+                # The V2 followup producer returns an empty string on success.
+                .agents[$call.target] = (if $r.output == "" then "running" else "unknown" end)
+                | .observed = true
+              end
+            ) catch ($before | .unread = true)
           | del(.calls[$r.call_id])
         else . end)
-    | (.agents | to_entries[] | [.key, .value] | @tsv),
-      (select(.observed | not) | ["?", "unread"] | @tsv),
-      (.calls[] | select(.tool == "spawn_agent" or .tool == "list_agents") | ["?", "pending"] | @tsv)'
+    | (.agents | to_entries[] | if .value == "unknown" then ["?", "agent-status"]
+        else [.key, .value] end | @tsv),
+      (select((.observed | not) or .unread) | ["?", "unread"] | @tsv),
+      (.calls[] | ["?", "pending"] | @tsv)'
 }
 
 # lane_adapter_codex_transcript_owned PATH SESSION HOME — whether PATH is the
