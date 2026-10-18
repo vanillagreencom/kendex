@@ -21,7 +21,7 @@ message() { # KEY VALUE [CAUSE]
     printf 'lane-marker: %s=%s\n' "$1" "$2"
     case "$1" in
       args)
-        echo "lane-marker takes WORKTREE ITEM with an optional resumed HARNESS SESSION pair, either form after an optional --lane-refresh, or --marker-path COMMON_GIT_DIR ITEM, or --refresh-path GIT_DIR"
+        echo "lane-marker takes WORKTREE ITEM with an optional resumed HARNESS SESSION pair, after optional --launch-record JSON and --lane-refresh, or --launch-contents JSON MODEL, --marker-path COMMON_GIT_DIR ITEM, --launch-path COMMON_GIT_DIR ITEM, or --refresh-path GIT_DIR"
         ;;
       item)
         echo "the item is not spelled in the alphabet a work item is spelled in, ASCII letters, digits, dot, underscore and hyphen, and is never . or ..; refusing rather than composing a path it does not name"
@@ -52,8 +52,11 @@ usage() {
   cat << 'EOF'
 Usage: lane-marker WORKTREE ITEM
        lane-marker WORKTREE ITEM HARNESS SESSION
+       lane-marker --launch-record JSON WORKTREE ITEM [HARNESS SESSION]
+       lane-marker --launch-contents JSON MODEL
        lane-marker --lane-refresh WORKTREE ITEM [HARNESS SESSION]
        lane-marker --marker-path COMMON_GIT_DIR ITEM
+       lane-marker --launch-path COMMON_GIT_DIR ITEM
        lane-marker --refresh-path GIT_DIR
 
 Write a lane's launch record, both halves of it:
@@ -64,6 +67,19 @@ Write a lane's launch record, both halves of it:
 and the refresh record beside them:
 
   <WORKTREE git dir>/lane-refresh                   holds the lane's root
+
+The path marker holds only the root and a final newline. A separate record
+holds optional launch fields:
+
+  <common git dir>/lane-launch/<item in lower case>.json
+
+This record is one JSON object. `model` is the recorded launch model.
+`identity_file` names the native predecessor record the SSH prefix writes
+before the harness starts. `--launch-contents` prints these fields for a
+launcher that writes through its host transport. MODEL adds
+the controller's recorded model while retaining the native launch fields.
+`--launch-path` prints the record's path without writing it. A launch without
+`--launch-record` removes a previous launch record.
 
 `--lane-refresh` writes the refresh record, which says the launch asked for a
 refresh lane, one whose brief runs `kendex refresh` or `kendex apply` with the
@@ -95,17 +111,18 @@ itself would be a second spelling of the one this script writes.
 directory it is given; that launcher writes the root there for a refresh lane
 and empties the file otherwise, an empty record reading as no refresh lane.
 
-Containment: five components must be plain, never a symlink and never another
+Containment: the components must be plain, never a symlink and never another
 kind of file. Under the common git directory, `lane-mail` and the marker in it;
 under the worktree, `tmp/lane-mail` and the item's own directory in it; the
-refresh record in the worktree git directory. `tmp` itself is left alone,
+refresh record in the worktree git directory; `lane-launch` and the launch
+record under the common git directory. `tmp` itself is left alone,
 because a worktree setup may link it. A component outside that rule would put
 the marker, the mailbox or the refresh record somewhere the lane never reads,
 and the refusal names the one that broke it.
 
 Exit status:
   0  both halves stand (and the refresh record, with `--lane-refresh`), or
-     `--marker-path` or `--refresh-path` printed the path
+     `--launch-contents` printed the launch record, or a path option printed its path
   2  a component is not what it names, the item is outside the alphabet a work
      item is spelled in, a git or context read failed, or a write failed; the cause is one
      `lane-marker: <key>=<value>` line on stderr with the English under it
@@ -139,12 +156,39 @@ refresh_path() { # GIT_DIR
   printf '%s/lane-refresh\n' "$1"
 }
 
+# The launch fields live apart from path markers read by released CLIs.
+launch_path() { # COMMON_GIT_DIR ITEM
+  local marker
+  marker=$(marker_path "$1" "$2")
+  printf '%s/lane-launch/%s.json\n' "$1" "${marker##*/}"
+}
+
+launch_contents() { # LAUNCH_RECORD MODEL
+  local record
+  record=$(jq -nc --argjson record "$1" --arg model "$2" '$record + {model:$model}' 2>&1) || refuse args launch-record "$record"
+  printf '%s\n' "$record"
+}
+
 [ "${1:-}" != --help ] || { usage; exit 0; }
+
+if [ "${1:-}" = --launch-contents ]; then
+  [ "$#" -eq 3 ] || refuse args "$#"
+  shift
+  launch_contents "$@"
+  exit 0
+fi
 
 if [ "${1:-}" = --marker-path ]; then
   [ "$#" -eq 3 ] || refuse args "$#"
   check_item "$3"
   marker_path "$2" "$3"
+  exit 0
+fi
+
+if [ "${1:-}" = --launch-path ]; then
+  [ "$#" -eq 3 ] || refuse args "$#"
+  check_item "$3"
+  launch_path "$2" "$3"
   exit 0
 fi
 
@@ -155,6 +199,12 @@ if [ "${1:-}" = --refresh-path ]; then
 fi
 
 REFRESH=false
+LAUNCH_RECORD=""
+if [ "${1:-}" = --launch-record ]; then
+  [ "$#" -ge 2 ] || refuse args "$#"
+  LAUNCH_RECORD=$(jq -ce 'select(type == "object")' <<<"$2" 2>&1) || refuse args launch-record "$LAUNCH_RECORD"
+  shift 2
+fi
 if [ "${1:-}" = --lane-refresh ]; then
   REFRESH=true
   shift
@@ -177,17 +227,18 @@ GIT_DIR=$(git -C "$WT" rev-parse --absolute-git-dir 2>&1) || GIT_DIR_RC=$?
 [ "$GIT_DIR_RC" -eq 0 ] || refuse git 'rev-parse --absolute-git-dir' "$GIT_DIR"
 MARKER=$(marker_path "$COMMON" "$ITEM")
 REFRESH_RECORD=$(refresh_path "$GIT_DIR")
+LAUNCH_PATH=$(launch_path "$COMMON" "$ITEM")
 BOX="$ROOT/tmp/lane-mail/$ITEM"
 
 # Judged before anything is created, so a refusal leaves the tree as it was.
-for path in "$COMMON/lane-mail" "$ROOT/tmp/lane-mail" "$BOX"; do
+for path in "$COMMON/lane-mail" "$COMMON/lane-launch" "$ROOT/tmp/lane-mail" "$BOX"; do
   { [ ! -L "$path" ] && { [ ! -e "$path" ] || [ -d "$path" ]; }; } || refuse unsafe "$path"
 done
-for path in "$MARKER" "$REFRESH_RECORD"; do
+for path in "$MARKER" "$REFRESH_RECORD" "$LAUNCH_PATH"; do
   { [ ! -L "$path" ] && { [ ! -e "$path" ] || [ -f "$path" ]; }; } || refuse unsafe "$path"
 done
 
-MADE=$(mkdir -p -- "$COMMON/lane-mail" "$BOX" 2>&1) || refuse write "$BOX" "$MADE"
+MADE=$(mkdir -p -- "$COMMON/lane-mail" "$COMMON/lane-launch" "$BOX" 2>&1) || refuse write "$BOX" "$MADE"
 
 # A resumed session keeps its context. The launcher supplies the selected
 # identity; a fresh or different session cannot inherit this reading.
@@ -217,16 +268,21 @@ fi
 # The rename consumes it, so this removes nothing on the path that worked.
 STAGED=""
 trap '[ -z "$STAGED" ] || rm -f -- "${STAGED:?}"' EXIT
-write_root() { # RECORD
+write_record() { # RECORD CONTENTS
   local staged wrote
   staged=$(mktemp "${1%/*}/.${1##*/}.XXXXXX" 2>&1) || refuse write "$1" "$staged"
   STAGED=$staged
-  wrote=$({ printf '%s\n' "$ROOT" > "$STAGED" && mv -f -- "$STAGED" "$1"; } 2>&1) ||
+  wrote=$({ printf '%s\n' "$2" > "$STAGED" && mv -f -- "$STAGED" "$1"; } 2>&1) ||
     refuse write "$1" "$wrote"
 }
-write_root "$MARKER"
+write_record "$MARKER" "$ROOT"
+if [ -n "$LAUNCH_RECORD" ]; then
+  write_record "$LAUNCH_PATH" "$LAUNCH_RECORD"
+else
+  CLEARED=$(rm -f -- "${LAUNCH_PATH:?}" 2>&1) || refuse write "$LAUNCH_PATH" "$CLEARED"
+fi
 if [ "$REFRESH" = true ]; then
-  write_root "$REFRESH_RECORD"
+  write_record "$REFRESH_RECORD" "$ROOT"
 else
   CLEARED=$(rm -f -- "${REFRESH_RECORD:?}" 2>&1) || refuse write "$REFRESH_RECORD" "$CLEARED"
 fi

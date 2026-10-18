@@ -2292,7 +2292,7 @@ host_marker_busy() { # STATUS
 # first `lane-mail append` that reaches it creates it under the lock that host
 # holds; nothing here can take that lock.
 host_lane_marker() { # ITEM ROOT
-  local gitfile common marker read_back git_dir refresh
+  local gitfile common marker read_back git_dir refresh launch launch_record contents model read_rc=0
   LANE_MARKER_REASON=host-gitfile-unread
   LANE_MARKER_FIELDS=("path=$2/.git")
   gitfile="$(host_transport cat --item "$1" "$2/.git")" || { host_marker_busy $?; return 1; }
@@ -2306,6 +2306,15 @@ host_lane_marker() { # ITEM ROOT
   printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || { host_marker_busy $?; return 1; }
   read_back="$(host_transport cat --item "$1" "$marker")" || { host_marker_busy $?; return 1; }
   [[ "$read_back" == "$2" ]] || return 1
+  launch="$("$SCRIPT_DIR/lane-marker" --launch-path "$common" "$1")" || return 1
+  LANE_MARKER_FIELDS=("path=$launch")
+  launch_record="$(host_transport cat --item "$1" "$launch")" || read_rc=$?
+  case "$read_rc" in 0) ;; 2) launch_record='{}' ;; *) host_marker_busy "$read_rc"; return 1 ;; esac
+  model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" launch)" || return 1
+  contents="$("$SCRIPT_DIR/lane-marker" --launch-contents "$launch_record" "$model")" || return 1
+  printf '%s\n' "$contents" | host_transport put --item "$1" "$launch" || { host_marker_busy $?; return 1; }
+  read_back="$(host_transport cat --item "$1" "$launch")" || { host_marker_busy $?; return 1; }
+  [[ "$read_back" == "$contents" ]] || return 1
   # The refresh record, which the host has no verb to delete: a launch that is
   # no refresh lane empties it, and the hook reads an empty record as none.
   LANE_MARKER_REASON=marker-failed

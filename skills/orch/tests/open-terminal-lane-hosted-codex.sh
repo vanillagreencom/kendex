@@ -82,7 +82,7 @@ OPEN_TERMINAL="$CODEX_OT_SHIPPED"
 HOSTED_LINE="$(hosted_line issue-2708)"
 run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane "$H/.eclaude" --repo o/r --relaunch 2708
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume issue-2708 github-2708 '/orch start github o/r#2708')")" \
-  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;put,--item,issue-2708,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
+  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-launch/issue-2708.json;put,--item,issue-2708,/srv/clone/.git/lane-launch/issue-2708.json;cat,--item,issue-2708,/srv/clone/.git/lane-launch/issue-2708.json;put,--item,issue-2708,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number, and asks the provider nothing beyond the judge's one accounts read on an account that measured"
 
 

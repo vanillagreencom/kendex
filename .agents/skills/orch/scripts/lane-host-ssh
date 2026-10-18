@@ -801,7 +801,8 @@ if [ ! -x "$marker" ]; then
   printf 'the host clone predates the launch record writer; refresh it to a build carrying that script\\n' >&2
   exit 1
 fi
-exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
+exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
+           json.dumps({"identity_file": row["clone"] + IDENTITY_FILE}))
     pi_root = f"\tpi-root={remote_account}" if args.harness == "pi" else ""
     lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{pi_root}\n".encode())
 

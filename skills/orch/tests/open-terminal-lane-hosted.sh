@@ -44,7 +44,7 @@ assert_failed_cd() { # OBSERVATION
 }
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;cmd=$CD_HARNESS --model opus --effort high" --harness claude --lane work --repo o/r KEN-40
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN=") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=KEN-40 host=$HOST_STUB path=/srv/lane")" \
-  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;put,--item,KEN-40,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-launch/ken-40.json;put,--item,KEN-40,/srv/clone/.git/lane-launch/ken-40.json;cat,--item,KEN-40,/srv/clone/.git/lane-launch/ken-40.json;put,--item,KEN-40,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 assert_eq "$(ot_hosted_relaunch_text "$RUN/tmux.log")" \
   "exec bash -lc 'cd /srv/lane && export KENDEX_LANE_ORIGIN='/srv/lane' && $SCRUB_UNSET export KENDEX_USER_EMAIL='' && $CD_HARNESS --model opus --effort high $QUESTION_OFF_ALL'" \
@@ -56,6 +56,40 @@ assert_failed_cd "$(cd_guard_result 1)"
 # The refresh record belongs to the hosted worktree's git directory, not its
 # root. Without --lane-refresh the drift hook must read an empty record.
 assert_eq "refresh=$(hosted_refresh)" "refresh=[]" "a hosted launch without --lane-refresh empties the refresh record"
+
+# SSH create supplies the native identity file before the controller verifies
+# the marker. The controller's rewrite must retain that recovery evidence.
+MARKER_HOST="$TMP_ROOT/marker-host"
+cat > "$MARKER_HOST" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == create ]]; then
+  item=$(printf '%s' "$3" | tr 'A-Z' 'a-z')
+  mkdir -p "$LANE_HOST_STUB_DIR/srv/clone/.git/lane-launch"
+  printf '%s\n' '{"identity_file":"/srv/clone/.git/lane-host-pid"}' \
+    > "$LANE_HOST_STUB_DIR/srv/clone/.git/lane-launch/$item.json"
+fi
+exec "$MARKER_PROVIDER" "$@"
+SH
+chmod +x "$MARKER_HOST"
+hosted_marker_run() {
+  run_ot "MARKER_PROVIDER=$HOST_STUB;$CHOICE_CMD" --host "$MARKER_HOST" --harness claude --lane "$H/.eclaude" --repo o/r KEN-4006
+  local record
+  record=$(cat "$RUN/remote/srv/clone/.git/lane-launch/ken-4006.json") || return 1
+  MARKER_OBSERVATION=$(jq -c '{model,identity_file}' <<<"$record") || return 1
+}
+hosted_marker_run
+assert_eq "rc=$RC record=$MARKER_OBSERVATION" \
+  'rc=0 record={"model":"opus","identity_file":"/srv/clone/.git/lane-host-pid"}' \
+  'the controller marker rewrite retains the native recovery identity'
+MARKER_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts marker-fields/orch lane-marker)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/marker-fields/orch"
+mutate_file "${OPEN_TERMINAL%/*}/lane-marker" '$record + {model:$model}' '{model:$model}'
+hosted_marker_run
+assert_eq "rc=$RC record=$MARKER_OBSERVATION" 'rc=0 record={"model":"opus","identity_file":null}' \
+  'control: replacing the named fields loses the native recovery identity'
+OPEN_TERMINAL="$MARKER_OT_SHIPPED"
 CD_GUARD_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-hosted-cd/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-hosted-cd/orch"
@@ -211,7 +245,7 @@ OPEN_TERMINAL="$ID_OT_SHIPPED"
 HOSTED_LINE="$(hosted_line KEN-41)"
 run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch KEN-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume KEN-41 KEN-41 '/orch start KEN-41')")" \
-  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,KEN-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,KEN-41,/srv/lane/.git;put,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;put,--item,KEN-41,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-41,/srv/lane/tmp/lane-mail/KEN-41/context.json remote=1" \
+  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,KEN-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,KEN-41,/srv/lane/.git;put,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-launch/ken-41.json;put,--item,KEN-41,/srv/clone/.git/lane-launch/ken-41.json;cat,--item,KEN-41,/srv/clone/.git/lane-launch/ken-41.json;put,--item,KEN-41,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-41,/srv/lane/tmp/lane-mail/KEN-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
 assert_eq "$(cd_guard_result 0)" 'rc=0 cd=attempted harness=started' \
   'the hosted resume group starts its harness after a successful cd'

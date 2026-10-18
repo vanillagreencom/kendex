@@ -70,6 +70,27 @@ assert_eq "$(mark KEN-1)" "rc=0 first=- marker=root box=made" \
 assert_eq "$(mark KEN-1)" "rc=0 first=- marker=root box=made" \
   "a second launch of the same item leaves both standing"
 
+# SSH create writes native launch fields. A later local open-terminal call
+# supplies no fields, so the owner must remove the predecessor's record.
+new_tree launch-fields
+LAUNCH_JSON='{"model":"claude-fable-5-1","identity_file":"/srv/clone/.git/lane-host-pid"}'
+"$LANE_MARKER" --launch-record "$LAUNCH_JSON" "$WT" KEN-40
+LAUNCH_PATH="$("$LANE_MARKER" --launch-path "$WT/.git" KEN-40)"
+assert_eq "$(cat "$LAUNCH_PATH")" "$LAUNCH_JSON" \
+  'the launch record contains the named native fields at the path its owner prints'
+assert_eq "$(cat "$WT/.git/lane-mail/ken-40")" "$WT" \
+  'native launch fields leave the path marker unchanged'
+"$LANE_MARKER" "$WT" KEN-40
+assert_eq "record=$([[ -e "$LAUNCH_PATH" ]] && echo present || echo absent) root=$(cat "$WT/.git/lane-mail/ken-40")" \
+  "record=absent root=$WT" 'a launch without fields removes the predecessor launch record'
+
+LAUNCH_CONTROL="$(mutant_scripts launch-control lane-marker)" || exit 1
+mutate_file "$LAUNCH_CONTROL/lane-marker" 'rm -f -- "${LAUNCH_PATH:?}"' 'true "${LAUNCH_PATH:?}"'
+"$LANE_MARKER" --launch-record "$LAUNCH_JSON" "$WT" KEN-40
+"$LAUNCH_CONTROL/lane-marker" "$WT" KEN-40
+assert_eq "$([[ -f "$LAUNCH_PATH" ]] && echo retained || echo absent)" retained \
+  'control: ignoring launch-record removal retains the predecessor fields'
+
 # The hook writes the harness and session id together. The launcher supplies
 # the selected resumed identity, or no identity for a fresh session.
 while IFS='|' read -r name recorded_harness recorded_session harness session retained; do

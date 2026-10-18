@@ -270,8 +270,8 @@ CC-39163|fable-5-1[1m]|claude-fable-5-1
 ROWS
 MODEL_RECORD_CTL="$(mutant_scripts model-recordctl open-terminal)" || exit 1
 mutate_file "$MODEL_RECORD_CTL/open-terminal" \
-  'launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" launch' \
-  'launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" resolved'
+  'record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" launch)"' \
+  'record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" resolved)"'
 run_ot SCRIPT="$MODEL_RECORD_CTL/open-terminal" --ghostty --harness claude \
   --cmd "true --model opusplan --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-39164
 MODEL_RECORD_CONTROL="$(FAIL=0; assert_eq "$RC|$(field "$(record CC-39164)" model)" '0|opusplan' \
