@@ -394,7 +394,7 @@ run_rows \
   "a symlinked hook whose target cannot be read fails the uninstall and keeps the helper|fx_dangling_shim||uninstall||rc=1 $WARN hook-symlink-unreadable=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/dangling-target[dangling] commit-msg=absent pre-push=absent hooksPath=<unset>" \
   "an unreadable managed hook fails the uninstall and keeps the helper|fx_unreadable_shim||uninstall||rc=1 $WARN hook-read=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=-wx------:unreadable commit-msg=absent pre-push=absent hooksPath=<unset>"
 
-echo "=== citation defaults in a real pre-commit ==="
+echo "=== repository citation selection in a real pre-commit ==="
 # skills scripts produce extensionless carriers. Unsupported comment grammars
 # stay unmeasured even when their bytes contain the same invalid citation.
 unset COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_SOURCE_PATHS \
@@ -412,7 +412,8 @@ for row in \
   git -C "$R" config gc.auto 0
   git -C "$R" config maintenance.auto false
   stage .gitignore '.agents/\n'
-  settings 'COMMIT_GUARDS_CHECKS = "md-refs"'
+  repo_source_setting="$(sed -n '/^COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = /p' "$SKILL_DIR/../../kendex.settings.toml")"
+  settings "COMMIT_GUARDS_CHECKS = \"md-refs\"\n$repo_source_setting"
   seed
   mkdir -p "$R/docs" "$R/skills/x/scripts"
   stage docs/guide.md '# Guide\n\n## Rules\n\nSee [Guide \302\247 Rules](guide.md#rules).\n'
@@ -437,6 +438,14 @@ for row in \
     done <<<"$OUT"
     assert_eq "$name: the document target is measured" absent "$unmeasured"
     assert_eq "$name: the summary has no grammar skip" absent "$grammar"
+  fi
+  if [ "$name" = shell ]; then
+    settings 'COMMIT_GUARDS_CHECKS = "md-refs"'
+    commit_in "$R" 'fix: cite a rule without source opt-in'
+    control_status=0
+    (PASS=0; FAIL=0; assert_eq 'repository opt-in' "$expected" "$RC"; [ "$FAIL" -eq 0 ]) \
+      >"$TMP/control-repository-opt-in.log" 2>&1 || control_status=$?
+    assert_eq 'control: removing the repository opt-in turns the refusal assertion red' 1 "$control_status"
   fi
 done
 

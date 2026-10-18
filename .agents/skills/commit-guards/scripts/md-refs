@@ -51,8 +51,8 @@ source "$SCRIPT_DIR/lib/comment-text.sh"
 # at; each name spelled at the root and below it, as the prose lane spells
 # them.
 PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
-# Discover all carriers; the extractor selects a grammar, including shebangs.
-SOURCE_PATHS_DEFAULT="*"
+# Broader discovery is opt-in because every scan rechecks unchanged files.
+SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"
 SECTION_SIGN=$'\302\247'
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
 SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
@@ -123,6 +123,9 @@ kendex.settings.toml [env] > default):
                                 or the replacing value (default empty)
                                 Each combined base and EXTRA list must name
                                 a path; an empty combined list is refused.
+                                Set the source EXTRA list to '*' to include
+                                extensionless scripts; their shebang selects
+                                the comment grammar.
   COMMIT_GUARDS_MD_EXCLUDES     exclusion list, pattern<TAB>reason per line
                                 (default $GG_MD_EXCLUDES_DEFAULT)
   COMMIT_GUARDS_MD_SCOPE        touched | all (default $GG_MD_SCOPE_DEFAULT)

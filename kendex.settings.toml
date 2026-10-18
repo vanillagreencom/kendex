@@ -353,6 +353,9 @@ COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
 # vendored text they leave alone.
 COMMIT_GUARDS_MD_SCOPE = "all"
 
+# Catalog scripts include extensionless files; judge their citations here.
+COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = "*"
+
 GH_BOT_USERNAME = ""
 GH_VERIFY_CMD = ""
 

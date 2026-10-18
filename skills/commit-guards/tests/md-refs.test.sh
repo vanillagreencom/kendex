@@ -42,15 +42,16 @@ assert_eq() { # LABEL EXPECT ACTUAL
 # stable record printed, in order, joined by ';'. ENVS is a comma-separated list of
 # assignments; ARGS are passed through.
 R=""
-run() { # ENVS ARGS
-  local envs=() rc=0 out=""
+run() { # ENVS ARGS [default-sources]
+  local envs=() rc=0 out="" sources=('COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=*.rs *.ts *.sh *.toml *.svg *.h *.c')
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  [ "${3:-}" != default-sources ] || sources=()
   # These grammar fixtures select their source extensions explicitly. Real
   # commits in install-git-hooks.test.sh exercise the default discovery.
   # shellcheck disable=SC2086
   out="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" \
     XDG_CONFIG_HOME="$XDG_CONFIG_HOME" GIT_CONFIG_NOSYSTEM=1 LC_ALL=C \
-    COMMIT_GUARDS_MD_REFS_SOURCE_PATHS='*.rs *.ts *.sh *.toml *.svg *.h *.c' \
+    ${sources[@]+"${sources[@]}"} \
     ${envs[@]+"${envs[@]}"} "$MDR" $2 2>&1)" || rc=$?
   out="$(printf '%s\n' "$out" | LC_ALL=C awk '
     /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
@@ -642,6 +643,34 @@ for control in warn strict position; do
   assert_eq "control: $control mutant turns its assertion red" 1 "$status"
 done
 MDR="$REAL_MDR"
+
+echo "=== extension-list default and extensionless opt-in ==="
+# Consumer tools produce extensionless scripts; every scan rechecks them
+# once their source-path list selects them.
+for row in \
+  'default|run||0|0|0' \
+  'extra|run|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=*|1|1|1' \
+  'explicit|run|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=run|1|1|1' \
+  'listed|run.sh||1|1|1'; do
+  IFS='|' read -r name carrier settings rc references sources <<<"$row"
+  repo "source-default-$name"
+  put AGENTS.md '# Rules\n'
+  put "$carrier" '#!/usr/bin/env bash\n# absent.md \302\247 Rules\n'
+  expected="rc=0 $(clean 0 1)"
+  [ "$rc" -eq 0 ] || expected="rc=1 $(dead "$carrier" 2 "$(nocite 'absent.md § Rules' absent.md "$carrier")");$(failed 1 "$references" 1 "$sources")"
+  assert_eq "$name: source selection" "$expected" "$(run "$settings" --all default-sources)"
+  case "$name" in
+    default) gg_mutant MDR md-refs 'SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"' 'SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"; SOURCE_PATHS_DEFAULT="*"' ;;
+    extra) gg_mutant MDR md-refs '"$SOURCE_PATHS_DEFAULT" COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA' '"$SOURCE_PATHS_DEFAULT" COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA_IGNORED' ;;
+    explicit) continue ;;
+    listed) gg_mutant MDR md-refs 'SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"' 'SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"; SOURCE_PATHS_DEFAULT="*.rs"' ;;
+  esac
+  status=0
+  (PASS=0; FAIL=0; assert_eq "$name" "$expected" "$(run "$settings" --all default-sources)"; [ "$FAIL" -eq 0 ]) \
+    >"$TMP/control-source-$name.log" 2>&1 || status=$?
+  assert_eq "control: $name mutant turns its assertion red" 1 "$status"
+  MDR="$REAL_MDR"
+done
 
 echo "=== the skill's own shipped markdown resolves ==="
 fx_shipped() { # the four shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
