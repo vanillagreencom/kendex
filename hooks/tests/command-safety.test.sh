@@ -588,6 +588,38 @@ environment_rows() {
 [2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 84ecebaad618841f58f67d71a1da25c9034280f2 --test 'true' --build 'true' --mutate 'eval \"timeout 5 printenv\"'","waiter-recursive-mutate-eval-printenv"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"eval \\\"timeout 5 env\\\"\"'","waiter-recursive-shell-eval-env"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"printf %s env\"'","waiter-recursive-command-data-refusal"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'xargs env' --build 'true' --mutate 'true'","waiter-result-test-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'xargs printenv' --build 'true' --mutate 'true'","waiter-result-test-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'grep -a . /proc/self/environ' --build 'true' --mutate 'true'","waiter-result-test-grep-proc"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'bash -c \"xargs env\"' --build 'true' --mutate 'true'","waiter-result-test-shell-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'printf unused | xargs -I{} env' --build 'true' --mutate 'true'","waiter-result-test-pipe-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'xargs env' --mutate 'true'","waiter-result-build-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'xargs printenv' --mutate 'true'","waiter-result-build-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'grep -a . /proc/self/environ' --mutate 'true'","waiter-result-build-grep-proc"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'bash -c \"xargs env\"' --mutate 'true'","waiter-result-build-shell-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'printf unused | xargs -I{} env' --mutate 'true'","waiter-result-build-pipe-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'true' --mutate 'xargs env'","waiter-result-mutate-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'true' --mutate 'xargs printenv'","waiter-result-mutate-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'true' --mutate 'grep -a . /proc/self/environ'","waiter-result-mutate-grep-proc"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'true' --mutate 'bash -c \"xargs env\"'","waiter-result-mutate-shell-xargs"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha 1716377973bdbe7474aff9de8e3d9591976156f9 --test 'true' --build 'true' --mutate 'printf unused | xargs -I{} env'","waiter-result-mutate-pipe-xargs"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'grep -a . < /proc/self/environ'","waiter-result-grep-redirect"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'cat env'","waiter-result-cat-unresolved"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'tr env x'","waiter-result-tr-unresolved"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'strings env'","waiter-result-strings-unresolved"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'systemctl status env'","waiter-result-systemctl-unresolved"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'declare'","waiter-result-declare-unresolved"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'typeset'","waiter-result-typeset-unresolved"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'command xargs env'","waiter-result-command-target"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'sudo -n xargs env'","waiter-result-sudo-target"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'env VAR=1 xargs env'","waiter-result-assignment-target"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'printenv NAME'","waiter-receipt-printenv-named"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'printenv --help'","waiter-receipt-printenv-help"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'export VAR=1'","waiter-receipt-export-assignment"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'declare -p NAME'","waiter-receipt-declare-named"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'typeset -p NAME'","waiter-receipt-typeset-named"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'set -o pipefail'","waiter-receipt-set-action"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'set -- env printenv set'","waiter-receipt-set-operands"]
 [0,"bash wrapper.sh 'env'","wrapper-quoted-bare-env-data"]
 [2,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
 [2,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
@@ -1166,7 +1198,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
-      defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[$program_pos]}\"; then mode=dump-unknown; fi") }
+      defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[$program_pos]}\"; }; then mode=dump-unknown; fi") }
+      defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi") }
+      defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
       defect == "recursive-context-loss" { swap("[ -z \"${forwarded_argument:-}\" ] || executable_contexts[cursor]=forwarded", ":") }
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
@@ -1353,6 +1387,8 @@ split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-proc-operand:
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-systemctl-operand: exit=0 expected=2
 unclassified-head-only|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
 recursive-context-loss|FAIL environment: waiter-recursive-test-bash-env: exit=0 expected=2
+producer-implicit-clean|FAIL environment: waiter-result-test-xargs-env: exit=0 expected=2
+unresolved-redirect-loss|FAIL environment: waiter-result-grep-redirect: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
