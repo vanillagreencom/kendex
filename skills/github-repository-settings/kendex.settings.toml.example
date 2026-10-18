@@ -1,0 +1,5 @@
+[env]
+# Required for adoption. Choose hosted or local. No default.
+GITHUB_STANDARD_CHECK_LOCATION = ""
+# Remote review: off by default. Choose off or on.
+GITHUB_STANDARD_BOT_REVIEW = "off"

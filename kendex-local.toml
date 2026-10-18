@@ -383,6 +383,11 @@ source = "."
 harnesses = ["claude", "codex", "pi", "copilot"]
 enabled = true
 
+[skills.github-repository-settings]
+source = "."
+harnesses = ["claude", "codex", "pi", "copilot"]
+enabled = true
+
 [skills.code-quality]
 source = "."
 harnesses = [

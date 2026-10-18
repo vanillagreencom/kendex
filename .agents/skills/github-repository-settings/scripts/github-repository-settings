@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'github-repository-settings: %s=%s\n%s\n' "$1" "$2" "$3" >&2
+  exit 2
+}
+
+usage() {
+  cat <<'EOF'
+Usage: github-repository-settings <adopt --dry-run|render|check> [options]
+
+Options: --repo PATH, --dry-run, --staged, --json, --help
+The bot-instructions library owns render, preview and check semantics.
+Check reports github-standard-check-location=hosted|local|unset on stderr.
+Exit codes: 0 clean, 1 findings, 2 could not complete.
+EOF
+}
+
+case "${1:-}" in
+  --help|-h) usage; exit 0 ;;
+  adopt|render|check) verb=$1; shift ;;
+  *) fail usage "${1:-missing}" 'Choose adopt --dry-run, render or check.' ;;
+esac
+repo=.
+preview=false
+args=("$verb")
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || fail usage --repo 'Supply a repository path.'
+      repo=$2
+      shift 2
+      ;;
+    --dry-run) preview=true; args+=("$1"); shift ;;
+    --staged|--json) args+=("$1"); shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) fail usage "$1" 'Use --help for supported options.' ;;
+  esac
+done
+[ "$verb" != adopt ] || [ "$preview" = true ] || fail usage adopt 'Adoption requires --dry-run in this package.'
+
+# Keep checkout installation links so local review points at installed doctrine.
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -L)"
+skills_dir="$(cd -- "$script_dir/../.." && pwd -L)"
+library="$skills_dir/bot-instructions/scripts/bot-instructions"
+settings="$skills_dir/review-gate/scripts/lib/settings.sh"
+[ -x "$library" ] || fail dependency bot-instructions 'Install the required bot-instructions package beside this package.'
+[ -r "$settings" ] || fail dependency review-gate 'Install the required review-gate package beside this package.'
+cd -- "$repo" || fail repository "$repo" 'Could not open the repository.'
+# shellcheck source=../../review-gate/scripts/lib/settings.sh
+source "$settings" || exit 2
+private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
+private_file=${private_file:-.env.local}
+location="$(rg_setting GITHUB_STANDARD_CHECK_LOCATION '' "$private_file")" || exit 2
+review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW off "$private_file")" || exit 2
+case "$location" in
+  hosted|local|'') ;;
+  *) fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local.' ;;
+esac
+case "$review" in
+  off) output=local ;;
+  on) output=full ;;
+  *) fail setting GITHUB_STANDARD_BOT_REVIEW 'Choose off or on.' ;;
+esac
+if [ "$verb" = adopt ] && [ -z "$location" ]; then
+  fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local before adoption.'
+fi
+if [ "$verb" = check ]; then
+  printf 'github-standard-check-location=%s\n' "${location:-unset}" >&2
+fi
+exec "$library" "${args[@]}" --repo "$PWD" --output "$output"
