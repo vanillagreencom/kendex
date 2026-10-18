@@ -556,6 +556,12 @@ environment_rows() {
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A bash test.sh' > out","waiter-quoted-redirect-retains-refusal"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test \"env -u $NAME bash test.sh\"","waiter-expanded-command-retains-refusal"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'bash -c \"env\"'","waiter-quoted-nested-shell-dump"]
+[2,"bash wrap.sh step cat \"/proc/self/environ\"","waiter-forwarded-cat-quoted-path"]
+[2,"bash wrap.sh step systemctl --user 'show-environment'","waiter-forwarded-systemctl-quoted-verb"]
+[2,"bash wrap.sh step 'cat' '/proc/self/environ'","waiter-forwarded-quoted-cat-and-path"]
+[2,"bash wrap.sh step TOOL '/proc/self/environ'","waiter-forwarded-unresolved-proc-operand"]
+[2,"bash wrap.sh step TOOL 'show-environment'","waiter-forwarded-unresolved-systemctl-operand"]
+[0,"sh LAUNCH.sh WAIT 'env' VAR=1 TOOL --test 'env -u A -u B VAR=1 bash test.sh'","waiter-forwarded-quoted-env-head"]
 [0,"bash wrapper.sh 'env'","wrapper-quoted-bare-env-data"]
 [2,"{ printf '%s' 'env NAME=value command-name'; }","suffix-quoted-launcher-data"]
 [2,"bash wrapper.sh set -o pipefail","wrapper-set-pipefail"]
@@ -1140,7 +1146,15 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
       defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$incoming_sources\" ]", "false") }
-      defect == "quoted-launcher-cut" { swap("[ -n \"$script_pos\" ] && [ \"$candidate\" -gt \"$((script_pos + 1))\" ]", "false") }
+      defect == "quoted-launcher-cut" { swap("[ \"$candidate\" -gt \"$((script_pos + 1))\" ] && [ -z \"$output\" ]", "false") }
+      defect == "split-forwarded-argv" && $0 == "        if [ -z \"$script_pos\" ] || [ \"$candidate\" -le \"$script_pos\" ] ||" {
+        print "        if [ -n \"$script_pos\" ] && [ \"$candidate\" -gt \"$((script_pos + 1))\" ] && [ -z \"$output\" ] &&"
+        print "           [ \"${stage_roles[$candidate]}:${stage_kinds[$candidate]}\" = argument:literal ] && [ -z \"${stage_unquoted[$candidate]}\" ]; then"
+        print "          code=${#executable_texts[@]}; executable_texts[code]=$value; executable_stages[code]=$stage; executable_contexts[code]=conservative; continue"
+        print "        fi"
+        print "        case \"${value##*/}\" in env) ;; *) if environment_main_evidence \"$value\"; then return 0; fi; continue ;; esac"
+        changed++
+      }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
       defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
@@ -1304,6 +1318,11 @@ quoted-launcher-cut|FAIL environment: waiter-quoted-unset-command: exit=2 expect
 quoted-launcher-cut|FAIL environment: waiter-quoted-setup-command: exit=2 expected=0
 no-check|FAIL environment: waiter-quoted-env-dump: exit=0 expected=2
 no-check|FAIL environment: waiter-quoted-printenv-dump: exit=0 expected=2
+split-forwarded-argv|FAIL environment: waiter-forwarded-cat-quoted-path: exit=0 expected=2
+split-forwarded-argv|FAIL environment: waiter-forwarded-systemctl-quoted-verb: exit=0 expected=2
+split-forwarded-argv|FAIL environment: waiter-forwarded-quoted-cat-and-path: exit=0 expected=2
+split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-proc-operand: exit=0 expected=2
+split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-systemctl-operand: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-set-data: exit=2 expected=0
 quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
