@@ -1,10 +1,20 @@
 # Reports and briefings
 
-Read when writing a report or briefing. Use the wording and markup in [messages](messages.md).
+Read when writing a report, briefing, work-item description, comment or completion summary. Use the wording and markup in [messages](messages.md).
+
+## Work story
+
+Write a plain briefing as a chain of events. Open each area with good or bad, done or incomplete, and why. Then connect its goal, progress, completed work, remaining work, failures and the action taken. Use the person's words for the problem, its state and the outcome they experience.
+
+State the goal as the outcome the person needs. Put the observed reading beside it. A measure alone is not the goal.
+
+Work-item descriptions, comments and completion summaries use this story too. Apply the [visible comparison](questions.md#today-and-after). Keep technical detail on the tracker item.
+
+A report names the author's own misses since the previous report. Give each miss its cause and the fix, or the reason no fix is needed.
 
 ## Reports
 
-Say the outcome for the person or fleet, not the issue title. Link each work item to its owning tracker issue: the Linear issue for a Linear item or the GitHub issue for an `issue-N` item. Do not use its pull request or commit as the work-item link. The tracker issue links to its pull request.
+Say the outcome for the person or fleet. A project name or item title does not replace its effect. Link each work item to its owning tracker issue: the Linear issue for a Linear item or the GitHub issue for an `issue-N` item. Do not use its pull request or commit as the work-item link. The tracker issue links to its pull request.
 
 Put detail in the report file. Send one post per report, not a thread of fragments. Give each blocked item its cause and next action.
 
@@ -28,7 +38,9 @@ Report account headroom for every harness the fleet runs, including Claude, Code
 
 ## Summary shape
 
-- Put one item per line, at most 20 words. A line may carry two links.
+A consumer's user instruction that sets a report format for its reader overrides the shared format for that reader.
+
+- Put one item and one sentence per line, at most 20 words. A line may carry two links.
 - Put a blank line before each label. Each label stands alone: **Landed**, **Running**, **Blocked**, **Waiting on you**.
 - Put each figure on its own line. Group account headroom after the opening outcome readings.
 - Use at most `ORCH_REPORT_SUMMARY_LINES` item lines for an orch report, default 20. Blank lines, labels and the first opening line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
@@ -36,7 +48,7 @@ Report account headroom for every harness the fleet runs, including Claude, Code
 
 ## Owner summary template
 
-Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
+Jarvis and overseer reports use this shared summary shape. Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
 
 ```text
 [DATE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
@@ -45,10 +57,10 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 [ACCOUNT HEADROOM FIGURE]
 
 *Landed*
-- [OUTCOME] (<https://linear.app/vanillagreen/issue/KEY-N|KEY-N>)
+- [OUTCOME] (<TRACKER_ISSUE_URL|KEY-N>)
 
 *Running*
-- [OUTCOME IN PROGRESS] (<https://linear.app/vanillagreen/issue/KEY-N|KEY-N>)
+- [OUTCOME IN PROGRESS] (<TRACKER_ISSUE_URL|KEY-N>)
 
 *Blocked*
 - Nothing

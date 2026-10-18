@@ -35,7 +35,7 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 - Give every number its yardstick and verdict in the same bullet: the earlier value, target or normal range; good, bad or not known; and what is done about it. If the yardstick is unread, say so and name the reading that settles it.
 - Give a measure that depends on load with that load: session length beside the work handled, or machine use beside what ran. Length or use alone never claims an improvement.
 - Before posting, read each topic as the person and ask "so what for me?". Add that answer or cut the topic.
-- State a cost as its figure and source. Compare added CI time against the plan's 50,000 private-repository minutes each month.
+- State a cost as its figure and source. Compare added CI time against the plan's included monthly allowance.
 
 The yardstick, load and so-what rules come from the owner's Slack messages 1792172820, 1792172887 and 1792172957, relayed in Jarvis note 1792173119.
 
@@ -48,6 +48,11 @@ When describing a mechanism, give its effect on the person and the likelihood of
 - Omit acknowledgements, unneeded mechanisms and history that do not affect the person's action.
 - A critical notice states the failure, its effect and the action the person must take.
 - When introducing a rule or setting, name the file or service that will hold it.
+- For a work update, use the [work story](reports.md#work-story). A simple reply needs no fixed status labels.
+- Name planned work by its tracker item, or state that it was dropped and why. Vague promises of future work do not replace either.
+- Attribute another agent's work to that agent by name. Use I only for work the speaking session did.
+- When a message says a fix is coming, say in the same sentence whether it existed before the person's message, with its item and filing date, or was filed because of that message.
+- Review the saved text before sending. Message-format checks are advisory. A tool must not refuse a message because of its wording or layout.
 
 ## Medium and threads
 
@@ -62,6 +67,12 @@ When describing a mechanism, give its effect on the person and the likelihood of
 
 Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 
+## Names
+
+- Give a tracker item its subject words beside its link.
+- Use distinct names for different things. Replace a pronoun with the thing's name when it could refer to more than one thing.
+- When a short reply could refer to different earlier items, name the item the reply acts on before acting.
+
 ## References and markup
 
 - Link each pull request, commit, issue and tracker item with its short name. Use `[REPO#N](https://github.com/OWNER/REPO/pull/N)`, `[SHORT_SHA](https://github.com/OWNER/REPO/commit/SHORT_SHA)` or `[KEY-N](TRACKER_ISSUE_URL)` as the form. Never put a tracker id in a code span.
@@ -69,6 +80,7 @@ Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 - Use headings and bold labels or decisions for structure. Never use bold for emphasis or on a whole sentence. Use sentence case. Use italics seldom.
 - Use inline code for a command or path. Use a code block for output longer than one line. Keep paragraphs to a few sentences.
 - Put text the person must send in a code block. Name the recipient above it.
+- Report changed rules, guidance or directives after their commit is pushed. Name each changed file once as `repo/folder/file.md`, linked to `https://github.com/OWNER/REPO/blob/COMMIT/path#heading` at that commit.
 - Beside a file, including a Slack file comment, use Slack mrkdwn: `*Label*` for bold, `<URL|LABEL>` for a link and plain lines for a list. The other markup rules still hold.
 
 ## Corrections
@@ -77,4 +89,4 @@ Own a mistake in one line, with its repair.
 
 ## Attachments
 
-Attach a screenshot or image when it explains the point better than words.
+Attach a screenshot or image when it explains the point better than words. Send a picture for review as a direct file post in its topic's thread. Evidence-only pictures can stay on the tracker item with its link.

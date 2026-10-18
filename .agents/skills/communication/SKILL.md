@@ -33,7 +33,7 @@ Read [messages](references/messages.md) before every message. Add only the refer
 | Task | Read |
 |---|---|
 | Request a decision or action | [questions](references/questions.md) |
-| Write a report or briefing | [reports](references/reports.md) |
+| Write a report, briefing, work-item description, comment or completion summary | [reports](references/reports.md) |
 | Answer a voice request | [voice](references/voice.md) |
 
 ## User instruction

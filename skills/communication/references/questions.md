@@ -4,7 +4,11 @@ Read when requesting a decision or action. The caller decides whether to ask and
 
 ## Decision requests
 
-Ask one question per message. Give the options and a recommendation. Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
+Ask one question per message. Give the options and a recommendation. Use the [visible comparison](#today-and-after). Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
+
+## Today and After
+
+Show Today and After side by side in the words of the screen or app the person uses. Put this comparison first in work-item descriptions, comments and completion summaries.
 
 ## CEO questions
 
@@ -32,7 +36,7 @@ Use outcomes only. Name no mechanism the person does not act on and no option by
 
 ## Action requests
 
-Use plain words to say what the person does and what evidence closes the request. State what the deadline does. Omit the recommendation when the caller's ask form records none.
+Give numbered steps in plain words, with one action per step. Say what evidence closes the request. State what the deadline does. Omit the recommendation when the caller's ask form records none.
 
 ## Opening question
 
