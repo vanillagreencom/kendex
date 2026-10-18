@@ -1,4 +1,4 @@
-//! Whether a package's declared effect actually stands in one project.
+//! Set up a package's declared effect and report its standing in one project.
 //!
 //! Installing a package and arming what it does to the repository are two
 //! separate acts, and the second one can be declined, undone by hand, or
@@ -19,7 +19,7 @@
 //! The check is a script out of a checkout, and a checkout arrives with a
 //! fetch. Opening a page must not run it. The licence is kendex's own
 //! record of having armed this effect in this repository — written by
-//! [`super::arm`], kept where git clones nothing, and argued in
+//! [`apply`] and [`super::arm`], kept where git clones nothing, and argued in
 //! [`super::armed`].
 //!
 //! No record is therefore an answer and not an error — kendex did not set
@@ -37,6 +37,128 @@ use specta::Type;
 use crate::model::Scope;
 
 use super::DeclaredEffects;
+
+/// The operation that failed while moving a configuration effect's licence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferStep {
+    Retire,
+    Install,
+    Record,
+}
+
+impl std::fmt::Display for TransferStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Retire => "retire",
+            Self::Install => "install",
+            Self::Record => "record",
+        })
+    }
+}
+
+/// Set up the explicitly authorized package. When it is the selected
+/// configuration owner, retire the locally armed predecessor without removing
+/// its package. Both terminal and desktop spend their existing consent here.
+pub fn apply(
+    env: &crate::env::Env,
+    scope: &Scope,
+    declared: &DeclaredEffects,
+) -> Result<crate::guard::GuardReport, super::ArmError> {
+    let Some(previous) =
+        crate::bot_instructions::superseded_configuration_owner(env, scope, declared)?
+    else {
+        return super::arm(scope, declared);
+    };
+    // Resolve every recovery program before changing the repository. These
+    // configuration packages declare uninstallers; without one a partial new
+    // install cannot be retired, so no safe transfer can start.
+    let retire = uninstaller(&previous)?;
+    let cleanup = uninstaller(declared)?;
+    for (package, script) in [
+        (&previous, retire),
+        (&previous, previous.installer()?),
+        (declared, declared.installer()?),
+        (declared, cleanup),
+    ] {
+        super::resolve_script(scope, &package.root, script)?;
+    }
+    let Scope::Project { root } = scope else {
+        return Err(super::err("configuration setup requires a project").into());
+    };
+    let previous_dir = record_dir(root, super::touches_git(&previous.effects))?
+        .ok_or_else(|| super::err("previous configuration owner has no record directory"))?;
+    let selected_dir = record_dir(root, super::touches_git(&declared.effects))?
+        .ok_or_else(|| super::err("selected configuration owner has no record directory"))?;
+    let mut step = TransferStep::Retire;
+    let result = (|| {
+        checked_script(scope, &previous, retire)?;
+        step = TransferStep::Install;
+        let report = super::arm(scope, declared)?;
+        step = TransferStep::Record;
+        super::armed::arm(&selected_dir, &declared.name)?;
+        super::armed::disarm(&previous_dir, &previous.name)?;
+        Ok(report)
+    })();
+    result.map_err(|cause| {
+        let mut recovery = Vec::new();
+        // arm keeps no pre-image. The packages own their file grammar, so
+        // their declared uninstaller and installer are the compensation.
+        if step != TransferStep::Retire {
+            if let Err(error) = checked_script(scope, declared, cleanup) {
+                recovery.push(error.to_string());
+            }
+            if let Err(error) = super::armed::disarm(&selected_dir, &declared.name) {
+                recovery.push(error.to_string());
+            }
+        }
+        match super::arm(scope, &previous) {
+            Ok(_) => {
+                if let Err(error) = super::armed::arm(&previous_dir, &previous.name) {
+                    recovery.push(error.to_string());
+                }
+            }
+            Err(error) => recovery.push(error.to_string()),
+        }
+        super::ArmError::Transfer {
+            previous: previous.name,
+            selected: declared.name.clone(),
+            step,
+            cause: Box::new(cause),
+            recovery,
+        }
+    })
+}
+
+fn uninstaller(declared: &DeclaredEffects) -> Result<&str, super::ArmError> {
+    declared.effects.uninstaller.as_deref().ok_or_else(|| {
+        super::err(format!(
+            "{}: configuration transfer requires a declared uninstaller",
+            crate::names::shown(&declared.name)
+        ))
+        .into()
+    })
+}
+
+fn checked_script(
+    scope: &Scope,
+    declared: &DeclaredEffects,
+    script: &str,
+) -> Result<crate::guard::GuardReport, super::ArmError> {
+    let report = super::run_script(scope, &declared.root, script)?;
+    if report.code != 0 {
+        return Err(super::ArmError::Failed {
+            name: declared.name.clone(),
+            installer: script.to_owned(),
+            code: report.code,
+            undo: match scope {
+                Scope::Project { root } => declared.undo(root),
+                Scope::Global => None,
+            },
+            report: Box::new(report),
+        });
+    }
+    Ok(report)
+}
 
 /// Who wants the status, which is what decides whether the package's
 /// script may run.

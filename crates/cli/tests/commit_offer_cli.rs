@@ -16,6 +16,8 @@ use std::process::{Command, Output};
 
 use kendex_core::process::Hardened;
 
+mod owner_transfer;
+
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))

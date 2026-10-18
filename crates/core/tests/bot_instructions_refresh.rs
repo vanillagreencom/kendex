@@ -23,6 +23,7 @@ const CODEX_PACKAGE: &str = ".agents/skills/bot-instructions";
 const CLAUDE_PACKAGE: &str = ".claude/skills/bot-instructions";
 
 mod owner_selection;
+mod owner_transfer;
 
 struct Fixture {
     _tmp: tempfile::TempDir,

@@ -24,6 +24,38 @@ pub(crate) fn configuration_owner(env: &Env, scope: &Scope) -> Result<Option<Dec
     .transpose()
 }
 
+/// An installed configuration effect whose local licence the selected
+/// package's explicit setup replaces. Selection remains independent of consent.
+pub(crate) fn superseded_configuration_owner(
+    env: &Env,
+    scope: &Scope,
+    declared: &DeclaredEffects,
+) -> Result<Option<DeclaredEffects>> {
+    if ![CONFIGURATION_PACKAGE, PACKAGE].contains(&declared.name.as_str()) {
+        return Ok(None);
+    }
+    if configuration_owner(env, scope)?
+        .as_ref()
+        .map(|owner| &owner.name)
+        != Some(&declared.name)
+    {
+        return Ok(None);
+    }
+    select_configuration_owner(|name| {
+        if name == declared.name {
+            return None;
+        }
+        let previous = || -> Result<Option<DeclaredEffects>> {
+            let Some(previous) = crate::engine::installed_declaration(env, scope, name)? else {
+                return Ok(None);
+            };
+            Ok(crate::repo_effects::armed_here(scope, &previous)?.then_some(previous))
+        };
+        previous().transpose()
+    })
+    .transpose()
+}
+
 /// Whole-scope checks keep unreadable declarations as rows so their local
 /// arming records can decide whether a failed read is a lapse. Selecting that
 /// row still prevents fallback to the superseded configuration checker.

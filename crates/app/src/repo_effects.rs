@@ -13,7 +13,7 @@
 use kendex_core::engine::EngineReport;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
-use kendex_core::repo_effects::{ArmError, DeclaredEffects};
+use kendex_core::repo_effects::DeclaredEffects;
 
 /// What an installer said, kept by channel.
 ///
@@ -67,7 +67,7 @@ pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Sai
             .map(|line| kendex_core::names::shown(line))
             .collect()
     };
-    match kendex_core::repo_effects::arm(scope, declared) {
+    match kendex_core::repo_effects::setup::apply(env, scope, declared) {
         Ok(report) => Ok(Said {
             stdout: shown(&report.stdout),
             stderr: shown(&report.stderr),
@@ -76,14 +76,14 @@ pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Sai
         // installer got far enough to say anything — the account of a
         // possibly half-written repository has to reach the person whole.
         Err(error) => {
-            let said: Vec<String> = match &error {
-                ArmError::Failed { report, .. } => report
+            let said: Vec<String> = match error.report() {
+                Some(report) => report
                     .stderr
                     .iter()
                     .chain(&report.stdout)
                     .map(|line| kendex_core::names::shown(line))
                     .collect(),
-                _ => Vec::new(),
+                None => Vec::new(),
             };
             Err(match said.is_empty() {
                 true => error.to_string(),

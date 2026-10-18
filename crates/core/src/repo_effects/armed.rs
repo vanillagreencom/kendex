@@ -10,8 +10,8 @@
 //!
 //! Two properties make this one. It sits in one of the repository's GIT
 //! DIRECTORIES, which git clones for nobody, so a record can only have been
-//! made on this machine. And [`super::arm`] is its only writer, so nothing
-//! a declaration says can produce one.
+//! made on this machine. And core writes it through [`super::arm`] and
+//! [`super::setup::apply`], so nothing a declaration says can produce one.
 //!
 //! Which of them is [`record_dir`]'s answer, and it is the effect's reach:
 //! an effect inside `.git` belongs to every linked work tree and an effect

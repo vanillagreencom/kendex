@@ -1,0 +1,1 @@
+- Repository setup transfers the configuration effect to its selected package while keeping the previous package installed. A failed install restores the previous effect and arming record under the existing setup consent.

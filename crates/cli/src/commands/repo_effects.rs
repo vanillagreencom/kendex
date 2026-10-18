@@ -164,15 +164,20 @@ pub fn disclose_and_finish(
     finalize: impl FnOnce(),
 ) -> CliResult {
     let walked = disclose(env, scope, effects)
-        .and_then(|shown_to_them| walkthrough(scope, &shown_to_them, allowed));
+        .and_then(|shown_to_them| walkthrough(env, scope, &shown_to_them, allowed));
     finalize();
     walked
 }
 
-pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -> CliResult {
+pub fn walkthrough(
+    env: &Env,
+    scope: &Scope,
+    shown_to_them: &[Disclosure],
+    allowed: bool,
+) -> CliResult {
     if confirm(shown_to_them, allowed)? {
         for disclosure in shown_to_them {
-            apply(scope, &disclosure.declared)?;
+            apply(env, scope, &disclosure.declared)?;
         }
         return Ok(());
     }
@@ -244,8 +249,8 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
 /// The consent that let this run was given against the disclosure above,
 /// which is escaped; this is the program the person said yes to talking.
 /// A package with nothing to run is a state to name, not a failure.
-pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
-    match kendex_core::repo_effects::arm(scope, declared) {
+pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> CliResult {
+    match kendex_core::repo_effects::setup::apply(env, scope, declared) {
         Ok(report) => {
             relay(&report);
             Ok(())
@@ -255,7 +260,7 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
             Ok(())
         }
         Err(error) => {
-            if let kendex_core::repo_effects::ArmError::Failed { report, .. } = &error {
+            if let Some(report) = error.report() {
                 relay(report);
             }
             Err(error.to_string().into())
@@ -289,7 +294,7 @@ pub fn set_up_beside_main(
     ))? {
         return Ok(false);
     }
-    apply(scope, &disclosure.declared)?;
+    apply(env, scope, &disclosure.declared)?;
     Ok(true)
 }
 

@@ -13,6 +13,8 @@
 pub mod fixture;
 use fixture::*;
 
+mod owner_transfer;
+
 /// Installing writes the package and hands back its account — what
 /// changes, where it writes, which companions are here, how to undo it —
 /// with the repository untouched. The separate yes is what arms it.

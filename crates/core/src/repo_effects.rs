@@ -304,11 +304,10 @@ pub enum ArmError {
     /// The package declared no installer: the disclosure ends with what the
     /// reader runs themselves, and kendex has nothing to launch.
     NothingToRun { name: String },
-    /// The installer ran and exited nonzero. kendex takes no pre-image and
-    /// rolls nothing back, so an installer that wrote three files and
-    /// failed on the fourth leaves three files, and a message promising
-    /// otherwise is the one thing that would stop somebody looking. The
-    /// package's own lines are carried so a surface can show them.
+    /// The installer ran and exited nonzero. A standalone arm takes no
+    /// pre-image and rolls nothing back. Configuration setup wraps this in
+    /// `Transfer` after attempting compensation. The package's own lines
+    /// are carried so a surface can show them.
     Failed {
         name: String,
         installer: String,
@@ -321,6 +320,26 @@ pub enum ArmError {
     /// The installer could not be run at all. Boxed: the error is a rare
     /// path and the common `Ok` should not pay for its size.
     Run(Box<crate::error::CoreError>),
+    /// A configuration-owner transfer failed. Recovery errors are retained
+    /// separately so a failed compensation never claims the old effect is back.
+    Transfer {
+        previous: String,
+        selected: String,
+        step: setup::TransferStep,
+        cause: Box<ArmError>,
+        recovery: Vec<String>,
+    },
+}
+
+impl ArmError {
+    /// Package output from the failed step, for both setup surfaces to relay.
+    pub fn report(&self) -> Option<&crate::guard::GuardReport> {
+        match self {
+            Self::Failed { report, .. } => Some(report),
+            Self::Transfer { cause, .. } => cause.report(),
+            Self::NothingToRun { .. } | Self::Run(_) => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ArmError {
@@ -351,6 +370,38 @@ impl std::fmt::Display for ArmError {
                 }
             }
             ArmError::Run(error) => write!(f, "{error}"),
+            ArmError::Transfer {
+                previous,
+                selected,
+                step,
+                cause,
+                recovery,
+            } => {
+                writeln!(
+                    f,
+                    "repo-effects: transfer={} previous={} step={step}",
+                    shown(selected),
+                    shown(previous)
+                )?;
+                match cause.as_ref() {
+                    ArmError::Failed {
+                        name,
+                        installer,
+                        code,
+                        ..
+                    } => write!(f, "{}: {} exited {code}", shown(name), shown(installer))?,
+                    other => write!(f, "{other}")?,
+                }
+                if recovery.is_empty() {
+                    write!(
+                        f,
+                        "\n{}: previous effect and arming record restored",
+                        shown(previous)
+                    )
+                } else {
+                    write!(f, "\nrecovery failed: {}", recovery.join("; "))
+                }
+            }
         }
     }
 }
