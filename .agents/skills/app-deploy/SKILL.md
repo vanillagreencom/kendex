@@ -59,6 +59,8 @@ When a pull request makes the catalog require new engine behavior, raise the sou
 
 `.github/workflows/catalog-check.yml` installs the latest released kendex and `tools/catalog-release-check` runs that engine's catalog check, then installs the catalog into an isolated project for all harnesses and runs the consumer's refresh and verify commands. Release an engine that supports a feature before merging catalog content that uses it; a binary built from the pull request does not satisfy this check.
 
+On a merge group, the catalog job's package-suites leg also runs every suite of each changed shell package whose scripts or suites call kendex with that installed release first on PATH, through `tools/guard --released-packages`. Pi packages and unchanged packages do not rerun. The catalog check also asks the released manifest reader about actual `kendex.toml` files the catalog ships. A failure names the package, suite and engine version. Release the engine first, then raise `min_kendex` and merge the package content.
+
 A catalog change must also settle in an existing install, not only a fresh one. The same check installs the catalog as the caller's base commit held it, every package declared, then refreshes that project to the change through the same source and verifies it. A dropped or renamed package that the released engine cannot retire fails it: keep the package, a stub is enough, or release the engine that retires it first. Only hooks have an engine retire route today, `RETIRED_HOOKS` in `crates/core/src/engine/desired.rs`; catalog-declared retirement for every kind is KEN-2998. A base commit whose catalog the released engine's catalog check refuses skips this part with `upgrade=skip cause=prior-uninstallable`.
 
 ## Pre-releases

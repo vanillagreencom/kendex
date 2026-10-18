@@ -7,6 +7,8 @@ leg installs PRIOR with every package and each bundle the engine reports declare
 refreshes that project to CATALOG through the same declared source, as a consumer's refresh
 does after a catalog merge. A PRIOR the engine's own catalog check refuses
 skips the upgrade leg.
+Rendered kendex.toml files also pass their schema declaration through the
+released manifest reader, independently of their install declarations.
 Report protocol: catalog-release: version=JSON leg=NAME feature=JSON then
 catalog-release: remedy=KEY on failure, catalog-release: version=JSON
 result=pass legs=NAMES on success, and catalog-release: upgrade=skip
@@ -23,6 +25,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 REFRESH = ["refresh", "--scope", "project", "--yes", "--leave"]
 VERIFY = ["verify", "--scope", "project"]
@@ -96,6 +99,31 @@ def settle(run, commands, diagnostics):
     return None
 
 
+def shipped_manifests(binary, project, place, ceilings):
+    """Ask the released reader about schema declarations in rendered files.
+
+    Rendering owns the shipped file set. An empty manifest isolates the
+    schema read from the package's sources and unrecorded installations.
+    """
+    for number, manifest in enumerate(project.rglob("kendex.toml")):
+        if manifest == project / "kendex.toml":
+            continue
+        with manifest.open("rb") as source:
+            declaration = tomllib.load(source)
+        if "schema" not in declaration:
+            continue
+        probe_root = place / str(number)
+        probe = leg(binary, probe_root, ceilings)
+        (probe_root / "project/kendex.toml").write_text(
+            f"schema = {json.dumps(declaration['schema'])}\n"
+        )
+        # source list reads the manifest without a plan or an install record.
+        diagnostic = settle(probe, [["source", "list", "--scope", "project"]], [])
+        if diagnostic is not None:
+            return f"{manifest.relative_to(project)}\n{diagnostic}"
+    return None
+
+
 def main():
     binary, catalog, strict, prior = arguments(sys.argv[1:])
     binary = str(Path(binary).resolve(strict=True))
@@ -123,6 +151,9 @@ def main():
             ["check", "--catalog", str(catalog), *strict],
             install(catalog), REFRESH, VERIFY,
         ], [])
+        if diagnostic is not None:
+            return failed("fresh", diagnostic)
+        diagnostic = shipped_manifests(binary, root / "fresh/project", root / "manifests", ceilings)
         if diagnostic is not None:
             return failed("fresh", diagnostic)
         legs = ["fresh"]

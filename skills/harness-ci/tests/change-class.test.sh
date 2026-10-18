@@ -1999,24 +1999,11 @@ assert_eq "a measurement that lists no test path scores a render-root fixture as
 # is on PATH, so a runner that carries none keeps its skip rather than paying
 # a cold build. A build that fails is a failure, never a fallback to the
 # install: that install is the judge this section must not stand.
+# The released-package leg sets KENDEX_RELEASE_TEST=1 to keep its supplied
+# engine; it is the additional compatibility run, not the renderer proof.
 kendex_tree="$(cd "$TEST_DIR/../../.." && pwd)"
-checkout_kendex=""
-if command -v kendex >/dev/null 2>&1 && [ -f "$kendex_tree/crates/cli/Cargo.toml" ]; then
-  if checkout_kendex="$(cd "$kendex_tree" && cargo build -p kendex-cli --locked \
-    --message-format=json-render-diagnostics 2>"$SANDBOX/kendex-build" | jq -r \
-    'select(.reason == "compiler-artifact" and .target.name == "kendex" and .executable != null) | .executable')" \
-    && [ -x "$checkout_kendex" ]; then
-    mkdir -p "$SANDBOX/checkout-bin"
-    ln -s "$checkout_kendex" "$SANDBOX/checkout-bin/kendex"
-    PATH="$SANDBOX/checkout-bin:$PATH"
-  else
-    printf '  FAIL: the render rows judge the kendex %s builds, and cargo build -p kendex-cli did not make one\n' \
-      "$kendex_tree" >&2
-    sed 's/^/    /' "$SANDBOX/kendex-build" >&2
-    FAIL=$((FAIL + 1))
-    checkout_kendex=unbuilt
-  fi
-fi
+source "$TEST_DIR/lib/kendex-engine.sh"
+hci_test_engine "$kendex_tree" "$SANDBOX" || FAIL=$((FAIL + 1))
 if [ "$checkout_kendex" = unbuilt ]; then
   :
 elif ! command -v kendex >/dev/null 2>&1; then

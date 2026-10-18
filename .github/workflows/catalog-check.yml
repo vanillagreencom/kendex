@@ -53,6 +53,10 @@ on:
         description: kendex revision to read the CI scripts from (the engine is always the latest release)
         type: string
         default: main
+      suite-command:
+        description: Optional caller command, run in the catalog checkout with released kendex first on PATH and CATALOG_BASE set to the prior commit
+        type: string
+        default: ""
       timeout-minutes:
         description: Job time limit in minutes (GitHub requires it in the called workflow)
         type: number
@@ -124,3 +128,13 @@ jobs:
           "$HOME/.local/bin/kendex" check \
             --catalog "$CATALOG_PATH" \
             ${{ inputs.strict && '--strict' || '' }}
+      - name: Package suites with released kendex
+        if: inputs.suite-command != ''
+        working-directory: catalog
+        env:
+          SUITE_COMMAND: ${{ inputs.suite-command }}
+          CATALOG_BASE: ${{ steps.prior.outputs.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$CATALOG_BASE"
+          export PATH="$HOME/.local/bin:$PATH"
+          bash -euo pipefail -c "$SUITE_COMMAND"

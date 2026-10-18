@@ -48,7 +48,7 @@ for mode in full range; do
 done
 
 # A disposable guard that executes during preview must fail the same no-run assertion.
-if mutant_guard 's/if \[ "\$selection_only" -eq 1 \] \&\& \[ "\$scoped_only" -eq 0 \]; then continue; fi/if [ "$selection_only" -eq 1 ] \&\& [ "$scoped_only" -eq 0 ] \&\& false; then continue; fi/'; then
+if mutant_guard 's/if \[ "\$selection_only" -eq 1 \] \&\& \[ "\$scoped_only" -eq 0 \] \&\& \[ -z "\$release_version" \]; then continue; fi/if [ "$selection_only" -eq 1 ] \&\& [ "$scoped_only" -eq 0 ] \&\& [ -z "$release_version" ] \&\& false; then continue; fi/'; then
   preview range false "$MUTANT_TOOLS/guard"
   [ -s "$SUITE_LOG" ] && ok 'control: executing preview turns its no-suite guarantee red' \
     || bad 'control: executing preview turns its no-suite guarantee red' "$OUT"

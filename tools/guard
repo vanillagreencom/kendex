@@ -276,6 +276,19 @@ MODE=default
 range_base=""
 selection_only=0
 scoped_only=0
+release_version=""
+if [ "${1:-}" = --released-packages ]; then
+  [ "$#" -ge 2 ] || refuse argument "$1"
+  release_binary=$2
+  release_dir=$(cd -- "$(dirname -- "$release_binary")" && pwd -P) || exit 1
+  release_version=$("$release_binary" --version) || exit 1
+  release_version=${release_version#kendex }
+  export PATH="$release_dir:$PATH"
+  # The harness-ci render suite otherwise replaces PATH with its own build.
+  export KENDEX_RELEASE_TEST=1 HARNESS_CI_REQUIRE_KENDEX=1 ORCH_REQUIRE_KENDEX=1 REVIEW_GATE_REQUIRE_KENDEX=1
+  selection_only=1
+  shift 2
+fi
 if [ "${1:-}" = --selection ]; then
   selection_only=1
   shift
@@ -319,6 +332,8 @@ case "${1:-}" in
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
       '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
+      '--released-packages BINARY --range BASE: run every suite of each changed' \
+      '        shell package calling kendex with BINARY first on PATH, without scans or builds.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
       '        the same suite mapper, leaving the full record to merge-group CI.'
@@ -326,6 +341,7 @@ case "${1:-}" in
     ;;
 esac
 [ "$#" -eq 0 ] || refuse argument "$1"
+[ -z "$release_version" ] || [ "$MODE" = range ] || refuse argument --released-packages-requires-range
 cd "$(git rev-parse --show-toplevel)"
 if [ "$MODE" = range ]; then
   # Resolved once, so every read below judges the same commit however the
@@ -1899,6 +1915,12 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         ;;
       *) tree=tools; rel="../$f" ;;
     esac
+    if [ -n "$release_version" ]; then
+      [ "$tree" != tools ] || continue
+      tree_paths="$tree_paths$tree	$rel	$f
+"
+      continue
+    fi
     tree_paths="$tree_paths$tree	$rel	$f
 "
     if [ "$tree" != tools ]; then
@@ -1915,6 +1937,26 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   # after every later battery is available to cancellation reporting.
   for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
     suite_script=""
+    if [ -n "$release_version" ]; then
+      case "$d" in pi-extensions/*) continue ;; esac
+      release_inputs=$(skill_files "$d") || { say scan "$d"; continue; }
+      calls_kendex=0
+      while read -r role f; do
+        [ -n "$f" ] || continue
+        release_code=$(sed '/^[[:space:]]*#/d' -- "$f") || { say scan "$f"; continue; }
+        # Executable names include quoted argv and constructed binary paths;
+        # A URL's colon and the slash after a repository name distinguish help
+        # links from a binary path; settings filenames are not invocations.
+        release_hit=0
+        grep -Eq "(^|[^[:alnum:]_./:-])([^[:space:]\"':;|&()=]*/)?kendex([^[:alnum:]_./-]|$)" <<<"$release_code" || release_hit=$?
+        case "$release_hit" in
+          0) calls_kendex=1; break ;;
+          1) ;;
+          *) say scan "$f" ;;
+        esac
+      done <<<"$release_inputs"
+      [ "$calls_kendex" -eq 1 ] || continue
+    fi
     case "$d" in
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
@@ -1937,6 +1979,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ -d "$d/tests" ] || continue
         run=all
         case "$d" in skills/* | hooks | refresh | tools) run="" ;; esac
+        [ -z "$release_version" ] || run=all
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           while IFS='	' read -r tree rel f; do
@@ -1981,7 +2024,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           note suites "$selected_count/$total_count reason=mapped tree=$d"
           [ -n "$run" ] || continue
         fi
-        if [ "$selection_only" -eq 1 ] && [ "$scoped_only" -eq 0 ]; then continue; fi
+        if [ "$selection_only" -eq 1 ] && [ "$scoped_only" -eq 0 ] && [ -z "$release_version" ]; then continue; fi
         ;;
     esac
     suite_trees+=("$d")
@@ -2016,6 +2059,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   for ((suite_index = 0; suite_index < ${#suite_trees[@]}; suite_index++)); do
     d=${suite_trees[suite_index]}
     run=${suite_runs[suite_index]}
+    if [ -n "$release_version" ]; then
+      printf 'catalog-release: version=%s leg=package-suites package=%s\n' "$release_version" "$d"
+    fi
     if [ -n "${suite_scripts[suite_index]}" ]; then
       # Prove the npm launcher can start, including its Node interpreter,
       # once for the selected Pi suites before interpreting suite output.
@@ -2042,8 +2088,21 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     while IFS= read -r t; do
       [ -n "$t" ] || continue
       t="${t##*/}"
+      t="${t%.test.mjs}"
       filters+=("=${t%.sh}")
     done <<<"$run"
+    if [ -n "$release_version" ]; then
+      # --local replaces PATH with a checkout build. The release leg uses
+      # the same battery and filters with its inherited release PATH.
+      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --battery "$d/tests" ${filters[@]+"${filters[@]}"} || {
+        printf 'catalog-release: version=%s leg=package-suites package=%s suite=%s\n' "$release_version" "$d" "$d/tests"
+        printf '%s\n' 'catalog-release: remedy=release-engine' \
+          'Release the engine first, then raise min_kendex. See app-deploy Catalog compatibility.'
+        fail=1
+      }
+      suite_runs[suite_index]=""
+      continue
+    fi
     if [ -f "$d/tests/run-all.sh" ]; then
       # Family aliases can expand these filters; the runner publishes its selection.
       echo "=== $d/tests/run-all.sh" ${filters[@]+"${filters[@]}"}
@@ -2064,7 +2123,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 fi
 [ -n "$suite_selection" ] || suite_selection=all
 if [ "$selection_only" -eq 1 ]; then
-  if [ "$scoped_only" -eq 1 ]; then
+  if [ -n "$release_version" ]; then
+    printf 'catalog-release: version=%s leg=package-suites result=%s\n' "$release_version" "$fail"
+  elif [ "$scoped_only" -eq 1 ]; then
     printf 'validate: lanes=scoped-suites selection=subset\n'
     printf 'scoped=true\n'
   else

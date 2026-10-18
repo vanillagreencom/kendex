@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Inputs: tools/guard, tools/ci-job-set, skills/orch/tests/run-all.sh
+# Inputs: tools/guard, tools/ci-job-set, skills/orch/tests/run-all.sh, skills/harness-ci/tests/lib/kendex-engine.sh
 # The configured local route must not borrow an installed kendex. Fixture
 # suites add BIN and OT_BIN as lanes-pick-spread does, then lose their kendex.
 set -euo pipefail
@@ -219,5 +219,39 @@ PY
   [ "$RC|$RESULT|$BUILT" = "$want" ] && ok "$kind guard supplies direct suite environment" || bad "$kind guard supplies direct suite environment" "$RC|$RESULT|$BUILT $OUT"
 done
 cp "$TMP/source-runner" "$RUNNER"
+
+# The release job must also survive suites that normally replace PATH with
+# their own build. Exercise the harness-ci suite's actual engine owner.
+ENGINE_OWNER="$REPO/skills/harness-ci/tests/lib/kendex-engine.sh"
+mkdir -p "$TMP/engine-source/crates/cli"
+printf '[package]\nname = "kendex-cli"\n' > "$TMP/engine-source/crates/cli/Cargo.toml"
+python3 - "$ENGINE_OWNER" "$TMP/engine-mutant.sh" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+needle = '[ "${KENDEX_RELEASE_TEST:-}" != 1 ] || return 0'
+assert source.count(needle) == 1
+mutant = source.replace(needle, ': "${KENDEX_RELEASE_TEST:-}"')
+assert mutant != source
+Path(sys.argv[2]).write_text(mutant)
+PY
+export BUILD_STATUS=0
+for row in 'default|0|checkout|yes' 'release|1|host|no' 'control|1|checkout|yes'; do
+  IFS='|' read -r kind release expected built <<< "$row"
+  owner=$ENGINE_OWNER
+  [ "$kind" != control ] || owner="$TMP/engine-mutant.sh"
+  mkdir "$TMP/engine-$kind"
+  : > "$BUILD_LOG"
+  RC=0
+  OUT="$(KENDEX_RELEASE_TEST="$release" "$BASH" -c '
+    set -euo pipefail
+    source "$1"
+    hci_test_engine "$2" "$3"
+    kendex --version
+  ' sh "$owner" "$TMP/engine-source" "$TMP/engine-$kind" 2>&1)" || RC=$?
+  BUILT=no
+  [ ! -s "$BUILD_LOG" ] || BUILT=yes
+  [ "$RC|$OUT|$BUILT" = "0|$expected|$built" ] && ok "$kind harness-ci engine selection" || bad "$kind harness-ci engine selection" "$RC|$OUT|$BUILT"
+done
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
