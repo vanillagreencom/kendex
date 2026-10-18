@@ -1031,6 +1031,12 @@ class RootRelay:
     def post_ask(self, envelope: Dict) -> bool:
         """Whether the ask landed and its `open` line was journaled."""
         pieces = self.ask_pieces(envelope, f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:")
+        ref = envelope.get("ref")
+        thread_ts = self.state.post_thread(str(ref)) if ref else None
+        if thread_ts is not None:
+            permalink = self.api.get("chat.getPermalink", channel=self.channel, message_ts=thread_ts)["permalink"]
+            # The ask needs its own thread so an owner reply answers this ask.
+            pieces += [f"\n\n[Referenced conversation]({permalink})"]
         ts = self._send(envelope, "ask", pieces, None)
         if ts is None:
             return False

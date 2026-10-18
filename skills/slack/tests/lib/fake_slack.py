@@ -511,6 +511,18 @@ class Handler(BaseHTTPRequestHandler):
             return params["markdown_text"], "markdown_text"
         return params.get("text", ""), "text"
 
+    def m_chat_getPermalink(self, params):
+        channel = params["channel"]
+        if channel not in self.ws.channels:
+            return self.send_json({"ok": False, "error": "channel_not_found"})
+        for message in self.ws.messages.get(channel, []):
+            if message["ts"] == params["message_ts"]:
+                permalink = f"https://workspace.slack.test/archives/{channel}/p{message['ts'].replace('.', '')}"
+                if message.get("thread_ts"):
+                    permalink += f"?thread_ts={message['thread_ts']}&cid={channel}"
+                return self.send_json({"ok": True, "channel": channel, "permalink": permalink})
+        self.send_json({"ok": False, "error": "message_not_found"})
+
     def m_chat_postMessage(self, params):
         body = self.body_of(params)
         if body is None:

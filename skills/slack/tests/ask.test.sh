@@ -172,6 +172,48 @@ sk_assert_red "$FALLBACK_FACTS" true \
   'control: issue presence fails the full chat fallback assertion'
 sk_bin_reset
 
+echo "=== slack referenced ask ==="
+# A linked ask stays separate from the directive, so its reply answers the ask.
+referenced_ask() {
+  ROOT="$(sk_tracker_root "$1" Team '')"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  REF_TS="$(sk_inject "$CH" U001 'Earlier conversation.')"
+  sk_poll "$ROOT"
+  REF="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" 'Approve referenced action?')" --options approve,hold --recommend hold)"
+  ASK="${ASK#id=}"
+  if [ -n "${2:-}" ]; then sk_ctl /_test/fault "$2" >/dev/null; fi
+  sk_poll "$ROOT"
+  ASK_TS="$(sk_state "[.messages.${CH}[] | select(.text | contains(\"Approve referenced action?\")) | .ts][0] // \"\"")"
+  POSTED="$(sk_state "[.messages.${CH}[] | select(.ts == \"$ASK_TS\") | .text][0] // \"\"")"
+  REF_LINK="https://workspace.slack.test/archives/$CH/p${REF_TS/./}"
+}
+referenced_ask referenced
+assert_eq "$RC" 0 'the fake Slack server supports the permalink request'
+assert_has "$POSTED" "$REF_LINK" 'the ask carries the referenced Slack conversation permalink'
+assert_eq "$(sk_state "[.messages.${CH}[] | select(.ts == \"$ASK_TS\") | .thread_ts // \"top-level\"][0]")" \
+  top-level 'the ask starts its own thread'
+sk_inject "$CH" U001 approve "$ASK_TS" >/dev/null
+sk_poll "$ROOT"
+assert_eq "$(jq -cs --arg id "$ASK" '[.[] | select(.kind == "answer" and .re == $id) | .text]' "$(sk_box "$ROOT")/to-lane.jsonl")" \
+  '["approve"]' 'an owner reply in the ask thread answers the ask'
+
+referenced_ask referenced-retry '{"method":"chat.getPermalink","drop":true}'
+assert_eq "$RC|$ASK_TS" '1|' 'a failed permalink read leaves the ask unposted'
+sk_poll "$ROOT"
+assert_eq "$RC" 0 'the next poll retries the failed permalink read'
+assert_eq "$(asks "$CH" 'Approve referenced action?')" 1 'the retry posts the ask once'
+assert_has "$(sk_state ".messages.${CH}[] | select(.text | contains(\"Approve referenced action?\")) | .text")" \
+  "$REF_LINK" 'the retry retains the referenced conversation link'
+
+sk_mutant ref-link relay.py '            pieces \+= \[f"\\n\\n\[Referenced conversation\]\(\{permalink\}\)"\]' '            pieces += []'
+referenced_ask referenced-control
+sk_assert_red "$(jq -cn --arg text "$POSTED" --arg link "$REF_LINK" '$text | contains($link)')" true \
+  'control: dropping the link fails the referenced conversation assertion'
+sk_bin_reset
+
 echo "=== slack reserved ask ==="
 # reserved_ask NAME WAIT — a reserved ask posted from a fresh root, then
 # polled once more. Sets ROOT, CH, ASK, ASK_TS (empty when nothing posted)
