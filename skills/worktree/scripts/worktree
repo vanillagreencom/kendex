@@ -2246,17 +2246,16 @@ probe_session_lease() {
 # release the exact recorded owner. The guard checks its writer PID under its
 # mutex; that PID does not establish harness liveness.
 release_own_session_lease() {
-  local wt="$1" issue_owner="${2:-}" env_owner owner="" status status_rc=0
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" status_rc=0
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
-  status="$("$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" 2>/dev/null)" || status_rc=$?
-  # status emits its JSON before reporting an inherited owner mismatch.
+  owner="$("$SESSION_GUARD" status "$wt" --owner-only --repo "$PROJECT_ROOT" 2>/dev/null)" || status_rc=$?
+  # status emits the recorded owner before an inherited owner mismatch.
   # Adoption changes the item owner while the session environment stays put.
   case "$status_rc" in
     0 | 75) ;;
     *) return 0 ;;
   esac
-  owner="$(jq -er '.owner | select(type == "string" and length > 0)' <<<"$status")" || return 0
   if [[ "$owner" != "$env_owner" ]]; then
     [[ -n "$issue_owner" && "$(issue_branch_name "$owner")" == "$(issue_branch_name "$issue_owner")" ]] || return 0
   fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Native Git worktree locks carrying an owner and a TTL heartbeat.
 # stdout protocol: claim/refresh return the owner; status/list emit complete
-# JSON records consumed by worktree's lease probe. Other notices use stable
+# JSON records by default. status --owner-only feeds worktree remove. Notices use stable
 # worktree-<key>: <value> lines; English explanation is not a parsed protocol.
 set -euo pipefail
 MESSAGE_DIR=${BASH_SOURCE[0]%/*}
@@ -47,6 +47,10 @@ Options (a flag a command does not take is a usage failure):
   --owner NAME       claim, refresh, release, status. Lease owner; defaults to
                      KENDEX_SESSION_OWNER, HT_SESSION_OWNER, then USER for
                      mutating owner commands.
+  --owner-only       status. Print the recorded owner as one line instead of
+                     JSON, or an empty line without a managed lease. Output
+                     precedes the same status exit code, including 75.
+                     worktree remove uses this readback for lease close-out.
   --adopt            claim. Has effect only with --owner: take over a lease
                      held under the environment owner above, as a
                      session-start claim leaves it; without it that lease
@@ -305,7 +309,7 @@ lease_age() {
 	printf '%s\n' "$(( $(date -u +%s) - heartbeat ))"
 }
 
-status_json() {
+status_output() {
 	local locked=false managed=false owner='' pid='' host='' claimed='' heartbeat='' age=-1 reason=''
 	if read_lease; then
 		locked=true
@@ -319,6 +323,10 @@ status_json() {
 			heartbeat="$(lease_field "$LEASE_TEXT" heartbeat 2>/dev/null || true)"
 			age="$(lease_age "$LEASE_TEXT" 2>/dev/null || printf '%s' -1)"
 		fi
+	fi
+	if [[ "$owner_only" == true ]]; then
+		printf '%s\n' "$owner"
+		return 0
 	fi
 	printf '{"path":"%s","directory_present":%s,"locked":%s,"managed":%s,"owner":"%s","pid":"%s","host":"%s","claimed_at":"%s","heartbeat_at":"%s","heartbeat_age_seconds":%s,"lock_reason":"%s"}\n' \
 		"$(json_escape "$REQUESTED_PATH")" "$DIRECTORY_PRESENT" "$locked" "$managed" \
@@ -394,6 +402,7 @@ require_flag_applies() {
 
 OWNER=''
 owner_set=false
+owner_only=false
 repo="$PWD"
 repo_set=false
 ttl="$DEFAULT_TTL_MINUTES"
@@ -406,6 +415,7 @@ session=false
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--owner) require_flag_applies --owner 'claim refresh release status'; [[ $# -ge 2 ]] || fail guard-option-value --owner "This option requires a value."; OWNER="$(sanitize_owner "$2")"; owner_set=true; shift 2 ;;
+		--owner-only) require_flag_applies --owner-only 'status'; owner_only=true; shift ;;
 		--ttl-minutes) require_flag_applies --ttl-minutes 'release sweep'; [[ $# -ge 2 && "$2" =~ ^[0-9]{1,10}$ ]] || fail guard-ttl-invalid "${2:-}" "TTL must be a non-negative integer."; ttl="$2"; shift 2 ;;
 		--stale) require_flag_applies --stale 'release'; stale=true; shift ;;
 		--force) require_flag_applies --force 'release'; force=true; shift ;;
@@ -471,7 +481,7 @@ case "$command" in
 		;;
 	status)
 		resolve_registration "$path" "$repo" || fail guard-worktree-invalid "$path" "Path is not a linked worktree of $repo."
-		status_json
+		status_output
 		read_lease || exit "$EXIT_NO_LEASE"
 		lease_is_managed "$LEASE_TEXT" || exit "$EXIT_UNMANAGED"
 		if [[ -n "$OWNER" && "$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)" != "$OWNER" ]]; then
@@ -500,7 +510,7 @@ case "$command" in
 			DIRECTORY_PRESENT=false
 			[[ -d "$REQUESTED_PATH" ]] && DIRECTORY_PRESENT=true
 			if [[ "$command" == list ]]; then
-				status_json
+				status_output
 				continue
 			fi
 			read_lease || continue
