@@ -40,6 +40,8 @@ The overseer owns fleet judgement, not just liveness; every `oversee.md` § 4 ev
   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] handoff '{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":[PR_NUMBER_OR_NULL],"traps":["[TRAP]"]}'
   ```
 
+  Include any in-flight foreground validation in `traps`. State whether it survives the agent's scope and carry the run and recovery details required by [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation). A queued run whose parent is gone follows that interruption route.
+
   The record, the event and the relaunch are surface-independent. Surfaces 2 and 3 register no lane claim, so `lanes context` reports no worker lane there: on surface 2 read a lane's context through the harness's own session tooling and hand off at the same mark; surface 3 has no lane to hand off.
 
   On a hosted fleet, also run `lane-host list`: a row not `available` whose item, the last segment of repository/item, has no `running` lane record is a sandbox with no live claim; surface it to the user.
