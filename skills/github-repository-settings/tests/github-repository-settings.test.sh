@@ -157,6 +157,10 @@ def checking(root):
         if not stale:
             assert json.loads(result.stdout) == {"version": 1, "paths": []}
         assert snapshot(root) == before
+    before = snapshot(root)
+    result = invoke(root, "check", "--staged")
+    assert result.returncode == 2 and "github-repository-settings: usage=--staged\n" in result.stderr, result
+    assert snapshot(root) == before
 
 
 def locations(root):
@@ -193,8 +197,10 @@ def settings(root):
 contracts = {"preview": preview, "symlink": symlink, "selection": selection,
              "equality": equality, "checking": checking, "locations": locations,
              "settings": settings}
+completed = 0
 for name, contract in contracts.items():
     contract(fixture(name))
+    completed += 1
     print(f"pass: {name}")
 
 root = fixture("linked-installation")
@@ -205,6 +211,7 @@ for package in ("github-repository-settings", "bot-instructions", "review-gate")
     (root / "catalog" / package).symlink_to(store / package, target_is_directory=True)
     assert (root / "catalog" / package).is_symlink()
 selection(root)
+completed += 1
 print("pass: linked installation")
 
 # Each control changes a disposable production copy and reuses its contract.
@@ -221,6 +228,8 @@ for name, contract, path, old, new in (
      '--output "$output"', '--output full'),
     ("check-write", checking, "bot-instructions/scripts/lib/verbs.py",
      'def check_verb(ctx):\n', 'def check_verb(ctx):\n    open(ctx.root + "/check-write", "w").close()\n'),
+    ("staged-option", checking, "github-repository-settings/scripts/github-repository-settings",
+     '    --json)', '    --staged|--json)'),
     ("location-gate", locations, "github-repository-settings/scripts/github-repository-settings",
      '[ "$verb" = adopt ] && [ -z "$location" ]', '[ "$verb" = never ] && [ -z "$location" ]'),
 ):
@@ -236,7 +245,11 @@ for name, contract, path, old, new in (
     try:
         contract(root)
     except AssertionError:
+        completed += 1
         print(f"control rejected: {name}")
     else:
         raise AssertionError(f"control survived: {name}")
+
+# skills/orch/tests/run-all.sh reads this numeric suite summary.
+print(f"{completed} passed, 0 failed")
 PY

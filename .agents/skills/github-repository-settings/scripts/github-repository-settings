@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 Usage: github-repository-settings <adopt --dry-run|render|check> [options]
 
-Options: --repo PATH, --dry-run, --staged, --json, --help
+Options: --repo PATH, --dry-run, --json, --help
 The bot-instructions library owns render, preview and check semantics.
 Check reports github-standard-check-location=hosted|local|unset on stderr.
 Exit codes: 0 clean, 1 findings, 2 could not complete.
@@ -33,7 +33,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --dry-run) preview=true; args+=("$1"); shift ;;
-    --staged|--json) args+=("$1"); shift ;;
+    --json) args+=("$1"); shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail usage "$1" 'Use --help for supported options.' ;;
   esac
