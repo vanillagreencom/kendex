@@ -25,11 +25,16 @@ pub(crate) fn configuration_owner(env: &Env, scope: &Scope) -> Result<Option<Dec
     crate::engine::installed_declaration(env, scope, PACKAGE)
 }
 
-pub(crate) fn superseded(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<bool> {
+/// The selected effect also judges changes to its superseded dependency.
+pub(crate) fn commit_owner(
+    env: &Env,
+    scope: &Scope,
+    declared: &DeclaredEffects,
+) -> Result<DeclaredEffects> {
     if declared.name != PACKAGE {
-        return Ok(false);
+        return Ok(declared.clone());
     }
-    Ok(configuration_owner(env, scope)?.is_some_and(|owner| owner.name != PACKAGE))
+    Ok(configuration_owner(env, scope)?.unwrap_or_else(|| declared.clone()))
 }
 
 /// Compare bot files through a trusted package supplied for this invocation.
@@ -113,7 +118,7 @@ fn verify_error(root: &Path, detail: impl std::fmt::Display) -> CoreError {
     }
 }
 
-/// Re-render every enabled bot-instruction surface in this project.
+/// Re-render the selected configuration owner's outputs in this project.
 ///
 /// An absent package is not an error. The scope does not use this package,
 /// so there is no package-owned render to run.
@@ -121,7 +126,7 @@ pub fn render(env: &Env, scope: &Scope) -> Result<RenderedPaths> {
     run(env, scope, Mode::Write)
 }
 
-/// Add every enabled bot-instruction surface to the files a commit offer
+/// Add the selected configuration owner's outputs to the files a commit offer
 /// covers. The package remains the one judge of which flags produce paths.
 pub fn add_to_generated(env: &Env, scope: &Scope, generated: &mut GeneratedPaths) -> Result<()> {
     let paths = run(env, scope, Mode::Discover)?;

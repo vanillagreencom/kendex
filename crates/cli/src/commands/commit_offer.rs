@@ -496,13 +496,12 @@ fn hold(
     }
 }
 
-/// Set each held package up here, and add what bot-instructions renders to
+/// Set each held package up here, and add what the selected configuration owner renders to
 /// the files the offer covers.
 ///
 /// The setup is the package's declared installer, the same run the
 /// package page and an install's separate yes make, relayed the same way.
-/// bot-instructions is the one package whose rendered files kendex reads
-/// back, through its own dry run.
+/// kendex reads that owner's rendered files back through its own dry run.
 fn set_up_here(
     env: &Env,
     scope: &Scope,

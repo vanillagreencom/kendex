@@ -1,4 +1,4 @@
-//! `kendex bot-instructions-render`: the installed bot-instructions render,
+//! `kendex bot-instructions-render`: the selected configuration owner's render,
 //! run once in the current project on this invocation's say-so.
 //!
 //! A script's verb. The consumer refresh runs it in a checkout it creates and

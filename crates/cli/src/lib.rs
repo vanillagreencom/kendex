@@ -193,7 +193,7 @@ enum Command {
     /// Report a package problem to kendex or your current repository
     #[command(hide = true)]
     Report(ReportFlags),
-    /// Run the installed bot-instructions render here once, writing no setup record
+    /// Run the selected configuration owner's render here once, writing no setup record
     #[command(name = "bot-instructions-render", hide = true)]
     BotInstructionsRender,
     /// Add, switch on or off, and check marketplaces for updates

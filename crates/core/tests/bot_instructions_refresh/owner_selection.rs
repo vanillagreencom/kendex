@@ -221,54 +221,69 @@ fn selected_owner_failures_keep_write_and_discovery_failed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_commit_offer_checks_only_the_selected_configuration_owner() {
-    for &row in SELECTIONS {
-        let fixture = selected_fixture(row);
-        commit_fixture(&fixture.root);
-        let mut generated = GeneratedPaths::default();
-        for name in [OLD, NEW] {
-            let declaration = fixture
-                .root
-                .join(".agents/skills")
-                .join(name)
-                .join("SKILL.md");
-            if declaration.exists() {
-                let text = fs::read_to_string(&declaration).unwrap();
-                fs::write(&declaration, format!("{text}\nchanged\n")).unwrap();
-                generated.whole.insert(declaration);
-            }
-        }
-        let scan = offer_scan(&fixture, &generated);
-        let held = commit_offer::stale(
-            &fixture.env,
-            &fixture.scope,
-            &scan,
-            &generated,
-            &scan.carried(),
-        )
-        .unwrap();
-        assert_eq!(
-            held.iter()
-                .map(|held| held.disclosure.name.as_str())
-                .collect::<Vec<_>>(),
-            [row.selected]
-        );
-        assert_eq!(
-            held[0].why,
-            if row.armed {
-                Staleness::OutOfDate(Vec::new())
-            } else {
-                Staleness::NotSetUp
-            }
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.root.join("calls")).unwrap_or_default(),
-            if row.armed {
-                format!("{}\n", row.selected)
-            } else {
-                String::new()
-            },
-        );
+    for (row, changed) in [
+        (SELECTIONS[0], &[OLD][..]),
+        (SELECTIONS[1], &[NEW][..]),
+        (SELECTIONS[2], &[OLD, NEW][..]),
+        (SELECTIONS[3], &[OLD, NEW][..]),
+        (SELECTIONS[2], &[OLD][..]),
+        (SELECTIONS[3], &[OLD][..]),
+        (SELECTIONS[2], &[NEW][..]),
+        (SELECTIONS[3], &[NEW][..]),
+    ] {
+        assert_commit_owner(row, changed);
     }
+}
+
+/// Refresh can change only the selected owner's old renderer dependency.
+#[allow(clippy::unwrap_used)]
+fn assert_commit_owner(row: Selection, changed: &[&str]) {
+    let fixture = selected_fixture(row);
+    commit_fixture(&fixture.root);
+    let mut generated = GeneratedPaths::default();
+    for name in changed {
+        let declaration = fixture
+            .root
+            .join(".agents/skills")
+            .join(name)
+            .join("SKILL.md");
+        if declaration.exists() {
+            let text = fs::read_to_string(&declaration).unwrap();
+            fs::write(&declaration, format!("{text}\nchanged\n")).unwrap();
+            generated.whole.insert(declaration);
+        }
+    }
+    let scan = offer_scan(&fixture, &generated);
+    let held = commit_offer::stale(
+        &fixture.env,
+        &fixture.scope,
+        &scan,
+        &generated,
+        &scan.carried(),
+    )
+    .unwrap();
+    assert_eq!(
+        held.iter()
+            .map(|held| held.disclosure.name.as_str())
+            .collect::<Vec<_>>(),
+        [row.selected]
+    );
+    assert_eq!(
+        held[0].why,
+        if row.armed {
+            Staleness::OutOfDate(Vec::new())
+        } else {
+            Staleness::NotSetUp
+        }
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("calls")).unwrap_or_default(),
+        if row.armed {
+            format!("{}\n", row.selected)
+        } else {
+            String::new()
+        },
+    );
 }
 
 #[test]

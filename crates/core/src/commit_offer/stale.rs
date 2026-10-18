@@ -1,17 +1,17 @@
 //! The packages whose checkout files a commit of this offer would carry
 //! out of date.
 //!
-//! A package can declare an effect on files in the checkout: bot-instructions
-//! renders the review-bot files from its doctrine. A commit carries those
+//! A package can declare an effect on files in the checkout: the selected
+//! configuration owner renders review files from its inputs. A commit carries those
 //! files, and the repository's own pre-commit chain judges them. commit-guards
-//! runs `bot-instructions check --staged` wherever that package is installed.
+//! selects the configuration owner's staged check.
 //! A commit made while they are out of date is a commit kendex can already
 //! predict will be refused. So before the offer is made, each such package
 //! whose files the offer touches is asked, and one kendex cannot vouch for
 //! holds the commit.
 //!
 //! Setting a held package up runs its declared installer. Only the renders
-//! kendex reads back join the offer after it: today bot-instructions',
+//! kendex reads back join the offer after it: the selected configuration owner's,
 //! through `crate::bot_instructions::add_to_generated`. A package's declared
 //! writes are never carried whole, since one of them can be a file kendex
 //! owns a region of.
@@ -19,7 +19,7 @@
 //! An effect inside `.git` is out of scope. A commit carries none of those
 //! files, and a hook that is not set up refuses nothing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::engine::GeneratedPaths;
@@ -82,6 +82,8 @@ pub enum Staleness {
 /// A package is asked only where the commit carries one of its changed
 /// paths: under its own tree, which is what a refresh of its doctrine
 /// changes, or under one of the paths it declares it writes. A package
+/// selected to judge a renderer dependency also includes that dependency's
+/// changed paths, even where none of its own paths changed. A package
 /// declaring no installer holds nothing, since no setup could clear the
 /// hold. One not set up here holds the commit without any of its code
 /// running, unless its declared configuring table is absent.
@@ -113,14 +115,20 @@ pub fn stale(
 ) -> crate::error::Result<Vec<Stale>> {
     let mut candidate: Option<Candidate> = None;
     let mut held = Vec::new();
+    let mut owners = BTreeMap::new();
     for installed in crate::engine::installed_declarations(env, scope)? {
         let crate::engine::InstalledDeclaration::Declared(declared) = installed else {
             continue;
         };
         let declared = *declared;
-        if crate::bot_instructions::superseded(env, scope, &declared)? {
-            continue;
-        }
+        let owner = crate::bot_instructions::commit_owner(env, scope, &declared)?;
+        owners
+            .entry(owner.name.clone())
+            .or_insert_with(|| (owner, Vec::new()))
+            .1
+            .push(declared);
+    }
+    for (declared, inputs) in owners.into_values() {
         if crate::repo_effects::touches_git(&declared.effects) {
             continue;
         }
@@ -128,7 +136,7 @@ pub fn stale(
             .owned
             .iter()
             .map(|owned| owned.path.as_str())
-            .filter(|path| belongs(&scan.root, &declared, path))
+            .filter(|path| inputs.iter().any(|input| belongs(&scan.root, input, path)))
             .partition(|path| carried.contains(*path));
         if taken.is_empty() || declared.effects.installer.is_none() {
             continue;
