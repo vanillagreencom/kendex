@@ -58,6 +58,9 @@ Options (a flag a command does not take is a usage failure):
   --ttl-minutes N    release, sweep. Heartbeat TTL in minutes (default 720).
   --stale            release. Release a lease only when it is past the TTL.
   --force            release. Release a foreign lease regardless of age.
+  --inactive         release. With --owner, release only when the recorded
+                     process is absent on this host. Unknown liveness refuses.
+                     Cannot combine with --stale or --force.
   --dry-run          sweep. Report results without releasing leases.
   --repo DIR         release, status, list, sweep. Repository checkout.
 
@@ -339,6 +342,25 @@ release_current() {
 		claimed_by "${recorded:-unknown}"
 		return "$EXIT_OWNED"
 	fi
+	if [[ "$inactive" == true ]]; then
+		# remove's close-out must not unlock another session on the same item.
+		# Only this host's process table can establish that its writer is gone.
+		local pid='' host='' process='' process_rc=2
+		if pid="$(lease_field "$LEASE_TEXT" pid 2>/dev/null)" &&
+		   host="$(lease_field "$LEASE_TEXT" host 2>/dev/null)" &&
+		   [[ "$host" == "$(sanitize_host)" && "$pid" =~ ^[1-9][0-9]*$ ]]; then
+			process_rc=0
+			process="$(ps -p "$pid" -o pid= 2>&1)" || process_rc=$?
+		fi
+		if [[ "$process_rc" == 0 ]]; then
+			worktree_message guard-process-live "path=$REQUESTED_PATH pid=$pid" >&2
+			return "$EXIT_OWNED"
+		fi
+		if [[ "$process_rc" != 1 || -n "$process" ]]; then
+			worktree_message guard-process-unverified "path=$REQUESTED_PATH pid=$pid host=$host" >&2
+			return "$EXIT_OWNED"
+		fi
+	fi
 	rm -f -- "$LOCK_FILE"
 }
 
@@ -374,6 +396,7 @@ repo_set=false
 ttl="$DEFAULT_TTL_MINUTES"
 stale=false
 force=false
+inactive=false
 dry_run=false
 adopt=false
 session=false
@@ -383,6 +406,7 @@ while [[ $# -gt 0 ]]; do
 		--ttl-minutes) require_flag_applies --ttl-minutes 'release sweep'; [[ $# -ge 2 && "$2" =~ ^[0-9]{1,10}$ ]] || fail guard-ttl-invalid "${2:-}" "TTL must be a non-negative integer."; ttl="$2"; shift 2 ;;
 		--stale) require_flag_applies --stale 'release'; stale=true; shift ;;
 		--force) require_flag_applies --force 'release'; force=true; shift ;;
+		--inactive) require_flag_applies --inactive 'release'; inactive=true; shift ;;
 		--dry-run) require_flag_applies --dry-run 'sweep'; dry_run=true; shift ;;
 		--adopt) require_flag_applies --adopt 'claim'; adopt=true; shift ;;
 		--session) require_flag_applies --session 'claim'; session=true; shift ;;
@@ -391,6 +415,9 @@ while [[ $# -gt 0 ]]; do
 		*) fail guard-option-unknown "$1" "Unknown session-guard option." ;;
 	esac
 done
+if [[ "$inactive" == true && ( "$owner_set" != true || "$stale" == true || "$force" == true ) ]]; then
+	fail guard-option-combination --inactive "This option requires --owner and cannot combine with --stale or --force."
+fi
 [[ "$repo_set" == true || -z "$path" || ! -d "$path" ]] || repo="$path"
 env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
 if [[ "$owner_set" != true ]]; then

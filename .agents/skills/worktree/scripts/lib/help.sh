@@ -420,7 +420,10 @@ Failure semantics:
   manual 'git branch -D' recovery command.
 
 Session leases:
-  remove releases its own lease before removing. A foreign lease is left
+  remove releases its own lease only when its recorded process is absent on
+  this host. A live process, remote host or unknown process state refuses.
+  ID calls use the item ID; path calls use the private Git issue record.
+  The session environment is a fallback identity. A foreign lease is left
   alone and refuses the removal, naming the owner.
 
 Lane mailboxes:
