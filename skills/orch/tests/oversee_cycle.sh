@@ -1032,6 +1032,36 @@ a fix pushed between two reviews and a rebase pushed after them are both bot wai
 another phase is the miss's cause and keeps the split|100 1400|400 1500 2000|-|-|9000|phase=merged cause=merged bot_wait=380 draft=0 thread_fix=2500 paused=0
 null push times split nothing and leave the miss its phase|null|400 1500 2000|-|-|3200|phase=gate_green cause=gate_green bot_wait=- draft=- thread_fix=- paused=-
 ROWS
+standing_wall_rows() {
+  local name open held got
+  while IFS='|' read -r name open held; do
+    new_case "standing-wall-$1-$name"
+    printf micro > "$CASE/class"
+    gate_timeline - - 3200
+    pauses KEN-1 "$held" -
+    if [[ "$open" == yes ]]; then
+      edit_json "$CASE/state/workflow-state-oversee.json" ".lanes[0].walled = {at: \"$(at 400)\"}"
+    fi
+    got="$(record KEN-1 standard)"
+    assert_eq "$(field bot_wait "$got") $(field thread_fix "$got") $(field paused "$got")|$(state '.lanes[0].cycle.gate_waits.paused')" \
+      'bot_wait=280 thread_fix=0 paused=2600|2600' "standing wall: $name"
+  done <<'ROWS'
+open at merge|yes|-
+completed after merge|no|400-3600
+completed overlapping open|yes|400-3600
+ROWS
+}
+standing_wall_rows shipped
+control m-standing-wall oversee-cycle '[.parked.at, .walled.at]' '[.parked.at]'
+if (FAIL=0; standing_wall_rows control; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/standing-wall-control.out"; then
+  fail "standing wall: ignoring the open wall did not redden its accounting"
+else
+  assert_eq "$(grep -c '^  FAIL  standing wall: open at merge$' "$TMP_ROOT/standing-wall-control.out")" 1 \
+    "control: the original reader loses the wall still standing at merge"
+  assert_contains "$(cat "$TMP_ROOT/standing-wall-control.out")" 'bot_wait=2880 thread_fix=0 paused=0|0' \
+    "control: the original reader counts the standing wall as bot wait"
+fi
+RUN_BIN=""
 new_case split-admin-route
 printf micro > "$CASE/class"
 gate_timeline "100 1400" "400 1500 2000" 3200

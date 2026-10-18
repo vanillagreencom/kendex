@@ -131,6 +131,7 @@ stage() {
     printf 'esc to interrupt\n' > "$STUB_DIR/pane-gh-2.txt"
   fi
   cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/saved-state.json"
+  jq '.lanes[0].walled = {at: "2026-09-02T16:00:00Z"}' "$STUB_DIR/saved-state.json" > "$STUB_DIR/expected-wall-state.json"
   cp "$STUB_DIR/windows.txt" "$STUB_DIR/saved-windows.txt"
   local pick_file="$STUB_DIR/pick-$harness-$model"
   mkdir -p "${pick_file%/*}"
@@ -178,7 +179,7 @@ facts() {
       killed) value=none; [[ ! -f "$STUB_DIR/kill-window.calls" ]] || value="$(paste -sd, - < "$STUB_DIR/kill-window.calls")" ;;
       stopped) value=0; [[ ! -f "$STUB_DIR/host.calls" ]] || value="$(grep -c '^stop ' "$STUB_DIR/host.calls" || true)" ;;
       marker) value=false; [[ ! -f "$STATE_DIR/wall-relaunch.gh-2" && ! -f "$STATE_DIR/wall-relaunch.gh-2.exit" ]] || value=true ;;
-      record) value=changed; cmp -s "$STUB_DIR/saved-state.json" "$STUB_DIR/oversee-state.json" && value=retained ;;
+      record) value=changed; cmp -s "$STUB_DIR/expected-wall-state.json" "$STUB_DIR/oversee-state.json" && value=retained ;;
       windows) value=changed; cmp -s "$STUB_DIR/saved-windows.txt" "$STUB_DIR/windows.txt" && value=retained ;;
       cwd) relaunch_args >/dev/null; value="$(cat "$STUB_DIR/open-terminal.cwd")"; [[ "$value" != "$STUB_DIR/peer" ]] || value=peer ;;
       session) relaunch_args >/dev/null; value="$(cat "$STUB_DIR/open-terminal.session")" ;;
@@ -335,6 +336,7 @@ mv "$STUB_DIR/edited" "$STUB_DIR/oversee-state.json"
 cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/workflow-state-oversee.json"
 cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/saved-state.json"
 canonical_saved="$(jq -Sc '.lanes[0]' "$STUB_DIR/workflow-state-oversee.json")"
+watch_saved="$(jq -Sc '.lanes[0] + {walled: {at: "2026-09-02T16:00:00Z"}}' "$STUB_DIR/saved-state.json")"
 ERR="$TMP_ROOT/actual-launcher.err"
 OUT="$(run_watch ORCH_WALL_RELAUNCH=auto OVERSEE_WATCH_OPEN_TERMINAL="$REPO_ROOT/skills/orch/scripts/open-terminal" \
   PATH="$TMP_ROOT/bin:$LAUNCH_BIN:$PATH" LANES_CLI="$TMP_ROOT/bin/lanes-stub.sh" WORKTREE_CLI="$LAUNCH_BIN/worktree" \
@@ -356,7 +358,7 @@ assert_file_contains "$STUB_DIR/wall-relaunch-issue-2.log" 'open-terminal: marke
 assert_eq "$(grep -c '^stop ' "$STUB_DIR/host.calls" || true)" 0 'failed wall setup never retires the predecessor'
 assert_eq "$(grep -vc 'workflow-state handoff-standing ' "$STUB_DIR/launcher-tmux.log.handoff" || true)" 0 'failed wall setup executes no remote successor command'
 assert_eq "$(jq -Sc '.lanes[0]' "$STUB_DIR/workflow-state-oversee.json")" "$canonical_saved" 'failed wall setup keeps the complete canonical lane record'
-assert_eq "$(jq -Sc '.lanes[0]' "$STUB_DIR/oversee-state.json")" "$canonical_saved" 'failed wall setup keeps the complete watch lane record'
+assert_eq "$(jq -Sc '.lanes[0]' "$STUB_DIR/oversee-state.json")" "$watch_saved" 'failed wall setup keeps the complete watch lane record and its wall'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

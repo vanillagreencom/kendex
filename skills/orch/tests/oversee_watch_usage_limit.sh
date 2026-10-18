@@ -444,6 +444,7 @@ wall_then() { # NAME END — a wall on gh-2 at RESET_NOW, then END 600 s on
   screen banner_idle
   printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
   run TZ=UTC
+  jq -r '.lanes | map(.walled.at // "-") | join(" ")' "$STUB_DIR/oversee-state.json"
   local lanes=""
   case "$2" in
     cleared) screen healthy ;;
@@ -457,10 +458,15 @@ wall_then() { # NAME END — a wall on gh-2 at RESET_NOW, then END 600 s on
   printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
   RUN_LANES="$lanes" run TZ=UTC
   jq -r "$PAUSES" "$STUB_DIR/oversee-state.json"
+  jq -r '.lanes | map(.walled.at // "-") | join(" ")' "$STUB_DIR/oversee-state.json"
 }
 WALL_PAUSE="KEN-1: KEN-2:2026-09-02T16:00:00Z-2026-09-02T16:10:00Z:walled"
 while IFS='|' read -r label end; do
-  assert_eq "$(wall_then "wall_$end" "$end")" "$WALL_PAUSE" "$label" "$ERR"
+  end_wall='- -'
+  [[ "$end" != replaced ]] || end_wall='- 2026-09-02T16:10:00Z'
+  assert_eq "$(wall_then "wall_$end" "$end")" "- 2026-09-02T16:00:00Z
+$WALL_PAUSE
+$end_wall" "$label" "$ERR"
 done <<'ROWS'
 a banner gone from the screen closes the wall at that pass, on the walled lane's record alone|cleared
 a banner replaced by another wall closes the first one|replaced
@@ -468,6 +474,10 @@ a window gone from tmux closes its wall the same way|gone
 a window the fleet no longer carries closes its wall the same way|left
 the last windows leaving the fleet close their walls the same way|emptied
 ROWS
+wall_mutant wall-start-unwritten oversee-watch '      wall_pause "$lane" "$seen_at" null' '      : wall_pause "$lane" "$seen_at" null'
+assert_eq "$(WATCH_BIN="$WALL_WATCH" wall_then wall_start_control cleared)" "- -
+$WALL_PAUSE
+- -" "control: omitting the first-seen write loses only the standing wall" "$ERR"
 new_case wall_unrecorded_window
 printf '{"triaged":[],"lanes":[{"item":"KEN-1","window":"gh-1"}]}\n' > "$STUB_DIR/oversee-state.json"
 screen banner_idle
@@ -497,13 +507,20 @@ wall_in_fleet_dir() { # NAME
   screen banner_idle
   printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
   run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
+  # Preserve the sighting across restart and repair a missing lane stamp.
+  "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$fleet" update oversee 'del(.lanes[1].walled)' >/dev/null
+  next_pass
+  printf '%s' "$((RESET_NOW + 300))" > "$STUB_DIR/now.epoch"
+  run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
+  jq -r '.lanes[1].walled.at' "$fleet/workflow-state-oversee.json"
   screen healthy
   next_pass
   printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
   run_watch "$@" -- --max-loops 1 --state "$fleet/workflow-state-oversee.json" > /dev/null 2>"$ERR" || return
   printf '%s | %s\n' "$(jq -r "$PAUSES" "$fleet/workflow-state-oversee.json")" "$(jq -c . "$orch/workflow-state-oversee.json")"
 }
-assert_eq "$(wall_in_fleet_dir wall_fleet_dir)" "$WALL_PAUSE | {\"triaged\":[]}" \
+assert_eq "$(wall_in_fleet_dir wall_fleet_dir)" "2026-09-02T16:00:00Z
+$WALL_PAUSE | {\"triaged\":[]}" \
   "a wall that ends is kept in the fleet state directory, never in ORCH_STATE_DIR" "$ERR"
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash

@@ -124,7 +124,7 @@
 #   gate waits  the gap that ends at gate_green, split into the waits it
 #             holds, which sum to it:
 #               paused      the lane was parked or walled: the lane record's
-#                           `pauses`, and a `parked` still standing, which runs
+#                           `pauses`, and a `parked` or `walled` still standing, which runs
 #                           on past the gap; a record whose pauses do not read
 #                           refuses as pauses-unreadable
 #               draft       unpaused time before the last ready_for_review
@@ -616,10 +616,9 @@ if [[ -n "$COMMIT" ]]; then
     || refuse commit-unreadable "$COMMIT"
 fi
 
-# The lane's pauses in epoch seconds: each one the record keeps, and a park
-# still standing, which no relaunch has closed.
+# Open parks and walls run through the measured gap until their owner closes them.
 pauses="$(jq -c '[(.pauses // [])[] | {from: (.from | fromdate), to: (if .to == null then null else .to | fromdate end)}]
-  + (if .parked.at == null then [] else [{from: (.parked.at | fromdate), to: null}] end)' <<<"$lane" 2>"$WORK/pauses.err")" \
+  + ([.parked.at, .walled.at] | map(select(. != null) | {from: fromdate, to: null}))' <<<"$lane" 2>"$WORK/pauses.err")" \
   || refuse pauses-unreadable "$ITEM" "$WORK/pauses.err"
 
 negatives="$(jq -r --arg item "$ITEM" "$CYCLE_DEFS"'.rounds // [] | .[] | select(.secs != (.secs | interval))
