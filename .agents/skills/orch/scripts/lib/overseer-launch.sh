@@ -459,14 +459,13 @@ ol_lanes() { # ACCOUNT_HARNESS ARGS...
     lane_capability pool pool
     [[ "$launch:$pool" != ssh:plan ]] || host="${ORCH_LANE_HOST:-local}"
   fi
-  ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lanes" "$@" 2>"$DEP_ERR" || rc=$?
-  # Refused picks leave their detail for the caller's own refusal. Their
-  # provider fallback key still reaches stderr before record parsing can
-  # replace DEP_ERR. lanes owns that diagnostic and its account decision.
-  case "$rc" in
-    0) [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; : > "$DEP_ERR" ;;
-    3|5) awk '/^lanes: host-accounts-unreadable /' "$DEP_ERR" >&2 || return 1 ;;
-  esac
+  # The child owns descriptor 3 for this invocation. Provider notices go to
+  # the caller before record parsing can replace DEP_ERR; ordinary refusal
+  # details stay there for the caller's keyed refusal.
+  ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lanes" "$@" --provider-notices-fd3 3>&2 2>"$DEP_ERR" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; : > "$DEP_ERR"
+  fi
   return "$rc"
 }
 

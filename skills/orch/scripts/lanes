@@ -3281,7 +3281,7 @@ host_accounts_answer() { # HOST [RECORD] — rows or their cache record, status 
 		rows="$record"
 	fi
 	printf '%s\n' "$rows"
-}
+} 2>&"$HOST_ACCOUNTS_ERR_FD"
 
 # The recorded reading of the session one `lanes context` row names, the
 # lane_context_collect fetch contract: the record on stdout and exit 0, exit 1
@@ -3916,6 +3916,9 @@ parse_argv() {
 	PROJECTED=false
 	LOCAL_ONLY=false
 	CACHE_ONLY=false
+	# ol_lanes supplies descriptor 3 to keep provider notices separate from
+	# pick/check refusal details. Ordinary invocations retain stderr.
+	HOST_ACCOUNTS_ERR_FD=2
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -3938,6 +3941,7 @@ parse_argv() {
 			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
 			--binding-floor) BINDING_FLOOR=true; shift ;;
 			--for-overseer) FOR_OVERSEER=true; shift ;;
+			--provider-notices-fd3) HOST_ACCOUNTS_ERR_FD=3; shift ;;
 			--projected) PROJECTED=true; shift ;;
 			--local) LOCAL_ONLY=true; shift ;;
 			--cache-only) [[ "$SUB" == list ]] || die unknown-option "$@"; CACHE_ONLY=true; LOCAL_ONLY=true; shift ;;
