@@ -343,7 +343,9 @@ printf 'batch evidence: lanes=3 provider-calls=%s\n' "$MAIL_CALLS"
 # Restore per-file reads only in a disposable lane-mail copy. The actual
 # watch still runs, so its transport count must reject this old path.
 BATCH_MUTANT="$(mutant_scripts batch/orch lane-mail)/lane-mail" || exit 1
-mutate_file "$BATCH_MUTANT" '[ -n "${LANE_HOST_READ_DIR:-}" ]' '[ -n "" ]'
+# Clear the supplied snapshot before either cached-read entry point uses it.
+mutate_file "$BATCH_MUTANT" $'CACHED_READ=0\nif [ "$HOST:$FAST_READ" = 1:1 ]' \
+  $'LANE_HOST_READ_DIR=""\nCACHED_READ=0\nif [ "$HOST:$FAST_READ" = 1:1 ]'
 hosted_batch_pass "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$BATCH_MUTANT"
 assert_le 3 "$MAIL_CALLS" "control: the per-lane path needs at least three provider calls"
 printf 'batch control: lanes=3 provider-calls=%s\n' "$MAIL_CALLS"

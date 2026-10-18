@@ -51,7 +51,9 @@ measure_passes() { # CASE WATCH
 measure_passes fixed_fifteen "${PASS_COST_WATCH:-$REPO_ROOT/skills/orch/scripts/oversee-watch}"
 [[ -z "${PASS_COST_EVIDENCE:-}" ]] || printf '%s\n' "$counts" >"$PASS_COST_EVIDENCE"
 assert_le "$MAIL_COST" 100 'fifteen-lane mail pass starts at most one hundred processes'
-assert_le "$LONG_COST" 900 'fifteen-lane long pass starts at most 900 processes'
+# Candidate: 774 starts. Restored per-lane window reads: 816 starts.
+LONG_LIMIT=800
+assert_le "$LONG_COST" "$LONG_LIMIT" 'fifteen-lane long pass meets the process bound'
 
 # Restoring the per-lane window reads preserves the workload and exceeds the bound.
 CONTROL_SCRIPTS="$(mutant_scripts pass-cost-control/orch oversee-watch)"
@@ -59,7 +61,7 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/pass-cost-control/github"
 mutate_file "$CONTROL_SCRIPTS/oversee-watch" 'local LANE_WINDOW_CACHE=1' 'local LANE_WINDOW_CACHE=0'
 measure_passes per_lane_control "$CONTROL_SCRIPTS/oversee-watch"
 control_rc=0
-(FAIL=0; assert_le "$LONG_COST" 900 'per-lane reads satisfy the long-pass bound'; [[ "$FAIL" -eq 0 ]]) \
+(FAIL=0; assert_le "$LONG_COST" "$LONG_LIMIT" 'per-lane reads satisfy the long-pass bound'; [[ "$FAIL" -eq 0 ]]) \
   >"$STUB_DIR/control.out" || control_rc=$?
 assert_eq "$control_rc" 1 'control: the long-pass bound rejects per-lane window reads'
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

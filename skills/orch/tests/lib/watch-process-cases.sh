@@ -177,8 +177,10 @@ fi
 CONTROL_DIR="$(mutant_scripts mail-cost-control/orch oversee-watch)"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mail-cost-control/github"
 mutate_file "$CONTROL_DIR/oversee-watch" \
-  '    "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?' \
-  '    MAIL_OUT="$("$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?; printf "%s" "$MAIL_OUT" >"$WORK_DIR/mail.out"'
+  '  if [[ "$host_read" -eq 0 ]]; then
+    "$LANE_MAIL" "$@" >"$WORK_DIR/mail.out" 2>"$WORK_DIR/mail.err" || rc=$?' \
+  '  if [[ "$host_read" -eq 0 ]]; then
+    MAIL_OUT="$("$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?; printf "%s" "$MAIL_OUT" >"$WORK_DIR/mail.out"'
 READER_DIR="$(mutant_scripts mail-reader-control/orch lane-mail)"
 mutate_file "$READER_DIR/lane-mail" 'READ_OUT="$(lm_read_pair "$READ_OVER_LOCK" "$TO_LANE"' \
   'READ_OUT="$(lm_existing_lock 8 "$READ_OVER_LOCK" lm_existing_lock 9 "$TO_LANE"'
