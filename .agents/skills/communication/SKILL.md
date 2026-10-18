@@ -38,7 +38,13 @@ Read [messages](references/messages.md) before every message. Add only the refer
 
 ## User instruction
 
-The supported installed path is `.agents/skills/communication/SKILL.md`, relative to the consumer project or assistant home. Its user instruction file carries this writing reference:
+For a global install, put this writing reference in the user-scope instruction file:
+
+```text
+Before writing a message to a person, read `$HOME/.agents/skills/communication/SKILL.md`.
+```
+
+For a project install, put this writing reference in the project-scope instruction file. The path is relative to the project root:
 
 ```text
 Before writing a message to a person, read `.agents/skills/communication/SKILL.md`.
