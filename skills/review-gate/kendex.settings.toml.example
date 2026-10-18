@@ -44,3 +44,8 @@ REVIEW_GATE_STANDARD_QUEUE_BYPASS = ""
 # The same, for a ruleset that holds the required status checks rule alone.
 # Every other ruleset admits no bypass actor.
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
+
+# Extra kendex projects for automatic refresh, separated by semicolons.
+# Paths are relative to the checkout and must contain kendex.toml.
+# Example: packaging/jarvis-home;another/project. Empty refreshes the root.
+KENDEX_REFRESH_PROJECTS = ""

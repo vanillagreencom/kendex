@@ -114,8 +114,193 @@ run_refresh() { # CONTENT VERIFY CLASS
     "$TMP/state/armed" "$TMP/state/queued" "$TMP/state/merged" "$TMP/state/arm-state.json"
   : >"$TMP/state/summary"
   : >"$TMP/state/outputs"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" GITHUB_OUTPUT="$TMP/state/outputs" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" GITHUB_OUTPUT="$TMP/state/outputs" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} ${PROJECT_SETTING_ENV[@]+"${PROJECT_SETTING_ENV[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="${LEASE_REMOTE:-$TMP/remote}" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
   RC="$result"
+}
+
+# Each row runs the release runner against a committed consumer declaration.
+# The historical main runner is a must-fail control for these new assertions.
+run_project_rows() {
+  local saved_repo="$repo" saved_runner="$runner" base name selection expected mode matched head entry
+  local projects_runner="$TMP/project-release/refresh/refresh-consumer.sh"
+  mkdir -p "$TMP/project-release" "$TMP/project-main"
+  cp -RL "$repo/refresh" "$repo/skills" "$TMP/project-release/"
+  cp -RL "$repo/refresh" "$repo/skills" "$TMP/project-main/"
+  git -C "$SKILL_DIR" show 0d7a2704642362e6f65cb1ab8949e79b58864442:refresh/refresh-consumer.sh >"$TMP/project-main/refresh/refresh-consumer.sh"
+  cp -R "$TMP/project-release" "$TMP/project-order-control"
+  python3 - "$TMP/project-order-control/refresh/refresh-consumer.sh" <<'PROJECT_ORDER_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+source = path.read_text()
+adopt = '''if [ "$1" = "$ROOT" ]; then
+  "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
+fi
+'''
+old = adopt + 'kendex verify --scope project'
+assert source.count(old) == 1
+changed = source.replace(old, 'kendex verify --scope project\n' + adopt)
+assert changed != source
+path.write_text(changed)
+PROJECT_ORDER_CONTROL
+  git clone -q --branch main "$repo" "$TMP/project-consumer"
+  repo="$TMP/project-consumer"
+  git -C "$repo" config user.name fixture
+  git -C "$repo" config user.email fixture@example.invalid
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
+  git init -q --bare "$TMP/project-remote"
+  git --git-dir="$TMP/project-remote" config gc.auto 0
+  git --git-dir="$TMP/project-remote" config maintenance.auto false
+  git -C "$repo" remote set-url origin "$TMP/project-remote"
+  LEASE_REMOTE="$TMP/project-remote"
+  base="$(git -C "$repo" rev-parse main)"
+  mkdir -p "${repo}-outside"
+  printf 'schema = 7\n' >"${repo}-outside/kendex.toml"
+  for mode in release main-control adoption-order-control; do
+    runner="$projects_runner"
+    [ "$mode" != main-control ] || runner="$TMP/project-main/refresh/refresh-consumer.sh"
+    [ "$mode" != adoption-order-control ] || runner="$TMP/project-order-control/refresh/refresh-consumer.sh"
+    while IFS='|' read -r name selection expected; do
+      if [ "$mode" = adoption-order-control ] && [ "$name" != nested ]; then continue; fi
+      git -C "$repo" reset --hard -q
+      git -C "$repo" checkout -q -B main "$base"
+      git -C "$repo" clean -fdq
+      printf 'schema = 7\n' >"$repo/kendex.toml"
+      mkdir -p "$repo/packaging/jarvis home/.agents/skills/bot-instructions/scripts"
+      printf 'schema = 7\n' >"$repo/packaging/jarvis home/kendex.toml"
+      printf 'stale\n' >"$repo/packaging/jarvis home/rendered.txt"
+      printf 'stale\n' >"$repo/packaging/jarvis home/bot.txt"
+      cat >"$repo/packaging/jarvis home/.agents/skills/bot-instructions/scripts/bot-instructions" <<'PROJECT_BOT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}${TEST_SECRET:-}" ] || exit 51
+[ ! -e .fixture-render-fail ] || exit 50
+# The renderer must see the project refresh in the repository index.
+git diff --exit-code -- rendered.txt
+printf 'updated\n' >bot.txt
+PROJECT_BOT
+      chmod +x "$repo/packaging/jarvis home/.agents/skills/bot-instructions/scripts/bot-instructions"
+      # An unselected project must stay stale and cannot extend root selection.
+      mkdir -p "$repo/unselected"
+      printf 'schema = 7\n' >"$repo/unselected/kendex.toml"
+      printf 'stale\n' >"$repo/unselected/rendered.txt"
+      printf '[env]\nKENDEX_REFRESH_PROJECTS = "unselected"\n' >"$repo/packaging/jarvis home/kendex.settings.toml"
+      PROJECT_SETTING_ENV=()
+      case "$name" in
+        nested) : >"$repo/.fixture-adoption-required" ;;
+        environment) PROJECT_SETTING_ENV=("KENDEX_REFRESH_PROJECTS=packaging/jarvis home") ;;
+        absolute) selection="$repo/packaging/jarvis home" ;;
+        outside) selection='../project-consumer-outside' ;;
+        directory-link)
+          ln -s "${repo}-outside" "$repo/linked"
+          [ -L "$repo/linked" ] || exit 1 ;;
+        manifest-link)
+          rm "$repo/packaging/jarvis home/kendex.toml"
+          ln -s "${repo}-outside/kendex.toml" "$repo/packaging/jarvis home/kendex.toml"
+          [ -L "$repo/packaging/jarvis home/kendex.toml" ] || exit 1 ;;
+        unread)
+          rm "$repo/packaging/jarvis home/kendex.toml"
+          ln -s missing "$repo/packaging/jarvis home/kendex.toml"
+          [ -L "$repo/packaging/jarvis home/kendex.toml" ] || exit 1 ;;
+        manifest) rm "$repo/packaging/jarvis home/kendex.toml" ;;
+        apply|verify|render) : >"$repo/packaging/jarvis home/.fixture-$name-fail" ;;
+        covered|third-party|coverage-unread|revision)
+          printf 'current\n' >"$repo/packaging/jarvis home/rendered.txt"
+          printf 'updated\n' >"$repo/packaging/jarvis home/bot.txt"
+          case "$name" in
+            third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/packaging/jarvis home/.fixture-sources" ;;
+            coverage-unread) : >"$repo/packaging/jarvis home/.fixture-source-unread" ;;
+            revision) printf '\n[skills.probe]\nsource = "kendex"\nrev = "topic"\n' >>"$repo/packaging/jarvis home/kendex.toml" ;;
+          esac ;;
+      esac
+      printf '[env]\nKENDEX_REFRESH_PROJECTS = "%s"\n' "$selection" >"$repo/kendex.settings.toml"
+      if [ "$name" = private ]; then
+        printf 'KENDEX_ENV_FILE = ".refresh-env"\n' >>"$repo/kendex.settings.toml"
+        printf 'KENDEX_REFRESH_PROJECTS="packaging/jarvis home"\n' >"$repo/.refresh-env"
+      fi
+      commit "$repo"
+      git -C "$repo" push -q --force origin main
+      git --git-dir="$LEASE_REMOTE" update-ref -d refs/heads/kendex/refresh
+      : >"$TMP/state/pr"
+      : >"$TMP/state/calls"
+      : >"$TMP/state/project-calls"
+      rm -f -- "$TMP/state/adopted"
+      CATALOG_REV=main
+      if [ "$name" = fallback ]; then
+        printf 'Error: catalog-needs-engine min=7.9.0 engine=7.8.9\n' >"$TMP/state/catalog-main-error"
+      fi
+      run_refresh current pass render
+      matched=no
+      case "$expected" in
+        updated)
+          if [ "$RC" -eq 0 ] &&
+              head="$(git --git-dir="$LEASE_REMOTE" rev-parse refs/heads/kendex/refresh 2>/dev/null)" &&
+              [ "$(git --git-dir="$LEASE_REMOTE" show "$head:packaging/jarvis home/rendered.txt")" = current ] &&
+              [ "$(git --git-dir="$LEASE_REMOTE" show "$head:packaging/jarvis home/bot.txt")" = updated ] &&
+              [ "$(git --git-dir="$LEASE_REMOTE" show "$head:unselected/rendered.txt")" = stale ]; then
+            matched=yes
+            for entry in "$repo" "$repo/packaging/jarvis home"; do
+              [ "$(grep -cxF "$entry|refresh --scope project --yes --leave|main" "$TMP/state/project-calls")" -eq 1 ] || matched=no
+              grep -qxF "$entry|apply --scope project --yes --leave|main" "$TMP/state/project-calls" || matched=no
+              grep -qxF "$entry|verify --scope project|main" "$TMP/state/project-calls" || matched=no
+            done
+          fi ;;
+        fallback)
+          if [ "$RC" -eq 0 ]; then
+            matched=yes
+            for entry in "$repo" "$repo/packaging/jarvis home"; do
+              grep -qxF "$entry|refresh --scope project --yes --leave|main" "$TMP/state/project-calls" || matched=no
+              grep -qxF "$entry|refresh --scope project --yes --leave|v7.8.9" "$TMP/state/project-calls" || matched=no
+            done
+            grep -qF 'Project `.`:' "$TMP/state/body" || matched=no
+            grep -qF 'Project `packaging/jarvis home`:' "$TMP/state/body" || matched=no
+          fi ;;
+        sources=*)
+          if [ "$RC" -eq 0 ] && grep -qxF "$expected" "$TMP/state/outputs" &&
+              grep -qxF "$repo/packaging/jarvis home|marketplace list --scope project --json|main" "$TMP/state/project-calls"; then matched=yes; fi ;;
+        project-*|read)
+          if [ "$RC" -ne 0 ] && grep -qxF "refresh-error=$expected value=$selection" <<<"$OUT" &&
+              [ ! -s "$TMP/state/project-calls" ]; then matched=yes; fi ;;
+        verify)
+          if [ "$RC" -eq 49 ] &&
+              ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then matched=yes; fi ;;
+        *)
+          if [ "$RC" -ne 0 ] && grep -qxF "refresh-error=$expected" <<<"$OUT" &&
+              ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then matched=yes; fi ;;
+      esac
+      if [ "$mode:$matched" = release:yes ] || [ "$mode:$matched" = main-control:no ] ||
+          { [ "$mode:$matched" = adoption-order-control:no ] && [ "$RC" -eq 52 ]; }; then
+        ok "projects $mode: $name"
+      else bad "projects $mode: $name" "$OUT"; fi
+      rm -f -- "$TMP/state/catalog-main-error"
+    done <<'PROJECT_ROWS'
+nested|packaging/jarvis home|updated
+deduplicated| . ; packaging/jarvis home; packaging/jarvis home/../jarvis home;; |updated
+private|unselected|updated
+environment|unselected|updated
+absolute||project-path
+missing|missing|project-missing
+outside||project-outside
+directory-link|linked|project-outside
+manifest-link|packaging/jarvis home|project-outside
+manifest|packaging/jarvis home|project-manifest
+unread|packaging/jarvis home|read
+apply|packaging/jarvis home|apply value=48
+verify|packaging/jarvis home|verify
+render|packaging/jarvis home|bot-instructions-render value=50
+covered|packaging/jarvis home|sources=covered
+third-party|packaging/jarvis home|sources=uncovered
+coverage-unread|packaging/jarvis home|sources=uncovered
+revision|packaging/jarvis home|sources=uncovered
+fallback|packaging/jarvis home|fallback
+PROJECT_ROWS
+  done
+  repo="$saved_repo"
+  runner="$saved_runner"
+  unset LEASE_REMOTE CATALOG_REV PROJECT_SETTING_ENV
+  : >"$TMP/state/pr"
+  : >"$TMP/state/calls"
 }
 
 # The acceptance assertion also holds ordering and no publication after refusal.

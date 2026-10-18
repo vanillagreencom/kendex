@@ -235,6 +235,7 @@ cat >"$TMP/bin/kendex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s|%s\n' "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/catalog-revs"
+printf '%s|%s|%s\n' "$PWD" "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/project-calls"
 # The runner calls the render verb under env -i, so it reads no test
 # setting; a row drives it through the state. render-exit and render-said are the verb's
 # exit and output where a row sets them; otherwise, like kendex, it runs the
@@ -308,9 +309,14 @@ case "$1" in
   # A hand-deleted declaration's file stays after refresh; apply removes it.
   apply)
     [ "${2:-}" != --plan ] || exit 0
+    [ ! -e .fixture-apply-fail ] || exit 48
     [ "${TEST_APPLY_EXIT:-0}" -eq 0 ] || exit "$TEST_APPLY_EXIT"
     rm -f -- .claude/hooks/leftover.sh ;;
   verify)
+    if [ -e .fixture-adoption-required ]; then
+      [ -e "$TEST_STATE/adopted" ] || exit 52
+    fi
+    [ ! -e .fixture-verify-fail ] || exit 49
     if [[ " $* " == *' --json '* ]] && [ -f "$TEST_STATE/classifier-proof" ]; then
       failed=0
       [ "$(cat "$TEST_STATE/classifier-proof")" != verify-not-clean ] || failed=1
@@ -326,6 +332,10 @@ case "$1" in
       [ ! -e .claude/hooks/leftover.sh ] && [ "$TEST_VERIFY" = pass ]
     fi ;;
   help) [ "$TEST_LISTS_PRUNE" != yes ] || printf '      --prune\n' ;;
+  marketplace)
+    [ ! -e .fixture-source-unread ] || exit 47
+    if [ -e .fixture-sources ]; then cat .fixture-sources
+    else printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"}]}\n'; fi ;;
   *) exit 2 ;;
 esac
 SH
@@ -385,7 +395,7 @@ file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
 file_edit "$TMP/bin" gh 1 '@STATE@' "s|@STATE@|$TMP/state|"
 file_edit "$TMP/bin" gh 1 '@FIXTURES@' "s|@FIXTURES@|$FIXTURES|"
 file_edit "$TMP/bin" gh 1 '@GH_SHIM@' "s|@GH_SHIM@|$TMP/standard-gh|"
-file_edit "$TMP/bin" kendex 6 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 7 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -428,6 +438,9 @@ git -C "$repo" push -q origin main
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
 runner="$repo/refresh/refresh-consumer.sh"
+
+# The same assertions reject the runner on the implementation's main base.
+run_project_rows
 
 # The shared workflow clones the consumer before release setup. Another
 # writer can advance its default branch before this script fetches it.
@@ -499,6 +512,10 @@ s = p.read_text()
 line = ': "${KENDEX_CATALOG_REV:?KENDEX_CATALOG_REV names the default catalog revision}"'
 assert s.count(line) == 1
 changed = s.replace(line, ': # ' + line)
+# The per-project snapshot also reads the required value before the CLI call.
+line = 'local KENDEX_CATALOG_REV="$KENDEX_CATALOG_REV"'
+assert changed.count(line) == 1
+changed = changed.replace(line, ': # ' + line)
 assert changed != s
 p.write_text(changed)
 CATALOG_CONTROL
@@ -1849,6 +1866,14 @@ printf '[env]\nORCH_OVERSEER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.sett
 commit "$repo"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/settings-trusted" HEAD
+# A release keeps its path reader when a consumer removes optional orch.
+mv "$TMP/settings-trusted/skills" "$TMP/settings-trusted/consumer-skills"
+mkdir "$TMP/settings-trusted/skills"
+cp -R "$repo/.agents/skills/orch" "$TMP/settings-trusted/skills/orch"
+for package in review-gate harness-ci; do
+  ln -s "../.agents/skills/$package" "$TMP/settings-trusted/skills/$package"
+  [ -L "$TMP/settings-trusted/skills/$package" ] || exit 1
+done
 runner="$TMP/settings-trusted/refresh/refresh-consumer.sh"
 cp "$runner" "$TMP/boundary-runner"
 cp -R "$repo/.agents/skills/orch" "$TMP/release-orch"
@@ -2662,9 +2687,9 @@ skill second for Claude Code: edited on disk since install — keep it as a fork
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]).resolve(); s=p.read_text()
-old='  exit 1\nfi\nTMP="$(mktemp -d)"'
+old='  exit 1\nfi\n# refresh keeps the files'
 assert s.count(old)==1
-changed=s.replace(old, '  kendex refresh --scope project --yes --leave --discard-edits\nfi\nTMP="$(mktemp -d)"')
+changed=s.replace(old, '  kendex refresh --scope project --yes --leave --discard-edits\nfi\n# refresh keeps the files')
 assert changed != s; p.write_text(changed)
 DISCARD_CONTROL
       commit "$repo"

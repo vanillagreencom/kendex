@@ -16,7 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../skills/review-gate/scripts/lib/arm-published-head.sh"
 templates="$SCRIPT_DIR"
 ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
+ROOT="$(cd -- "$ROOT" && pwd -P)"
+cd -- "$ROOT"
 : "${GH_REPO:?GH_REPO names the running repository}"
 : "${GH_TOKEN:?GH_TOKEN must be the repository-scoped app installation token}"
 : "${REFRESH_APP_SLUG:?REFRESH_APP_SLUG names that app}"
@@ -114,6 +115,94 @@ if [ -n "$pr" ]; then
 fi
 git checkout -B kendex/refresh "$base"
 export KENDEX_UI=plain
+TMP="$(mktemp -d)" || { printf 'refresh-error=read value=scratch\n' >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
+# Target selection uses released readers before any consumer package changes.
+# The root declaration alone selects projects; installed consumer code has no say.
+project_env=()
+if [ "${KENDEX_REFRESH_PROJECTS+set}" = set ]; then project_env+=("KENDEX_REFRESH_PROJECTS=$KENDEX_REFRESH_PROJECTS"); fi
+if [ "${KENDEX_ENV_FILE+set}" = set ]; then project_env+=("KENDEX_ENV_FILE=$KENDEX_ENV_FILE"); fi
+if [ "${REVIEW_GATE_SETTINGS_FILE+set}" = set ]; then project_env+=("REVIEW_GATE_SETTINGS_FILE=$REVIEW_GATE_SETTINGS_FILE"); fi
+if ! env -i PATH="$PATH" HOME="$HOME" ${project_env[@]+"${project_env[@]}"} bash -s -- "$SCRIPT_DIR" "$ROOT" >"$TMP/project-entries" <<'PROJECT_SETTINGS'
+set -euo pipefail
+source "$1/../skills/review-gate/scripts/lib/settings.sh"
+source "$1/../skills/orch/scripts/lib/kendex-env.sh"
+KENDEX_ENV_FILE="$(rg_setting KENDEX_ENV_FILE "" "")"
+kendex_private_env_file private_file "$2"
+projects="$(rg_setting KENDEX_REFRESH_PROJECTS "" "$private_file")"
+rg_pack "$projects" ';'
+PROJECT_SETTINGS
+then
+  printf 'refresh-error=settings-extraction value=KENDEX_REFRESH_PROJECTS\n' >&2
+  exit 1
+fi
+# Require a manifest here so the CLI cannot walk to a parent project when a
+# consumer removes a declared nested manifest. This is local refresh policy.
+python3 - "$ROOT" "$TMP/project-entries" >"$TMP/projects" <<'PROJECT_PATHS'
+from pathlib import Path
+import stat
+import sys
+root = Path(sys.argv[1])
+def refuse(key, entry, operation):
+    print(f'refresh-error={key} value={entry}', file=sys.stderr)
+    print(operation, file=sys.stderr)
+    sys.exit(1)
+def inside(path):
+    return path == root or root in path.parents
+seen = {root}
+targets = [(root, '.')]
+for entry in Path(sys.argv[2]).read_text().splitlines():
+    declared = Path(entry)
+    if declared.is_absolute():
+        refuse('project-path', entry, 'Project paths must be relative to the checkout.')
+    try:
+        directory = root / declared
+        try:
+            directory_stat = directory.stat()
+        except FileNotFoundError:
+            if directory.is_symlink():
+                raise
+            refuse('project-missing', entry, 'The declared project directory does not exist.')
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            refuse('project-missing', entry, 'The declared project directory does not exist.')
+        directory = directory.resolve(strict=True)
+        if not inside(directory):
+            refuse('project-outside', entry, 'The project directory resolves outside the checkout.')
+        manifest = directory / 'kendex.toml'
+        try:
+            manifest_stat = manifest.stat()
+        except FileNotFoundError:
+            if manifest.is_symlink():
+                raise
+            refuse('project-manifest', entry, 'The declared project needs a kendex.toml file.')
+        if not stat.S_ISREG(manifest_stat.st_mode):
+            refuse('project-manifest', entry, 'The declared project needs a kendex.toml file.')
+        if not inside(manifest.resolve(strict=True)):
+            refuse('project-outside', entry, 'The project manifest resolves outside the checkout.')
+        with manifest.open('rb'):
+            pass
+    except (OSError, RuntimeError) as error:
+        refuse('read', entry, f'Could not resolve or read the project: {error}')
+    if directory not in seen:
+        seen.add(directory)
+        targets.append((directory, entry))
+for directory, entry in targets:
+    sys.stdout.buffer.write(str(directory).encode() + b'\0' + entry.encode() + b'\0')
+PROJECT_PATHS
+projects=()
+project_entries=()
+while IFS= read -r -d '' directory && IFS= read -r -d '' entry; do
+  projects+=("$directory")
+  project_entries+=("$entry")
+done <"$TMP/projects"
+catalog_report=""
+retired_items=""
+setting_notes=()
+refresh_project() {
+local KENDEX_CATALOG_REV="$KENDEX_CATALOG_REV"
+local catalog_note=""
+cd -- "$1"
+if [ "${#projects[@]}" -gt 1 ]; then printf 'refresh-project=%s\n' "$2"; fi
 # This refresh-run edit leaves engine.md rule 15's reader refusal intact.
 # It serves only a bump that adds or changes what no existing table means,
 # such as KEN-3652's top-level key. A changed table meaning needs its own route.
@@ -153,7 +242,6 @@ case "$refresh_help" in
   *--prune*) refresh_args+=(--prune) ;;
 esac
 refresh_output="$(kendex "${refresh_args[@]}" 2>&1)" || refresh_status=$?
-catalog_report=""
 # The engine owns both compatibility and the lock's recorded-commit floor.
 # Its refusal precedes package writes. A release retry keeps that floor and
 # explicit revisions; it must not turn any other failure into a fallback.
@@ -164,7 +252,9 @@ if [ "$refresh_status" -ne 0 ] && [ "$KENDEX_CATALOG_REV" = main ]; then
     KENDEX_CATALOG_REV="v${BASH_REMATCH[2]}"
     printf -v catalog_held 'catalog-held min=%s engine=%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
     printf '%s\n' "$catalog_held"
-    printf -v catalog_report 'Packages wait for a CLI release and the v1 move: `%s`. This refresh selected the release catalog `%s`. Declared revisions and the lock record still take precedence.' "$catalog_held" "$KENDEX_CATALOG_REV"
+    printf -v catalog_note 'Packages wait for a CLI release and the v1 move: `%s`. This refresh selected the release catalog `%s`. Declared revisions and the lock record still take precedence.' "$catalog_held" "$KENDEX_CATALOG_REV"
+    if [ "${#projects[@]}" -gt 1 ]; then catalog_note="Project \`$2\`: $catalog_note"; fi
+    catalog_report="${catalog_report}${catalog_report:+$'\n'}$catalog_note"
     refresh_status=0
     refresh_output="$(kendex "${refresh_args[@]}" 2>&1)" || refresh_status=$?
     break
@@ -182,8 +272,6 @@ fi
 # setting; a run with no render change runs no classifier and reports none.
 # retired_items collects the line refresh prints for each item its catalog
 # retired, keyed by the item's name and the catalog, its migration last.
-setting_notes=()
-retired_items=""
 retired_pattern='^[^ :]+: retired by '
 held_items=""
 held_keys=$'\n'
@@ -219,6 +307,7 @@ while IFS= read -r line; do
     *) conflict_section=no ;;
   esac
   if [[ "$line" =~ $retired_pattern ]]; then
+    if [ "${#projects[@]}" -gt 1 ]; then line="project=$2 $line"; fi
     retired_items="$retired_items$line"$'\n'
   fi
   case "$line" in
@@ -239,8 +328,6 @@ if [ -n "$conflict_count" ] || [ "$held_count" -ne 0 ]; then
   printf '%s' "$held_items" >&2
   exit 1
 fi
-TMP="$(mktemp -d)"
-trap 'rm -rf -- "${TMP:?}"' EXIT
 # refresh keeps the files of a declaration deleted from kendex.toml by hand;
 # apply moves them to the trash as diffs of this pull request. A leftover
 # edited on disk is held, not trashed, and the verify below fails on it.
@@ -280,7 +367,17 @@ elif [ "$render_status" -ne 0 ]; then
   printf 'refresh-error=bot-instructions-render value=%s\n' "$render_status" >&2
   exit 1
 fi
-"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
+# The root caller can still carry an older adoption record after apply.
+# Adopt it once before verification judges the refreshed template bytes.
+if [ "$1" = "$ROOT" ]; then
+  "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
+fi
+kendex verify --scope project
+}
+for ((project_index=0; project_index<${#projects[@]}; project_index++)); do
+  refresh_project "${projects[$project_index]}" "${project_entries[$project_index]}"
+done
+cd -- "$ROOT"
 # The release-installed parser must judge its own settings, including on a
 # first install. It reads and prints data without the refresh app credential.
 # Only this script in the kendex release tree consumes its output or publishes. Without orch the
@@ -365,7 +462,6 @@ report_settings() {
     exit 1
   fi
 }
-kendex verify --scope project
 if ! engine_version="$(kendex --version)"; then
   printf 'refresh-error=read value=engine-version\n' >&2
   exit 1
@@ -384,30 +480,31 @@ if git diff --cached --quiet; then
     # remotes but omits item overrides, so inspect TOML for any revision.
     # No revision override can be covered by the main-only tuple.
     # Missing evidence withholds the record, so a later run refreshes in full.
-    python3 - "$ROOT" >>"$GITHUB_OUTPUT" <<'SOURCE_COVERAGE'
+    python3 - "${projects[@]}" >>"$GITHUB_OUTPUT" <<'SOURCE_COVERAGE'
 import json, pathlib, subprocess, sys
 try:
     import tomllib
-    listed = json.loads(subprocess.check_output(
-        ['kendex', 'marketplace', 'list', '--scope', 'project', '--json'],
-        timeout=30, stderr=subprocess.PIPE))
-    assert listed['schema'] == 1
-    sources = listed['subscriptions']
-    assert isinstance(sources, list) and sources
-    assert all(row.get('enabled') is False or
-               (row.get('enabled') is True and row.get('repo') == 'vanillagreencom/kendex'
-                and 'path' not in row and 'rev' not in row) for row in sources)
     def revision(value):
         if isinstance(value, dict):
             return 'rev' in value or any(revision(child) for child in value.values())
         return isinstance(value, list) and any(revision(child) for child in value)
-    root = pathlib.Path(sys.argv[1])
-    manifests = [root / 'kendex.toml', root / 'kendex-local.toml']
-    assert manifests[0].is_file()
-    for manifest in manifests:
-        assert not manifest.is_symlink()
-        if manifest.exists():
-            assert not revision(tomllib.loads(manifest.read_text()))
+    for project in sys.argv[1:]:
+        root = pathlib.Path(project)
+        listed = json.loads(subprocess.check_output(
+        ['kendex', 'marketplace', 'list', '--scope', 'project', '--json'],
+        cwd=root, timeout=30, stderr=subprocess.PIPE))
+        assert listed['schema'] == 1
+        sources = listed['subscriptions']
+        assert isinstance(sources, list) and sources
+        assert all(row.get('enabled') is False or
+               (row.get('enabled') is True and row.get('repo') == 'vanillagreencom/kendex'
+                and 'path' not in row and 'rev' not in row) for row in sources)
+        manifests = [root / 'kendex.toml', root / 'kendex-local.toml']
+        assert manifests[0].is_file()
+        for manifest in manifests:
+            assert not manifest.is_symlink()
+            if manifest.exists():
+                assert not revision(tomllib.loads(manifest.read_text()))
 except (AssertionError, AttributeError, ImportError, KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
     print('sources=uncovered')
 else:
