@@ -6,7 +6,7 @@
 # worst case marks a working reviewer unresponsive mid-run.
 #
 # Both sides are read from their own files on every run. The worst case is
-# (N + C) x TIMEOUT: N and TIMEOUT from mutation-stability's one defaults
+# C x TIMEOUT + min(N x TIMEOUT, BUDGET + 2 x TIMEOUT): defaults from the one
 # assignment line, C the timeout-bounded calls (run_command, run_test) that
 # start a line at column 0, which is every call outside a function body and
 # outside the stability loop, whose own call is the N. The deadline is the
@@ -26,24 +26,25 @@ SCRIPT="$SKILLS_ROOT/reviewer/scripts/mutation-stability"
 echo "=== reviewer-test deadline covers one mutation-stability run ==="
 
 # deadline_check DOC SCRIPT — one keyed line on stdout:
-#   deadline-ok|deadline-short minutes=M required-seconds=S stability=N calls=C timeout=T
+#   deadline-ok|deadline-short minutes=M required-seconds=S stability=N calls=C timeout=T budget=B
 #   read-failed what=defaults|calls|section|deadline path=FILE
 # read-failed names an extractor that found nothing, or more than one answer.
 deadline_check() {
-  local doc="$1" script="$2" defaults calls section hits minutes n t required verdict
+  local doc="$1" script="$2" defaults calls section hits minutes n t b repeats required verdict
   defaults="$(awk '
     /^[A-Z_]+=/ {
-      n = ""; t = ""
+      n = ""; t = ""; b = ""
       for (i = 1; i <= NF; i++) {
         if ($i ~ /^N=[0-9]+$/) n = substr($i, 3)
         if ($i ~ /^TIMEOUT=[0-9]+$/) t = substr($i, 9)
+        if ($i ~ /^BUDGET=[0-9]+$/) b = substr($i, 8)
       }
-      if (n != "" && t != "") print n, t
+      if (n != "" && t != "" && b != "") print n, t, b
     }' "$script")" || { echo "read-failed what=defaults path=$script"; return 0; }
   case "$defaults" in
     '' | *$'\n'*) echo "read-failed what=defaults path=$script"; return 0 ;;
   esac
-  read -r n t <<<"$defaults"
+  read -r n t b <<<"$defaults"
 
   calls="$(grep -cE -- '^(run_command|run_test)[[:space:]]' "$script")" || [ "$?" -eq 1 ] ||
     { echo "read-failed what=calls path=$script"; return 0; }
@@ -65,10 +66,12 @@ deadline_check() {
   esac
   minutes="${hits%% *}"
 
-  required=$(( (10#$n + calls) * 10#$t ))
+  repeats=$((10#$n * 10#$t))
+  [ "$repeats" -le $((10#$b + 2 * 10#$t)) ] || repeats=$((10#$b + 2 * 10#$t))
+  required=$(( calls * 10#$t + repeats ))
   verdict=deadline-short
   [ $(( 10#$minutes * 60 )) -lt "$required" ] || verdict=deadline-ok
-  echo "$verdict minutes=$((10#$minutes)) required-seconds=$required stability=$((10#$n)) calls=$calls timeout=$((10#$t))"
+  echo "$verdict minutes=$((10#$minutes)) required-seconds=$required stability=$((10#$n)) calls=$calls timeout=$((10#$t)) budget=$((10#$b))"
 }
 
 # plant SRC DST OLD NEW — DST is SRC with its one OLD replaced by NEW. A
@@ -86,13 +89,13 @@ plant() {
 LIVE="$(deadline_check "$DOC" "$SCRIPT")"
 assert_contains "$LIVE" "deadline-ok " "the reviewer-test deadline covers one mutation-stability run at its defaults"
 
-FIELDS='minutes=([0-9]+) required-seconds=([0-9]+) stability=([0-9]+) calls=([0-9]+) timeout=([0-9]+)$'
+FIELDS='minutes=([0-9]+) required-seconds=([0-9]+) stability=([0-9]+) calls=([0-9]+) timeout=([0-9]+) budget=([0-9]+)$'
 if ! [[ $LIVE =~ $FIELDS ]]; then
   fail "the live figures read, so the controls can be planted" "got: $LIVE"
   md_report
   exit 1
 fi
-M=${BASH_REMATCH[1]} REQ=${BASH_REMATCH[2]} N=${BASH_REMATCH[3]} C=${BASH_REMATCH[4]} T=${BASH_REMATCH[5]}
+M=${BASH_REMATCH[1]} REQ=${BASH_REMATCH[2]} N=${BASH_REMATCH[3]} C=${BASH_REMATCH[4]} T=${BASH_REMATCH[5]} B=${BASH_REMATCH[6]}
 
 # Each control copies one side, plants a value derived from the live figures
 # so it lands on the far side of the bound whatever those figures are, and
@@ -107,15 +110,17 @@ plant "$DOC" "$EDGE" "$M minutes for \`reviewer-test\`" "$(( (REQ + 59) / 60 )) 
 plant "$DOC" "$NOSEC" "### 3.2 " "### 3.9 "
 
 MORE_N="$MD_TMP/more-stability"
+MORE_B="$MD_TMP/more-budget"
 MORE_T="$MD_TMP/longer-timeout"
 MORE_C="$MD_TMP/more-calls"
 INDENTED="$MD_TMP/indented-calls"
 NODEF="$MD_TMP/no-defaults"
 plant "$SCRIPT" "$MORE_N" " N=$N " " N=$(( M * 60 / T + 1 )) "
-plant "$SCRIPT" "$MORE_T" " TIMEOUT=$T " " TIMEOUT=$(( M * 60 / (N + C) + 1 )) "
+plant "$SCRIPT" "$MORE_B" " BUDGET=$B " " BUDGET=$(( M * 60 )) "
+plant "$SCRIPT" "$MORE_T" " TIMEOUT=$T " " TIMEOUT=$(( M * 60 / C + 1 )) "
 plant "$SCRIPT" "$NODEF" " N=$N " " STABILITY=$N "
 cp -- "$SCRIPT" "$MORE_C"
-extra=$(( M * 60 / T - N - C + 1 ))
+extra=$(( M * 60 / T - C + 1 ))
 while [ "$extra" -gt 0 ]; do
   printf 'run_test "$ROOT/clean" "$ROOT/extra.log"\n' >>"$MORE_C"
   extra=$((extra - 1))
@@ -132,7 +137,8 @@ done <<EOF
 the pre-branch text, reviewer-test under the every-other-agent figure, is short|$PRE|$SCRIPT|deadline-short
 a reviewer-test figure one minute under the run is short|$LOW|$SCRIPT|deadline-short
 a reviewer-test figure at the run's length in whole minutes covers it|$EDGE|$SCRIPT|deadline-ok
-a stability default above the deadline's reach is short|$DOC|$MORE_N|deadline-short
+a repeat count above the budget keeps the deadline bounded|$DOC|$MORE_N|deadline-ok
+a stability budget above the deadline's reach is short|$DOC|$MORE_B|deadline-short
 a timeout default above the deadline's reach is short|$DOC|$MORE_T|deadline-short
 top-level timed calls past the deadline's reach are short|$DOC|$MORE_C|deadline-short
 a doc with no section 3.2 fails the read, not the bound|$NOSEC|$SCRIPT|read-failed

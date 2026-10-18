@@ -4,7 +4,7 @@
 # Copies WORKTREE at SHA into a fresh temp dir (git archive; the shared tree
 # is never touched), builds and tests the control copy, applies MUTATE (a shell
 # command run inside the copy), builds the mutant, reruns TEST (must now fail =
-# mutant killed), then runs TEST N more times on a clean copy at elevated
+# mutant killed), then runs TEST up to N times within a start budget at elevated
 # parallelism and prints the one summary line reviewers report:
 #
 #   mutation: killed 1/1; stability: N/N at T threads; seconds: S
@@ -24,12 +24,18 @@ usage() {
   cat <<'USAGE'
 usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
                           --mutate CMD [--stability N] [--threads T]
-                          [--timeout S] [--keep]
+                          [--stability-budget S] [--timeout S] [--keep]
 
   --test CMD       run via bash -c inside the copy; exit 0 = pass
   --build CMD      compile the copy without running its tests
   --mutate CMD     run via bash -c inside the copy before the kill check
-  --stability N    clean-copy repeat runs (default 10; minimum 1)
+  --stability N    maximum clean-copy repeat runs (default 10; minimum 1)
+  --stability-budget S
+                   stop starting clean runs after S seconds (default 60).
+                   Complete at least two runs unless --stability is 1.
+                   A started run retains --timeout, so repeats take at most
+                   S + 2 x --timeout seconds,
+                   excluding extraction and cleanup. Report completed runs.
   --threads T      exported to TEST as THREADS and RUST_TEST_THREADS
                    (default 2x nproc); a runner that takes a flag must be
                    given it in TEST, e.g. --test 'cargo test -- --test-threads $THREADS'
@@ -80,11 +86,11 @@ MS_GROUP_LEADER_LIB="${MS_SELF%/*}/../../github/scripts/lib/group-leader.sh"
 # shellcheck source=../../github/scripts/lib/group-leader.sh
 . "$MS_GROUP_LEADER_LIB"
 
-WORKTREE="" SHA="" TEST="" BUILD="" MUTATE="" N=10 THREADS="" TIMEOUT=300 KEEP=0
+WORKTREE="" SHA="" TEST="" BUILD="" MUTATE="" N=10 THREADS="" TIMEOUT=300 BUDGET=60 KEEP=0
 THREADS_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --worktree|--sha|--test|--build|--mutate|--stability|--threads|--timeout)
+    --worktree|--sha|--test|--build|--mutate|--stability|--threads|--timeout|--stability-budget)
       [ $# -ge 2 ] || { option="$1"; message error argument-value-missing option "$option" "$option needs a value"; usage >&2; exit 2; }
       case "$1" in
         --worktree) WORKTREE="$2" ;;
@@ -93,6 +99,7 @@ while [ $# -gt 0 ]; do
         --build) BUILD="$2" ;;
         --mutate) MUTATE="$2" ;;
         --stability) N="$2" ;;
+        --stability-budget) BUDGET="$2" ;;
         --threads) THREADS="$2"; THREADS_SET=1 ;;
         --timeout) TIMEOUT="$2" ;;
       esac
@@ -119,6 +126,7 @@ positive_integer() {
 positive_integer --stability "$N"
 positive_integer --threads "$THREADS"
 positive_integer --timeout "$TIMEOUT"
+positive_integer --stability-budget "$BUDGET"
 
 # Bounded on width as well as grammar: 19 digits or more is outside what the
 # shell's arithmetic holds, so every test below it reads the figure as an
@@ -463,11 +471,14 @@ if [ "$extract_status" -ne 0 ]; then
   refuse_with_log archive-failed sha "$SHA" "clean archive failed" "$ROOT/clean-archive.log"
 fi
 i=0
+stability_started=$SECONDS
 while [ "$i" -lt "$N" ]; do
+  # Finish the current sample rather than count an interrupted test as stable.
+  [ "$i" -lt 2 ] || [ "$((SECONDS - stability_started))" -lt "$((10#$BUDGET))" ] || break
   if run_test "$ROOT/clean" "$ROOT/stability-$i.log"; then PASSES=$((PASSES + 1)); fi
   i=$((i + 1))
 done
 
-echo "mutation: killed $KILLED/1; stability: $PASSES/$N at $THREADS threads; seconds: $SECONDS"
+echo "mutation: killed $KILLED/1; stability: $PASSES/$i at $THREADS threads; seconds: $SECONDS"
 if [ "$KEEP" = 1 ]; then notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"; fi
-[ "$KILLED" = 1 ] && [ "$PASSES" = "$N" ]
+[ "$KILLED" = 1 ] && [ "$PASSES" = "$i" ]

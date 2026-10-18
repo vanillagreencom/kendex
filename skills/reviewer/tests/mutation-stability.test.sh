@@ -444,6 +444,31 @@ plant_variant() {
   fi
 }
 
+# The suite command takes longer than the repeat start budget. Its clean-copy
+# failure is seeded only in the clean copy, after the control and kill. Removing
+# the budget guard restores main's ten full repeats on this same fixture.
+plant_variant unbudgeted '  [ "$i" -lt 2 ] || [ "$((SECONDS - stability_started))" -lt "$((10#$BUDGET))" ] || break' '  :'
+MS_UNBUDGETED="$variant"
+MS_BUDGETED="$MS"
+echo "=== repeat budget table ==="
+while IFS='|' read -r name runner seeded expected_rc expected_samples; do
+  case "$runner" in budgeted) MS="$MS_BUDGETED" ;; unbudgeted) MS="$MS_UNBUDGETED" ;; esac
+  started=$SECONDS
+  run_ms "$SHA_BASE" --test ". ./lib.sh; [ \"\$(add 2 3)\" = 5 ] || exit 1; sleep 2; if [ '$seeded' = yes ] && [ -f .ran ]; then exit 1; fi; touch .ran" \
+    --build true --mutate "$KILL_MUTATION" --stability-budget 1 --timeout 3 --threads 2
+  elapsed=$((SECONDS - started))
+  assert_row "repeat budget" "$name" "rc=$rc;samples=$(output_has "$expected_samples")" "rc=$expected_rc;samples=yes"
+  if [ "$runner" = budgeted ]; then
+    # Four fixed commands plus budget plus two final timeouts, in seconds.
+    if [ "$elapsed" -le 19 ]; then pass "$name: within command bound"; else fail "$name: within command bound" "elapsed=$elapsed; bound=19"; fi
+  fi
+done <<'ROWS'
+slow stable suite|budgeted|no|0|stability: 2/2 at 2 threads
+slow seeded failure|budgeted|yes|1|stability: 1/2 at 2 threads
+same suite without budget guard|unbudgeted|no|0|stability: 10/10 at 2 threads
+ROWS
+MS="$MS_BUDGETED"
+
 # The control keeps TMPDIR wherever the caller put it: the unchanged script.
 plant_variant inside-tmpdir '  case "$temp_physical/" in "${owned%/}"/*) TEMP_BASE=/tmp ;; esac' '  :'
 MS_INSIDE="$variant"
