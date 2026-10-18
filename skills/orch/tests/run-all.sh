@@ -319,7 +319,7 @@ shard_of() { # BASE
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
 trap 'rm -rf -- "$OUT_DIR"' EXIT
-SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd)" || exit 1
+SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd -P)" || exit 1
 CLEAN_PATH=""
 CHECKOUT_PATH=""
 suite_environment() { # FILE: set SUITE_PATH before either launch route
@@ -347,7 +347,8 @@ suite_environment() { # FILE: set SUITE_PATH before either launch route
       CLEAN_PATH="${CLEAN_PATH:+$CLEAN_PATH:}$dir"
     done
   fi
-  case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
+  dir="$(cd -- "$(dirname -- "$file")" && pwd -P)" || return 1
+  file="$dir/${file##*/}"
   case "$file" in
     "$SUITE_ROOT/skills/orch/tests/"*) entry=${file##*/}; shard_of "${entry%.sh}"; shard=$OWNING_SHARD ;;
   esac
@@ -722,7 +723,7 @@ while [ "$finished" -lt "$RUN" ]; do
         "$ORCH_TEST_DIR/oversee_watch_owed.sh") suite_args+=(development) ;;
         "$ORCH_TEST_DIR/oversee_watch_mail.sh") suite_args+=(delivery) ;;
       esac
-      suite_environment "$suite_file" || exit 1
+      suite_environment "$suite_file" || { status=$?; stop_suites; exit "$status"; }
       PATH="$SUITE_PATH" "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
