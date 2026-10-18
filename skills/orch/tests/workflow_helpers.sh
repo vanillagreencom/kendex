@@ -360,6 +360,7 @@ git -C "$review_base" checkout -q -b main
 mkdir -p "$review_base/.agents/skills" "$review_base/skills/harness-ci/scripts"
 cp -R "$REPO_ROOT/skills/harness-ci" "$review_base/.agents/skills/harness-ci"
 cp -R "$SKILL_DIR" "$review_base/.agents/skills/orch"
+cp -R "$REPO_ROOT/skills/reviewer" "$review_base/.agents/skills/reviewer"
 cp "$REPO_ROOT/skills/harness-ci/scripts/change-class" "$review_base/skills/harness-ci/scripts/change-class"
 printf '[]\n' >"$review_base/.kendex-generated.json"
 git -C "$review_base" add .
@@ -380,8 +381,9 @@ git -C "$review_subject" -c core.hooksPath=/dev/null commit -qm forged-classifie
 
 review_classification_requires_review() { # workflow
   local command answer diagnostic="$TMP_ROOT/review-classifier.err"
+  : >"$diagnostic"
   command="$(awk '/^```/ { fenced = !fenced; next }
-    fenced && /scripts\/change-class"? --event/ { print }' "$1")" || return 1
+    fenced && /scripts\/review-depth"? --base/ { print }' "$1")" || return 1
   [[ -n "$command" && "$command" != *$'\n'* ]] || return 1
   command="${command//\[REVIEW_BASE_CHECKOUT\]/$review_base}"
   command="${command//\[WORKTREE_PATH\]/$review_subject}"
@@ -389,7 +391,7 @@ review_classification_requires_review() { # workflow
   # The review workflow consumes these machine-read fields to select § 9.
   answer="$(cd "$review_subject" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" \
     bash --noprofile --norc -c "$command" 2>"$diagnostic")" || return 1
-  [[ "$answer" == change_class=standard ]] &&
+  [[ "$answer" == 'change_class=standard review_depth=full native_approval=unchanged' ]] &&
     grep -Eq '^class: class=standard measured=true( |$)' "$diagnostic"
 }
 
@@ -400,8 +402,8 @@ else
   fail "review-pr must classify with the trusted base checkout" "$(cat "$TMP_ROOT/review-classifier.err")"
 fi
 assert_doc_mutant_fails review_classification_requires_review "$review_workflow" \
-  '"[REVIEW_BASE_CHECKOUT]/.agents/skills/harness-ci/scripts/change-class" --event' \
-  '.agents/skills/harness-ci/scripts/change-class --event' \
+  '"[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base' \
+  '.agents/skills/reviewer/scripts/review-depth --base' \
   "trusting the malicious subject classifier for the review skip"
 
 # The lane's terminal condition is the removal, so § 5 reads [WORKTREE_PATH]
@@ -699,7 +701,10 @@ REF_RE='\.agents/skills/[A-Za-z0-9._-]+/(scripts|workflows|references|schemas|te
 # proved nothing about the regex feeding it.
 # grep exits 1 on zero matches, which under `pipefail` would abort the suite
 # before the floor assertion below could name the cause.
-scan_refs() { printf '%s\0' "$@" | { xargs -0 grep -ohE "$REF_RE" || true; } | sort -u; }
+scan_refs() {
+  # Link labels describe the destination; only the target names an asset.
+  sed -E 's/\[[^]]*\]\(/(/g' "$@" | { grep -oE "$REF_RE" || true; } | sort -u
+}
 
 collect_broken() {
   local ref target out=""
@@ -741,6 +746,18 @@ fi
 control_ref="workflows/definitely-not-a-real-workflow.md"
 control_doc="$TMP_ROOT/control-ref-doc.md"
 printf 'Run `%s` to continue.\n' "$control_ref" >"$control_doc"
+printf '[references/definitely-not-a-reference.md](../reviewer/references/finding-disposition.md)\n' >>"$control_doc"
+control_refs="$(scan_refs "$control_doc")"
+if grep -Fqx '../reviewer/references/finding-disposition.md' <<<"$control_refs"; then
+  pass "the reference scan retains a linked asset in its sibling skill"
+else
+  fail "the reference scan missed the linked sibling asset"
+fi
+if grep -Fqx 'references/definitely-not-a-reference.md' <<<"$control_refs"; then
+  fail "the reference scan treats a link label as an asset"
+else
+  pass "the reference scan ignores an asset-shaped link label"
+fi
 if [[ ! -e "$SKILL_DIR/$control_ref" ]]; then
   pass "planted control: the nonexistent asset used by the teeth check is absent"
 else
