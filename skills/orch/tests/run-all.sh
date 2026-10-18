@@ -52,6 +52,12 @@
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
 #   total suites=<n> seconds=<n> pass=<n> fail=<n>
 #
+# Before any suite starts, selected suite=<name> lists the whole selection.
+# On cancellation, unstarted suite=<name> names each selected suite the
+# worker pool did not launch. The lane can use these rows for its fallback.
+# tools/guard supplies later batteries as newline-separated paths in
+# RUN_ALL_PENDING_SUITES. Cancellation reports those paths before teardown too.
+#
 # A passing suite can print a warning after its report line. --report-job
 # prints final job evidence without running suites. The workflow calls it
 # once in its last successful shared suite step, after all batteries finish.
@@ -353,6 +359,8 @@ fi
 # Eligibility belongs to this invocation. A suite's nested fixture runner
 # has its own suite universe and must not inherit this repository profile.
 unset RUN_ALL_NATIVE_CONTRACTS
+PENDING_SUITES="${RUN_ALL_PENDING_SUITES:-}"
+unset RUN_ALL_PENDING_SUITES
 JOBS="$(nproc 2>/dev/null)" || JOBS=4
 case "$JOBS" in
   '' | *[!0-9]* | 0) echo "run-all.sh: nproc printed '$JOBS', not a worker count" >&2; exit 1 ;;
@@ -508,7 +516,16 @@ stop_tree() { # TREE
 # signal to the runner must therefore stop each suite and its descendants
 # before the runner exits.
 stop_suites() {
-  local k=0 tree=""
+  local k=0 tree="" pending="" name
+  for ((k = next; k < RUN; k++)); do
+    pending+="${SUITES[k]}"$'\n'
+  done
+  pending+="$PENDING_SUITES"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf 'unstarted suite=%s\n' "$name"
+  done <<<"$pending"
+  k=0
   while [ "$k" -lt "$JOBS" ]; do
     if [ -n "${SLOT_PID[k]:-}" ]; then
       tree="$tree
@@ -559,6 +576,7 @@ started=$SECONDS
 next=0
 finished=0
 running=0
+printf 'selected suite=%s\n' "${SUITES[@]}"
 while [ "$finished" -lt "$RUN" ]; do
   reaped=0
   k=0

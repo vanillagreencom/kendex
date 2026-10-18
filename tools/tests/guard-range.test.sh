@@ -762,7 +762,7 @@ MAP_CONTROLS=(
   "control: with an empty file taken as unreadable a reference only a comment and prose cite runs the whole set~append~skills/plain/references/note.md~s@if (!scan_file(i)) exit 2@if (scan_paths[i] == \"skills/plain/scripts/empty.sh\" || !scan_file(i)) exit 2@~$PLAIN_CATALOG"
   "control: without the whole-set fallback the unmapped script runs nothing~append~skills/mapped/scripts/orphan~s/unmapped path=\$f\"; run=all; break ;;/unmapped path=\$f\"; break ;;/~"
   "control: with each path's suites overwriting the last only the last path's run~append~skills/mapped/scripts/tool skills/mapped/tests/other.sh~s/^            run=\"\$run\$sel$/            run=\"\$sel/~other"
-  "control: with the no-runner loop reading the whole set every suite runs~append~skills/plain/scripts/alpha.sh~s/^        done <<<\"\$run\"$/        done <<<\"\$(skill_suites \"\$d\")\"/~$PLAIN_ALL"
+  "control: with the no-runner loop reading the whole set every suite runs~append~skills/plain/scripts/alpha.sh~s/^    done <<<\"\$run\"$/    done <<<\"\$(skill_suites \"\$d\")\"/~$PLAIN_ALL"
   "control: without the .test strip the script's suite goes unmatched and the whole set runs~append~skills/plain/scripts/alpha.sh~/base=\"\${base%.test}\"/d~$PLAIN_ALL"
   "control: with the mapping excluding hooks a changed hook runs the whole hooks set~append~hooks/alpha.sh~s/ in skills\/\* | hooks | refresh | tools) run=\"\" ;;/ in skills\/* | refresh | tools) run=\"\" ;;/~$HOOKS_ALL"
   "control: with a render's path kept whole a changed hook render runs the whole hooks set~append~.codex/hooks/demo.sh~s/^        rel=\"\${f#\*hooks\/}\"$/        rel=\"\$f\"/~$HOOKS_ALL"

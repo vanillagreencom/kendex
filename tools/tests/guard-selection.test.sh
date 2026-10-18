@@ -419,6 +419,76 @@ for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-swi
     && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
 done
 
+# PR 5399's launch change includes the shared library, its source and render,
+# and the changed contract suites. Keep real reader text; the existing replay
+# fixtures replace suite bodies, so this proves selection and runner verdicts.
+git -C "$actual" reset -q --hard "$replay_base"
+for input in skills/orch/scripts/open-terminal skills/orch/scripts/lib/lane-launch.sh skills/orch/references/skill-rules.md; do
+  printf '\n# launch replay\n' >> "$actual/$input"
+  printf '\n# launch replay\n' >> "$actual/.agents/$input"
+done
+for input in hooks/tests/lane-mail-check-agent.test.sh \
+  skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_context_adapters.sh \
+  skills/orch/tests/open-terminal-harness-gate.sh skills/orch/tests/open-terminal-lane-hosted-codex.sh \
+  skills/orch/tests/open-terminal-record.sh; do
+  printf '\n# launch replay\n' >> "$actual/$input"
+done
+direct_launch_selection() { # SELECTED PATHS
+  grep -Fxq 'skills/orch/tests/open-terminal-cap.sh' <<<"$1" &&
+    grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1" &&
+    ! grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$1"
+}
+if mutant_guard '/^  if \[ "\$scoped_only" -eq 1 \] \&\& \[ "\${3:-reader}" != changed \]; then$/,/^  fi$/d'; then
+  scoped_selection=""
+  normal_selection=""
+  control_selection=""
+  normal_control_selection=""
+  for variant in scoped normal control normal-control; do
+    replay_guard=$GUARD
+    replay_scoped=true
+    replay_args=(--selection --range "$replay_base")
+    case "$variant" in
+      normal) replay_scoped=false; replay_args=(--range "$replay_base") ;;
+      control) replay_guard="$MUTANT_TOOLS/guard" ;;
+      normal-control) replay_guard="$MUTANT_TOOLS/guard"; replay_scoped=false; replay_args=(--range "$replay_base") ;;
+    esac
+    RC=0
+    replay_started=$SECONDS
+    OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+      DEV_VALIDATE_SCOPED="$replay_scoped" "$replay_guard" "${replay_args[@]}" 2>&1)" || RC=$?
+    selected="$(sed -n 's/^guard-note: selected-suite=//p' <<<"$OUT" | sort -u)"
+    selected_count="$(awk 'NF { n++ } END { print n + 0 }' <<<"$selected")"
+    printf 'launch-replay variant=%s exit=%s seconds=%s suites=%s\n' "$variant" "$RC" "$((SECONDS - replay_started))" "$selected_count"
+    printf '%s\n' "$selected"
+    [ "$RC" -eq 0 ] && ok "launch replay $variant reaches a pass verdict" \
+      || bad "launch replay $variant reaches a pass verdict" "$OUT"
+    case "$variant" in
+      scoped)
+        scoped_selection=$selected
+        direct_launch_selection "$selected" && ok 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' \
+          || bad 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' "$OUT"
+        ;;
+      normal) normal_selection=$selected ;;
+      normal-control) normal_control_selection=$selected ;;
+      control)
+        control_selection=$selected
+        if direct_launch_selection "$selected"; then
+          bad 'control: restoring main propagation rejects the direct-only oracle'
+        else
+          grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$selected" \
+            && ok 'control: restoring main propagation rejects the direct-only oracle' \
+            || bad 'control: restoring main propagation rejects the direct-only oracle' "$OUT"
+        fi
+        ;;
+    esac
+  done
+  [ "$normal_selection" = "$normal_control_selection" ] && [ "$scoped_selection" != "$control_selection" ] \
+    && ok 'normal selection retains the complete main reach for the incident diff' \
+    || bad 'normal selection retains the complete main reach for the incident diff'
+else
+  bad 'the incident control changes the production-reader reach'
+fi
+
 # A noncanonical source and its render reach the shipped glob consumer only
 # through its input declaration. Its one-member tools roster makes the mapped
 # count identify that consumer. Both baselines retain the consumer's code.
