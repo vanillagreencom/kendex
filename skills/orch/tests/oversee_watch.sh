@@ -232,46 +232,73 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none
 
 # A consumer rolling refresh, as in hyprtrade PR 1144, has no owning item.
 # The fleet consumes EVENT merged to check open lanes after the base moves.
-refresh_merge_replay() { # CASE STATE MERGED
+refresh_merge_replay() { # CASE ALREADY_REPORTED PHASES
   new_case "$1"
-  printf '1144\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.1"
-  printf '1' > "$STUB_DIR/prwatch.rc.1"
-  printf '0' > "$STUB_DIR/prwatch.rc"
-  jq -nc --arg state "$2" --argjson merged "$3" \
-    '{number:1144, head:{ref:"kendex/refresh"}, state:$state, merged:$merged}' > "$STUB_DIR/pull-1144.json"
+  local phase state merged head reads_before reads_after phases=()
+  read -r -a phases <<<"$3"
+  if [[ "$2" == true ]]; then
+    mkdir -p "$STATE_DIR"
+    printf 'merged\tkendex/refresh\tvanillagreencom/hyprtrade#1144\n' > "$STATE_DIR/vanillagreencom_hyprtrade__none"
+  fi
   err="$TMP_ROOT/$1.err"
-  out="$(run_watch -- --repo vanillagreencom/hyprtrade --item issue-5 --max-loops 1 2>"$err")" && rc=0 || rc=$?
-  assert_eq "$rc|$(awk '/^EVENT pr-watch / {n++} END {print n+0}' <<<"$out")" '0|1' \
-    "$1: the first pass reports refresh-ready without an owning item" "$err"
-  out="$(run_watch -- --repo vanillagreencom/hyprtrade --item issue-5 --max-loops 1 2>"$err")" && rc=0 || rc=$?
-  REFRESH_MERGE_RESULT="$rc|$(awk '/^EVENT merged /' <<<"$out")|$(awk '/^api repos\/vanillagreencom\/hyprtrade\/pulls\/1144 --jq .merged$/ {n++} END {print n+0}' "$STUB_DIR/gh.calls")"
-  # A restart with the ready key restored proves that the merged row, rather
-  # than only the cleared key, suppresses a second merge line.
-  printf '\n1144\trefresh-ready:aaaa0000\n' >> "$STATE_DIR/vanillagreencom_hyprtrade__none"
-  out="$(run_watch -- --repo vanillagreencom/hyprtrade --item issue-5 --max-loops 1 2>"$err")" && rc=0 || rc=$?
-  assert_eq "$rc|$(awk '/^EVENT merged / {n++} END {print n+0}' <<<"$out")" '0|0' \
-    "$1: a restart prints no duplicate merge event" "$err"
-  out="$(run_watch -- --repo vanillagreencom/hyprtrade --item issue-5 --max-loops 1 2>"$err")" && rc=0 || rc=$?
-  REFRESH_MERGE_RESULT+="|$rc|$(awk '/^EVENT merged / {n++} END {print n+0}' <<<"$out")|$(awk '/^api repos\/vanillagreencom\/hyprtrade\/pulls\/1144 / {n++} END {print n+0}' "$STUB_DIR/gh.calls")"
+  REFRESH_MERGE_RESULT="" REFRESH_MERGE_EVENTS=""
+  : > "$STUB_DIR/gh.calls"
+  for phase in "${phases[@]}"; do
+    state=open merged=false head=aaaa0000
+    : > "$STUB_DIR/prwatch.out"
+    printf '0' > "$STUB_DIR/prwatch.rc"
+    case "$phase" in
+      ready | replaced)
+        [[ "$phase" != replaced ]] || head=bbbb0000
+        printf '1144\t%s\trefresh-ready\tCI passed\n' "$head" > "$STUB_DIR/prwatch.out"
+        printf '1' > "$STUB_DIR/prwatch.rc" ;;
+      approved) ;;
+      merged) state=closed merged=true ;;
+      closed) state=closed ;;
+      *) echo "refresh replay: unknown phase=$phase" >&2; exit 1 ;;
+    esac
+    jq -nc --arg state "$state" --argjson merged "$merged" \
+      '{number:1144, head:{ref:"kendex/refresh"}, state:$state, merged:$merged}' > "$STUB_DIR/pull-1144.json"
+    reads_before="$(awk '/^api repos\/vanillagreencom\/hyprtrade\/pulls\/1144 / {n++} END {print n+0}' "$STUB_DIR/gh.calls")"
+    out="$(run_watch -- --repo vanillagreencom/hyprtrade --item issue-5 --max-loops 1 2>"$err")" && rc=0 || rc=$?
+    reads_after="$(awk '/^api repos\/vanillagreencom\/hyprtrade\/pulls\/1144 / {n++} END {print n+0}' "$STUB_DIR/gh.calls")"
+    REFRESH_MERGE_RESULT+="${REFRESH_MERGE_RESULT:+;}$rc,$(awk '/^EVENT pr-watch / {n++} END {print n+0}' <<<"$out"),$(awk '/^EVENT merged / {n++} END {print n+0}' <<<"$out"),$((reads_after - reads_before))"
+    merged="$(awk '/^EVENT merged /' <<<"$out")"
+    [[ -z "$merged" ]] || REFRESH_MERGE_EVENTS+="${REFRESH_MERGE_EVENTS:+;}$merged"
+  done
 }
 
-while IFS='|' read -r name state merged wanted; do
-  refresh_merge_replay "refresh_merge_$name" "$state" "$merged"
-  assert_eq "$REFRESH_MERGE_RESULT" "0|$wanted|1|0|0|2" \
-    "$name: one REST state read distinguishes a refresh merge from approval or unmerged close" "$err"
+# Each phase starts a fresh watch process. The tuple is exit, ready events,
+# merge events, state reads. EVENT merged is parsed by the overseer's watch.
+while IFS='|' read -r name reported phases wanted events; do
+  refresh_merge_replay "refresh_merge_$name" "$reported" "$phases"
+  assert_eq "$REFRESH_MERGE_RESULT|$REFRESH_MERGE_EVENTS" "$wanted|$events" \
+    "$name: refresh identity survives approval and ends at merge or unmerged close" "$err"
 done <<'EOF'
-merged|closed|true|EVENT merged 1144 kendex/refresh vanillagreencom/hyprtrade
-approved_open|open|false|
-closed_unmerged|closed|false|
+merged|false|ready merged merged|0,1,0,0;0,0,1,1;0,0,0,0|EVENT merged 1144 kendex/refresh vanillagreencom/hyprtrade
+approved_open|false|ready approved approved merged merged|0,1,0,0;0,0,0,1;0,0,0,1;0,0,1,1;0,0,0,0|EVENT merged 1144 kendex/refresh vanillagreencom/hyprtrade
+closed_unmerged|false|ready closed closed|0,1,0,0;0,0,0,1;0,0,0,0|
+replacement_head|false|ready approved replaced approved merged merged|0,1,0,0;0,0,0,1;0,1,0,0;0,0,0,1;0,0,1,1;0,0,0,0|EVENT merged 1144 kendex/refresh vanillagreencom/hyprtrade
+already_reported|true|ready merged merged|0,1,0,0;0,0,0,1;0,0,0,0|
 EOF
 
 REFRESH_MERGE_SCRIPTS="$(mutant_scripts refresh-merge-mutant/orch lib/pr-watch-pass.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-merge-mutant/github"
 mutate_file "$REFRESH_MERGE_SCRIPTS/lib/pr-watch-pass.sh" \
-  'gh api "repos/$repo/pulls/$pr" --jq .merged' \
-  'false && gh api "repos/$repo/pulls/$pr" --jq .merged || printf false'
-WATCH_BIN="$REFRESH_MERGE_SCRIPTS/oversee-watch" refresh_merge_replay refresh_merge_control closed true
-assert_eq "$REFRESH_MERGE_RESULT" '0||0|0|0|0' 'control: no state read loses the merged refresh event and fails the replay contract' "$err"
+  "gh api \"repos/\$repo/pulls/\$pr\" --jq '[.merged, .state] | @tsv'" \
+  "false && gh api \"repos/\$repo/pulls/\$pr\" --jq '[.merged, .state] | @tsv' || printf 'false\\tclosed'"
+WATCH_BIN="$REFRESH_MERGE_SCRIPTS/oversee-watch" refresh_merge_replay refresh_merge_control false 'ready merged merged'
+assert_eq "$REFRESH_MERGE_RESULT|$REFRESH_MERGE_EVENTS" '0,1,0,0;0,0,0,0;0,0,0,0|' \
+  'control: no state read loses the merged refresh event and fails the replay contract' "$err"
+
+REFRESH_PENDING_SCRIPTS="$(mutant_scripts refresh-pending-mutant/orch lib/pr-watch-pass.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-pending-mutant/github"
+mutate_file "$REFRESH_PENDING_SCRIPTS/lib/pr-watch-pass.sh" \
+  'pass_keys[$i]+="${pass_keys[$i]:+$'\''\n'\''}$pr"$'\''\t'\''"$kind"' \
+  'false && pass_keys[$i]+="${pass_keys[$i]:+$'\''\n'\''}$pr"$'\''\t'\''"$kind" || :'
+WATCH_BIN="$REFRESH_PENDING_SCRIPTS/oversee-watch" refresh_merge_replay refresh_pending_control false 'ready approved approved merged merged'
+assert_eq "$REFRESH_MERGE_RESULT|$REFRESH_MERGE_EVENTS" '0,1,0,0;0,0,0,1;0,0,0,0;0,0,0,0;0,0,0,0|' \
+  'control: dropping an approved open refresh loses its later merge and fails the lifecycle contract' "$err"
 
 # 1e'. a line that clears and later recurs is a rising edge again
 new_case prwatch_recur
