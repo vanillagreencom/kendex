@@ -416,6 +416,8 @@ class Session:
             choice = record.get("choice") or {}
             choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
                                              choice.get("model", ""), choice.get("effort", "")).stdout)
+            if not shutil.which(choice["harness"]):
+                raise Refusal("app-missing")
             generation = record["generation"] + 1
             handoff = Path(self.home) / "state/handoff.md"
             contents = handoff.read_bytes()

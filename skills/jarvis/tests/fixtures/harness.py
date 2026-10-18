@@ -111,6 +111,10 @@ def main():
     fixture = json.loads(Path(".fixture.json").read_text())
     harness = fixture.get("harness", os.environ["JARVIS_TEST_HARNESS"])
     args = sys.argv[1:]
+    # Jarvis's Codex command carries this boolean once. The real CLI refuses
+    # duplicate boolean flags before it can publish its native identity.
+    if harness == "codex":
+        assert args.count("--dangerously-bypass-hook-trust") <= 1
     record_path = Path(os.environ["JARVIS_RECORD"])
     record = json.loads(record_path.read_text())
     identity = record["pending"].get("native_session_id")

@@ -33,11 +33,19 @@ case "$verb" in
     jarvis_load "$3"
     DEP_ERR="$(mktemp)" || exit 1
     trap 'rm -f -- "$DEP_ERR"' EXIT
+    source "$SCRIPT_DIR/lib/lane-context.sh"
     source "$SCRIPT_DIR/lib/overseer-launch.sh"
     harness="$1" account="$2" model="$4" effort="$5"
     trigger="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
-    rc=0
-    ol_pick_record "$harness" "$model" "$trigger" "" "$account" || rc=$?
+    ol_account "$harness" "$model"
+    rc=4
+    if ol_account_measured "$OL_ACCOUNT_HARNESS"; then
+      # The source account and the walk both serve an overseer, so neither
+      # takes the seat reserve that lanes keeps for ordinary work-item picks.
+      rc=0
+      ol_lanes "$OL_ACCOUNT_HARNESS" pick --lane "$account" --harness "$OL_ACCOUNT_HARNESS" --for-overseer \
+        --min-headroom-pct "$trigger" ${OL_ACCOUNT_MODEL:+--native-model "$OL_ACCOUNT_MODEL"} --json >/dev/null || rc=$?
+    fi
     case "$rc" in
       0|4|5) ;; # An unmeasured account keeps the existing context-only route.
       3)
@@ -92,8 +100,7 @@ case "$verb" in
     if [[ -n "${8:-}${9:-}" ]]; then
       flags="$(launch_choice_write "$harness" "${8:-}" "${9:-}")" || exit 1
       launch_choice_shell_words "$flags" || exit 1
-      launch_choice_lead_settings --model "${8:-}" "$harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1
-      flags="$(printf ' %q' ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})" || exit 1
+      flags="$(printf ' %q' ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})" || exit 1
       cmd="$harness$flags${cmd#"$harness"}"
     fi
     form="$(lane_launch_form "$cmd" "$harness" "$LANE_TRUST_HOME" "")"

@@ -33,7 +33,12 @@ if not config.exists():
 row = json.loads(config.read_text())
 with Path(row["calls"]).open("a") as stream:
     stream.write(json.dumps(args) + "\\n")
-if ("--lane" in args and row["headroom"] <= float(args[args.index("--min-headroom-pct") + 1])) or args[args.index("--harness") + 1] != row["harness"]:
+harness = args[args.index("--harness") + 1]
+floor = float(args[args.index("--min-headroom-pct") + 1])
+if row.get("shared") and "--for-overseer" not in args:
+    floor = max(floor, 50)
+model_wall = harness == "claude" and "--binding-floor" in args
+if ("--lane" in args and row["headroom"] <= floor) or harness != row["harness"] or model_wall:
     print('{"walled":1,"unmeasured":0}')
     sys.exit(3)
 print(json.dumps({"config_dir": row["account"]}))
@@ -99,34 +104,90 @@ print(json.dumps({"config_dir": row["account"]}))
         self.record.write_text(json.dumps(saved))
 
     def test_account_succession(self):
-        for state, headroom, target in (("walled", 0, "claude"), ("walled", 0, "codex"), ("low", 4, "codex")):
+        for state, headroom, target in (("walled", 0, "claude"), ("walled", 0, "codex"), ("low", 4, "codex"),
+                                        ("walled", 0, "copilot"), ("shared-reserve", 20, "claude"), ("app-missing", 0, "codex")):
             with self.subTest(state=state, target=target):
                 self.call("start", mode="new")
                 previous = self.wait()
                 before = json.loads(self.record.read_text())
+                native_count = len(self.started())
                 contents = self.handoff()
                 account = self.root / ("next-" + state + "-" + target)
                 account.mkdir()
                 calls = self.root / ("picks-" + state + "-" + target)
-                (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom}))
-                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"\n')
+                (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom,
+                                                                          "shared": state == "shared-reserve"}))
+                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n')
                 # Model classification is kendex's external boundary. Preserve
                 # native defaults for these class entries, as its protocol does.
                 kendex = self.root / "bin/kendex"
-                kendex.write_text('#!/usr/bin/env python3\nimport json\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},"resolution":{"diagnostics":[],"native_selector":"sonnet"}}))\n')
+                kendex.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},"resolution":{"diagnostics":[],"native_selector":"sonnet" if sys.argv[2] == "claude" else None}}))\n')
                 kendex.chmod(0o755)
+                if state == "app-missing":
+                    missing = self.root / "bin" / target
+                    missing.unlink()
+                    # Keep native tooling, but remove every installed spelling
+                    # of the selected harness from this request's PATH.
+                    limited = self.root / "limited-bin"
+                    limited.mkdir()
+                    for folder in self.env["PATH"].split(os.pathsep):
+                        if not Path(folder).is_dir():
+                            continue
+                        for tool in Path(folder).iterdir():
+                            if tool.name != target and tool.is_file() and os.access(tool, os.X_OK) and not (limited / tool.name).exists():
+                                (limited / tool.name).symlink_to(tool.resolve())
+                    saved = self.record.read_bytes()
+                    answer, code = self.call("succeed", env=self.env | {"PATH": str(limited)})
+                    self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "app-missing", 1))
+                    self.assertEqual(self.record.read_bytes(), saved)
+                    self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
+                    self.assertEqual(len(self.started()), native_count)
+                    shutil.copyfile(session_test.HARNESS, missing)
+                    missing.chmod(0o755)
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    (self.home / ".lane-fixture.json").unlink()
+                    continue
                 self.call("succeed")
                 current = self.wait()
                 after = json.loads(self.record.read_text())
-                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), target, str(account)))
+                kept = state == "shared-reserve"
+                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), target, str(self.account if kept else account)))
                 self.assertNotEqual(current["terminal"]["window"], previous["terminal"]["window"])
                 self.assertEqual(Path(after["transfer"]["handoff"]).read_text(), contents)
                 self.assertEqual((self.home / "state/handoff.md").read_text(), contents)
                 queries = [json.loads(line) for line in calls.read_text().splitlines()]
                 self.assertIn(str(self.account), queries[0])
+                self.assertIn("--for-overseer", queries[0])
                 for query in queries[1:]:
                     self.assertEqual(query[query.index("--exclude-lane") + 1], str(self.account))
+                    if query[query.index("--harness") + 1] == "claude":
+                        self.assertNotIn("--binding-floor", query)
                 self.assertEqual(queries[-1][queries[-1].index("--harness") + 1], target)
+                argv = self.started()[-1]["argv"]
+                if not kept:
+                    if target == "claude":
+                        self.assertIn("--model", argv)
+                        self.assertIn("--effort", argv)
+                        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+                        self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                        self.assertFalse(any(word.startswith("--settings") for word in argv))
+                    elif target == "codex":
+                        self.assertIn("model_reasoning_effort=high", argv)
+                        self.assertNotIn("-m", argv)
+                        self.assertNotIn("--model", argv)
+                        self.assertEqual(argv.count("--dangerously-bypass-hook-trust"), 1)
+                        for setting in ("check_for_update_on_startup=false", "features.daemon_auto_start=false", "notice.hide_rate_limit_model_nudge=true",
+                                        "model_auto_compact_token_limit=9223372036854775807", "model_auto_compact_token_limit_scope=body_after_prefix",
+                                        "model_post_turn_compact_threshold_percent=0"):
+                            self.assertEqual(argv.count(setting), 1)
+                    elif target == "copilot":
+                        self.assertIn("--reasoning-effort", argv)
+                        self.assertEqual(argv[argv.index("--reasoning-effort") + 1], "high")
+                        self.assertNotIn("--model", argv)
+                        self.assertTrue(set(argv).isdisjoint({"--autopilot", "--max-autopilot-continues", "--context", "--no-auto-update"}))
+                else:
+                    self.assertEqual(len(queries), 1)
                 self.assertEqual(after["transfer"]["phase"], "complete")
                 self.assertNotEqual(after["pending"]["native_session_id"], before["pending"]["native_session_id"])
                 self.call("stop")
