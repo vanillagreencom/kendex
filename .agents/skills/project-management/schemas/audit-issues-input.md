@@ -37,7 +37,8 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
       "blocks_items": [2],
       "blocked_by_items": [],
       "blocks_issues": ["PROJ-301"],
-      "blocked_by_issues": []
+      "blocked_by_issues": [],
+      "supersedes": [{"identifier": "PROJ-240", "reason": "Replacement covers the old scope", "when": "at-completion"}]
     }
   ]
 }
@@ -79,6 +80,19 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `origin` | Yes | `suggestion`, `escalated` (items no dev round resolved: blockers dev could not fix, plus items outstanding at the review cycle cap), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
 | `blocks_items` / `blocked_by_items` | No | Indexes of other items in this batch |
 | `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs |
+| `supersedes` | No | Structured form of the filer's `Supersedes:` line: entries carry `identifier`, `reason`, and `when` (`now`, `partial`, or `at-completion`). `now` cancels after creation; `partial` re-scopes the named item to its remainder; `at-completion` records the strict description block below for the completion close and an ordinary related link for readers. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode. `Related:` prose acts on nothing |
+
+### Completion block
+
+The filing renders only confirmed `when: at-completion` entries into the replacement issue's description, with this exact heading and one line per entry:
+
+```markdown
+**Supersedes**:
+
+- PROJ-240 (at-completion): Replacement covers the old scope
+```
+
+`issues complete` reads this block from its existing description read. An exact entry names an issue identifier and a nonblank one-line reason. On Done, it comments naming the replacement and cancels each named issue that is still open. A malformed line is reported and skipped. Neither `Related:` prose nor an ordinary related relation grants cancellation authority.
 
 ## Tracker
 

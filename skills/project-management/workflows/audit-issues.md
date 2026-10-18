@@ -18,7 +18,7 @@ Overseer heartbeat audits use [Heartbeat audit](../../orch/references/heartbeat-
 | `audit-issues --single [file]` | `single` | One item from such a file: creation bar, title duplicate check, label preflight and create, with no cancellation sweep |
 | `audit-issues --analyzed [file]` | `analyzed` | Pre-analyzed [audit-output.md](../schemas/audit-output.md) issue-mode JSON — skips § 4 |
 
-`analyzed` follows every `issue`-mode rule in §§ 5-9, and `single` every one in §§ 4-9; its TPM run proposes no cancellation, so its Cancel section and § 7.4 stay empty. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
+`analyzed` follows every `issue`-mode rule in §§ 5-9, and `single` every one in §§ 4-9. A `single` run performs no cancellation sweep; it can dispose only the filing's confirmed `supersedes[]` entries through § 7.2, with § 7.4 applying to its cancellations. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
 
 The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
 
@@ -290,7 +290,7 @@ Process creates in dependency order — every issue after the issues it is block
 
 | Action | Execution |
 |--------|-----------|
-| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. Backlog is mandatory, never the team-default Triage. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies. |
+| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. After creation, execute each authorized `supersedes[]` entry through Superseded issues below. Backlog is mandatory, never the team-default Triage. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies. |
 | expand, update | workflow-actions § Descriptions + reason comment |
 | supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
 | cancel | workflow-actions § State Transitions |
@@ -314,9 +314,9 @@ A `create` whose `review_born` is false is the same command without that flag.
 
 **Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, `symptom` supplying `[SYMPTOM]`, `regressed_by` supplying `[REGRESSED_BY]`, and `review_born` deciding the `--review-born` flag. A proposal-backed row also carries `source`, which must agree with `review_born` before execution. When creating a child, carry the parent's research and decision references into the template's Filing record.
 
-**Superseded issues — Linear**: fetch children (`issues children [SUPERSEDED_ID]`), detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. Scope fully covered."`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel.
+**Superseded issues — Linear**: process every authorized `supersedes[]` entry after its replacement exists, including on a `create` row. For `when: now` (also the default when omitted), fetch children (`issues children [SUPERSEDED_ID]`), detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. [REASON]"`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel. For `when: partial`, post the comment naming the replacement and transferred scope, then use the expand/update Descriptions route above to retain only the remainder; keep the named issue open. For `when: at-completion`, write the exact Completion block from [audit-issues-input.md](../schemas/audit-issues-input.md#completion-block) into the replacement description, containing only those remaining entries, and add `issues add-relation [ISSUE_ID] --related [SUPERSEDED_ID]` for readers. `issues complete` owns the later comment-then-cancel on Done; never cancel it at filing. An entry not confirmed by the TPM or held by authorization is not touched.
 
-**GitHub degradation (explicit, never silent)**: GitHub has no bundle, typed-relation, project-state, or cascade model here. Represent structure in issue bodies — `make_child` becomes a `Parent: #[N]` line in the template's Context section plus a comment on the parent; relations become `Blocks: #N` / `Blocked by: #N` / `Related: #N` lines maintained through the body-edit route. Supersession has no detach or cascade: enumerate any sub-items listed in the closed issue's body in the close comment. Never drop an approved hierarchy or relation action — either record its body representation or report it as not executed, and list every degradation in § 8.
+**GitHub degradation (explicit, never silent)**: GitHub has no bundle, typed-relation, project-state, or cascade model here. Represent structure in issue bodies — `make_child` becomes a `Parent: #[N]` line in the template's Context section plus a comment on the parent; relations become `Blocks: #N` / `Blocked by: #N` / `Related: #N` lines maintained through the body-edit route. Supersession has no detach or cascade: enumerate any sub-items listed in the closed issue's body in the close comment. Apply `partial` through the body-edit route. For `at-completion`, retain the strict Completion block and report the automatic completion close as not executed: `linear.sh issues complete` has no GitHub counterpart here. Never drop an approved hierarchy or relation action — either record its body representation or report it as not executed, and list every degradation in § 8.
 
 #### 7.2.1 Position in the Active Project
 
@@ -370,7 +370,7 @@ Report any mismatch between an approved action and the re-fetched state in § 8.
 
 ## 8. Report
 
-Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty categories.
+Repeat cancellation, supersession, decline and deferred-cleanup bullets per entry; omit empty categories. Include each absent identifier reported as not touched in a row's `reason`.
 
 <output_format>
 
@@ -388,6 +388,7 @@ Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty 
 | Research refs | N | — |
 
 - Cancelled: [ISSUE_ID]: [REASON]
+- Supersession: [SUPERSEDED_ID] → [REPLACEMENT_ID]: [now: cancelled | partial: re-scoped to REMAINDER | at-completion: completion block and related link recorded | not touched: REASON]
 - Declined: [TITLE]: [REASON]
 - Deferred cleanup: [candidate BLOCKER_ID for TARGET_ID: REASON, or stale reference ISSUE_ID: OLD PATTERN; not applied under auto]
 - Project needed: [ISSUE_ID or TITLE]: [NAME] ([KIND]): [REASON], held until the map lists it

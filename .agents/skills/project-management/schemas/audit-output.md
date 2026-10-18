@@ -91,7 +91,7 @@ In a map repository, `wrong_project[].to` is a map project and `to_id` its id fr
 
 ## ISSUE Mode
 
-Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` row, whose action is `create` or `skip` ([tpm-audit](../workflows/tpm-audit.md) § 14).
+Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` row, whose action is `create` or `skip` ([tpm-audit](../workflows/tpm-audit.md) § 14). A `create` populates `supersedes[]` with the filing's confirmed entries; an identifier absent from the open-titles read is reported as not touched in `reason` and omitted from that array.
 
 ```json
 {
@@ -133,13 +133,15 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
         "is_bundle_parent": false,
         "source_path": "tmp/roadmaps/roadmap-feature.md"
       },
-      "supersedes": [{"identifier": "[ISSUE_ID]", "title": "...", "reason": "Scope fully covered by this issue"}],
+      "supersedes": [{"identifier": "[ISSUE_ID]", "title": "...", "reason": "Scope fully covered by this issue", "when": "now"}],
       "obsolete": {"evidence": {}, "confidence": 100},
       "reason": "Summary explanation"
     }
   ]
 }
 ```
+
+`supersedes[].when` is `now`, `partial`, or `at-completion`, with execution owned by [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations). An entry without `when` retains the existing full-supersession behavior (`now`). A partial entry's `reason` names the scope transferred and the remainder to retain.
 
 `proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its authorized tracker comment, preserved author, original `Source:` value, and merged source PR or landed source commit. `source` must match `create_fields.source`. `repository` and `comment_url` are required for GitHub and null for Linear. Linear receives a parent reply. GitHub receives a new issue comment that cites `comment_url`. Cancellation-sweep rows have no proposal source.
 

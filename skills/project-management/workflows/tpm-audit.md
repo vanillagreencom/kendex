@@ -345,7 +345,7 @@ Recommend a new project in `project_recommendations[]` for architecture gaps onl
 
 ### 10.1 Apply the Creation Bar
 
-Each proposed item passes only if it clears all three tests in [SKILL.md](../SKILL.md) § Disposition and has clear scope, testable criteria, and defined deliverables. A reproducible anomaly with evidence attached passes as an investigation issue whose deliverable is the diagnosis. A failure is `skip` with a one-line reason naming the test it failed — `"no user-visible effect"`, `"covered by [ISSUE_ID]"`, `"no evidence to start from"`, `"too vague — [missing criterion]"`.
+For every source, including `oversee`, proposal-sweep, and audits, apply reviewer/references/finding-disposition.md § Decision flow Step 0 before the creation bar. Each proposed item then passes only if it clears all three tests in [SKILL.md](../SKILL.md) § Disposition and has clear scope, testable criteria, and defined deliverables. Preserve that section's security, data-loss, critical-harm and financial-loss exceptions. A reproducible anomaly with evidence attached passes as an investigation issue whose deliverable is the diagnosis. A failure is `skip` with a one-line reason naming the test it failed: `"refactor with no behaviour change or user-visible work unblocked"`, `"size or ceiling warning"`, `"hypothetical no run reached"`, `"no user-visible effect"`, `"covered by [ISSUE_ID]"`, `"no evidence to start from"`, or `"too vague — [missing criterion]"`. Carry that reason into the report; a no-behaviour-change refactor filed through `--single` returns `skip`, not `create`.
 
 Hierarchy-contract items (§ 7.0) are never `skip`: keep `action: "create"` and flag any actionability gap in `reason` for the caller.
 
@@ -367,7 +367,7 @@ Otherwise, first match wins: creation bar failed → `skip` for a proposed item,
 
 **Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Canceled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
-For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. `regressed_by` is the input item's, copied as written and omitted when the item has none. Verify `supersedes[]` entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
+For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. `regressed_by` is the input item's, copied as written and omitted when the item has none. Preserve confirmed input `supersedes[]` entries and their `when`; verify entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
 
 ---
 
@@ -422,19 +422,19 @@ File: tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json
 
 ## 14. Single-Item Mode
 
-One filing: the creation bar, a title-level duplicate check, the label set and the placement, then § 12 and § 13. No other section runs: no contracts, no relation or hierarchy analysis, no comparison-set bodies, and no § 6 cancellation sweep.
+One filing: the creation bar, a title-level duplicate check, explicit supersession confirmation, the label set and the placement, then § 12 and § 13. No other section runs: no contracts, no inferred relation or hierarchy analysis, no comparison-set bodies, and no § 6 cancellation sweep.
 
 1. **Input.** Read the file as § 1.1 reads `issues` mode. It holds exactly one `items[]` entry and no `hierarchy_contract`; any other shape halts naming the item count, and the caller runs `--issues`.
 2. **Scope and labels.** § 1.1.1, then § 1.2.
 3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`; in a map repository, the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing), with `project_needed` when it routes to none. GitHub: § 1.3's degradation.
-4. **Duplicates by title.** One read of the open titles; keep only rows § 1.1.1 scopes in:
+4. **Duplicates by title and explicit supersession.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash
    .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact   # TRACKER=linear
    gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title                                                                # TRACKER=github
    ```
 
-   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
+   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). Check every input `supersedes[].identifier` against this same read, with no second tracker list. Echo each confirmed identifier, its title, reason and `when` into the create row's `supersedes[]`. Report each absent identifier in the row's `reason` as not touched and omit it from `supersedes[]`. A confirmed explicit supersession is disposed by its `when`, not treated as a duplicate title. Another title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "none", "parent": null}`.
 

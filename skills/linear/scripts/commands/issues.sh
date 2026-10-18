@@ -228,6 +228,9 @@ Activate Options:
                         changing state when the label does not exist.
 
 Complete Options:
+  On Done, exact at-completion entries under **Supersedes**: are commented
+  and canceled. Malformed entries are reported and skipped; related links
+  and Related prose grant no cancellation authority.
   --format <fmt>        Output format: ids (identifier only); default is JSON.
   --summary <text>       Post a summary comment, then apply the checklist state
   --summary-file <path>  Read the summary from a file (preferred for markdown)
@@ -3421,6 +3424,28 @@ complete_issue() {
             return 1
         }
     fi
+    local superseded_ids=()
+    local supersedes_block=0 supersedes_line
+    local supersedes_entry='^- ([A-Z][A-Z0-9]*-[1-9][0-9]*) \(at-completion\):[[:blank:]]+[^[:blank:]].*$'
+    while IFS= read -r supersedes_line || [ -n "$supersedes_line" ]; do
+        supersedes_line=${supersedes_line%$'\r'}
+        if [ "$supersedes_line" = '**Supersedes**:' ]; then
+            supersedes_block=1
+        elif [ "$supersedes_block" -gt 0 ]; then
+            if [ -z "$supersedes_line" ]; then
+                [ "$supersedes_block" -ne 2 ] || supersedes_block=0
+            elif [[ "$supersedes_line" =~ ^# || "$supersedes_line" =~ ^\*\* ]]; then
+                supersedes_block=0
+            elif [[ "$supersedes_line" =~ $supersedes_entry ]]; then
+                superseded_ids+=("${BASH_REMATCH[1]}")
+                supersedes_block=2
+            else
+                jq -cn --arg issue "$issue_id" --arg line "$supersedes_line" \
+                    '{warning: "supersedes-malformed", issue: $issue, line: $line}' >&2
+                supersedes_block=2
+            fi
+        fi
+    done <<<"${description%.}"
     if [ -n "$met_json" ]; then
         done_when_checked=$(jq '.ticked' <<<"$tick") || return 1
     fi
@@ -3485,6 +3510,29 @@ complete_issue() {
             echo "$update_result"
         fi
         return 1
+    fi
+
+    # Only the filing's explicit block grants cancellation authority. Related
+    # links are informational, and a Verifying item has not completed yet.
+    if [ "$completion_state" = Done ]; then
+        local superseded_id superseded_result superseded_terminal disposition_result replacement
+        replacement=$(jq -er '.issue.identifier' <<<"$issue_result") || return 1
+        for superseded_id in ${superseded_ids[@]+"${superseded_ids[@]}"}; do
+            superseded_result=$(get_issue "$superseded_id" --format=raw) || return 1
+            superseded_terminal=$(jq -er '.issue.state.type | strings' <<<"$superseded_result") || return 1
+            case "$superseded_terminal" in completed|canceled) continue ;; esac
+            linear_guard_issue_team complete "$superseded_id" || return 1
+            disposition_result=$("$SCRIPT_DIR/comments.sh" create "$superseded_id" --body "Superseded by $replacement.") || return 1
+            if ! jq -e '.success == true' <<<"$disposition_result" >/dev/null; then
+                jq -cn --arg issue "$superseded_id" '{error: "supersession-comment", issue: $issue}' >&2
+                return 1
+            fi
+            disposition_result=$(update_issue "$superseded_id" --state Canceled) || return 1
+            if ! jq -e '.success == true' <<<"$disposition_result" >/dev/null; then
+                jq -cn --arg issue "$superseded_id" '{error: "supersession-cancel", issue: $issue}' >&2
+                return 1
+            fi
+        done
     fi
 
     if [ "$output_format" = "ids" ]; then
