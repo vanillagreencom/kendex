@@ -42,7 +42,12 @@ cat > "$TMP_ROOT/bin/terminal" <<'TERMINAL'
 #!/usr/bin/env bash
 set -euo pipefail
 # Execute the GUI command without loading this host's login profile.
-[[ "${MODEL_DELAY:-0}" == 0 ]] || sleep "$MODEL_DELAY"
+if [[ -n "${MODEL_TERMINAL_RELEASE:-}" ]]; then
+  while [[ ! -e "$MODEL_TERMINAL_RELEASE" ]]; do
+    [[ -d "${MODEL_TERMINAL_RELEASE%/*}" ]] || exit 1
+    sleep 0.05
+  done
+fi
 rc=0
 "$BASH" -c "${!#}" >> "$MODEL_TERMINAL_LOG" 2>&1 || rc=$?
 printf '%s\n' "$rc" > "$MODEL_TERMINAL_DONE"
@@ -124,7 +129,9 @@ while IFS='|' read -r name control; do
   fi
   expected_failure="" expected_cause=""
   case "$control" in
-    slow) GUI_ENV+=(MODEL_DELAY=6); expected_failure=launch-identity-unread; expected_cause=startup ;;
+    slow)
+      GUI_ENV+=("MODEL_TERMINAL_RELEASE=$LANE/tmp/terminal.release")
+      expected_failure=launch-identity-unread; expected_cause=startup ;;
     uuid|git|scratch)
       mkdir -p "$LANE/bin"
       GUI_ENV+=("PATH=$LANE/bin:$TMP_ROOT/bin:$PATH")
@@ -161,8 +168,10 @@ while IFS='|' read -r name control; do
     assert_eq "$(awk -v key="$expected_failure" '$1=="open-terminal:" && $2==key {for(i=3;i<=NF;i++) if($i~/^cause=/){sub(/^cause=/,"",$i);print $i;exit}}' "$LANE/tmp/launch.log")" "$expected_cause" "$name records its specific failure cause"
     assert_eq "$(jq 'any(.lanes[]?; .status=="running")' "$LANE/tmp/workflow-state-oversee.json")" false "$name records no running lane"
     if [[ "$control" == slow ]]; then
-      # This row checks the real startup timer. Terminal completion is the
-      # acknowledgement that a late shell has observed its cancellation.
+      # Release only after the launcher has refused startup. A timed delay
+      # can expire before scheduler-stretched startup polling finishes.
+      : > "$LANE/tmp/terminal.release"
+      # Terminal completion acknowledges that the late shell saw cancellation.
       deadline=$((SECONDS + 15))
       while [[ ! -s "$LANE/tmp/terminal.done" ]]; do
         [[ "$SECONDS" -lt "$deadline" ]] || exit 1
