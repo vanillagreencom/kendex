@@ -6,7 +6,7 @@ set -euo pipefail
 #
 #   bundle-child  A sub-issue processed under its parent session as part of a
 #                 single-PR bundle. A started state passes when the shared
-#                 parser proves that only post-merge checks remain.
+#                 parser proves its branch boxes and their evidence.
 #   container-child  A separate PR unit. It must finish Done before its
 #                    container can close.
 #
@@ -108,7 +108,11 @@ build_completion_validation_result() {
 		fi
 		if [[ "$role" == "bundle-child" && "$state_ok" == true ]]; then
 			checklist=$(done_when_parse "$description" '[]') || return 1
-			state_ok=$(jq -r --arg state "$state" '.completion_state == (if $state == "Done" then "Done" else "Verifying" end)' <<<"$checklist") || return 1
+			state_ok=$(jq -r --arg state "$state" '
+				if $state == "Done" then .completion_state == "Done"
+				else (.boxes | length) > 0 and .unmet_branch_boxes == []
+					and .missing_evidence_boxes == [] and .errors == [] end
+			' <<<"$checklist") || return 1
 		fi
 
 		if [[ "$state_ok" == "true" && "$has_summary" == "true" ]]; then

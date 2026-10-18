@@ -272,8 +272,9 @@ Validate-Completion:
   ONLY to the session root, not to expanded bundle children.
   Bundle children expanded via --include-children-of pass in Done, or a started
   state other than Verifying
-  when the shared checklist parser proves only post-merge checks remain and
-  every checked box has evidence. Open branch work fails state_ok.
+  when the shared checklist parser proves every branch box and every checked
+  box has evidence. A started child needs a checklist; post-merge boxes are
+  optional. Open branch work or invalid post-merge metadata fails state_ok.
   Canceled children are excluded from the expansion:
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or

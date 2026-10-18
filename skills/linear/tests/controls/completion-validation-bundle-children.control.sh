@@ -31,8 +31,15 @@ control_replace scripts/lib/issue-validation.sh 1 \
 # A state name cannot substitute for branch proof.
 control_expect "open-branch child controls bundle acceptance"
 control_replace scripts/lib/issue-validation.sh 1 \
-    $'\t\t\tstate_ok=$(jq -r --arg state "$state" '\''.completion_state == (if $state == "Done" then "Done" else "Verifying" end)'\'' <<<"$checklist") || return 1' \
-    $'\t\t\tstate_ok=true'
+    $'\t\t\t\telse (.boxes | length) > 0 and .unmet_branch_boxes == []' \
+    $'\t\t\t\telse true or (.boxes | length) > 0 and .unmet_branch_boxes == []'
+
+# Main ties pre-merge acceptance to a future completion state. Proved branch
+# work must also pass when the child has no post-merge box.
+control_expect "branch-only child controls bundle acceptance"
+control_replace scripts/lib/issue-validation.sh 1 \
+    $'\t\t\t\telse (.boxes | length) > 0 and .unmet_branch_boxes == []' \
+    $'\t\t\t\telse .completion_state == "Verifying" and (.boxes | length) > 0 and .unmet_branch_boxes == []'
 
 control_expect "early-verifying child controls bundle acceptance"
 control_replace scripts/lib/issue-validation.sh 1 \

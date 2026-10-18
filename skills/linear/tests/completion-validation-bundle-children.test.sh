@@ -288,6 +288,9 @@ while IFS='|' read -r name format state description expected; do
   fi
 done <<'ROWS'
 qualified|safe|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+branch-only|safe|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed|true
+branch-only-open|safe|In Progress|## Done when\n- [ ] branch proof|false
+branch-only-missing-evidence|safe|In Progress|## Done when\n- [x] branch proof|false
 review|safe|In Review|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
 custom-started|safe|In QA|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
 open-branch|safe|In Progress|## Done when\n- [ ] branch proof\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|false
@@ -298,6 +301,7 @@ early-verifying|safe|Verifying|## Done when\n- [x] branch proof\n  Evidence: bra
 done-open-branch|safe|Done|## Done when\n- [ ] branch proof|false
 done-missing-evidence|safe|Done|## Done when\n- [x] branch proof|false
 compact-qualified|compact|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployed release; Trigger: release owner/repo v*; Deadline: +24h|true
+compact-branch-only|compact|In Progress|## Done when\n- [x] branch proof\n  Evidence: branch test passed|true
 compact-done-open-branch|compact|Done|## Done when\n- [ ] branch proof|false
 compact-done-missing-evidence|compact|Done|## Done when\n- [x] branch proof|false
 ROWS
