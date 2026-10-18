@@ -320,9 +320,10 @@ fn installed_catalog_passes_comment_and_prose_lanes() {
     install_reference_controls(&home, &project, &scripts);
 }
 
-/// The source scan admits every staged path, including Markdown that it
-/// cannot parse as source. Markdown is judged separately. Counts plus the
-/// hook and extensionless controls reject a scan that admits too few files.
+/// These callers select every staged Markdown file for the document pass.
+/// Markdown, source, and skipped counts must cover the selected paths.
+/// Counts plus the hook and extensionless controls reject a scan that admits
+/// too few files.
 fn assert_reference_coverage(output: &Output, staged: &[String]) {
     let said = String::from_utf8_lossy(&output.stdout);
     let summary = said
@@ -341,7 +342,7 @@ fn assert_reference_coverage(output: &Output, staged: &[String]) {
     };
     assert!(!staged.is_empty(), "installed catalog staged no files");
     assert_eq!(
-        count("sources=") + count("skipped="),
+        count("markdown=") + count("sources=") + count("skipped="),
         staged.len(),
         "{summary}"
     );

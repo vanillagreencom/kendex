@@ -28,8 +28,8 @@
 # left open or comment text the extractor cannot separate, is named unjudged
 # and counted as skipped, and a reference into the headings of one is
 # unjudged too, never dead.
-# The catalog-render test reads summary sources and skipped as the source
-# scan's admitted count, and markdown as its separately judged document count.
+# The catalog-render test selects every Markdown file for the document pass.
+# It adds summary markdown, sources and skipped to count all selected paths.
 set -euo pipefail
 set -f
 
