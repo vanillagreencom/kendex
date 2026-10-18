@@ -12,3 +12,8 @@ control_expect "children-fail leaves related items unchanged"
 control_replace scripts/commands/issues.sh 1 \
     '        if [ -n "$pending_children" ]; then' \
     '        if false; then'
+
+control_expect "deep-children-fail names all open descendants for disposition"
+control_replace scripts/commands/issues.sh 1 \
+    '            frontier="$next_frontier"' \
+    '            frontier=""'

@@ -46,6 +46,10 @@ case "$query" in
       printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200'
       exit 0
     fi
+    if [[ "$SCENARIO" = deep-read-fail && "$id" = CC-724 ]]; then
+      printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200'
+      exit 0
+    fi
     type=started
     [[ "$SCENARIO" != retry || "$id" != CC-720 || ! -e "$TRACKER_STATE.done" ]] || type=completed
     [[ "$SCENARIO" != terminal || "$id" != CC-721 ]] || type=completed
@@ -55,6 +59,25 @@ case "$query" in
       [ "$SCENARIO" != closed-children ] || child_type=completed
       children=$(jq -cn --arg type "$child_type" '[{id:"CC-722",identifier:"CC-722",title:"child",state:{name:"child state",type:$type},children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}]')
     fi
+    if [[ "$SCENARIO" = deep-* ]]; then
+      # create/update --parent permits both branches to continue below the
+      # recursive reader's three-level window, even under terminal ancestors.
+      children=$(jq -cn --arg id "$id" --arg scenario "$SCENARIO" --arg query "$query" '
+        def node($id; $type; $children):
+          {id:$id,identifier:$id,title:"child",state:{name:"child state",type:$type},
+           children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children}};
+        def trim($depth): if $depth == 0 then del(.children)
+          else .children.nodes |= map(trim($depth - 1)) end;
+        (if $scenario == "deep-children-fail" then "started" else "completed" end) as $leaf_type
+        | node("CC-721"; "started"; [
+            node("CC-722"; "completed"; [node("CC-723"; "canceled"; [node("CC-724"; "completed"; [node("CC-725"; $leaf_type; [])])])]),
+            node("CC-726"; "canceled"; [node("CC-727"; "completed"; [node("CC-728"; "canceled"; [node("CC-729"; $leaf_type; [])])])])])
+        | .children.nodes += [.children.nodes[0]]
+        | [recurse(.children.nodes[]?) | select(.id == $id)]
+        | if length == 0 then [] else
+            (if $query | contains("GetChildrenRecursive") then 3 else 1 end) as $depth
+            | .[0] | trim($depth) | .children.nodes end')
+    fi
     jq -cn --arg id "$id" --arg type "$type" --argjson children "$children" --rawfile description "$DESCRIPTION_FILE" '{data:{issue:{id:$id,identifier:$id,title:"work",description:$description,state:{name:"In Review",type:$type},team:{id:"team",key:"CC",name:"Test"},children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"fixture-relation",type:"related",relatedIssue:{id:"CC-721",identifier:"CC-721",title:"old",state:{name:"Todo",type:"unstarted"}}},{id:"ordinary",type:"related",relatedIssue:{id:"CC-999",identifier:"CC-999",state:{name:"Todo",type:"unstarted"}}}]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' ;;
   *) printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
 esac
@@ -62,7 +85,7 @@ printf '___HTTP_CODE___200'
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-for scenario in done closed-children related-only malformed held terminal comment-fail cancel-fail complete-fail unreadable-fail children-fail retry; do
+for scenario in done closed-children deep-closed-children related-only malformed held terminal comment-fail cancel-fail complete-fail unreadable-fail children-fail deep-children-fail deep-read-fail retry; do
   description="$TMP_ROOT/description"
   printf '%s\n' 'Related: CC-999' '**Supersedes**:' '' '- CC-721 (at-completion): Replaced scope' >"$description"
   case "$scenario" in
@@ -83,7 +106,7 @@ for scenario in done closed-children related-only malformed held terminal commen
   assert_eq "$scenario returns the completion result" "$rc" "$expected_rc"
   mutations=$(jq -sc '[.[] | select(.query | test("commentCreate|issueUpdate")) | {id:(.variables.input.issueId // .variables.id),state:.variables.input.stateId,body:.variables.input.body}]' "$log")
   case "$scenario" in
-    done|closed-children)
+    done|closed-children|deep-closed-children)
       assert_jq "$scenario cancels the named item after its replacement completes" "$mutations" 'map({id,state}) == [{id:"CC-720",state:"Done"},{id:"CC-721",state:null},{id:"CC-721",state:"Canceled"}]'
       assert_jq "$scenario comments naming the replacement before cancellation" "$mutations" '.[1].body | contains("CC-720")' ;;
     comment-fail|cancel-fail)
@@ -98,14 +121,24 @@ for scenario in done closed-children related-only malformed held terminal commen
     assert "malformed entry reports its structured category" jq -se 'any(.[]; .warning == "supersedes-malformed")' "$TMP_ROOT/err"
   fi
   case "$scenario" in
-    comment-fail|cancel-fail|unreadable-fail|children-fail|retry)
+    comment-fail|cancel-fail|unreadable-fail|children-fail|deep-children-fail|deep-read-fail|retry)
       assert_jq "$scenario preserves the successful transition" "$(cat "$TMP_ROOT/out")" '.success == true and .identifier == "CC-720"'
-      diagnostic=$(jq -sc '[.[] | select(.error == "supersession-incomplete")] | last' "$TMP_ROOT/err")
+      diagnostic=$(jq -Rsc '[split("\n")[] | fromjson? | select(.error == "supersession-incomplete")] | last' "$TMP_ROOT/err")
       assert_jq "$scenario reports Done and a summary-free retry" "$diagnostic" '.already_done == true and .state == "Done" and .retry == {resource:"issues",action:"complete",issue:"CC-720",options:[]}'
       ;;
   esac
-  if [ "$scenario" = children-fail ]; then
-    assert "open children are named for disposition" jq -se 'any(.[]; .error == "supersession-children" and .issue == "CC-721" and .children == ["CC-722"])' "$TMP_ROOT/err"
+  case "$scenario" in
+    children-fail) pending='["CC-722"]' ;;
+    deep-children-fail) pending='["CC-725","CC-729"]' ;;
+    *) pending='' ;;
+  esac
+  if [ -n "$pending" ]; then
+    assert "$scenario names all open descendants for disposition" jq -se --argjson pending "$pending" 'any(.[]; .error == "supersession-children" and .issue == "CC-721" and (.children | sort) == $pending)' "$TMP_ROOT/err"
+  fi
+  if [ "$scenario" = deep-closed-children ]; then
+    assert "terminal descendants are all read once before cancellation" jq -se '
+      [.[] | select(.query | test("query GetChildren(Recursive)?\\(")) | .variables.id] | sort
+      == ["CC-721","CC-722","CC-723","CC-724","CC-725","CC-726","CC-727","CC-728","CC-729"]' "$log"
   fi
   if [ "$scenario" = retry ]; then
     rc=0
