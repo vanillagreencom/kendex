@@ -546,6 +546,7 @@
   ".agents/skills/jarvis/scripts/docs-audit",
   ".agents/skills/jarvis/scripts/human-input",
   ".agents/skills/jarvis/scripts/jarvis-browser",
+  ".agents/skills/jarvis/scripts/jarvis-section",
   ".agents/skills/jarvis/scripts/jarvis-session",
   ".agents/skills/jarvis/scripts/lib/jarvis-env.sh",
   ".agents/skills/jarvis/scripts/lib/op_fifo.py",

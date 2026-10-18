@@ -1,5 +1,7 @@
 # Memory
 
+Read a named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`. Use the exact heading text from its owning file. Keep the returned child sections rather than loading them again.
+
 ## Home
 
 - Skills hold how to do a task. Memory holds what is true or preferred. The tracker holds work and the handoff holds session state under [Homes](long-session.md#homes).

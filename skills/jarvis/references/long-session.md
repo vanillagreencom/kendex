@@ -1,5 +1,7 @@
 # Long sessions
 
+Read each named rule, handoff or memory section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`. Use the exact heading text from its owning file. A returned parent section includes its children; use that text rather than reading a child again.
+
 ## Homes
 
 Each record kind has one home. Write a record to its home, never to the handoff.

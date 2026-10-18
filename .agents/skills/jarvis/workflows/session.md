@@ -2,6 +2,8 @@
 
 Follow this workflow when starting a continuing session, reconciling open work or transferring control.
 
+Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`, using its owning file and exact heading. The command includes child sections and stops before the next heading of the same or higher level. Use already loaded text when a parent read includes the requested child.
+
 ## Session command
 
 - Before the first Start with Copilot CLI, follow [Copilot folder trust](../references/home-layout.md#copilot-folder-trust).
@@ -12,7 +14,7 @@ Follow this workflow when starting a continuing session, reconciling open work o
 
 ## Start
 
-- Read `state/handoff.md` first, at the path in the [home layout](../references/home-layout.md). If it is absent and the user has an earlier handoff elsewhere, read that file. Have the user move it once to the current path. Read the [Handoff contract](../references/long-session.md#handoff) before using it. Read its State, Sub-agents and Instructions in force sections. Compare its state time with the clock and the user's staleness bound. Refuse a handoff outside that bound. Ask the user to set the bound if none exists.
+- Read the State, Sub-agents and Instructions in force sections of `state/handoff.md` first with `jarvis-section`, at the path in the [home layout](../references/home-layout.md). If it is absent and the user has an earlier handoff elsewhere, read those sections there. Have the user move it once to the current path. Read the [Handoff contract](../references/long-session.md#handoff) with `jarvis-section` before using it. Apply its checkpoint, staleness and recovery rules. Ask the user to set the staleness bound if none exists.
 - Load only the safety core at start: the role in [persona.md](../persona.md), [Authority](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records). Use already loaded text rather than reading it again. Keep one assistant in control at a time.
 - Check current holds and temporary instructions in the compact handoff sections above. Read the current owner request with its delivered context. Apply its decision boundary through Authority before choosing work.
 - Check the event registration state in the handoff's State section.
@@ -34,7 +36,7 @@ Follow this workflow when starting a continuing session, reconciling open work o
 
 ## Action routes
 
-Load each named section before the step that acts on it. Read its full text, including its rules, rather than only its heading or a summary. Use [Acceptance](../references/verification.md#acceptance) to select any further instructions the task needs. A start instruction must not read whole rule files in advance.
+Load each named section with `jarvis-section` before the step that acts on it. Read its full text, including its rules, rather than only its heading or a summary. Use [Acceptance](../references/verification.md#acceptance) to select any further instructions the task needs. A start instruction must not read whole rule files in advance.
 
 | Action | Load before acting |
 |---|---|
@@ -46,7 +48,7 @@ Load each named section before the step that acts on it. Read its full text, inc
 | Lane launch | [Authority](../references/decisions.md#authority), orch's [Delegation](../../orch/references/skill-rules.md#delegation) and [Agent Lifecycle](../../orch/references/skill-rules.md#agent-lifecycle). For an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md). |
 | Succession | [Succession](#succession), [Handoff replacement](#handoff-replacement), the [Handoff contract](../references/long-session.md#handoff) and [Retention](../references/accounts-and-secrets.md#retention). |
 
-A consumer's own rule files keep their content. Its start instructions load only its safety-core sections above. Give its remaining rule sections action routes for the same classes in this table. Each route names the owning file and its existing section heading. Load that section before the action it governs. Keep consumer-specific rules in their owning files rather than copying them into this workflow or the handoff.
+A consumer's own rule files keep their content. Its start instructions load only its safety-core sections above through `jarvis-section`. Give its remaining rule sections action routes for the same classes in this table. Each route names the owning file and its existing section heading. Load that section with `jarvis-section` before the action it governs. Keep consumer-specific rules in their owning files rather than copying them into this workflow or the handoff.
 
 ## Event loop
 
@@ -66,7 +68,7 @@ A consumer's own rule files keep their content. Its start instructions load only
 ## Succession
 
 - Judge whether the remaining context permits continued work. Use the user's succession trigger when they set one.
-- Follow [Handoff replacement](#handoff-replacement), then rewrite `state/handoff.md` from current source readings under the [Handoff contract](../references/long-session.md#handoff).
+- Follow [Handoff replacement](#handoff-replacement) and the reconciliation and update rules in the [Handoff contract](../references/long-session.md#handoff), read through `jarvis-section`.
 - Start the successor with that handoff. Transfer control before it acts. Stop the predecessor after the successor accepts control. During the transfer, only the assistant that holds control acts.
 - Start the successor's log empty after replacement succeeds.
 - Keep session state in the current handoff. Never move it into memory.

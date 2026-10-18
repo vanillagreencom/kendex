@@ -16,6 +16,6 @@ Read when starting a session, finding a memory note or updating its index row.
 
 ## Read a note
 
-- A terminal session that can run commands opens the named file and reads the section by its subject heading.
+- A terminal session reads the note with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Subject heading'`, using the file and exact heading from its index row.
 - A session with only search access searches for the subject heading in the named file and reads that section.
 - Read the selected heading and its content. Stop before the next heading of the same or higher level.
