@@ -451,7 +451,9 @@ case "$1" in
     case "$(cat "$LANE_CLOSE_PHASE")" in
       exited) printf '\n' ;;
       *) cat -- "$LANE_CLOSE_SCREEN" ;;
-    esac ;;
+    esac
+    [[ "${*: -1}" != $'\036''#{pane_dead}' ]] || printf '\0360\n'
+    ;;
   # Every verb that writes into a pane fails, logged first, so a close that
   # types anything is both a refusal and a line in the call log.
   load-buffer|paste-buffer|send-keys) exit 97 ;;

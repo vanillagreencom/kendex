@@ -466,6 +466,7 @@ case "${1:-}" in
     [[ ! -f "$STUB_DIR/kill-window-fail" ]] || { echo "can't find pane" >&2; exit 1; }
     exit 0 ;;
   capture-pane)
+    format="${*: -1}"
     lane=""; join=0
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$(lane_name "$2")"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
     n=0; [[ -f "$STUB_DIR/pane-$lane.calls" ]] && n="$(cat "$STUB_DIR/pane-$lane.calls")"
@@ -479,6 +480,7 @@ case "${1:-}" in
     # other case is unaffected.
     w=0; [[ -f "$STUB_DIR/width-$lane.txt" ]] && w="$(cat "$STUB_DIR/width-$lane.txt")"
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
+    [[ "$format" != $'\036''#{pane_dead}' ]] || printf '\0360\n'
     exit 0 ;;
   display-message)
     # `-p [-t <pane>] '#S'` asks which session the caller is in.
@@ -542,12 +544,6 @@ case "${1:-}" in
       fi
       key="$STUB_DIR/pane-key-$lane.txt"
       if [[ -f "$key" ]]; then cat "$key"; else printf '7000 %%%s\n' "$lane"; fi
-      exit 0
-    done
-    # These fixture panes remain live when the shared capture reads pane_dead.
-    for a in "$@"; do
-      [[ "$a" == '#{pane_dead}' ]] || continue
-      printf '0\n'
       exit 0
     done
     lane="$(dash_t "$@")"

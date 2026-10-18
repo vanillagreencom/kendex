@@ -966,7 +966,7 @@ lane_pane_mode() { # OUT_VAR HOST
 # The output variable and tagged read result remain in the caller's shell.
 # A command substitution would discard the result and make the judge repeat it.
 lane_pane_capture() { # OUT_VAR MODE HOST ITEM PANE [history]
-  local _lpc_screen="" _lpc_rc=0 _lpc_args=() _lpc_dead
+  local _lpc_screen="" _lpc_rc=0 _lpc_args=() _lpc_dead=""
   LANE_PANE_SOURCE=unreadable
   printf -v "$1" '%s' ''
   case "$2" in
@@ -979,7 +979,15 @@ lane_pane_capture() { # OUT_VAR MODE HOST ITEM PANE [history]
       # pane read fails. The provider's mandatory unreadable rule is separate.
       LANE_PANE_SOURCE=local-unreadable
       [[ "${6:-}" != history ]] || _lpc_args+=(-S -)
-      _lpc_screen="$(tmux capture-pane -pJ ${_lpc_args[@]+"${_lpc_args[@]}"} -t "$5")" || _lpc_rc=$? ;;
+      # One client reads both values. The final record separator keeps a
+      # blank dead flag separate from screen text and trailing blank lines.
+      _lpc_args+=(-t "$5" \; display-message -p -t "$5" $'\036''#{pane_dead}')
+      _lpc_screen="$(tmux capture-pane -pJ ${_lpc_args[@]+"${_lpc_args[@]}"})" || _lpc_rc=$?
+      if [[ "$_lpc_screen" == *$'\036'* ]]; then
+        _lpc_dead="${_lpc_screen##*$'\036'}"
+        _lpc_screen="${_lpc_screen%$'\036'*}"
+        _lpc_screen="${_lpc_screen%"${_lpc_screen##*[!$'\n']}"}"
+      fi ;;
     *) return 1 ;;
   esac
   [[ "$_lpc_rc" == 0 ]] || return "$_lpc_rc"
@@ -989,9 +997,7 @@ lane_pane_capture() { # OUT_VAR MODE HOST ITEM PANE [history]
   # A dead SSH viewer cannot prove that its remote harness ended.
   # Only an affirmative dead flag adds exit proof; otherwise the captured
   # screen and the process checks still decide the state.
-  if [[ "$2" == local && "${3:-local}" == local ]] \
-    && _lpc_dead="$(tmux display-message -p -t "$5" '#{pane_dead}' 2>/dev/null)" \
-    && [[ "$_lpc_dead" == 1 ]]; then
+  if [[ "$2" == local && "${3:-local}" == local && "$_lpc_dead" == 1 ]]; then
     LANE_PANE_SOURCE=local-dead
   fi
   printf -v "$1" '%s' "$_lpc_screen"
