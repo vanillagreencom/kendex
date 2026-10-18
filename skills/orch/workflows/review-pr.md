@@ -57,6 +57,23 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Prepare Reviewers
 
+**Pre-panel context check.** Before sizing or starting any attached reviewer, a lane reads its current session's context reading, the one `lane-mail-check` judges. Read `tmp/lane-mail/[ISSUE_ID]/context.json` with the harness file reader. Confirm its `session_id` names this session and its reading matches the latest usage in the harness's session records. If the reading is absent, stale, unreadable, or carries a `gap`, start no attached panel. Report the unavailable reading and repair it before re-entering § 2. An unknown reading is never room.
+
+Resolve the existing settings:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_HANDOFF_CONTEXT_PCT 90
+.agents/skills/orch/scripts/orch-env ORCH_HANDOFF_AGENT_RESERVE_TOKENS ""
+```
+
+Pass the reading's `tokens` and `window` (empty for null), and those settings, to the hook's existing judge. An empty reserve read uses `150000`, as the hook does. Fill every argument from those reads:
+
+```bash
+bash -euo pipefail -c 'source "$1"; lane_context_handoff_due "$2" "$3" "$4" "$5"' _ .agents/skills/orch/scripts/lib/lane-context.sh "[TOKENS]" "[WINDOW]" "[CONTEXT_PCT]" "[AGENT_RESERVE_TOKENS]"
+```
+
+Only a successful `room` result permits attached panel sizing below. A failed setting read or judge call starts no attached panel; report its cause and repair it before re-entering § 2. A `due` result means the reading is at or above the handoff mark minus `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`. Set `REVIEWER_SLOTS=0` and record a handoff at the published head under [oversee-events.md § Judgement rules, Hand off a lane before it runs out](../references/oversee-events.md#judgement-rules). If the head is unpublished, finish the existing publication step first; start no attached panel while publication is pending or blocked. Keep the existing unfinished-work and running-job details in the handoff. The fresh session re-enters § 2 and runs this check before starting the whole panel. This route uses the existing handoff instead of adding a panel runner.
+
 `[AGENTS]` is the caller's `agents` context when provided. Otherwise it is the first-cycle panel: the reviewers this harness exposes whose domains the whole diff, `origin/[BASE_BRANCH]...HEAD`, or the issue's Done-when touches, by [§ 4's scoped-panel rule](#bounded-re-review). Read the Done-when first: `linear.sh issues get [ISSUE_ID]` `.description` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` for GitHub. A failed read, or a `pr-N` key, selects from the diff alone, and `[PANEL_REASON]` says so. On a § 1 entry, record the panel before any spawn, `[PANEL_REASON]` naming the domains touched, or `caller panel` for a caller's `agents`:
 
 ```bash

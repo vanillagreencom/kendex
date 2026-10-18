@@ -4,6 +4,8 @@
 
 ## Judgement rules
 
+Review panels take the [pre-panel context check](../workflows/review-pr.md#2-prepare-reviewers) before any attached reviewer starts.
+
 The overseer owns fleet judgement, not just liveness; every `oversee.md` § 4 event is handled under these rules. The fleet log is the oversee state's `fleet_log[]` ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), which exists before the first append per `oversee.md` § 3 Lane record; every record a rule below asks for is one append, `[KIND]` being `proposal`, `ruling`, `close`, `peer` or `use1` and `[ITEM]` the issue or repository it is about. `[ONE_LINE]` carries text the overseer did not author, so the record crosses a file and never argv ([SKILL.md](../SKILL.md) § Harness-Safe Shell): write it with the harness file-write tool, then bind the path. Append each record before replacing the file for the next one. The record carries no time: `append-file` stamps `at` from its own clock and refuses as `fleet-log-at-future` a record already dated later than it. `[ONE_LINE]` holds at most `ORCH_FLEET_LOG_ROW_BYTES` bytes, default 600, and a longer one is refused as `fleet-log-row-bytes`. The `append-file` entry in `workflow-state --help` names the rest of what it refuses on that field.
 
 ```json
