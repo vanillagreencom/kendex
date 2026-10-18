@@ -34,7 +34,7 @@ orch_fixture_shared_libs() {
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-} ${2:-}" == 'issues get' ]] || exit 1
-jq -cn --arg id "$3" '{id:$id, parent_id:"", blocked_by_open:[]}'
+jq -cn --arg id "$3" '{id:$id, parent_id:"", blocked_by_open:[], blocked_by_launch:[]}'
 EOF
   chmod +x "$dest/linear.sh"
 }

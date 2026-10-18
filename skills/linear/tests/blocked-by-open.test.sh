@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
 # Every issue read keeps completed blocking relations as history while
-# identifying only blockers that still prevent dispatch.
+# identifying nonterminal blockers for reports and scheduling.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,6 +92,22 @@ assert_issue() {
 }
 
 assert_issue "live get safe filters by state type" "$(run_live issues get KEN-1 --format=safe)" '.'
+
+# Verifying remains open to existing readers. Only the launch field differs.
+while IFS='|' read -r state state_type expected_launch; do
+  verifying_raw="$(jq -cn --argjson issue "$main" --arg name "$state" --arg type "$state_type" \
+    '{issue:($issue | .inverseRelations.nodes[0].issue.state = {name:$name,type:$type})}')"
+  assert_jq "safe get launch blockers for $state" "$(format_issue_single "$verifying_raw")" \
+    ".blocked_by_open == [\"KEN-2\"] and .blocked_by_launch == $expected_launch"
+  assert_issue "compact get keeps open blockers for $state" "$(format_issue_compact "$verifying_raw")" '.'
+  list_raw="$(jq -c '{issues:{nodes:[.issue]}}' <<<"$verifying_raw")"
+  assert_issue "safe list keeps open blockers for $state" "$(format_issues_list "$list_raw")" '.[0]'
+done <<'ROWS'
+Verifying|started|[]
+In Progress|started|["KEN-2"]
+Backlog|backlog|["KEN-2"]
+ROWS
+
 assert_issue "live get compact filters by state type" "$(run_live issues get KEN-1 --format=compact)" '.'
 assert_issue "live list safe filters by state type" "$(run_live issues list --format=safe)" '.[0]'
 assert_issue "live list compact filters by state type" "$(run_live issues list --format=compact)" '.[0]'

@@ -11,6 +11,7 @@ readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { pageInfo { hasNextPage endC
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
+def issue_blocks_launch: issue_is_open and .state.name != "Verifying";
 def issue_blocks_relations($relations): [($relations // [])[] | select(.type == "blocks")];
 def issue_blocks_ids($relations): issue_blocks_relations($relations) | map(.relatedIssue.identifier);
 def issue_blocks_open_ids($relations): issue_blocks_relations($relations) | map(select(.relatedIssue | issue_is_open) | .relatedIssue.identifier);
@@ -21,6 +22,7 @@ def issue_blocked_by_open_relations($relations): issue_blocked_by_relations($rel
 def issue_blocker_row: {id: .issue.identifier, title: .issue.title, state: .issue.state.name};
 def issue_blocked_by_ids($relations): issue_blocked_by_relations($relations) | map(.issue.identifier);
 def issue_blocked_by_open_ids($relations): issue_blocked_by_open_relations($relations) | map(.issue.identifier);
+def issue_blocked_by_launch_ids($relations): issue_blocked_by_relations($relations) | map(select(.issue | issue_blocks_launch) | .issue.identifier);
 def issue_blocked_by_rows($relations; $with_relation_id): issue_blocked_by_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
 def issue_blocked_by_open_rows($relations; $with_relation_id): issue_blocked_by_open_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
 # A related relation is one record Linear shows on both issues: the side that
@@ -135,6 +137,7 @@ format_issue_single() {
         blocks: issue_blocks_ids(.issue.relations.nodes),
         blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
         blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
+        blocked_by_launch: issue_blocked_by_launch_ids(.issue.inverseRelations.nodes),
         related: issue_related_ids(.issue.relations.nodes; .issue.inverseRelations.nodes),
         url: (.issue.url // "")
     } + (if (.issue | has("syncedWith")) then {

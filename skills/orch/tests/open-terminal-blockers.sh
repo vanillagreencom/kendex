@@ -4,7 +4,7 @@
 # tests/lib/{assertions,growth-state,shared-skill-libs,open-terminal-stubs,question-off}.sh.
 # Fleet consumers parse the refusal header; launch and worktree stubs prove
 # admission without starting a harness. An optional argument is main's script
-# for the same blocked-row control.
+# for the Verifying blocker control.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +26,7 @@ git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 WS="$SCRIPTS/workflow-state"
 OT="$SCRIPTS/open-terminal"
-# Reuse the production formatter, including its terminal-blocker rule.
+# Reuse the production formatter for the launch admission decision.
 cp "$TEST_DIR/../../linear/scripts/lib/formatters.sh" "$REPO/linear/scripts/formatters.sh"
 cat > "$REPO/linear/scripts/linear.sh" <<'TRACKER'
 #!/usr/bin/env bash
@@ -52,10 +52,14 @@ chmod +x "$REPO/linear/scripts/linear.sh"
 # relation history in the real formatter, with no open blocker.
 fixture() {
   jq -cn --arg id "$1" --arg parent "$2" --arg state "$3" '
+    def blocker_state:
+      if $state == "Verifying" or $state == "In Progress" then {name:$state,type:"started"}
+      elif $state == "Backlog" then {name:$state,type:"backlog"}
+      else {type:$state} end;
     {issue:{identifier:$id, title:$id, state:{type:"started"},
       parent:(if $parent == "" then null else {identifier:$parent} end),
       inverseRelations:{nodes:(if $state == "" then [] else
-        [{type:"blocks",issue:{identifier:"CC-9",state:{type:$state}}}] end)}}}
+        [{type:"blocks",issue:{identifier:"CC-9",state:blocker_state}}] end)}}}
   ' > "$FIXTURE/$1.json"
 }
 run_row() { # NAME MODE LEAF_STATE PARENT_STATE RECORD [SCRIPT] [FORMAT]
@@ -103,8 +107,13 @@ while IFS='|' read -r name mode leaf parent record expected default_format; do
   fi
 done <<'ROWS'
 open|fresh|started||no|rc=1 creates=0 key=launch-blocked reads=1
+in-progress|fresh|In Progress||no|rc=1 creates=0 key=launch-blocked reads=1
+backlog|cmd|Backlog||no|rc=1 creates=0 key=launch-blocked reads=1
 custom-open|cmd|started||no|rc=1 creates=0 key=launch-blocked reads=1
 ancestor-open|cmd||started|no|rc=1 creates=0 key=launch-blocked reads=3
+verifying|fresh|Verifying||no|rc=0 creates=1 key=none reads=1
+custom-verifying|cmd|Verifying||no|rc=0 creates=1 key=none reads=1
+ancestor-verifying|cmd||Verifying|no|rc=0 creates=1 key=none reads=3
 completed|fresh|completed||no|rc=0 creates=1 key=none reads=1
 canceled|cmd|canceled||no|rc=0 creates=1 key=none reads=1
 clear|cmd|||no|rc=0 creates=1 key=none reads=1
@@ -120,6 +129,17 @@ ROWS
 run_row recorded-wake wake unread '' yes
 assert_eq "${RESULT#* key=}" 'none reads=0' 'recorded wake bypasses blocker read'
 
+# Keep the launch predicate in place but remove its Verifying exemption.
+# The same fixture must then be refused before creating a worktree.
+mutate_file "$REPO/linear/scripts/formatters.sh" \
+  'def issue_blocks_launch: issue_is_open and .state.name != "Verifying";' \
+  'def issue_blocks_launch: issue_is_open;'
+run_row verifying-control fresh Verifying '' no
+assert_eq "$RESULT" 'rc=1 creates=0 key=launch-blocked reads=1' 'control: Verifying holds launch without exemption'
+mutate_file "$REPO/linear/scripts/formatters.sh" \
+  'def issue_blocks_launch: issue_is_open;' \
+  'def issue_blocks_launch: issue_is_open and .state.name != "Verifying";'
+
 # LINEAR_FORMAT is a supported caller setting. Removing the explicit format
 # must reject the unblocked row because its raw result is not a safe issue.
 mutate_file "$OT" 'issues get "$next" --format=safe' 'issues get "$next"'
@@ -133,8 +153,10 @@ run_row control cmd started '' no
 assert_eq "$RESULT" 'rc=0 creates=1 key=none reads=0' 'must-fail control admits blocked item'
 if [[ -n "${1:-}" ]]; then
   cp -- "$1" "$OT"
-  run_row main-control cmd started '' no
-  assert_eq "$RESULT" 'rc=0 creates=1 key=none reads=0' 'current main admits blocked item'
+  run_row main-control fresh Verifying '' no
+  assert_eq "$RESULT" 'rc=1 creates=0 key=launch-blocked reads=1' 'main refuses Verifying blocker'
+  run_row main-ancestor-control cmd '' Verifying no
+  assert_eq "$RESULT" 'rc=1 creates=0 key=launch-blocked reads=3' 'main refuses ancestor Verifying blocker'
   cat "$FIXTURE/output"
 fi
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"

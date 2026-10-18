@@ -15,7 +15,7 @@ ot_message() { # REASON FIELD=VALUE...
   case "$reason" in
     missing-value) text='The option requires a value.' ;;
     helper-missing) text='The required helper is not executable.' ;;
-    launch-blocked) text='An item or its ancestor has an open blocker. Complete the named blockers before launching this item.' ;;
+    launch-blocked) text='An item or its ancestor has a blocker that still holds launch. Merge or complete the named blockers before launching this item.' ;;
     launch-blocked-unread) text='The live blocker read failed. Restore the tracker read before launching this item.' ;;
     entry-permission-untransferable) text='The caller permissions cannot transfer to this harness. The preference walk skips this entry.' ;;
     items-missing) text='Specify a work item.' ;;
@@ -807,6 +807,13 @@ any other create failure is host-create-failed. The final summary line reports
 launched, skipped, and failed counts. Preparing counts both background jobs
 and saved foreground busy continuations, as schemas/lane-host.md § Provider
 protocol defines.
+
+A new Linear fleet launch refuses as launch-blocked when the item or a
+container ancestor has a blocker in blocked_by_launch from issues get
+--format=safe. Completed, canceled and post-merge Verifying blockers satisfy
+this launch check. In Progress and Backlog blockers still hold launch.
+launch-blocked-unread means the live read could not be completed. A relaunch
+or wake of a recorded lane passes this check.
 
 Every launch that stands under --state-dir is recorded in the oversee
 workflow state that flag names (`workflow-state get oversee .lanes`, created

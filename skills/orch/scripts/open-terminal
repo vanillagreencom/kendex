@@ -3827,19 +3827,19 @@ launch_blockers_gate() { # ITEM
       || ! row="$("$linear" issues get "$next" --format=safe)" \
       || ! jq -e --arg id "$next" '
           .id == $id and (.parent_id | type == "string")
-          and (.blocked_by_open | type == "array" and all(.[]; type == "string" and length > 0))
+          and (.blocked_by_launch | type == "array" and all(.[]; type == "string" and length > 0))
         ' <<<"$row" >/dev/null; then
       ot_message launch-blocked-unread "item=$selected" "read=$next" >&2
       return 1
     fi
     seen+="$next "
-    blockers="$(jq -cn --argjson known "$blockers" --argjson row "$row" '$known + $row.blocked_by_open | unique')" || return 1
+    blockers="$(jq -cn --argjson known "$blockers" --argjson row "$row" '$known + $row.blocked_by_launch | unique')" || return 1
     parent="$(jq -r '.parent_id' <<<"$row")" || return 1
     next="$parent"
   done
   blockers="$(jq -r 'join(",")' <<<"$blockers")" || return 1
   [[ -n "$blockers" ]] || return 0
-  ot_message launch-blocked "item=$selected" "blockers=$blockers" "fix=complete blockers $blockers before launch" >&2
+  ot_message launch-blocked "item=$selected" "blockers=$blockers" "fix=merge or complete blockers $blockers before launch" >&2
   return 1
 }
 
