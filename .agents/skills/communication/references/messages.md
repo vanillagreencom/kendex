@@ -8,7 +8,7 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 
 | Mode | Prose |
 |---|---|
-| `ceo` | Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person must act on it. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
+| `ceo` | Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person must act on it. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
 | `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
 
 ## Plain language
@@ -89,4 +89,4 @@ Own a mistake in one line, with its repair.
 
 ## Attachments
 
-Attach a screenshot or image when it explains the point better than words. Send a picture for review as a direct file post in its topic's thread. Evidence-only pictures can stay on the tracker item with its link.
+Attach a screenshot or image when it explains the point better than words. Send a picture for review as a direct file post in its topic's thread. Send a picture to a person as a file post, never as a repository, commit or file-host link, because the link does not open for a reader without access. Evidence-only pictures can stay on the tracker item with its link.

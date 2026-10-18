@@ -20,7 +20,7 @@ Put detail in the report file. Send one post per report, not a thread of fragmen
 
 ## Report opening
 
-Open with the repository's outcome readings, each with its date and source. Reuse existing evidence comments and rulings. Do not open with a Landed count.
+Open with the repository's outcome readings, each with its date and source. Give each reading its scope beside its date and source, name the decision taken when the reading moved, and use one line or omit the reading when it has no change and no decision. Reuse existing evidence comments and rulings. Do not open with a Landed count.
 
 ## Evidence
 
@@ -51,8 +51,8 @@ A consumer's user instruction that sets a report format for its reader overrides
 Jarvis and overseer reports use this shared summary shape. Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
 
 ```text
-[DATE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
-[DATE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
+[DATE], [SCOPE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
+[DATE], [SCOPE]: [REPOSITORY OUTCOME READING] (<SOURCE URL|SOURCE>)
 
 [ACCOUNT HEADROOM FIGURE]
 

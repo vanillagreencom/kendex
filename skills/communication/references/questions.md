@@ -4,16 +4,16 @@ Read when requesting a decision or action. The caller decides whether to ask and
 
 ## Decision requests
 
-Ask one question per message. Give the options and a recommendation. Use the [visible comparison](#today-and-after). Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
+Ask one question per message. When a chat or relay may show only the ask's first sentence, name the person's decision and its subject in that sentence, for example 'Decision for you on ITEM, SUBJECT: ...'. Give the options and a recommendation. Use the [visible comparison](#today-and-after). Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
 
 ## Today and After
 
-Show Today and After side by side in the words of the screen or app the person uses. Put this comparison first in work-item descriptions, comments and completion summaries.
+Show Today and After side by side in the words of the screen or app the person uses. Put this comparison first in work-item descriptions, comments and completion summaries. A goal statement alone never replaces the Today and After picture.
 
 ## CEO questions
 
 ```text
-[WHAT THIS CHANGES FOR THE USER, ONE SENTENCE]
+Decision for you on [ITEM], [SUBJECT]: [WHAT THIS CHANGES FOR THE USER, ONE SENTENCE]
 
 **A. [OUTCOME OF THE FIRST PATH]**
 
