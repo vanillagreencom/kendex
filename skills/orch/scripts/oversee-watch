@@ -3342,39 +3342,52 @@ LANE_TURNS=()
 # The cycle can be recorded before the watch sees a wall end. Keep its start
 # as `walled.at` until this owner replaces it with the completed pause.
 # The persisted item record owns the wall across every watch entry point.
-WALL_RETIRED=""
-wall_pause() { # LANE SEEN_AT [null for a standing wall], or --reconcile
-  local errf="$WORK_DIR/wall-pause.err" report
-  local finish='def finish($from; $to):
-    .pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"} | select($from < $to)]
-    | del(.walled);'
-  if [[ "$1" == --reconcile ]]; then
-    WALL_RETIRED=""
-    # Direct-list watches can keep sightings without any fleet state.
-    [[ -n "$STATE_FILE" || -e "$FLEET_STATE_DIR/workflow-state-oversee.json" || -L "$FLEET_STATE_DIR/workflow-state-oversee.json" ]] || return 0
-    # Commit old owners before a replacement observation can write .walled.
-    # The report names exactly the sightings this locked transition retired.
-    report="$("$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update-report oversee "$finish"'
-      [(.lanes // []) | to_entries[]
-        | select(.value.walled.window != null and .value.walled.window != .value.window)
-        | select((.value.walled.at | fromdate) <= $now) | .key] as $moved
-      | {state: (reduce $moved[] as $i (.; .lanes[$i] |= finish((.walled.at | fromdate); $now))),
-         report: [$moved[] as $i | .lanes[$i].walled.window]}' --argjson now "$PASS_NOW" 2>"$errf")" \
-      || die wall-reconcile-failed "$(cat -- "$errf")" "path=$FLEET_STATE_DIR/workflow-state-oversee.json" "phase=reconcile"
-    WALL_RETIRED="$(jq -r '.[]' <<<"$report" 2>"$errf")" \
-      || die wall-reconcile-failed "$(cat -- "$errf")" "path=$FLEET_STATE_DIR/workflow-state-oversee.json" "phase=reconcile-report"
-    return 0
-  fi
-  [[ "$2" =~ ^[0-9]+$ && "$2" -le "$PASS_NOW" ]] || return 0
-  "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update oversee \
-    --arg window "$1" --argjson from "$2" --argjson to "${3:-$PASS_NOW}" "$finish"'
-    ((if $to == null then null else
-        [(.lanes // []) | to_entries[] | select(.value.walled.window == $window) | .key] | last end)
-       // ([(.lanes // []) | to_entries[] | select(.value.window == $window) | .key] | last)) as $i
-     | if $i == null then . else .lanes[$i] |=
-       (if $to == null then .walled = {at: ($from | todate), window: $window}
-        else finish($from; $to) end) end' \
-    >/dev/null 2>"$errf" || { ow_message wall-unrecorded "lane=$1" >&2; cat -- "$errf" >&2; }
+wall_pause() { # WINDOW<TAB>FIRST_SEEN|clear|unavailable observations
+  local observations="$1" errf="$WORK_DIR/wall-pause.err"
+  local transition="$LANE_RUNNING_JQ"'
+    ($observations | split("\n") | map(select(length > 0) | fromjson)
+      | map({key: .item, value: .}) | from_entries) as $seen
+    | if .lanes == null then . else .lanes |= map(
+        $seen[.item] as $observation
+        | if running and .window == $observation.window and $observation.reading == "unavailable" then .
+          else (if running and .window == $observation.window
+                and ($observation.reading // "" | test("^[0-9]+$"))
+                then ($observation.reading | tonumber) else null end) as $from
+          | if .walled != null and (.walled.at | fromdate) <= $now
+               and ($from == null or (.walled.at | fromdate) != $from) then
+              .pauses += [{from: .walled.at, to: ($now | todate), cause: "walled"}
+                | select((.from | fromdate) < $now)]
+              | del(.walled)
+            else . end
+          | if $from != null and $from <= $now then .walled = {at: ($from | todate)} else . end
+          end) end'
+  # Observations select current running records. Completion stays on each
+  # item's own standing start, even after its launch or status changes.
+  if (
+    rc=0
+    "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" exists oversee >/dev/null 2>"$errf" || rc=$?
+    [[ "$rc" -ne 1 ]] || exit 0
+    [[ "$rc" -eq 0 ]] || exit 1
+    records="$("$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" get oversee 2>"$errf")" || exit 1
+    standing="$(jq -r 'any(.lanes[]?; .walled != null)' <<<"$records" 2>"$errf")" || exit 1
+    [[ "$standing" == true || "$observations" == *$'\t'[0-9]* ]] || exit 0
+    seen=""
+    while IFS=$'\t' read -r window reading; do
+      [[ -n "$window" ]] || continue
+      [[ "$window" == *:* ]] || window="$WATCH_SESSION:$window"
+      record="$(lane_running_record "$records" "$window" "" session)" || exit 1
+      [[ -n "$record" ]] || continue
+      row="$(jq -c --arg reading "$reading" '{item, window, reading: $reading}' <<<"$record" 2>"$errf")" || exit 1
+      seen+="$row"$'\n'
+    done <<<"$observations"
+    changed="$(jq -r --arg observations "$seen" --argjson now "$PASS_NOW" \
+      '. as $before | '"$transition"' | . != $before' <<<"$records" 2>"$errf")" || exit 1
+    [[ "$changed" == true ]] || exit 0
+    "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update oversee \
+      --arg observations "$seen" --argjson now "$PASS_NOW" "$transition" >/dev/null 2>"$errf" || exit 1
+  ); then return 0; fi
+  ow_message wall-unrecorded lane=oversee >&2
+  cat -- "$errf" >&2
 }
 
 LANE_PANE_FILE=""
@@ -3439,21 +3452,13 @@ observe_lanes() {
   # still end their walls and are pruned before the snapshot.
   local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local pane_mode capture_rc pane_host pane_item
+  local wall_observations=""
   # One window listing per session answers membership for the whole snapshot.
   local LANE_WINDOW_CACHE=1 LANE_WINDOW_SESSIONS=() LANE_WINDOW_LISTINGS=()
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
-  # Healthy passes do not pay for a wall-owner lookup.
-  if [[ $'\n'"$state" == *$'\nusage-limit\t'* ]]; then
-    wall_pause --reconcile
-    while IFS= read -r lane; do
-      [[ -n "$lane" ]] || continue
-      lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
-    done <<<"$WALL_RETIRED"
-  fi
-  # An explicit watch list can also stop carrying an unchanged owner.
+  # Rows outside this watch no longer describe an observation.
   while IFS=$'\t' read -r kind lane prior; do
     [[ "$kind" == usage-limit ]] && ! window_listed "$lane" || continue
-    wall_pause "$lane" "${prior%%|*}"
     lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
   done <<<"$state"
   for lane in ${LANES[@]+"${LANES[@]}"}; do
@@ -3465,11 +3470,7 @@ observe_lanes() {
     if ! lane_window_listed "$lane"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       lane_row_clear lane-asking "$state" "$lane" >/dev/null; state="$LANE_ROW"
-      if ! lane_row_get usage-limit "$state" "$lane" >/dev/null; then
-        die state-read-failed "" "lane=$lane" "row=usage-limit"
-      fi
-      prior="$LANE_ROW"
-      [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
+      wall_observations+="$lane"$'\tclear\n'
       lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
       lane_row_clear model-capacity "$state" "$lane" >/dev/null; state="$LANE_ROW"
       lane_row_clear lane-exited "$state" "$lane" >/dev/null; state="$LANE_ROW"
@@ -3495,6 +3496,7 @@ observe_lanes() {
       if ! lane_pane_mode pane_mode "$pane_host"; then
         LANE_PANE_SOURCES[$i]=unreadable
         LANE_OBS+="$i"$'\t'"unreadable"$'\t\t\t\n'
+        wall_observations+="$lane"$'\tunavailable\n'
         continue
       fi
     else pane_item=""; fi
@@ -3506,6 +3508,7 @@ observe_lanes() {
       if [[ "$pane_mode" == verb ]]; then
         cat "$errf" >&2
         LANE_OBS+="$i"$'\t'"unreadable"$'\t\t\t\n'
+        wall_observations+="$lane"$'\tunavailable\n'
         continue
       fi
       die pane-capture-failed "$(cat "$errf")" "lane=$lane"
@@ -3538,6 +3541,10 @@ observe_lanes() {
     # too, with an empty reset key: the row is also where check_lanes records
     # that the wall was reported, and a wall with no row is one reported on
     # every run.
+    if [[ "${LANE_ROWS[$i]:-}" == unreadable ]]; then
+      wall_observations+="$lane"$'\tunavailable\n'
+      continue
+    fi
     if [[ -n "${LANE_ROWS[$i]:-}" ]]; then lane_banner_text "$i" "$lane" "$pane"
     else LANE_BANNER_TEXT="$below"; fi
     banner_rc=0
@@ -3549,17 +3556,16 @@ observe_lanes() {
       seen_at=""; seen_pane=""; seen_key=""
       [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$prior"
       if [[ "$seen_pane" != "$key" || "$seen_key" != "$reset_key" ]]; then
-        [[ -z "$prior" ]] || wall_pause "$lane" "$seen_at"
         seen_at="$PASS_NOW"
         lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key" >/dev/null; state="$LANE_ROW"
       fi
-      # An older watch or a failed advisory write can leave only the sighting.
-      wall_pause "$lane" "$seen_at" null
+      wall_observations+="$lane"$'\t'"$seen_at"$'\n'
     else
-      [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
+      wall_observations+="$lane"$'\tclear\n'
       lane_row_clear usage-limit "$state" "$lane" >/dev/null; state="$LANE_ROW"
     fi
   done
+  wall_pause "$wall_observations"
   state="$(lane_row_prune model-capacity "$state" ${LANES[@]+"${LANES[@]}"})"
   state="$(lane_row_prune lane-exited "$state" ${LANES[@]+"${LANES[@]}"})"
   state="$(lane_row_prune lane-idle "$state" ${LANES[@]+"${LANES[@]}"})"

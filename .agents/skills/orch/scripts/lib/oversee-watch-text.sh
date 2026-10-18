@@ -1386,8 +1386,7 @@ ow_message() { # REASON FIELD=VALUE...
     account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, the seconds the ceiling allowed, or parse=failed when the listing or a record in it could not be read.' ;;
     account-reset-unparsed) text='The binding_resets_at the baseline held could not be parsed into a time, so whether that bucket reset settles nothing, and the baseline has already moved to the new reading: that reset is not reported. Status and headroom changes on the account are still judged.' ;;
     claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
-    wall-reconcile-failed) text='The watch could not reconcile standing walls in the oversee record named by path. Pane observation stopped before a replacement could overwrite a wall owner. The failing tool details follow.' ;;
-    wall-unrecorded) text='A wall this watch saw end on the lane could not be kept in its lane record, so oversee-cycle reads that walled time as the wait it fell in. The workflow-state refusal follows. Other watch checks continue.' ;;
+    wall-unrecorded) text='The watch could not read or keep wall accounting in the fleet record. The existing paused-time record stays unchanged. The failing tool details follow. Other watch checks continue.' ;;
     reducer-baseline) text='The initial PR attention is the baseline. Only new attention produces events.' ;;
     state-target-invalid) text='The watch state target is not a regular file.' ;;
     long-pass-unfinished) text='The long pass exited 0 without writing its status, so whether it found news is unknown.' ;;
