@@ -522,6 +522,82 @@ wall_in_fleet_dir() { # NAME
 assert_eq "$(wall_in_fleet_dir wall_fleet_dir)" "2026-09-02T16:00:00Z
 $WALL_PAUSE | {\"triaged\":[]}" \
   "a wall that ends is kept in the fleet state directory, never in ORCH_STATE_DIR" "$ERR"
+
+# Exercise optional fleet state through the direct-list CLI outside tmux.
+# The real state owner must refuse required state and leave absent optional
+# state absent. The watch's own first pass supplies the wall sighting.
+wall_state_passes() { # STATE END
+  local mode="$1" end="$2" fleet file first_rc=0 first_wall second_rc=0 captured=0 reconcile=0 record=absent
+  local args=(--max-loops 1) windows=(gh-2) env
+  new_case "wall_state_${mode}_${end}"
+  fleet="$STUB_DIR/fleet"; file="$fleet/workflow-state-oversee.json"
+  mkdir -p "$fleet"
+  if [[ "$mode" != absent ]]; then
+    printf '{"triaged":[],"lanes":[{"item":"KEN-2","window":"gh-2","status":"running"}]}\n' > "$file"
+  fi
+  case "$mode" in
+    explicit) args+=(--state "$file") ;;
+    explicit-missing)
+      # --state accepts a named input file; mutations still use its directory.
+      cp "$file" "$fleet/watch-input.json"
+      args+=(--state "$fleet/watch-input.json") ;;
+  esac
+  env=(TZ=UTC TMUX= ORCH_TMUX_SESSION=main LINEAR_TEAM= ORCH_STATE_DIR="$fleet"
+    OVERSEE_WATCH_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state")
+  ERR="$STUB_DIR/wall-state.err"
+  screen banner_idle
+  printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+  run_watch "${env[@]}" -- "${args[@]}" "${windows[@]}" > "$STUB_DIR/first.out" 2>"$ERR" || first_rc=$?
+  first_wall="$(grep -c '^EVENT usage-limit gh-2 ' "$STUB_DIR/first.out" || true)"
+  case "$end" in
+    cleared) screen healthy ;;
+    standing) ;;
+    gone) printf 'gh-1\n' > "$STUB_DIR/windows.txt" ;;
+    left) windows=(gh-1) ;;
+    emptied) windows=() ;;
+  esac
+  case "$mode" in
+    implicit-invalid) printf 'invalid\n' > "$file" ;;
+    explicit-missing) rm -- "$file" ;;
+  esac
+  next_pass
+  printf '%s' "$((RESET_NOW + 600))" > "$STUB_DIR/now.epoch"
+  run_watch "${env[@]}" -- "${args[@]}" ${windows[@]+"${windows[@]}"} > "$STUB_DIR/second.out" 2>>"$ERR" || second_rc=$?
+  [[ ! -f "$STUB_DIR/pane-gh-2.calls" ]] || captured="$(cat "$STUB_DIR/pane-gh-2.calls")"
+  reconcile="$(grep -c '^oversee-watch: wall-reconcile-failed .*phase=reconcile$' "$ERR" || true)"
+  if [[ -e "$file" ]]; then
+    if [[ "$mode" == implicit-invalid ]]; then record=invalid
+    else record="$(jq -c '[.lanes[].pauses[]?]' "$file")"; fi
+  fi
+  WALL_STATE_RESULT="$first_rc $first_wall $second_rc $captured $reconcile $record"
+}
+wall_state_table() {
+  local row mode end expect
+  for row in "$@"; do
+    IFS='|' read -r mode end expect <<<"$row"
+    wall_state_passes "$mode" "$end"
+    assert_eq "$WALL_STATE_RESULT" "$expect" "fleet state $mode after $end" "$ERR"
+  done
+}
+WALL_STATE_ABSENT='absent|cleared|0 1 0 1 0 absent'
+WALL_STATE_PAUSE='[{"from":"2026-09-02T16:00:00Z","to":"2026-09-02T16:10:00Z","cause":"walled"}]'
+wall_state_table "$WALL_STATE_ABSENT" \
+  'absent|standing|0 1 0 1 0 absent' \
+  'absent|gone|0 1 0 0 0 absent' \
+  'absent|left|0 1 0 0 0 absent' \
+  'absent|emptied|0 1 0 0 0 absent' \
+  "implicit|cleared|0 1 0 1 0 $WALL_STATE_PAUSE" \
+  "explicit|cleared|0 1 0 1 0 $WALL_STATE_PAUSE" \
+  'implicit-invalid|cleared|0 1 2 0 1 invalid' \
+  'explicit-missing|cleared|0 1 2 0 1 absent'
+
+# Restoring unconditional reconciliation must reject the unchanged absent row.
+wall_mutant wall-state-required oversee-watch \
+  '    [[ -n "$STATE_FILE" || -e "$FLEET_STATE_DIR/workflow-state-oversee.json" || -L "$FLEET_STATE_DIR/workflow-state-oversee.json" ]] || return 0' \
+  '    : # [[ -n "$STATE_FILE" || -e "$FLEET_STATE_DIR/workflow-state-oversee.json" || -L "$FLEET_STATE_DIR/workflow-state-oversee.json" ]] || return 0'
+WATCH_BIN="$WALL_WATCH" wall_state_passes absent cleared
+assert_eq "$WALL_STATE_RESULT" '0 1 2 0 1 absent' \
+  'control: required fleet state stops observation after the watch writes its own wall sighting' "$ERR"
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash
 if [[ -f "$STUB_DIR/reset-grep-fail" && "${1:-}" == "-Em1" ]]; then

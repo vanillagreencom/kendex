@@ -3349,6 +3349,9 @@ wall_pause() { # LANE SEEN_AT [null for a standing wall], or --reconcile
     .pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"} | select($from < $to)]
     | del(.walled);'
   if [[ "$1" == --reconcile ]]; then
+    WALL_RETIRED=""
+    # Direct-list watches can keep sightings without any fleet state.
+    [[ -n "$STATE_FILE" || -e "$FLEET_STATE_DIR/workflow-state-oversee.json" || -L "$FLEET_STATE_DIR/workflow-state-oversee.json" ]] || return 0
     # Commit old owners before a replacement observation can write .walled.
     # The report names exactly the sightings this locked transition retired.
     report="$("$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update-report oversee "$finish"'
