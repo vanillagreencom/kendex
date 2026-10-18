@@ -8,7 +8,10 @@ codex_call() { # TOOL ARGUMENTS [OUTPUT]
   jq -nc --arg n "$1" --arg a "$2" --arg id "call-$CALL_NUMBER" \
     '{type:"response_item",payload:{type:"function_call",name:$n,arguments:$a,call_id:$id}}' >> "$TRANSCRIPT"
   [ "$#" -eq 3 ] || return 0
-  jq -nc --arg o "$3" --arg id "call-$CALL_NUMBER" \
+  codex_result "call-$CALL_NUMBER" "$3"
+}
+codex_result() { # CALL_ID OUTPUT
+  jq -nc --arg o "$2" --arg id "$1" \
     '{type:"response_item",payload:{type:"function_call_output",call_id:$id,output:$o}}' >> "$TRANSCRIPT"
 }
 snapshot() { # STATUS
@@ -28,7 +31,7 @@ install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
 TRANSCRIPT="$TMP_ROOT/codex.jsonl"
 ARM_ARGS=(halt)
 codex_row() { # ROSTER RC KEY
-  local roster="$1" rc="$2" key="$3" current_call
+  local roster="$1" rc="$2" key="$3" current_call mutation arguments result stale list_call mutation_call
   CALL_NUMBER=0
   usage_line codex 119200 > "$TRANSCRIPT"
   case "$roster" in
@@ -43,10 +46,11 @@ codex_row() { # ROSTER RC KEY
     spawned | spawned-returned) snapshot '"completed"'
       codex_call collaboration.spawn_agent '{"task_name":"reviewer"}' '{"task_name":"/root/reviewer"}'
       [ "$roster" != spawned-returned ] || snapshot '"idle"' ;;
-    resumed | resumed-relative) snapshot '"completed"'
+    resumed | resumed-relative | resumed-returned) snapshot '"completed"'
       target=/root/reviewer
       [ "$roster" != resumed-relative ] || target=reviewer
-      codex_call collaborationfollowup_task "$(jq -nc --arg t "$target" '{target:$t,message:"Review again."}')" '' ;;
+      codex_call collaborationfollowup_task "$(jq -nc --arg t "$target" '{target:$t,message:"Review again."}')" ''
+      [ "$roster" != resumed-returned ] || snapshot '"completed"' ;;
     waited | waited-returned) snapshot '"running"'
       codex_call wait_agent '{}' '{"summary":"agent updates available"}'
       [ "$roster" != waited-returned ] || snapshot '"completed"' ;;
@@ -65,8 +69,27 @@ codex_row() { # ROSTER RC KEY
       codex_call followup_task '{"target":"/root/reviewer","message":"Review again."}'
       pending_call="call-$CALL_NUMBER"
       snapshot '"completed"'
-      [ "$roster" != resolved-followup ] || jq -nc --arg id "$pending_call" \
-        '{type:"response_item",payload:{type:"function_call_output",call_id:$id,output:""}}' >> "$TRANSCRIPT" ;;
+      [ "$roster" != resolved-followup ] || codex_result "$pending_call" '' ;;
+    overlap-* | recovered-overlap-*)
+      # Codex dispatches before taking its execution lock, then records bundled
+      # results in model call order. The list can sample before the mutation.
+      case "$roster" in
+        *-spawn) mutation=spawn_agent; arguments='{"task_name":"reviewer"}'
+          result='{"task_name":"/root/reviewer"}'
+          stale='{"agents":[{"agent_name":"/root","agent_status":"running"}]}' ;;
+        *-followup) mutation=followup_task; arguments='{"target":"/root/reviewer","message":"Review again."}'
+          result=''; stale='{"agents":[{"agent_name":"/root/reviewer","agent_status":"completed"}]}' ;;
+      esac
+      codex_call list_agents '{}' "$stale"
+      case "$roster" in
+        *-list-*) codex_call list_agents '{}'; list_call="call-$CALL_NUMBER"
+          codex_call "$mutation" "$arguments"; mutation_call="call-$CALL_NUMBER"
+          codex_result "$list_call" "$stale"; codex_result "$mutation_call" "$result" ;;
+        *) codex_call "$mutation" "$arguments"; mutation_call="call-$CALL_NUMBER"
+          codex_call list_agents '{}'; list_call="call-$CALL_NUMBER"
+          codex_result "$mutation_call" "$result"; codex_result "$list_call" "$stale" ;;
+      esac
+      case "$roster" in recovered-*) snapshot '"completed"' ;; esac ;;
     pending | prior-pending) snapshot '"completed"'; codex_call spawn_agent '{"task_name":"later"}' ;;
     concurrent) snapshot '"completed"'; codex_call spawn_agent '{"task_name":"pending"}'
       codex_call spawn_agent '{"task_name":"later"}' '{"task_name":"/root/later"}' ;;
@@ -113,6 +136,7 @@ spawned|2|agent-reserve
 spawned-returned|0|-
 resumed|2|agent-reserve
 resumed-relative|2|agent-reserve
+resumed-returned|0|-
 waited|2|agent-reserve
 waited-returned|0|-
 refused|0|-
@@ -124,7 +148,15 @@ recovered-spawn|0|-
 missing-name|2|agent-unobserved
 recovered-name|0|-
 pending-followup|2|agent-unobserved
-resolved-followup|2|agent-reserve
+resolved-followup|2|agent-unobserved
+overlap-spawn|2|agent-unobserved
+overlap-followup|2|agent-unobserved
+overlap-list-spawn|2|agent-unobserved
+overlap-list-followup|2|agent-unobserved
+recovered-overlap-spawn|0|-
+recovered-overlap-followup|0|-
+recovered-overlap-list-spawn|0|-
+recovered-overlap-list-followup|0|-
 pending|2|agent-unobserved
 prior-pending|2|agent-unobserved
 concurrent|2|agent-unobserved
@@ -213,6 +245,25 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         esac
         [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/$control.control.log" 2>&1 || control_rc=$?
       assert_eq "$control_rc" 1 "control $control fails its own hook row"
+    done
+    wake_mutant no-overlap-guard '                if $call.full and ($call.overlap | not) then' \
+      '                if $call.full then' "$REPO_ROOT/skills/orch/scripts/lib/adapters/codex.sh"
+    for mutation in spawn followup; do
+      new_lane "codex-overlap-$mutation-control" AGENT-1
+      mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
+      install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
+      ARM_ARGS=(halt)
+      codex_row "overlap-$mutation" 2 agent-unobserved
+      control_rc=0
+      (PASS=0; FAIL=0
+        rows=$("$BASH" -euo pipefail -c '. "$1"; lane_adapter_codex_agents "$2"' \
+          _ "$MUTANT_PATH" "call-$CALL_NUMBER" < "$TRANSCRIPT") || exit 2
+        # attached_agents_out consumes the adapter TSV: ? means unknown.
+        unknown=no
+        case "$rows" in "?$TAB"* | *"$NL?$TAB"*) unknown=yes ;; esac
+        assert_eq "$unknown" yes "overlapping $mutation keeps the roster unknown"
+        [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/overlap-$mutation.control.log" 2>&1 || control_rc=$?
+      assert_eq "$control_rc" 1 "control overlap $mutation fails its roster assertion"
     done
   fi
 fi

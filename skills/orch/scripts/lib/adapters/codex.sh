@@ -55,6 +55,8 @@ lane_adapter_codex_reading() { # UNREAD
 # AgentStatus and agent/status.rs in Codex 0.163.0 define the states below.
 # Interrupted is not final. A later full list replaces uncertain observations,
 # but cannot settle a call that has not returned yet.
+# Codex dispatch scheduling can differ from result recording order. A list
+# that overlaps a launch or followup cannot establish the roster after it.
 lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
   jq -Rnr --arg current_call "${1:-}" '
     def decoded: if type == "string" then fromjson else . end;
@@ -78,7 +80,11 @@ lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
           | if $tool == "list_agents" or $tool == "spawn_agent" or $tool == "followup_task" then
               ($r.arguments | decoded) as $args
               | .calls[$r.call_id] = {tool: $tool,
-                  full: (($args.path_prefix // "") == "" or $args.path_prefix == "/root")}
+                  full: (($args.path_prefix // "") == "" or $args.path_prefix == "/root"),
+                  overlap: any(.calls[]; .tool != "list_agents")}
+              | if $tool != "list_agents" then
+                  .calls |= with_entries(if .value.tool == "list_agents" then .value.overlap = true else . end)
+                else . end
               | if $tool == "followup_task" then
                   ($args.target | if startswith("/") then . else "/root/" + . end | name) as $target
                   | .calls[$r.call_id].target = $target
@@ -93,13 +99,13 @@ lane_adapter_codex_agents() { # [CURRENT_CALL_ID]
               if ($r.output | type) == "string"
                   and ($r.output | startswith("Tool call blocked by PreToolUse hook: ")) then .
               elif $call.tool == "list_agents" then
-                if $call.full then
+                if $call.full and ($call.overlap | not) then
                   ($r.output | decoded) as $out
                   | if ($out.agents | type) != "array" then error("agent list is unreadable") else . end
                   | .agents = (reduce $out.agents[] as $agent ({}; ($agent.agent_name | name) as $id
                       | if $id == "/root" then . else .[$id] = ($agent.agent_status | status) end))
                   | .unread = false | .observed = true
-                else . end
+                elif $call.full then .unread = true else . end
               elif $call.tool == "spawn_agent" then
                 ($r.output | decoded | .task_name | name) as $id
                 | .agents[$id] = "running" | .observed = true
