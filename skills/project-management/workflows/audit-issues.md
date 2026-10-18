@@ -52,15 +52,22 @@ Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
 #### 1.2.1 Preflight — Linear (TRACKER=linear)
 
+Only MODE `project` runs this read for § 3 fallback target resolution:
+
 ```bash
 .agents/skills/linear/scripts/linear.sh session-status
+```
+
+Every mode runs:
+
+```bash
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 .agents/skills/orch/scripts/reconcile-work-items
 ```
 
-MODE `single` runs the first and third lines only. Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
+Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
 
-Keep `project` for fallback target resolution and the issue-label inventory for every create/update preflight.
+Keep the issue-label inventory for every create/update preflight.
 
 #### 1.2.2 Preflight — GitHub (TRACKER=github)
 
