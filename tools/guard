@@ -1573,6 +1573,7 @@ scan_load() { # DIR
       for (reader_phase = 0; reader_phase < 4; reader_phase++) {
         for (q in queries) {
           pattern = query_patterns[q, reader_phase]
+          if (pattern == "-") continue
           for (reader in reader_counts) {
             for (line = 1; line <= reader_counts[reader]; line++) {
               if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
@@ -1638,8 +1639,9 @@ doc_readers() { # REL
   esac
   walk_root="$skill_root|$catalog_root"
   if [ "$external" -eq 1 ]; then
-    dir='a^'
-    walk_root='a^'
+    # Nonempty markers preserve disabled comparisons through shell capture.
+    dir='-'
+    walk_root=''
     case "$rel" in
       skills/*/*)
         source_rel=${rel#skills/}
@@ -1651,7 +1653,10 @@ doc_readers() { # REL
         ;;
     esac
   fi
-  walk='(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?('"$walk_root"')"?([[:space:]]|\)|$)'
+  walk='-'
+  if [ -n "$walk_root" ]; then
+    walk='(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?('"$walk_root"')"?([[:space:]]|\)|$)'
+  fi
   reader_patterns=("/$rel" "$token" "$dir" "$walk")
 }
 # A file in the reach adds its name as a needle by its role, into the

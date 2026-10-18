@@ -213,6 +213,16 @@ if [ "$(grep -c '^    walk_root=' "$GUARD")" -eq 1 ] \
 else
   bad 'external walk-root control changes the guard'
 fi
+if mutant_guard '/^          if (pattern == "-") continue$/d'; then
+  git -C "$R" reset -q --hard "$BASE"
+  printf '# changed\n' >> "$R/skills/orch/scripts/lib/private.sh"
+  preview range true "$MUTANT_TOOLS/guard"
+  [ "$RC" -ne 0 ] && grep -Fxq unrelated-refresh "$SUITE_LOG" \
+    && ok 'control: matching disabled reader patterns selects unrelated suites' \
+    || bad 'control: matching disabled reader patterns selects unrelated suites' "rc=$RC out=$OUT"
+else
+  bad 'disabled reader-pattern control changes the guard'
+fi
 
 # Reader comparisons can fail while the files remain readable. Normal runs
 # must run the whole set; scoped runs must refuse the unavailable evidence.
