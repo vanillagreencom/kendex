@@ -35,6 +35,10 @@ sandbox() { # sets DIR to a fresh copy of the pristine repo
   # A GLOBAL, not a printed path: `dir="$(sandbox)"` would run the counter
   # in a subshell, every case would land on the same directory, and the
   # copies would pile up inside one another.
+  if [ -n "$DIR" ] && ! rm -rf -- "$DIR"; then
+    printf 'sandbox-error=cleanup value=%s\n' "$DIR" >&2
+    exit 1
+  fi
   SANDBOX_N=$((SANDBOX_N + 1))
   DIR="$TMP/case.$SANDBOX_N"
   cp -R "$PRISTINE" "$DIR"

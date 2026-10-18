@@ -387,7 +387,7 @@ real_refresh_fixture() { # NAME [INSTALL_MANIFEST]
   git -C "$repo" config maintenance.auto false
   git -C "$repo" config user.name fixture
   git -C "$repo" config user.email fixture@example.invalid
-  cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+  cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
   printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/refresh/adopt-refresh.sh"
   printf 'Hand edit.\n' >>"$repo/.agents/skills/probe/SKILL.md"
 }

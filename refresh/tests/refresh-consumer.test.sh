@@ -393,7 +393,7 @@ repo="$DIR"
 git -C "$repo" branch -M main
 git -C "$repo" config gc.auto 0
 mkdir -p "$repo/.agents/skills/harness-ci/scripts"
-cat >"$repo/.agents/skills/harness-ci/scripts/change-class" <<'SH'
+cat >"$TMP/stub-change-class" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/classifier"
@@ -411,6 +411,8 @@ fi
 printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
+chmod +x "$TMP/stub-change-class"
+cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/refresh/adopt-refresh.sh"
 chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
 chmod +x "$repo/refresh/adopt-refresh.sh"
@@ -2072,7 +2074,7 @@ chmod +x "$repo/.agents/skills/review-gate/scripts/"*.sh
 printf '#!/usr/bin/env bash\nexit 1\n' >"$repo/.agents/skills/review-gate/scripts/review-writer.sh"
 cp "$SKILL_DIR/templates/review-gate-writer.yml" "$repo/.github/workflows/review-gate-writer.yml"
 record_adoption "$repo" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
-cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 commit "$repo"
 git init --bare -q "$TMP/legacy-remote"
 git --git-dir="$TMP/legacy-remote" config gc.auto 0
@@ -2117,7 +2119,7 @@ git -C "$repo" branch -M main
 printf 'retired workflow\n' >"$repo/.github/workflows/gate.yml"
 record_adoption "$repo" .github/workflows/gate.yml .agents/skills/review-gate/templates/review-gate-writer.yml
 printf 'current\n' >"$repo/rendered.txt"
-cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 commit "$repo"
 git init --bare -q "$TMP/secure-remote"
 git --git-dir="$TMP/secure-remote" config gc.auto 0
@@ -2192,7 +2194,7 @@ repo="$DIR"
 git -C "$repo" branch -M main
 printf '[]\n' >"$repo/.kendex-generated.json"
 printf 'current\n' >"$repo/rendered.txt"
-cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 commit "$repo"
 git init --bare -q "$TMP/no-writer-remote"
 git --git-dir="$TMP/no-writer-remote" config gc.auto 0
@@ -2261,7 +2263,7 @@ codex = true
 copilot = true
 '
 printf 'schema = 7\n\n%s' "$bot_table" >"$repo/kendex.toml"
-cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 cp -R "$SKILL_DIR/../bot-instructions" "$TMP/bot-release"
 rm -rf -- "${TMP:?}/bot-release/tests"
 cp -R "$TMP/bot-release" "$repo/.agents/skills/bot-instructions"
