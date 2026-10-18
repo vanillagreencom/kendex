@@ -519,6 +519,16 @@ environment_rows() {
 [0,"sh /workspace/tmp/waiter.ABC123/launch.sh /workspace/tmp/waiter.ABC123/wait .agents/skills/worktree/scripts/worktree push KEN-4156 --set-upstream","waiter-launch-worktree-set-upstream"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args > out","wrapper-launcher-redirect"]
 [0,"env -u NAME -u OTHER command-name args","unset-launcher"]
+[0,"time env -u A -u B CMD ARGS > LOG","timed-unset-command-redirect"]
+[0,"{ time env -u A -u B scripts/validate repo --changed SHA; } > LOG 2>&1; echo $? > EXIT","grouped-unset-command-recording"]
+[0,"time env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE scripts/validate repo --changed db814e708e8a630b051a0c95f165e0c38cbfb6d7 > LOG","reported-timed-unset-validation"]
+[2,"time env -u A -u B > LOG","timed-unset-without-command"]
+[2,"{ time env -u A -u B; } > LOG 2>&1; echo $? > EXIT","grouped-unset-without-command"]
+[2,"time env -u A -u B printenv > LOG","timed-unset-dump-command"]
+[2,"{ time env -u A -u B printenv; } > LOG 2>&1; echo $? > EXIT","grouped-unset-dump-command"]
+[2,"time env -u A -u B bash -c 'env' > LOG","timed-unset-shell-dump-command"]
+[2,"time env -u A -u B CMD ARGS > LOG; env","dump-after-timed-unset-command"]
+[2,"{ time env -u A -u B scripts/validate repo --changed SHA; } > LOG 2>&1; printenv > EXIT","dump-after-grouped-unset-command"]
 [0,"bash wrapper.sh env -u NAME -u OTHER command-name args","wrapper-unset-launcher"]
 [2,"bash wrapper.sh env -u env -u set command-name args > out","wrapper-unset-producer-operands"]
 [2,"bash wrapper.sh env -i NAME=value command-name","wrapper-empty-launcher"]
@@ -1093,6 +1103,10 @@ fi
 environment_rows
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  environment_controls="$(mktemp -d)" || { echo 'command-safety-test: control-scratch=mktemp-failed' >&2; exit 1; }
+  [[ -d $environment_controls && ! -L $environment_controls ]] || { echo 'command-safety-test: control-scratch=not-a-directory' >&2; exit 1; }
+  environment_controls="$(cd -- "$environment_controls" && pwd -P)" || { echo 'command-safety-test: control-scratch=resolve-failed' >&2; exit 1; }
+  trap 'rm -rf -- "$scratch" "${environment_controls:?}"' EXIT
   planted=""
   while IFS='|' read -r defect failed_row; do
     if [ "$defect" = empty-copies ]; then
@@ -1100,7 +1114,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     fi
     if [ "$defect" != "$planted" ]; then
     planted=$defect
-    mutant="$scratch/environment-$defect.sh"
+    mutant="$environment_controls/environment-$defect.sh"
     awk -v defect="$defect" '
       /^environment_main_command\(\)/ { main_classifier=1 }
       main_classifier { print; if ($0 == "}") main_classifier=0; next }
@@ -1140,7 +1154,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "suffix-stage-only" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=1; fi") }
       defect == "suffix-launcher" { swap("environment_producer shell \"$scan\"", "environment_producer shell \"$scan\"; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
-      defect == "suffix-set" { swap("environment_producer \"$1\" \"$unsupported${2:-}\"", "environment_producer \"$1\" \"$unsupported${2:-}\"; [ \"$program\" != set ] || mode=dump-unknown") }
+      defect == "suffix-set" { swap("environment_producer \"$1\" \"$unsupported${2:-}\" command-head", "environment_producer \"$1\" \"$unsupported${2:-}\" command-head; [ \"$program\" != set ] || mode=dump-unknown") }
+      defect == "unset-command-head" { swap("arg_roles[env_head]=unset-launcher", "arg_roles[env_head]=prefix") }
       defect == "suffix-quotes" { swap("[ \"${stage_roles[$candidate]}\" = argument ] &&", "false &&") }
       defect == "quoted-heredoc" && /^              for \(\(doc=0;/ { swap("doc<${#heredocs[@]}", "doc<0") }
       defect == "heredoc-resume" { swap("heredoc_bodies[doc]=$body", "heredoc_bodies[doc]=$body; i=$text_length") }
@@ -1270,6 +1285,8 @@ suffix-launcher|FAIL environment: wrapper-launcher: exit=2 expected=0
 suffix-launcher|FAIL environment: wrapper-launcher-redirect: exit=2 expected=0
 suffix-launcher|FAIL environment: wrapper-unset-launcher: exit=2 expected=0
 suffix-set|FAIL environment: strict-set-receipt: exit=2 expected=0
+unset-command-head|FAIL environment: timed-unset-command-redirect: exit=2 expected=0
+unset-command-head|FAIL environment: grouped-unset-command-recording: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-launcher-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-unset-data: exit=2 expected=0
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
