@@ -43,7 +43,7 @@ Do not trade correctness for a smaller change. A failed check limits the evidenc
 
 ## Over-Engineering
 
-Build only what the current callers need. Add no speculative abstraction, extension point, forwarding wrapper or error path for an impossible state. Justify a new dependency in the commit message.
+Build only what the current callers need. Add no speculative abstraction, extension point, forwarding wrapper or error path for an impossible state. Add an interface or injection point only when two implementations exist; production plus a test fake counts as two. Justify a new dependency in the commit message.
 
 One owner makes each decision: classification, validation, parsing and state detection. Compute it once and let callers consume the result. Before adding a script, watch, file, setting or rule, find and extend the existing owner. If none exists, state that in the commit message. A new gate, check or scanner names the failure it prevents: a run that failed, or a shipped producer that reaches it. With no failure to name, it is not added. A check that compares a declaration with its implementation checks consistency; it is not a second implementation of the decision. Keep its expected contract independent of the implementation.
 
@@ -66,9 +66,10 @@ Apply the must-fail control requirement in [§ Tests](#tests). Mutate a disposab
 ## Tests
 
 - A test is kept for the protection it gives, judged against its cost (run time and upkeep).
-- A must-fail control proves a new or changed instrument once. It is not owed per surface, per independent rule or per row. Follow [§ Prove Your Guards](#prove-your-guards) for control mechanics.
+- A must-fail control proves a new or changed instrument once, and a bug fix ships the test that failed before the fix. The control is not owed per surface, per independent rule or per row. Follow [§ Prove Your Guards](#prove-your-guards) for control mechanics.
 - No test is admitted or required by its file name, suite name or label.
 - A surface is a coherent contract or state machine. The stack reference defines its test placement.
+- When modules merge or an interface moves, tests at the new interface replace the old tests of the parts; delete the old ones in the same change.
 - Write the required controls with the new or changed check. Ship them in its first commit. A control using input, a fixture or an uncompiled source copy stays in the test and runs with it. A control requiring a compiled-source edit is shown once and recorded in the commit message; its absence from the current test file proves no omission.
 - If no production edit can redden the test, state why and what the test establishes. Assert the guarantee, not the mechanism used to provide it.
 - No test asserts human-readable wording in messages, docs, help text or comments. Assert typed categories, error kinds or structured fields. The only exception is output another program parses: test its machine-read line or format and name that consumer. Delete pins on the test harness's own configuration.

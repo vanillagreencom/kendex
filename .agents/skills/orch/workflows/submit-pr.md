@@ -128,6 +128,10 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    ## Summary
    [1-3 bullets describing the changes]
 
+   ## Merge danger
+   - **Door:** [one-way or two-way. A change that deletes data, migrates a format or changes a published contract is one-way.]
+   - **Blast radius:** [who breaks if this is wrong]
+
    ## Context
    - **[DECISION_ID]**: [ONE_LINE_SUMMARY] — `[DECISION_FILE_PATH]`
    - **Research**: [TITLE] — `[RESEARCH_FILE_PATH]`
@@ -149,10 +153,10 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    [Each string in workflow state `pr_comment_review.proposed_rules`.]
 
    ## Test Plan
-   [validation steps]
+   [Before-and-after evidence: the test that failed before and passes now, or the command output before and after.]
    ```
 
-   Keep `## Merge decision`. For an existing PR, preserve its recorded head and route through body updates; use pending text only before any attempt is recorded. Omit other empty sections. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
+   Keep `## Merge decision`, and keep `## Merge danger`: every change has a Door answer. For an existing PR, preserve its recorded head and route through body updates; use pending text only before any attempt is recorded. Omit other empty sections. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
 
    Include qualified started bundle children in the child `Closes` lines. Their implementation is in this PR. Merge-pr completes each child again after merge and hands its remaining checks to the overseer.
 
