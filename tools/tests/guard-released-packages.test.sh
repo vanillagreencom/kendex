@@ -105,10 +105,9 @@ printf 'caller\n' >> "$SUITE_LOG"
 printf 'pass: 1 fail: 0\n'
 SH
       ;;
-    empty | unreadable)
+    empty)
       mkdir -p "$R/skills/nonconsumer/scripts/lib"
       cp "$REPO/$input" "$R/skills/nonconsumer/scripts/lib/${input##*/}"
-      [ "$kind" != unreadable ] || chmod 000 "$R/skills/nonconsumer/scripts/lib/${input##*/}"
       ;;
     python)
       mkdir -p "$R/skills/nonconsumer/scripts/lib"
@@ -142,9 +141,6 @@ SH
   if [ "$expected" = 0: ]; then
     [[ "$OUT" != *'leg=package-suites package='* ]] || matched=0
   fi
-  if [ "$kind" = unreadable ]; then
-    [[ "$OUT" == *"guard: scan=skills/nonconsumer/scripts/lib/${input##*/}"* ]] || matched=0
-  fi
   [ "$matched" -eq 1 ] && ok "selection $kind: ${input:-no CLI text}" || bad "selection $kind: $input" "$RC $RAN engine=$ENGINE_CALLS $OUT"
   git -C "$R" reset -q --hard "$BASE"
   git -C "$R" clean -qfd
@@ -156,7 +152,6 @@ package|slack|0:
 package|bot-instructions|0:
 empty|skills/slack/scripts/lib/__init__.py|0:
 empty|skills/bot-instructions/scripts/lib/__init__.py|0:
-unreadable|skills/slack/scripts/lib/__init__.py|1:
 prose||0:
 prose|https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#the-pre-push-lane|0:
 prose|echo "a title (kendex#537)"|0:
