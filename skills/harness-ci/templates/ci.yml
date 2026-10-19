@@ -216,7 +216,8 @@ jobs:
           SUBJECT: ${{ github.sha }}
           TOKEN: ${{ github.token }}
         run: |
-          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64)"
+          auth="${auth//[[:space:]]/}"
           echo "::add-mask::$auth"
           git -c "http.$GITHUB_SERVER_URL/.extraheader=AUTHORIZATION: basic $auth" fetch --unshallow --no-tags origin "$SUBJECT"
       - name: secrets (credential scan of the pull request diff)
