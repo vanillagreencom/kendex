@@ -2,14 +2,41 @@
 # Platform: Linux and macOS with Python 3 and a Chromium-based browser.
 """Open a URL in the configured assistant profile. Chromium owns profile reuse."""
 import argparse
+from contextlib import closing
+import http.client
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 import uuid
+
+
+def profile_port(profile, child=None):
+    # A stale file can name a port another profile now owns. Match Chromium's
+    # browser target, published in DevToolsActivePort, before reporting readiness.
+    deadline = time.monotonic() + 10
+    while True:
+        if child and child.poll() not in (None, 0):
+            raise OSError("browser exited before its endpoint was ready")
+        try:
+            port, target = (profile / "DevToolsActivePort").read_text().splitlines()
+            if not 0 < int(port) < 65536:
+                raise ValueError("profile port")
+            with closing(http.client.HTTPConnection("127.0.0.1", int(port), timeout=0.5)) as connection:
+                connection.request("GET", "/json/version")
+                endpoint = urlsplit(json.load(connection.getresponse())["webSocketDebuggerUrl"])
+            if (endpoint.scheme, endpoint.hostname, endpoint.port, endpoint.path) != (
+                    "ws", "127.0.0.1", int(port), target) or not target.startswith("/devtools/browser/"):
+                raise ValueError("profile browser target")
+            return port
+        except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as failure:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("profile endpoint unavailable") from failure
+            time.sleep(0.05)
 
 
 def set_downloads(profile, downloads):
@@ -48,7 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         "Platform: Linux and macOS. JARVIS_BROWSER_PROFILE: required absolute assistant profile. "
         "JARVIS_BROWSER_COMMAND: optional executable name/path; otherwise detect Chromium, Chrome, Brave or Edge. "
-        "JARVIS_BROWSER_PORT: loopback debugging port, default 9222. "
+        "JARVIS_BROWSER_PORT: loopback debugging port, default 9222; 0 lets Chromium allocate a port per profile. "
         "JARVIS_BROWSER_DOWNLOADS: optional absolute downloads directory, applied when the profile is not open. "
         "JARVIS_BROWSER_CLASS: optional window class, the Wayland app id on Linux. "
         "The plain invocation is the service form: the browser replaces this process as the unit's main process. "
@@ -57,31 +84,39 @@ def main():
     parser.add_argument("url", nargs="?", help="URL to open; required unless a report flag is given")
     parser.add_argument("--detach", action="store_true",
                         help="terminal form: check the request, then start the browser in its own session with no output "
-                             "and return once it has started")
+                             "and return once it has started (with port 0, wait for its profile endpoint)")
     report = parser.add_mutually_exclusive_group()
-    report.add_argument("--port", action="store_true", help="print the configured debugging port")
+    report.add_argument("--port", action="store_true", help="print the configured port; with port 0, wait up to 10 seconds "
+                        "for the requested profile's live debugging endpoint")
     report.add_argument("--shim", action="store_true",
                         help="print a directory whose xdg-open, x-www-browser and www-browser open their URL here")
     args = parser.parse_args()
     if sys.platform not in ("linux", "darwin"):
         parser.exit(2, "jarvis-browser: platform=unsupported\n")
     port = os.environ.get("JARVIS_BROWSER_PORT", "9222")
-    if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
-        parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PORT\n")
-    if args.port:
+    if port != "0":
+        if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+            parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PORT\n")
+    if args.port and port != "0":
         print(port)
         return
     if args.shim:
         print(Path(__file__).resolve().parent / "browser-shim")
         return
-    if args.url is None:
+    if args.url is None and not args.port:
         parser.error("a URL is required to launch the browser")
-    # CLI URLs can otherwise become Chromium flags instead of navigation.
-    if urlsplit(args.url).scheme not in ("http", "https", "about", "file"):
-        parser.exit(2, "jarvis-browser: url=unsupported-scheme\n")
     profile = Path(os.environ.get("JARVIS_BROWSER_PROFILE", ""))
     if not profile.is_absolute():
         parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PROFILE\nSupply an absolute assistant-owned profile path.\n")
+    if args.port:
+        try:
+            print(profile_port(profile))
+        except OSError:
+            parser.exit(2, "jarvis-browser: endpoint=unavailable\n")
+        return
+    # CLI URLs can otherwise become Chromium flags instead of navigation.
+    if urlsplit(args.url).scheme not in ("http", "https", "about", "file"):
+        parser.exit(2, "jarvis-browser: url=unsupported-scheme\n")
     downloads = os.environ.get("JARVIS_BROWSER_DOWNLOADS")
     if downloads and not Path(downloads).is_absolute():
         parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_DOWNLOADS\n")
@@ -106,8 +141,20 @@ def main():
     # This launcher passes the caller's desktop environment unchanged.
     if args.detach:
         # A caller reading this process's output reaches its end when this process exits.
-        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+        if port == "0":
+            try:
+                profile_port(profile, child)
+            except OSError:
+                if child.poll() is None:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=2)
+                parser.exit(2, "jarvis-browser: endpoint=unavailable\n")
         return
     os.execv(browser, argv)
 

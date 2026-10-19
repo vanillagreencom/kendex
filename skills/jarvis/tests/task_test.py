@@ -50,7 +50,7 @@ class TaskContract(unittest.TestCase):
         shutil.copyfile(ROOT / "skills/orch/tests/fixtures/tier-model/kendex", self.bin / "kendex")
         self.bin.joinpath("kendex").chmod(0o755)
         native = ("#!" + sys.executable + "\nimport json,os,signal,sys\nfrom pathlib import Path\n"
-                  + "keys={'CLAUDE_CONFIG_DIR','CODEX_HOME','COPILOT_HOME','PI_CODING_AGENT_DIR','JARVIS_BROWSER_PROFILE','JARVIS_TASK_SCRATCH'}\n"
+                  + "keys={'CLAUDE_CONFIG_DIR','CODEX_HOME','COPILOT_HOME','PI_CODING_AGENT_DIR','JARVIS_BROWSER_PROFILE','JARVIS_BROWSER_PORT','JARVIS_TASK_SCRATCH'}\n"
                   + "row={'harness':Path(sys.argv[0]).name,'argv':sys.argv[1:],'env_keys':list(os.environ),'env':{k:os.environ[k] for k in keys if k in os.environ}}\n"
                   + "Path('ack-'+os.environ['JARVIS_TASK_ID']+'.json').write_text(json.dumps(row))\n"
                   + "while True: signal.pause()\n")
@@ -62,6 +62,7 @@ class TaskContract(unittest.TestCase):
                         CLAUDE_CODE_SESSION_ID="parent", CODEX_THREAD_ID="parent",
                         PI_SUBAGENT_PARENT_SESSION_ID="parent", JARVIS_RECORD="parent",
                         JARVIS_GENERATION="999", JARVIS_BROWSER_PROFILE="/parent/browser",
+                        JARVIS_BROWSER_PORT="9222",
                         JARVIS_TEST_REAL_KENDEX=REAL_KENDEX or "")
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record_path = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
@@ -147,6 +148,8 @@ class TaskContract(unittest.TestCase):
                 self.assertTrue(profile.is_absolute() and profile.is_dir())
                 self.assertEqual(profile.parent, Path(record["scratch"]))
                 self.assertEqual(observed["env"]["JARVIS_BROWSER_PROFILE"], str(profile))
+                self.assertEqual(record["browser_port"], 0)
+                self.assertEqual(observed["env"]["JARVIS_BROWSER_PORT"], "0")
                 self.assertNotIn(profile, profiles)
                 profiles.add(profile)
         # Keep all four tasks live while proving profile isolation, then
@@ -482,6 +485,8 @@ while True: signal.pause()
                 "if signal.getsignal(signum) != signal.SIG_IGN:",
                 "if False and signal.getsignal(signum) != signal.SIG_IGN:"),),
              "test_terminal_interrupt_preserves_native_lifetime"),
+            ("browser-endpoint", "task.py", (('child_env.append("JARVIS_BROWSER_PORT=0")',
+                'child_env.append("JARVIS_BROWSER_PORT=9222")'),), "test_launch_contract"),
         )
         for name, filename, edits, case in rows:
             with self.subTest(control=name):

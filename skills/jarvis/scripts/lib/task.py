@@ -70,6 +70,7 @@ class Task(Session):
                       "inputs": inputs,
                       "result_path": str(result), "scratch": str(scratch),
                       "browser_profile": str(profile) if profile else None,
+                      "browser_port": 0 if profile else None,
                       "server_pid": controller["server_pid"],
                       "server_started_at": controller["server_started_at"],
                       "terminal": None, "completion": None, "cleanup": None}
@@ -86,7 +87,7 @@ class Task(Session):
                              + json.dumps(str(result)) + ". Your absolute scratch directory is "
                              + json.dumps(str(scratch)) + ". "
                              + "Additional inputs: " + json.dumps(inputs) + ". "
-                             + ("Use JARVIS_BROWSER_PROFILE for this task's browser. " if profile else "")
+                             + ("Use JARVIS_BROWSER_PROFILE and JARVIS_BROWSER_PORT with jarvis-browser for this task's browser. " if profile else "")
                              + "After writing the result, record completion with "
                              + shlex.join([str(Path(__file__).resolve().parents[1] / "task"), "complete",
                                            "--home", self.home, "--id", self.path.stem,
@@ -115,6 +116,8 @@ class Task(Session):
                                  "JARVIS_BASH=" + BASH,
                                  "JARVIS_TASK_SCRATCH=" + str(scratch),
                                  "JARVIS_BROWSER_PROFILE=" + (str(profile) if profile else "")]
+                    if profile:
+                        child_env.append("JARVIS_BROWSER_PORT=0")
                     receipt = scratch / "startup.json"
                     self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
                               *child_env, sys.executable, "-B", "-c",
