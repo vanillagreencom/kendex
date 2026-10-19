@@ -35,6 +35,7 @@ CONTROLS = [
     ("brief taken", "jarvis/scripts/lib/session.py", '(taken or (observed == "working" and not prepared["kickoff"]))', '((observed == "working" and not prepared["kickoff"]))', "test_turn_end_takes_the_brief"),
     ("Copilot text-only resume", "orch/scripts/lib/session-rows.sh", 'own:own | turn:own) stamp=brief_taken ;;', 'own:own | turn:own) [ "$due:$4" != turn:copilot ] || exit 0; stamp=brief_taken ;;', "test_resume_after_text_only_brief"),
     ("Codex text-only resume", "orch/scripts/lib/session-rows.sh", 'own:own | turn:own) stamp=brief_taken ;;', 'own:own | turn:own) [ "$due:$4" != turn:codex ] || exit 0; stamp=brief_taken ;;', "test_resume_after_text_only_brief"),
+    ("text-only delivery ordering", "jarvis/tests/fixtures/harness.py", 'while not json.loads(record_path.read_text()).get("brief_delivered"):', 'while False and not json.loads(record_path.read_text()).get("brief_delivered"):', "test_resume_after_text_only_brief"),
     ("Pi tool call takes the brief", "jarvis/scripts/lib/session.py", '(taken or (observed == "working" and not prepared["kickoff"]))', '((observed == "working" and not prepared["kickoff"]))', "test_pi_contract"),
     ("Pi idle before the brief", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$harness" == pi && "$6" == confirmed && "$brief" == undelivered ]]; then', 'if false; then', "test_pi_contract"),
     ("trust refusal", "jarvis/scripts/lib/session-backend.sh", "0) printf 'trust\\n%s\\n' \"$dialog\"; exit ;;", '0) ;;', "test_trust_dialog_is_refused"),

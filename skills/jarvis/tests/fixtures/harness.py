@@ -70,8 +70,12 @@ def await_inspections(events, count):
 def brief_taken(fixture, harness, identity, event):
     # The native hook's stamp, written by its real library at the default wait.
     shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_taken "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2" "$3"'
-    subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness, event],
-                   input=json.dumps({"session_id": identity}), text=True, check=True)
+    result = subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness, event],
+                            input=json.dumps({"session_id": identity}), text=True, capture_output=True)
+    with Path(fixture["rows"]).open("a") as stream:
+        stream.write(json.dumps({"stamp": event, "harness": harness,
+                                 "exit": result.returncode, "stderr": result.stderr}) + "\n")
+    result.check_returncode()
 
 
 @contextmanager
@@ -234,6 +238,12 @@ def main():
         brief_taken(fixture, harness, identity, "Stop")
     elif fixture.get("turn") == "text-only":
         print("Ready.\n❯\u00a0", flush=True)
+        # This instantaneous answer must follow the worker's delivery write:
+        # before it, Stop still belongs to the already-ended kickoff turn.
+        deadline = time.monotonic() + 10
+        while not json.loads(record_path.read_text()).get("brief_delivered"):
+            assert time.monotonic() < deadline, "the worker did not publish the brief delivery"
+            time.sleep(0.05)
         brief_taken(fixture, harness, identity, "Stop")
     else:
         print("Working to interrupt", flush=True)

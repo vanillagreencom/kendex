@@ -181,9 +181,13 @@ class SessionContract(unittest.TestCase):
 
     def session_log(self):
         try:
-            return (self.record.parent / "session.log").read_text()
+            log = (self.record.parent / "session.log").read_text()
         except FileNotFoundError:
-            return "session-log=absent"
+            log = "session-log=absent"
+        if self.rows.exists():
+            stamps = [line for line in self.rows.read_text().splitlines() if "stamp" in json.loads(line)]
+            log += "\n" + "\n".join(stamps)
+        return log
 
     def await_launches(self, count):
         deadline = time.monotonic() + 10
@@ -520,6 +524,7 @@ class SessionContract(unittest.TestCase):
     def test_resume_after_text_only_brief(self):
         # Both kickoff harnesses must accept a resumed brief with no tool call.
         fixture = self.home / ".fixture.json"
+        real_tmux = shutil.which("tmux")
         for harness in ("copilot", "codex"):
             with self.subTest(harness=harness):
                 fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"turn": "tools"}))
@@ -529,6 +534,25 @@ class SessionContract(unittest.TestCase):
                 self.call("stop")
                 self.wait("stopped")
                 fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"turn": "text-only"}))
+                # Timer-wiring control: keep delivery's record lock past the
+                # hook's default 2 s wait after the fixture receives its brief.
+                prompts = sum("prompt" in json.loads(line) for line in self.rows.read_text().splitlines())
+                wrapper = self.root / "bin/tmux"
+                wrapper.write_text("#!" + sys.executable + "\n"
+                    + "import json, subprocess, sys, time\nfrom pathlib import Path\n"
+                    + "args = sys.argv[1:]\n"
+                    + "result = subprocess.run([" + repr(real_tmux) + ", *args])\n"
+                    + "if result.returncode == 0 and 'send-keys' in args and args[-1] == 'Enter':\n"
+                    + "    rows = Path(" + repr(str(self.rows)) + ")\n"
+                    + "    deadline = time.monotonic() + 10\n"
+                    + "    while sum('prompt' in json.loads(line) for line in rows.read_text().splitlines()) <= " + str(prompts) + ":\n"
+                    + "        assert time.monotonic() < deadline, 'the fixture did not receive its brief'\n"
+                    + "        time.sleep(0.01)\n"
+                    + "    started = time.monotonic()\n    time.sleep(3)\n"
+                    + "    with rows.open('a') as stream:\n"
+                    + "        stream.write(json.dumps({'delivery_hold': time.monotonic() - started}) + '\\n')\n"
+                    + "sys.exit(result.returncode)\n")
+                wrapper.chmod(0o755)
                 self.call("start", harness, mode="resume")
                 answer = self.wait(reason="resumed", seconds=70)
                 self.assertIsNotNone(answer["terminal"])
@@ -537,8 +561,12 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(record["pending"]["native_session_id"], identity)
                 self.assertIs(record["pending"].get("brief_taken"), True)
                 self.assertIs(record["pending"].get("kickoff_ended"), True)
+                holds = [json.loads(line)["delivery_hold"] for line in self.rows.read_text().splitlines()
+                         if "delivery_hold" in json.loads(line)]
+                self.assertGreaterEqual(holds[-1], 3)
                 self.call("stop")
                 self.wait("stopped")
+                wrapper.unlink()
 
     def test_session_start_at_first_prompt(self):
         # Copilot CLI and Codex fire SessionStart only once the first prompt is
