@@ -268,12 +268,29 @@ HOST_ACCOUNT_STATE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$HOST_ACCOUNT_F
 write_claim hosted-account "%47" "$H/.hostclaude" ken-4296 "$HOST_ACCOUNT_STATE"
 record_reading "$HOSTED_DIR$HOSTED_ROOT/claude/tmp/lane-mail/KEN-4296" claude 1000 1000000 claude-opus-5-5
 HOST_ACCOUNT_ROWS="$TMP_ROOT/host-account-rows"
-for used in 97 98; do
+# An unset ambient host is a controller shell that configures no provider: the
+# lane's recorded host must still reach the provider's accounts child.
+# ambient|used
+while IFS='|' read -r ambient used; do
+  ambient_host=""
+  [[ "$ambient" != fixture ]] || ambient_host="$TEST_DIR/fixtures/lane-host"
   printf 'account=%s\tharness=claude\tsession-pct=0\tweekly-pct=%s\n' "$H/.hostclaude" "$used" > "$HOST_ACCOUNT_ROWS"
-  lanes_table "$(CTX_FLEET="$HOST_ACCOUNT_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
+  lanes_table "$(CTX_FLEET="$HOST_ACCOUNT_FLEET" CTX_AMBIENT_HOST="$ambient_host" \
     CTX_PROVIDER_ACCOUNTS="$HOST_ACCOUNT_ROWS" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
-    "the controller marks a hosted account at $((100 - used)) percent headroom|ken-4296|config_dir=$H/.hostclaude headroom_pct=$((100 - used)) context_handoff_due=false handoff_required=true"
-done
+    "the controller marks a hosted account at $((100 - used)) percent headroom, ambient host $ambient|ken-4296|config_dir=$H/.hostclaude headroom_pct=$((100 - used)) context_handoff_due=false handoff_required=true"
+done <<EOF
+fixture|97
+fixture|98
+unset|98
+EOF
+HOST_DISPATCH_CTRL="$(mutant_scripts mutant-host-accounts-dispatch lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$HOST_DISPATCH_CTRL/lanes" \
+  'rows="$(ORCH_LANE_HOST="$host" ${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts' \
+  'rows="$(${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts'
+lanes_table "$(CTX_FLEET="$HOST_ACCOUNT_FLEET" CTX_PROVIDER_ACCOUNTS="$HOST_ACCOUNT_ROWS" \
+  CTX_LANES="$HOST_DISPATCH_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "control: an inherited provider asks no host when the controller sets none|ken-4296|headroom_pct=null context_handoff_due=false handoff_required=false"
 HOST_ACCOUNT_CTRL="$(mutant_scripts mutant-host-account-mark lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$HOST_ACCOUNT_CTRL/lanes" \

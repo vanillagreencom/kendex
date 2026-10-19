@@ -3253,7 +3253,10 @@ host_accounts_answer() { # HOST [SAMPLE|RECORD] — rows or their sampled body; 
 	# falls through to the `cat` below, which reads the file the handler has
 	# just deleted and prints its own error where the keyed line belongs.
 	trap 'usage_lock_release; rm -f -- "${err:?}"; exit 1' INT TERM
-	rows="$(${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
+	# HOST is passed as the child's environment, never inherited: a caller that
+	# scopes the provider with `local ORCH_LANE_HOST` exports it only where the
+	# shadowed global was exported, and the answer is cached under HOST's key.
+	rows="$(ORCH_LANE_HOST="$host" ${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
 		if [[ "$rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
 			cat -- "$err" >&2
