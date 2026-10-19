@@ -133,9 +133,13 @@
 #         a grant that expires and does not refill. Cloud credit uses the
 #         host's pool=cloud-credit; API credit uses the launch model's pool:
 #         `remaining_dollars` above ORCH_LANE_CLOUD_CREDIT_FLOOR,
-#         `limit_dollars` above 0, `locked_reason` null and E ahead, E the
-#         earlier of the credit's `resets_at` and the account's
-#         ORCH_LANE_RETIRE date. It is `room` whatever its plan windows read;
+#         `limit_dollars` above 0, `locked_reason` null and E ahead. E is
+#         the credit's `resets_at`; for cloud credit it is the earlier of
+#         that and the account's ORCH_LANE_RETIRE date. An API grant ends at
+#         its own `resets_at` and a plan retires at its own date: neither
+#         moves the other, so a retired account's grant is spent until it
+#         expires. A read API grant's `headroom_pct` is its share left,
+#         binding_bucket `credits`. It is `room` whatever its plan windows read;
 #         spent, locked or expired credit is walled, and unread credit is
 #         unmeasured. Each refusal carries refusal={cause:"cloud-credit" or "api-credit",
 #         retry_at:null}; the grant expiry is not a refill time. A cloud-credit
@@ -329,7 +333,10 @@
 #         below ORCH_HANDOFF_HEADROOM_PCT (default 3), or on a seat at or below
 #         ORCH_OVERSEER_SEAT_RESERVE_PCT. The caller's own row uses the ordinary
 #         mark. An account room on its credits (see pick) is never marked by
-#         headroom; its HEADROOM is its balance.
+#         headroom; its HEADROOM is its balance. A Pi lane on an anthropic/
+#         model is judged on its account's API grant as pick --lane judges
+#         it: HEADROOM is the grant's share left, and the plan windows never
+#         mark it.
 #         --json carries `binding_bucket`, `credits` and `binding_resets_at`;
 #         the last is when the binding window resets, a credits row's spent
 #         plan window, in whole-second UTC with a Z, so a headroom
@@ -393,7 +400,10 @@
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
 #         or `lanes: lane-retired` when one does, so a caller can tell a
-#         covered lane from a failure (exit 1). Nothing inside the directory is
+#         covered lane from a failure (exit 1). With --harness pi and an
+#         anthropic/ --model or --native-model, retirement does not refuse:
+#         the launch spends the account's API grant, which pick judges on its
+#         own expiry. Nothing inside the directory is
 #         read. Prints the resolved config dir on stdout, or nothing for an
 #         unknown bare name. A bare name resolves the first local alias match
 #         in list's inventory. `open-terminal` asks it for every named --lane.
@@ -593,7 +603,10 @@
 #                      (`oldclaude=YYYY-MM-DD`). The lane is picked until that
 #                      UTC date; from it on, `list` shows it as `retired` and
 #                      nothing inside it is read. A malformed pair, or a date
-#                      naming no calendar day, is refused.
+#                      naming no calendar day, is refused. It retires the
+#                      plan alone: a provider harness=pi row carrying an API
+#                      grant for the account keeps its figures, and the grant
+#                      ends at its own `resets_at` (see pick, tier 0).
 #                      Both reach an account a lane host reports as well as a
 #                      config dir on this machine: the setting says the account
 #                      is not this fleet's to use, which a copy of it on another
@@ -748,7 +761,8 @@
 # verb stops paying a fork per invocation; a FAILED verb is never cached. The
 # rows are cached AFTER the account policy: an excluded account's row is
 # omitted, and a retired account's row is reduced to its account, harness and
-# a `status=retired` marker with no usage figure. The record carries a stamp
+# a `status=retired` marker with no usage figure, except a harness=pi API
+# grant row, which ends at its own expiry and is kept whole. The record carries a stamp
 # of the policy that shaped it, every setting an exclusion or retirement key
 # is matched through (LANE_POLICY_SETTINGS: ORCH_LANE_EXCLUDE, ORCH_LANE_RETIRE
 # and ORCH_LANE_ALIASES) and the UTC day, and is a miss under any other, so a
@@ -3005,7 +3019,10 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 
 # CACHE is the form written to the usage cache: the provider's row for an
 # account the policy admits, nothing for an excluded one, and for a retired one
-# its account, harness and a `status=retired` marker with no usage figure. The
+# its account, harness and a `status=retired` marker with no usage figure. A
+# retired account's harness=pi row carrying credit-* fields is the exception
+# in every mode: retirement ends the plan, and the grant ends at its own
+# credit-expires (`lanes --help` § pick, tier 0), so that row stays whole. The
 # marker keeps the row a reading, so a listing that wants readings still
 # reports the account retired rather than unlisted; it is never read under a
 # policy that does not retire the account, since the record it sits in is
@@ -3090,7 +3107,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		lane_alias_for "$account" silent; alias="$LANE_ALIAS"
 		if lane_retired "$account" silent; then
 			retire="$LANE_RETIRE_DATE"
-			if [[ "$mode" != seats && "$mode" != canon && "$mode" != discovery ]]; then
+			if [[ "$mode" != seats && "$mode" != canon && "$mode" != discovery && -z "$credit_fields" ]]; then
 				status=retired detail="retired on $retire (ORCH_LANE_RETIRE)"
 			fi
 		fi
@@ -4585,9 +4602,14 @@ case "$SUB" in
 				[[ "$alias_val" != "$LANE_ARG" ]] || check_names+=$'\n'"$alias_name"
 			done < <(alias_pairs)
 		fi
+		# Retirement ends the plan; a launch spending an API grant is judged on
+		# the grant's own expiry by pick.
+		check_pool="$(lane_pick_pool "$HARNESS" "$MODEL")" || exit 1
 		while IFS= read -r check_name; do
 			if lane_excluded "$check_name"; then message lane-excluded "$LANE_ARG" >&2; exit 4; fi
-			if lane_retired "$check_name" silent; then message lane-retired "$LANE_ARG" "$LANE_RETIRE_DATE" >&2; exit 4; fi
+			if [[ "$check_pool" != api-credit ]] && lane_retired "$check_name" silent; then
+				message lane-retired "$LANE_ARG" "$LANE_RETIRE_DATE" >&2; exit 4
+			fi
 		done <<<"$check_names"
 		[[ -z "$check_dir" ]] || printf '%s\n' "$check_dir"
 		;;

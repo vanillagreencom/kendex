@@ -67,7 +67,7 @@ assert_eq "$(observe 'rc=0 launched=1 cmd_lane=eclaude')|$(grep -c '^list ' "$TM
 alias_scripts="$(mutant_scripts alias-list/orch open-terminal)" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/alias-list/orch"
 mutate_file "$alias_scripts/open-terminal" \
-  'lane_dir="$("$LANES_CLI" check "$LANE")"' \
+  'lane_dir="$("$LANES_CLI" check "$LANE" ${1:+--harness "$1"} ${2:+--native-model "$2"})"' \
   'lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" '\''map(select(.alias == $a)) | first | .config_dir // empty'\'')"'
 OPEN_TERMINAL="$alias_scripts/open-terminal"
 : > "$TMP_ROOT/alias-lanes.log"

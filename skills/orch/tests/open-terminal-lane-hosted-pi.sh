@@ -79,6 +79,23 @@ api_launch_room
 assert_eq "session_env=$(typed 'tmux set-environment')" 'session_env=0' \
   'a hosted Pi launch on an Anthropic model hands no session environment'
 
+# A retired plan leaves the account's live grant to a named launch, which the
+# judge spends on the grant's own expiry; a plan launch stays refused.
+RETIRED_PLAN="ORCH_LANE_RETIRE=eclaude=2000-01-01"
+api_retired_result() { # what a named launch did: created, typed, refused
+  local typed_ssh
+  typed_ssh="$(typed "clear; ssh 'lane.example'")"
+  printf 'rc=%s account=%s launched=%s refused=%s' "$RC" \
+    "$(awk '/^create / { for(i=1;i<=NF;i++) if($i == "--account") print $(i+1) }' "$RUN/host.log" 2>/dev/null)" \
+    "${typed_ssh:-0}" "$(awk '$2 == "lane-refused" {n++} END {print n+0}' <<<"$OUT")"
+}
+run_ot "$API_ENV;$RETIRED_PLAN" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r KEN-4428
+assert_eq "$(api_retired_result)" "rc=0 account=$H/.eclaude launched=1 refused=0" \
+  'a retired account launches a named Pi lane on its live API grant'
+run_ot "$HARNESS_UP;$RETIRED_PLAN;flags=--model fable --effort high" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4429
+assert_eq "$(api_retired_result)" 'rc=1 account= launched=0 refused=1' \
+  'a retired account stays refused for a named plan launch'
+
 # The preference walk spends the hosted API grant before the local Claude
 # account. A restricted source posture must reach the fallback before flags
 # are built, since the shared builder refuses that cross-harness transfer.

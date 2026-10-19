@@ -772,11 +772,11 @@ lane_context_columns() {
 # The HEADROOM cell both lane tables print, as a jq def over one record: the
 # credit balance of a Codex account room on its credits, binding_bucket
 # `credits`, whose window headroom is spent and says nothing of its room;
-# otherwise headroom_pct.
+# otherwise headroom_pct, which for a dollar API grant is its share left.
 # shellcheck disable=SC2016  # jq source, never expanded by the shell.
 LANE_HEADROOM_CELL_JQ='
 def headroom_cell:
-  if .binding_bucket == "credits"
+  if .binding_bucket == "credits" and .credits.unit != "usd"
   then (.credits.balance | if . >= 1000 then (((. / 100) | floor) / 10 | tostring) + "k cr"
                            else (floor | tostring) + " cr" end)
   elif .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end;

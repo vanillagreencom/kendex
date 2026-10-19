@@ -300,11 +300,13 @@ fi
 
 # Exits unless lanes clears the lane $1 names. lanes owns the name, alias and
 # retirement matching: its exit 4 is a lane a setting excludes or retires, and
-# any other failure is lanes failing, never reported as a covered lane.
-lane_check() {
+# any other failure is lanes failing, never reported as a covered lane. The
+# launch's harness and model, where known, tell it which allowance is spent:
+# retirement refuses a plan launch and leaves an API grant launch to the judge.
+lane_check() { # DIR [HARNESS MODEL]
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
   local rc=0
-  "$LANES_CLI" check "$1" >/dev/null || rc=$?
+  "$LANES_CLI" check "$1" ${2:+--harness "$2"} ${3:+--native-model "$3"} >/dev/null || rc=$?
   case "$rc" in
     0) ;;
     4) ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1 ;;
@@ -312,7 +314,7 @@ lane_check() {
   esac
 }
 # Resolves and checks a caller-named lane once, before its model is judged.
-named_lane_resolve() {
+named_lane_resolve() { # [HARNESS MODEL]
   local alias_rc=0
   lane_dir="$LANE"
   # A value carrying a `/` is meant as a path, so a miss there is a typo,
@@ -331,7 +333,7 @@ named_lane_resolve() {
     # failed would otherwise end the run here with no line naming why, and
     # an empty result is the alias-not-found answer the branch below reads.
     alias_rc=0
-    lane_dir="$("$LANES_CLI" check "$LANE")" || alias_rc=$?
+    lane_dir="$("$LANES_CLI" check "$LANE" ${1:+--harness "$1"} ${2:+--native-model "$2"})" || alias_rc=$?
     case "$alias_rc" in
       0) ;;
       4) ot_message lane-refused "lane=$LANE" "exit=$alias_rc" >&2; exit 1 ;;
@@ -344,7 +346,7 @@ named_lane_resolve() {
   fi
   # Whether a setting excludes or retires the lane is lanes' decision, asked
   # of the resolved directory so an alias and a path answer alike.
-  lane_check "$lane_dir"
+  lane_check "$lane_dir" "${1:-}" "${2:-}"
 }
 
 # Keep the caller's input for every preference walk, including a batch's
@@ -1310,7 +1312,7 @@ if [[ -n "$LANE" ]]; then
     *)
       if [[ -n "$PREFERENCE_ENTRY" ]]; then LANE_ENV="$PREFERENCE_LANE_ENV"
       else
-        named_lane_resolve
+        named_lane_resolve "$LAUNCH_HARNESS" "$LAUNCH_MODEL"
         # The harness-to-variable mapping is lib/lane-launch.sh's, the same one
         # `lanes` hands a picked lane back through, so a harness added there is
         # not left prefixing its launches with the other harness's variable.

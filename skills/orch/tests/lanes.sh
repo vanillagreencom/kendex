@@ -731,6 +731,58 @@ for detail in api-credit-tokens-unreadable api-credit-tokens-undated api-credit-
   assert_eq "$(grep -c '^lanes: copilot-pool-' "$ERR" || true)" 0 'an API-credit refusal names no Copilot setting'
 done
 
+echo "=== a retired plan leaves its account's API grant to the grant's own expiry ==="
+# One account holds a Claude plan, now retired, and an API grant that expires
+# later. The plan rows refuse; the grant is spent until its own resets_at.
+API_RETIRED="$API_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01"
+api_retired_rows() { # EXPIRY
+  api_rows 150 "$1"
+  printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=10\n' "$H/.eclaude" >> "$API_ROWS"
+}
+api_retired_rows "$API_EXPIRES_SOON"
+api_case 'a retired plan leaves its live grant to the automatic pick' "$API_RETIRED" "$API_PICK" '.config_dir' "0:\"$H/.eclaude\""
+api_case 'a retired plan leaves its live grant to the named pick' "$API_RETIRED" "$API_PICK --lane $H/.eclaude" \
+  '[.config_dir, .headroom_pct, .binding_bucket]' "0:[\"$H/.eclaude\",75,\"credits\"]"
+api_case 'the retired account lists its grant row whole and its plan row retired' "$API_RETIRED" 'host-accounts --harness pi --json' \
+  '[.[] | [.harness, .status, .credits.remaining_dollars, (.credits.limit_dollars == 200), (.credits.resets_at != null)]]' \
+  '0:[["pi","ok",150,true,true]]'
+api_case 'the retired account keeps its plan row retired with no figures' "$API_RETIRED" 'host-accounts --harness claude --json' \
+  '[.[] | [.harness, .status, .credits, .headroom_pct]]' '0:[["claude","retired",null,null]]'
+# The cached record is written after the policy, and carries the same split.
+API_RETIRED_CACHE="$TMP_ROOT/api-retired-cache"
+mkdir -p "$API_RETIRED_CACHE"
+run_lanes "$API_RETIRED;OVERSEE_WATCH_STATE_DIR=$API_RETIRED_CACHE;ORCH_LANES_USAGE_TTL=300" host-accounts --harness pi --json
+assert_eq "$(jq -r '.usage.rows' "$API_RETIRED_CACHE"/usage/host-accounts-*.json 2>/dev/null \
+  | awk -F'\t' '{ s = ""; for (i = 1; i <= NF; i++) if ($i ~ /^(harness|status|credit-remaining)=/) s = s $i ","; print s }' | sort | paste -sd';' -)" \
+  'harness=claude,status=retired,;harness=pi,status=ok,credit-remaining=150,' 'the cached record keeps the grant row and reduces the plan row'
+api_case 'the retired plan is still no plan pick' "$API_RETIRED" 'pick --harness claude --json' '.config_dir // "none"' '3:"none"'
+table \
+  "check refuses the retired account for a plan launch|$API_RETIRED|check $H/.eclaude --harness claude --model opus|rc=4 key=lane-retired,dir=$H/.eclaude,date=2000-01-01" \
+  "check refuses the retired account for a Copilot pool launch|$API_RETIRED|check $H/.eclaude --harness pi --model github-copilot/opus|rc=4 key=lane-retired,dir=$H/.eclaude,date=2000-01-01" \
+  "check clears the retired account for a grant launch|$API_RETIRED|check $H/.eclaude --harness pi --native-model anthropic/claude-opus-5-5|rc=0 out=$H/.eclaude" \
+  "check still refuses an excluded account for a grant launch|$API_ENV;ORCH_LANE_EXCLUDE=eclaude|check $H/.eclaude --harness pi --model anthropic/claude-opus-5-5|rc=4 key=lane-excluded,dir=$H/.eclaude"
+# The control lets the grant exemption cover every row of a retired account.
+API_RETIRED_SHIPPED="$LANES"
+API_RETIRED_MUTANT="$(mutant_scripts api-retired-plan lanes)" || exit 1
+mutate_file "$API_RETIRED_MUTANT/lanes" '"$mode" != discovery && -z "$credit_fields" ]]' '"$mode" != discovery && -z "x" ]]'
+LANES="$API_RETIRED_MUTANT/lanes"; API_RETIRED_SAVED="$FAIL"; FAIL=0
+api_case 'the retired plan is still no plan pick' "$API_RETIRED" 'pick --harness claude --json' '.config_dir // "none"' '3:"none"' \
+  > "$TMP_ROOT/api-retired-plan.out"
+API_RETIRED_RED="$FAIL"; FAIL="$API_RETIRED_SAVED"; LANES="$API_RETIRED_SHIPPED"
+assert_eq "$API_RETIRED_RED" 1 'control: a grant exemption covering the plan row turns the plan pick row red'
+
+api_retired_rows 2000-01-01T00:00:00Z
+api_case 'the retired account with an expired grant is refused on the grant' "$API_RETIRED" "$API_PICK --lane $H/.eclaude" \
+  '[.refusal.cause, .refusal.retry_at]' '3:["api-credit",null]'
+# A plan retiring tomorrow does not cut its grant's later expiry short: the
+# grant that expires first is spent first.
+API_TOMORROW="$(jq -nr 'now + 86400 | strftime("%Y-%m-%d")')"
+api_rows 150 "$API_EXPIRES_LATE"
+printf 'account=%s\tharness=pi\tcredit-limit=200.00\tcredit-spent=37.52\tcredit-remaining=150\tcredit-expires=%s\n' \
+  "$H/.soonclaude" "$API_EXPIRES_SOON" >> "$API_ROWS"
+api_case 'a plan retiring tomorrow ranks its grant on the grant expiry' "$API_ENV;ORCH_LANE_RETIRE=eclaude=$API_TOMORROW" "$API_PICK" \
+  '.config_dir' "0:\"$H/.soonclaude\""
+
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the
 # consumer windows (a real enterprise plan), and an unreachable API each report

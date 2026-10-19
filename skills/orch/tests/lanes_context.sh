@@ -394,6 +394,48 @@ opus|claude|$H/.modelclaude|claude|claude-opus-5-5|3|true|3|yes|provider|10|97|3
 unknown-model|claude|$H/.modelclaude|claude||3|true|3|yes|provider|10|97|3|true|no
 EOF
 
+echo "=== a Pi grant lane reads the grant, a Claude lane on its account the plan ==="
+# One account whose plan weekly window is spent and whose Claude API grant has
+# room. The Pi anthropic/ lane spends the grant, the Claude lane the plan.
+GRANT_FLEET="$TMP_ROOT/grant-fleet"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$GRANT_FLEET" init oversee >/dev/null
+GRANT_STATE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$GRANT_FLEET" path oversee)"
+GRANT_ACCOUNT="$H/.grantclaude"
+GRANT_ROWS="$TMP_ROOT/grant-rows"
+GRANT_LIVE="$(jq -nr 'now + 5 * 86400 | todateiso8601')"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$GRANT_FLEET" set oversee lanes "$(jq -nc \
+  --arg a "$GRANT_ACCOUNT" --arg p "$BIN/provider" --arg root "$HOSTED_ROOT/grant" '[
+  {item:"GRANT-PI",window:"fleet:grant-pi",harness:"pi",model:"anthropic/claude-opus-5-5",account:$a,host:$p,mail_root:($root + "/pi"),status:"running"},
+  {item:"GRANT-CLAUDE",window:"fleet:grant-claude",harness:"claude",model:"claude-opus-5-5",account:$a,host:$p,mail_root:($root + "/claude"),status:"running"}]')" >/dev/null
+write_claim grant-pi "%44" "$GRANT_ACCOUNT" grant-pi "$GRANT_STATE"
+write_claim grant-claude "%45" "$GRANT_ACCOUNT" grant-claude "$GRANT_STATE"
+record_reading "$HOSTED_DIR$HOSTED_ROOT/grant/pi/tmp/lane-mail/GRANT-PI" pi 1000 1000000 anthropic/claude-opus-5-5
+record_reading "$HOSTED_DIR$HOSTED_ROOT/grant/claude/tmp/lane-mail/GRANT-CLAUDE" claude 1000 1000000 claude-opus-5-5
+# label|remaining|expires|pi room|pi bucket|pi handoff
+while IFS='|' read -r label remaining expires room bucket handoff; do
+  [[ "$expires" != live ]] || expires="$GRANT_LIVE"
+  printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=100\n' "$GRANT_ACCOUNT" > "$GRANT_ROWS"
+  printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=%s\tcredit-remaining=%s\tcredit-expires=%s\n' \
+    "$GRANT_ACCOUNT" "$((200 - remaining))" "$remaining" "$expires" >> "$GRANT_ROWS"
+  GRANT_OUT="$(CTX_FLEET="$GRANT_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
+    CTX_PROVIDER_ACCOUNTS="$GRANT_ROWS" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 ORCH_LANES_USAGE_TTL=0 run_ctx --json)"
+  lanes_table "$GRANT_OUT" \
+    "$label|grant-pi|headroom_pct=$room binding_bucket=$bucket handoff_required=$handoff" \
+    "$label: the Claude lane on the account keeps the plan window|grant-claude|headroom_pct=0 binding_bucket=weekly handoff_required=true"
+done <<'GRANTS'
+a live grant gives the Pi lane its own room on a spent plan|150|live|75|credits|false
+a spent grant marks the Pi lane|0|live|0|credits|true
+an expired grant marks the Pi lane|150|2000-01-01T00:00:00Z|0|credits|true
+GRANTS
+# The table prints a grant's share left, never a Codex balance it lacks.
+printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=50\tcredit-remaining=150\tcredit-expires=%s\n' \
+  "$GRANT_ACCOUNT" "$GRANT_LIVE" > "$GRANT_ROWS"
+GRANT_TABLE="$(CTX_FLEET="$GRANT_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
+  CTX_PROVIDER_ACCOUNTS="$GRANT_ROWS" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 ORCH_LANES_USAGE_TTL=0 run_ctx)" || GRANT_TABLE=failed
+assert_line "$GRANT_TABLE" '^grant-pi[[:space:]]+%44[[:space:]]+[^[:space:]]+[[:space:]]+pi[[:space:]]+0%[[:space:]]+1000[[:space:]]+75%[[:space:]]+-[[:space:]]+ok[[:space:]]*$' \
+  "the table prints a live grant's share left as its headroom"
+rm -f -- "${STATE:?}/claims/grant-pi.claim" "${STATE:?}/claims/grant-claude.claim"
+
 echo "=== only this fleet owns context rows; accounts keep global claims ==="
 FOREIGN_FLEET="$TMP_ROOT/other-fleet/oversee.json"
 # name|pane|account|window|fleet
