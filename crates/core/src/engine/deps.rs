@@ -1,6 +1,7 @@
 //! Required and selected optional dependencies stay within one catalog: a
-//! skill's from its SKILL.md, a hook's from its header. Derived install
-//! reasons preserve the manifest as a record of user choices.
+//! skill's from its SKILL.md, a hook's from its header, and a required
+//! agent's from its skill assignment. Derived install reasons preserve the
+//! manifest as a record of user choices.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -32,12 +33,19 @@ pub(crate) struct Dependencies {
 }
 
 /// Each supported edge: the declaring kind and its dependency kind.
-const DEPENDENT_KINDS: [(ItemKind, ItemKind); 4] = [
+const DEPENDENT_KINDS: [(ItemKind, ItemKind); 5] = [
     (ItemKind::Skill, ItemKind::Skill),
     (ItemKind::Skill, ItemKind::Agent),
+    (ItemKind::Agent, ItemKind::Skill),
     (ItemKind::Hook, ItemKind::Hook),
     (ItemKind::Hook, ItemKind::Skill),
 ];
+
+/// The kinds every walk starts from. An agent is walked only once a skill
+/// requires it: one the person declared took its skills at `add` time or
+/// was told not to (`--no-auto-skills`, a set's agents), and walking it
+/// would install them anyway.
+const DECLARING_KINDS: [ItemKind; 2] = [ItemKind::Skill, ItemKind::Hook];
 
 /// What an item's frontmatter declares it needs, `found` being what
 /// [`find_item`] returned for it: a skill's directory, whose SKILL.md is
@@ -106,12 +114,13 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
 /// may share a name without being the same dependency.
 type Node = (ItemKind, String);
 
-/// Everything the skills and hooks in this expansion require, walked until
-/// no installation learns another reason. Cycles are fine — `orch` and `dev`
-/// require each other on purpose, and so do the lane-mail hooks — because an
-/// item is only walked again when its reasons grow, and they cannot grow
-/// forever. Items that came in as bundle members are walked like any other:
-/// what an item needs does not depend on how it was chosen.
+/// Everything the skills and hooks in this expansion require, and the
+/// skills the agents they require load, walked until no installation
+/// learns another reason. Cycles are fine — `orch` and `dev` require each
+/// other on purpose, and so do the lane-mail hooks — because an item is
+/// only walked again when its reasons grow, and they cannot grow forever.
+/// Items that came in as bundle members are walked like any other: what
+/// an item needs does not depend on how it was chosen.
 ///
 /// Where the pass judges pins (`DesiredState::judge_pins`), a hook whose
 /// pin alone keeps it off a tool is asked about that tool again, by the
@@ -124,10 +133,7 @@ pub(super) fn expand(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) {
-    let every_item = DEPENDENT_KINDS
-        .into_iter()
-        .map(|(kind, _)| kind)
-        .collect::<BTreeSet<_>>()
+    let every_item = DECLARING_KINDS
         .into_iter()
         .flat_map(|kind| {
             expansion
@@ -898,8 +904,13 @@ fn wanted_by(
         }
         Offer::NotOffered | Offer::Silent => return Some(wanted),
     };
-    let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
-        return Some(wanted);
+    let declared = if kind == ItemKind::Agent {
+        agent_assignment(catalog, manifest, parent, &dir)
+    } else {
+        let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
+            return Some(wanted);
+        };
+        declared
     };
     let header = hook_header(sealed, kind, &dir);
     if let Ok(Some(own)) = &header
@@ -982,6 +993,42 @@ fn wanted_by(
         &mut wanted,
     );
     Some(wanted)
+}
+
+/// The skills an agent a skill requires loads, as its required skills: the
+/// consumer's `[agent-skills]` row where it has one, which replaces the
+/// catalog's assignment for the rendering too, and the catalog's own
+/// (`mapping::upstream_skills`) otherwise. Only names this catalog offers:
+/// a row may name a skill another source carries, and one nothing installs
+/// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
+/// agent that will not read or parse needs nothing; the renderer reports it.
+fn agent_assignment(
+    catalog: &OpenCatalog,
+    manifest: &Manifest,
+    agent: &str,
+    path: &std::path::Path,
+) -> Dependencies {
+    let available = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill);
+    let required_skills = match crate::mapping::declared_skills(manifest, agent) {
+        Some((declared, _)) => declared
+            .iter()
+            .filter(|skill| available.contains(skill))
+            .cloned()
+            .collect(),
+        None => {
+            let Ok(Some(text)) = catalog.sealed.read_if_exists(path) else {
+                return Dependencies::default();
+            };
+            let Ok(parsed) = crate::render::agent::parse_source_agent(&text) else {
+                return Dependencies::default();
+            };
+            crate::mapping::upstream_skills(agent, parsed.role, &catalog.config, &available)
+        }
+    };
+    Dependencies {
+        required_skills,
+        ..Dependencies::default()
+    }
 }
 
 /// Of `harnesses`, the tools the plan writes the hook's position on
