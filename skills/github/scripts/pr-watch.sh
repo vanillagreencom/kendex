@@ -405,7 +405,19 @@ def reduce_pr($n; $initial; $later; $repository):
     # Pushes to a queued branch are rejected, so every attention line on a
     # queued PR carries the dequeue note. A null reviewDecision, which GitHub
     # answers on a base no approval rule targets, is NONE: never an approval.
-    else (if $p.isInMergeQueue or $p.mergeQueueEntry != null then " (QUEUED: dequeue before pushing)" else "" end) as $queued
+    else (if $p.isInMergeQueue or $p.mergeQueueEntry != null then {member: true}
+      else $repo.mergeQueue.entries as $entries
+      | if ($repo | has("mergeQueue") | not)
+          or ($repo.mergeQueue != null and
+            (($entries.nodes | type) != "array" or ($entries.pageInfo.hasNextPage | type) != "boolean"
+             or any($entries.nodes[]; (.pullRequest.number | type) != "number")))
+        then {error: "repository queue response malformed"}
+        elif any($entries.nodes[]?; .pullRequest.number == $n) then {member: true}
+        elif $entries.pageInfo.hasNextPage == true
+        then {error: "repository queue is past one page; absence is unconfirmed"}
+        else {member: false} end
+      end) as $queue
+    | (if $queue.member == true then " (QUEUED: dequeue before pushing)" else "" end) as $queued
     | ($p.reviewDecision // "NONE") as $decision
     | threads($p.reviewThreads; $later) as $t
     | if $t.walk then [{n: $n, walk: $t.walk}]
@@ -421,7 +433,7 @@ def reduce_pr($n; $initial; $later; $repository):
                    user: ($p.author | if type == "object"
                      then {login: (if .__typename == "Bot" then "\(.login)[bot]" else .login end), type: .__typename}
                      else null end)} | refresh_identity) catch false) == true) as $refresh
-      | (if ($refresh or $p.autoMergeRequest != null or $queued != "") and ($commit | type) == "object"
+      | (if ($refresh or $p.autoMergeRequest != null or $queue.member == true) and ($commit | type) == "object"
          then refresh_ci($commit; $n; $head; $queued) else [] end) as $ci
       # Armed PRs keep their existing silence on an unreadable aggregate.
       # Refresh errors still reach the approval branch below.
@@ -445,16 +457,8 @@ def reduce_pr($n; $initial; $later; $repository):
           else if $refresh and ($p.isDraft | not) and $decision == "REVIEW_REQUIRED"
             then [$ci[] | select(.kind != "ci-failed")]
             # Approved, unarmed, unqueued and ready: nothing will merge it.
-            elif $decision == "APPROVED" and ($p.isDraft | not) and $p.autoMergeRequest == null and $queued == ""
-            then $repo.mergeQueue.entries as $entries
-            | if ($repo | has("mergeQueue") | not)
-                or ($repo.mergeQueue != null and
-                  (($entries.nodes | type) != "array" or ($entries.pageInfo.hasNextPage | type) != "boolean"
-                   or any($entries.nodes[]; (.pullRequest.number | type) != "number")))
-              then [finding($n; $head; "error"; "repository queue response malformed")]
-              elif any($entries.nodes[]?; .pullRequest.number == $n) then []
-              elif $entries.pageInfo.hasNextPage == true
-              then [finding($n; $head; "error"; "repository queue is past one page; absence is unconfirmed")]
+            elif $decision == "APPROVED" and ($p.isDraft | not) and $p.autoMergeRequest == null and $queue.member != true
+            then if $queue.error then [finding($n; $head; "error"; $queue.error)]
               else [finding($n; $head; "disarmed"; "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)")]
               end
             # Drafts await readiness, not review: the clock skips them.

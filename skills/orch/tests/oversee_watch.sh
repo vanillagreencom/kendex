@@ -199,13 +199,16 @@ for mode in opening replacement repeat; do
     printf '12\t%s:aaaa0000\n' "$kind" > "$STATE_DIR/owner_repo__none"
   fi
   if [[ "$mode" == repeat ]]; then
-    cp "$STUB_DIR/prwatch.out.1" "$STUB_DIR/prwatch.out.2"
+    cp "$STUB_DIR/prwatch.out.1" "$STUB_DIR/prwatch.out"
+    rm "$STUB_DIR/prwatch.out.2"
   fi
   err="$TMP_ROOT/$kind-$mode.err"
   out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
   if [[ "$mode" == repeat ]]; then
     assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "$kind first pass delivers the failed head" "$err"
     out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+    assert_eq "$rc" "0" "$kind on the same head completes the heartbeat" "$err"
+    assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "$kind on the same head reaches the heartbeat" "$err"
     assert_not_contains "$out" "EVENT pr-watch" "$kind on the same head reports no second event" "$err"
   else
     assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "$kind $mode wakes without an owning lane" "$err"

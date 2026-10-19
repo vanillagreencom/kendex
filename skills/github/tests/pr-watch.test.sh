@@ -63,6 +63,7 @@ echo '=== repository queue confirms a disarmed candidate ==='
 REPO_QUEUED='{"entries":{"pageInfo":{"hasNextPage":false},"nodes":[{"pullRequest":{"number":7}}]}}'
 REPO_EMPTY='{"entries":{"pageInfo":{"hasNextPage":false},"nodes":[]}}'
 QUEUE_RACE="STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$REPO_QUEUED"
+QUEUE_CI_RED='{"check_runs":[{"name":"CI","status":"completed","conclusion":"failure"}]}'
 for mode in listing named paginated; do
   flags="" pages=""
   case "$mode" in
@@ -71,16 +72,18 @@ for mode in listing named paginated; do
   esac
   table \
     "repository queue suppresses false disarmed: $mode|$flags|$QUEUE_RACE$pages|rc=0 kinds=none" \
+    "repository queue reports failed current-head CI: $mode|$flags|$QUEUE_RACE;STUB_CI_RAW=$QUEUE_CI_RED$pages|rc=1 kinds=ci-failed subjects=7~aaaaaaaa queued_notes=1" \
+    "repository queue annotates CI and objections: $mode|$flags|$QUEUE_RACE;STUB_CI_RAW=$QUEUE_CI_RED;STUB_DECISION=CHANGES_REQUESTED$pages|rc=1 kinds=ci-failed,changes-requested queued_notes=2" \
     "absent from both views stays disarmed: $mode|$flags|STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$REPO_EMPTY$pages|rc=1 kinds=disarmed"
 done
 table \
-  "unreadable queue is no confirmed disarm||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE={}|rc=2 kinds=error" \
-  "an incomplete queue cannot confirm absence||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$(jq -c '.entries.pageInfo.hasNextPage=true' <<<"$REPO_EMPTY")|rc=2 kinds=error" \
-  "membership is known even on an incomplete queue||$QUEUE_RACE;STUB_REPO_QUEUE=$(jq -c '.entries.pageInfo.hasNextPage=true' <<<"$REPO_QUEUED")|rc=0 kinds=none"
-mutant_watch repository-queue-member 's#elif any($entries.nodes\[\]?; .pullRequest.number == $n) then \[\]#elif false then []#' 'elif any($entries.nodes[]?; .pullRequest.number == $n) then []'
-table "must-fail: ignoring the repository queue repeats the false disarm||$QUEUE_RACE|rc=1 kinds=disarmed"
+  "unreadable queue is no confirmed disarm||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE={};STUB_CI_RAW=$QUEUE_CI_RED|rc=2 kinds=error" \
+  "an incomplete queue cannot confirm absence||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$(jq -c '.entries.pageInfo.hasNextPage=true' <<<"$REPO_EMPTY");STUB_CI_RAW=$QUEUE_CI_RED|rc=2 kinds=error" \
+  "membership is known even on an incomplete queue||$QUEUE_RACE;STUB_REPO_QUEUE=$(jq -c '.entries.pageInfo.hasNextPage=true' <<<"$REPO_QUEUED");STUB_CI_RAW=$QUEUE_CI_RED|rc=1 kinds=ci-failed queued_notes=1"
+mutant_watch repository-queue-member 's#elif any($entries.nodes\[\]?; .pullRequest.number == $n) then {member: true}#elif false then {member: true}#' 'elif any($entries.nodes[]?; .pullRequest.number == $n) then {member: true}'
+table "must-fail: ignoring the repository queue loses CI and repeats the false disarm||$QUEUE_RACE;STUB_CI_RAW=$QUEUE_CI_RED|rc=1 kinds=disarmed"
 WATCH_BIN="$LIVE_WATCH"
-mutant_watch repository-queue-absent 's#elif any($entries.nodes\[\]?; .pullRequest.number == $n) then \[\]#elif true then []#' 'elif any($entries.nodes[]?; .pullRequest.number == $n) then []'
+mutant_watch repository-queue-absent 's#elif any($entries.nodes\[\]?; .pullRequest.number == $n) then {member: true}#elif true then {member: true}#' 'elif any($entries.nodes[]?; .pullRequest.number == $n) then {member: true}'
 table "must-fail: treating an empty queue as membership loses a real disarm||STUB_OPEN_PRS=$P7U;STUB_REPO_QUEUE=$REPO_EMPTY|rc=0 kinds=none"
 WATCH_BIN="$LIVE_WATCH"
 
