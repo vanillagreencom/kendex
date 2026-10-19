@@ -11,9 +11,11 @@ import tempfile
 import time
 import unittest
 
+from fixtures.harness import native_launcher
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
+REAL_KENDEX = shutil.which("kendex")
 
 
 class TaskContract(unittest.TestCase):
@@ -30,20 +32,22 @@ class TaskContract(unittest.TestCase):
         self.account.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        # Only the external allowance endpoint is replaced. The consumer must
-        # ask it about the same harness/model/account that it launches.
-        lanes = self.skills / "orch/scripts/lanes"
-        lanes.write_text("#!" + sys.executable + "\nimport json,sys\nfrom pathlib import Path\n"
-            + "args=sys.argv[1:]; assert args[0]=='pick' and '--json' in args\n"
-            + "Path('pick.json').write_text(json.dumps(args))\n"
-            + "if Path('refuse-pick').exists(): sys.exit(3)\n"
-            + "print(json.dumps({'config_dir':" + repr(str(self.account)) + "}))\n")
-        # The fixture is kendex's existing model-resolution protocol, not a
-        # second resolver: it returns the chosen selector for one known class.
-        self.bin.joinpath("kendex").write_text("#!" + sys.executable + "\nimport json,sys\n"
-            + "assert sys.argv[1]=='tier-model'\n"
-            + "model=sys.argv[sys.argv.index('--model')+1]\n"
-            + "print(json.dumps({'protocol':'model-resolution-v1','request':{'tag':'class' if model=='standard' else 'exact','class':'standard' if model=='standard' else None},'resolution':{'native_selector':'opus','diagnostics':[]},'warning':''}))\n")
+        # Exercise the production picker; only its external host meter is a
+        # fixture. No account credentials or live quota endpoints are read.
+        meter = self.bin / "meter"
+        meter.write_text("#!" + sys.executable + "\nfrom pathlib import Path\nimport sys\n"
+            + "if sys.argv[1]=='capabilities':\n print('kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane'); sys.exit(0)\n"
+            + "assert sys.argv[1]=='accounts'\n"
+            + "pct=99 if Path('refuse-pick').exists() else 5\n"
+            + "for harness in ('claude','codex','copilot','pi'):\n"
+            + " print('account=' + " + repr(str(self.account)) + " + '\\tharness='+harness+'\\tsession-5h-pct='+str(pct)+'\\tweekly-pct='+str(pct)+'\\tmodel-pct='+str(pct)+'\\tmodel-label=Opus\\tmonthly-pct='+str(pct))\n")
+        meter.chmod(0o755)
+        settings = {"ORCH_LANE_HOST": str(meter), "LANES_HOME": str(self.root / "empty-home"),
+                    "OVERSEE_WATCH_STATE_DIR": str(self.root / "meter-state"),
+                    "ORCH_STATE_DIR": str(self.root / "orch-state")}
+        (self.home / "kendex.settings.toml").write_text("[env]\n" + "".join(
+            key + " = " + json.dumps(value) + "\n" for key, value in settings.items()))
+        shutil.copyfile(ROOT / "skills/orch/tests/fixtures/tier-model/kendex", self.bin / "kendex")
         self.bin.joinpath("kendex").chmod(0o755)
         native = ("#!" + sys.executable + "\nimport json,os,signal,sys\nfrom pathlib import Path\n"
                   + "keys={'CLAUDE_CONFIG_DIR','CODEX_HOME','COPILOT_HOME','PI_CODING_AGENT_DIR','JARVIS_BROWSER_PROFILE','JARVIS_TASK_SCRATCH'}\n"
@@ -88,12 +92,15 @@ class TaskContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0 if success else 1, result.stderr)
         return json.loads(result.stdout) if success else result
 
-    def launch(self, harness, suffix="", success=True):
-        model = "standard" if harness == "claude" else "github-copilot/gpt-5" if harness == "pi" else "gpt-5"
+    def launch(self, harness, suffix="", success=True, model=None):
+        model = model or ("github-copilot/gpt-5" if harness == "pi" else "standard")
         return self.call("launch", "--name", "Inspect " + harness + suffix, "--harness", harness,
                          "--model", model, "--task-file", self.task_file,
                          "--result-file", self.home / ("result-" + harness + suffix + ".md"),
                          "--input", self.task_file, "--account", self.account, "--browser", success=success)
+
+    def saved_tasks(self):
+        return [json.loads(path.read_text()) for path in self.record_path.parent.joinpath("tasks").glob("*.json")]
 
     def acknowledgement(self, record):
         path = self.home / ("ack-" + record["id"] + ".json")
@@ -110,8 +117,8 @@ class TaskContract(unittest.TestCase):
     def test_launch_contract(self):
         profiles = set()
         rows = (("claude", "opus", "CLAUDE_CONFIG_DIR", "--model"),
-                ("codex", "gpt-5", "CODEX_HOME", "-m"),
-                ("copilot", "gpt-5", "COPILOT_HOME", "--model"),
+                ("codex", "native-default", "CODEX_HOME", "-m"),
+                ("copilot", "native-default", "COPILOT_HOME", "--model"),
                 ("pi", "github-copilot/gpt-5", "PI_CODING_AGENT_DIR", "--model"))
         for harness, model, account_var, model_flag in rows:
             with self.subTest(harness=harness):
@@ -125,7 +132,10 @@ class TaskContract(unittest.TestCase):
                 self.assertEqual(record["result_path"], str(self.home / ("result-" + harness + ".md")))
                 self.assertEqual(record["terminal"]["server"], self.terminal["server"])
                 self.assertNotEqual(record["terminal"]["window"], self.terminal["window"])
-                self.assertEqual(observed["argv"][observed["argv"].index(model_flag) + 1], model)
+                if model == "native-default":
+                    self.assertNotIn(model_flag, observed["argv"])
+                else:
+                    self.assertEqual(observed["argv"][observed["argv"].index(model_flag) + 1], model)
                 self.assertTrue(observed["env"][account_var].startswith(str(self.account)))
                 for identity in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID",
                                  "PI_SUBAGENT_PARENT_SESSION_ID", "JARVIS_RECORD", "JARVIS_GENERATION"):
@@ -136,10 +146,6 @@ class TaskContract(unittest.TestCase):
                 self.assertEqual(observed["env"]["JARVIS_BROWSER_PROFILE"], str(profile))
                 self.assertNotIn(profile, profiles)
                 profiles.add(profile)
-                pick = json.loads(self.home.joinpath("pick.json").read_text())
-                self.assertEqual(pick[pick.index("--harness") + 1], harness)
-                self.assertEqual(pick[pick.index("--model") + 1], model)
-                self.assertEqual(pick[pick.index("--lane") + 1], str(self.account))
         # Keep all four tasks live while proving profile isolation, then
         # preserve their results while closing only their owned windows.
         for path in sorted(self.record_path.parent.joinpath("tasks").glob("*.json")):
@@ -172,6 +178,171 @@ class TaskContract(unittest.TestCase):
         self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
                          [self.terminal["window"]])
 
+    def test_native_start_failure_is_recoverable(self):
+        # Resolve tools from a private PATH so an optional harness installed
+        # elsewhere cannot turn the missing-executable row into a live launch.
+        for directory in os.environ["PATH"].split(os.pathsep):
+            folder = Path(directory)
+            if not folder.is_dir():
+                continue
+            for path in folder.iterdir():
+                target = self.bin / path.name
+                if path.name not in ("claude", "codex", "copilot", "pi") and not target.exists() and path.is_file():
+                    target.symlink_to(path.resolve())
+        self.env["PATH"] = str(self.bin)
+        for harness in ("claude", "codex", "copilot", "pi"):
+            path = self.bin / harness
+            original = path.read_text()
+            for mode in ("missing", "early-exit"):
+                with self.subTest(harness=harness, mode=mode):
+                    if mode == "missing":
+                        path.unlink()
+                    else:
+                        path.write_text("#!" + sys.executable + "\nimport sys\nsys.exit(23)\n")
+                        path.chmod(0o755)
+                    failed = self.launch(harness, mode, success=False,
+                                         model="gpt-5" if harness in ("codex", "copilot") else None)
+                    record = self.saved_tasks()[-1] if len(self.saved_tasks()) == 1 else next(
+                        row for row in self.saved_tasks() if row["name"] == "Inspect " + harness + mode)
+                    self.assertIn("id=" + record["id"], failed.stderr)
+                    self.assertEqual(record["state"], "failed")
+                    self.assertEqual(record["failure"]["reason"], "app-missing" if mode == "missing" else "native-exited")
+                    if mode == "early-exit":
+                        self.assertEqual(record["failure"]["exit"], 23)
+                    self.assertEqual(record["completion"]["outcome"], "failed")
+                    self.assertEqual(self.call("cleanup", "--id", record["id"])["cleanup"]["state"], "done")
+                    path.write_text(original)
+                    path.chmod(0o755)
+
+    def test_expired_launch_retains_rollback_ownership(self):
+        for unread in (False, True):
+            with self.subTest(unread=unread):
+                wrapper = self.bin / "tmux"
+                wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+                    + 'for arg in "$@"; do if [[ $arg == list-panes && -e refuse-close ]]; then exit 2; fi; done\n'
+                    + "exec " + shlex.quote(shutil.which("tmux")) + ' "$@"\n')
+                wrapper.chmod(0o755)
+                code = """
+import sys,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+import task
+unread=sys.argv[2]=='True'
+original=task.Task.tmux
+def expire(self,*args,**kwargs):
+    answer=original(self,*args,**kwargs)
+    if args[0]=='new-window':
+        self.deadline=time.monotonic()-1
+        if unread: Path(self.home,'refuse-close').touch()
+    return answer
+task.Task.tmux=expire
+sys.argv=[sys.argv[0],*sys.argv[3:]]
+sys.exit(task.main())
+"""
+                args = ["launch", "--home", str(self.home), "--harness", "codex", "--model", "gpt-5",
+                        "--name", "expired-" + str(unread), "--task-file", str(self.task_file),
+                        "--result-file", str(self.home / "output.md"), "--account", str(self.account), "--browser"]
+                result = subprocess.run([sys.executable, "-B", "-c", code,
+                    str(self.skills / "jarvis/scripts/lib"), str(unread), *args],
+                    env=dict(self.env, JARVIS_BASH=self.env["JARVIS_TEST_BASH"]),
+                    capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                record = next(row for row in self.saved_tasks() if row["name"] == "expired-" + str(unread))
+                self.assertEqual(record["state"], "failed")
+                self.assertIn("id=" + record["id"], result.stderr)
+                self.assertEqual(record["failure"]["reason"], "TimeoutExpired")
+                self.assertEqual(record["completion"]["outcome"], "failed")
+                self.assertIsNotNone(record["terminal"])
+                self.assertEqual(record["cleanup"]["state"], "pending" if unread else "done")
+                self.assertEqual(Path(record["scratch"]).exists(), unread)
+                self.home.joinpath("refuse-close").unlink(missing_ok=True)
+                wrapper.unlink()
+                cleaned = self.call("cleanup", "--id", record["id"])
+                self.assertEqual(cleaned["cleanup"]["state"], "done")
+                self.assertFalse(Path(record["scratch"]).exists())
+                self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
+                                 [self.terminal["window"]])
+
+    def test_controller_exit_recovers_task_windows(self):
+        self.tmux("new-session", "-d", "-s", "unrelated", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
+        task = self.launch("codex", model="gpt-5")
+        self.acknowledgement(task)
+        self.tmux("kill-window", "-t", self.terminal["window"])
+        # The replacement is a real managed controller, using the existing
+        # native fixture and SessionStart carrier rather than a mocked worker.
+        with native_launcher() as launcher:
+            shutil.copyfile(launcher, self.bin / "claude")
+            self.bin.joinpath("claude").chmod(0o755)
+            shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", self.home / ".fixture-harness.py")
+            (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.root / "rows.jsonl"),
+                "gate": str(self.root / "gate"), "bash": self.env["JARVIS_TEST_BASH"], "skills": str(self.skills)}))
+            session = self.skills / "jarvis/scripts/jarvis-session"
+            for recovery in ("start", "stop"):
+                with self.subTest(recovery=recovery):
+                    args = [str(session), recovery, "--home", str(self.home)]
+                    if recovery == "start":
+                        args += ["--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual"]
+                    result = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    deadline = time.monotonic() + 20
+                    while time.monotonic() < deadline:
+                        saved = json.loads(self.record_path.read_text())
+                        if saved["state"] == ("running" if recovery == "start" else "stopped"):
+                            break
+                        self.assertNotIn(saved["state"], ("blocked", "failed"), saved)
+                        time.sleep(0.05)
+                    else:
+                        self.fail(self.record_path.read_text())
+                    self.tmux("has-session", "-t", "=unrelated")
+                    ended = self.call("status", "--id", task["id"])
+                    self.assertIsNotNone(ended["completion"])
+                    self.assertEqual(ended["completion"]["outcome"], "failed")
+                    self.assertTrue(Path(ended["scratch"]).is_dir())
+                    if recovery == "start":
+                        self.terminal = saved["terminal"]
+                        # Leave another task window after this controller ends
+                        # so the explicit stop path reaches the same condition.
+                        task = self.launch("codex", "again", model="gpt-5")
+                        self.tmux("kill-window", "-t", self.terminal["window"])
+            self.call("cleanup", "--id", task["id"])
+
+    def test_model_classes_use_production_picker(self):
+        if not REAL_KENDEX:
+            self.skipTest("kendex executable unavailable")
+        self.bin.joinpath("kendex").unlink()
+        self.bin.joinpath("kendex").symlink_to(REAL_KENDEX)
+        isolated = self.root / "empty-home"
+        isolated.mkdir()
+        self.env.update(HOME=str(isolated), XDG_CONFIG_HOME=str(isolated / ".config"))
+        for harness in ("codex", "copilot"):
+            with self.subTest(harness=harness):
+                record = self.launch(harness)
+                self.assertEqual(record["model"], "native-default")
+                self.acknowledgement(record)
+        # A resolved alias must spend the bucket of that native model. The
+        # project's fast override deliberately points at the other bucket.
+        self.home.joinpath("kendex.toml").write_text('schema = 7\n[model-classes]\n'
+            'standard = "anthropic/claude-haiku-5-5"\nfast = "anthropic/claude-opus-5-5"\n')
+        self.account.joinpath(".credentials.json").write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "fixture-token", "expiresAt": (time.time() + 3600) * 1000,
+            "subscriptionType": "max"}}))
+        body = {"five_hour": {"utilization": 0}, "seven_day": {"utilization": 0},
+                "limits": [{"kind": "weekly_scoped", "percent": percent,
+                            "scope": {"model": {"display_name": name}}}
+                           for name, percent in (("Haiku", 5), ("Opus", 99))]}
+        fetch = self.bin / "fetch"
+        fetch.write_text("#!" + sys.executable + "\nprint('200')\nprint(" + repr(json.dumps(body)) + ")\n")
+        fetch.chmod(0o755)
+        self.home.joinpath("kendex.settings.toml").write_text("[env]\n" + "".join(
+            key + " = " + json.dumps(value) + "\n" for key, value in {
+                "ORCH_LANE_HOST": "local", "LANES_HOME": str(isolated),
+                "ORCH_LANE_DIRS": str(self.account), "ORCH_LANES_FETCH_CMD": str(fetch),
+                "OVERSEE_WATCH_STATE_DIR": str(self.root / "claude-meter")}.items()))
+        record = self.launch("claude")
+        self.assertEqual(record["model"], "haiku")
+        observed = self.acknowledgement(record)
+        self.assertEqual(observed["argv"][observed["argv"].index("--model") + 1], "haiku")
+
     def test_browser_profile_control(self):
         path = self.skills / "jarvis/scripts/lib/task.py"
         source = path.read_text()
@@ -188,6 +359,44 @@ class TaskContract(unittest.TestCase):
                                 capture_output=True, text=True, timeout=60)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAIL: test_launch_contract", result.stderr)
+
+    def test_regression_controls(self):
+        rows = (
+            ("startup", "task.py", (
+                ('if not shutil.which(prepared["harness"], path=self.env["PATH"]):',
+                 'if False and not shutil.which(prepared["harness"], path=self.env["PATH"]):'),
+                ('if startup["state"] != "started":', 'if False and startup["state"] != "started":')),
+             "test_native_start_failure_is_recoverable"),
+            ("rollback", "task.py", (("self.deadline = time.monotonic() + 3",
+                "self.deadline = time.monotonic() + 3 if False else self.deadline"),),
+             "test_expired_launch_retains_rollback_ownership"),
+            ("picker", "session-backend.sh", (('pick_args+=(--native-model "$model")',
+                'pick_args+=(--model "$model")'),), "test_model_classes_use_production_picker"),
+            ("controller", "session.py", (("if not record or not record.get(\"terminal\"):\n            return\n        paths =",
+                "if True or not record or not record.get(\"terminal\"):\n            return\n        paths ="),),
+             "test_controller_exit_recovers_task_windows"),
+        )
+        for name, filename, edits, case in rows:
+            with self.subTest(control=name):
+                with tempfile.TemporaryDirectory() as allocation:
+                    root = Path(allocation).resolve()
+                    for package in ("jarvis", "orch", "mailbox"):
+                        shutil.copytree(SKILLS / package / "scripts", root / package / "scripts")
+                    path = root / "jarvis/scripts/lib" / filename
+                    self.assertFalse(path.is_symlink())
+                    source = path.read_text()
+                    for old, replacement in edits:
+                        self.assertEqual(source.count(old), 1)
+                        changed = source.replace(old, replacement)
+                        self.assertNotEqual(changed, source)
+                        source = changed
+                    path.write_text(source)
+                    result = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()),
+                        "TaskContract." + case], env=dict(self.env, JARVIS_TEST_SKILLS=str(root)),
+                        capture_output=True, text=True, timeout=120)
+                    self.assertNotEqual(result.returncode, 0, name)
+                    self.assertIn("FAIL: " + case, result.stderr)
+                    self.assertNotIn("ERROR: ", result.stderr)
 
     def test_cleanup_keeps_unread_terminal_open(self):
         record = self.launch("codex")

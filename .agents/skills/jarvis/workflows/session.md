@@ -18,6 +18,7 @@ Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 
 - Put the private brief in the task file. Add one `--input PATH` for each other input. The task reads that brief directly and writes its Output to the result file. This route starts no repository overseer workflow.
 - Add `--browser` for browser work. Each launch creates its own absolute scratch directory and browser profile beneath it. The child receives `JARVIS_TASK_SCRATCH` and `JARVIS_BROWSER_PROFILE`. Use that profile with the [browser guide](../references/browser.md#profile-and-tabs). Keep the result outside scratch so cleanup retains it.
 - Retain the returned task id. Read its record with `task status --home HOME --id ID`; it names the task, inputs, selected model and account, result path and terminal window. Record the outcome with `task complete --home HOME --id ID --outcome succeeded|failed`. A succeeded task requires its result file. After checking the result and closing task-owned browser work, run `task cleanup --home HOME --id ID`. Cleanup closes that task's window and removes its scratch. Completion and cleanup remain on the same task record.
+- A refused launch prints its task id and retains the failure cause. Read that record with `task status`; if cleanup is pending, close task-owned browser work and retry `task cleanup`. Starting or stopping Jarvis after its controller has ended closes its recorded task windows and marks unfinished tasks failed. Their scratch remains for inspection and explicit cleanup.
 
 ## Start
 

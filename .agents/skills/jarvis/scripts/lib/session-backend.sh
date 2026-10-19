@@ -76,7 +76,8 @@ case "$verb" in
     DEP_ERR=/dev/stderr
     ol_entry_model "$1:$2:$3" || { printf 'jarvis-task: selection=model-unread\n%s\n' "$OL_CLASS_ERR" >&2; exit 1; }
     harness="$OL_ENTRY_HARNESS" model="$OL_ENTRY_MODEL" effort="$OL_ENTRY_EFFORT"
-    pick_args=(pick --harness "$harness" --model "$model" --json)
+    pick_args=(pick --harness "$harness" --json)
+    [[ -z "$model" ]] || pick_args+=(--native-model "$model")
     [[ -z "$4" ]] || pick_args+=(--lane "$4")
     picked="$("$SCRIPT_DIR/lanes" "${pick_args[@]}")" || exit "$?"
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1

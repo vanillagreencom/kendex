@@ -234,7 +234,7 @@ class Session:
         log = self.path.parent / "session.log"
         with log.open("a") as stream:
             child = subprocess.Popen([sys.executable, "-B", "-c",
-                                      "import runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
+                                      "import runpy, sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                      env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
@@ -348,6 +348,8 @@ class Session:
                 if record["state"] == "running":
                     return self.answer(record, state="running", reason="existing"), 0
                 return self.answer(record), 0
+            if record and not self.terminal(record):
+                self.end_tasks(record)
             predecessor = record if self.terminal(record) else (record.get("predecessor") if record else None)
             if predecessor and not self.terminal(predecessor):
                 predecessor = None
@@ -513,10 +515,25 @@ class Session:
                 return answer, 0
             record.update(state="off" if record["app_off"] else "stopped",
                           reason="app-off" if record["app_off"] else "stopped", detail="")
+            self.end_tasks(record)
             self.write(record)
             return self.answer(record), 0
 
+    def end_tasks(self, record):
+        if not record or not record.get("terminal"):
+            return
+        paths = list((self.path.parent / "tasks").glob("*.json"))
+        if not paths:
+            return
+        from task import Task
+        for path in paths:
+            task = Task(self.home, path.stem)
+            task.deadline = self.deadline
+            task.end_controller(record)
+
     def end_owned(self, record, *, window=False):
+        if not window:
+            self.end_tasks(record)
         if self.terminal(record):
             pane = record["terminal"]["pane"]
             # tmux evaluates ownership and closes the pane's session in one
@@ -581,7 +598,7 @@ class Session:
                         raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
-                runner = [sys.executable, "-B", "-c", "import runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                runner = [sys.executable, "-B", "-c", "import runpy,sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
                 created = self.tmux(*creation, "-c", self.home,
                                     "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *runner)
                 socket, server, started, window, pane = created.stdout.strip().split("\t")

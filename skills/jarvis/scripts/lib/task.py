@@ -11,7 +11,22 @@ import tempfile
 import time
 import uuid
 
-from session import BASH, Refusal, Session
+from session import BASH, CALL_SECONDS, Refusal, Session
+
+
+def native(line, receipt):
+    """Observe early termination of the shared command before acknowledging it."""
+    child = subprocess.Popen([BASH, "--noprofile", "--norc", "-c", line])
+    try:
+        code = child.wait(timeout=0.5)
+        answer = {"state": "exited", "exit": code}
+    except subprocess.TimeoutExpired:
+        answer = {"state": "started"}
+    path = Path(receipt)
+    with path.with_suffix(".writing").open("x") as stream:
+        json.dump(answer, stream)
+    os.replace(path.with_suffix(".writing"), path)
+    return child.wait()
 
 
 class Task(Session):
@@ -52,7 +67,7 @@ class Task(Session):
                       "server_pid": controller["server_pid"],
                       "server_started_at": controller["server_started_at"],
                       "terminal": None, "completion": None, "cleanup": None}
-            acquired, recorded = None, False
+            acquired, recorded, startup = None, False, None
             try:
                 self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 with self.path.open("x") as stream:
@@ -74,38 +89,73 @@ class Task(Session):
                                                        args.account or "", self.home, brief).stdout)
                     record.update(harness=prepared["harness"], model=prepared["model"],
                                   account=prepared["account"], effort=prepared["effort"])
+                    if not shutil.which(prepared["harness"], path=self.env["PATH"]):
+                        raise Refusal("app-missing", prepared["harness"])
                     created = self.tmux("new-window", "-d", "-t", "=jarvis", "-n", args.name,
                                         "-c", self.home, "-P", "-F", "#{window_id}\t#{pane_id}",
                                         BASH, "--noprofile", "--norc", socket=terminal["server"])
                     window, pane = created.stdout.strip().split("\t")
                     acquired = {"server": terminal["server"], "session": terminal["session"],
-                                "window": window, "pane": pane}
+                                "window": window, "pane": pane, "marked": False}
                     record["terminal"] = acquired
+                    self.write(record)
                     self.tmux("set-option", "-p", "-t", pane, "@jarvis-task", record["id"],
                               socket=terminal["server"])
+                    acquired["marked"] = True
                     self.write(record)
+                    self.tmux("set-option", "-w", "-t", window, "remain-on-exit", "on",
+                              socket=terminal["server"])
                     child_env = ["env", "JARVIS_TASK_ID=" + record["id"],
+                                 "JARVIS_BASH=" + BASH,
                                  "JARVIS_TASK_SCRATCH=" + str(scratch),
                                  "JARVIS_BROWSER_PROFILE=" + (str(profile) if profile else "")]
+                    receipt = scratch / "startup.json"
                     self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
-                              *child_env, BASH, "--noprofile", "--norc", "-c", prepared["line"],
+                              *child_env, sys.executable, "-B", "-c",
+                              "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.exit(runpy.run_path(sys.argv[1]+'/task.py',run_name='task_native')['native'](sys.argv[2],sys.argv[3]))",
+                              str(Path(__file__).resolve().parent), prepared["line"], str(receipt),
                               socket=terminal["server"])
+                    while not receipt.exists():
+                        if time.monotonic() >= self.deadline:
+                            raise subprocess.TimeoutExpired("task-startup", CALL_SECONDS)
+                        time.sleep(0.02)
+                    startup = json.loads(receipt.read_text())
+                    if startup["state"] != "started":
+                        screen = self.tmux("capture-pane", "-p", "-t", pane, socket=terminal["server"]).stdout
+                        raise Refusal("native-exited", "exit=" + str(startup["exit"]) + "\n" + screen.strip())
                     record.update(state="running", launched_at=time.time())
                     self.write(record)
                     return record
-            except BaseException:
-                # The acquisition is ours even when its first record write fails.
-                if acquired:
-                    self.close_window(record, allow_unmarked=True)
-                shutil.rmtree(scratch)
+            except BaseException as failure:
                 record.update(state="failed", completion={"at": time.time(), "outcome": "failed"},
-                              cleanup={"at": time.time(), "state": "done"})
+                              failure={"reason": failure.reason if isinstance(failure, Refusal) else type(failure).__name__,
+                                       "detail": failure.detail if isinstance(failure, Refusal) else str(failure)},
+                              cleanup={"state": "pending"})
+                if startup and startup["state"] == "exited":
+                    record["failure"]["exit"] = startup["exit"]
+                # Rollback gets the call's remaining headroom, independent of
+                # the exhausted launch budget. Unknown ownership keeps scratch.
+                self.deadline = time.monotonic() + 3
+                try:
+                    if recorded:
+                        self.write(record)
+                    if acquired:
+                        self.close_window(record, allow_unmarked=True)
+                    shutil.rmtree(scratch)
+                    record["cleanup"] = {"at": time.time(), "state": "done"}
+                except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
+                    record["cleanup"]["reason"] = type(teardown).__name__
                 if recorded:
-                    self.write(record)
+                    try:
+                        self.write(record)
+                    except OSError as write_error:
+                        print("jarvis-task: record=write-failed id=" + self.path.stem
+                              + " cause=" + type(write_error).__name__, file=sys.stderr)
                 raise
 
     def close_window(self, record, *, allow_unmarked=False):
         terminal = record["terminal"]
+        allow_unmarked = allow_unmarked or not terminal.get("marked", True)
         self.backend("task-close", terminal["server"], record["server_pid"], record["server_started_at"],
                      terminal["pane"], terminal["window"], self.path.stem, str(allow_unmarked).lower())
 
@@ -119,12 +169,26 @@ class Task(Session):
                 self.write(record)
             return record
 
+    def end_controller(self, controller):
+        with self.locked():
+            record = self.read()
+            if any(record[key] != controller.get(key) for key in ("server_pid", "server_started_at")):
+                return
+            terminal = record["terminal"]
+            if not terminal or terminal["server"] != controller["terminal"]["server"]:
+                return
+            if record["completion"] is None:
+                record.update(state="failed", completion={"at": time.time(), "outcome": "failed"},
+                              failure={"reason": "controller-ended", "detail": ""})
+                self.write(record)
+            self.close_window(record)
+
     def cleanup(self):
         with self.locked():
             record = self.read()
             if record["completion"] is None:
                 raise Refusal("task-not-completed")
-            if record["cleanup"] is None:
+            if not record["cleanup"] or record["cleanup"]["state"] != "done":
                 if record["terminal"]:
                     self.close_window(record)
                 scratch = Path(record["scratch"])
@@ -155,6 +219,7 @@ def main():
         if verb != launch:
             verb.add_argument("--id", required=True)
     args = parser.parse_args()
+    task = None
     try:
         task = Task(args.home, str(uuid.uuid4()) if args.verb == "launch" else args.id)
         if args.verb == "launch":
@@ -168,7 +233,10 @@ def main():
         print(json.dumps(record, separators=(",", ":")))
         return 0
     except (Refusal, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
-        print("jarvis-task: refused=" + (error.reason if isinstance(error, Refusal) else type(error).__name__), file=sys.stderr)
+        print("jarvis-task: refused=" + (error.reason if isinstance(error, Refusal) else type(error).__name__)
+              + (" id=" + task.path.stem if task else ""), file=sys.stderr)
+        if isinstance(error, Refusal) and error.detail:
+            print(error.detail, file=sys.stderr)
         return 1
 
 
