@@ -810,6 +810,15 @@ api_case 'list gives a grant above the floor room and its share left' "$API_LIST
   "0:[[\"$H/.eclaude\",\"api-credit\",\"credits\",\"room\",null,75]]"
 api_case 'list --harness pi lists the grants alone' "$API_LIST_ENV" 'list --harness pi --json' \
   '[.[] | [.harness, .config_dir]]' "0:[[\"pi\",\"$H/.eclaude\"]]"
+# The grant rows ride the listing's one provider read, so a cold listing asks
+# the accounts verb once, whether it answers or fails.
+for status in 0 7; do
+  API_ONCE_LOG="$TMP_ROOT/api-list-once-$status.log"
+  : > "$API_ONCE_LOG"
+  run_lanes "$API_LIST_ENV;LANE_HOST_STUB_LOG=$API_ONCE_LOG;LANE_HOST_STUB_ACCOUNTS_STATUS=$status" list --no-cache --json
+  assert_eq "rc=$RC accounts=$(grep -c '^accounts ' "$API_ONCE_LOG" || true)" 'rc=0 accounts=1' \
+    "a cold listing asks the provider once, its accounts verb exiting $status" "$ERR"
+done
 
 # On a pool=cloud-credit host a Claude account spends its cloud credit, so a
 # credit at 9 of 200 dollars walls it on the credits bucket while its plan
@@ -819,6 +828,12 @@ make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus | jq '. + {iguana_necktie: {limit_dollars: 200, used_dollars: 191,
   remaining_dollars: 9, resets_at: "2099-06-01T00:00:00Z", locked_reason: null}}' > "$FIXTURE_DIR/.claude.json"
 table "on a cloud-credit host the credit decides a Claude account's listing, whatever its plan windows read|ORCH_LANE_HOST=claude-cloud|$LIST|claude.pool=cloud-credit claude.verdict=walled claude.binding_bucket=credits claude.headroom_pct=4"
+# --local and --cache-only ask no provider anything, its capabilities
+# included, so a configured provider that cannot answer leaves the local
+# listing standing.
+table \
+  "list --local reads no capabilities of a provider that cannot answer|ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_NO_CAPABILITIES=1|list --local --json|rc=0 length=1 claude.measured_through=local" \
+  "list --cache-only reads no capabilities of a provider that cannot answer|ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_NO_CAPABILITIES=1|list --cache-only --json|rc=0 length=1 claude.measured_through=local"
 
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the

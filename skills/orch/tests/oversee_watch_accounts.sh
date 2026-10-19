@@ -8,9 +8,10 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # The grant cases run the real `lanes`, which no caller's account settings
-# may reach.
+# or account home may reach: a Codex or Copilot launch exports its home, and
+# lane_dirs lists that account whatever LANES_HOME names.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_MAX_PCT \
-  ORCH_LANE_CLOUD_CREDIT_FLOOR ORCH_LANES_USAGE_TTL CODEX_HOME
+  ORCH_LANE_CLOUD_CREDIT_FLOOR ORCH_LANES_USAGE_TTL ORCH_LANE_COPILOT_POOL CODEX_HOME COPILOT_HOME
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"

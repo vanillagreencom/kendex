@@ -5543,14 +5543,22 @@ verifying_read() { # SAFE_ITEMS
 # reading the provider's copy runs under, names each walled account's deciding
 # window and its reset, `until=-` where none states one. Exit 3 with none
 # walled is every account unmeasured, and any other exit a judgement that
-# failed, named on stderr: both are `unjudged`.
+# failed, named on stderr: both are `unjudged`. A listing holding no account
+# the pick would judge queues the item unasked: the accounts are those of the
+# harness the model is billed on (lib/lane-launch.sh lane_pick_harness), and
+# the listing's api-credit records, its Pi API grants, stand only for a pick
+# whose pool (lane_pick_pool) is api-credit, never for a Copilot pool.
 owed_wall() { # HOST HARNESS MODEL
-  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until
+  local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until billed pool
   local args=(pick --harness "$harness" --json)
   OWED_VERDICT="verdict=unjudged harness=$harness"
   owed_accounts "$host"
   [[ "$OWED_LISTING" != - ]] || return 0
-  if ! jq -e --arg h "$harness" 'any(.[]; .harness == $h)' <<<"$OWED_LISTING" >/dev/null 2>"$errf"; then
+  billed="$(lane_pick_harness "$harness" "$model")"
+  pool="$(lane_pick_pool "$harness" "$model")"
+  if ! jq -e --arg h "$billed" --arg pool "$pool" \
+    'any(.[]; .harness == $h and ((.pool == "api-credit") == ($pool == "api-credit")))' \
+    <<<"$OWED_LISTING" >/dev/null 2>"$errf"; then
     [[ ! -s "$errf" ]] || die owed-roster-invalid "$(cat "$errf")" "host=$host"
     OWED_VERDICT="verdict=queue"
     return 0

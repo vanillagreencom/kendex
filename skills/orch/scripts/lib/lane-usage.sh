@@ -199,21 +199,15 @@ parse_usage_samples() { # HARNESS CURRENT_JSON PRIOR_JSON
 # session reaches only a repository its account was given.
 TIER_POOL="" TIER_RETIRE='{}' TIER_CLOUD_REPO=null TIER_REPO=""
 lane_tier_inputs() { # LANES HARNESS MODEL
-	local pool launch dir date
+	local pool launch dir
 	TIER_RETIRE='{}' TIER_CLOUD_REPO=null TIER_REPO=""
-	lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || die host-capabilities-unread "${ORCH_LANE_HOST:-local}"
-	lane_capability pool pool
-	pool="$(lane_pick_pool "$2" "$3" "$pool")" || return 1
+	lane_host_pool
+	pool="$(lane_pick_pool "$2" "$3" "$LANE_HOST_POOL")" || return 1
 	TIER_POOL="$pool"
 	lane_capability launch launch
 	case "$pool" in
 		plan | copilot | api-credit) ;;
-		cloud-credit)
-			while IFS= read -r dir; do
-				lane_retire_date "$dir" silent; date="$LANE_RETIRE_DATE"
-				[[ -z "$date" ]] || TIER_RETIRE="$(jq -c --arg d "$dir" --arg v "$date" '. + {($d): $v}' <<<"$TIER_RETIRE")" || return 1
-			done < <(jq -r '.[].config_dir' <<<"$1")
-			;;
+		cloud-credit) lane_tier_retire "$1" || return 1 ;;
 		*) die host-capabilities-unread "${ORCH_LANE_HOST:-local}" ;;
 	esac
 	[[ "$pool" != api-credit ]] || return 0
@@ -233,6 +227,26 @@ lane_tier_inputs() { # LANES HARNESS MODEL
 			;;
 		*) die host-capabilities-unread "${ORCH_LANE_HOST:-local}" ;;
 	esac
+}
+
+# The pool the configured host's kind declares, as LANE_HOST_POOL, with its
+# whole declaration left in LANE_CAPABILITIES. A declaration that cannot be read
+# refuses: no pool is guessed for a host.
+LANE_HOST_POOL=""
+lane_host_pool() {
+	lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || die host-capabilities-unread "${ORCH_LANE_HOST:-local}"
+	lane_capability LANE_HOST_POOL pool
+}
+
+# Each account in LANES, `lanes`' JSON array of records, that an ORCH_LANE_RETIRE
+# date names, as TIER_RETIRE: a cloud credit ends at its account's retirement.
+lane_tier_retire() { # LANES
+	local dir date
+	TIER_RETIRE='{}'
+	while IFS= read -r dir; do
+		lane_retire_date "$dir" silent; date="$LANE_RETIRE_DATE"
+		[[ -z "$date" ]] || TIER_RETIRE="$(jq -c --arg d "$dir" --arg v "$date" '. + {($d): $v}' <<<"$TIER_RETIRE")" || return 1
+	done < <(jq -r '.[].config_dir' <<<"$1")
 }
 
 # Whether an ORCH_LANE_CLOUD_REPOS entry names REPO, an owner/name, for the

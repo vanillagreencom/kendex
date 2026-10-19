@@ -243,6 +243,24 @@ assert_eq "rc=$RC $(notices) $(owed KEN-12)" \
   "rc=0 local=1 provider-x=1 owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue" \
   "each owed listing's notices reach stderr" "$ERR"
 
+# Rows: case | a Pi lane's model | the picks asked. The listing holds one Pi
+# API grant and no Claude account: only an anthropic/ model spends the grant,
+# so a pi-claude/ or github-copilot/ lane is queued unasked.
+while IFS='|' read -r name model want; do
+  world "owed_grant_$name"
+  fleet '[]' "$(record KEN-14 stopped pi "{\"model\":\"$model\"}")"
+  issue KEN-14 'In Progress' 1 | jq -sc . > "$STUB_DIR/tracker.out"
+  account eclaude pi room 2026-10-01T00:00:00Z | jq -sc 'map(. + {pool: "api-credit", binding_bucket: "credits"})' > "$STUB_DIR/lanes.json"
+  watch_pass -- --state "$STUB_DIR/state.json"
+  assert_eq "rc=$RC $(owed KEN-14) picks=$(grep -c ' pick ' "$STUB_DIR/lanes.hosts" || true)" \
+    "rc=0 owed KEN-14 state=in-progress priority=1 lane=stopped verdict=queue picks=$want" \
+    "a pi $model lane beside a listed grant" "$ERR"
+done <<'ROWS'
+claude|pi-claude/claude-opus-5|0
+copilot|github-copilot/gpt-5|0
+api|anthropic/claude-opus-5|1
+ROWS
+
 # Rows: case | the pick reply on KEN-12's host | KEN-12's owed line. A walled
 # hosted lane dates to the reset its own host's pick names, never the local
 # host's, and to none where that pick names none.
@@ -1649,7 +1667,7 @@ done <<'ROWS'
 world@without the in-flight exclusion an item with a running lane is owed@($rec | in_flight | not)@true@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
 world@without the merged verdict a cycle record is judged for a wall@if [[ "$delivery" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
 world@the PR-only cycle filter aborts on a direct record@elif has("commit") and (has("pr") | not)@elif false and (has("pr") | not)@state-invalid@rc=2 heartbeat=0 key=1
-world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@pi-pick@requests=1
+world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h and ((.pool == "api-credit") == ($pool == "api-credit")))@true@pi-pick@requests=1
 world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--native-model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
 world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
 world@without the pick's own reset the wall goes undated@.walled_resets_at | if . == null then "-"@null | if . == null then "-"@KEN-3@owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=-
