@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, and literal cat bodies retain their data contract. The unknown-head evidence fallback classifies unquoted literal env arguments and literal shell executable arguments, quoted or not, with the shared producer option grammar and checks their selected targets; eval, source and . arguments, and set in an unknown-head argument or assignment, remain data. A trap action is shell code. Every unknown-head stage of a list (stages joined by ;, a newline, &&, || or a pipe, or a command ended by &, the first stage included) takes the same fallback plus every other known read word, env --help and env --version included; only a proved env launcher prefix is exempt. A list stage whose stdout feeds a pipe or a redirect, and shell code run by such a stage, keep the conservative set evidence. Known producers, registered bodies, compound syntax, exec and builtin retain their conservative evidence contracts. Unquoted body expansions are checked independently. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, and literal cat bodies retain their data contract. The unknown-head evidence fallback classifies unquoted literal env arguments and literal shell executable arguments, quoted or not, with the shared producer option grammar and checks their selected targets; an env that a lone ; or + ends, as in find -exec, launches nothing and refuses; a shell word's script path and operands stay data unless an env launcher selected the shell; eval, source and . arguments, and set in an unknown-head argument or assignment, remain data. A trap action is shell code parsed like an eval join. Every unknown-head stage of a list (stages joined by ;, a newline, &&, || or a pipe, or a command ended by &, the first stage included) takes the same fallback plus every other known read word, env --help and env --version included; only a proved env launcher prefix is exempt. A list stage whose stdout feeds a pipe or a redirect, and shell code run by such a stage, keep the conservative set evidence. Known producers, registered bodies, compound syntax, exec and builtin retain their conservative evidence contracts. Unquoted body expansions are checked independently. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -95,7 +95,10 @@ environment_producer() { # command kind, optional unsupported context and comman
               *) break ;;
             esac
           done
-          if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then
+          # A lone ; or + ends find's -exec, -execdir, -ok and -okdir argv, so
+          # an env before it launches no program and prints the environment.
+          if [ "$program" = env ] &&
+             { [ "$pos" -ge "${#args[@]}" ] || [ "${args[$pos]}" = ';' ] || [ "${args[$pos]}" = + ]; }; then
             mode=dump-lines; [ -z "$null_output" ] || mode=dump-nul
           fi
           if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then mode=dump-unknown; fi
@@ -327,7 +330,9 @@ environment_main_evidence() { # context, then decoded words or conservative text
         esac
         if [ "$program" = opaque ] && environment_main_evidence conservative "${args[@]:pos}"; then return 0; fi
         if [ "$receiver" != unknown ]; then
-          if [ "$receiver" = shell ] && [ -z "$source_pos" ] &&
+          # An env launcher proves its shell runs. A bare shell word can be a
+          # search pattern, so only the code it would run is judged.
+          if [ "$receiver" = shell ] && [ -z "$source_pos" ] && [ "${program_pos:-0}" -gt 0 ] &&
              environment_main_evidence conservative "${args[@]:pos}"; then return 0; fi
           break
         fi
@@ -690,7 +695,7 @@ environment_main_command() { # command kind; arguments are already decoded data
           done
         fi
         if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
-      opaque | bash | sh | dash | zsh | ksh | eval | source | . | trap)
+      opaque | bash | sh | dash | zsh | ksh | eval | source | .)
         evidence=()
         if [ -n "$opaque_from" ]; then
           mode=opaque-clean; compound=1
@@ -732,7 +737,7 @@ environment_receiver() {
   receiver=unknown; receiver_pattern=""; receiver_option=""; receiver_named=""
   case "$program" in
     cat) receiver=data ;;
-    bash | sh | dash | zsh | ksh | eval | source | . | trap) receiver=shell ;;
+    bash | sh | dash | zsh | ksh | eval | source | .) receiver=shell ;;
     python | python3)
       receiver=interpreter; receiver_option='^-c$'
       receiver_pattern='(^|[^A-Za-z0-9_])os[[:space:]]*\.[[:space:]]*environ'
@@ -834,6 +839,14 @@ environment_program_text() {
       done
       source_pos=$pos ;;
     source | .) stdin_program=1 ;;
+    trap)
+      # The first of two or more operands is shell code run at the signal;
+      # -l, -p and -P print and run none.
+      case "${args[$pos]:-}" in --) cursor=$((pos + 1)) ;; -?*) cursor=${#args[@]} ;; esac
+      if [ "$((${#args[@]} - cursor))" -ge 2 ]; then
+        source=${args[$cursor]}; source_pos=$cursor
+        [ "${arg_kinds[$cursor]}" = literal ] || unproved=1
+      fi ;;
     opaque)
       unproved=1
       # Exec can retain literal input for later list commands. Remove the

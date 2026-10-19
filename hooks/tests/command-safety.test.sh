@@ -303,6 +303,7 @@ environment_rows() {
 [0,"git -C . log --grep set","unknown-head-dot-path-set"]
 [0,"find . -name set","unknown-head-find-dot-set"]
 [0,"tool source set","unknown-head-source-word-data"]
+[0,"tool eval set","unknown-head-eval-word-data"]
 [0,"cd DIR && find . -name set","list-find-dot-set-after-and"]
 [0,"true; find . -name set","list-find-dot-set-after-semicolon"]
 [2,"timeout 5 \"bash\" -c set","unknown-head-quoted-shell-receiver-set"]
@@ -326,6 +327,18 @@ environment_rows() {
 [2,"cd DIR && env -u GH_REPO sh -c set","list-unset-launcher-shell-set"]
 [2,"true; timeout 5 \"env\"","list-quoted-env-argument"]
 [2,"true; tool env --help","list-env-help-argument"]
+[2,"find . -exec env \\;","find-exec-env"]
+[2,"cd DIR && find . -exec env \\;","list-find-exec-env"]
+[2,"true; find . -exec env -u A \\;","list-find-exec-unset-env"]
+[2,"true; tool env +","list-env-before-plus"]
+[0,"find . -exec env -u A tool {} \\;","find-exec-unset-launcher-program"]
+[2,"bash <<'EOF' | bash\ntrue; echo set\nEOF","nested-heredoc-set-piped-to-shell"]
+[2,"sh <<'EOF' > tmp/x.sh\ntrue; echo set\nEOF\nbash tmp/x.sh","nested-heredoc-set-written-then-run"]
+[0,"trap 'set -e' ERR","trap-action-option-data"]
+[0,"bash <<'EOF'\ntrap 'set +x' EXIT\nEOF","body-trap-action-option-data"]
+[2,"bash <<'EOF'\ntrap set EXIT\nEOF","body-trap-action-set"]
+[0,"rg -n \"bash\" crates/core/src/set.rs","unknown-head-quoted-shell-pattern"]
+[0,"rg -n bash src/set.rs","unknown-head-shell-pattern"]
 [2,"job-launcher env","unknown-launcher-bare-env"]
 [2,"job-launcher env -u NAME","unknown-launcher-unset-without-target"]
 [2,"job-launcher env -0","unknown-launcher-null-env"]
@@ -1558,7 +1571,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "shell-receiver-selection" { swap("[[ $program =~ ^(bash|sh|dash|zsh|ksh)$ ]]; }; }; then", "false; }; }; then") }
       defect == "builtin-receiver-selection" { swap("^(bash|sh|dash|zsh|ksh)$ ]]; }; }; then", "^(bash|sh|dash|zsh|ksh|eval|source|[.])$ ]]; }; }; then") }
       defect == "quoted-shell-selection" { swap("[[ ${evidence_kinds[$candidate]} =~ ^(dollar-)?literal$ ]] &&", "[ -n \"${evidence_unquoted[$candidate]}\" ] &&") }
-      defect == "trap-receiver" { swap("| . | trap) receiver=shell", "| .) receiver=shell") }
+      defect == "trap-action-source" { swap("source=${args[$cursor]}; source_pos=$cursor", ":") }
+      defect == "find-terminator" { swap("|| [ \"${args[$pos]}\" = '\'';'\'' ] || [ \"${args[$pos]}\" = + ]; }; then", "; }; then") }
+      defect == "shell-pattern-operands" { swap("[ \"${program_pos:-0}\" -gt 0 ] &&", ":  &&") }
+      defect == "nested-body-context" { swap("if command_context=$nested_context environment_dump shell conservative; then", "if environment_dump shell conservative; then") }
       defect == "list-prefix-roles" { swap("prefix | unset-launcher | syntax) continue ;; esac", "syntax) continue ;; esac") }
       defect == "forwarded-launcher-roles" { swap("do evidence_roles[candidate+j]=prefix; done", "do :; done") }
       defect == "nested-stdout-context" { swap("then nested_context=compound; fi", "then :; fi") }
@@ -1683,17 +1699,22 @@ list-stdout-rule|FAIL environment: list-set-written-then-run: exit=0 expected=2
 list-stdout-rule|FAIL environment: list-set-piped-to-shell: exit=0 expected=2
 shell-receiver-selection|FAIL environment: list-shell-receiver-set: exit=0 expected=2
 shell-receiver-selection|FAIL environment: unknown-head-shell-receiver-set: exit=0 expected=2
-builtin-receiver-selection|FAIL environment: unknown-head-dot-path-set: exit=2 expected=0
-builtin-receiver-selection|FAIL environment: unknown-head-find-dot-set: exit=2 expected=0
-builtin-receiver-selection|FAIL environment: unknown-head-source-word-data: exit=2 expected=0
-builtin-receiver-selection|FAIL environment: list-find-dot-set-after-and: exit=2 expected=0
-builtin-receiver-selection|FAIL environment: list-find-dot-set-after-semicolon: exit=2 expected=0
+builtin-receiver-selection|FAIL environment: unknown-head-eval-word-data: exit=2 expected=0
 quoted-shell-selection|FAIL environment: unknown-head-quoted-shell-receiver-set: exit=0 expected=2
 quoted-shell-selection|FAIL environment: list-quoted-shell-receiver-set: exit=0 expected=2
 quoted-shell-selection|FAIL environment: list-fragment-shell-receiver-set: exit=0 expected=2
 quoted-shell-selection|FAIL environment: forwarded-quoted-shell-receiver-set: exit=0 expected=2
-trap-receiver|FAIL environment: trap-action-set: exit=0 expected=2
-trap-receiver|FAIL environment: list-trap-action-set: exit=0 expected=2
+trap-action-source|FAIL environment: trap-action-set: exit=0 expected=2
+trap-action-source|FAIL environment: list-trap-action-set: exit=0 expected=2
+trap-action-source|FAIL environment: body-trap-action-set: exit=0 expected=2
+find-terminator|FAIL environment: find-exec-env: exit=0 expected=2
+find-terminator|FAIL environment: list-find-exec-env: exit=0 expected=2
+find-terminator|FAIL environment: list-find-exec-unset-env: exit=0 expected=2
+find-terminator|FAIL environment: list-env-before-plus: exit=0 expected=2
+shell-pattern-operands|FAIL environment: unknown-head-quoted-shell-pattern: exit=2 expected=0
+shell-pattern-operands|FAIL environment: unknown-head-shell-pattern: exit=2 expected=0
+nested-body-context|FAIL environment: nested-heredoc-set-piped-to-shell: exit=0 expected=2
+nested-body-context|FAIL environment: nested-heredoc-set-written-then-run: exit=0 expected=2
 list-prefix-roles|FAIL environment: list-unset-launcher-program: exit=2 expected=0
 list-prefix-roles|FAIL environment: list-unset-launcher-after-semicolon: exit=2 expected=0
 list-prefix-roles|FAIL environment: list-unset-launcher-repeated: exit=2 expected=0
