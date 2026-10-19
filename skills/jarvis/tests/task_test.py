@@ -544,6 +544,10 @@ while True: signal.pause()
                 observed = self.acknowledgement(record, "raw" if suspended else "started")
                 self.assertFalse(observed["ignored"])
                 pane = record["terminal"]["pane"]
+                # With remain-on-exit, pane-died runs once tmux has both closed the pty and
+                # reaped the pane's process; wait-for latches a signal that precedes the wait.
+                channel = "pane-died-" + record["id"]
+                self.tmux("set-hook", "-p", "-t", pane, "pane-died", "wait-for -S " + channel)
                 if suspended:
                     self.tmux("send-keys", "-t", pane, "C-z")
                     self.acknowledgement(record, "cooked")
@@ -555,19 +559,16 @@ while True: signal.pause()
                     self.acknowledgement(record, "quit")
                     self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip(), "0")
                     self.tmux("send-keys", "-t", pane, "finish", "Enter")
-                # tmux marks the pane dead at pty EOF and sets its status only after reaping the child.
-                deadline = time.monotonic() + 10
-                status = ""
-                while time.monotonic() < deadline:
-                    dead = self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip()
-                    if dead == "1":
-                        if not suspended:
-                            break
-                        status = self.tmux("display-message", "-p", "-t", pane, "#{pane_dead_status}").stdout.strip()
-                        if status:
-                            break
-                    time.sleep(0.02)
-                self.assertEqual(dead, "1")
+                self.tmux("wait-for", channel)
+                # A signal death leaves the status empty and names the signal instead: its
+                # number where tmux was built without sys_signame (Linux), else a lowercase name.
+                status, signal_name = self.tmux("display-message", "-p", "-t", pane,
+                    "#{pane_dead_status}\t#{pane_dead_signal}").stdout.rstrip("\n").split("\t")
+                if signal_name.isdigit():
+                    signal_name = signal.Signals(int(signal_name)).name
+                elif signal_name:
+                    signal_name = "SIG" + signal_name.upper()
+                self.assertEqual(signal_name, "")
                 if suspended:
                     self.assertEqual(status, "23")
 
@@ -648,6 +649,8 @@ while True: signal.pause()
                     self.assertNotEqual(result.returncode, 0, name)
                     self.assertIn("FAIL: " + case, result.stderr)
                     self.assertNotIn("ERROR: ", result.stderr)
+                    if name == "interrupt":
+                        self.assertIn("'SIGINT' != ''", result.stderr)
 
     def test_cleanup_keeps_unread_terminal_open(self):
         record = self.launch("codex")
