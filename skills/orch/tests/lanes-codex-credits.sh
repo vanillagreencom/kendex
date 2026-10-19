@@ -304,10 +304,10 @@ table \
 
 "$SCRIPTS_DIR/workflow-state" --state-dir "$SEAT_FLEET" set oversee overseer "$(jq -nc --arg a "$H/.seatclaude" '{account:$a}')" >/dev/null
 table \
-  "a cloud session spends credit instead of the seat plan window|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET|$CPICK|rc=0 config_dir=$H/.seatclaude headroom_pct=40" \
-  "its named projected check keeps the cloud credit exemption|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET|pick --lane $H/.seatclaude --harness claude --projected --json|rc=0 headroom_pct=40" \
-  "explicit cloud credits stay exempt from a full plan reserve|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$CPICK|rc=0 config_dir=$H/.seatclaude headroom_pct=40" \
-  "the full reserve keeps the named cloud-credit projection exempt|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.seatclaude --harness claude --projected --json|rc=0 headroom_pct=40"
+  "a cloud session spends credit instead of the seat plan window|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET|$CPICK|rc=0 config_dir=$H/.seatclaude headroom_pct=96 binding_bucket=credits" \
+  "its named projected check keeps the cloud credit exemption|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET|pick --lane $H/.seatclaude --harness claude --projected --json|rc=0 headroom_pct=96 binding_bucket=credits" \
+  "explicit cloud credits stay exempt from a full plan reserve|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$CPICK|rc=0 config_dir=$H/.seatclaude headroom_pct=96 binding_bucket=credits" \
+  "the full reserve keeps the named cloud-credit projection exempt|$CLOUD;$(dirs seatclaude);$(repos seatclaude);ORCH_STATE_DIR=$SEAT_FLEET;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.seatclaude --harness claude --projected --json|rc=0 headroom_pct=96 binding_bucket=credits"
 
 echo "=== controls ==="
 # Without the tier the score alone orders the pair, and the credit-backed

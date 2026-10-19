@@ -5038,8 +5038,10 @@ check_lanes() {
 # differently. The overseer's own mark judgement is a separate read. Each row is `<row key> TAB <row
 # value> TAB <fields>`, the key and value laid out with the rows above and
 # <fields> the text both the event and the roster print. `verdict` is
-# `lanes`'s own wall judgement against ORCH_LANE_MAX_PCT, so the threshold and
-# its default are read in one place. A read that failed or overran its ceiling
+# `lanes`'s own wall judgement against ORCH_LANE_MAX_PCT, or a grant's against
+# ORCH_LANE_CLOUD_CREDIT_FLOOR, so each threshold and its default are read in
+# one place. A Pi API grant is its own `pi` record, keyed apart from its
+# account's plan row. A read that failed or overran its ceiling
 # leaves ACCOUNT_ROSTER_RC non-zero, which the heartbeat reports rather than
 # printing no accounts.
 ACCOUNT_ROSTER=""

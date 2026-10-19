@@ -437,7 +437,7 @@ GRANTS
 # The control drops the grant's own headroom, so the live grant row reads the plan.
 GRANT_CTRL="$(mutant_scripts mutant-grant-headroom lib/lane-model.sh)" || exit 1
 mutate_file "$GRANT_CTRL/lib/lane-model.sh" \
-  'if $pool == "api-credit" and $read and lane_measured and $c.limit_dollars > 0' 'if false'
+  'if ($pool == "cloud-credit" or ($pool == "api-credit" and lane_measured)) and $read and $c.limit_dollars > 0' 'if false'
 grant_rows 150 "$GRANT_LIVE"
 GRANT_SAVED_FAIL="$FAIL"; FAIL=0
 lanes_table "$(grant_ctx "$GRANT_CTRL/lanes")" "$GRANT_LIVE_ROW" > "$TMP_ROOT/grant-headroom-control.out"

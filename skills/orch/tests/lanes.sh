@@ -792,6 +792,34 @@ printf 'account=%s\tharness=pi\tcredit-limit=200.00\tcredit-spent=37.52\tcredit-
 api_case 'a plan retiring tomorrow ranks its grant on the grant expiry' "$API_ENV;ORCH_LANE_RETIRE=eclaude=$API_TOMORROW" "$API_PICK" \
   '.config_dir' "0:\"$H/.soonclaude\""
 
+echo "=== list judges a grant as pick does ==="
+# oversee-watch's one account read. A provider grant row is its own api-credit
+# record judged at the default floor, and the Copilot pool row beside it stays
+# out. On main the listing held no harness=pi record.
+API_LIST_ENV="${API_ENV%;ORCH_LANE_CLOUD_CREDIT_FLOOR=5}"
+API_LIST_GRANT='[.[] | select(.harness == "pi") | [.config_dir, .pool, .binding_bucket, .verdict, .binding_resets_at, .headroom_pct]]'
+api_list_rows() { # REMAINING
+  api_rows "$1" "$API_EXPIRES_SOON"
+  printf 'account=%s\tharness=pi\tmonthly-pct=1\n' "$H/.pi-copilot" >> "$API_ROWS"
+}
+api_list_rows 9
+api_case 'list walls a grant at the default floor as its own api-credit record' "$API_LIST_ENV" 'list --json' "$API_LIST_GRANT" \
+  "0:[[\"$H/.eclaude\",\"api-credit\",\"credits\",\"walled\",null,4]]"
+api_list_rows 150
+api_case 'list gives a grant above the floor room and its share left' "$API_LIST_ENV" 'list --json' "$API_LIST_GRANT" \
+  "0:[[\"$H/.eclaude\",\"api-credit\",\"credits\",\"room\",null,75]]"
+api_case 'list --harness pi lists the grants alone' "$API_LIST_ENV" 'list --harness pi --json' \
+  '[.[] | [.harness, .config_dir]]' "0:[[\"pi\",\"$H/.eclaude\"]]"
+
+# On a pool=cloud-credit host a Claude account spends its cloud credit, so a
+# credit at 9 of 200 dollars walls it on the credits bucket while its plan
+# windows have room. On main it carried its plan-window verdict.
+new_home cloud-list
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus | jq '. + {iguana_necktie: {limit_dollars: 200, used_dollars: 191,
+  remaining_dollars: 9, resets_at: "2099-06-01T00:00:00Z", locked_reason: null}}' > "$FIXTURE_DIR/.claude.json"
+table "on a cloud-credit host the credit decides a Claude account's listing, whatever its plan windows read|ORCH_LANE_HOST=claude-cloud|$LIST|claude.pool=cloud-credit claude.verdict=walled claude.binding_bucket=credits claude.headroom_pct=4"
+
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the
 # consumer windows (a real enterprise plan), and an unreachable API each report

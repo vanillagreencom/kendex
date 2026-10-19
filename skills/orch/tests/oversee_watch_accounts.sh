@@ -7,6 +7,10 @@
 # reads the stub's lanes.<N>.json.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# The grant cases run the real `lanes`, which no caller's account settings
+# may reach.
+unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_MAX_PCT \
+  ORCH_LANE_CLOUD_CREDIT_FLOOR ORCH_LANES_USAGE_TTL CODEX_HOME
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
@@ -239,6 +243,47 @@ for terminal in expired retired; do
   assert_eq "$SEQUENCE_EVENTS" "0" "control: suppressing $terminal loses the terminal events" "$ERR"
   assert_not_contains "$SEQUENCE_GOT" "$SEQUENCE_WANT" "control: the $terminal sequence rejects the lost events" "$ERR"
 done
+
+# A running lane's grant reaching ORCH_LANE_CLOUD_CREDIT_FLOOR: the real
+# `lanes list` reads a provider harness=pi grant row, and the watch reports
+# the pass it walls. GRANT_FLOOR names a set floor, empty for the default.
+GRANT_LANES="$REPO_ROOT/skills/orch/scripts/lanes"
+GRANT_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+GRANT_EXPIRES="$(jq -nr 'now + 5 * 86400 | todateiso8601')" || exit 1
+grant_pass() { # REMAINING
+  local floor=()
+  [[ -z "$GRANT_FLOOR" ]] || floor=("ORCH_LANE_CLOUD_CREDIT_FLOOR=$GRANT_FLOOR")
+  printf 'account=%s\tharness=pi\tcredit-limit=200\tcredit-spent=0\tcredit-remaining=%s\tcredit-expires=%s\n' \
+    "$GRANT_HOME/.eclaude" "$1" "$GRANT_EXPIRES" > "$STUB_DIR/accounts.tsv"
+  watch_pass OVERSEE_WATCH_LANES="$GRANT_LANES" LANES_HOME="$GRANT_HOME" ORCH_LANE_HOST="$GRANT_HOST" \
+    LANE_HOST_STUB_ACCOUNTS="$STUB_DIR/accounts.tsv" LANE_HOST_STUB_LOG="$STUB_DIR/provider.log" \
+    ORCH_LANES_USAGE_TTL=0 ${floor[@]+"${floor[@]}"}
+}
+grant_event() { # HEADROOM
+  printf 'EVENT account eclaude config_dir=%s harness=pi through=host status=ok verdict=walled headroom_pct=%s binding_bucket=credits binding_resets_at=- change=headroom was=ok/room' \
+    "$GRANT_HOME/.eclaude" "$1"
+}
+
+new_case grant_floor
+GRANT_HOME="$STUB_DIR/home"; mkdir -p "$GRANT_HOME"
+GRANT_FLOOR=""
+grant_pass 150
+assert_eq "rc=$RC events=$(account_events)" "rc=0 events=0" "a grant's first reading is its baseline" "$ERR"
+grant_pass 9
+assert_eq "rc=$RC $(grep '^EVENT account ' <<<"$OUT")" \
+  "rc=0 $(grant_event 4)" \
+  "a grant falling to the default floor is one account event" "$ERR"
+grant_pass 8
+assert_eq "rc=$RC events=$(account_events)" "rc=0 events=0" "a grant still under the floor emits nothing" "$ERR"
+
+new_case grant_set_floor
+GRANT_HOME="$STUB_DIR/home"; mkdir -p "$GRANT_HOME"
+GRANT_FLOOR=160
+grant_pass 170
+grant_pass 150
+assert_eq "rc=$RC $(grep '^EVENT account ' <<<"$OUT")" \
+  "rc=0 $(grant_event 75)" \
+  "the set floor, not zero, decides the pass the grant walls" "$ERR"
 
 # A baseline reset no date can read settles no reset, is noted once, and the
 # status and headroom changes beside it are still reported.

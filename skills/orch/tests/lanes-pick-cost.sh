@@ -197,8 +197,8 @@ rc=0
 assert_eq "$rc" 1 'parity assertion rejects an account policy that ignores exclusions'
 CONTROL="$(mutant_scripts list-parity lanes)"
 mutate_file "$CONTROL/lanes" \
-  'map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' \
-  'map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | .claims = 7 | lane_public)'
+  'with_lane_verdict(.wall; $max; $credit_floor)' \
+  'with_lane_verdict(.wall; $max; $credit_floor) | .claims = 7'
 LANES="$CONTROL/lanes"
 for format in table json; do
   run_lanes 4 "$RETIRE_ONE" local list "$format"

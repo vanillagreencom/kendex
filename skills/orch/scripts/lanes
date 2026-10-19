@@ -13,7 +13,7 @@
 # them.
 #
 # Usage:
-#   lanes list [--harness claude|codex|copilot|all] [--local] [--cache-only] [--no-cache] [--json]
+#   lanes list [--harness claude|codex|copilot|pi|all] [--local] [--cache-only] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex|copilot|pi] [--max-pct N | --min-headroom-pct N]
 #              [--model NAME] [--binding-floor] [--exclude-lane DIR]
 #              [--for-overseer] [--no-cache] [--json]
@@ -47,6 +47,13 @@
 #         Each record carries `retire_date`: the
 #         ORCH_LANE_RETIRE date as YYYY-MM-DD, past or future, or null where
 #         no entry names the account.
+#         A grant is judged as `pick` judges it (tier 0 below), not on plan
+#         windows: each provider harness=pi API grant row is its own record,
+#         `pool` api-credit, under `all` and alone under --harness pi; on a
+#         pool=cloud-credit host each Claude account takes `pool`
+#         cloud-credit. A read grant's `headroom_pct` is its share left,
+#         binding_bucket `credits` and binding_resets_at null, and its
+#         verdict is walled at or below ORCH_LANE_CLOUD_CREDIT_FLOOR.
 #         A weekly wall oversee-watch recorded from a lane's harness banner
 #         (lib/account-wall.sh) holds that account's `weekly_pct` at 100 until
 #         the reset the banner stated, whatever the usage endpoint reads; a
@@ -138,8 +145,8 @@
 #         that and the account's ORCH_LANE_RETIRE date. An API grant ends at
 #         its own `resets_at` and a plan retires at its own date: neither
 #         moves the other, so a retired account's grant is spent until it
-#         expires. A read API grant's `headroom_pct` is its share left,
-#         binding_bucket `credits`. It is `room` whatever its plan windows read;
+#         expires. A read grant's `headroom_pct`, cloud credit or API, is its
+#         share left, binding_bucket `credits`. It is `room` whatever its plan windows read;
 #         spent, locked or expired credit is walled, and unread credit is
 #         unmeasured. Each refusal carries refusal={cause:"cloud-credit" or "api-credit",
 #         retry_at:null}; the grant expiry is not a refill time. A cloud-credit
@@ -413,7 +420,8 @@
 #
 # Options:
 #   --harness NAME   claude, codex, copilot, or all (default: all for list,
-#                    claude for pick).
+#                    claude for pick). list also takes pi, its API grants
+#                    alone (see list).
 #                    pick also takes pi, judged on the account its --model's
 #                    provider bills (lib/lane-launch.sh lane_pick_harness). A
 #                    `pi-claude/` model runs Claude Code on a Claude seat
@@ -646,6 +654,9 @@
 #                      or Pi Anthropic API credit must exceed (default 10,
 #                      provisional; see `pick`). Refused, before any lane is
 #                      measured, when it is not a whole number 0 or more.
+#                      `list` walls a grant at it, so oversee-watch reports
+#                      a running lane's grant reaching it as an `account`
+#                      event; raise it for more margin before a round.
 #   ORCH_LANE_CLOUD_REPOS  Comma-separated `<name>=<owner>/<repo>` pairs, one
 #                      per account and repository it was given access to,
 #                      which a cloud-session pick keeps (see `pick`). A
@@ -983,7 +994,7 @@ message() {
       ;;
     invalid-harness)
       printf 'lanes: invalid-harness option=%s\n' "--harness"
-      printf '%s\n' "--harness must be claude, codex, copilot, or all; host-accounts also takes pi"
+      printf '%s\n' "--harness must be claude, codex, copilot, pi or all"
       ;;
     invalid-pick-harness)
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
@@ -3528,10 +3539,16 @@ pick_host_rows() { # HARNESS [MODEL]
 		# A failed command returned no reading to repair. Both pick forms
 		# preserve its busy or timeout diagnostic and fail as a command.
 		[[ "$pool" != api-credit || "$HOSTED_READ" != failed ]] || return 1
-		HOSTED_ROWS="$(jq -c --arg pool "$pool" "$LANE_MODEL_JQ"'
-			 def api_credit: api_grant_row(.credits != null; .detail);
-			 map(select(if $pool == "api-credit" then api_credit else (api_credit | not) end))' <<<"$HOSTED_ROWS")" || return 1
+		pi_pool_rows "$pool" || return 1
 	fi
+}
+
+# Keep the Pi rows in HOSTED_ROWS that spend POOL: the API grants for
+# api-credit, the Copilot pool rows for any other.
+pi_pool_rows() { # POOL
+	HOSTED_ROWS="$(jq -c --arg pool "$1" "$LANE_MODEL_JQ"'
+		 def api_credit: api_grant_row(.credits != null; .detail);
+		 map(select(if $pool == "api-credit" then api_credit else (api_credit | not) end))' <<<"$HOSTED_ROWS")"
 }
 
 # The fix= line for each unmeasured pool record in RECORDS, a JSON array: a
@@ -4495,7 +4512,7 @@ case "$SUB" in
 	facts) cmd_facts; exit $? ;;
 	list)
 		HARNESS="${HARNESS:-all}"
-		[[ "$HARNESS" =~ ^(claude|codex|copilot|all)$ ]] || die invalid-harness "$@"
+		[[ "$HARNESS" =~ ^(claude|codex|copilot|pi|all)$ ]] || die invalid-harness "$@"
 		validate_lane_settings
 		load_lane_claims || exit 1
 		# Every row says which credential measured it, local rows included: a
@@ -4503,19 +4520,45 @@ case "$SUB" in
 		# infer the rest, and the whole point of the merge is that one account
 		# can carry two readings that disagree. emit_lane writes that field, so
 		# neither this listing nor the reader below stamps rows afterwards.
-		out="$(collect_lanes "$HARNESS")" || exit 1
+		# The Pi accounts listed are the API grants, which only a provider's
+		# accounts rows read; a Pi root's Copilot pool is left to pick.
+		out='[]'
+		[[ "$HARNESS" == pi ]] || out="$(collect_lanes "$HARNESS")" || exit 1
 		# Asked only where a provider is configured. A fleet with no provider
 		# reads the local config dirs and nothing else, exactly as before.
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
-			host_lane_rows "$HARNESS" || exit 1
-			out="$(jq -c --argjson hosted "$HOSTED_ROWS" '. + $hosted' <<<"$out")"
+			if [[ "$HARNESS" != pi ]]; then
+				host_lane_rows "$HARNESS" || exit 1
+				out="$(jq -c --argjson hosted "$HOSTED_ROWS" '. + $hosted' <<<"$out")"
+			fi
+			# A provider the first read found absent or failing is not asked again.
+			if [[ "$HARNESS" == pi || ( "$HARNESS" == all && "$HOSTED_READ" == answered ) ]]; then
+				host_lane_rows pi || exit 1
+				pi_pool_rows api-credit || exit 1
+				out="$(jq -c --argjson hosted "$HOSTED_ROWS" '. + $hosted' <<<"$out")" || exit 1
+			fi
+		fi
+		# A Claude account on a pool=cloud-credit host spends its cloud credit,
+		# so it takes the pool and retirement dates a Claude pick takes. The
+		# local kind declares pool=plan, and asking lane-host would print the
+		# project env load's notices a second time.
+		TIER_POOL=plan TIER_RETIRE='{}'
+		if [[ ( "$HARNESS" == claude || "$HARNESS" == all ) && "${ORCH_LANE_HOST:-local}" != local ]]; then
+			lane_tier_inputs "$out" claude "" || exit 1
 		fi
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not
 		# say. The projection rides beside it for a reader weighing the claims.
+		# A grant is judged by with_lane_tier, as pick judges it, so its
+		# verdict crosses at ORCH_LANE_CLOUD_CREDIT_FLOOR.
 		lane_now; now="$LANE_NOW"
-		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" --argjson now "$now" "$LANE_MODEL_JQ"'
-			map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' <<<"$out")"
+		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" \
+			--arg pool "$TIER_POOL" --argjson cloud_floor "$CLOUD_CREDIT_FLOOR" --argjson retire "$TIER_RETIRE" --argjson now "$now" "$LANE_MODEL_JQ"'
+			map(with_lane_projection($burn; $now) | with_lane_verdict(.wall; $max; $credit_floor)
+				| if .harness == "pi" then with_lane_tier("api-credit"; $cloud_floor; {}; $now)
+				  elif .harness == "claude" and $pool == "cloud-credit" then with_lane_tier($pool; $cloud_floor; $retire; $now)
+				  else . end
+				| lane_public)' <<<"$out")" || exit 1
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	host-accounts)

@@ -395,9 +395,11 @@ def with_lane_verdict($wall; $max; $credit_floor):
 # the pick and are no record of it: _tier, _expires (E, 0 outside tier 0) and
 # _score (S); and _credit_unread, a credit account whose reading supplies
 # no grant to judge. API grants keep unread provider rows unmeasured. A read
-# API grant also states headroom_pct and binding_bucket, since the plan
-# windows beside it are not what it spends; its binding_resets_at is null,
-# since a grant that ends returns nothing.
+# grant, cloud credit or API, also states headroom_pct and binding_bucket,
+# since the plan windows beside it are not what it spends; its
+# binding_resets_at is null, since a grant that ends returns nothing. `lanes
+# list` judges every grant it lists here too, so the listing and the pick
+# cannot disagree about a grant at the floor.
 def with_lane_tier($pool; $cloud_floor; $retire; $now):
   (.credits // {}) as $c
   | ([($c.resets_at | utc_stamp | reset_epoch),
@@ -405,7 +407,7 @@ def with_lane_tier($pool; $cloud_floor; $retire; $now):
      | map(select(. != null)) | min) as $e
   | ($c.unit == "usd" and ($c.remaining_dollars | type) == "number" and ($c.limit_dollars | type) == "number"
      and $e != null) as $read
-  | (if $pool == "api-credit" and $read and lane_measured and $c.limit_dollars > 0
+  | (if ($pool == "cloud-credit" or ($pool == "api-credit" and lane_measured)) and $read and $c.limit_dollars > 0
      then . + {headroom_pct: (if $e > $now then (100 * $c.remaining_dollars / $c.limit_dollars | floor) else 0 end),
                binding_bucket: "credits", binding_resets_at: null}
      else . end)

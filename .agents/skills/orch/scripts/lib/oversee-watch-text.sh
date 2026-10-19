@@ -654,9 +654,11 @@ The long pass's events, checked and reported in this order:
                              its verdict against ORCH_LANE_MAX_PCT crossed in
                              either direction (a Codex account on its credits
                              reads room, binding_bucket=credits: `lanes
-                             --help`, pick), or the binding bucket reset the
-                             last reading named has passed and the reading has
-                             moved off it. `change=` names every one that
+                             --help`, pick; a grant, a harness=pi API grant
+                             or a Claude cloud credit, binding_bucket=credits,
+                             crosses at ORCH_LANE_CLOUD_CREDIT_FLOOR), or the
+                             binding bucket reset the last reading named has
+                             passed and the reading has moved off it. `change=` names every one that
                              applies and `was=` the status and verdict before
                              it. `config_dir` names the credentials, since
                              two accounts can share an alias. The first
