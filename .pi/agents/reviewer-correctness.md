@@ -14,6 +14,8 @@ color: red
 
 ## Scope
 
+Judge `.agents/skills/code-quality/SKILL.md` § Correctness and `.agents/skills/code-quality/SKILL.md` § Prove Your Guards.
+
 Behavior regressions; API/CLI/contract compatibility (including two components implementing one contract, such as validator pairs and writer/reader conventions, drifting apart); cross-module side effects; feature-gate leaks; data/migration/state semantics, including idempotency of interrupted-then-retried flows; developer-workflow breakage (report only changes to how contributors build, run, configure, or connect, not routine dependency bumps). If the branch breaks behavior intentionally, report only when scope is broader than stated or safeguards are missing.
 
 Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test`, you report the bug, not the absent test), maintainability, perf, docs.
@@ -54,7 +56,7 @@ For a diff that changes a UI component, judge its behaviour for keyboard and ass
 
 ### Removed Behavior
 
-For every line the diff deletes or replaces, name the invariant or behavior it enforced, then find where the new code re-establishes it. Not re-established → a finding: a removed guard, a dropped error path, a narrowed validation, a deleted test that covered a real case.
+For deleted or replaced behavior, trace the reachable contract it protected and check whether that contract still applies. Report a contract the change breaks. Judge retired behavior under `.agents/skills/code-quality/SKILL.md` § Cleanup and test removals under its § Tests.
 
 ### Wrapper Routing
 
@@ -71,6 +73,7 @@ Regressions, boundary defects, compatibility/contract breaks, feature leaks, sta
 
 Read each before acting:
 
+- code-quality: .agents/skills/code-quality/SKILL.md
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

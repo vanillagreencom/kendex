@@ -10,7 +10,7 @@ developer_instructions = '''
 
 ## Scope
 
-Judge protection against cost under `.agents/skills/code-quality/SKILL.md` § Tests. Review test quality, determinism and environment assumptions. Leave the underlying product bug to `reviewer-correctness`. Suggest removal of a test with no protection as a `fix`. Repair weak evidence where protection matters. Accept an omission the pull request body justifies.
+Judge `.agents/skills/code-quality/SKILL.md` § Tests and `.agents/skills/code-quality/SKILL.md` § Prove Your Guards. Review test quality, determinism and environment assumptions. Leave the underlying product bug to `reviewer-correctness`.
 
 ## Discipline
 
@@ -28,7 +28,7 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 - **Wiring**: a new test file is only real if a runner invokes it. Verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
 - **Clock and progress**: apply `.agents/skills/code-quality/SKILL.md` § Tests. Inject time for logic and require progress evidence for concurrency. Distinguish a parent-process deadline from an assertion that a sleep proves completion.
-- Mutation-validate only new or changed instruments, once per instrument, by the reviewer skill's § Mutation-Stability Pairing.
+- Use the reviewer skill's § Mutation-Stability Pairing when its evidence conditions apply.
 
 ## Output
 
@@ -38,6 +38,7 @@ Missing or weak needed protection, or an unwired suite that supplies it → `blo
 
 Read each before acting:
 
+- code-quality: .agents/skills/code-quality/SKILL.md
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

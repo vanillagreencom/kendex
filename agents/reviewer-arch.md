@@ -12,11 +12,12 @@ tags: [review]
 
 ## Scope
 
+Judge `.agents/skills/code-quality/SKILL.md` § Structure and `.agents/skills/code-quality/SKILL.md` § Over-Engineering.
+
 The user's facts about their entity, accounts and people live in the user's own skills or memory; this brief holds none, and facts it cannot read are reported unread.
 
 - **Module boundaries and layering**: components respecting documented boundaries; cross-cutting leaks; dependency-rule violations.
 - **Abstraction quality**: interfaces minimal and cohesive; anti-patterns; over-engineering.
-- **Integration with another system**: a change that derives another system's state indirectly (scrapes its screen or pane, reads a status line, parses output text the system does not document as an interface, or reads its internal files) names the documented interface it stands in for and why that interface cannot serve, the rule `.agents/skills/code-quality/SKILL.md` § Over-Engineering states. A change that omits either is a blocker. Reading a documented interface, text or JSON output included, is not this finding.
 - **Spec/proposal review.** When the change is a design document, audit the proposed mechanism itself: race windows (TOCTOU between pin and use), trust-boundary holes (who can alter the inputs a decision reads), enforcement-surface coverage (does the path/tier map reach every surface that can weaken a guard), and failure semantics (does a persistently missing dependency stay green forever).
 - **Technical debt**: accumulated debt worth naming, prioritized by impact; architecture docs drifting from actual structure.
 
@@ -26,8 +27,8 @@ Compliance criteria come from the project's architecture docs. Do not invent des
 
 A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
-If the code-quality or orch instructions are unavailable, apply the project's adopted architecture and review rules and keep the same `blockers[]` and `suggestions[]` output.
+If required instructions are unavailable, report the unread standard and declare `qa_metadata.review_performed: false` with a reason under `.agents/skills/reviewer/schemas/review-finding.md` § qa_metadata.
 
 ## Output
 
-Architecture violations, boundary breaches, spec holes, an indirect read of another system's state (not a read of its documented interface, text or JSON output included) that does not name the documented interface it stands in for and why that interface cannot serve → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
+Architecture violations, boundary breaches, spec holes and violations of the owned code-quality sections → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
