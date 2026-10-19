@@ -524,12 +524,13 @@ class Session:
             return self.answer(record), 0
 
     def end_tasks(self, record):
-        # Tasks run under the tmux server of the controller that launched them.
-        # A record whose own controller holds no terminal, such as a failed
-        # successor, answers for its predecessor's tasks once that has ended.
-        controller = record if record and record.get("terminal") else (record or {}).get("predecessor")
-        if not controller or not controller.get("terminal") or (controller is not record and self.terminal(controller)):
-            return
+        # Each task record names the tmux server of the controller that
+        # launched it, so a controller binding a failure path cleared from
+        # this record cannot orphan a task. Callers reach here once this
+        # record's controller has ended or is ending; only a live predecessor
+        # keeps the tasks on its server.
+        predecessor = (record or {}).get("predecessor")
+        live = predecessor if self.terminal(predecessor) else None
         paths = list((self.path.parent / "tasks").glob("*.json"))
         if not paths:
             return
@@ -537,7 +538,7 @@ class Session:
         for path in paths:
             task = Task(self.home, path.stem)
             task.deadline = self.deadline
-            task.end_controller(controller)
+            task.end_unless_owned(live)
 
     def end_owned(self, record, *, window=False):
         if not window:
@@ -742,20 +743,26 @@ class Session:
                 live = record if self.terminal(record) else predecessor if self.terminal(predecessor) else None
                 if live:
                     record = self.retain_live(record, live)
-                elif verb == "stop":
-                    record.update(state="off" if record["app_off"] else "stopped",
-                                  reason="app-off" if record["app_off"] else "stopped", detail="", terminal=None)
                 else:
+                    stopped = verb == "stop"
                     try:
                         # No controller remains. Its task windows would hold
                         # the managed session's name against a retry.
                         self.end_tasks(record)
                     except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
                         self.failure_log("cleanup-failed", teardown)
-                    record.update(state=failure.state if isinstance(failure, Refusal) else "failed",
-                                  reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
-                                  detail=failure.detail if isinstance(failure, Refusal) else "Jarvis could not start. Check the session log.",
-                                  terminal=None)
+                        # A task window still open means Jarvis has not
+                        # stopped; a retried Stop ends it from its task record.
+                        stopped = False
+                    if stopped:
+                        record.update(state="off" if record["app_off"] else "stopped",
+                                      reason="app-off" if record["app_off"] else "stopped", detail="", terminal=None)
+                    else:
+                        record.update(state=failure.state if isinstance(failure, Refusal) else "failed",
+                                      reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
+                                      detail=failure.detail if isinstance(failure, Refusal) else
+                                      "Jarvis could not " + ("stop" if verb == "stop" else "start") + ". Check the session log.",
+                                      terminal=None)
                     if verb == "succeed":
                         record.update(state="failed", reason="handover-failed", history=None,
                                       detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")

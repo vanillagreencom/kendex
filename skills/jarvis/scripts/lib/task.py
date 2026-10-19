@@ -178,13 +178,16 @@ class Task(Session):
                 self.write(record)
             return record
 
-    def end_controller(self, controller):
+    def end_unless_owned(self, live):
+        # The task's own record names its controller's server; only the live
+        # controller on that server keeps it. Cleanup already closed its window.
         with self.locked():
             record = self.read()
-            if any(record[key] != controller.get(key) for key in ("server_pid", "server_started_at")):
-                return
             terminal = record["terminal"]
-            if not terminal or terminal["server"] != controller["terminal"]["server"]:
+            if not terminal or (record["cleanup"] or {}).get("state") == "done":
+                return
+            if live and (record["server_pid"], record["server_started_at"], terminal["server"]) == (
+                    live["server_pid"], live["server_started_at"], live["terminal"]["server"]):
                 return
             if record["completion"] is None:
                 record.update(state="failed", completion={"at": time.time(), "outcome": "failed"},

@@ -494,18 +494,26 @@ while True: signal.pause()
     def test_controller_teardown_refusals(self):
         original = json.loads(self.record_path.read_text())
         self.tmux("new-session", "-d", "-s", "unrelated", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
-        for verb, live in (("stop", False), ("start", False), ("stop", True)):
-            with self.subTest(verb=verb, live=live):
+        # A controller that ended before the request, one that stays live,
+        # and one whose native exit closes its window while the Stop worker
+        # is refused a task close.
+        for verb, controller in (("stop", "ended"), ("start", "ended"), ("stop", "live"), ("stop", "dies")):
+            live = controller != "ended"
+            with self.subTest(verb=verb, controller=controller):
                 saved = dict(original, terminal=self.terminal, pending={"generation": 1})
                 self.record_path.write_text(json.dumps(saved))
-                task = self.launch("codex", verb + str(live), model="gpt-5")
+                task = self.launch("codex", verb + controller, model="gpt-5")
                 self.acknowledgement(task)
                 if not live:
                     self.tmux("kill-window", "-t", self.terminal["window"])
+                real = repr(shutil.which("tmux"))
                 wrapper = self.bin / "tmux"
-                wrapper.write_text("#!" + sys.executable + "\nimport os,sys\n"
-                    + "if '#{@jarvis-task}' in sys.argv: sys.exit(2)\n"
-                    + "os.execv(" + repr(shutil.which("tmux")) + ", ['tmux',*sys.argv[1:]])\n")
+                wrapper.write_text("#!" + sys.executable + "\nimport os,subprocess,sys\n"
+                    + "if '#{@jarvis-task}' in sys.argv:\n"
+                    + (" subprocess.run([" + real + ",'kill-window','-t'," + repr(self.terminal["window"])
+                       + "],stderr=subprocess.DEVNULL)\n" if controller == "dies" else "")
+                    + " sys.exit(2)\n"
+                    + "os.execv(" + real + ", ['tmux',*sys.argv[1:]])\n")
                 wrapper.chmod(0o755)
                 args = [str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home)]
                 if verb == "start":
@@ -524,14 +532,25 @@ while True: signal.pause()
                             break
                         time.sleep(0.02)
                     self.assertNotIn("worker", repaired)
-                    self.assertEqual(repaired["state"], "running")
-                    self.tmux("has-session", "-t", "=jarvis")
+                    if controller == "live":
+                        self.assertEqual(repaired["state"], "running")
+                        self.tmux("has-session", "-t", "=jarvis")
+                    else:
+                        # The task window outlives its controller, so Stop
+                        # reports failure and a retry ends it from the task record.
+                        self.assertEqual((repaired["state"], repaired["reason"]), ("failed", "launch-failed"))
                 wrapper.unlink()
+                if controller == "dies":
+                    retried = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(retried.returncode, 0, retried.stderr)
+                    self.assertEqual(json.loads(retried.stdout)["state"], "stopped")
+                    self.assertNotIn(task["terminal"]["window"], self.tmux(
+                        "list-windows", "-a", "-F", "#{window_id}").stdout.splitlines())
                 ended = self.call("status", "--id", task["id"])
                 self.assertEqual(ended["completion"]["outcome"], "failed")
                 self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
                 self.tmux("has-session", "-t", "=unrelated")
-                if not live:
+                if controller != "live":
                     created = self.tmux("new-session", "-d", "-s", "jarvis", "-P", "-F", "#{window_id}\t#{pane_id}",
                                         self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
                     window, pane = created.stdout.strip().split("\t")
