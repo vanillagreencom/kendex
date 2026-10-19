@@ -210,8 +210,8 @@ assert_eq "$PI_TEMPLATE_ACCOUNT" "$H/.claude" \
 PI_TEMPLATE_CONTROL="$(mutant_scripts pi-template-control open-terminal)" || exit 1
 orch_fixture_shared_libs "${PI_TEMPLATE_CONTROL%/scripts}"
 mutate_file "$PI_TEMPLATE_CONTROL/open-terminal" \
-  '"$launch_var" "$launch_home" "$launch_form" "$CMD_TEMPLATE" "" "$compaction_env")' \
-  '"$launch_var" "$launch_home" "$launch_form" "" "" "$compaction_env")'
+  '"$launch_var" "$launch_home" "$launch_form" "$CMD_TEMPLATE" "$model_env" "$compaction_env")' \
+  '"$launch_var" "$launch_home" "$launch_form" "" "$model_env" "$compaction_env")'
 PI_TEMPLATE_LIVE_OT="$OPEN_TERMINAL"
 OPEN_TERMINAL="$PI_TEMPLATE_CONTROL/open-terminal"
 run_ot "" --harness pi --lane "$H/.claude" --cmd "$PI_TEMPLATE" KEN-96
