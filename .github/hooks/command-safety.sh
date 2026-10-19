@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, and literal cat bodies retain their data contract. The unknown-head evidence fallback classifies unquoted literal env and shell arguments with the shared producer option grammar and checks their selected targets; set in an unknown-head argument or assignment remains data. An unknown-head list stage (after ;, a newline, &&, || or a pipe, or before &) takes the same fallback plus every other known read word, unless its stdout feeds a pipe or a redirect, which keeps the conservative set evidence. Known producers, registered bodies, compound syntax, exec and builtin retain their conservative evidence contracts. Unquoted body expansions are checked independently. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, and literal cat bodies retain their data contract. The unknown-head evidence fallback classifies unquoted literal env arguments and literal shell executable arguments, quoted or not, with the shared producer option grammar and checks their selected targets; eval, source and . arguments, and set in an unknown-head argument or assignment, remain data. A trap action is shell code. Every unknown-head stage of a list (stages joined by ;, a newline, &&, || or a pipe, or a command ended by &, the first stage included) takes the same fallback plus every other known read word, env --help and env --version included; only a proved env launcher prefix is exempt. A list stage whose stdout feeds a pipe or a redirect, and shell code run by such a stage, keep the conservative set evidence. Known producers, registered bodies, compound syntax, exec and builtin retain their conservative evidence contracts. Unquoted body expansions are checked independently. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -296,11 +296,12 @@ environment_main_evidence() { # context, then decoded words or conservative text
       # Assignment values never name a builtin or a forwarded executable.
       case "${evidence_roles[$candidate]}" in prefix | syntax) continue ;; esac
       value=${evidence_args[$candidate]}
-      # An env or shell word can be forwarded argv; judge what it would run.
-      program=${value##*/}; environment_receiver
-      if [ "${evidence_roles[$candidate]}:${evidence_kinds[$candidate]}" = argument:literal ] &&
-         { [ "$program" = env ] || [ "$receiver" = shell ]; } &&
-         [ -n "${evidence_unquoted[$candidate]}" ]; then
+      # Forwarded argv can execute env or a shell, never a shell builtin.
+      # Quoting keeps an env word as data; a quoted shell name still runs.
+      program=${value##*/}
+      if [ "${evidence_roles[$candidate]}" = argument ] &&
+         { [ "${evidence_kinds[$candidate]}:$program:${evidence_unquoted[$candidate]}" = literal:env:1 ] ||
+           { [[ ${evidence_kinds[$candidate]} =~ ^(dollar-)?literal$ ]] && [[ $program =~ ^(bash|sh|dash|zsh|ksh)$ ]]; }; }; then
         limit=${#evidence_args[@]}
         args=("${evidence_args[@]:candidate:limit-candidate}")
         arg_kinds=("${evidence_kinds[@]:candidate:limit-candidate}")
@@ -309,6 +310,8 @@ environment_main_evidence() { # context, then decoded words or conservative text
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
         environment_producer shell conservative
         [ -z "$program_pos" ] || arg_roles[$program_pos]=command
+        # The producer proved this launcher, as the head producer does.
+        for ((j=0; j<${program_pos:-0}; j++)); do evidence_roles[candidate+j]=prefix; done
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
         case "$mode" in
@@ -338,6 +341,13 @@ environment_main_evidence() { # context, then decoded words or conservative text
       fi
     done
     [ "$evidence_context" = list ] || return 1
+    # The head producer proved the launcher prefix; judge the other words.
+    local judged=()
+    for ((j=0; j<${#evidence_args[@]}; j++)); do
+      case "${evidence_roles[$j]}" in prefix | unset-launcher | syntax) continue ;; esac
+      judged[${#judged[@]}]=${evidence_args[$j]}
+    done
+    set -- ${judged[@]+"${judged[@]}"}
   fi
   for value in "$@"; do
     evidence=${value//"$continuation"/}
@@ -680,7 +690,7 @@ environment_main_command() { # command kind; arguments are already decoded data
           done
         fi
         if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
-      opaque | bash | sh | dash | zsh | ksh | eval | source | .)
+      opaque | bash | sh | dash | zsh | ksh | eval | source | . | trap)
         evidence=()
         if [ -n "$opaque_from" ]; then
           mode=opaque-clean; compound=1
@@ -722,7 +732,7 @@ environment_receiver() {
   receiver=unknown; receiver_pattern=""; receiver_option=""; receiver_named=""
   case "$program" in
     cat) receiver=data ;;
-    bash | sh | dash | zsh | ksh | eval | source | .) receiver=shell ;;
+    bash | sh | dash | zsh | ksh | eval | source | . | trap) receiver=shell ;;
     python | python3)
       receiver=interpreter; receiver_option='^-c$'
       receiver_pattern='(^|[^A-Za-z0-9_])os[[:space:]]*\.[[:space:]]*environ'
@@ -866,7 +876,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() heredoc_starts=() body_ids=() stage_sources=() stage_stdin=() executable_texts=() executable_stages=()
   local body_decisions=()
-  local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() file_outputs=() executable_contexts=()
+  local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() file_outputs=() executable_contexts=() stage_outputs=() nested_context
   if [ "${2:-}" = forwarded ]; then
     forwarded_argument=1
     set -- "$1" conservative "${@:3}"
@@ -1179,7 +1189,7 @@ environment_dump() { # command kind; arguments are already decoded data
     if [ "$stage" -gt 0 ] && [ "${separators[$((stage - 1))]}" = '|' ]; then
       data_source="$data_source$piped_source"
     fi
-    file_outputs[stage]=$file_output
+    file_outputs[stage]=$file_output; stage_outputs[stage]=$output
     # The approved data and file-writing classes bypass this fallback.
     # File data must stay out of later bodies' complete-command fallback.
     for doc in $data_source; do
@@ -1304,18 +1314,22 @@ environment_dump() { # command kind; arguments are already decoded data
     data_source="$data_source $incoming_sources"
     input_bodies=()
     for doc in $data_source; do input_bodies[${#input_bodies[@]}]=${literal_inputs[$doc]}; done
+    # Nested code whose stdout feeds a pipe or a redirect can reach a later
+    # interpreter, so its own list stages keep the conservative set evidence.
+    nested_context=$command_context
+    if [ "${separators[$stage]}" = '|' ] || [ -n "${stage_outputs[$stage]:-}" ]; then nested_context=compound; fi
     # A command string can start a shell that reads the same stdin.
     for ((code=0; code<${#executable_texts[@]}; code++)); do
       [ "${executable_stages[$code]}" -eq "$stage" ] || continue
       local command_text=${executable_texts[$code]}
-      if environment_dump shell "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
+      if command_context=$nested_context environment_dump shell "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
     done
     if [ -n "${stage_stdin[$stage]}" ]; then
       # These identifiers come only from the proved registry. Keep bodies
       # independent: quotes in one program cannot hide another program.
       for doc in $data_source; do
         local command_text=${literal_inputs[$doc]}
-        if environment_dump shell conservative; then return 0; fi
+        if command_context=$nested_context environment_dump shell conservative; then return 0; fi
       done
     fi
   done

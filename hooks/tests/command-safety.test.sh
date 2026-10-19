@@ -300,6 +300,32 @@ environment_rows() {
 [2,"true; tool env","list-env-argument"]
 [2,"true; tool export","list-export-argument"]
 [2,"true; tool /proc/self/environ","list-proc-environ-argument"]
+[0,"git -C . log --grep set","unknown-head-dot-path-set"]
+[0,"find . -name set","unknown-head-find-dot-set"]
+[0,"tool source set","unknown-head-source-word-data"]
+[0,"cd DIR && find . -name set","list-find-dot-set-after-and"]
+[0,"true; find . -name set","list-find-dot-set-after-semicolon"]
+[2,"timeout 5 \"bash\" -c set","unknown-head-quoted-shell-receiver-set"]
+[2,"true; timeout 5 \"bash\" -c set","list-quoted-shell-receiver-set"]
+[2,"true; timeout 5 b\"ash\" -c set","list-fragment-shell-receiver-set"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'true; timeout 5 \"bash\" -c set'","forwarded-quoted-shell-receiver-set"]
+[2,"trap set EXIT","trap-action-set"]
+[2,"true; trap set EXIT","list-trap-action-set"]
+[0,"true; trap 'rm -f tmp/x' EXIT","list-trap-action-data"]
+[2,"bash -c 'echo set' | bash","nested-set-piped-to-shell"]
+[2,"bash -c 'true; echo set' > tmp/x.sh; bash tmp/x.sh","nested-list-set-written-then-run"]
+[0,"true; bash -c 'true; echo set'","nested-list-set-terminal"]
+[0,"cd DIR && env -u GH_REPO prog arg","list-unset-launcher-program"]
+[0,"true; env -u A prog x","list-unset-launcher-after-semicolon"]
+[0,"cd /x && env -u A -u B tool /path","list-unset-launcher-repeated"]
+[0,"true; timeout 5 env -u A prog x","list-forwarded-unset-launcher"]
+[2,"cd DIR && env -u GH_REPO","list-unset-launcher-without-program"]
+[2,"true; env -i","list-empty-env"]
+[2,"true; env -u A -u B","list-unset-launchers-without-program"]
+[2,"cd DIR && env -u GH_REPO printenv","list-unset-launcher-printenv"]
+[2,"cd DIR && env -u GH_REPO sh -c set","list-unset-launcher-shell-set"]
+[2,"true; timeout 5 \"env\"","list-quoted-env-argument"]
+[2,"true; tool env --help","list-env-help-argument"]
 [2,"job-launcher env","unknown-launcher-bare-env"]
 [2,"job-launcher env -u NAME","unknown-launcher-unset-without-target"]
 [2,"job-launcher env -0","unknown-launcher-null-env"]
@@ -1529,7 +1555,13 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "list-context-loss" { swap("[ \"$command_stages\" -eq 1 ] || [ \"$command_context\" = compound ] || command_context=list", "[ \"$command_stages\" -eq 1 ] || command_context=compound") }
       defect == "list-set-evidence" { swap("[ \"$evidence_context\" != list ] || opaque_re=\"$other_re|$env_re\"", ":") }
       defect == "list-stdout-rule" { swap("[ \"${separators[$stage]}\" = '\''|'\'' ] || [ -n \"$output\" ] || evidence_context=list", "evidence_context=list") }
-      defect == "shell-receiver-selection" { swap("{ [ \"$program\" = env ] || [ \"$receiver\" = shell ]; }", "[ \"$program\" = env ]") }
+      defect == "shell-receiver-selection" { swap("[[ $program =~ ^(bash|sh|dash|zsh|ksh)$ ]]; }; }; then", "false; }; }; then") }
+      defect == "builtin-receiver-selection" { swap("^(bash|sh|dash|zsh|ksh)$ ]]; }; }; then", "^(bash|sh|dash|zsh|ksh|eval|source|[.])$ ]]; }; }; then") }
+      defect == "quoted-shell-selection" { swap("[[ ${evidence_kinds[$candidate]} =~ ^(dollar-)?literal$ ]] &&", "[ -n \"${evidence_unquoted[$candidate]}\" ] &&") }
+      defect == "trap-receiver" { swap("| . | trap) receiver=shell", "| .) receiver=shell") }
+      defect == "list-prefix-roles" { swap("prefix | unset-launcher | syntax) continue ;; esac", "syntax) continue ;; esac") }
+      defect == "forwarded-launcher-roles" { swap("do evidence_roles[candidate+j]=prefix; done", "do :; done") }
+      defect == "nested-stdout-context" { swap("then nested_context=compound; fi", "then :; fi") }
       defect == "selected-producer-unresolved" { swap("environment_main_evidence conservative \"${args[@]:program_pos}\"", "false") }
       defect == "compound-context-loss" { swap("case \"$command_context\" in", "case simple in") }
       defect == "operand-word-boundary" { swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]"); swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]") }
@@ -1651,6 +1683,23 @@ list-stdout-rule|FAIL environment: list-set-written-then-run: exit=0 expected=2
 list-stdout-rule|FAIL environment: list-set-piped-to-shell: exit=0 expected=2
 shell-receiver-selection|FAIL environment: list-shell-receiver-set: exit=0 expected=2
 shell-receiver-selection|FAIL environment: unknown-head-shell-receiver-set: exit=0 expected=2
+builtin-receiver-selection|FAIL environment: unknown-head-dot-path-set: exit=2 expected=0
+builtin-receiver-selection|FAIL environment: unknown-head-find-dot-set: exit=2 expected=0
+builtin-receiver-selection|FAIL environment: unknown-head-source-word-data: exit=2 expected=0
+builtin-receiver-selection|FAIL environment: list-find-dot-set-after-and: exit=2 expected=0
+builtin-receiver-selection|FAIL environment: list-find-dot-set-after-semicolon: exit=2 expected=0
+quoted-shell-selection|FAIL environment: unknown-head-quoted-shell-receiver-set: exit=0 expected=2
+quoted-shell-selection|FAIL environment: list-quoted-shell-receiver-set: exit=0 expected=2
+quoted-shell-selection|FAIL environment: list-fragment-shell-receiver-set: exit=0 expected=2
+quoted-shell-selection|FAIL environment: forwarded-quoted-shell-receiver-set: exit=0 expected=2
+trap-receiver|FAIL environment: trap-action-set: exit=0 expected=2
+trap-receiver|FAIL environment: list-trap-action-set: exit=0 expected=2
+list-prefix-roles|FAIL environment: list-unset-launcher-program: exit=2 expected=0
+list-prefix-roles|FAIL environment: list-unset-launcher-after-semicolon: exit=2 expected=0
+list-prefix-roles|FAIL environment: list-unset-launcher-repeated: exit=2 expected=0
+forwarded-launcher-roles|FAIL environment: list-forwarded-unset-launcher: exit=2 expected=0
+nested-stdout-context|FAIL environment: nested-set-piped-to-shell: exit=0 expected=2
+nested-stdout-context|FAIL environment: nested-list-set-written-then-run: exit=0 expected=2
 selected-producer-unresolved|FAIL environment: selected-producer-forwarded-xargs-env: exit=0 expected=2
 receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
 receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0
