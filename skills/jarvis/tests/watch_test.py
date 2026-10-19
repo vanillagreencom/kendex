@@ -583,7 +583,11 @@ class Producer(unittest.TestCase):
         self.executable("date", '#!/bin/sh\nif [ "$*" = "-u +%s" ]; then cat ' +
                         shlex.quote(str(clock)) + '\nelse exec ' + shlex.quote(real_date) + ' "$@"; fi\n')
         self.home.joinpath("kendex.settings.toml").write_text(
-            '[env]\nORCH_REPORT_EVERY_MINUTES="1"\nORCH_REPORT_QUIET_HOURS=""\n')
+            '[env]\nORCH_REPORT_EVERY_MINUTES="1"\nORCH_REPORT_QUIET_HOURS=""\n'
+            'ORCH_REPORT_EVERY_ISSUES="1"\nORCH_CONNECTED_REPOS="owner/repo"\n')
+        github_calls = self.root / "github.calls"
+        self.executable("gh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' +
+                        shlex.quote(str(github_calls)) + '\nexit 71\n')
         with patch.dict(os.environ, self.env | {"JARVIS_BASH": BASH}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()):
             session = load(self.scripts / "lib/session.py").Session(self.home)
@@ -608,6 +612,9 @@ class Producer(unittest.TestCase):
             self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
             with patch.dict(os.environ, ORCH_REPORT="off"):
                 self.assertIsNone(watch.report())
+            for minutes in ("0", ""):
+                with self.subTest(minutes=minutes), patch.dict(os.environ, ORCH_REPORT_EVERY_MINUTES=minutes):
+                    self.assertIsNone(watch.report())
             successor = self.watch()
             for result in (successor.report(),
                            "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=2\n",
@@ -633,6 +640,7 @@ class Producer(unittest.TestCase):
             clock.write_text("1120\n")
             self.assertEqual(self.watch().report(),
                              "EVENT report-due reason=minutes since=1970-01-01T00:17:40Z\n")
+            self.assertFalse(github_calls.exists(), "stateless report polling reached GitHub")
 
     def test_slow_acquisition_does_not_extend_settle(self):
         ready, release = self.root / "ready", self.root / "release"
@@ -936,19 +944,26 @@ class Producer(unittest.TestCase):
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
     def test_instrument_control(self):
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, 'if False and ' + old[3:])
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
+        for relative, old, new in (
+                ("jarvis/scripts/lib/watch.py",
+                 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):',
+                 'if False and result and report_key(result) != self.cursors.get("report", {}).get("event"):'),
+                ("orch/scripts/oversee-report",
+                 '[[ -n "$STATE" && "$EVERY_ISSUES" -gt 0 ]] || exit 0',
+                 '[[ "$EVERY_ISSUES" -gt 0 ]] || exit 0')):
             case = Producer(methodName="test_report_deadline_restart_and_receipt")
             case.setUp()
             try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
+                if relative.startswith("orch/"):
+                    case.packages.joinpath("orch").unlink()
+                    shutil.copytree(REPO / "skills/orch/scripts", case.packages / "orch/scripts")
+                path = case.packages / relative
+                source = path.read_text()
+                self.assertEqual(source.count(old), 1)
+                mutant = source.replace(old, new)
+                self.assertNotEqual(source, mutant)
+                path.write_text(mutant)
+                case.module = load(case.scripts / "lib/watch.py")
                 with self.assertRaises(AssertionError):
                     case.test_report_deadline_restart_and_receipt()
             finally:

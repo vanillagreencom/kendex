@@ -119,7 +119,9 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          seconds, retained across succession. It needs no lane or repository.
          In this mode only a report with an owner notice receipt advances
          cadence; an unsent file leaves it due. Quiet hours defer the event
-         until their end. --state and --repo optionally include fleet landings.
+         until their end. Without --state only the minutes trigger applies;
+         ORCH_REPORT_EVERY_ISSUES performs no GitHub reads. --state and --repo
+         retain the fleet landing trigger when supplied.
 render   prints the rows.
 write    prints the rows and writes the same bytes to the path
          `workflow-state progress-report-path` prints, with --succession
@@ -654,7 +656,8 @@ if [[ "$VERB" == due ]]; then
     echo "report-due reason=minutes since=$since"
     exit 0
   fi
-  [[ "$EVERY_ISSUES" -gt 0 ]] || exit 0
+  # Jarvis supplies a session start without fleet state, so no item can match.
+  [[ -n "$STATE" && "$EVERY_ISSUES" -gt 0 ]] || exit 0
   github_auth
   landed_read
   # Items, not pull requests: one item's second PR, in a consumer repository

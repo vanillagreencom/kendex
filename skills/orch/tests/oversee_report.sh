@@ -1225,8 +1225,12 @@ new_case due_issues_two_items
 report -60
 fleet '' "$(lane KEN-1 running)" "$(lane KEN-2 done)"
 printf '%s\n' "$(merged_pr 11 ken-1 -30 abcdef1234)" "$(merged_pr 12 ken-2 -20 1212121aaa)" | jq -s . > "$CASE/merged.json"
-run ORCH_REPORT_EVERY_ISSUES=2 -- due --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$OUT" "0|report-due reason=issues since=$(at -60) landed=2" "due, two items landed reach ORCH_REPORT_EVERY_ISSUES=2"
+for caller in fleet session; do
+  session_args=()
+  [[ "$caller" != session ]] || session_args=(--session-start "$((NOW - 86400))")
+  run ORCH_REPORT_EVERY_ISSUES=2 -- due --state "$CASE/state.json" --repo owner/repo ${session_args[@]+"${session_args[@]}"}
+  assert_eq "$RC|$OUT" "0|report-due reason=issues since=$(at -60) landed=2" "due, $caller with fleet state retains the landed-item trigger"
+done
 new_case due_two_lanes
 fleet '' "$(lane KEN-1 running -40000)" "$(lane KEN-2 running -86400)"
 run -- due --state "$CASE/state.json" --repo owner/repo
