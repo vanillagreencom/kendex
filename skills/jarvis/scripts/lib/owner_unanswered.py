@@ -5,7 +5,6 @@ the handoff and its archive supply progress records. This module only judges
 which reference answers which owner row.
 """
 import argparse
-import datetime
 import json
 from pathlib import Path
 import re
@@ -17,21 +16,15 @@ from progress import records  # noqa: E402
 import watch  # noqa: E402
 
 
-class Unreadable(RuntimeError):
-    pass
-
-
-def instant(value):
-    return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+class Refusal(Exception):
+    """KEY, the value it names, and the cause's first line."""
 
 
 def box(bash, home, name):
-    operation = "mailbox-events-" + name
-    result = watch.run([bash, watch.LIB.parents[2] / "mailbox/scripts/lane-mail", "events", "--item", "overseer",
-                        "--box", name], home, operation=operation)
-    if result.returncode:
-        raise Unreadable(name, (result.stderr.strip() or "exit=%d" % result.returncode).split("\n", 1)[0])
-    return watch.events_rows(result.stdout, operation)
+    try:
+        return watch.mailbox_events(bash, home, name)[1]
+    except watch.Failure as error:
+        raise Refusal("mailbox-unreadable", name, str(error).split("\n", 1)[0]) from error
 
 
 def progress_records(home):
@@ -47,24 +40,22 @@ def progress_records(home):
         except FileNotFoundError:
             continue
         except (OSError, UnicodeError) as error:
-            raise Unreadable("handoff", "%s %s" % (path, error)) from error
+            raise Refusal("handoff-unreadable", path, str(error)) from error
     return found
 
 
 def names(text, identity):
-    """Whether text names the id, or its first part, as a whole token."""
-    first = identity.split("-", 1)[0]
-    return any(re.search(r"(?<![0-9A-Za-z])" + re.escape(token) + r"(?![0-9A-Za-z])", text)
-               for token in (identity, first))
+    """Whether text names the full id as a whole token.
+
+    An id's first part is only its send's epoch second, which other owner
+    rows can share, so it names no single message.
+    """
+    return re.search(r"(?<![0-9A-Za-z])" + re.escape(identity) + r"(?![0-9A-Za-z])", text) is not None
 
 
 def unanswered(lane, over, logged):
     replies = [row for row in over if row.get("ref")]
     closed = {row.get("re") for row in lane if row.get("mail_class") == "close"}
-    answers = {}
-    for row in lane:
-        if row.get("mail_class") == "resolution" and row.get("re"):
-            answers.setdefault(row["re"], set()).add(row["id"])
     open_rows = []
     for row in lane:
         if not watch.owner_row(row):
@@ -75,10 +66,10 @@ def unanswered(lane, over, logged):
         request = row["mail_class"] == "owner-note"
         ask = None if request else row.get("re")
         if ask is not None:
-            # A later reply to the ask, or to any owner answer to it, covers
-            # every earlier answer in that thread; a resolution closes them all.
-            thread = {ask} | answers.get(ask, set())
-            if ask in closed or any(reply["ref"] in thread and reply.get("at", "") >= row.get("at", "")
+            # A later reply to the ask covers every earlier answer to it; a
+            # resolution closes them all. lane-mail lets a reply ref name an
+            # owner ask or note, never an owner answer.
+            if ask in closed or any(reply["ref"] == ask and reply.get("at", "") >= row.get("at", "")
                                     for reply in replies):
                 continue
         handled = False
@@ -96,14 +87,17 @@ def unanswered(lane, over, logged):
 def main():
     parser = argparse.ArgumentParser(prog="owner-unanswered", description=(
         "Print one JSON line {id, at, kind, text} per owner message in the Jarvis home's overseer inbox "
-        "that no reply reference, closed ask or progress record covers."))
+        "that no reply reference, closed ask or progress record covers."), epilog=(
+        "A refusal prints `owner-unanswered: KEY=VALUE` and its cause's first line on stderr. Exit 2 keys: "
+        "since-invalid, older-invalid. Exit 1 keys: mailbox-unreadable (VALUE is the box), "
+        "handoff-unreadable (VALUE is the file), clock-unreadable."))
     parser.add_argument("--bash", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--root", default=".", help="the Jarvis home, or a folder inside it")
     parser.add_argument("--since", help="only messages stamped at or after this UTC time, YYYY-MM-DDTHH:MM:SSZ")
     parser.add_argument("--older", default="0", help="only messages at least this many minutes old")
     args = parser.parse_args()
     try:
-        since = instant(args.since) if args.since else None
+        since = watch.instant(args.since) if args.since else None
     except ValueError:
         print("owner-unanswered: since-invalid=" + args.since, file=sys.stderr)
         return 2
@@ -115,20 +109,15 @@ def main():
         lane = box(args.bash, home, "to-lane")
         over = box(args.bash, home, "to-overseer")
         logged = progress_records(home)
-    except Unreadable as error:
-        key = "handoff-unreadable" if error.args[0] == "handoff" else "mailbox-unreadable"
-        print("owner-unanswered: %s=%s\n%s" % (key, error.args[0], error.args[1]), file=sys.stderr)
-        return 1
-    except (ValueError, RuntimeError) as error:
-        print("owner-unanswered: mailbox-unreadable=events\n" + str(error), file=sys.stderr)
-        return 1
-    try:
-        now = watch.epoch()
-    except (ValueError, RuntimeError) as error:
-        print("owner-unanswered: clock-unreadable=date\n" + str(error), file=sys.stderr)
+        try:
+            now = watch.epoch()
+        except (ValueError, watch.Failure) as error:
+            raise Refusal("clock-unreadable", "date", str(error)) from error
+    except Refusal as refusal:
+        print("owner-unanswered: %s=%s\n%s" % refusal.args, file=sys.stderr)
         return 1
     for row in unanswered(lane, over, logged):
-        at = instant(row["at"])
+        at = watch.instant(row["at"])
         if (since is not None and at < since) or now - at.timestamp() < int(args.older) * 60:
             continue
         print(json.dumps({"id": row["id"], "at": row["at"], "kind": row["kind"], "text": row.get("text", "")}))

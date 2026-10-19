@@ -58,7 +58,7 @@ Use named fields for each record. Record values rather than a prose account that
 | State change | Set or remove, the handoff section and durable item id, and the changed field names and values. Use none when the action changes no session state. |
 
 - Write each record with `.agents/skills/jarvis/scripts/progress-log --operation TEXT --result TEXT --decision TEXT --state-change TEXT`. It stamps the id and the clock time. The [README](../README.md#control-host-events) states the id form. The State checkpoint's log range uses these ids.
-- A record about a user's message names the message id, or the part of it before the first `-`, in Operation or Decision. When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
+- A record about a user's message names the message's full id in Operation or Decision. When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
 
 ### Lane results
 

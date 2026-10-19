@@ -74,6 +74,11 @@ def epoch():
     return int(checked(["date", "+%s"]).strip())
 
 
+def instant(value):
+    """A mailbox `at` stamp, YYYY-MM-DDTHH:MM:SSZ, as an aware UTC time."""
+    return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+
+
 def home_root(path):
     path = Path(path).resolve()
     result = run(["git", "rev-parse", "--show-toplevel"], path)
@@ -221,23 +226,31 @@ def pass_output(side, roots, events):
     return "".join(body) + "cursor: " + json.dumps(record, separators=(",", ":")) + "\n"
 
 
-def events_rows(output, operation):
-    lines = output.split("\n")
-    if not re.fullmatch(r"count=(\d+) first=.*", lines[0]):
-        raise Failure("mailbox-read", "protocol", "events-header-unread", operation)
-    return [json.loads(row) for row in lines[1:] if row]
+def lane_mail():
+    """The producer's own mailbox code; a target's installed copy is never run."""
+    return LIB.parents[2] / "mailbox/scripts/lane-mail"
 
 
-def owner_unread(bash, mail, root, unread, now, reported, events):
-    """Owner rows unread past the home cursor for OWNER_WAIT_SECS, each reported once."""
-    aged = {parts[1]: int(parts[0]) for parts in unread if now - int(parts[2]) >= OWNER_WAIT_SECS}
-    if not aged:
+def mailbox_events(bash, root, box, after=0, mark_read=False):
+    """One `lane-mail events --item overseer --box` read in root, as (count, rows)."""
+    operation = "mailbox-events-" + box
+    args = [bash, lane_mail(), "events", "--item", "overseer", "--box", box, "--after", str(after)]
+    if mark_read:
+        args.append("--mark-read")
+    lines = checked(args, root, operation=operation).split("\n")
+    header = re.fullmatch(r"count=(\d+) first=.*", lines[0])
+    if not header:
+        raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
+    return int(header[1]), [json.loads(row) for row in lines[1:] if row]
+
+
+def owner_unread(bash, root, cursor, count, now, reported, events):
+    """Owner rows past the home receipt cursor for OWNER_WAIT_SECS, each reported once."""
+    if count <= cursor:
         return []
-    rows = events_rows(checked([bash, mail, "events", "--item", "overseer", "--box", "to-lane",
-                                "--after", str(min(aged.values()) - 1)], root, operation="mailbox-events-owner"),
-                       "mailbox-events-owner")
-    owned = [row for row in rows if row.get("id") in aged and owner_row(row)]
-    events.extend(event("owner-unread", id=row["id"], at=row.get("at", ""))
+    _, rows = mailbox_events(bash, root, "to-lane", cursor)
+    owned = [row for row in rows if owner_row(row) and now - instant(row["at"]).timestamp() >= OWNER_WAIT_SECS]
+    events.extend(event("owner-unread", id=row["id"], at=row["at"])
                   for row in owned if row["id"] not in reported)
     return [row["id"] for row in owned]
 
@@ -246,7 +259,6 @@ def mail_pass(bash, home, side, cursor):
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
-    mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
     for root in project_roots():
         key = str(root)
         prior = state.get(key, {})
@@ -256,7 +268,7 @@ def mail_pass(bash, home, side, cursor):
         try:
             if not root.is_dir():
                 raise Failure("root-read", "missing", "root", "root-missing")
-            if not mail.is_file():
+            if not lane_mail().is_file():
                 raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
             common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
             for box in ("to-lane", "to-overseer"):
@@ -266,19 +278,10 @@ def mail_pass(bash, home, side, cursor):
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
                 if size is not None and size == before.get("size"):
                     continue
-                args = [bash, mail, "events", "--item", "overseer", "--box", box,
-                        "--after", str(before.get("count", 0))]
-                if box == "to-overseer":
-                    args.append("--mark-read")
-                output = checked(args, root, operation="mailbox-events-" + box).split("\n")
-                header = re.fullmatch(r"count=(\d+) first=.*", output[0]) if output else None
-                if not header:
-                    raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
-                next_root[box] = {"count": int(header[1]), "size": size}
-                for row in output[1:]:
-                    if not row:
-                        continue
-                    envelope = json.loads(row)
+                count, envelopes = mailbox_events(bash, root, box, before.get("count", 0),
+                                                  mark_read=box == "to-overseer")
+                next_root[box] = {"count": count, "size": size}
+                for envelope in envelopes:
                     if box == "to-lane":
                         if (side == "local" and root == home) or envelope.get("kind") != "answer":
                             continue
@@ -292,11 +295,11 @@ def mail_pass(bash, home, side, cursor):
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
-            receipts = checked([bash, mail, "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
+            receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
             index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
             if index is None:
                 raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
-            receipt = re.fullmatch(r"receipts cursor=(\d+) count=\d+ first=.*", receipts[index])
+            receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
             if not receipt:
                 raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
             unread = []
@@ -306,7 +309,8 @@ def mail_pass(bash, home, side, cursor):
                     unread.append(parts)
             if side == "local" and root == home:
                 # Only the home inbox's receipts say whether owner mail was read.
-                owned = owner_unread(bash, mail, root, unread, now, prior.get("owner_unread", []), root_events)
+                owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
+                                     prior.get("owner_unread", []), root_events)
                 if owned:
                     next_root["owner_unread"] = owned
                 else:
@@ -479,7 +483,7 @@ class Watch:
             payload.write(pending["body"])
             payload.flush()
             try:
-                result = run([self.bash, LIB.parents[2] / "mailbox/scripts/lane-mail", "send", "--item", "overseer",
+                result = run([self.bash, lane_mail(), "send", "--item", "overseer",
                               "--directive", "--file", payload.name, "--delivery-id", pending["key"]], self.home)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 print("watch-loop: send=pending " + str(error), file=sys.stderr)
@@ -637,23 +641,22 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
 
     def accept_unanswered(self, rows, cause):
         # A reminder for the session, never a page: owner-unread alone says mail is unread.
-        path = self.directory / "unanswered.json"
-        state = json.loads(path.read_text()) if path.exists() else {"reported": [], "failed": False}
+        memory = self.state.setdefault("unanswered", {"reported": [], "failed": False})
         blocks = []
         if cause is not None:
-            if not state["failed"]:
+            if not memory["failed"]:
                 blocks.append(event("owner-unanswered-failed", cause=cause["detail"]))
-            state["failed"] = True
+            memory["failed"] = True
         else:
             blocks.extend(event("owner-unanswered", id=row["id"], at=row["at"], kind=row["kind"]) +
                           line_value(row.get("text", ""), limit=4000) + "\n"
-                          for row in rows if row["id"] not in state["reported"])
-            # Listed ids alone stay remembered; an answered row leaves the file.
-            state = {"reported": [row["id"] for row in rows], "failed": False}
+                          for row in rows if row["id"] not in memory["reported"])
+            # Listed ids alone stay remembered; an answered row is forgotten.
+            self.state["unanswered"] = {"reported": [row["id"] for row in rows], "failed": False}
         if blocks:
             self.append(pass_output("local", self.cursors.get("local", {}),
                                     [(str(self.home), block) for block in blocks]))
-        atomic_json(path, state)
+        self.save()
 
     def _poll(self, passes, pending, now):
         work = self.unanswered_pending

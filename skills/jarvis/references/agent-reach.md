@@ -7,7 +7,7 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 - The repository mailbox is the one route to another repository's agent, with a fleet or without one. A repository is reachable when the [mailbox](../../mailbox/SKILL.md) package is installed there; [SKILL.md § Reachable repositories](../SKILL.md#reachable-repositories) judges which are.
 - `[LANE_MAIL]` below is the repository's own `.agents/skills/mailbox/scripts/lane-mail`, run with the repository's main checkout as the working directory. Do not use the Jarvis home's `lane-mail` or its `peer send`: a peer send reaches the agent as another repository's note, not as the user's.
 - Take repositories only from `kendex project list`. Each line is a folder, then optional notes in parentheses: `(folder not found)`, `(not a folder)`, `(folder could not be read)` or `(worktree of [MAIN])`. A worktree line stands for `[MAIN]`, where its mailbox sits.
-- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one. The one exception is a directive to a repository on the control host through `.agents/skills/jarvis/scripts/owner-note REPO FILE`, which makes the send below on that host.
+- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one.
 - `lane-mail --help` defines every verb, envelope, receipt and refusal key used here.
 
 ## Read

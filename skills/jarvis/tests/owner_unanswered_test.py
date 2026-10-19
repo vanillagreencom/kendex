@@ -50,10 +50,11 @@ class OwnerUnanswered(MailWorld):
     def world(self):
         """One owner row per table case; returns the texts expected listed.
 
-        The session reads every covered row; the listed rows arrive unread, so
-        compaction keeps them while it drops the closed and covered exchanges.
-        An id's first part is its epoch second, so each case stamps its own
-        second: a record naming one first part then covers no other case.
+        The session reads the inbox before the -300 cases, so compaction drops
+        the earlier closed and covered exchanges and keeps every later row and
+        the open ask's thread.
+        Rows sent under one at() share their id's epoch second, as a relay
+        catch-up's do: a record naming one full id covers no sibling.
         """
         key = iter("C1:%d.0" % n for n in range(100))
         plain = self.env
@@ -71,6 +72,8 @@ class OwnerUnanswered(MailWorld):
         self.owner("yes", "--re", asks[0], "--delivery-id", next(key))
         self.owner("no, sibling", "--re", asks[0], "--delivery-id", next(key))
         self.mail(self.home, "notice", "ruling reported", "--to", "owner", "--ref", asks[0])
+        at(-650)
+        self.owner("correction after the reply", "--re", asks[0], "--delivery-id", next(key))
         at(-600)
         self.owner("closed answer", "--re", asks[1], "--delivery-id", next(key))
         result = self.command([LANE_MAIL, "resolve", "--item", "overseer", "--id", asks[1]], self.home)
@@ -79,12 +82,14 @@ class OwnerUnanswered(MailWorld):
         logged = self.owner("logged answer", "--re", asks[2], "--delivery-id", next(key))
         at(-400)
         archived = self.owner("archived answer", "--re", asks[3], "--delivery-id", next(key))
-        at(-300)
-        quiet = self.owner("request handled with no reply", "--directive", "--delivery-id", next(key))
-        at(-200)
-        self.owner("no delivery id", "--directive")
         read = self.command([LANE_MAIL, "inbox", "--item", "overseer"], self.home)
         self.assertEqual(read.returncode, 0, read.stderr)
+        at(-300)
+        quiet = self.owner("request handled with no reply", "--directive", "--delivery-id", next(key))
+        self.owner("same second as a handled request", "--directive", "--delivery-id", next(key))
+        at(-200)
+        self.owner("no delivery id", "--directive")
+        self.owner("watch-loop batch", "--directive", "--delivery-id", "jarvis-0123abcd")
         at(-100)
         self.owner("unanswered", "--directive", "--delivery-id", next(key))
         self.env = plain
@@ -94,16 +99,17 @@ class OwnerUnanswered(MailWorld):
         (state / "handoff.md").write_text("## Progress log\n\n" + record("1", "Read " + logged, "apply it") +
                                           record("2", "Handled " + request, "done") +
                                           record("3", "Handled " + quiet, "done, No reply needed"))
-        (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived.split("-")[0], "kept"))
-        return ["unanswered", "request handled without no reply"]
+        (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived, "kept"))
+        return ["correction after the reply", "same second as a handled request", "unanswered",
+                "request handled without no reply"]
 
     def test_table(self):
         expected = self.world()
         past = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         runs = (("listed", ["--older", "10", "--since", past], 11 * 60, expected),
-                ("younger than --older", ["--older", "10"], 0, []),
-                ("one older than --older", ["--older", "1"], 0, ["unanswered"]),
+                ("younger than --older", ["--older", "11"], 0, []),
+                ("older than --older", ["--older", "1"], 0, expected[:-1]),
                 ("older than --since", ["--since", future], 0, []))
         for name, args, offset, listed in runs:
             with self.subTest(run=name):
@@ -141,10 +147,10 @@ class OwnerUnanswered(MailWorld):
             Path(folder, "mailbox").symlink_to(REPO / "skills/mailbox", target_is_directory=True)
             path = copy / "lib/owner_unanswered.py"
             source = path.read_text()
-            old = "    return watch.events_rows(result.stdout, operation)\n"
+            old = "        return watch.mailbox_events(bash, home, name)[1]\n"
             self.assertEqual(source.count(old), 1)
-            path.write_text(source.replace(old, "    box = home / 'tmp/lane-mail/overseer' / (name + '.jsonl')\n"
-                                           "    return [json.loads(row) for row in box.read_text().splitlines()]\n"))
+            path.write_text(source.replace(old, "        box = home / 'tmp/lane-mail/overseer' / (name + '.jsonl')\n"
+                                           "        return [json.loads(row) for row in box.read_text().splitlines()]\n"))
             case = OwnerUnanswered(methodName="test_table")
             case.scripts = copy
             case.setUp()

@@ -4,7 +4,7 @@ Read when starting, recovering or extending the event producer in the [session w
 
 ## Input log
 
-`watch-loop` appends changed local and host passes to `events.log` under `JARVIS_LOG_DIR`. Unchanged cursor-only results add no log entry. Its `batch.json` retains logical read progress, deferred block spans, an immutable current send and a cursor checkpoint. Restart recovers later cursors from the log after that checkpoint. Its `unanswered.json` remembers the owner messages already reported as unanswered. Keep these files across restart. Each simultaneous Jarvis home needs a separate log directory.
+`watch-loop` appends changed local and host passes to `events.log` under `JARVIS_LOG_DIR`. Unchanged cursor-only results add no log entry. Its `batch.json` retains logical read progress, deferred block spans, an immutable current send and a cursor checkpoint. Restart recovers later cursors from the log after that checkpoint. Keep both files across restart. Each simultaneous Jarvis home needs a separate log directory.
 
 An `EVENT` line opens a block. The next `EVENT` line or `cursor:` line closes it. LF is the physical line separator. An unfinished final block waits for its closing boundary. Consumer checks append complete blocks under an exclusive advisory lock on the event log inode. Write each append in full before releasing that lock. End the append with `cursor: {"side":"consumer","roots":{}}` when no next event closes its last block. Consumer checks send no mailbox batch and change no batch state.
 
