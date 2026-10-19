@@ -71,11 +71,6 @@ pub(super) struct Planned {
     /// The synthetic declaration that supplied this reading, inherited
     /// by dependencies when their parent owns the revision.
     held_by: Option<(super::Held, SelectorBasis)>,
-    /// The agent whose assignment this item's revision came through: the
-    /// agent itself for a skill its assignment brought, inherited by what
-    /// that skill requires, like `held_by`. `None` for an item a
-    /// declaration, a set or a requirement outside any assignment brought.
-    assigned_by: Option<String>,
 }
 
 #[derive(Default, Clone)]
@@ -87,11 +82,13 @@ pub(super) struct Expansion {
     /// loser is reported, never silently absorbed.
     rev_disagreements: Vec<Disagreement>,
     held_owners: BTreeMap<(String, super::Held), (String, Option<crate::lock::DeclaredSelector>)>,
-    /// Skills an agent's assignment brought that another item then
-    /// required ([`Expansion::add`]). No assignment brings these again
-    /// (`deps::agent_assignment`), and the walk that let one decide their
-    /// revision starts again (`deps::walk`), so the requirer decides it.
-    yielded: BTreeSet<String>,
+    /// For each agent a requirement reached, the assigned skills its
+    /// assignment brings (`deps::select_assignments`): those no item the
+    /// requirements alone hold, that no requirement wants at another
+    /// revision, and that would take no held item to another revision.
+    /// `None` until that selection is made, and until then an agent's
+    /// assignment brings nothing (`deps::agent_assignment`).
+    brings: Option<BTreeMap<String, BTreeSet<String>>>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -183,25 +180,53 @@ impl Expansion {
             .as_ref()
     }
 
-    /// Whether an agent's assignment leaves `skill` to the items that
-    /// require it, per [`Expansion::add`].
-    pub(super) fn yielded(&self, skill: &str) -> bool {
-        self.yielded.contains(skill)
+    /// Whether `agent`'s assignment brings `skill`, per
+    /// [`Expansion::brings`](Expansion).
+    pub(super) fn brings(&self, agent: &str, skill: &str) -> bool {
+        self.brings
+            .as_ref()
+            .and_then(|brings| brings.get(agent))
+            .is_some_and(|skills| skills.contains(skill))
     }
 
-    /// How many skills the assignments have yielded so far: a walk that
-    /// sees this grow read an assignment's revision where a requirer's
-    /// belongs, and starts again (`deps::walk`).
-    pub(super) fn yield_count(&self) -> usize {
-        self.yielded.len()
+    /// Whether the assigned skills each agent brings are selected yet.
+    pub(super) fn selected(&self) -> bool {
+        self.brings.is_some()
     }
 
-    /// This expansion as it stood at `start`, keeping every skill yielded
-    /// since, for a walk that starts again.
-    pub(super) fn restart_from(&mut self, start: &Expansion) {
-        let yielded = std::mem::take(&mut self.yielded);
-        self.clone_from(start);
-        self.yielded.extend(yielded);
+    pub(super) fn select(&mut self, brings: BTreeMap<String, BTreeSet<String>>) {
+        self.brings = Some(brings);
+    }
+
+    /// The commit `source` read at `rev` resolved to this pass, if it
+    /// resolved.
+    pub(super) fn commit_of(
+        state: &DesiredState,
+        source: &str,
+        rev: Option<&str>,
+    ) -> Option<String> {
+        let resolved = match rev {
+            None => state.sources.get(source),
+            Some(rev) => state.pinned.get(&(source.to_owned(), rev.to_owned())),
+        };
+        match resolved {
+            Some(SourceState::Ready(ready)) => ready.commit.clone(),
+            _ => None,
+        }
+    }
+
+    /// Whether `source` read at `one` and at `other` asks for different
+    /// bytes: the revisions differ, and this pass holds no one commit both
+    /// resolved to. The rule [`Expansion::report_rev_disagreements`]
+    /// reports a derivation's disagreement by.
+    pub(super) fn revisions_differ(
+        state: &DesiredState,
+        source: &str,
+        one: Option<&str>,
+        other: Option<&str>,
+    ) -> bool {
+        let kept = Self::commit_of(state, source, one);
+        one != other && (kept.is_none() || kept != Self::commit_of(state, source, other))
     }
 
     pub(super) fn harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
@@ -235,7 +260,6 @@ impl Expansion {
                 harnesses,
                 chosen_rev,
                 derived_from: None,
-                assigned_by: None,
                 held_by: self.held_owner(
                     &decl.source,
                     super::Held::Item {
@@ -320,27 +344,20 @@ impl Expansion {
         harness: HarnessId,
         reason: Reason,
     ) -> bool {
-        let (held_by, assigned_by) = match &reason {
+        let held_by = match &reason {
             Reason::Requested => unreachable!("a requested item is declared, never derived"),
-            Reason::MemberOf { bundle } => {
-                let held_by = self.held_owner(
-                    &bundle.source,
-                    super::Held::Set {
-                        name: bundle.name.clone(),
-                    },
-                    decl.rev.as_deref(),
-                );
-                (held_by, None)
-            }
+            Reason::MemberOf { bundle } => self.held_owner(
+                &bundle.source,
+                super::Held::Set {
+                    name: bundle.name.clone(),
+                },
+                decl.rev.as_deref(),
+            ),
             Reason::RequiredBy { by } => {
                 let Some(parent) = self.items.get(&(by.kind, by.name.clone())) else {
                     unreachable!("a dependency's parent is already expanded");
                 };
-                let assigned_by = match by.kind == ItemKind::Agent {
-                    true => Some(by.name.clone()),
-                    false => parent.assigned_by.clone(),
-                };
-                (parent.held_by.clone(), assigned_by)
+                parent.held_by.clone()
             }
         };
         // A set weighs its revision against the one the person chose for
@@ -349,24 +366,6 @@ impl Expansion {
         // A dependency uses its parent's commit, including a pin synthesized
         // for the plan.
         let carried_by_a_set = matches!(reason, Reason::MemberOf { .. });
-        // An agent's assignment edge is soft: it decides a skill's
-        // revision and reasons only while nothing else requires the skill.
-        // A requirement from outside what that agent's assignment brought,
-        // at the skill's revision or another, yields the skill to it. The
-        // assignment's revision is then stale in everything it derived, so
-        // the walk starts again rather than weigh it here. A requirement
-        // from inside, `dev` requiring back the `orch` an agent loads, is
-        // at the agent's revision and yields nothing.
-        let brought_by =
-            self.items
-                .get(&(kind, name.to_owned()))
-                .and_then(|planned| match &planned.derived_from {
-                    Some(Reason::RequiredBy { by }) if by.kind == ItemKind::Agent => Some(&by.name),
-                    _ => None,
-                });
-        if brought_by.is_some_and(|agent| assigned_by.as_ref() != Some(agent)) {
-            self.yielded.insert(name.to_owned());
-        }
         let reason_owning = reason.clone();
         let fresh = self
             .reasons
@@ -382,7 +381,6 @@ impl Expansion {
                 chosen_rev: decl.rev.clone(),
                 derived_from: Some(reason_owning.clone()),
                 held_by: held_by.clone(),
-                assigned_by,
             });
         // A derived item is on while any requirer that brings it in is on:
         // the first requirer walked wrote its switch, and a later one that
@@ -463,20 +461,15 @@ impl Expansion {
     pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
-        let commit_of = |source: &str, rev: &Option<String>| {
-            let resolved = match rev {
-                None => state.sources.get(source),
-                Some(rev) => state.pinned.get(&(source.to_owned(), rev.clone())),
-            };
-            match resolved {
-                Some(SourceState::Ready(ready)) => ready.commit.clone(),
-                _ => None,
-            }
-        };
         self.rev_disagreements.retain(|one| {
-            let kept = commit_of(&one.source, &one.kept);
             let chosen = one.by_a_set && one.kept_owner.is_none() && one.refused_owner.is_none();
-            chosen || kept.is_none() || kept != commit_of(&one.source, &one.refused)
+            chosen
+                || Self::revisions_differ(
+                    state,
+                    &one.source,
+                    one.kept.as_deref(),
+                    one.refused.as_deref(),
+                )
         });
         for Disagreement {
             kind,
@@ -487,12 +480,9 @@ impl Expansion {
             ..
         } in &self.rev_disagreements
         {
-            let show = |rev: &Option<String>| match rev {
-                Some(rev) => format!("revision {}", rev.chars().take(7).collect::<String>()),
-                None => "the source's own revision".to_owned(),
-            };
+            let show = |rev: &Option<String>| shown_rev(rev.as_deref());
             let resolved = |rev: &Option<String>| {
-                commit_of(source, rev)
+                Self::commit_of(state, source, rev.as_deref())
                     .or_else(|| rev.clone())
                     .unwrap_or_else(|| "the source's own revision".to_owned())
             };
@@ -514,6 +504,15 @@ impl Expansion {
                 detail: None,
             });
         }
+    }
+}
+
+/// A revision as a warning names it: its first seven characters, or the
+/// source's own where none is held.
+pub(super) fn shown_rev(rev: Option<&str>) -> String {
+    match rev {
+        Some(rev) => format!("revision {}", rev.chars().take(7).collect::<String>()),
+        None => "the source's own revision".to_owned(),
     }
 }
 

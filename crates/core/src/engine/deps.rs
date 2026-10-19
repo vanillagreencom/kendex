@@ -17,7 +17,7 @@ use crate::source_read::SealedSource;
 use super::ItemWarning;
 use super::desired::{DesiredState, Withholding};
 use super::desired_kinds::{NotWritten, manifest_refusal, not_written, pin_answers};
-use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
+use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog, shown_rev};
 
 pub(crate) mod commands;
 
@@ -116,12 +116,13 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
 type Node = (ItemKind, String);
 
 /// Everything the skills and hooks in this expansion require, and the
-/// skills the agents they require load, walked until no installation
-/// learns another reason. Cycles are fine — `orch` and `dev` require each
-/// other on purpose, and so do the lane-mail hooks — because an item is
-/// only walked again when its reasons grow, and they cannot grow forever.
-/// Items that came in as bundle members are walked like any other: what
-/// an item needs does not depend on how it was chosen.
+/// skills the agents they require bring ([`select_assignments`]), walked
+/// until no installation learns another reason. Cycles are fine — `orch`
+/// and `dev` require each other on purpose, and so do the lane-mail hooks
+/// — because an item is only walked again when its reasons grow, and they
+/// cannot grow forever. Items that came in as bundle members are walked
+/// like any other: what an item needs does not depend on how it was
+/// chosen.
 ///
 /// Where the pass judges pins (`DesiredState::judge_pins`), a hook whose
 /// pin alone keeps it off a tool is asked about that tool again, by the
@@ -167,21 +168,24 @@ fn walk(
     state: &mut DesiredState,
     queue: VecDeque<Node>,
 ) -> BTreeMap<String, Vec<HarnessId>> {
-    // An agent's assignment decides a skill's revision and reasons only
-    // while nothing else requires the skill (`Expansion::add`). A pass that
-    // finds a requirer for a skill an assignment brought let the
-    // assignment decide that skill and all it requires, so the walk starts
-    // again from here with no assignment bringing that skill. Each restart
-    // yields one more skill, so the walk ends.
-    let start = expansion.clone();
-    let retired = state.retired.clone();
-    let mut wanted = loop {
-        if let Some(wanted) = closure(manifest, expansion, catalogs, state, queue.clone()) {
-            break wanted;
-        }
-        expansion.restart_from(&start);
-        state.retired.clone_from(&retired);
-    };
+    let mut wanted = closure(manifest, expansion, catalogs, state, queue);
+    // The walk above read every agent's assignment as bringing nothing, so
+    // every revision in it is a requirement's. Only now can what each
+    // assignment brings be chosen without deciding one, and the agents are
+    // walked again to bring it. A walk asked again past a hook's pin
+    // starts from an expansion where that choice is made.
+    if !expansion.selected() {
+        let agents: VecDeque<Node> = wanted
+            .keys()
+            .filter(|(kind, _)| *kind == ItemKind::Agent)
+            .cloned()
+            .collect();
+        let graph = assignment_graph(manifest, expansion, catalogs, &agents);
+        let (brings, contested) = select_assignments(&graph, expansion, state);
+        expansion.select(brings);
+        state.warnings.extend(contested);
+        wanted.extend(closure(manifest, expansion, catalogs, state, agents));
+    }
     carry_kept_retired_edges(expansion, state);
     // The revision each item is wanted at is known only now, once every
     // requirer has added its reason, and the walk must read it before
@@ -230,16 +234,14 @@ fn walk(
 }
 
 /// One pass of [`walk`] from `queue`: every item it reaches walked, and
-/// what each came to. `None` once a skill an agent's assignment brought
-/// yields to a requirer (`Expansion::add`), since what the pass derived
-/// below that skill came from the assignment's revision.
+/// what each came to.
 fn closure(
     manifest: &Manifest,
     expansion: &mut Expansion,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
     mut queue: VecDeque<Node>,
-) -> Option<BTreeMap<Node, Wanted>> {
+) -> BTreeMap<Node, Wanted> {
     // A hook's withholding is read off the companions below it, so one the
     // queue did not start with is walked the first time it is required,
     // grown or not: the walk past a pin starts from an expansion the first
@@ -253,13 +255,7 @@ fn closure(
     // item is what stops a pair of items that require each other from
     // reporting everything twice.
     let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
-    // Every agent waits until no other edge is left to walk, so a skill
-    // those edges require is held before any assignment is read
-    // ([`agent_assignment`]), and only a requirement below an assigned
-    // skill starts the walk again.
-    let yields = expansion.yield_count();
-    let mut agents: VecDeque<Node> = VecDeque::new();
-    while let Some((kind, parent)) = queue.pop_front().or_else(|| agents.pop_front()) {
+    while let Some((kind, parent)) = queue.pop_front() {
         // A declaration no tool here can hold installs nothing, so it needs
         // nothing either; the declaration itself reports that.
         let Some(parent_decl) = expansion.decl_of(kind, &parent) else {
@@ -298,24 +294,12 @@ fn closure(
             }
             let node = (*dep_kind, dep.clone());
             if seen.insert(node.clone()) || grew {
-                match node.0 {
-                    ItemKind::Agent => agents.push_back(node),
-                    ItemKind::Skill
-                    | ItemKind::Hook
-                    | ItemKind::Command
-                    | ItemKind::McpServer
-                    | ItemKind::Plugin
-                    | ItemKind::PiExtension
-                    | ItemKind::OutputStyle => queue.push_back(node),
-                }
+                queue.push_back(node);
             }
-        }
-        if expansion.yield_count() > yields {
-            return None;
         }
         wanted.insert((kind, parent.clone()), found);
     }
-    Some(wanted)
+    wanted
 }
 
 /// Of `tools`, each one `hook`'s pin alone keeps it off, those the walk
@@ -1000,17 +984,7 @@ fn wanted_by(
         if on.is_empty() {
             continue;
         }
-        let (required, optional) = if *dep_kind == ItemKind::Agent {
-            (declared.required_agents.as_slice(), [].as_slice())
-        } else if *dep_kind == kind {
-            (declared.required.as_slice(), declared.optional.as_slice())
-        } else {
-            (declared.required_skills.as_slice(), [].as_slice())
-        };
-        for name in required
-            .iter()
-            .chain(optional.iter().filter(|o| chosen.contains(o)))
-        {
+        for name in names_required(&declared, &chosen, kind, *dep_kind) {
             let Some(dep) = resolve(kind, *dep_kind, name, parent, catalog, &own.0, found) else {
                 unresolved.extend(on.iter().copied());
                 continue;
@@ -1047,10 +1021,11 @@ fn wanted_by(
     Some(wanted)
 }
 
-/// What `parent`, offered at `dir`, declares it needs: an agent's
-/// assignment ([`agent_assignment`]), every other kind's own frontmatter.
-/// `None` where that frontmatter will not read, which the renderer
-/// reports.
+/// What `parent`, offered at `dir`, declares it needs: for an agent, the
+/// skills of its assignment ([`agent_assignment`]) it brings
+/// ([`select_assignments`]), none before that is chosen; for every other
+/// kind, its own frontmatter. `None` where that frontmatter will not read,
+/// which the renderer reports.
 fn declared_by(
     catalog: &OpenCatalog,
     manifest: &Manifest,
@@ -1060,7 +1035,13 @@ fn declared_by(
     dir: &std::path::Path,
 ) -> Option<Dependencies> {
     match kind {
-        ItemKind::Agent => Some(agent_assignment(catalog, manifest, expansion, parent, dir)),
+        ItemKind::Agent => Some(Dependencies {
+            required_skills: agent_assignment(catalog, manifest, parent, dir)
+                .into_iter()
+                .filter(|skill| expansion.brings(parent, skill))
+                .collect(),
+            ..Dependencies::default()
+        }),
         ItemKind::Skill
         | ItemKind::Hook
         | ItemKind::Command
@@ -1071,61 +1052,434 @@ fn declared_by(
     }
 }
 
-/// The skills an agent a skill requires loads, as its required skills: the
-/// consumer's `[agent-skills]` row where it has one, which replaces the
-/// catalog's assignment for the rendering too, and the catalog's own
-/// (`mapping::upstream_skills`) otherwise. Only names this catalog offers:
-/// a row may name a skill another source carries, and one nothing installs
-/// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
-/// agent that will not read or parse needs nothing; the renderer reports it.
+/// The names `declared` requires of `dep_kind`, a `kind` parent's: its
+/// required ones, and the optional ones the manifest chose (`chosen`).
+fn names_required<'a>(
+    declared: &'a Dependencies,
+    chosen: &'a [String],
+    kind: ItemKind,
+    dep_kind: ItemKind,
+) -> impl Iterator<Item = &'a String> {
+    let (required, optional) = if dep_kind == ItemKind::Agent {
+        (declared.required_agents.as_slice(), [].as_slice())
+    } else if dep_kind == kind {
+        (declared.required.as_slice(), declared.optional.as_slice())
+    } else {
+        (declared.required_skills.as_slice(), [].as_slice())
+    };
+    required
+        .iter()
+        .chain(optional.iter().filter(|name| chosen.contains(name)))
+}
+
+/// The skills an agent loads: the consumer's `[agent-skills]` row where
+/// it has one, which replaces the catalog's assignment for the rendering
+/// too, and the catalog's own (`mapping::upstream_skills`) otherwise.
+/// Only names this catalog offers: a row may name a skill another source
+/// carries, and one nothing installs is the agent pass's warning
+/// (`agent_skills::warn_uninstalled`). An agent that will not read or
+/// parse loads nothing; the renderer reports it.
 ///
 /// The assignment is what the agent loads, not what it needs to install,
-/// so its edge is soft: it brings only a skill the scope does not already
-/// hold and nothing outside this assignment requires. A skill held or
-/// required for any other reason — declared, a set's, required at any
-/// depth by an item this assignment did not bring, or brought by another
-/// agent, the skill that requires this agent among them — keeps its own
-/// declaration, revision and reasons, with no revision disagreement,
-/// finding or reason from this edge, whatever the walk order:
-/// `Expansion::add` yields a skill an assignment brought to the first
-/// such requirement that reaches it, and [`walk`] starts again without
-/// it. [`wanted_by`] drops the findings on the skills this edge does
-/// bring.
+/// so its edge is soft: it never decides a skill's revision and never
+/// keeps a skill from installing. Which of these skills it brings is
+/// [`select_assignments`]'s choice, and [`wanted_by`] drops the findings
+/// on those it does bring.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
-    expansion: &Expansion,
     agent: &str,
     path: &std::path::Path,
-) -> Dependencies {
-    let brought_here = |skill: &str| match expansion.derived_from(ItemKind::Skill, skill) {
-        Some(Reason::RequiredBy { by }) => by.kind == ItemKind::Agent && by.name == agent,
-        Some(Reason::Requested | Reason::MemberOf { .. }) | None => false,
-    };
-    let available: Vec<String> = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill)
-        .into_iter()
-        .filter(|skill| !expansion.yielded(skill))
-        .filter(|skill| !expansion.contains(ItemKind::Skill, skill) || brought_here(skill))
-        .collect();
-    let required_skills = match crate::mapping::declared_skills(manifest, agent) {
+) -> Vec<String> {
+    let offered = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill);
+    match crate::mapping::declared_skills(manifest, agent) {
         Some((declared, _)) => declared
             .iter()
-            .filter(|skill| available.contains(skill))
+            .filter(|skill| offered.contains(skill))
             .cloned()
             .collect(),
         None => {
             let Ok(Some(text)) = catalog.sealed.read_if_exists(path) else {
-                return Dependencies::default();
+                return Vec::new();
             };
             let Ok(parsed) = crate::render::agent::parse_source_agent(&text) else {
-                return Dependencies::default();
+                return Vec::new();
             };
-            crate::mapping::upstream_skills(agent, parsed.role, &catalog.config, &available)
+            crate::mapping::upstream_skills(agent, parsed.role, &catalog.config, &offered)
         }
+    }
+}
+
+/// One item [`assignment_graph`] reads: its kind and name, and the
+/// catalog it would be read from.
+type Placed = (ItemKind, String, CatalogKey);
+
+/// One edge of [`AssignmentGraph`], from the first item to the second.
+type Edge = (Placed, Placed);
+
+/// What the agents a requirement reached could bring through their
+/// assignments, and everything that would bring with it.
+#[derive(Default)]
+struct AssignmentGraph {
+    /// The agents a requirement reached, each where the scope holds it.
+    roots: Vec<Placed>,
+    /// Each assignment edge: an agent to a skill it loads.
+    soft: BTreeSet<Edge>,
+    /// Each requirement edge: a skill to a skill or an agent it requires.
+    hard: BTreeSet<Edge>,
+    /// Each requirement of an item the scope already holds, which keeps
+    /// its own revision: the requirer, and the item it requires.
+    crossings: BTreeSet<(Placed, Node)>,
+}
+
+/// From each of `agents`, which a requirement reached, the skills its
+/// assignment names, what those require, and the assignments of the
+/// agents they require, every item read where it would be read if it
+/// were brought: at the catalog of whatever reaches it. An item the scope
+/// already holds is not entered, since what it requires is already
+/// walked; a requirement of one is recorded as a crossing. Reads only
+/// catalogs the walk opened, since every item here is read at an agent's
+/// catalog, and decides nothing.
+fn assignment_graph(
+    manifest: &Manifest,
+    expansion: &Expansion,
+    catalogs: &Catalogs,
+    agents: &VecDeque<Node>,
+) -> AssignmentGraph {
+    let roots: Vec<Placed> = agents
+        .iter()
+        .filter_map(|(kind, name)| {
+            let decl = expansion.decl_of(*kind, name)?;
+            Some((*kind, name.clone(), (decl.source, decl.rev)))
+        })
+        .collect();
+    let manifest_file = crate::manifest::manifest_file_name(catalogs.env, catalogs.scope);
+    let mut graph = AssignmentGraph {
+        roots: roots.clone(),
+        ..AssignmentGraph::default()
     };
-    Dependencies {
-        required_skills,
-        ..Dependencies::default()
+    let mut seen: BTreeSet<Placed> = roots.iter().cloned().collect();
+    let mut queue: VecDeque<Placed> = roots.into();
+    while let Some(node) = queue.pop_front() {
+        let (kind, name, key) = &node;
+        let Offer::Item(catalog, path) = catalogs.offer(key, *kind, name) else {
+            continue;
+        };
+        // What the walk reports of these names, it reports once it walks
+        // them.
+        let mut said = Vec::new();
+        let (soft, targets): (bool, Vec<(ItemKind, String)>) = match kind {
+            ItemKind::Agent => (
+                true,
+                agent_assignment(catalog, manifest, name, &path)
+                    .into_iter()
+                    .map(|skill| (ItemKind::Skill, skill))
+                    .collect(),
+            ),
+            ItemKind::Skill => {
+                let Ok(declared) = declared_dependencies(&catalog.sealed, *kind, &path) else {
+                    continue;
+                };
+                let chosen =
+                    chosen_extras(&manifest_file, *kind, name, manifest, &declared, &mut said);
+                let targets = DEPENDENT_KINDS
+                    .iter()
+                    .filter(|(parent_kind, _)| parent_kind == kind)
+                    .flat_map(|(_, dep_kind)| {
+                        names_required(&declared, &chosen, *kind, *dep_kind)
+                            .map(|dep| (*dep_kind, dep.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .filter_map(|(dep_kind, dep)| {
+                        resolve(*kind, dep_kind, &dep, name, catalog, &key.0, &mut said)
+                            .map(|dep| (dep_kind, dep))
+                    })
+                    .collect();
+                (false, targets)
+            }
+            ItemKind::Hook
+            | ItemKind::Command
+            | ItemKind::McpServer
+            | ItemKind::Plugin
+            | ItemKind::PiExtension
+            | ItemKind::OutputStyle => {
+                unreachable!("only agents and the skills they bring enter the assignment graph")
+            }
+        };
+        for (dep_kind, dep) in targets {
+            if expansion.contains(dep_kind, &dep) {
+                if !soft {
+                    graph.crossings.insert((node.clone(), (dep_kind, dep)));
+                }
+                continue;
+            }
+            let target: Placed = (dep_kind, dep, key.clone());
+            let edges = match soft {
+                true => &mut graph.soft,
+                false => &mut graph.hard,
+            };
+            edges.insert((node.clone(), target.clone()));
+            if seen.insert(target.clone()) {
+                queue.push_back(target);
+            }
+        }
+    }
+    graph
+}
+
+/// Of the assignment edges in `graph`, those kept, as the skills each
+/// agent brings, and a warning for each item two assignments want at two
+/// revisions with no requirement deciding which.
+///
+/// A soft edge never decides a revision and never keeps a skill from
+/// installing. Each round drops the edges that would break that, with
+/// everything only they bring, under the first of three rules that finds
+/// any:
+///
+/// 1. An item an edge brings requires a held item at another revision.
+///    The requirements alone decided that revision, and the agent warns
+///    that it lacks the skill.
+/// 2. An edge brings an item only assignments reach, and a requirement
+///    brings the same item at another revision.
+/// 3. Two revisions of one item are left and nothing settles which. Every
+///    edge bringing either goes, with the warning.
+///
+/// Selection ends at a round that drops nothing, and every round before
+/// it drops an edge, so it ends.
+fn select_assignments(
+    graph: &AssignmentGraph,
+    expansion: &Expansion,
+    state: &DesiredState,
+) -> (BTreeMap<String, BTreeSet<String>>, Vec<ItemWarning>) {
+    let mut kept: BTreeSet<&Edge> = graph.soft.iter().collect();
+    let mut warnings = Vec::new();
+    loop {
+        let live = Live::of(graph, &kept);
+        let dropped = live
+            .held_elsewhere(graph, expansion, state)
+            .or_else(|| live.outranked(state))
+            .or_else(|| live.contested(state, &mut warnings));
+        let Some(dropped) = dropped else {
+            break;
+        };
+        kept.retain(|edge| !dropped.contains(edge));
+    }
+    let live = Live::of(graph, &kept);
+    let mut brings: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for ((_, agent, _), (_, skill, _)) in kept.iter().filter(|(from, _)| live.nodes.contains(from))
+    {
+        brings
+            .entry(agent.clone())
+            .or_default()
+            .insert(skill.clone());
+    }
+    (brings, warnings)
+}
+
+/// What one round of [`select_assignments`] reads: the items the kept
+/// assignment edges and every requirement reach from the agents.
+struct Live<'g> {
+    nodes: BTreeSet<&'g Placed>,
+    kept: Vec<&'g Edge>,
+    hard: Vec<&'g Edge>,
+}
+
+impl<'g> Live<'g> {
+    fn of(graph: &'g AssignmentGraph, kept: &BTreeSet<&'g Edge>) -> Self {
+        let mut nodes: BTreeSet<&Placed> = graph.roots.iter().collect();
+        let mut queue: VecDeque<&Placed> = graph.roots.iter().collect();
+        while let Some(node) = queue.pop_front() {
+            let next = kept
+                .iter()
+                .copied()
+                .chain(&graph.hard)
+                .filter(|(from, _)| from == node)
+                .map(|(_, to)| to);
+            for to in next {
+                if nodes.insert(to) {
+                    queue.push_back(to);
+                }
+            }
+        }
+        let reached = |edges: Vec<&'g Edge>| -> Vec<&'g Edge> {
+            edges
+                .into_iter()
+                .filter(|(from, _)| nodes.contains(from))
+                .collect()
+        };
+        Self {
+            kept: reached(kept.iter().copied().collect()),
+            hard: reached(graph.hard.iter().collect()),
+            nodes,
+        }
+    }
+
+    /// Every item `from` reaches over live edges, itself included.
+    fn reach(&self, from: &'g Placed) -> BTreeSet<&'g Placed> {
+        let mut seen = BTreeSet::from([from]);
+        let mut queue = VecDeque::from([from]);
+        while let Some(node) = queue.pop_front() {
+            for (_, to) in self
+                .kept
+                .iter()
+                .chain(&self.hard)
+                .filter(|(at, _)| at == node)
+            {
+                if seen.insert(to) {
+                    queue.push_back(to);
+                }
+            }
+        }
+        seen
+    }
+
+    /// Whether a requirement brings `node`: one enters the knot of items
+    /// that reach each other `node` sits in from outside it. Inside the
+    /// knot every requirement goes round to an assignment that brought
+    /// the knot, so it decides nothing.
+    fn required(&self, node: &'g Placed) -> bool {
+        let reach = self.reach(node);
+        let knot: BTreeSet<&Placed> = reach
+            .iter()
+            .copied()
+            .filter(|other| self.reach(other).contains(node))
+            .collect();
+        self.hard
+            .iter()
+            .any(|(from, to)| knot.contains(to) && !knot.contains(from))
+    }
+
+    /// The kept assignment edges that bring `node`: those whose skill
+    /// requires it, at any depth, or is it.
+    fn bringing(&self, node: &'g Placed) -> BTreeSet<&'g Edge> {
+        let mut below = BTreeSet::from([node]);
+        let mut queue = VecDeque::from([node]);
+        while let Some(at) = queue.pop_front() {
+            for (from, _) in self.hard.iter().filter(|(_, to)| to == at) {
+                if below.insert(from) {
+                    queue.push_back(from);
+                }
+            }
+        }
+        self.kept
+            .iter()
+            .copied()
+            .filter(|(_, to)| below.contains(to))
+            .collect()
+    }
+
+    /// The live items by kind, name and source: each group the items one
+    /// name could install as.
+    fn by_name(&self) -> BTreeMap<(ItemKind, &'g str, &'g str), Vec<&'g Placed>> {
+        let mut named: BTreeMap<_, Vec<&Placed>> = BTreeMap::new();
+        for node in &self.nodes {
+            let (kind, name, (source, _)) = node;
+            named
+                .entry((*kind, name.as_str(), source.as_str()))
+                .or_default()
+                .push(*node);
+        }
+        named
+    }
+
+    /// The edges bringing an item that requires a held item at another
+    /// revision than the scope holds it at.
+    fn held_elsewhere(
+        &self,
+        graph: &AssignmentGraph,
+        expansion: &Expansion,
+        state: &DesiredState,
+    ) -> Option<BTreeSet<&'g Edge>> {
+        let mut dropped = BTreeSet::new();
+        for (node, (kind, name)) in &graph.crossings {
+            let Some(node) = self.nodes.get(node).copied() else {
+                continue;
+            };
+            let Some(held) = expansion.decl_of(*kind, name) else {
+                unreachable!("{name} is a crossing because the scope holds it");
+            };
+            let (source, rev) = &node.2;
+            if held.source == *source
+                && Expansion::revisions_differ(state, source, held.rev.as_deref(), rev.as_deref())
+            {
+                dropped.extend(self.bringing(node));
+            }
+        }
+        (!dropped.is_empty()).then_some(dropped)
+    }
+
+    /// The edges bringing an item only assignments reach, where a
+    /// requirement brings the same item at another revision and every
+    /// requirement agrees on it.
+    fn outranked(&self, state: &DesiredState) -> Option<BTreeSet<&'g Edge>> {
+        let mut dropped = BTreeSet::new();
+        for ((_, _, source), nodes) in self.by_name() {
+            let (required, assigned): (Vec<&Placed>, Vec<&Placed>) =
+                nodes.into_iter().partition(|node| self.required(node));
+            let rev = |node: &Placed| node.2.1.clone();
+            let Some(decided) = required.first() else {
+                continue;
+            };
+            let differ = |one: &Placed, other: &Placed| {
+                Expansion::revisions_differ(
+                    state,
+                    source,
+                    rev(one).as_deref(),
+                    rev(other).as_deref(),
+                )
+            };
+            if required.iter().any(|other| differ(decided, other)) {
+                continue;
+            }
+            for node in assigned.into_iter().filter(|node| differ(decided, node)) {
+                dropped.extend(self.bringing(node));
+            }
+        }
+        (!dropped.is_empty()).then_some(dropped)
+    }
+
+    /// The edges bringing any revision of an item wanted at two with
+    /// nothing settling which, each such item warned on.
+    fn contested(
+        &self,
+        state: &DesiredState,
+        warnings: &mut Vec<ItemWarning>,
+    ) -> Option<BTreeSet<&'g Edge>> {
+        let mut dropped = BTreeSet::new();
+        for ((kind, name, source), nodes) in self.by_name() {
+            let revs: BTreeSet<Option<&str>> = nodes
+                .iter()
+                .map(|(_, _, (_, rev))| rev.as_deref())
+                .collect();
+            let first = revs.first().copied().flatten();
+            if !revs
+                .iter()
+                .any(|rev| Expansion::revisions_differ(state, source, first, *rev))
+            {
+                continue;
+            }
+            for node in nodes {
+                dropped.extend(self.bringing(node));
+            }
+            let shown: Vec<String> = revs.into_iter().map(shown_rev).collect();
+            warnings.push(ItemWarning {
+                kind,
+                name: name.to_owned(),
+                harness: None,
+                message: format!(
+                    "kendex-agent-skill-contested: {}={}\nAgents' assignments want it at {}, and no requirement settles which, so none of them brings it.",
+                    kind.name(),
+                    crate::names::shown(name),
+                    shown.join(" and "),
+                ),
+                remediation: Some(format!(
+                    "pin the items that bring those agents in to the same revision, or declare {}",
+                    crate::names::shown(name),
+                )),
+                detail: None,
+            });
+        }
+        (!dropped.is_empty()).then_some(dropped)
     }
 }
 
