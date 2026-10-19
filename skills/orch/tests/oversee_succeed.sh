@@ -1432,6 +1432,15 @@ RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" run_succ
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=95" \
   "a provider row with more room supplies the caller's Claude headroom"
+# The control VM's reading of an account whose organization disabled
+# subscription access: the mark names the status the watch reads as a wall no
+# reset lifts.
+printf 'account=%s\tharness=claude\tstatus=plan_ended\tdetail=http-403-oauth_not_allowed_for_organization\n' "$H/.claude" > "$TMP_ROOT/accounts-ended.tsv"
+hosted_caller
+RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-ended.tsv" run_succeed hostedended '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=headroom value=0 mark=$TRIGGER succession=on account=claude resets=none status=plan_ended" \
+  "a plan_ended caller account reaches the headroom mark carrying its status"
 
 # The projected wall is measured from the displaced cache sample. A fast burn
 # reaches the setting. A slow burn does not. Missing, close, and flat samples

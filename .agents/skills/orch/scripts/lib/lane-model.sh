@@ -135,7 +135,9 @@ def model_binding($model):
 # read as room. With no model named, this bucket decides as it always did.
 #
 # A record whose usage could not be read answers null whatever its other fields
-# say: a window nobody read is not an empty one.
+# say: a window nobody read is not an empty one. A `plan_ended` record is the
+# one exception: its refused read confirmed the plan ended, so it answers
+# ended_wall (lane_ended above).
 def binding_bucket:
   if lane_ended then ended_wall
   elif ((lane_measured | not) or .headroom_pct == null

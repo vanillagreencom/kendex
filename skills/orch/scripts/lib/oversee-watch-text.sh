@@ -122,7 +122,9 @@ The long pass's events, checked and reported in this order:
                              mark-reached kind=headroom value=0 without
                              reserve_only=true, account
                              and reset under the line; both on the first pass that
-                             reads them. Or, from the `pane` fallback, on N
+                             reads them. An account the judgement reads
+                             status=plan_ended has no reset, and its notice
+                             also goes to the owner once. Or, from the `pane` fallback, on N
                              consecutive passes read by the same judge AND
                              that judgement reading mark-reached
                              kind=headroom without reserve_only=true: the harness is still running
@@ -151,8 +153,10 @@ The long pass's events, checked and reported in this order:
                              repeat stops.
                              Measured account and reset values need an
                              account mark. Unmeasured fields read
-                             account=unknown and resets=none. Login recovery
-                             has no usage reset: sign in to an account, then
+                             account=unknown and resets=none. A login wall
+                             or a plan_ended account has no usage reset:
+                             sign the account in again, restore its plan or
+                             access or sign in to another account, then
                              start a fresh overseer by hand
   EVENT overseer-reserve <pane> window=<window> passes=1 succession=<on|off> source=<source>
                              Positive spendable credits remain below the
@@ -1296,7 +1300,7 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched. '"$OW_REPLAY_RULE"' The held field is that line, none where the record holds none for this pane, or unread where the record, or the pane key or server start that names it, could not be read. The step field names what failed.' ;;
     overseer-notice-failed) text='An overseer notice could not be delivered on the channel the field names. A notice from a pass still had its event line printed; a notice from the watch start has none.' ;;
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
-    overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The notice reaches the fleet log, the overseer mailbox and the owner, once. Measured account and reset values come from an account mark. Unmeasured fields read account=unknown and resets=none. Login recovery has no usage reset: sign in to an account, then start a fresh overseer by hand.' ;;
+    overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The notice reaches the fleet log, the overseer mailbox and the owner, once. Measured account and reset values come from an account mark. Unmeasured fields read account=unknown and resets=none. A login wall or a plan_ended account has no usage reset: sign the account in again, restore its plan or access or sign in to another account, then start a fresh overseer by hand.' ;;
     overseer-capacity-blocked) text='No account qualifies for a successor at the launch reserve. The current coordinator can still spend credits. Its watch continues without repeating the account sweep.' ;;
     overseer-capacity-failed) text='The successor launch failed at the launch reserve. The current coordinator stays live. Its watch continues through the bounded retry and after exhaustion.' ;;
     overseer-succeeded) text='A successor holds the overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;

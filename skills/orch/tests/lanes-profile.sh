@@ -31,7 +31,7 @@ for arg in "$@"; do
 done
 printf '%s\t%s\t%s\n' "$endpoint" "$config" "$beta" >> "$CURL_LOG"
 case "$endpoint" in
-  usage) code="$USAGE_CODE"; body='{}' ;;
+  usage) code="$USAGE_CODE"; body='{}'; [[ ! -f "$USAGE_BODY" ]] || body="$(cat "$USAGE_BODY")" ;;
   profile)
     [[ "$PROFILE_CODE" != transport ]] || exit 7
     code="$PROFILE_CODE"; body="$(cat "$PROFILE_BODY")"
@@ -70,7 +70,7 @@ profile_run() { # SCRIPT USAGE_CODE PROFILE_CODE ARGS...
     ORCH_LANE_DIRS="$ACCOUNT" ORCH_LANES_CLAUDE_USAGE_URL=https://lanes-test.invalid/api/oauth/usage \
     ORCH_LANES_CODEX_USAGE_URL=https://lanes-test.invalid/codex/usage \
     OVERSEE_WATCH_STATE_DIR="$H/store" ORCH_STATE_DIR="$H/state" \
-    CURL_LOG="$H/curl.log" USAGE_CODE="$usage" PROFILE_CODE="$profile" PROFILE_BODY="$H/profile.json" \
+    CURL_LOG="$H/curl.log" USAGE_CODE="$usage" USAGE_BODY="$H/usage.json" PROFILE_CODE="$profile" PROFILE_BODY="$H/profile.json" \
     "$script" "$@" 2>"$H/err")
 }
 
@@ -140,6 +140,28 @@ for row in \
       assert_eq "$(jq -r '"\(.[0].status) \(.[0].verdict) \(.[0].detail)"' <<<"$cached")" "plan_ended walled $detail" "$name keeps the recorded cause on the cached refusal"
       assert_eq "$(awk 'END { print NR }' "$H/curl.log")" 2 "$name posts no request for a cached refusal"
     fi
+  fi
+done
+# A figure cached while the plan had room, then a forced read that confirms
+# the plan ended: the default list and pick read the ended plan, never the
+# older figure.
+KEPT_CONTROL="$(mutant_scripts profile-kept lanes)"
+mutate_file "$KEPT_CONTROL/lanes" '[[ ! -f "$file" || "$4" == plan_ended ]] || kept=' '[[ ! -f "$file" ]] || kept='
+for script in "$SHIPPED" "$KEPT_CONTROL/lanes"; do
+  new_home cached-then-ended
+  ACCOUNT="$H/.claude"
+  make_lane "$H" claude 3600 max
+  printf '%s\n' "$LAPSED" > "$H/profile.json"
+  claude_usage 10 10 10 Opus > "$H/usage.json"
+  profile_run "$script" 200 200 list --harness claude --json >/dev/null
+  profile_run "$script" 403 200 list --harness claude --json --no-cache >/dev/null
+  listed="$(profile_run "$script" 403 200 list --harness claude --json)"
+  rc=0; profile_run "$script" 403 200 pick --harness claude >/dev/null || rc=$?
+  got="$(jq -r '"\(.[0].status) \(.[0].verdict)"' <<<"$listed") pick=$rc"
+  if [[ "$script" == "$SHIPPED" ]]; then
+    assert_eq "$got" "plan_ended walled pick=3" "a confirmed ended plan outranks the figure cached before it" "$H/err"
+  else
+    [[ "$got" != "plan_ended walled pick=3" ]] && pass "control-kept turns the unchanged assertion red" || fail "control-kept did not reject the planted defect"
   fi
 done
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

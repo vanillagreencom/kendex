@@ -38,7 +38,8 @@
 #         judged against ORCH_LANE_MAX_PCT by the rule `pick` with no --model
 #         refuses on, so a reader of the listing never holds a second copy of
 #         that threshold or its default. The verdict is the reading's, a wall
-#         that lifts at binding_resets_at; `burn_pct_per_lane_hour` and
+#         that lifts at binding_resets_at, save a `plan_ended` account's,
+#         which has none (lib/lane-model.sh § lane_ended); `burn_pct_per_lane_hour` and
 #         `projected_headroom_pct` beside it are the projection `pick` also
 #         drops a lane on. Claims charge only their spending pool: Claude and
 #         Codex windows count plan claims, Copilot counts Copilot claims, and
@@ -2291,13 +2292,16 @@ write_usage_refusal() { # HARNESS DIR ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
 
 # Writes the refusal over the lane's record, keeping the figure the record held
 # for this lane, under its own stamp, beside it: `kept` is that figure as
-# `{usage, usage_fetched_at}`, or `{}` where there is none.
+# `{usage, usage_fetched_at}`, or `{}` where there is none. A `plan_ended`
+# refusal keeps none: a default read serves a kept figure ahead of the
+# refusal beside it, and a figure from before the plan ended would hand out an
+# account that admits no launch.
 store_usage_refusal() { # HARNESS DIR ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
 	local file tmp window kept="" parsed observed ems="${expires_ms:-0}" rms="${refresh_expiry:-0}"
 	window="$(usage_refusal_window "${7:-}")"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
-	[[ ! -f "$file" ]] || kept="$(jq -c --arg h "$1" --arg d "$2" '
+	[[ ! -f "$file" || "$4" == plan_ended ]] || kept="$(jq -c --arg h "$1" --arg d "$2" '
 		(.usage_fetched_at // .fetched_at) as $at
 		| select(.harness == $h and .config_dir == $d
 		       and ($at | type) == "number" and (.usage | type) == "object")

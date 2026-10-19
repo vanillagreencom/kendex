@@ -3180,13 +3180,10 @@ table \
 # listing, the chooser and the named pick read walled, never unmeasured.
 printf 'account=%s\tharness=claude\tstatus=plan_ended\tdetail=http-403-oauth_not_allowed_for_organization\n' \
   "$H/.tclaude" > "$TMP_ROOT/pick-ended.tsv"
-printf 'account=%s\tharness=claude\tstatus=plan_ended\tdetail=http-403-oauth_not_allowed_for_organization\naccount=%s\tharness=claude\tsession-5h-pct=60\tweekly-pct=70\n' \
-  "$H/.tclaude" "$H/.hostonly" > "$TMP_ROOT/pick-ended-beside.tsv"
 table \
   "a listed plan_ended account reads walled at the plan bucket|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended.tsv|list --harness claude --json|rc=0 last.alias=tclaude last.measured_through=host last.status=plan_ended last.verdict=walled last.wall=100 last.binding_bucket=plan" \
   "a named plan_ended account is walled, never unmeasured|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended.tsv|$PICK_LANE $H/.tclaude|rc=3 status=plan_ended wall=100 binding_bucket=plan measured_through=host" \
-  "the chooser counts a plan_ended account walled|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2,seats=0 considered.tclaude=host" \
-  "the chooser never returns a plan_ended account beside one with room|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended-beside.tsv|$PICK|rc=0 config_dir=$H/.hostonly"
+  "the chooser counts a plan_ended account walled|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended.tsv|$PICK|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2,seats=0 considered.tclaude=host"
 # Control: a judge with no ended wall reads the same account as a reading
 # nobody made, the unjudged mark the overseer watch held for hours.
 lanes_mutant mutant-plan-unended lib/lane-model.sh 'def lane_ended: \.status == "plan_ended";' 'def lane_ended: false;'

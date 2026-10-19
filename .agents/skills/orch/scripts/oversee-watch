@@ -3684,6 +3684,23 @@ overseer_auth_wall() {
   [[ "$OV_SOURCE" == auth || ( "$OV_SOURCE" == rows && "$SESSION_ROWS_WALL_KIND" == auth ) ]]
 }
 
+# The remedy for a wall no usage reset lifts, on stdout, or exit 1 for a wall
+# its reset lifts, whose successor is the whole remedy. Two walls reach it:
+# the account refused the login or its access (overseer_auth_wall), or this
+# pass's account mark reads the account `plan_ended`, a plan or organization
+# access that ended (lib/lane-model.sh § lane_ended). Only the owner can act
+# on either, so overseer_deliver and overseer_recovery_blocked both carry this
+# sentence and send it to the owner.
+overseer_unlifted_remedy() {
+  if overseer_auth_wall; then
+    echo 'Its account refused the login or its access, which no usage reset lifts: sign the account in again, restore its access or sign in to another account.'
+  elif [[ "$OVERSEER_MARK_READ" == 1 && "$OVERSEER_MARK_RC" == 0 && "$OVERSEER_MARK_STATUS" == plan_ended ]]; then
+    echo "Its account ${OVERSEER_MARK_ACCOUNT:-unknown} reads plan_ended: its plan or its organization's subscription access ended, which no usage reset lifts. Restore the plan or the access, or take the account out of the fleet."
+  else
+    return 1
+  fi
+}
+
 # The notice every channel carries, written once into WORK_DIR: the fleet log
 # reads it as the text of its record and the overseer mailbox as the body of an
 # owner note, so the two cannot describe the case differently.
@@ -3694,13 +3711,13 @@ overseer_auth_wall() {
 # not say: an earlier server handed the same pid and pane id left the same
 # one. The no-line plan names which of the three shapes left it with no line.
 #
-# An auth wall also reaches the owner, once per episode since the caller
-# delivers only on a case's first reading: the successor moves the fleet off
-# that account, and only the owner can sign it in again or restore its access.
-# A usage wall lifts at its reset, and its successor is the whole remedy.
+# A wall no usage reset lifts (overseer_unlifted_remedy) also reaches the
+# owner, once per episode since the caller delivers only on a case's first
+# reading: the successor moves the fleet off that account, and only the owner
+# can bring it back.
 overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
   local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
-  local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text headline
+  local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text headline remedy=""
   now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
   if [[ "$kind" == reserve ]]; then
     relaunch_text='A successor is being selected. The current coordinator can still spend credits and its watch continues if no successor opens.'
@@ -3737,12 +3754,12 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
     printf -v headline 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s, source=%s. %s' \
       "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text"
   fi
-  [[ "$kind" != walled ]] || ! overseer_auth_wall \
-    || headline+=' Its account refused the login or its access, which no usage reset lifts: sign the account in again or restore its access.'
+  [[ "$kind" != walled ]] || remedy="$(overseer_unlifted_remedy)" || remedy=""
+  [[ -z "$remedy" ]] || headline+=" $remedy"
   printf '%s\n' "$headline" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
-  [[ "$kind" != walled ]] || ! overseer_auth_wall || overseer_owner_notice "$notice" "$errf" || true
+  [[ -z "$remedy" ]] || overseer_owner_notice "$notice" "$errf" || true
 }
 
 # Exit 3 from the launcher is `lanes pick`'s own "no lane clears the bound",
@@ -3757,8 +3774,8 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
 # The account fields come from this pass's existing `--check-marks` result,
 # never from the banner or from the requested recovery mode. Reserve refusal
 # reports the measured account without a reset promise. Actual wall recovery
-# reports a measured binding bucket reset where available. Authentication
-# failure has no usage reset. See ../references/overseer-session-events.md,
+# reports a measured binding bucket reset where available. A wall no usage
+# reset lifts names its remedy instead (overseer_unlifted_remedy). See ../references/overseer-session-events.md,
 # Recovery requests.
 overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW KIND
   local row="$1" rows="$2" identity="$3" pane="$4" window="$5"
@@ -3778,10 +3795,11 @@ overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW KIND
   OVERSEER_STOP=1
   local account="" resets=""
   [[ "$OVERSEER_MARK_READ" -ne 1 ]] || { account="$OVERSEER_MARK_ACCOUNT"; resets="$OVERSEER_MARK_RESETS"; }
-  local remedy="Start a fresh overseer by hand once an account qualifies."
-  if overseer_auth_wall; then
-    account="" resets=""
-    remedy="The login failed and has no usage reset. Sign in to an account, then start a fresh overseer by hand."
+  local remedy="Start a fresh overseer by hand once an account qualifies." unlifted
+  if unlifted="$(overseer_unlifted_remedy)"; then
+    # Login recovery skips the usage read, so no account mark names them.
+    ! overseer_auth_wall || { account="" resets=""; }
+    remedy="$unlifted Then start a fresh overseer by hand."
   elif [[ -n "$account" && -n "$resets" ]]; then
     remedy="Account $account has a measured binding bucket reset at $resets. Start a fresh overseer by hand once an account has room."
   fi
@@ -3834,7 +3852,7 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP KIND
 #
 # OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
 # or `below-mark` for the `account-below-mark` line; the KIND, VALUE,
-# MARK, ACCOUNT and RESETS globals are its fields, empty where the line
+# MARK, ACCOUNT, RESETS and STATUS globals are its fields, empty where the line
 # carries none. Exit 1 means no judgement was made at all, the note already
 # said once, and nothing may be concluded from any of them.
 OVERSEER_MARK_KEY=""
@@ -3844,6 +3862,7 @@ OVERSEER_MARK_MARK=""
 OVERSEER_MARK_SUCCESSION=on
 OVERSEER_MARK_ACCOUNT=""
 OVERSEER_MARK_RESETS=""
+OVERSEER_MARK_STATUS=""
 OVERSEER_MARK_RESERVE_ONLY=false
 OVERSEER_MARK_READ=0
 OVERSEER_MARK_RC=1
@@ -3898,6 +3917,7 @@ overseer_marks_judge() {
   OVERSEER_MARK_SUCCESSION=on
   OVERSEER_MARK_ACCOUNT=""
   OVERSEER_MARK_RESETS=""
+  OVERSEER_MARK_STATUS=""
   OVERSEER_MARK_RESERVE_ONLY=false
   if [[ ! -x "$SUCCEED" ]]; then
     overseer_note overseer-mark-unjudged "path=$SUCCEED" "setting=OVERSEE_WATCH_SUCCEED"
@@ -3930,6 +3950,7 @@ overseer_marks_judge() {
       succession=*) OVERSEER_MARK_SUCCESSION="${field#succession=}" ;;
       account=*) OVERSEER_MARK_ACCOUNT="${field#account=}" ;;
       resets=*) OVERSEER_MARK_RESETS="${field#resets=}" ;;
+      status=*) OVERSEER_MARK_STATUS="${field#status=}" ;;
       reserve_only=true) OVERSEER_MARK_RESERVE_ONLY=true ;;
     esac
   done
