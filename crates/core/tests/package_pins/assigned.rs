@@ -1,7 +1,7 @@
 //! Required agents bring assigned skills without choosing their revisions.
 //! Jarvis requires several agents with overlapping github/linear assignments.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kendex_core::engine::{DeclarationStatus, planned_closure};
 
@@ -1013,4 +1013,185 @@ fn a_consumed_reservation_keeps_its_redeclared_sources_record() {
         report.record.entries[&y].source_commit.as_deref(),
         Some(b.as_str())
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HarnessCopies {
+    /// q is assigned by an agent on the first harness and required by t,
+    /// which another agent assigns, on the second.
+    Split(HarnessId, HarnessId),
+    /// Every ancestor of the target c4 is installed on three harnesses.
+    Nested,
+}
+
+/// The catalog and scope one [`HarnessCopies`] row installs.
+struct Closure {
+    skills: &'static [(&'static str, &'static str)],
+    agents: &'static [&'static str],
+    assignments: &'static str,
+    harnesses: &'static [HarnessId],
+    declarations: String,
+    target: &'static str,
+}
+
+/// One item is one lock entry per harness, and its copies can be there
+/// for different reasons. A targeted update reads the owners of every
+/// copy, so the outcome cannot turn on which harness name sorts first,
+/// and a nested closure installed on several harnesses holds the same
+/// followers it holds on one.
+#[test]
+#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one harness-copy ownership table: split assigners in both orders and a nested closure"
+)]
+fn targeted_updates_read_every_harness_copys_owners() {
+    for case in [
+        HarnessCopies::Split(HarnessId::Claude, HarnessId::Copilot),
+        HarnessCopies::Split(HarnessId::Copilot, HarnessId::Claude),
+        HarnessCopies::Nested,
+    ] {
+        let w = world();
+        let Closure {
+            skills,
+            agents,
+            assignments,
+            harnesses,
+            declarations,
+            target,
+        } = match case {
+            HarnessCopies::Split(q_on, t_on) => Closure {
+                skills: &[
+                    ("ra", "dependencies:\n  agents: [aa]\n"),
+                    ("rb", "dependencies:\n  agents: [ab]\n"),
+                    ("t", "dependencies:\n  required: [q]\n"),
+                    ("q", ""),
+                ],
+                agents: &["aa", "ab"],
+                assignments: "aa = [\"q\"]\nab = [\"t\"]\n",
+                harnesses: &[HarnessId::Claude, HarnessId::Copilot],
+                declarations: format!(
+                    "[skills.ra]\nsource = \"cat\"\nharnesses = [\"{}\"]\n[skills.rb]\nsource = \"cat\"\nharnesses = [\"{}\"]\n",
+                    q_on.name(),
+                    t_on.name()
+                ),
+                target: "t",
+            },
+            HarnessCopies::Nested => Closure {
+                skills: &[
+                    ("lead", "dependencies:\n  agents: [scout]\n"),
+                    ("c1", "dependencies:\n  required: [c2]\n"),
+                    ("c2", "dependencies:\n  required: [c3]\n"),
+                    ("c3", "dependencies:\n  required: [c4]\n"),
+                    ("c4", ""),
+                    ("solo", ""),
+                ],
+                agents: &["scout"],
+                assignments: "scout = [\"c1\", \"solo\"]\n",
+                harnesses: &[HarnessId::Claude, HarnessId::Codex, HarnessId::Copilot],
+                declarations: "[skills.lead]\nsource = \"cat\"\n".to_owned(),
+                target: "c4",
+            },
+        };
+        let write = |version: &str| {
+            for (name, deps) in skills {
+                write_skill(&w.upstream, name, deps, &format!("{name} {version}."));
+            }
+            for name in agents {
+                write_agent(&w.upstream, name, version);
+            }
+        };
+        write("one");
+        fs::write(
+            w.upstream.join("kendex.toml"),
+            format!("[agent-skills]\n{assignments}"),
+        )
+        .unwrap();
+        let first = commit(&w.upstream, "one");
+        let installs: Vec<_> = harnesses
+            .iter()
+            .map(|harness| format!("\"{}\"", harness.name()))
+            .collect();
+        write_manifest(
+            &w,
+            &format!(
+                "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [{}]\nmethod = \"copy\"\n{declarations}",
+                installs.join(", ")
+            ),
+        );
+        sync_and_apply(&w);
+        write("two");
+        let second = commit(&w.upstream, "two");
+        fetch_mirrors(&w);
+        let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, target).unwrap();
+        assert_eq!(
+            report.declaration_status,
+            DeclarationStatus::Complete,
+            "{case:?}: {:?}",
+            messages(&report)
+        );
+        // The pins and reservations the plan read through: everything the
+        // update held still.
+        let held: BTreeSet<_> = report
+            .held
+            .iter()
+            .map(|pin| match &pin.held {
+                kendex_core::engine::Held::Item { kind, name } => (*kind, name.as_str()),
+                kendex_core::engine::Held::Set { name } => panic!("{case:?}: set {name} held"),
+            })
+            .collect();
+        let (expected_held, moved): (BTreeSet<_>, &[&str]) = match case {
+            HarnessCopies::Split(..) => (
+                [
+                    (ItemKind::Skill, "ra"),
+                    (ItemKind::Skill, "rb"),
+                    (ItemKind::Agent, "aa"),
+                    (ItemKind::Agent, "ab"),
+                ]
+                .into(),
+                &["t", "q"],
+            ),
+            HarnessCopies::Nested => (
+                [
+                    (ItemKind::Skill, "lead"),
+                    (ItemKind::Agent, "scout"),
+                    (ItemKind::Skill, "solo"),
+                ]
+                .into(),
+                &["c1", "c2", "c3", "c4"],
+            ),
+        };
+        assert_eq!(held, expected_held, "{case:?}");
+        apply::execute(&w.env, &report.plan).unwrap();
+        let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+        for entry in lock.entries.values() {
+            let fresh = moved.contains(&entry.name.as_str());
+            assert_eq!(
+                entry.source_commit.as_deref(),
+                Some(if fresh {
+                    second.as_str()
+                } else {
+                    first.as_str()
+                }),
+                "{case:?}: {:?} {} on {:?}",
+                entry.kind,
+                entry.name,
+                entry.harness
+            );
+        }
+        let copies: Vec<_> = match case {
+            HarnessCopies::Split(q_on, t_on) => vec![("q", q_on), ("q", t_on), ("t", t_on)],
+            HarnessCopies::Nested => harnesses
+                .iter()
+                .flat_map(|harness| moved.iter().map(move |name| (*name, *harness)))
+                .collect(),
+        };
+        for (name, harness) in copies {
+            assert!(
+                lock.entries
+                    .contains_key(&entry_key(ItemKind::Skill, name, harness)),
+                "{case:?}: {name} on {harness:?}"
+            );
+        }
+    }
 }

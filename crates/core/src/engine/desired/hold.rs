@@ -59,15 +59,20 @@ enum Owner {
     },
 }
 
-/// The declarations one installation is here under, following a dependency
-/// up to whatever asked for its parent.
+/// The declarations one item is here under, following a dependency up to
+/// whatever asked for its parent.
 ///
 /// A dependency reads its own bytes from the catalog its parent was read
 /// at, so what has to be pinned to recover it is the declaration that
-/// brought the parent in, not anything of its own. `seen` is the cycle
-/// guard: two skills may require each other on purpose — and it keys on
-/// the source too, so a package installed from two of them is walked once
-/// per installation rather than once per name.
+/// brought the parent in, not anything of its own.
+///
+/// The item is its `(kind, name, source)`, the identity every consumer of
+/// the answer keys on: a pin, a reservation and an exemption each speak
+/// for every harness copy at once. Its lock entries are one per harness
+/// and can carry different reasons — assigned by an agent on one tool,
+/// required by a skill on another — so each item reads the union of its
+/// copies' reasons. Asked of one copy, the answer would turn on which
+/// harness name sorts first.
 ///
 /// Every reference is followed by the source it records, never by name
 /// alone: the edge names which parent, and which bundle, this dependency
@@ -82,22 +87,53 @@ enum Owner {
 /// target's own declaration says.
 fn owners_of(
     lock: &Lock,
-    entry: &LockEntry,
-    seen: &mut BTreeSet<(ItemKind, String, String)>,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
     carriers: bool,
 ) -> BTreeSet<Owner> {
-    if !seen.insert((entry.kind, entry.name.clone(), entry.source.clone())) {
-        return BTreeSet::new();
-    }
     let mut owners = BTreeSet::new();
-    for reason in &entry.reasons {
+    walk_owners(
+        lock,
+        (kind, name, source),
+        carriers,
+        &mut BTreeSet::new(),
+        &mut owners,
+    );
+    owners
+}
+
+/// [`owners_of`]'s walk. `visited` is one set for the whole walk: two
+/// skills may require each other on purpose, and an item reached by two
+/// paths names the same owners on both, because what it contributes
+/// depends on its own reasons alone — every parent walks with `carriers`
+/// set, and the agent arm decides per item. Only the root reads the
+/// caller's `carriers`, and a cycle back to it stops there.
+fn walk_owners<'a>(
+    lock: &'a Lock,
+    item: (ItemKind, &'a str, &'a str),
+    carriers: bool,
+    visited: &mut BTreeSet<(ItemKind, &'a str, &'a str)>,
+    owners: &mut BTreeSet<Owner>,
+) {
+    if !visited.insert(item) {
+        return;
+    }
+    let (kind, name, source) = item;
+    let own = || Owner::Item {
+        kind,
+        name: name.to_owned(),
+        source: source.to_owned(),
+    };
+    let reasons = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == kind && entry.name == name && entry.source == source)
+        .flat_map(|entry| &entry.reasons);
+    for reason in reasons {
         match reason {
             Reason::Requested => {
-                owners.insert(Owner::Item {
-                    kind: entry.kind,
-                    name: entry.name.clone(),
-                    source: entry.source.clone(),
-                });
+                owners.insert(own());
             }
             Reason::MemberOf { bundle } if carriers => {
                 owners.insert(Owner::Bundle {
@@ -106,32 +142,14 @@ fn owners_of(
                 });
             }
             Reason::MemberOf { .. } => {}
-            Reason::RequiredBy { by }
-                if entry.kind == ItemKind::Skill && by.kind == ItemKind::Agent =>
-            {
-                owners.insert(Owner::Item {
-                    kind: entry.kind,
-                    name: entry.name.clone(),
-                    source: entry.source.clone(),
-                });
+            Reason::RequiredBy { by } if kind == ItemKind::Skill && by.kind == ItemKind::Agent => {
+                owners.insert(own());
             }
             Reason::RequiredBy { by } => {
-                // A copy of the guard per parent, not one shared between
-                // them. One item is one entry per tool and those entries
-                // can carry different reasons — requested for one tool,
-                // carried by a set for another — so a shared guard stops at
-                // the first and drops every owner the rest would have
-                // named. The guard is here to stop a cycle, not to visit a
-                // parent once.
-                for parent in lock.entries.values().filter(|parent| {
-                    parent.kind == by.kind && parent.name == by.name && parent.source == by.source
-                }) {
-                    owners.extend(owners_of(lock, parent, &mut seen.clone(), true));
-                }
+                walk_owners(lock, (by.kind, &by.name, &by.source), true, visited, owners)
             }
         }
     }
-    owners
 }
 
 /// The synthetic pins one held plan wrote — exactly these and nothing else
@@ -557,14 +575,20 @@ fn reserve_readings(
         {
             continue;
         }
-        let own = Owner::Item {
-            kind: entry.kind,
-            name: entry.name.clone(),
-            source: entry.source.clone(),
-        };
-        let carriers = owners_of(lock, entry, &mut BTreeSet::new(), true);
-        if exempt.contains(&own) || !carriers.is_disjoint(exempt) {
-            continue;
+        // Nothing is exempt under a locked, at-record or installed read,
+        // so no owner could release the reservation: skip the walk.
+        if !exempt.is_empty() {
+            let own = Owner::Item {
+                kind: entry.kind,
+                name: entry.name.clone(),
+                source: entry.source.clone(),
+            };
+            if exempt.contains(&own)
+                || !owners_of(lock, entry.kind, &entry.name, &entry.source, true)
+                    .is_disjoint(exempt)
+            {
+                continue;
+            }
         }
         let Some(repo) = held_repo(manifest, lock, &entry.source, keeps_records) else {
             continue;
@@ -648,18 +672,26 @@ fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held, reach: Reach) ->
     // Its installations under that source, and the declarations they came
     // in under. An entry a rebind left behind is an installation of a
     // package this declaration is not, and its edges lead to
-    // declarations this update has no business unpinning.
-    for entry in lock.entries.values().filter(|entry| {
-        entry.kind == target.0
-            && entry.name == target.1
-            && reads_from
-                .as_ref()
-                .is_none_or(|source| &entry.source == source)
-    }) {
+    // declarations this update has no business unpinning. A derived
+    // target is every source the lock installed it from.
+    let sources: BTreeSet<&str> = lock
+        .entries
+        .values()
+        .filter(|entry| {
+            entry.kind == target.0
+                && entry.name == target.1
+                && reads_from
+                    .as_ref()
+                    .is_none_or(|source| &entry.source == source)
+        })
+        .map(|entry| entry.source.as_str())
+        .collect();
+    for source in sources {
         exempt.extend(owners_of(
             lock,
-            entry,
-            &mut BTreeSet::new(),
+            target.0,
+            &target.1,
+            source,
             reads_from.is_none(),
         ));
     }
