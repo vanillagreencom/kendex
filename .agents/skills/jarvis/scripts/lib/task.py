@@ -41,10 +41,25 @@ class Task(Session):
         self.path = self.path.parent / "tasks" / (str(uuid.UUID(identifier)) + ".json")
 
     def read(self):
+        # Callers hold this task's lock: an ended controller is recorded here,
+        # so status, completion and cleanup read one verdict.
         with self.path.open() as stream:
             record = json.load(stream)
         if record["home"] != self.home or record["id"] != self.path.stem:
             raise Refusal("record-unreadable")
+        terminal = record["terminal"]
+        if record["completion"] is None and terminal:
+            live = self.backend("task-live", terminal["server"], record["server_pid"], record["server_started_at"],
+                                terminal["pane"], check=False)
+            if live.returncode == 1:
+                # The task ran in that window. Its controller's session or
+                # server has ended, so nothing remains to complete it.
+                record.update(state="failed", completion={"at": time.time(), "outcome": "failed"},
+                              failure={"reason": "controller-ended", "detail": ""})
+                self.write(record)
+            elif live.returncode:
+                # Unread evidence ends nothing; the record keeps its state.
+                print(live.stderr, end="", file=sys.stderr)
         return record
 
     def launch(self, args):
@@ -164,14 +179,9 @@ class Task(Session):
 
     def close_window(self, record, *, allow_unmarked=False):
         terminal = record["terminal"]
-        # Every controller end walks the task records it finds; a closed
-        # window is never judged again. The caller writes the record.
-        if terminal.get("closed"):
-            return
         allow_unmarked = allow_unmarked or not terminal.get("marked", True)
         self.backend("task-close", terminal["server"], record["server_pid"], record["server_started_at"],
                      terminal["pane"], terminal["window"], self.path.stem, str(allow_unmarked).lower())
-        terminal["closed"] = True
 
     def complete(self, outcome):
         with self.locked():
@@ -182,24 +192,6 @@ class Task(Session):
                 record.update(state="completed", completion={"at": time.time(), "outcome": outcome})
                 self.write(record)
             return record
-
-    def end_unless_owned(self, live):
-        # The task's own record names its controller's server; only the live
-        # controller on that server keeps it. Cleanup already closed its window.
-        with self.locked():
-            record = self.read()
-            terminal = record["terminal"]
-            if not terminal or (record["cleanup"] or {}).get("state") == "done":
-                return
-            if live and (record["server_pid"], record["server_started_at"], terminal["server"]) == (
-                    live["server_pid"], live["server_started_at"], live["terminal"]["server"]):
-                return
-            if record["completion"] is None:
-                record.update(state="failed", completion={"at": time.time(), "outcome": "failed"},
-                              failure={"reason": "controller-ended", "detail": ""})
-                self.write(record)
-            self.close_window(record)
-            self.write(record)
 
     def cleanup(self):
         with self.locked():
@@ -247,7 +239,8 @@ def main():
         elif args.verb == "cleanup":
             record = task.cleanup()
         else:
-            record = task.read()
+            with task.locked():
+                record = task.read()
         print(json.dumps(record, separators=(",", ":")))
         return 0
     except (Refusal, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:

@@ -313,44 +313,84 @@ sys.exit(task.main())
                         self.tmux("kill-window", "-t", self.terminal["window"])
             self.call("cleanup", "--id", task["id"])
 
-    def test_replaced_server_task_leaves_lifecycle_open(self):
-        # A task record outlives its controller's tmux server. Once another
-        # tmux holds that server's pid, Stop, Start and cleanup still succeed.
+    def test_task_records_leave_controller_lifecycle_open(self):
+        # Stop and Start close no task window themselves, so no task record,
+        # whatever server it names or however its close would fail, blocks
+        # either. Each unfinished record reads ended once its window is gone.
         unrelated = ["tmux", "-L", self.label + "-unrelated", "-f", os.devnull]
         self.addCleanup(subprocess.run, [*unrelated, "kill-server"], env=self.env, capture_output=True, timeout=10)
-        other = subprocess.run([*unrelated, "new-session", "-d", "-P", "-F", "#{pid}\t#{start_time}",
+        other = subprocess.run([*unrelated, "new-session", "-d", "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}",
                                 self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
                                env=self.env, capture_output=True, text=True, timeout=10, check=True)
-        other_pid, other_started = other.stdout.strip().split("\t")
+        other_socket, other_pid, other_started = other.stdout.strip().split("\t")
+        other_server = {"server_pid": int(other_pid), "server_started_at": int(other_started)}
+        refuse_close = ("#!" + sys.executable + "\nimport os,sys\n"
+                        + "if '#{@jarvis-task}' in sys.argv: sys.exit(2)\n"
+                        + "os.execv(" + repr(shutil.which("tmux")) + ", ['tmux',*sys.argv[1:]])\n")
+        rows = (
+            # name, controller ended before Stop, record identity, tmux wrapper
+            ("stale", False, {}, None),
+            ("stale-orphan", True, {}, None),
+            ("foreign", False, dict(other_server, terminal={"server": other_socket, "pane": "%999"}), None),
+            ("reused", True, other_server, None),
+            ("close-refused", False, {}, refuse_close),
+        )
+        start = ("--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual")
         self.record_path.write_text(json.dumps(dict(json.loads(self.record_path.read_text()), pending={"generation": 1})))
-        task = self.launch("codex", model="gpt-5")
-        self.acknowledgement(task)
-        self.call("complete", "--id", task["id"], "--outcome", "failed")
-        self.tmux("kill-window", "-t", task["terminal"]["window"])
-        path = self.record_path.parent / "tasks" / (task["id"] + ".json")
-        path.write_text(json.dumps(dict(json.loads(path.read_text()), server_pid=int(other_pid),
-                                        server_started_at=int(other_started))))
         with native_launcher() as launcher:
             shutil.copyfile(launcher, self.bin / "claude")
             self.bin.joinpath("claude").chmod(0o755)
             shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", self.home / ".fixture-harness.py")
             (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.root / "rows.jsonl"),
                 "gate": str(self.root / "gate"), "bash": self.env["JARVIS_TEST_BASH"], "skills": str(self.skills)}))
+            for name, ended, identity, wrapper in rows:
+                with self.subTest(record=name):
+                    task = self.launch("codex", name, model="gpt-5")
+                    self.acknowledgement(task)
+                    path = self.record_path.parent / "tasks" / (task["id"] + ".json")
+                    saved = json.loads(path.read_text())
+                    saved.update(identity, terminal=dict(saved["terminal"], **identity.get("terminal", {})))
+                    path.write_text(json.dumps(saved))
+                    if ended:
+                        self.tmux("kill-window", "-t", json.loads(self.record_path.read_text())["terminal"]["window"])
+                    if wrapper:
+                        self.bin.joinpath("tmux").write_text(wrapper)
+                        self.bin.joinpath("tmux").chmod(0o755)
+                    self.session("stop")
+                    self.settle("stopped", "stopped")
+                    self.assertFalse(self.jarvis_live())
+                    self.session("start", *start)
+                    self.settle("running")
+                    self.bin.joinpath("tmux").unlink(missing_ok=True)
+                    read = self.call("status", "--id", task["id"])
+                    self.assertEqual((read["state"], (read["completion"] or {}).get("outcome"), read.get("failure")),
+                                     ("failed", "failed", {"reason": "controller-ended", "detail": ""}))
+                    self.assertEqual(json.loads(path.read_text()), read)
+                    self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
+                    subprocess.run([*unrelated, "has-session"], env=self.env, capture_output=True, timeout=10, check=True)
+
+    def test_foreign_jarvis_session_survives(self):
+        # With no controller, a session of the managed name that holds a
+        # window without a task mark is not Jarvis's to end.
+        task = self.launch("codex", model="gpt-5")
+        self.acknowledgement(task)
+        self.tmux("kill-window", "-t", self.terminal["window"])
+        foreign = self.tmux("new-window", "-d", "-t", "=jarvis", "-P", "-F", "#{window_id}",
+                            self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc").stdout.strip()
+        with native_launcher() as launcher:
+            shutil.copyfile(launcher, self.bin / "claude")
+            self.bin.joinpath("claude").chmod(0o755)
             self.session("stop")
             self.settle("stopped", "stopped")
-            self.assertFalse(self.jarvis_live())
+            self.assertEqual(sorted(self.jarvis_windows()), sorted([foreign, task["terminal"]["window"]]))
             self.session("start", "--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual")
-            self.settle("running")
-        subprocess.run([*unrelated, "has-session"], env=self.env, capture_output=True, timeout=10, check=True)
-        # A closed window is not judged again: cleanup succeeds while no
-        # tmux server can be read.
-        wrapper = self.bin / "tmux"
-        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nexit 2\n")
-        wrapper.chmod(0o755)
-        self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
-        wrapper.unlink()
-        self.session("stop")
-        self.settle("stopped", "stopped")
+            self.settle("blocked", "name-conflict")
+        self.assertIn(foreign, self.jarvis_windows())
+
+    def jarvis_windows(self):
+        listed = subprocess.run(["tmux", "-L", self.label, "list-windows", "-t", "=jarvis", "-F", "#{window_id}"],
+                                env=self.env, capture_output=True, text=True, timeout=10)
+        return listed.stdout.splitlines()
 
     def settle(self, state, reason=None):
         deadline = time.monotonic() + 60
@@ -375,22 +415,18 @@ sys.exit(task.main())
     def test_failed_succession_ends_task_windows(self):
         # A successor that fails after its predecessor ended leaves no
         # controller. Its tasks fail and close, so recovery can create the
-        # managed session again: the worker fails in place, is killed and
-        # leaves the retry to end its successor, or cannot close the task
-        # window and leaves it to Stop.
+        # managed session again: the worker fails in place, retried or
+        # stopped, or is killed and leaves the retry to end its successor.
         self.tmux("kill-session", "-t", "=jarvis")
         handoff = self.home / "state/handoff.md"
         handoff.parent.mkdir()
         handoff.write_text("# Handoff\n\n## State\n\nwork: TASK-ref\n")
         start = ("--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual")
-        refuse_close = ("#!" + sys.executable + "\nimport os,sys\n"
-                        + "if '#{@jarvis-task}' in sys.argv: sys.exit(2)\n"
-                        + "os.execv(" + repr(shutil.which("tmux")) + ", ['tmux',*sys.argv[1:]])\n")
         exits = "#!" + self.env["JARVIS_TEST_BASH"] + "\nexit 1\n"
         ended_by_controller = {"reason": "controller-ended", "detail": ""}
-        rows = (("exits", exits, None, "succeed"),
-                ("abandoned", "#!" + self.env["JARVIS_TEST_BASH"] + "\nexec sleep 600\n", None, "succeed"),
-                ("close-refused", exits, refuse_close, "stop"))
+        rows = (("exits", exits, "succeed"),
+                ("abandoned", "#!" + self.env["JARVIS_TEST_BASH"] + "\nexec sleep 600\n", "succeed"),
+                ("exits-stopped", exits, "stop"))
         with native_launcher() as launcher:
             shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", self.home / ".fixture-harness.py")
             (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.root / "rows.jsonl"),
@@ -402,7 +438,7 @@ sys.exit(task.main())
                 staged.write_bytes(contents)
                 staged.chmod(0o755)
                 os.replace(staged, self.bin / name)
-            for mode, successor, wrapper, recovery in rows:
+            for mode, successor, recovery in rows:
                 with self.subTest(mode=mode):
                     install("claude", launcher.read_bytes())
                     self.session("start", *start)
@@ -410,8 +446,6 @@ sys.exit(task.main())
                     task = self.launch("codex", mode, model="gpt-5")
                     self.acknowledgement(task)
                     install("claude", successor.encode())
-                    if wrapper:
-                        install("tmux", wrapper.encode())
                     self.session("succeed")
                     if mode == "abandoned":
                         deadline = time.monotonic() + 30
@@ -422,9 +456,7 @@ sys.exit(task.main())
                     else:
                         self.settle("failed", "handover-failed")
                         self.assertEqual(self.call("status", "--id", task["id"]).get("failure"), ended_by_controller)
-                        self.assertEqual(self.jarvis_live(), wrapper is not None)
-                    if wrapper:
-                        self.bin.joinpath("tmux").unlink()
+                        self.assertFalse(self.jarvis_live())
                     install("claude", launcher.read_bytes())
                     if recovery == "stop":
                         self.session("stop")
@@ -530,72 +562,6 @@ while True: signal.pause()
                 if suspended:
                     self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead_status}").stdout.strip(), "23")
 
-    def test_controller_teardown_refusals(self):
-        original = json.loads(self.record_path.read_text())
-        self.tmux("new-session", "-d", "-s", "unrelated", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
-        # A controller that ended before the request, one that stays live,
-        # and one whose native exit closes its window while the Stop worker
-        # is refused a task close.
-        for verb, controller in (("stop", "ended"), ("start", "ended"), ("stop", "live"), ("stop", "dies")):
-            live = controller != "ended"
-            with self.subTest(verb=verb, controller=controller):
-                saved = dict(original, terminal=self.terminal, pending={"generation": 1})
-                self.record_path.write_text(json.dumps(saved))
-                task = self.launch("codex", verb + controller, model="gpt-5")
-                self.acknowledgement(task)
-                if not live:
-                    self.tmux("kill-window", "-t", self.terminal["window"])
-                real = repr(shutil.which("tmux"))
-                wrapper = self.bin / "tmux"
-                wrapper.write_text("#!" + sys.executable + "\nimport os,subprocess,sys\n"
-                    + "if '#{@jarvis-task}' in sys.argv:\n"
-                    + (" subprocess.run([" + real + ",'kill-window','-t'," + repr(self.terminal["window"])
-                       + "],stderr=subprocess.DEVNULL)\n" if controller == "dies" else "")
-                    + " sys.exit(2)\n"
-                    + "os.execv(" + real + ", ['tmux',*sys.argv[1:]])\n")
-                wrapper.chmod(0o755)
-                args = [str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home)]
-                if verb == "start":
-                    args += ["--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual"]
-                result = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=60)
-                self.assertEqual(result.returncode, 0 if live else 1, result.stderr)
-                self.assertTrue(result.stdout, result.stderr)
-                answer = json.loads(result.stdout)
-                self.assertEqual((answer["state"], answer["reason"]),
-                                 ("stopping", "stop-requested") if live else ("failed", "launch-failed"))
-                if live:
-                    deadline = time.monotonic() + 15
-                    while time.monotonic() < deadline:
-                        repaired = json.loads(self.record_path.read_text())
-                        if "worker" not in repaired:
-                            break
-                        time.sleep(0.02)
-                    self.assertNotIn("worker", repaired)
-                    if controller == "live":
-                        self.assertEqual(repaired["state"], "running")
-                        self.tmux("has-session", "-t", "=jarvis")
-                    else:
-                        # The task window outlives its controller, so Stop
-                        # reports failure and a retry ends it from the task record.
-                        self.assertEqual((repaired["state"], repaired["reason"]), ("failed", "launch-failed"))
-                wrapper.unlink()
-                if controller == "dies":
-                    retried = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=60)
-                    self.assertEqual(retried.returncode, 0, retried.stderr)
-                    self.assertEqual(json.loads(retried.stdout)["state"], "stopped")
-                    self.assertNotIn(task["terminal"]["window"], self.tmux(
-                        "list-windows", "-a", "-F", "#{window_id}").stdout.splitlines())
-                ended = self.call("status", "--id", task["id"])
-                self.assertEqual(ended["completion"]["outcome"], "failed")
-                self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
-                self.tmux("has-session", "-t", "=unrelated")
-                if controller != "live":
-                    created = self.tmux("new-session", "-d", "-s", "jarvis", "-P", "-F", "#{window_id}\t#{pane_id}",
-                                        self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
-                    window, pane = created.stdout.strip().split("\t")
-                    self.terminal = dict(self.terminal, window=window, pane=pane)
-                    self.tmux("set-option", "-p", "-t", pane, "@jarvis-generation", "1")
-
     def test_browser_profile_control(self):
         path = self.skills / "jarvis/scripts/lib/task.py"
         source = path.read_text()
@@ -625,17 +591,18 @@ while True: signal.pause()
              "test_expired_launch_retains_rollback_ownership"),
             ("picker", "session-backend.sh", (('pick_args+=(--native-model "$model")',
                 'pick_args+=(--model "$model")'),), "test_model_classes_use_production_picker"),
-            ("controller", "session.py", (('paths = list((self.path.parent / "tasks").glob("*.json"))', "paths = []"),),
+            ("controller", "session.py", (("        elif not window:\n            self.end_task_session()\n",
+                "        elif False:\n            self.end_task_session()\n"),),
              "test_controller_exit_recovers_task_windows"),
-            ("succession", "session.py", (("                        self.end_tasks(record)\n                    except (Refusal",
-                "                        pass\n                    except (Refusal"),),
+            ("succession", "session.py", (("                    self.end_task_session()\n                    if verb ==",
+                "                    pass\n                    if verb =="),),
              "test_failed_succession_ends_task_windows"),
-            ("refusal", "session.py", (("sys.exit(session.main())", "sys.exit(main())"),),
-             "test_controller_teardown_refusals"),
-            ("replaced-server", "session-backend.sh", (('      rc=1\n    fi\n', '      :\n    fi\n'),),
-             "test_replaced_server_task_leaves_lifecycle_open"),
-            ("closed-window", "task.py", (('        if terminal.get("closed"):\n            return\n', ''),),
-             "test_replaced_server_task_leaves_lifecycle_open"),
+            ("foreign-session", "session.py", (('"#{==:" + unmarked + ",}"', '"1"'),),
+             "test_foreign_jarvis_session_survives"),
+            ("task-ended", "task.py", (("            if live.returncode == 1:", "            if False:"),),
+             "test_task_records_leave_controller_lifecycle_open"),
+            ("replaced-server", "session-backend.sh", (('    rc=1\n  fi\n', '    :\n  fi\n'),),
+             "test_task_records_leave_controller_lifecycle_open"),
             ("interrupt", "task.py", ((
                 "if signal.getsignal(signum) != signal.SIG_IGN:",
                 "if False and signal.getsignal(signum) != signal.SIG_IGN:"),),

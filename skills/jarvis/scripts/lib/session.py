@@ -75,21 +75,21 @@ class Session:
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
-        operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
+        self.operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
         result = subprocess.run(argv, input=input, text=True, capture_output=True,
                                 cwd=self.home, env=env or self.env, timeout=remaining)
         if check and result.returncode:
-            print("jarvis-session: operation=" + operation + " exit=" + str(result.returncode), file=sys.stderr)
+            print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, file=sys.stderr)
             raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
         return result
 
     def failure_log(self, key, failure):
         frame = next(frame for frame in reversed(traceback.extract_tb(failure.__traceback__)) if frame.filename == __file__)
-        operation = frame.line or frame.name
+        operation = self.operation if frame.name == "run" else frame.line or frame.name
         print(f"jarvis-session: {key} operation={json.dumps(operation)} cause={type(failure).__name__}"
               + (f" errno={errno.errorcode.get(failure.errno, failure.errno)}" if isinstance(failure, OSError) else "")
               + " message=" + json.dumps(str(failure)), file=sys.stderr)
@@ -234,7 +234,7 @@ class Session:
         log = self.path.parent / "session.log"
         with log.open("a") as stream:
             child = subprocess.Popen([sys.executable, "-B", "-c",
-                                      "import sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); from session import Session; Session(sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
+                                      "import runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                      env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
@@ -348,8 +348,6 @@ class Session:
                 if record["state"] == "running":
                     return self.answer(record, state="running", reason="existing"), 0
                 return self.answer(record), 0
-            if record and not self.terminal(record):
-                self.end_tasks(record)
             predecessor = record if self.terminal(record) else (record.get("predecessor") if record else None)
             if predecessor and not self.terminal(predecessor):
                 predecessor = None
@@ -410,9 +408,7 @@ class Session:
                 self.end_owned(record, window=True)
                 predecessor = record.get("predecessor")
                 if not self.terminal(predecessor):
-                    # No controller remains to own the tasks, whose windows
-                    # would otherwise hold the managed session's name.
-                    self.end_tasks(record)
+                    self.end_task_session()
                 saved_handoff = record["transfer"]["handoff"]
             else:
                 if record["state"] != "running" or not self.terminal(record):
@@ -519,30 +515,26 @@ class Session:
                 return answer, 0
             record.update(state="off" if record["app_off"] else "stopped",
                           reason="app-off" if record["app_off"] else "stopped", detail="")
-            self.end_tasks(record)
+            self.end_task_session()
             self.write(record)
             return self.answer(record), 0
 
-    def end_tasks(self, record):
-        # Each task record names the tmux server of the controller that
-        # launched it, so a controller binding a failure path cleared from
-        # this record cannot orphan a task. Callers reach here once this
-        # record's controller has ended or is ending; only a live predecessor
-        # keeps the tasks on its server.
-        predecessor = (record or {}).get("predecessor")
-        live = predecessor if self.terminal(predecessor) else None
-        paths = list((self.path.parent / "tasks").glob("*.json"))
-        if not paths:
+    def end_task_session(self):
+        # Task windows open in the controller's session, so once no controller
+        # remains they alone hold its name against the next Start. One server
+        # command ends the session only while every pane in it carries a task
+        # mark: a controller pane, or a foreign session of that name, keeps it.
+        # A session left standing refuses that Start with name-conflict, so a
+        # failure here is logged and never fails the controller's own end.
+        if not shutil.which("tmux"):
             return
-        from task import Task
-        for path in paths:
-            task = Task(self.home, path.stem)
-            task.deadline = self.deadline
-            task.end_unless_owned(live)
+        unmarked = "#{W:#{P:#{?#{@jarvis-task},,x}}}"
+        try:
+            self.tmux("if-shell", "-F", "-t", "=jarvis:", "#{==:" + unmarked + ",}", "kill-session -t =jarvis", check=False)
+        except (OSError, subprocess.TimeoutExpired) as failure:
+            self.failure_log("task-session-end-failed", failure)
 
     def end_owned(self, record, *, window=False):
-        if not window:
-            self.end_tasks(record)
         if self.terminal(record):
             pane = record["terminal"]["pane"]
             # tmux evaluates ownership and closes the pane's session in one
@@ -569,6 +561,8 @@ class Session:
             if window and record.get("process"):
                 while self.worker_live({"worker": identity}):
                     time.sleep(0.1)
+        elif not window:
+            self.end_task_session()
 
     def worker(self, verb, generation):
         self.deadline = time.monotonic() + CALL_SECONDS
@@ -607,7 +601,7 @@ class Session:
                         raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
-                runner = [sys.executable, "-B", "-c", "import sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); from session import Session; sys.exit(Session(sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                runner = [sys.executable, "-B", "-c", "import runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
                 created = self.tmux(*creation, "-c", self.home,
                                     "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *runner)
                 socket, server, started, window, pane = created.stdout.strip().split("\t")
@@ -744,24 +738,14 @@ class Session:
                 if live:
                     record = self.retain_live(record, live)
                 else:
-                    stopped = verb == "stop"
-                    try:
-                        # No controller remains. Its task windows would hold
-                        # the managed session's name against a retry.
-                        self.end_tasks(record)
-                    except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
-                        self.failure_log("cleanup-failed", teardown)
-                        # A task window still open means Jarvis has not
-                        # stopped; a retried Stop ends it from its task record.
-                        stopped = False
-                    if stopped:
+                    self.end_task_session()
+                    if verb == "stop":
                         record.update(state="off" if record["app_off"] else "stopped",
                                       reason="app-off" if record["app_off"] else "stopped", detail="", terminal=None)
                     else:
                         record.update(state=failure.state if isinstance(failure, Refusal) else "failed",
                                       reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
-                                      detail=failure.detail if isinstance(failure, Refusal) else
-                                      "Jarvis could not " + ("stop" if verb == "stop" else "start") + ". Check the session log.",
+                                      detail=failure.detail if isinstance(failure, Refusal) else "Jarvis could not start. Check the session log.",
                                       terminal=None)
                     if verb == "succeed":
                         record.update(state="failed", reason="handover-failed", history=None,
@@ -823,6 +807,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Task imports this owner by name; public calls use that same instance.
-    import session
-    sys.exit(session.main())
+    sys.exit(main())
