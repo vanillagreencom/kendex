@@ -67,11 +67,11 @@ def await_inspections(events, count):
         time.sleep(0.05)
 
 
-def brief_taken(fixture, harness, identity, event):
+def brief_taken(fixture, harness, identity, event, **fields):
     # The native hook's stamp, written by its real library at the default wait.
     shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_taken "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2" "$3"'
     result = subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness, event],
-                            input=json.dumps({"session_id": identity}), text=True, capture_output=True)
+                            input=json.dumps({"session_id": identity, **fields}), text=True, capture_output=True)
     with Path(fixture["rows"]).open("a") as stream:
         stream.write(json.dumps({"stamp": event, "harness": harness,
                                  "exit": result.returncode, "stderr": result.stderr}) + "\n")
@@ -232,6 +232,9 @@ def main():
             brief_taken(fixture, harness, identity, fixture["auth_event"])
     elif auth_mode == "stale":
         print(AUTH_MESSAGES[harness] + "\nesc to interrupt", flush=True)
+    elif harness == "pi" and fixture.get("turn") == "text-only":
+        print("Ready.\n" + PI_IDLE, flush=True)
+        brief_taken(fixture, harness, identity, "Stop", pi_run_outcome=fixture["outcome"])
     elif harness == "pi":
         # Pi draws no working rung; its first tool call says it took the brief.
         brief_taken(fixture, harness, identity, "PreToolUse")

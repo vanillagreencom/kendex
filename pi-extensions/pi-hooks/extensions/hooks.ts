@@ -393,11 +393,12 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// it is already the reason the agent kept going, and can stand down the
 		// way it does on Claude Code. It also carries the model's
 		// `context_window`, which Pi alone has to hand over: its session file
-		// never names one.
+		// never names one. `pi_run_outcome` lets a hook judge this Stop before
+		// the later StopFailure dispatch, without transiently accepting an error.
 		const run = await runListener(
 			TURN_END_LISTENER,
 			undefined,
-			() => JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, working_agents: workingAgents, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
+			() => JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, working_agents: workingAgents, pi_run_outcome: event.outcome, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
 			ctx,
 			cfg,
 			project,

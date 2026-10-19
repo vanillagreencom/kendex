@@ -3841,7 +3841,7 @@ lane_row() {
 }
 
 # A session the Jarvis runtime launched, which carries JARVIS_RECORD: its
-# lead's tool call, or Claude Code, Codex or Copilot CLI turn end, stamps the record's launch row as
+# lead's tool call or eligible turn end stamps the record's launch row as
 # the Start brief taken, and its Codex or Copilot CLI turn end before the brief
 # stamps it as the kickoff turn ended (lib/session-rows.sh §
 # session_rows_jarvis_taken), which the Jarvis launch worker reads beside the

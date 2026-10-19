@@ -568,6 +568,25 @@ class SessionContract(unittest.TestCase):
                 self.wait("stopped")
                 wrapper.unlink()
 
+    def test_pi_text_only_brief(self):
+        fixture = self.home / ".fixture.json"
+        for outcome, state, reason in (("completed", "running", "new-no-record"),
+                                       ("error", "failed", "launch-failed")):
+            with self.subTest(outcome=outcome):
+                fixture.write_text(json.dumps(json.loads(fixture.read_text())
+                                              | {"turn": "text-only", "outcome": outcome}))
+                self.call("start", "pi", mode="new")
+                answer = self.wait(state, reason, seconds=70)
+                record = json.loads(self.record.read_text())
+                if state == "running":
+                    self.assertIsNotNone(answer["terminal"])
+                    self.assertIs(record["pending"].get("brief_taken"), True)
+                else:
+                    self.assertIsNone(answer["terminal"])
+                    self.assertIsNone(record["history"]["pending"].get("brief_taken"))
+                self.call("stop")
+                self.wait("stopped")
+
     def test_session_start_at_first_prompt(self):
         # Copilot CLI and Codex fire SessionStart only once the first prompt is
         # submitted. Their kickoff turn draws a working line before its stamp

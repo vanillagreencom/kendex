@@ -37,6 +37,8 @@ CONTROLS = [
     ("Codex text-only resume", "orch/scripts/lib/session-rows.sh", 'own:own | turn:own) stamp=brief_taken ;;', 'own:own | turn:own) [ "$due:$4" != turn:codex ] || exit 0; stamp=brief_taken ;;', "test_resume_after_text_only_brief"),
     ("text-only delivery ordering", "jarvis/tests/fixtures/harness.py", 'while not json.loads(record_path.read_text()).get("brief_delivered"):', 'while False and not json.loads(record_path.read_text()).get("brief_delivered"):', "test_resume_after_text_only_brief"),
     ("Pi tool call takes the brief", "jarvis/scripts/lib/session.py", '(taken or (observed == "working" and not prepared["kickoff"]))', '((observed == "working" and not prepared["kickoff"]))', "test_pi_contract"),
+    ("Pi text-only brief on main", "orch/scripts/lib/session-rows.sh", 'Stop:pi) due=completed ;;', 'Stop:pi) return 0 ;;', "test_pi_text_only_brief"),
+    ("Pi errored brief", "orch/scripts/lib/session-rows.sh", 'select($due != "completed" or .pi_run_outcome == "completed")', 'select(true)', "test_pi_text_only_brief"),
     ("Pi idle before the brief", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$harness" == pi && "$6" == confirmed && "$brief" == undelivered ]]; then', 'if false; then', "test_pi_contract"),
     ("trust refusal", "jarvis/scripts/lib/session-backend.sh", "0) printf 'trust\\n%s\\n' \"$dialog\"; exit ;;", '0) ;;', "test_trust_dialog_is_refused"),
     ("trust below the last turn", "jarvis/scripts/lib/session-backend.sh", 'dialog="$(pane_trust_dialog "$slice")"', 'dialog="$(pane_trust_dialog "$screen")"', "test_resumed_history_is_no_trust_dialog"),
@@ -75,6 +77,7 @@ PART_1_BASELINES = frozenset({
     "test_idle_prompt_is_not_running",
     "test_start_acquisition_failure_releases_ownership",
     "test_pi_contract",
+    "test_pi_text_only_brief",
     "test_resumed_history_is_no_trust_dialog",
 })
 

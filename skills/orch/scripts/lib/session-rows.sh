@@ -432,8 +432,11 @@ session_rows_jarvis_write() { # RECORD GENERATION KEY HARNESS
 # Codex Stop has no outcome field, and Copilot agentStop's stopReason is
 # always end_turn, so an errored brief turn that emits Stop also reads as
 # taken on those harnesses. The worker still refuses a sign-in wall, trust
-# question or wrong account before a stamp counts. Pi's carrier dispatches
-# Stop on an errored run too, so Pi still requires a tool call.
+# question or wrong account before a stamp counts. Pi stamps only a Stop
+# whose `pi_run_outcome` is `completed`: its carrier also dispatches Stop on
+# errored and aborted runs. The outcome must travel on Stop itself, because
+# the worker can read the stamp before the later StopFailure dispatch.
+# A Pi carrier without that field still needs a tool call.
 #
 # `kickoff_ended`, the kickoff turn ended: a Codex or Copilot turn end where
 # the brief is not yet delivered. Those harnesses fire SessionStart only at
@@ -457,11 +460,15 @@ session_rows_jarvis_taken() { # RECORD GENERATION KEY HARNESS EVENT
   local session verdict due stamp
   case "$5:$4" in
     PreToolUse:* | Stop:claude) due=own ;;
+    Stop:pi) due=completed ;;
     Stop:codex | Stop:copilot) due=turn ;;
     *) return 0 ;;
   esac
-  session="$(jq -r '(.session_id // .sessionId) | strings')" || return 1
+  session="$(jq -r --arg due "$due" '
+    select($due != "completed" or .pi_run_outcome == "completed")
+    | (.session_id // .sessionId) | strings')" || return 1
   [ -n "$session" ] || return 0
+  [ "$due" != completed ] || due=own
   verdict="$(session_rows_jarvis_due "$1" "$2" "$3" "$4" "$session")" || return 1
   case "$due:$verdict" in
     own:own | own:undelivered | own:ended | turn:own | turn:undelivered) ;;

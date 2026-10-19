@@ -4,6 +4,8 @@
 
 ### Unreleased
 
+- Stop hooks receive `pi_run_outcome` from Pi's settle event. Jarvis can count a completed brief turn with no tool call while leaving errored and aborted turns unstamped.
+
 - Stop hooks carry the session's working background-agent count. Pi lanes remain working until the agents finish and the lead settles.
 
 - PreToolUse hooks receive the session context window so they can refuse an attached agent launch before its result reserve is spent.
