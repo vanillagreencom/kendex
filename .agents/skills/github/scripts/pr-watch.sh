@@ -2,7 +2,7 @@
 # pr-watch — reduce every open PR to normalized needs-attention lines, each
 # read from GitHub's own review state: unresolved review threads, the pull
 # request's reviewDecision, its auto-merge arm, its merge-queue entry and a
-# lanes-app refresh head's CI aggregate. A PR
+# current-head CI aggregate for armed, queued and lanes-app refresh PRs. A PR
 # sitting steadily over an open thread TRANSITIONS NOTHING, so a watcher keyed
 # on state transitions idles for hours over a thread posted minutes after its
 # last pass; this reducer reports the standing state on every call.
@@ -44,8 +44,8 @@ Usage: pr-watch.sh [PR# ...] [--awaiting-after SECS]
 
 Reduce every open PR to normalized needs-attention lines, read from GitHub's
 review state: unresolved review threads, the PR's reviewDecision, its
-auto-merge arm, its merge-queue entry and a lanes-app refresh head's CI
-aggregate. One invocation answers: does any
+auto-merge arm, its merge-queue entry and the current-head CI aggregate for
+armed, queued and lanes-app refresh PRs. One invocation answers: does any
 open PR need attention RIGHT NOW?
 
   PR# ...            watch only these PRs (default: every open PR)
@@ -84,6 +84,12 @@ Attention kinds:
                      current-head CI aggregate completed successfully.
                      Reported immediately, without a quiet period or lane.
                      The overseer still proves the render before approval
+  ci-failed          a completed CI check on the current non-draft head
+                     concluded FAILURE, TIMED_OUT or STARTUP_FAILURE on an
+                     armed, queued or exact lanes-app refresh PR, under any
+                     reviewDecision. Reported beside threads-open and
+                     changes-requested. Only the check named CI is covered;
+                     a required check with another name is not covered
   head-moved         the head changed between shared reads, or the head
                      commit read beside the PR is not its head. A push
                      landed during the read, so the findings
@@ -95,7 +101,7 @@ Attention kinds:
                      skipped
 
 Ordinary REVIEW_REQUIRED inside the quiet period, and an approved PR with auto-merge
-armed or queued, are healthy states and emit NOTHING — silence on stdout
+armed or queued whose CI has not failed, emit NOTHING — silence on stdout
 means "nothing needs you", which is what makes the exit code a cheap
 loop/cron predicate.
 
@@ -314,8 +320,8 @@ def threads($first; $later):
     end;
   step($first; $later; 0; ""; 1);
 
-# The refresh aggregate: every check named CI on the head commit completed
-# successfully. Pending or unsuccessful CI never starts a review wait.
+# One aggregate for refresh and armed heads. Only successful refresh CI
+# starts a review wait; completed failures also need the overseer.
 def refresh_ci($commit; $n; $head; $queued):
   $commit.checkSuites as $s
   | if ($s | type) != "object" or ($s.nodes | type) != "array" or ($s.pageInfo.hasNextPage | type) != "boolean"
@@ -332,6 +338,8 @@ def refresh_ci($commit; $n; $head; $queued):
       else [$runs[] | select(.name == "CI")] as $ci
       | if ($ci | length) > 0 and all($ci[]; .status == "COMPLETED" and .conclusion == "SUCCESS")
         then [finding($n; $head; "refresh-ready"; "current-head CI passed; prove the render and approve as the overseer app\($queued)")]
+        elif any($ci[]; .status == "COMPLETED" and (.conclusion | IN("FAILURE", "TIMED_OUT", "STARTUP_FAILURE")))
+        then [finding($n; $head; "ci-failed"; "current-head CI failed\($queued)")]
         else [] end
       end
     end;
@@ -407,15 +415,26 @@ def reduce_pr($n; $initial; $later; $repository):
             else [] end) as $threads
       # One line per finding: open threads do not suppress an objection, but
       # an open thread holds the re-arm and stale-review nudges.
-      | $threads + (
+      | (try $p.commits.nodes[0].commit catch null) as $commit
+      # GraphQL omits the [bot] suffix REST gives an app author.
+      | ((try ({head: {ref: $p.headRefName},
+                   user: ($p.author | if type == "object"
+                     then {login: (if .__typename == "Bot" then "\(.login)[bot]" else .login end), type: .__typename}
+                     else null end)} | refresh_identity) catch false) == true) as $refresh
+      | (if ($refresh or $p.autoMergeRequest != null or $queued != "") and ($commit | type) == "object"
+         then refresh_ci($commit; $n; $head; $queued) else [] end) as $ci
+      # Armed PRs keep their existing silence on an unreadable aggregate.
+      # Refresh errors still reach the approval branch below.
+      | $threads + (if ($p.isDraft | not) and $p.headRefOid == $head
+                       and ($commit | type) == "object" and $commit.oid == $head
+                    then [$ci[] | select(.kind == "ci-failed")] else [] end) + (
         if $decision == "CHANGES_REQUESTED" then [finding($n; $head; "changes-requested"; "a reviewer requested changes (reviewDecision CHANGES_REQUESTED)\($queued)")]
         elif ($threads | length) > 0 then []
         elif ($decision | IN("APPROVED", "CHANGES_REQUESTED", "NONE", "REVIEW_REQUIRED") | not)
         then [finding($n; $head; "error"; "reviewDecision '\''\($decision)'\'' reached the reduction unhandled — the review-state read admits only APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED and NONE")]
         elif $p.headRefOid != $head
         then [finding($n; $head; "head-moved"; "the head changed during this reduction (now \($p.headRefOid[0:8])) — findings describe the old head; re-run")]
-        else (try $p.commits.nodes[0].commit catch null) as $commit
-        | if ($commit | type) != "object" or ($commit.oid | sha | not)
+        else if ($commit | type) != "object" or ($commit.oid | sha | not)
           then [finding($n; $head; "error"; "head commit read returned no usable sha (broken read)")]
           # GitHub lists only the first 250 commits of a PR, so past them the
           # last listed commit is not the head: unreadable, not a push.
@@ -423,14 +442,8 @@ def reduce_pr($n; $initial; $later; $repository):
           then [finding($n; $head; "error"; "head commit is past the 250 commits GitHub lists for a PR (broken read)")]
           elif $commit.oid != $head
           then [finding($n; $head; "head-moved"; "the head changed during this reduction (now \($commit.oid[0:8])) — findings describe the old head; re-run")]
-          # GraphQL names an app author without the [bot] suffix REST gives
-          # it, and the identity rule is written against the REST shape.
-          else ((try ({head: {ref: $p.headRefName},
-                       user: ($p.author | if type == "object"
-                         then {login: (if .__typename == "Bot" then "\(.login)[bot]" else .login end), type: .__typename}
-                         else null end)} | refresh_identity) catch false) == true) as $refresh
-          | if $refresh and ($p.isDraft | not) and $decision == "REVIEW_REQUIRED"
-            then refresh_ci($commit; $n; $head; $queued)
+          else if $refresh and ($p.isDraft | not) and $decision == "REVIEW_REQUIRED"
+            then [$ci[] | select(.kind != "ci-failed")]
             # Approved, unarmed, unqueued and ready: nothing will merge it.
             elif $decision == "APPROVED" and ($p.isDraft | not) and $p.autoMergeRequest == null and $queued == ""
             then $repo.mergeQueue.entries as $entries

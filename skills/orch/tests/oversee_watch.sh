@@ -186,30 +186,41 @@ out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a first pass with no error key still baselines" "$err"
 assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "the ordinary first-pass note still covers the non-error keys"
 
-# A workflow-created refresh has no lane. Its green head must wake even on
-# the opening pass, and each replacement head needs another app approval.
-for mode in opening replacement; do
-  new_case "prwatch_refresh_$mode"
-  printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.1"
-  printf '12\tbbbb0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.2"
+# Refresh approval and failed CI need attention without an owning lane.
+# Each wakes on the opening pass and again for each replacement head.
+for kind in refresh-ready ci-failed; do
+for mode in opening replacement repeat; do
+  new_case "prwatch_${kind}_$mode"
+  printf '12\taaaa0000\t%s\tCI result\n' "$kind" > "$STUB_DIR/prwatch.out.1"
+  printf '12\tbbbb0000\t%s\tCI result\n' "$kind" > "$STUB_DIR/prwatch.out.2"
   printf '1' > "$STUB_DIR/prwatch.rc"
   if [[ "$mode" == replacement ]]; then
     mkdir -p "$STATE_DIR"
-    printf '12\trefresh-ready:aaaa0000\n' > "$STATE_DIR/owner_repo__none"
+    printf '12\t%s:aaaa0000\n' "$kind" > "$STATE_DIR/owner_repo__none"
   fi
-  err="$TMP_ROOT/refresh-$mode.err"
+  if [[ "$mode" == repeat ]]; then
+    cp "$STUB_DIR/prwatch.out.1" "$STUB_DIR/prwatch.out.2"
+  fi
+  err="$TMP_ROOT/$kind-$mode.err"
   out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-  assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "refresh $mode wakes without an owning lane" "$err"
-  if [[ "$mode" == opening ]]; then
-    assert_contains "$out" "aaaa0000" "the opening refresh head wakes immediately" "$err"
+  if [[ "$mode" == repeat ]]; then
+    assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "$kind first pass delivers the failed head" "$err"
+    out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+    assert_not_contains "$out" "EVENT pr-watch" "$kind on the same head reports no second event" "$err"
   else
-    assert_contains "$out" "bbbb0000" "the replacement refresh head is news" "$err"
+    assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "$kind $mode wakes without an owning lane" "$err"
+    if [[ "$mode" == opening ]]; then
+      assert_contains "$out" "aaaa0000" "the opening $kind head wakes immediately" "$err"
+    else
+      assert_contains "$out" "bbbb0000" "the replacement $kind head is news" "$err"
+    fi
   fi
+done
 done
 
 REFRESH_SCRIPTS="$(mutant_scripts refresh-opening-mutant/orch lib/pr-watch-pass.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-opening-mutant/github"
-mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '$2 == "error" || $2 ~ /^refresh-ready:/' '$2 == "error"'
+mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '$2 == "error" || $2 ~ /^(refresh-ready|ci-failed):/' '$2 == "error"'
 new_case prwatch_refresh_opening_control
 printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
@@ -219,7 +230,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none
 
 REFRESH_SCRIPTS="$(mutant_scripts refresh-head-mutant/orch lib/pr-watch-pass.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-head-mutant/github"
-mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '($3 == "refresh-ready" ? ":" $2 : "")' '""'
+mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '($3 == "refresh-ready" || $3 == "ci-failed" ? ":" $2 : "")' '""'
 new_case prwatch_refresh_head_control
 printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.1"
 printf '12\tbbbb0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.2"
@@ -229,6 +240,29 @@ printf '12\trefresh-ready\n' > "$STATE_DIR/owner_repo__none"
 err="$TMP_ROOT/refresh-head-control.err"
 out="$(WATCH_BIN="$REFRESH_SCRIPTS/oversee-watch" run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "control: an unbound key loses the replacement refresh head" "$err"
+
+for mode in opening replacement; do
+  CI_SCRIPTS="$(mutant_scripts "ci-$mode-mutant/orch" lib/pr-watch-pass.sh)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/ci-$mode-mutant/github"
+  if [[ "$mode" == opening ]]; then
+    mutate_file "$CI_SCRIPTS/lib/pr-watch-pass.sh" '/^(refresh-ready|ci-failed):/' '/^refresh-ready:/'
+  else
+    mutate_file "$CI_SCRIPTS/lib/pr-watch-pass.sh" ' || $3 == "ci-failed"' ''
+  fi
+  new_case "prwatch_ci_${mode}_control"
+  printf '12\taaaa0000\tci-failed\tCI failed\n' > "$STUB_DIR/prwatch.out.1"
+  printf '12\tbbbb0000\tci-failed\tCI failed\n' > "$STUB_DIR/prwatch.out.2"
+  printf '1' > "$STUB_DIR/prwatch.rc"
+  if [[ "$mode" == replacement ]]; then
+    mkdir -p "$STATE_DIR"
+    printf '12\tci-failed\n' > "$STATE_DIR/owner_repo__none"
+  else
+    cp "$STUB_DIR/prwatch.out.1" "$STUB_DIR/prwatch.out.2"
+  fi
+  err="$TMP_ROOT/ci-$mode-control.err"
+  out="$(WATCH_BIN="$CI_SCRIPTS/oversee-watch" run_watch -- 2>"$err")" && rc=0 || rc=$?
+  assert_not_contains "$out" "EVENT pr-watch" "control: removing ci-failed $mode delivery loses the event" "$err"
+done
 
 # A consumer rolling refresh, as in hyprtrade PR 1144, has no owning item.
 # The fleet consumes EVENT merged to check open lanes after the base moves.

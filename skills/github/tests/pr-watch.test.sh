@@ -204,7 +204,7 @@ table \
   "a pending refresh aggregate is silent|--awaiting-after 60|$REFRESH_ENV;STUB_HEAD_DATE=$OLD;STUB_CI_RAW=$(jq -c '.check_runs[0].status="in_progress" | .check_runs[0].conclusion=null' <<<"$CI_GREEN")|rc=0 kinds=none" \
   "a missing aggregate is silent|--awaiting-after 60|$REFRESH_ENV;STUB_HEAD_DATE=$OLD;STUB_CI_RAW={\"check_runs\":[]}|rc=0 kinds=none" \
   "a different check cannot act as the aggregate||$REFRESH_ENV;STUB_CI_RAW=$(jq -c '.check_runs[0].name="build"' <<<"$CI_GREEN")|rc=0 kinds=none" \
-  "a page after a passing aggregate can hold a failed aggregate||$REFRESH_ENV;STUB_CI_RAW=$CI_GREEN $(jq -c '.check_runs[0].conclusion="failure"' <<<"$CI_GREEN")|rc=0 kinds=none" \
+  "a page after a passing aggregate can hold a failed aggregate||$REFRESH_ENV;STUB_CI_RAW=$CI_GREEN $(jq -c '.check_runs[0].conclusion="failure"' <<<"$CI_GREEN")|rc=1 kinds=ci-failed" \
   "an aggregate past one page fails loud||$REFRESH_ENV;STUB_CI_MORE=yes|rc=2 kinds=error" \
   "a malformed aggregate response fails loud||$REFRESH_ENV;STUB_CI_RAW={}|rc=2 kinds=error" \
   "an object instead of check-run array fails loud||$REFRESH_ENV;STUB_CI_RAW=$(jq -c '.check_runs={aggregate:.check_runs[0]}' <<<"$CI_GREEN")|rc=2 kinds=error" \
@@ -215,9 +215,39 @@ table \
   "an unresolved thread holds refresh approval||$REFRESH_ENV;STUB_UNRESOLVED=1|rc=1 kinds=threads-open" \
   "a standing objection holds refresh approval||$REFRESH_ENV;STUB_DECISION=CHANGES_REQUESTED|rc=1 kinds=changes-requested" \
   "a refresh draft never requests approval attention||$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c '.draft=true' <<<"$REFRESH_ROW")]|rc=0 kinds=none"
-for conclusion in failure cancelled skipped neutral timed_out action_required stale; do
+for conclusion in cancelled skipped neutral action_required stale; do
   table "aggregate $conclusion grants no refresh attention||$REFRESH_ENV;STUB_CI_RAW=$(jq -c --arg c "$conclusion" '.check_runs[0].conclusion=$c' <<<"$CI_GREEN")|rc=0 kinds=none"
 done
+CI_RED="$(jq -c '.check_runs[0].conclusion="failure"' <<<"$CI_GREEN")"
+ARMED_ENV="STUB_OPEN_PRS=$P7;STUB_CI_RAW=$CI_RED"
+for conclusion in failure timed_out startup_failure; do
+  failed="$(jq -c --arg c "$conclusion" '.check_runs[0].conclusion=$c' <<<"$CI_GREEN")"
+  table \
+    "refresh aggregate $conclusion reports its current head||$REFRESH_ENV;STUB_CI_RAW=$failed|rc=1 kinds=ci-failed subjects=7~aaaaaaaa protocol=7~aaaaaaaa~ci-failed~current-head+CI+failed" \
+    "armed aggregate $conclusion reports its current head||$ARMED_ENV;STUB_CI_RAW=$failed|rc=1 kinds=ci-failed subjects=7~aaaaaaaa" \
+    "queued aggregate $conclusion reports its current head||$ARMED_ENV;STUB_OPEN_PRS=$P7U;STUB_QUEUED=yes;STUB_CI_RAW=$failed|rc=1 kinds=ci-failed queued_notes=1"
+done
+table \
+  "a failed armed head is a standing line on another call||$ARMED_ENV|rc=1 kinds=ci-failed" \
+  "a failed approved refresh reports CI without approval attention||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;STUB_DECISION=APPROVED|rc=1 kinds=ci-failed" \
+  "failed CI reports beside open threads and objections||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;STUB_UNRESOLVED=1;STUB_DECISION=CHANGES_REQUESTED|rc=1 kinds=threads-open,ci-failed,changes-requested" \
+  "a moved failing refresh head reports no old CI||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;$HEAD_AFTER|rc=1 kinds=head-moved" \
+  "a moved armed head during pagination reports no old CI||$ARMED_ENV;$PAGED;STUB_ROUND_HEAD=$HEAD_B|rc=1 kinds=head-moved" \
+  "a failed draft refresh is silent||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;STUB_OPEN_PRS=[$(jq -c '.draft=true' <<<"$REFRESH_ROW")]|rc=0 kinds=none" \
+  "a failed armed draft is silent||$ARMED_ENV;STUB_OPEN_PRS=$P7AD|rc=0 kinds=none" \
+  "an unarmed failed approved PR keeps its disarmed line||$ARMED_ENV;STUB_OPEN_PRS=$P7U|rc=1 kinds=disarmed" \
+  "armed green CI is silent||$ARMED_ENV;STUB_CI_RAW=$CI_GREEN|rc=0 kinds=none" \
+  "armed pending CI is silent||$ARMED_ENV;STUB_CI_RAW=$(jq -c '.check_runs[0].status="in_progress"' <<<"$CI_RED")|rc=0 kinds=none" \
+  "armed malformed CI keeps its silence||$ARMED_ENV;STUB_CI_RAW={}|rc=0 kinds=none" \
+  "armed CI past one page keeps its silence||$ARMED_ENV;STUB_CI_MORE=yes|rc=0 kinds=none"
+for conclusion in cancelled skipped neutral action_required stale; do
+  table "armed aggregate $conclusion is silent||$ARMED_ENV;STUB_CI_RAW=$(jq -c --arg c "$conclusion" '.check_runs[0].conclusion=$c' <<<"$CI_GREEN")|rc=0 kinds=none"
+done
+mutant_watch ci-failed-kind 's#"ci-failed"; "current-head CI failed#"ci-silenced"; "current-head CI failed#' '"ci-failed"; "current-head CI failed'
+table \
+  "must-fail: withholding failed CI loses refresh attention||$REFRESH_ENV;STUB_CI_RAW=$CI_RED|rc=0 kinds=none" \
+  "must-fail: withholding failed CI loses armed attention||$ARMED_ENV|rc=0 kinds=none"
+WATCH_BIN="$LIVE_WATCH"
 for identity in branch author type; do
   case "$identity" in
     branch) other="$(jq -c '.head.ref="kendex/refresh-extra"' <<<"$REFRESH_ROW")" ;;
@@ -272,7 +302,7 @@ mutant_watch refresh-author 's#\.user.login == "vanillagreen-fleet-lanes\[bot\]"
 table "must-fail: removing the app login check reports another author||$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c '.user.login="another[bot]"' <<<"$REFRESH_ROW")]|rc=1 kinds=refresh-ready"
 mutant_watch refresh-type 's#\.user.type == "Bot"#true#' '.user.type == "Bot"' lib/refresh-identity.sh
 table "must-fail: removing the Bot type check reports a user identity||$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c '.user.type="User"' <<<"$REFRESH_ROW")]|rc=1 kinds=refresh-ready"
-mutant_watch refresh-ci-status 's#\.status == "COMPLETED"#true#' '.status == "COMPLETED"'
+mutant_watch refresh-ci-status 's#all($ci\[\]; .status == "COMPLETED"#all($ci[]; true#' 'all($ci[]; .status == "COMPLETED"'
 table "must-fail: removing completion reports running CI||$REFRESH_ENV;STUB_CI_RAW=$(jq -c '.check_runs[0].status="in_progress"' <<<"$CI_GREEN")|rc=1 kinds=refresh-ready"
 mutant_watch refresh-ci-conclusion 's#\.conclusion == "SUCCESS"#true#' '.conclusion == "SUCCESS"'
 table "must-fail: removing success reports failed CI||$REFRESH_ENV;STUB_CI_RAW=$(jq -c '.check_runs[0].conclusion="failure"' <<<"$CI_GREEN")|rc=1 kinds=refresh-ready"

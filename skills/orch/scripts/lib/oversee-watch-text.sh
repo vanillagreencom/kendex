@@ -213,7 +213,7 @@ The long pass's events, checked and reported in this order:
                              record gets no such judgement. Emitted every long
                              pass it stands
   EVENT pr-watch rc=N        new pr-watch attention; only rising-key lines follow
-                             refresh-ready wakes on the opening pass and
+                             refresh-ready and ci-failed wake on the opening pass and
                              once per new head, including without a lane
   EVENT merged <PR> <branch> <repo>
                              every refresh-ready PR gets this line at its
