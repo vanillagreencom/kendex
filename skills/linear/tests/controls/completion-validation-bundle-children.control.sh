@@ -13,16 +13,21 @@ control_replace scripts/commands/issues.sh 1 \
     '        has_summary=$(echo "$comments" | jq '\''any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))'\'')'
 
 control_expect "open container outcome controls completion"
-control_replace scripts/commands/issues.sh 1 \
-    '        if [ "$role" = "container" ]; then' \
-    '        if false; then'
+control_replace scripts/lib/issue-validation.sh 1 \
+    $'\t\t''| if $role == "container" then' \
+    $'\t\t''| if false then'
 
 # Main's rule: a container closes only once every box, the child box among
 # them, carries a holder's Evidence, so finished children alone never close it.
 control_expect "child-open container outcome controls completion"
-control_replace scripts/commands/issues.sh 1 \
-    '                | .ok = (.ok and $checklist.errors == [] and $checklist.container_open_boxes == [])'"'"') || return 1' \
-    '                | .ok = (.ok and $checklist.completion_state == "Done")'"'"') || return 1'
+control_replace scripts/lib/issue-validation.sh 1 \
+    '        | .container_open_boxes = [.boxes[] | select(.number != $child)' \
+    '        | .container_open_boxes = [.boxes[] | select(true)'
+
+control_expect "done-unsummarized container child names its remedy"
+control_replace scripts/lib/issue-validation.sh 1 \
+    $'\t\t''  elif $role == "container-child" and $state_ok and ($has_summary | not) then' \
+    $'\t\t''  elif false then'
 
 # Restore child acceptance without the qualified started phase.
 control_expect "qualified child controls bundle acceptance"

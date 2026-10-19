@@ -84,13 +84,13 @@ container_close_message() {
       printf 'container-close: canceled parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: every child of $PARENT_ID was canceled, so it is set Canceled"
       ;;
-    pending-unreadable)
-      printf 'container-close: pending-unreadable parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: cannot read pending children for $PARENT_ID"
-      ;;
     children-unreadable)
       printf 'container-close: children-unreadable parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: cannot read children for $PARENT_ID"
+      ;;
+    no-children)
+      printf 'container-close: no-children parent-id=%s\n' "$PARENT_ID"
+      printf '%s\n' "container-close: $PARENT_ID has no children, so it is not a container"
       ;;
     children-response)
       printf 'container-close: children-response parent-id=%s\n' "$PARENT_ID"
@@ -104,21 +104,13 @@ container_close_message() {
       printf 'container-close: validation-result parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: completion validation returned invalid results for $PARENT_ID"
       ;;
-    validation-json)
-      printf 'container-close: validation-json parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: completion validation returned invalid JSON for $PARENT_ID"
-      ;;
     completion-refused)
-      printf 'container-close: completion-refused parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: completion validation refused $PARENT_ID"
+      printf 'container-close: completion-refused parent-id=%s cause=%s\n' "$PARENT_ID" "$REFUSAL"
+      printf '%s\n' "container-close: completion of $PARENT_ID refused: $REFUSAL"
       ;;
-    validation-state)
-      printf 'container-close: validation-state parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: completion validation returned invalid parent state for $PARENT_ID"
-      ;;
-    validation-summary)
-      printf 'container-close: validation-summary parent-id=%s\n' "$PARENT_ID"
-      printf '%s\n' "container-close: completion validation returned invalid summary evidence for $PARENT_ID"
+    decision-failed)
+      printf 'container-close: decision-failed parent-id=%s decision=%s\n' "$PARENT_ID" "${DECISION:-}"
+      printf '%s\n' "container-close: the close decision for $PARENT_ID gave no known result"
       ;;
     summary-rows)
       printf 'container-close: summary-rows parent-id=%s\n' "$PARENT_ID"
@@ -180,15 +172,21 @@ unauthenticated `gh`. A successful `closed` result may carry completion
 diagnostics on stderr; callers must preserve every one. With every child Done
 or Canceled, the run ticks the parent's "Every child Done or cancelled" box
 with an Evidence line naming each child's state, in the update that sets
-Done; any other open box refuses (`completion-refused`) until it moves into
-its own child, whether the children were Done or every one was canceled. A
-parent whose every child was canceled delivered nothing: it is set Canceled,
-with no summary and its child box left open, and prints `closed
-<PARENT_ID>` after the stderr line `container-close: canceled
-parent-id=<PARENT_ID>`. A parent another route already set Done takes the same
-child validation and tick, with no summary. An in-PR bundle root, whose safe
-read reports `in_pr_bundle`, is a work item: it refuses (`in-pr-bundle`) before
-any read of its children. The run supplies no merge time. The run owns the
+Done. A refusal prints each refused row on stderr, with its `remedy`, before
+`container-close: completion-refused parent-id=<PARENT_ID> cause=<CAUSE>`:
+`open-box`, any other open box, until it moves into its own child, whether
+the children were Done or every one was canceled; `child-not-ok`, a Done
+child that fails validation, such as one with no summary; `parent-canceled`,
+a Canceled parent with a Done child. A parent whose every child was canceled
+delivered nothing: it is set Canceled, with no summary and its child box left
+open, and prints `closed <PARENT_ID>` after the stderr line `container-close:
+canceled parent-id=<PARENT_ID>`. One already Done or Canceled is left as it
+is and prints the same, with that stderr line only when Canceled. A parent
+another route already set Done with a Done child takes the same child
+validation and tick, with no summary. A parent with no children refuses
+(`no-children`). An in-PR bundle root, whose safe read reports `in_pr_bundle`,
+is a work item: it refuses (`in-pr-bundle`) before any read of its children.
+The run supplies no merge time. The run owns the
 completion gate and the bundle summary: a retry carrying validated summary
 evidence completes without the summary flags, so the bundle comment is never
 posted twice. With `gh` absent a child's PR reference is recorded as `lookup
@@ -295,95 +293,115 @@ print_closed() {
 }
 
 PARENT="$(parent_json)" || { container_close_message parent-unreadable "$@" >&2; exit 1; }
-PARENT_TYPE="$(jq -r 'if (.state_type | type) == "string" and (.in_pr_bundle | type) == "boolean"
-  then "\(.state_type)\t\(.in_pr_bundle)" else error("parent-fields") end' <<<"$PARENT")" \
+jq -e '(.state_type | type) == "string" and (.in_pr_bundle | type) == "boolean"' <<<"$PARENT" >/dev/null \
   || { container_close_message parent-response "$@" >&2; exit 1; }
-IN_PR_BUNDLE="${PARENT_TYPE#*$'\t'}"
-PARENT_TYPE="${PARENT_TYPE%%$'\t'*}"
-[[ "$IN_PR_BUNDLE" == false ]] || { container_close_message in-pr-bundle "$@" >&2; exit 1; }
-MUTATION=(issues complete "$PARENT_ID")
-CANCEL_PARENT=false
 
-PENDING="$("$LINEAR" issues children "$PARENT_ID" --recursive --pending --format=ids)" \
-  || { container_close_message pending-unreadable "$@" >&2; exit 1; }
-if [[ -n "$PENDING" ]]; then print_deferred "$PENDING"; exit 0; fi
+# One owner decides the close. The rows below are its whole table, first match
+# wins, and the token it prints selects every mutation and output after it.
+# A row whose input is not read yet asks for that read, so an in-PR bundle
+# root reads no child and an open child defers before the validation's
+# per-child reads. pending is the `children --pending` filter. The
+# validation reports facts; its parent row's ok does not decide the close.
+CLOSE_DEFS='def pending: .state_type != "completed" and .state_type != "canceled";
+  def open_box: .container_open_boxes != [] or .errors != [];
+  def refused_child($id): .id != $id and .ok == false;'
+CLOSE_DECISION="$CLOSE_DEFS"'
+  $parent.state_type as $state
+  | if $parent.in_pr_bundle then "refuse:in-pr-bundle"
+    elif $children == null then "read:children"
+    elif $children == [] then "refuse:no-children"
+    elif any($children[]; pending) then "keep"
+    elif $validation == null then "read:validation"
+    elif $validation.results[] | select(.id == $id) | open_box then "refuse:open-box"
+    elif any($validation.results[]; refused_child($id)) then "refuse:child-not-ok"
+    elif all($children[]; .state_type == "canceled") then
+      if $state == "completed" or $state == "canceled" then "noop:\($state)" else "close-canceled" end
+    elif $state == "canceled" then "refuse:parent-canceled"
+    elif $state != "completed" and ($validation.results[] | select(.id == $id) | .has_summary | not) then "close-done:summary"
+    else "close-done:resume" end'
+CHILDREN=null
+VALIDATION=null
+while :; do
+  DECISION="$(jq -rn --arg id "$PARENT_ID" --argjson parent "$PARENT" --argjson children "$CHILDREN" \
+    --argjson validation "$VALIDATION" "$CLOSE_DECISION")" \
+    || { container_close_message decision-failed "$@" >&2; exit 1; }
+  case "$DECISION" in
+    read:children)
+      CHILDREN="$("$LINEAR" issues children "$PARENT_ID" --recursive)" \
+        || { container_close_message children-unreadable "$@" >&2; exit 1; }
+      jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) > 0 and
+        (.title | type) == "string" and (.state_type | type) == "string")' <<<"$CHILDREN" >/dev/null \
+        || { container_close_message children-response "$@" >&2; exit 1; }
+      ;;
+    read:validation)
+      VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
+        || { container_close_message validation-failed "$@" >&2; exit 1; }
+      jq -e --arg id "$PARENT_ID" '(.results | type) == "array" and ([.results[] | select(.id == $id)] | length) == 1 and
+        all(.results[]; if .id == $id then (.has_summary | type) == "boolean" and (.container_open_boxes | type) == "array"
+          and (.errors | type) == "array" and ((.child_box | type) as $t | $t == "null" or $t == "number")
+          else (.ok | type) == "boolean" end)' <<<"$VALIDATION" >/dev/null \
+        || { container_close_message validation-result "$@" >&2; exit 1; }
+      ;;
+    *) break ;;
+  esac
+done
 
-CHILDREN="$("$LINEAR" issues children "$PARENT_ID" --recursive)" \
-  || { container_close_message children-unreadable "$@" >&2; exit 1; }
-jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) > 0 and
-  (.title | type) == "string" and (.state_type | type) == "string")' <<<"$CHILDREN" >/dev/null \
-  || { container_close_message children-response "$@" >&2; exit 1; }
-TERMINAL_CHILDREN="$CHILDREN"
-CHILDREN="$(jq '[.[] | select(.state_type != "canceled")]' <<<"$CHILDREN")" \
-  || { container_close_message children-response "$@" >&2; exit 1; }
-
-VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
-  || { container_close_message validation-failed "$@" >&2; exit 1; }
-jq -e --arg id "$PARENT_ID" '(.results | if type == "array" then [.[] | select(.id == $id)] else [] end) as $parent |
-  (.all_ok | type) == "boolean" and (.results | type) == "array" and ($parent | length) == 1 and
-  ($parent[0].state_type | type) == "string" and ($parent[0].state_type | length) > 0 and ($parent[0].has_summary | type) == "boolean"' \
-  <<<"$VALIDATION" >/dev/null || { container_close_message validation-result "$@" >&2; exit 1; }
-# Every child canceled: nothing was delivered, so the parent closes Canceled,
-# once the parser finds no outcome box beside the child box to read first.
-# Its state alone does not refuse: a Canceled parent's retry closes again,
-# and a parent another route already completed keeps its completed state.
-if jq -e 'length == 0' <<<"$CHILDREN" >/dev/null && jq -e 'length > 0' <<<"$TERMINAL_CHILDREN" >/dev/null; then
-  PARENT_OPEN="$(jq -c --arg id "$PARENT_ID" '.results[] | select(.id == $id)
-    | if (.container_open_boxes | type) == "array" and (.errors | type) == "array"
-      then select(.container_open_boxes != [] or .errors != []) else error("parent-row") end' <<<"$VALIDATION")" \
-    || { container_close_message validation-result "$@" >&2; exit 1; }
-  if [[ -n "$PARENT_OPEN" ]]; then
-    printf '%s\n' "$PARENT_OPEN" >&2
+case "$DECISION" in
+  refuse:in-pr-bundle) container_close_message in-pr-bundle "$@" >&2; exit 1 ;;
+  refuse:no-children) container_close_message no-children "$@" >&2; exit 1 ;;
+  keep)
+    PENDING="$(jq -r "$CLOSE_DEFS"'.[] | select(pending) | .id' <<<"$CHILDREN")" \
+      || { container_close_message children-response "$@" >&2; exit 1; }
+    print_deferred "$PENDING"
+    exit 0
+    ;;
+  refuse:*)
+    REFUSAL="${DECISION#refuse:}"
+    jq -c --arg id "$PARENT_ID" --arg cause "$REFUSAL" "$CLOSE_DEFS"'.results[]
+      | select(if $cause == "child-not-ok" then refused_child($id) else .id == $id end)' <<<"$VALIDATION" >&2 \
+      || { container_close_message validation-result "$@" >&2; exit 1; }
     container_close_message completion-refused "$@" >&2
     exit 1
-  fi
-  if [[ "$PARENT_TYPE" != "completed" ]]; then
-    MUTATION=(issues update "$PARENT_ID" --state Canceled)
-    CANCEL_PARENT=true
-  fi
-else
-
-ALL_OK="$(jq -r '.all_ok' <<<"$VALIDATION")" \
-  || { container_close_message validation-json "$@" >&2; exit 1; }
-if [[ "$ALL_OK" != "true" ]]; then
-  jq -c '.results[] | select(.ok != true)' <<<"$VALIDATION" >&2 \
-    || { container_close_message validation-result "$@" >&2; exit 1; }
-  container_close_message completion-refused "$@" >&2
-  exit 1
-fi
-VALIDATED_PARENT_TYPE="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .state_type' <<<"$VALIDATION")" \
-  || { container_close_message validation-state "$@" >&2; exit 1; }
-HAS_SUMMARY="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .has_summary' <<<"$VALIDATION")" \
-  || { container_close_message validation-summary "$@" >&2; exit 1; }
-if [[ "$VALIDATED_PARENT_TYPE" != "completed" && "$HAS_SUMMARY" == "false" ]]; then
-  jq -r '.[] | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
-    || { container_close_message summary-rows "$@" >&2; exit 1; }
-  # A held summary is reused only for the exact children it was built from;
-  # rows that differ, or cannot be compared, rebuild it.
-  if [[ -f "$HELD_SUMMARY" ]] && cmp -s -- "$HELD_ROWS" "$CHILD_ROWS"; then
-    cp -- "$HELD_SUMMARY" "$SUMMARY" \
-      || { container_close_message summary-rows "$@" >&2; exit 1; }
-  else
-    printf '## Bundle Complete\n\n' > "$SUMMARY"
-    while IFS=$'\t' read -r id title state_type; do
-      [[ "$state_type" == "completed" ]] \
-        || { container_close_message summary-state "$@" >&2; exit 1; }
-      PR_REFERENCE="$(child_pr "$id")" || exit 1
-      printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
-    done < "$CHILD_ROWS"
-  fi
-  MUTATION+=(--summary-file "$SUMMARY")
-fi
-CHILD_BOX="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .child_box as $box
-  | select($box != null and ((.unmet_branch_boxes // []) + (.missing_evidence_boxes // []) | index($box)) != null) | $box' <<<"$VALIDATION")" \
-  || { container_close_message validation-result "$@" >&2; exit 1; }
-if [[ -n "$CHILD_BOX" ]]; then
-  jq -r --arg box "$CHILD_BOX" '"\($box): container-close read every child Done or Canceled: "
-    + (map("\(.id) \(if .state_type == "canceled" then "Canceled" else "Done" end)") | join(", "))' \
-    <<<"$TERMINAL_CHILDREN" > "$EVIDENCE" || { container_close_message evidence-failed "$@" >&2; exit 1; }
-  MUTATION+=(--done-when-met "$CHILD_BOX" --evidence-file "$EVIDENCE")
-fi
-fi
+    ;;
+  noop:completed|noop:canceled)
+    [[ "$DECISION" == noop:completed ]] || container_close_message canceled "$@" >&2
+    print_closed "$@"
+    exit 0
+    ;;
+  close-canceled) MUTATION=(issues update "$PARENT_ID" --state Canceled) ;;
+  close-done:summary|close-done:resume)
+    MUTATION=(issues complete "$PARENT_ID")
+    if [[ "$DECISION" == close-done:summary ]]; then
+      jq -r '.[] | select(.state_type != "canceled") | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
+        || { container_close_message summary-rows "$@" >&2; exit 1; }
+      # A held summary is reused only for the exact children it was built from;
+      # rows that differ, or cannot be compared, rebuild it.
+      if [[ -f "$HELD_SUMMARY" ]] && cmp -s -- "$HELD_ROWS" "$CHILD_ROWS"; then
+        cp -- "$HELD_SUMMARY" "$SUMMARY" \
+          || { container_close_message summary-rows "$@" >&2; exit 1; }
+      else
+        printf '## Bundle Complete\n\n' > "$SUMMARY"
+        while IFS=$'\t' read -r id title state_type; do
+          [[ "$state_type" == "completed" ]] \
+            || { container_close_message summary-state "$@" >&2; exit 1; }
+          PR_REFERENCE="$(child_pr "$id")" || exit 1
+          printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
+        done < "$CHILD_ROWS"
+      fi
+      MUTATION+=(--summary-file "$SUMMARY")
+    fi
+    CHILD_BOX="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .child_box as $box
+      | select($box != null and ((.unmet_branch_boxes // []) + (.missing_evidence_boxes // []) | index($box)) != null) | $box' <<<"$VALIDATION")" \
+      || { container_close_message validation-result "$@" >&2; exit 1; }
+    if [[ -n "$CHILD_BOX" ]]; then
+      jq -r --arg box "$CHILD_BOX" '"\($box): container-close read every child Done or Canceled: "
+        + (map("\(.id) \(if .state_type == "canceled" then "Canceled" else "Done" end)") | join(", "))' \
+        <<<"$CHILDREN" > "$EVIDENCE" || { container_close_message evidence-failed "$@" >&2; exit 1; }
+      MUTATION+=(--done-when-met "$CHILD_BOX" --evidence-file "$EVIDENCE")
+    fi
+    ;;
+  *) container_close_message decision-failed "$@" >&2; exit 1 ;;
+esac
 
 COMPLETE_RC=0
 "$LINEAR" "${MUTATION[@]}" >/dev/null 2>"$COMPLETE_ERR" || COMPLETE_RC=$?
@@ -415,5 +433,5 @@ if [[ $COMPLETE_RC -ne 0 ]]; then
   container_close_message completion-failed "$@" >&2
   exit 1
 fi
-[[ "$CANCEL_PARENT" == false ]] || container_close_message canceled "$@" >&2
+[[ "$DECISION" != close-canceled ]] || container_close_message canceled "$@" >&2
 print_closed "$@"

@@ -83,9 +83,13 @@ completion_state_matches() {
 # therefore keyed on state_type, not state name — any live state passes, a
 # canceled container (or one with no state_type evidence) fails closed — and
 # has_summary does not gate `ok`: the summary is posted by `issues complete
-# --summary` at completion time, after this validation runs.
+# --summary` at completion time, after this validation runs. Its row also
+# reports the checklist facts container-close decides the close on; they do
+# not gate `ok`, because that decision is container-close's.
 #
-# Output shape is stable: {id, state, state_type, state_ok, has_summary, ok}
+# Output shape is stable: {id, state, state_type, state_ok, has_summary, ok},
+# plus the container's checklist fields, and a `remedy` on a container with
+# an open box or a Done container child with no summary.
 build_completion_validation_result() {
 	local issue_id="$1"
 	local state="$2"
@@ -94,7 +98,7 @@ build_completion_validation_result() {
 	local has_summary="$4"
 	local role="${5:-session-root}"
 	local state_type="${6:-}"
-	local description="${7:-}" checklist
+	local description="${7:-}" checklist='{}'
 	local state_ok="false"
 	local ok="false"
 
@@ -103,6 +107,7 @@ build_completion_validation_result() {
 			state_ok="true"
 			ok="true"
 		fi
+		checklist=$(done_when_parse "$description" '[]') || return 1
 	else
 		if completion_state_matches "$state" "$role" "$state_type"; then
 			state_ok="true"
@@ -128,7 +133,15 @@ build_completion_validation_result() {
 		--argjson state_ok "$state_ok" \
 		--argjson has_summary "$has_summary" \
 		--argjson ok "$ok" \
-		'{id: $id, state: $state, state_type: $state_type, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}'
+		--arg role "$role" \
+		--argjson checklist "$checklist" \
+		'{id: $id, state: $state, state_type: $state_type, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}
+		| if $role == "container" then
+			. + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes, child_box, container_open_boxes})
+			+ (if $checklist.container_open_boxes != [] then {remedy: "Move each open box into its own child item, then rerun container-close."} else {} end)
+		  elif $role == "container-child" and $state_ok and ($has_summary | not) then
+			. + {remedy: "Post a comment headed ## Completion Summary on \($id) with comments create \($id) --body-file SUMMARY_FILE, then rerun container-close."}
+		  else . end'
 }
 
 # --- Blocking-relation hierarchy guard (add-relation / block) ---

@@ -34,7 +34,7 @@ Done when every child is Done or cancelled.
 
 ## Rules
 
-The one Done-when box is the parent's whole checklist. When the last child is Done or Canceled, orch's `container-close` ticks it with each child's state as its `Evidence:` line in the update that sets the parent Done. A parent whose every child was canceled is set Canceled with its box left open. A goal measure or other outcome the children together produce is its own child: a leaf blocked by the siblings it measures, carrying that box and its holder's read, completed by that holder with `issues complete [CHILD_ID] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`, `[SUMMARY_FILE]` a nonempty summary of the read under `tmp/`: `container-close` refuses a Done child with no Completion Summary.
+The one Done-when box is the parent's whole checklist. When the last child is Done or Canceled, orch's `container-close` ticks it with each child's state as its `Evidence:` line in the update that sets the parent Done. A parent whose every child was canceled is set Canceled with its box left open. A goal measure or other outcome the children together produce is its own child: a leaf blocked by the siblings it measures, carrying that box and its holder's read, completed by that holder with `issues complete [CHILD_ID] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`, `[SUMMARY_FILE]` a nonempty summary of the read under `tmp/`.
 
 1. `## Sub-Issues`, never `## Requirements`. No implementation detail lives here.
 2. All children share the parent's project. See [dependencies.md](../references/dependencies.md).

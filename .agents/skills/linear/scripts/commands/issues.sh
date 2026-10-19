@@ -296,11 +296,14 @@ Validate-Completion:
   whose children are each worked as their own PR unit, with the container
   closing when its last child is Done or Canceled. The container's state passes for any live state (canceled
   fails closed) and needs no pre-posted summary: `issues complete --summary`
-  posts it at completion time. Its expanded children must all be Done, so
-  all_ok answers "may this container complete now?". Its result carries
+  posts it at completion time. Its expanded children must each be Done with
+  a summary; a Done child without one carries a `remedy`. all_ok answers
+  "every row validated"; whether the container may close is container-close's
+  decision. The container's row reports the facts that decision reads:
   `child_box`, the number of its "Every child Done or cancelled" box or null,
-  which the closer ticks. Every other box must be checked with its Evidence
-  line; an open one fails with a `remedy` to move it into its own child.
+  which the closer ticks; `container_open_boxes`, every other box still open
+  or missing its Evidence line, with a `remedy` to move each into its own
+  child; `errors`; and `has_summary`. They do not gate its `ok`.
   No merge time is needed.
   The flag fails closed:
   it requires exactly one issue ID plus --include-children-of naming that
@@ -3666,8 +3669,8 @@ validate_completion() {
         return 1
     fi
 
-    # --container asserts "this bundle may complete now", so it fails CLOSED
-    # on any invocation that cannot prove it: exactly one positional target,
+    # --container reports the facts a container's close reads, so it fails
+    # CLOSED on any invocation that cannot read them: exactly one positional target,
     # a paired --include-children-of naming that same target, and (checked
     # after expansion below) at least one child. The flag may appear after
     # the positionals, so the role is assigned post-parse.
@@ -3758,15 +3761,6 @@ validate_completion() {
         local result description
         description=$(jq -r '(.description // "") + "."' <<<"$issue") || return 1
         result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type" "${description%.}") || return 1
-
-        if [ "$role" = "container" ]; then
-            local checklist
-            checklist=$(done_when_parse "${description%.}" '[]') || return 1
-            result=$(jq -cn --argjson result "$result" --argjson checklist "$checklist" '
-                $result + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes, child_box, container_open_boxes})
-                + (if $checklist.container_open_boxes != [] then {remedy: "Move each open box into its own child item, then rerun container-close."} else {} end)
-                | .ok = (.ok and $checklist.errors == [] and $checklist.container_open_boxes == [])') || return 1
-        fi
 
         if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
             all_ok="false"
