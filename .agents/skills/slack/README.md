@@ -60,6 +60,13 @@ For an existing app, add missing OAuth scopes, enable Socket Mode, subscribe to 
 
 The app must be a member of every channel it posts to. `setup` creates or adopts a channel the app is in; for an alert channel, invite the app in Slack.
 
+### Token rotation
+
+1. Revoke the old token in the Slack app's settings.
+2. Reinstall the app to the workspace. If Slack shows its sudo page, the human completes that step.
+3. Put the replacement token in the project's private env file and restart the relay.
+4. Re-add the bot to each private channel it serves.
+
 ## The Jarvis session hold
 
 Each root checks the presence pair at every poll from its own settings and private env files, with caller exports taking precedence. The settings reader runs when a file's modification time, size or existence changes. A presence setting added, changed or removed takes effect on the next poll after that file changes, with no restart. Other settings still need `slack setup` or a restart. An empty or absent `SLACK_JARVIS_SESSION_FILE` means no hold. Relative paths start at that root; `~` expands to the home directory. A stale or missing file ends the hold at the next check. When the setting moves to another file, a running relay keeps the replaced file: the hold stands while either file is fresh. The relay drops the replaced file once the new one is fresh or the replaced one is stale. Emptying or removing the setting ends the hold at the next check. Before Slack calls, the relay publishes the hold in a per-root OS lock. It releases the lock when the hold ends. Process exit also releases it. Explicit posts check this lock and the current presence file, so a live Slack retry cannot restore mentions when the health record expires. `slack listen --status` shows `held-by=jarvis` while held. A refused settings read fails that root's post step and keeps its hold; other roots continue.

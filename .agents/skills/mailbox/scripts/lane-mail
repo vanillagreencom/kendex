@@ -247,7 +247,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
   resolve --item overseer --id MSGID [--text PATH | --default] [--delivery-id KEY]
               closes any ask this overseer sent with a separate `resolution` envelope,
               `re=MSGID`, and `by=explicit` when neither option is given.
-              --text also records the owner's answer with `by=text`.
+              --text FILE records the file as the person's own answer with
+              `by=text`, and the relay posts it as theirs. Use it only for
+              an answer they gave elsewhere. The agent's own reply is a
+              notice with --ref.
               --text and --default require an owner ask; a peer ask or an
               ask with no audience refuses either as `option-conflict`.
               --default supplies the recommendation with `by=default` only

@@ -68,6 +68,8 @@ Restart=on-failure
 
 Keep the ledger in the user's private account home. Store references to protected credentials rather than their values.
 
+No message or memory file carries a full account number, a PIN or a total account balance. Keep only the last 4 digits of an account number and read a balance on demand from its source. Prepaid credits and investment values count as balances. Transaction, invoice and cost amounts may stay.
+
 | Entry | Content |
 |---|---|
 | Account | Service, account label, purpose and credential reference. |
@@ -81,7 +83,7 @@ Keep the ledger in the user's private account home. Store references to protecte
 ## Remote sign-in
 
 - Start sign-in through the service's supported interface. Confirm the intended account and target session.
-- When the service requires the user to enter a sign-in code, send that code privately as a decision request under [communication.md:Message types](communication.md#message-types). Name where they must enter it and its expiry if the service provides one.
+- When sign-in waits on the user's phone, use [communication.md:Phone sign-in](communication.md#message-types). For any sign-in code the user must enter, send it privately at once. Name where they must enter it and its expiry if the service provides one.
 - Send only the code intended for the user, never a reusable credential. Exclude it from the handoff and captures under [Secret transfer](#secret-transfer).
 - Wait for the service to confirm sign-in. Check the target session's account before using it.
 

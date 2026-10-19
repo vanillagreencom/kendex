@@ -6,6 +6,7 @@ Read a named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'He
 
 - Skills hold how to do a task. Memory holds what is true or preferred. The tracker holds work and the handoff holds session state under [Homes](long-session.md#homes).
 - Use the user's assistant home and its reading routes under the [home layout](home-layout.md).
+- Apply the [account ledger](accounts-and-secrets.md#account-ledger) limits to every memory file.
 - Keep editable source apart from generated output. Change the source through its owning tool. Treat generated files as output rather than another source of instructions.
 - Keep official-record originals in their private record store. Memory holds only metadata such as record type, checked date, storage location and retention requirement. Exclude identifiers and document contents.
 

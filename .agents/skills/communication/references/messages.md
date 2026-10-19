@@ -27,6 +27,7 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 - Never rate, rank, praise or sell, even when asked. This includes superlative framing, even when it carries a fact. A heading names a topic, not a verdict.
 - Name the real thing. Do not stack clauses or use insider shorthand. Replace abstract words such as signal, surface, shape, posture, residue, substrate and predicate with the real noun.
 - Never use: delve, landscape, testament, interplay, serves as, robust, seamless, and leverage as a verb.
+- The long-dash ban and banned-word list are defaults a consumer may override.
 - Give full detail on request. Never trade correctness for brevity.
 
 ## Evidence and costs
@@ -36,8 +37,6 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 - Give a measure that depends on load with that load: session length beside the work handled, or machine use beside what ran. Length or use alone never claims an improvement.
 - Before posting, read each topic as the person and ask "so what for me?". Add that answer or cut the topic.
 - State a cost as its figure and source. Compare added CI time against the plan's included monthly allowance.
-
-The yardstick, load and so-what rules come from the owner's Slack messages 1792172820, 1792172887 and 1792172957, relayed in Jarvis note 1792173119.
 
 ## Impact and odds
 
@@ -49,14 +48,14 @@ When describing a mechanism, give its effect on the person and the likelihood of
 - A critical notice states the failure, its effect and the action the person must take.
 - When introducing a rule or setting, name the file or service that will hold it.
 - For a work update, use the [work story](reports.md#work-story). A simple reply needs no fixed status labels.
-- Name planned work by its tracker item, or state that it was dropped and why. Vague promises of future work do not replace either.
+- Name planned work by its tracker item, or state that it was dropped and why. Never call work "for now", "deferred", "later" or "optional".
 - Attribute another agent's work to that agent by name. Use I only for work the speaking session did.
 - When a message says a fix is coming, say in the same sentence whether it existed before the person's message, with its item and filing date, or was filed because of that message.
 - Review the saved text before sending. Message-format checks are advisory. A tool must not refuse a message because of its wording or layout.
 
 ## Medium and threads
 
-- Use the medium where the person started the conversation. Chat and voice connectors are the person's choice. Voice replies go to the call only.
+- Use the medium where the person started the conversation. Chat and voice connectors are the person's choice. For voice delivery, follow [voice replies](voice.md#spoken-reply).
 - Keep one topic per post and per thread. Reply in the thread of the message answered, or its containing thread. Continue that topic there until the person changes topic. Keep thread replies in their threads.
 - Answer each message in its own thread. If a fact answers two messages, give a short answer in each thread.
 - A new topic, decision request, critical notice or progress report starts at the top level.
@@ -69,6 +68,7 @@ Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 
 ## Names
 
+- Name an installed kendex package by its name, never "the repository runs kendex".
 - Give a tracker item its subject words beside its link.
 - Use distinct names for different things. Replace a pronoun with the thing's name when it could refer to more than one thing.
 - When a short reply could refer to different earlier items, name the item the reply acts on before acting.

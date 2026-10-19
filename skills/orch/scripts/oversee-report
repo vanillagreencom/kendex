@@ -128,7 +128,7 @@ write    prints the rows and writes the same bytes to the path
          passed on to it, then sends the owner the report notice,
          `lane-mail notice --item overseer --to owner --attach <that file>`
          with the summary file's text as its text, so a relay carries the
-         file to the owner. Follow the Owner summary template cited below
+         file to the owner. Follow the Summary template cited below
          for the summary's opening and section order.
          The summary is the notice's text alone, never
          in the file or the print: the relay posts it as the file's Slack
@@ -154,7 +154,7 @@ write    prints the rows and writes the same bytes to the path
          These findings are advisory: write sends on the writer's word.
          Argument, setting and notice failures still refuse.
          Owner wording and the template live in
-         ../communication/references/reports.md § Owner summary template.
+         ../communication/references/reports.md § Summary template.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, with a

@@ -8,7 +8,7 @@ Write a plain briefing as a chain of events. Open each area with good or bad, do
 
 State the goal as the outcome the person needs. Put the observed reading beside it. A measure alone is not the goal.
 
-Work-item descriptions, comments and completion summaries use this story too. Apply the [visible comparison](questions.md#today-and-after). Keep technical detail on the tracker item.
+Apply the [visible comparison](questions.md#today-and-after). Keep technical detail on the tracker item.
 
 A report names the author's own misses since the previous report. Give each miss its cause and the fix, or the reason no fix is needed.
 
@@ -20,7 +20,7 @@ Put detail in the report file. Send one post per report, not a thread of fragmen
 
 ## Report opening
 
-Open with Overall in the [owner summary template](#owner-summary-template). Put the repository's outcome readings in Readings, each with its date, scope and source. Name the decision taken when the reading moved. Omit a reading when it has no change and no decision. Reuse existing evidence comments and rulings.
+Open with Overall in the [summary template](#summary-template). Put the repository's outcome readings in Readings, each with its date, scope and source. Name the decision taken when the reading moved. Omit a reading when it has no change and no decision. Reuse existing evidence comments and rulings.
 
 ## Evidence
 
@@ -34,20 +34,22 @@ Name each open ask by its question, so the person can find its thread. Link each
 
 ## Account headroom
 
-Report headroom for every provider the fleet runs, including Claude, Codex and Copilot. Put one line per provider under Headroom Remaining, with its remaining percent and account count, for example `Codex: 27% (3 accounts)`.
+Report headroom for every harness the consumer runs. Put one line per provider under Headroom Remaining, with its remaining percent and account count.
 
 ## Summary shape
 
 A consumer's user instruction that sets a report format for its reader overrides the shared format for that reader.
 
+The line and label rules below apply to every post to the person, not only a report. Use each section where it applies.
+
 - Use the ten labels in the template's order: **Overall**, **What's going well**, **What's not going well**, **Readings**, **Completed**, **In-Progress**, **Blocked**, **Waiting on you**, **Headroom Remaining**, **Self-Analysis**. Name the reporting session in its Self-Analysis label. Labels may have a leading emoji code.
 - Put a blank line between sections. A label may stand alone or introduce its section's prose. Separators and an italic Next report line are allowed.
 - The first three sections use plain sentences with no engineering language. Overall uses one or two sentences. These prose lines have no 20-word limit.
 - Put one item and one sentence per bullet line, at most 20 words. A line may carry two links. Use indented sub-bullets and third-tier bullets for detail, with each figure on its own sub-bullet. An italic Additional information line may explain a bullet.
-- Use at most `ORCH_REPORT_SUMMARY_LINES` top-level bullet lines for an orch report, default 20. Prose, labels, blank lines, separators, sub-bullets, third-tier bullets and the Next report line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
-- Use no table in an owner message.
+- Keep top-level bullet lines within the caller's line cap. Prose, labels, blank lines, separators, sub-bullets, third-tier bullets and the Next report line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
+- Use no table in a message to a person.
 
-## Owner summary template
+## Summary template
 
 Jarvis and overseer reports use this shared summary shape. Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
 

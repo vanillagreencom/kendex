@@ -10,6 +10,8 @@ Ask one question per message. When a chat or relay may show only the ask's first
 
 Show Today and After side by side in the words of the screen or app the person uses. Put this comparison first in work-item descriptions, comments and completion summaries. A goal statement alone never replaces the Today and After picture.
 
+For a folder change, show the folders today and where each moves.
+
 ## CEO questions
 
 ```text
