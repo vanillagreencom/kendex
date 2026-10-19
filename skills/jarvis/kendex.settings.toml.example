@@ -11,9 +11,10 @@ JARVIS_WAKE_SETTLE_SECS = "15"
 SLACK_JARVIS_SESSION_FILE = ""
 # Report minute cadence and delivery use orch's settings. Issue-count cadence
 # requires fleet state, which the Jarvis report reader does not supply.
-# Empty quiet hours permits
-# checkpoints at any hour; otherwise they arrive after the quiet window.
 ORCH_REPORT_EVERY_MINUTES = "120"
+# Empty permits checkpoints at any hour; otherwise they arrive after the
+# quiet window in ORCH_OWNER_TIME_ZONE.
 ORCH_REPORT_QUIET_HOURS = "0-7"
+# IANA time zone used to interpret report quiet hours.
 ORCH_OWNER_TIME_ZONE = "America/Los_Angeles"
 # ORCH_PROGRESS_REPORT_DIR uses orch's default tmp/progress-reports.
