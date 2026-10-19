@@ -117,6 +117,58 @@ skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
   "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
   'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
 
+# Tool calls routinely quote cleanup source while rewriting another script.
+# Receivers and quote state decide whether that source is shell input.
+data_body_rows() {
+  first_table 'python replacement heredoc|command|0|-|python3 - <<'\''PY'\''\ns = '\''rm -rf "$scratch"'\''\ns.replace(s, "cleanup")\nPY
+file writing heredoc|command|0|-|cat > tmp/helper.py <<'\''EOF'\''\ns = '\''rm -rf "$scratch"'\''\nEOF
+python replacement inline|command|0|-|python3 -c '\''s = "rm -rf \\"$scratch\\""; print(s)'\''
+python shared inline|command|0|-|python -c '\''s = "rm -rf $HOME"'\''
+node inline|command|0|-|node -e '\''const s = "rm -rf $X";'\''
+ruby inline|command|0|-|ruby -e '\''s = "rm -rf $X"'\''
+perl inline|command|0|-|perl -e '\''$s = "rm -rf $X";'\''
+double quoted program|command|0|-|python3 -c "print('\''rm -rf $X'\'')"
+node heredoc|command|0|-|node <<"JS"\nconst s = '\''rm -rf $HOME'\'';\nJS
+ruby heredoc|command|0|-|ruby <<'\''RB'\''\ns = "rm -rf $X"\nRB
+perl heredoc|command|0|-|perl <<'\''PL'\''\n$s = "rm -rf $X";\nPL
+escaped delimiter|command|0|-|cat <<\\EOF\nrm -rf $X\nEOF
+tab stripped delimiter|command|0|-|cat <<-'\''EOF'\''\n\trm -rf $X\n\tEOF
+multiple data bodies|command|0|-|cat <<'\''A'\'' <<'\''B'\''\nrm -rf $X\nA\nrm -rf $HOME\nB
+quoted heredoc marker|command|0|-|python3 -c '\''s = "<<EOF rm -rf $X"'\''
+'
+}
+executable_body_rows() {
+  first_table 'real removal|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$scratch/x"
+shell inline|command|2|block-unsafe-rm: refused=recursive-rm|bash -c '\''rm -rf "$X/sub"'\''
+eval inline|command|2|block-unsafe-rm: refused=recursive-rm|eval '\''rm -rf $X'\''
+source inline|command|2|block-unsafe-rm: refused=recursive-rm|source <(echo '\''rm -rf $X'\'')
+shell heredoc|command|2|block-unsafe-rm: refused=recursive-rm|bash <<'\''EOF'\''\nrm -rf "$X/sub"\nEOF
+expanding data heredoc|command|2|block-unsafe-rm: refused=recursive-rm|cat <<EOF\n$(rm -rf "$X/sub")\nEOF
+after data heredoc|command|2|block-unsafe-rm: refused=recursive-rm|python3 - <<'\''PY'\''\ns = "rm -rf $HOME"\nPY\nrm -rf "$X/sub"
+unknown receiver heredoc|command|2|block-unsafe-rm: refused=recursive-rm|unrecognized-tool <<'\''EOF'\''\nrm -rf "$X/sub"\nEOF
+quoted unknown receiver|command|2|block-unsafe-rm: refused=recursive-rm|"python\\3" <<'\''EOF'\''\nrm -rf $X\nEOF
+carriage return in receiver|command|2|block-unsafe-rm: refused=recursive-rm|python3\r <<'\''EOF'\''\nrm -rf $X\nEOF
+inline shell substitution|command|2|block-unsafe-rm: refused=recursive-rm|python3 -c "print('\''$(rm -rf $X)'\'')"
+piped shell heredoc|command|2|block-unsafe-rm: refused=recursive-rm|cat <<'\''EOF'\'' | bash\nrm -rf $X\nEOF
+inline program piped to shell|command|2|block-unsafe-rm: refused=recursive-rm|python3 -c '\''print("rm -rf $X")'\'' | bash
+data redirected to shell|command|2|block-unsafe-rm: refused=recursive-rm|cat > >(bash) <<'\''EOF'\''\nrm -rf $X\nEOF
+mixed heredocs|command|2|block-unsafe-rm: refused=shared-root|cat <<'\''A'\''; bash <<'\''B'\''\nrm -rf $X\nA\nrm -rf $HOME\nB
+incomplete data heredoc|command|2|block-unsafe-rm: refused=recursive-rm|cat <<'\''EOF'\''\nrm -rf $X
+'
+}
+data_body_rows
+executable_body_rows
+skill_load_control body-raw-scan "$HOOK" 'command_regions() {' \
+  '  return 0' HOOK data_body_rows \
+  'python replacement heredoc' 'file writing heredoc' 'python replacement inline'
+skill_load_control body-always-refuse "$HOOK" 'set -euo pipefail' \
+  'exit 2' HOOK data_body_rows \
+  'python replacement heredoc' 'file writing heredoc' 'python replacement inline'
+skill_load_control body-always-allow "$HOOK" 'set -euo pipefail' \
+  'exit 0' HOOK executable_body_rows \
+  'real removal' 'shell inline' 'eval inline' 'source inline' 'shell heredoc' \
+  'expanding data heredoc' 'after data heredoc' 'unknown receiver heredoc'
+
 # Agents use git rm to remove tracked paths. These tool payloads are scanned,
 # never run; a following plain rm must retain its own refusal.
 git_rm_rows() {

@@ -5,8 +5,8 @@
 # matcher: Bash
 # requires: [command-safety]
 # description: Block plain rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
-# summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
-# safety: The raw command scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The existing empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. Harmless text with the same shape can be refused. The scan does not parse shell: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, command substitutions, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
+# summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. Quoted programs and heredocs sent as data pass; the refusal gives a safe cleanup pattern.
+# safety: A quote-aware command scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Quoted-delimiter heredocs sent to cat, Python, Node, Ruby or Perl and quoted inline programs for those interpreters are data. Shell, eval, source, unquoted-delimiter and unknown-receiver bodies retain scanning. Inline programs containing shell command substitutions retain conservative scanning, as do unsupported or incomplete syntax and piped heredocs. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
 
 set -euo pipefail
@@ -91,6 +91,146 @@ COMMAND=$(printf '%s' "$INPUT" \
            else "" end
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
+
+# These hooks ship as standalone scripts; command-safety's receiver decision
+# depends on its environment-evidence parser and is not a callable interface.
+# Keep only the word/body boundary here, leaving the operand rules below alone.
+command_regions() {
+  local text=$1 i=0 n=${#1} c next word value quote depth expanded quoted
+  local receiver="" inline="" redirect="" out="" op delimiter body line found doc tabs
+  local doc_receivers=() delimiters=() strip_tabs=() expands=() quotes=()
+  while [ "$i" -lt "$n" ]; do
+    c=${text:$i:1}; next=${text:$((i + 1)):1}
+    case "$c" in
+      ' ' | $'\t') out=$out$c; i=$((i + 1)); continue ;;
+      $'\n' | ';' | '&' | '|')
+        # A pipeline can execute a data receiver's output as shell code.
+        # Its forwarding contract is outside this small boundary parser.
+        [ "$c" != '|' ] || return 1
+        out=$out$c; i=$((i + 1))
+        receiver=""; inline=""
+        if [ "$c" = $'\n' ]; then
+          for ((doc=0; doc<${#delimiters[@]}; doc++)); do
+            delimiter=${delimiters[$doc]}; body=""; found=""
+            while [ "$i" -lt "$n" ]; do
+              line=""
+              while [ "$i" -lt "$n" ] && [ "${text:$i:1}" != $'\n' ]; do
+                line=$line${text:$i:1}; i=$((i + 1))
+              done
+              [ "$i" -ge "$n" ] || i=$((i + 1))
+              tabs=$line
+              if [ "${strip_tabs[$doc]}" = 1 ]; then
+                while [[ $tabs == $'\t'* ]]; do tabs=${tabs#$'\t'}; done
+              fi
+              if [ "$tabs" = "$delimiter" ]; then found=1; break; fi
+              body=$body$line$'\n'
+            done
+            [ -n "$found" ] || return 1
+            if [ "${doc_receivers[$doc]}" != data ] || [ "${expands[$doc]}" = 1 ]; then
+              out=$out$body
+            fi
+            out=$out$'\n'
+          done
+          delimiters=(); strip_tabs=(); expands=(); doc_receivers=()
+        fi
+        continue ;;
+      '<' | '>')
+        [ "$next" != '(' ] || return 1
+        op=$c; i=$((i + 1))
+        if [ "$next" = "$c" ]; then
+          op=$op$next; i=$((i + 1))
+          case "${text:$i:1}" in
+            '<' | '-') op=$op${text:$i:1}; i=$((i + 1)) ;;
+          esac
+        elif [ "$next" = '&' ] || [ "$next" = '|' ] || [ "$next" = '>' ]; then
+          op=$op$next; i=$((i + 1))
+        fi
+        out=$out$op; redirect=$op; continue ;;
+      '#')
+        # Shell comments cannot introduce a heredoc that consumes later lines.
+        while [ "$i" -lt "$n" ] && [ "${text:$i:1}" != $'\n' ]; do
+          out=$out${text:$i:1}; i=$((i + 1))
+        done
+        continue ;;
+    esac
+
+    word=""; value=""; quote=""; depth=0; expanded=""; quoted=""; quotes=()
+    while [ "$i" -lt "$n" ]; do
+      c=${text:$i:1}; next=${text:$((i + 1)):1}
+      if [ -z "$quote" ] && [ "$depth" -eq 0 ]; then
+        case "$c" in ' ' | $'\t' | $'\n' | ';' | '&' | '|' | '<' | '>') break ;; esac
+      fi
+      word=$word$c; i=$((i + 1))
+      if [ "$quote" = "'" ]; then
+        if [ "$c" = "'" ]; then quote=""; else value=$value$c; fi
+        continue
+      fi
+      if [ "$c" = '\' ]; then
+        [ "$i" -lt "$n" ] || return 1
+        if [ "$quote" = '"' ]; then
+          case "$next" in '$' | '`' | '"' | '\' | $'\n') ;; *) value=$value$c ;; esac
+        fi
+        word=$word$next; value=$value$next; i=$((i + 1)); quoted=1; continue
+      fi
+      if [ "$c" = '$' ] && [ "$next" = '(' ]; then
+        quotes[$depth]=$quote; depth=$((depth + 1)); quote=""; expanded=1
+        word=$word$next; value=$value'$('; i=$((i + 1)); continue
+      fi
+      if [ "$c" = '`' ]; then expanded=1; fi
+      if [ -z "$quote" ] && [ "$depth" -gt 0 ]; then
+        case "$c" in
+          '(') quotes[$depth]=""; depth=$((depth + 1)) ;;
+          ')') depth=$((depth - 1)); quote=${quotes[$depth]} ;;
+        esac
+      fi
+      case "$c" in
+        '"' | "'")
+          if [ "$quote" = "$c" ]; then quote=""; quoted=1; continue
+          elif [ -z "$quote" ]; then quote=$c; quoted=1; continue; fi ;;
+      esac
+      value=$value$c
+    done
+    [ -z "$quote" ] && [ "$depth" -eq 0 ] || return 1
+    if [ -n "$redirect" ]; then
+      case "$redirect" in
+        '<<' | '<<-')
+          doc=${#delimiters[@]}; delimiters[$doc]=$value
+          strip_tabs[$doc]=0; [ "$redirect" != '<<-' ] || strip_tabs[$doc]=1
+          expands[$doc]=1; [ -z "$quoted" ] || expands[$doc]=0
+          doc_receivers[$doc]=$receiver ;;
+      esac
+      redirect=""
+    elif [ -z "$receiver" ]; then
+      case "$value" in
+        *=* | if | then | elif | while | until | do | '!' | time | '{' | '(') ;;
+        *)
+          case "${value##*/}" in
+            cat) receiver=data ;;
+            python | python3 | node | ruby | perl) receiver=data; inline=options ;;
+            *) receiver=code ;;
+          esac ;;
+      esac
+    elif [ "$inline" = argument ]; then
+      # Double-quoted programs still perform shell substitutions before the
+      # interpreter starts. Keep their whole word when that boundary is unclear.
+      if [ -n "$quoted" ] && [ -z "$expanded" ]; then word=__program_data__; fi
+      inline=""
+    elif [ "$inline" = options ]; then
+      case "$value" in
+        -c | -e | --eval) inline=argument ;;
+        -*) ;;
+        *) inline="" ;;
+      esac
+    fi
+    out=$out$word
+  done
+  [ "${#delimiters[@]}" -eq 0 ] && [ -z "$redirect" ] || return 1
+  COMMAND=$out
+}
+
+# Incomplete syntax retains the original conservative scan, never a partial
+# masking result. Parsing reads submitted text only; it executes none of it.
+command_regions "$COMMAND" || :
 
 # The whole rule, built from named parts so each one is readable on its own.
 # The parts count WHEREVER they stand in the command. There is no
