@@ -125,7 +125,7 @@ SCRUB_ENV="$(bash -c 'source "$1" && printf "env" && printf " -u %s" "${LANE_LAU
 
 echo "=== every command open-terminal builds takes the question tool away ==="
 # HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT[|PI MODEL]. FLAGS `-` passes no --launch-flags;
-# a Pi launch naming a model declares it to second-opinion ahead of the command.
+# a Pi launch naming a model declares it to second-opinion after the scrub.
 # an ITEM spelled REPO#N launches GitHub item N of REPO.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
@@ -149,9 +149,8 @@ for row in \
     item="${item#*#}"
     root="$TMP_ROOT/wt/issue-$item"
   fi
-  want="export KENDEX_USER_EMAIL='' && $SCRUB_ENV $want"
-  [[ -z "$declared" ]] || want="export SECOND_OPINION_CURRENT_MODEL='$declared' && $want"
-  want="export KENDEX_LANE_ORIGIN='$root' && $want"
+  [[ -z "$declared" ]] || want="SECOND_OPINION_CURRENT_MODEL='$declared' $want"
+  want="export KENDEX_LANE_ORIGIN='$root' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $want"
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
   case "$harness:$item" in

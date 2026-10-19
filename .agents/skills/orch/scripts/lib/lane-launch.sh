@@ -1476,7 +1476,11 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 #                second-opinion reads as running inside Codex.
 #   Pi           PI_SUBAGENT_CHILD_AGENT, the delegated child role;
 #                PI_SUBAGENT_PARENT_SESSION_ID and PI_BRIDGE_PARENT_SESSION_ID,
-#                pi-agents-tmux's parent session for a subagent.
+#                pi-agents-tmux's parent session for a subagent;
+#                SECOND_OPINION_CURRENT_MODEL, the model a Pi lane declares to
+#                second-opinion (open-terminal lane_model_env), which a child
+#                on another model would otherwise take as its own. A Pi
+#                launch passes its own as lane_launch_line's CHILD_ENV.
 #   Jarvis       JARVIS_RECORD and JARVIS_GENERATION, the runtime record a
 #                SessionStart writes its native identity into
 #                (lib/session-rows.sh session_rows_jarvis_write).
@@ -1506,6 +1510,7 @@ LANE_LAUNCH_SCRUB=(
   CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_PROJECT_DIR
   CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
   PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
+  SECOND_OPINION_CURRENT_MODEL
   JARVIS_RECORD JARVIS_GENERATION
   "${LANE_LAUNCH_LIVE_SESSION[@]}"
   ORCH_MODEL_LINES_HELD
@@ -1538,8 +1543,9 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
 # The complete command under the form lane_launch_form picked for it. TEMPLATE
 # retains caller shell text independently of whether its account is checked. Empty
 # account words keep the caller's account, or the provider's on a host. Every
-# line that opens on `env` clears LANE_LAUNCH_SCRUB there. A custom command
-# that takes no env words is the caller's shell text and stays as written: it
+# line that opens on `env` clears LANE_LAUNCH_SCRUB there, and CHILD_ENV
+# follows its `-u` words. A custom command that takes no env words is the
+# caller's shell text and stays as written, CHILD_ENV exported ahead of it: it
 # runs in the pane's own shell, started through lane_launch_shell_argv, so a
 # function that shell defines stays callable without the parent's identity.
 #
@@ -1564,8 +1570,11 @@ lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
 # nothing else: the account variable here, and the words lane_copilot_env
 # below prints.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV] [COMPACTION_ENV]
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" env_words scrub
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" launch_env="" env_words scrub raw="$1"
   [[ -z "${6:-}" ]] || form=custom
+  # Every launch route scrubs before the shell text runs, so the export
+  # outlives the scrub.
+  [[ -z "${7:-}" ]] || raw="export $7 && $1"
   printf -v scrub -- ' -u %s' "${LANE_LAUNCH_SCRUB[@]}"
   scrub="env$scrub"
   # A controller supplies its child's quoted assignments after parent identity
@@ -1588,7 +1597,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
         if [[ -n "$launch_env" ]]; then
           printf '%s %s %s -c %s\n' "$scrub" "$launch_env" "$(lane_single_quote "$BASH")" "$(lane_single_quote "$cmd")"
         else
-          printf '%s\n' "$cmd"
+          printf '%s\n' "$raw"
         fi
         ;;
       launcher:*) printf '%s%s %s %s\n' "$scrub" "${launch_env:+ $launch_env}" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
@@ -1603,7 +1612,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
     return
   fi
   if [[ -z "$var" ]]; then
-    if [[ "$form" == custom ]]; then printf '%s\n' "$cmd"; else printf '%s %s\n' "$scrub" "$cmd"; fi
+    if [[ "$form" == custom ]]; then printf '%s\n' "$raw"; else printf '%s %s\n' "$scrub" "$cmd"; fi
     return
   fi
   env_words="$(lane_copilot_env "$cmd" "$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills")")"

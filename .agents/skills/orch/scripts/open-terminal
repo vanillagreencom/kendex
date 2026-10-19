@@ -2993,16 +2993,18 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   return 1
 }
 
-# The shell text that declares a Pi lane's model to the second-opinion skill,
-# `export SECOND_OPINION_CURRENT_MODEL=MODEL && `, empty for any other launch
-# or a Pi launch naming no model. Pi fronts a selectable model that
-# second-opinion cannot detect, so its cross-model check refuses a Pi session
-# that declares none (second-opinion --help). The lane's own shell runs it
-# ahead of the harness; pane agents start from the tmux session's environment,
-# run models of their own, and do not inherit it.
-lane_model_export() {
+# The assignment that declares a Pi lane's model to the second-opinion skill,
+# `SECOND_OPINION_CURRENT_MODEL='MODEL'`, empty for any other launch or a Pi
+# launch naming no model. Pi fronts a selectable model that second-opinion
+# cannot detect, so its cross-model check refuses a Pi session that declares
+# none (second-opinion --help). The launch line carries it as
+# lane_launch_line's CHILD_ENV, after the scrub that clears a parent's
+# declaration (lib/lane-launch.sh LANE_LAUNCH_SCRUB). Pane agents start from
+# the tmux session's environment and do not inherit it; background subagents
+# Pi spawns from its own environment do.
+lane_model_env() {
   [[ "$LAUNCH_HARNESS" == pi && -n "$LAUNCH_MODEL" ]] || return 0
-  printf 'export SECOND_OPINION_CURRENT_MODEL=%s && ' "$(lane_single_quote "$LAUNCH_MODEL")"
+  printf 'SECOND_OPINION_CURRENT_MODEL=%s' "$(lane_single_quote "$LAUNCH_MODEL")"
 }
 
 # The launch from the lane marker to the lane record, for the item the loop
@@ -3119,6 +3121,8 @@ launch_finish() {
   if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$RELAUNCH_ROUTE" != resume-or-fresh ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
+  local model_env
+  model_env="$(lane_model_env)"
   # A quote-bearing lane dir was refused at lane resolution, before any
   # worktree. A hosted lane's credential is already on its host; the claim alone
   # records the config dir.
@@ -3144,7 +3148,7 @@ launch_finish() {
     # An exported empty email wins over private files in the project loader.
     # A lane has no person to assign when it activates its work item.
     run="export KENDEX_USER_EMAIL='' && $run"
-    run="$(lane_launch_line "$run" "$HARNESS" "" "" custom)" || return 1
+    run="$(lane_launch_line "$run" "$HARNESS" "" "" custom "" "$model_env")" || return 1
     # A Pi lane on the Copilot pool hands its pane agents the key and proxy
     # settings its login shell holds (lib/lane-launch.sh lane_pi_session_env).
     [[ "$HARNESS" != pi || "$(lane_pick_pool pi "$LAUNCH_MODEL")" != copilot ]] || run="$(lane_pi_session_env) && $run"
@@ -3155,7 +3159,6 @@ launch_finish() {
     # Older hosted launches wrote state under the remote project setting.
     # Keep the successor on the judge's file even when the provider exports tmp.
     [[ -z "$RELAUNCH_HANDOFF_DIR" ]] || run="export ORCH_STATE_DIR=$(lane_single_quote "$RELAUNCH_HANDOFF_DIR") && $run"
-    run="$(lane_model_export)$run"
     # Keep the marked launch root when a lane's tool shell changes directory.
     run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
@@ -3208,14 +3211,13 @@ launch_finish() {
     # A launch with none has no account to check and keeps the `unchecked` the
     # check reads as skip, whatever prefix the line below carries.
     [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
-    cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form" "$CMD_TEMPLATE" "" "$compaction_env")" || return 1
+    cmd="$(lane_launch_line "$cmd" "$LAUNCH_HARNESS" "$launch_var" "$launch_home" "$launch_form" "$CMD_TEMPLATE" "$model_env" "$compaction_env")" || return 1
   else
     launch_form="$(lane_launch_form "$cmd" "$HARNESS" "" "$CMD_TEMPLATE")" || return 1
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" "$launch_form" "$CMD_TEMPLATE")" || return 1
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "" "" "$launch_form" "$CMD_TEMPLATE" "$model_env")" || return 1
   fi
   if [[ "$LANE_HOST" == local ]]; then
     cmd="export KENDEX_USER_EMAIL='' && $cmd"
-    cmd="$(lane_model_export)$cmd"
     cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"
     if [[ -n "$brief_prompt_file" ]]; then
       # Login shells can change directory during startup. Keep the explicit

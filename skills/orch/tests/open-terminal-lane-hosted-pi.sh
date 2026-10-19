@@ -269,13 +269,17 @@ OPEN_TERMINAL="$PI_OT_SHIPPED"
 
 echo "=== a Pi lane declares its launch model to second-opinion ==="
 # The launched command replayed, a hosted one inside the provider's login
-# shell, with a `pi` that runs the real `second-opinion detect` from a
+# shell, with a harness stub that runs the real `second-opinion detect` from a
 # hermetic install, as the lane's review step does from its own tool shell.
-# The roster names claude then codex, each a stub CLI with no room check, so
-# detect prints the first target running a model other than the lane's, or
-# `none` where it refuses.
+# The replay starts from an environment that already holds a parent session's
+# declaration, as a launch made from a Pi lane's shell does, and hides the
+# runner's process tree: its `ps` answers the walk with one ancestor named
+# after the harness stub, the lane's own harness. The roster names claude then
+# codex, each a stub CLI with no room check, so detect prints the first target
+# running a model other than the session's, or `none` where it refuses.
 SO_PROJECT="$TMP_ROOT/so-project"
 SO_BIN="$TMP_ROOT/so-bin"
+SO_PARENT_MODEL='openai/gpt-5.4'
 mkdir -p "$SO_PROJECT/.agents/skills" "$SO_BIN"
 git -C "$SO_PROJECT" init -q
 git -C "$SO_PROJECT" config gc.auto 0
@@ -284,15 +288,31 @@ git -C "$SO_PROJECT" config maintenance.auto false
 source "$TEST_DIR/../../second-opinion/tests/lib/install.bash"
 second_opinion_install "$TEST_DIR/../../second-opinion" "$SO_PROJECT/.agents/skills" || exit 1
 printf '#!/bin/sh\nexit 0\n' > "$SO_BIN/review-cli"
-cat > "$SO_BIN/pi" <<'STUB'
+cat > "$SO_BIN/harness-probe" <<'STUB'
 #!/usr/bin/env bash
+export SO_HARNESS="${0##*/}"
 detect="$(cd "$SO_PROJECT" && .agents/skills/second-opinion/scripts/second-opinion detect 2>> "$SO_ERR")" || true
 printf 'declared=%s detect=%s\n' "${SECOND_OPINION_CURRENT_MODEL-unset}" "${detect:-empty}" >> "$SO_LOG"
 STUB
-chmod +x "$SO_BIN/review-cli" "$SO_BIN/pi"
-lane_detect() { # HOST LANE ENV_LIST; sets LANE_DETECT
+cat > "$SO_BIN/ps" <<'STUB'
+#!/usr/bin/env bash
+mode="" pid=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in -o) mode="$2"; shift 2 ;; -p) pid="$2"; shift 2 ;; *) shift ;; esac
+done
+case "$mode:$pid" in
+  ppid=:9999999) printf '1\n' ;;
+  ppid=:*) printf '9999999\n' ;;
+  comm=:9999999) printf '%s\n' "$SO_HARNESS" ;;
+  comm=:*) printf 'bash\n' ;;
+esac
+STUB
+chmod +x "$SO_BIN/review-cli" "$SO_BIN/harness-probe" "$SO_BIN/ps"
+ln -s harness-probe "$SO_BIN/pi"
+ln -s harness-probe "$SO_BIN/claude"
+lane_detect() { # HOST HARNESS LANE ENV_LIST; sets LANE_DETECT
   local line
-  run_ot "$3" --host "$1" --harness pi --lane "$2" --repo o/r KEN-2294
+  run_ot "$4" --host "$1" --harness "$2" --lane "$3" --repo o/r KEN-2294
   [[ "$RC" == 0 ]] || { LANE_DETECT=launch-failed; printf '%s\n' "$OUT" >&2; return; }
   if [[ "$1" == local ]]; then
     line="$(sed -n 's/^clear; //p' "$RUN/tmux.log")"
@@ -305,6 +325,7 @@ lane_detect() { # HOST LANE ENV_LIST; sets LANE_DETECT
   env -i PATH="$PATH" HOME="$TMP_ROOT" SO_BIN="$SO_BIN" SO_PROJECT="$SO_PROJECT" \
     SO_LOG="$RUN/so.log" SO_ERR="$RUN/so.err" SECOND_OPINION_MODELS='claude codex' \
     SECOND_OPINION_CLAUDE_CMD="$SO_BIN/review-cli" SECOND_OPINION_CODEX_CMD="$SO_BIN/review-cli" \
+    SECOND_OPINION_CURRENT_MODEL="$SO_PARENT_MODEL" \
     "$BASH" -lc 'PATH="$SO_BIN:$PATH"; cd() { return 0; }; eval "$1"' \
     so-probe "$line" > "$RUN/so-replay.out" 2>> "$RUN/so.err" || true
   LANE_DETECT="$(paste -sd';' "$RUN/so.log")"
@@ -312,30 +333,39 @@ lane_detect() { # HOST LANE ENV_LIST; sets LANE_DETECT
 api_hosted_rows 150
 API_HOST_ENV="$HARNESS_UP;LANE_HOST_STUB_ACCOUNTS=$API_ROWS;ORCH_LANE_CLOUD_CREDIT_FLOOR=5;flags=--model anthropic/claude-opus-5-5 --thinking high"
 LOCAL_ENV='cmd=pi --model pi-claude/sonnet:high'
+CLAUDE_ENV='cmd=claude --model opus --effort high'
+# HOST|HARNESS|LANE|ENV_LIST|EXPECTED|WHAT. A Pi launch declares its own model
+# in place of the parent's; any other launch reaches its harness with no
+# declaration, so a claude lane's detect sees no contradiction.
 printf '%s\n' \
-  "$HOST_STUB|$H/.eclaude|$API_HOST_ENV|declared=anthropic/claude-opus-5-5 detect=codex" \
-  "$HOST_STUB|$H/.eclaude|$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/gpt-5.5 --thinking high|declared=github-copilot/gpt-5.5 detect=claude" \
-  "local|$H/.claude|$LOCAL_ENV|declared=pi-claude/sonnet:high detect=codex" \
+  "$HOST_STUB|pi|$H/.eclaude|$API_HOST_ENV|declared=anthropic/claude-opus-5-5 detect=codex|a hosted Pi lane on anthropic/claude-opus-5-5" \
+  "$HOST_STUB|pi|$H/.eclaude|$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/gpt-5.5 --thinking high|declared=github-copilot/gpt-5.5 detect=claude|a hosted Pi lane on github-copilot/gpt-5.5" \
+  "local|pi|$H/.claude|$LOCAL_ENV|declared=pi-claude/sonnet:high detect=codex|a local Pi lane on pi-claude/sonnet:high" \
+  "local|claude|$H/.claude|$CLAUDE_ENV|declared=unset detect=codex|a local claude lane" \
   > "$TMP_ROOT/lane-detect-rows"
-while IFS='|' read -r host lane env_list expected; do
-  lane_detect "$host" "$lane" "$env_list"
+while IFS='|' read -r host harness lane env_list expected what; do
+  lane_detect "$host" "$harness" "$lane" "$env_list"
   assert_eq "$LANE_DETECT" "$expected" \
-    "a Pi lane on ${host##*/} passes second-opinion detect with a target of another model: ${env_list##*--model }" "$RUN/so.err"
+    "$what launched from a declared parent passes second-opinion detect with a target of another model" "$RUN/so.err"
 done < "$TMP_ROOT/lane-detect-rows"
-# Must-fail controls: the launcher without the export, on each route, leaves
-# the lane undeclared and detect refuses it as it did before.
+# Must-fail controls, each against one row of the table (`\n` in OLD is a
+# newline): the launcher without
+# the model, hosted and local, leaves a Pi lane undeclared and detect refuses
+# it as before; a scrub without the name hands a claude lane the parent's
+# declaration, which contradicts its harness.
 PI_OT_SHIPPED="$OPEN_TERMINAL"
 printf '%s\n' \
-  "$HOST_STUB|$H/.eclaude|$API_HOST_ENV|run" \
-  "local|$H/.claude|$LOCAL_ENV|cmd" \
+  "model|open-terminal|  model_env=\"\$(lane_model_env)\"|  model_env=\"\"|$HOST_STUB|pi|$H/.eclaude|$API_HOST_ENV|declared=unset detect=none" \
+  "model|open-terminal|  model_env=\"\$(lane_model_env)\"|  model_env=\"\"|local|pi|$H/.claude|$LOCAL_ENV|declared=unset detect=none" \
+  "scrub|lib/lane-launch.sh|SECOND_OPINION_CURRENT_MODEL\\n  JARVIS_RECORD|JARVIS_RECORD|local|claude|$H/.claude|$CLAUDE_ENV|declared=$SO_PARENT_MODEL detect=none" \
   > "$TMP_ROOT/lane-detect-controls"
-while IFS='|' read -r host lane env_list var; do
-  OPEN_TERMINAL="$(mutant_scripts "ctl-pi-model-export-$var/orch" open-terminal)/open-terminal" || exit 1
-  orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-model-export-$var/orch"
-  mutate_file "$OPEN_TERMINAL" "$var=\"\$(lane_model_export)\$$var\"" "$var=\"\$$var\""
-  lane_detect "$host" "$lane" "$env_list"
-  assert_eq "$LANE_DETECT" 'declared=unset detect=none' \
-    "control: without the export a Pi lane on ${host##*/} is refused by detect as undeclared"
+while IFS='|' read -r name file old new host harness lane env_list expected; do
+  OPEN_TERMINAL="$(mutant_scripts "ctl-so-$name/orch" "$file")/open-terminal" || exit 1
+  orch_fixture_shared_libs "$TMP_ROOT/ctl-so-$name/orch"
+  mutate_file "${OPEN_TERMINAL%/*}/$file" "${old//\\n/$'\n'}" "$new"
+  lane_detect "$host" "$harness" "$lane" "$env_list"
+  assert_eq "$LANE_DETECT" "$expected" \
+    "control ($name): a $harness lane on ${host##*/} fails its detect row"
   OPEN_TERMINAL="$PI_OT_SHIPPED"
 done < "$TMP_ROOT/lane-detect-controls"
 
