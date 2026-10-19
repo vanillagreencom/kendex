@@ -72,11 +72,13 @@ case "$resource:$action" in
   issues:get)
     state="$(cat "$root/parent.state")"; type=started
     [[ "$state" == Done ]] && type=completed
+    [[ "$state" == Canceled ]] && type=canceled
     printf '{"id":"PARENT-1","title":"Container","state":"%s","state_type":"%s"}\n' "$state" "$type"
     ;;
   issues:update)
-    [[ "$#" == 3 && "$2" == --description-file ]] || exit 2
-    cp "$3" "$root/parent.description"
+    [[ "$#" == 3 && "$2" == --state ]] || exit 2
+    printf '%s\n' "$3" > "$root/parent.state"
+    printf 'update %s\n' "$3" >> "$root/complete.calls"
     printf '{"success":true}\n'
     ;;
   issues:children)
@@ -93,10 +95,11 @@ case "$resource:$action" in
     [[ ! -e "$root/summary.posted" ]] || has_summary=true
     case "$mode" in
       exit) echo 'validator unavailable' >&2; exit 7 ;;
+      # The parent's result carries the shared parser's checklist fields.
       outcome)
         source "${0%/*}/lib/issue-validation.sh"
-        parsed="$(done_when_parse "$(cat "$root/parent.description")" '[]' '' '{}' container)"
-        jq -cn --argjson p "$parsed" --argjson summary "$has_summary" '{all_ok: ($p.completion_state == "Done"), results: [($p | {unmet_branch_boxes,missing_evidence_boxes,missing_outcome_box}) + {id:"PARENT-1",state_type:"started",has_summary:$summary,ok:($p.completion_state == "Done")}]}'
+        parsed="$(done_when_parse "$(cat "$root/parent.description" 2>/dev/null)" '[]')"
+        jq -cn --argjson p "$parsed" --argjson summary "$has_summary" '($p.container_open_boxes == []) as $ok | {all_ok: $ok, results: [($p | {unmet_branch_boxes,missing_evidence_boxes,child_box,container_open_boxes}) + {id:"PARENT-1",state_type:"started",has_summary:$summary,ok:$ok}]}'
         ;;
       # Each child's result comes from the shared validation rule, with the
       # summary marker read from the comments posted on it.
@@ -110,7 +113,7 @@ case "$resource:$action" in
         done < <(jq -r '.[] | select(.state_type != "canceled") | [.id, .state, .state_type] | @tsv' "$root/children.json")
         jq -cs '{all_ok: all(.[]; .ok), results: .}' <<<"$rows"
         ;;
-      open-outcome) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":false,"unmet_branch_boxes":[1],"missing_evidence_boxes":[]}]}\n' ;;
+      open-outcome) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":false,"unmet_branch_boxes":[1],"missing_evidence_boxes":[],"child_box":null,"container_open_boxes":[1]}]}\n' ;;
       false) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","has_summary":%s,"ok":false,"cause":"blocked"}]}\n' "$has_summary" ;;
       string_all_ok) printf '{"all_ok":"true","results":[{"id":"PARENT-1","state_type":"started","has_summary":false,"ok":true}]}\n' ;;
       missing_parent) printf '{"all_ok":true,"results":[]}\n' ;;
@@ -126,8 +129,22 @@ case "$resource:$action" in
       printf '{"success":true,"identifier":"%s"}\n' "$1"
       exit 0
     fi
-    summary=""
-    while [[ $# -gt 0 ]]; do case "$1" in --summary-file) summary="$2"; shift 2 ;; *) shift ;; esac; done
+    summary=""; met='[]'; evidence='{}'
+    while [[ $# -gt 0 ]]; do case "$1" in
+      --summary-file) summary="$2"; shift 2 ;;
+      --done-when-met) met="[$2]"; shift 2 ;;
+      --evidence-file) cp "$2" "$root/complete.evidence"
+        evidence="$(jq -Rn '[inputs | capture("^(?<box>[0-9]+): (?<text>.*)$")] | map({(.box): .text}) | add // {}' "$2")"; shift 2 ;;
+      *) shift ;;
+    esac; done
+    # Completion refuses an open box as issues complete does, through the same parser.
+    if [[ -e "$root/parent.description" ]]; then
+      source "${0%/*}/lib/issue-validation.sh"
+      tick="$(done_when_parse "$(cat "$root/parent.description")" "$met" '' "$evidence")"
+      [[ "$(jq -r '.completion_state // ""' <<<"$tick")" == Done ]] \
+        || { jq -c '{error: "post-merge-checklist", unmet_branch_boxes, missing_evidence_boxes}' <<<"$tick" >&2; exit 1; }
+      jq -r '.description' <<<"$tick" > "$root/parent.description"
+    fi
     ratelimit="$(cat "$root/ratelimit.complete.once" 2>/dev/null || true)"
     rm -f "$root/ratelimit.complete.once"
     # The transport keeps raw requests_reset distinct from its selected reset.
@@ -196,7 +213,8 @@ reset_state() {
   printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
   rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/complete.args" "$FAKE_LINEAR_ROOT/summary.calls"     "$FAKE_LINEAR_ROOT/summary.posted" "$FAKE_LINEAR_ROOT/summary.body" "$FAKE_LINEAR_ROOT/fail.complete.once"     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" "$FAKE_LINEAR_ROOT/gh.mode" "$FAKE_LINEAR_ROOT/linear.calls" \
     "$FAKE_LINEAR_ROOT/complete.invocations" "$FAKE_LINEAR_ROOT/supersession.calls" "$FAKE_LINEAR_ROOT/post-done.mode" \
-    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$FAKE_LINEAR_ROOT/ratelimit.hold-reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv"
+    "$FAKE_LINEAR_ROOT/ratelimit.complete.once" "$FAKE_LINEAR_ROOT/ratelimit.reset" "$FAKE_LINEAR_ROOT/ratelimit.hold-reset" "$HELD_DIR/summary.md" "$HELD_DIR/children.tsv" \
+    "$FAKE_LINEAR_ROOT/parent.description" "$FAKE_LINEAR_ROOT/complete.evidence"
   [[ ! -d "$HELD_DIR" ]] || rmdir "$HELD_DIR"
   rm -f -- "${FAKE_LINEAR_ROOT:?}"/comments.*
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"; mkdir "$FAKE_LINEAR_ROOT/complete.entries"
@@ -235,12 +253,15 @@ printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"c
 out="$("$CANCELED_MUTANT" "$SANDBOX" PARENT-1)"
 assert_eq "$out:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "deferred CHILD-2:In Progress" "canceled control exposes the endless deferral"
 
+# Every child canceled: nothing was delivered, so the parent closes Canceled
+# without the validator, which refuses a container with no live child.
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"}]' > "$FAKE_LINEAR_ROOT/children.json"
-rc=0; run_close >/dev/null 2>"$TMP_ROOT/all-canceled.err" || rc=$?
-assert_eq "$rc" 1 "all-canceled children preserve the validator refusal"
-assert_file_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "all-canceled children reach validation"
-[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "all-canceled children prevent parent mutation" || fail "all-canceled children prevent parent mutation"
+rc=0; out="$(run_close 2>"$TMP_ROOT/all-canceled.err")" || rc=$?
+assert_eq "$rc:$out:$(cat "$FAKE_LINEAR_ROOT/parent.state")" "0:closed PARENT-1:Canceled" "all-canceled children close the parent Canceled" "$TMP_ROOT/all-canceled.err"
+assert_file_not_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "all-canceled children skip completion validation"
+[[ ! -e "$FAKE_LINEAR_ROOT/summary.posted" ]] && pass "all-canceled children post no bundle summary" || fail "all-canceled children post no bundle summary"
+assert_eq "$(run_close 2>/dev/null):$(grep -c '^update Canceled$' "$FAKE_LINEAR_ROOT/complete.calls")" "closed PARENT-1:2" "a canceled parent's retry closes again"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -249,7 +270,7 @@ rc=0
 run_close >"$TMP_ROOT/outcome.out" 2>"$TMP_ROOT/outcome.err" || rc=$?
 assert_eq "$rc" 1 "an open outcome refuses container closure after every child completes"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" 'In Progress' "an unproved outcome keeps its container open"
-assert_file_contains "$TMP_ROOT/outcome.err" '"unmet_branch_boxes":[1]' "the dependency’s refused outcome box reaches the caller"
+assert_file_contains "$TMP_ROOT/outcome.err" '"container_open_boxes":[1]' "the dependency’s refused outcome box reaches the caller"
 [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "an open outcome refuses before completion" || fail "an open outcome refuses before completion"
 printf 'normal\n' > "$FAKE_LINEAR_ROOT/validation.mode"
 out="$(run_close)"
@@ -312,42 +333,47 @@ for defect in swallow short-circuit; do
   assert_eq "$control_rc" 1 "$defect control fails the required-completion assertion"
 done
 
-# The documented holder write leaves both newly-proved and already-proved
-# parents open. Only this helper may validate, summarize and complete them.
-for proof in newly-proved already-proved; do
-  for child in completed pending canceled; do
-    reset_state
-    printf 'outcome\n' >"$FAKE_LINEAR_ROOT/validation.mode"
-    printf '%s\n' '## Done when' '- [ ] Shared outcome' >"$FAKE_LINEAR_ROOT/parent.description"
-    printf '%s\n' '## Done when' '- [x] Shared outcome' '  Evidence: holder read passed' >"$TMP_ROOT/holder.md"
-    if [[ "$proof" == newly-proved ]]; then
-      "$SANDBOX/skills/linear/scripts/linear.sh" issues update PARENT-1 --description-file "$TMP_ROOT/holder.md" >"$TMP_ROOT/holder.out"
-    else
-      cp "$TMP_ROOT/holder.md" "$FAKE_LINEAR_ROOT/parent.description"
-    fi
-    assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" 'In Progress' "$proof $child stays open after holder proof"
-    case "$child" in
-      completed) child_state=Done; child_type=completed; want='closed PARENT-1' ;;
-      pending) child_state=Todo; child_type=unstarted; want='deferred CHILD-1' ;;
-      canceled) child_state=Canceled; child_type=canceled; want='closed PARENT-1' ;;
-    esac
-    jq -cn --arg state "$child_state" --arg type "$child_type" '[{id:"CHILD-1",title:"one",state:$state,state_type:$type}]' >"$FAKE_LINEAR_ROOT/children.json"
-    if [[ "$child" == canceled ]]; then
-      jq '. + [{id:"CHILD-2",title:"two",state:"Done",state_type:"completed"}]' "$FAKE_LINEAR_ROOT/children.json" >"$FAKE_LINEAR_ROOT/children.next"
-      mv "$FAKE_LINEAR_ROOT/children.next" "$FAKE_LINEAR_ROOT/children.json"
-    fi
-    out="$(run_close)"
-    assert_eq "$out" "$want" "$proof $child obeys the serialized close decision"
-    if [[ "$child" != pending ]]; then
-      assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" Done "$proof validates before Done"
-      assert_file_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "$proof reaches container validation"
-      assert_eq "$(cat "$FAKE_LINEAR_ROOT/summary.calls")" summary "$proof posts one Bundle Complete summary"
-    else
-      assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" 'In Progress' "$proof $child keeps its parent open"
-      [[ ! -e "$FAKE_LINEAR_ROOT/summary.posted" ]] && pass "$proof $child posts no bundle summary" || fail "$proof $child posts no bundle summary"
-    fi
-  done
-done
+# A parent's one box, "Every child Done or cancelled", stays open while a
+# child is open and is ticked, with each child's state as its Evidence, in the
+# update that closes the parent once the last child is Done or Canceled. Any
+# other open box keeps the parent open until it moves into its own child.
+child_box_close() { # DESCRIPTION CHILDREN [SCRIPT]
+  reset_state
+  printf 'outcome\n' >"$FAKE_LINEAR_ROOT/validation.mode"
+  [[ -z "$1" ]] || printf '%b\n' "$1" >"$FAKE_LINEAR_ROOT/parent.description"
+  printf '%s\n' "$2" >"$FAKE_LINEAR_ROOT/children.json"
+  local rc=0 out
+  out="$(cd "$CALLER_ONE" && "${3:-$SCRIPT}" "$SANDBOX" PARENT-1 2>"$TMP_ROOT/child-box.err")" || rc=$?
+  printf '%s:%s:%s:%s' "$rc" "$out" "$(cat "$FAKE_LINEAR_ROOT/parent.state")" \
+    "$(grep -o 'completion-refused' "$TMP_ROOT/child-box.err" || true)"
+}
+CHILD_BOX_DONE='## Done when\n- [ ] Every child Done or cancelled'
+ALL_DONE='[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"}]'
+DONE_AND_CANCELED='[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"}]'
+ONE_OPEN='[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"}]'
+while IFS='|' read -r row description children want evidence; do
+  assert_eq "$(child_box_close "$description" "${!children}")" "$want" "$row decides the container's close" "$TMP_ROOT/child-box.err"
+  if [[ -n "$evidence" ]]; then
+    assert_file_contains "$FAKE_LINEAR_ROOT/parent.description" '- [x] Every child Done or cancelled' "$row ticks the child box"
+    assert_file_contains "$FAKE_LINEAR_ROOT/parent.description" "  Evidence: container-close read every child Done or Canceled: $evidence" "$row records each child's state as Evidence"
+  else
+    [[ ! -e "$FAKE_LINEAR_ROOT/complete.evidence" ]] && pass "$row writes no Evidence" || fail "$row writes no Evidence"
+  fi
+done <<ROWS
+child box, every child Done|$CHILD_BOX_DONE|ALL_DONE|0:closed PARENT-1:Done:|CHILD-1 Done, CHILD-2 Done
+child box, Done and Canceled|$CHILD_BOX_DONE|DONE_AND_CANCELED|0:closed PARENT-1:Done:|CHILD-1 Done, CHILD-2 Canceled
+child box, a child open|$CHILD_BOX_DONE|ONE_OPEN|0:deferred CHILD-2:In Progress:|
+no checklist, every child Done||ALL_DONE|0:closed PARENT-1:Done:|
+outcome box beside the child box|$CHILD_BOX_DONE\n- [ ] Shared outcome at source|ALL_DONE|1::In Progress:completion-refused|
+ROWS
+
+# Main's helper ticks nothing, so the open child box refuses the close.
+TICK_MUTANT="$SANDBOX/skills/orch/scripts/container-close-tick-mutant"
+cp "$SCRIPT" "$TICK_MUTANT"
+mutate_file "$TICK_MUTANT" 'if [[ -n "$CHILD_BOX" ]]; then' 'if false; then'
+control_rc=0
+( FAIL=0; assert_eq "$(child_box_close "$CHILD_BOX_DONE" "$ALL_DONE" "$TICK_MUTANT")" '0:closed PARENT-1:Done:' 'child box closes'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/tick-control.log" || control_rc=$?
+assert_eq "$control_rc" 1 "tick control: an unticked child box keeps every-Done children from closing the parent"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

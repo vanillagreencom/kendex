@@ -115,7 +115,7 @@ In this order:
 4. `actions.set_sort_order[]` — `issues update [ID] --sort-order [VALUE]`, parents and standalone issues only
 5. `actions.update_initiative` / `actions.update_project` — per workflow-actions § Projects and Initiatives
 
-Then sync bundle state: an assigned parent pulls its pending children into the same cycle and state; an assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle. A parent with children stays a container unless its title carries `(one PR)`.
+Then sync bundle state: an assigned parent pulls its pending children into the same cycle and state; an assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle. A parent with children is a container and stays open while a child is open.
 
 No comments on priority updates.
 

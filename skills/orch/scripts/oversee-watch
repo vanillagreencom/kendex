@@ -5305,7 +5305,7 @@ owed_read() {
   fi
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     # Read child state facts only for live candidates. Historical descriptions
-    # are not needed to decide whether a container owes an outcome read.
+    # are not needed to decide whether a container is due for container-close.
     local containers candidates children
     candidates="$(jq -r '.[] | select((.title // "") | test("\\(one PR\\)"; "i") | not) | .id' <<<"$out")" \
       || die tracker-list-invalid "" "team=$LINEAR_TEAM"

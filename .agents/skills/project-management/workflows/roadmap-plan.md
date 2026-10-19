@@ -71,7 +71,7 @@ List implementation issues for your domain only. Reply as a table with these col
 | Field | Description |
 |-------|-------------|
 | Title | Verb: outcome |
-| Estimate | 1-5 points per PR unit — each child of a container bundle is its own PR; only a `(one PR)` parent estimates as one combined PR |
+| Estimate | 1-5 points per PR unit — each child of a container is its own PR; a container carries no estimate |
 | Depends on (proposed) | Title reference to another proposed issue |
 | Depends on (existing) | Leave blank unless you know a real [ISSUE_ID]; never guess |
 | Conflicts with | Existing code or patterns this would replace |

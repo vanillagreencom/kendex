@@ -271,7 +271,7 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `priority_misalignment` | `issues update [ID] --priority [P]` + reason comment |
 | `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
 | `add_relations`, `remove_relations` | § Hierarchy and Relations |
-| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
+| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild). `close_parent` closes through the verifier's route instead: `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [ID]`, which keeps a parent with an open child and reports its own result |
 | `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
 | `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
 | `project_needed`, `map_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |
@@ -282,7 +282,7 @@ Order per issue: relations first, then priority and labels, then project/state, 
 
 ### 7.2 Execute Approved Creations and Cancellations
 
-Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. The route comes from `TRACKER`. Never mix routes within one audit.
+Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. A run's rework parent ([SKILL.md § Disposition](../SKILL.md#disposition)) is therefore created first, and each produced item under it. The route comes from `TRACKER`. Never mix routes within one audit.
 
 **Contract-parent scope transfer.** With a `hierarchy_contract`, exclude its `parent_issue` from every supersession disposition, including carried or analyzed `supersedes[]` entries. Apply [tpm-audit § 7.0](tpm-audit.md#70-hierarchy-contract-binding)'s `related` scope-transfer representation instead. Never cancel or re-scope the contract parent here, or write it into a Completion block. The caller owns its coordination-only conversion after the audit.
 

@@ -370,7 +370,8 @@ EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10
 EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
 EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z'
 if [[ "$PART" == all || "$PART" == membership ]]; then
-# An unmerged Triage container with complete children reaches the same reader.
+# An unmerged Triage container with complete children reaches the same
+# reader; a box beside its child box is an outcome still to move into a child.
 world verifying_container
 jq '. + [{id:"KEN-P", title:"Shared outcome", state:"Triage", state_type:"triage", parent_id:"", description:"## Done when\n- [ ] Read shared outcome at source"},
          {id:"KEN-C", title:"Done child", state:"Done", state_type:"completed", parent_id:"KEN-P"}]' "$STUB_DIR/tracker.out" >"$STUB_DIR/container.json"
@@ -421,36 +422,26 @@ watch_pass -- --state "$STUB_DIR/state.json"
 # Completed history is absent from the parent list, but direct child facts
 # still make a Triage container due. No child read visits closed history.
 assert_not_contains "$(cat "$STUB_DIR/tracker.bulk-stdin")" 'KEN-C' "closed child history is not scanned as a candidate" "$ERR"
-for outcome in missing-proof absent empty proved; do
-  case "$outcome" in
-    missing-proof) description='## Done when
-- [x] Read shared outcome at source'; expected='box=1 trigger="outcome"' ;;
-    absent) description='Old acceptance criteria'; expected='box=0 trigger="outcome"' ;;
-    empty) description='## Done when'; expected='box=0 trigger="outcome"' ;;
-    proved) description='## Done when
-- [x] Read shared outcome at source
-  Evidence: holder read passed'; expected='boxes=0' ;;
-  esac
-  jq --arg d "$description" 'map(if .id == "KEN-P" then .description = $d else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/outcome.json"
+# A container holding only its child box, or no box, reads boxes=0 and goes
+# to container-close; any other unproved box stays an outcome line.
+while IFS='|' read -r outcome description child_type expected event; do
+  jq --arg d "$(printf '%b' "$description")" --arg type "$child_type" \
+    'map(if .id == "KEN-P" then .description = $d elif .id == "KEN-C" then .state_type = $type else . end)' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/outcome.json"
   mv -- "$STUB_DIR/outcome.json" "$STUB_DIR/tracker.out"
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_contains "$(verification_lines)" "verifying KEN-P $expected" "$outcome outcome stays visible with its completion duty" "$ERR"
-  if [[ "$outcome" == absent || "$outcome" == empty ]]; then
-    assert_not_contains "$(verification_events)" 'KEN-P boxes=0' "$outcome outcome never requests completion" "$ERR"
-  fi
-  if [[ "$outcome" == absent ]]; then
-    assert_contains "$(verification_events)" 'KEN-P box=0 trigger="outcome"' "$outcome outcome uses the existing deadline event" "$ERR"
-  fi
-  if [[ "$outcome" == missing-proof ]]; then
-    MUTANT_DIR="$TMP_ROOT/container-evidence"
-    MUTANT_WATCH="$(mutant_scripts container-evidence/orch oversee-watch)/oversee-watch" || exit 1
-    ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-    ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-    mutate_verifying "$MUTANT_WATCH" ' or ((.number as $n | $missing | index($n)) != null)' ''
-    WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-    assert_not_contains "$(verification_lines)" 'verifying KEN-P box=1' "control loses a checked outcome without Evidence" "$ERR"
-  fi
-done
+  assert_contains "$(verification_lines)" "verifying KEN-P $expected" "$outcome container reads its duty" "$ERR"
+  [[ -z "$event" ]] || assert_contains "$(verification_events)" "EVENT verifying-deadline KEN-P $event" "$outcome container raises its event" "$ERR"
+done <<'ROWS'
+missing-proof|## Done when\n- [x] Read shared outcome at source|completed|box=1 trigger="outcome"|
+child-box|## Done when\n- [ ] Every child Done or cancelled|completed|boxes=0|boxes=0
+absent|Old acceptance criteria|completed|boxes=0|
+empty|## Done when|completed|boxes=0|
+proved|## Done when\n- [x] Read shared outcome at source\n  Evidence: holder read passed|completed|boxes=0|
+all-canceled|## Done when\n- [ ] Every child Done or cancelled|canceled|boxes=0|
+ROWS
+jq 'map(if .id == "KEN-C" then .state_type = "completed" else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/outcome.json"
+mv -- "$STUB_DIR/outcome.json" "$STUB_DIR/tracker.out"
 jq 'map(if .id == "KEN-P" then .description = "## Done when\n- [ ] Read shared outcome at source" else . end)' "$STUB_DIR/tracker.out" >"$STUB_DIR/outcome.json"
 mv -- "$STUB_DIR/outcome.json" "$STUB_DIR/tracker.out"
 

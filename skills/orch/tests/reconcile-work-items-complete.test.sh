@@ -155,24 +155,6 @@ for id in T-7 T-8; do
     "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/$id.json"
 done
 
-# A container outcome survives a failed or unread source read. Its holder's
-# passing read writes its evidence without changing state. container_close.sh
-# covers the following serialized child checks, summary and Done transition.
-jq --arg d '## Done when
-- [ ] Read the shared outcome at source' '.identifier = "T-10" | .id = "uuid-T-10" | .description = $d | .state = {name:"Todo",type:"unstarted"}' \
-  "$TMP_ROOT/state/T-4.json" >"$TMP_ROOT/state/T-10.json"
-printf '%s\n' '## Done when' '- [ ] Read the shared outcome at source' >"$TMP_ROOT/descriptions/T-10"
-RC=0
-complete T-10 >"$TMP_ROOT/parent-open.out" 2>"$TMP_ROOT/parent-open.err" || RC=$?
-assert_eq "$RC" 1 "an unread or failed container outcome refuses completion without a merge time"
-assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Todo "the failed outcome keeps its parent open"
-RC=0
-printf '%s\n' '## Done when' '- [x] Read the shared outcome at source' '  Evidence: holder source read passed' >"$TMP_ROOT/holder.md"
-linear issues update T-10 --description-file "$TMP_ROOT/holder.md" >"$TMP_ROOT/parent-proved.out" 2>"$TMP_ROOT/parent-proved.err" || RC=$?
-assert_eq "$RC" 0 "holder evidence writes without a merge time" "$TMP_ROOT/parent-proved.err"
-assert_eq "$(jq -r '.state.name' "$TMP_ROOT/state/T-10.json")" Todo "the holder evidence update keeps its parent open"
-assert_eq "$(jq -r '.description' "$TMP_ROOT/state/T-10.json")" "$(cat "$TMP_ROOT/holder.md")" "the holder description contains the tick and Evidence"
-
 # Both readers resolve release publication. This release has not fired.
 # Waiting retains the merge date without a deadline.
 jq --arg d '## Done when

@@ -255,7 +255,7 @@ With `DECISION_REF` present, also detect issues the decision made unnecessary by
 
 **Below the bar.**
 
-1. Re-read every Backlog, Todo, In Progress, and In Review issue in the § 1.5 active set against the creation bar's first and third tests as they stand today (the second, coverage by other work, is not reapplied: an issue always covers itself). Verifying rows keep their live checks (§ 1.1).
+1. Re-read every Backlog, Todo, In Progress, and In Review issue in the § 1.5 active set against the creation bar's first and third tests as they stand today (the second, coverage by other work, is not reapplied: an issue always covers itself). Verifying rows keep their live checks (§ 1.1). A parent with an open child is never a below-bar cancel: the bar does not apply to a container, which stays open while a child is open (§ 7.3).
 2. One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body and its § 1.4.1 comments (on GitHub, `gh issue view [N] --repo [REPOSITORY] --json body,comments`; the § 1.5 list carries neither).
 3. In project mode it is an `obsolete[]` entry; in issue mode it is the issue's own `issues[]` entry with `action: "cancel"` and that evidence in its `obsolete` field.
 4. The bar's two exceptions (a shipped-path security or data-loss defect; a critical-harm or financial-loss edge case) never go here on likelihood; the third test still applies to them.
@@ -287,13 +287,15 @@ Items outside `child_indexes` — `origin: "discovered"` refactors, for instance
 
 `parent_issue` and `blocked_issues` are hints the analysis may override; `hierarchy_contract` is binding per § 7.0. A research issue never appears in `parent_issue`.
 
-Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); two or more input issues on the same target, or a large issue with implicit sub-tasks (parent candidate); and two or more issues sharing an agent label, project, and work type, or applying one refactor pattern across sibling components (bundle candidate). Bundle on pattern, not size.
+Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate under [SKILL.md § Disposition](../SKILL.md#disposition)'s rework-parent rule: 3 or more items sharing one outcome or one mechanism, or a large issue with implicit sub-tasks. Group on outcome or mechanism, not size.
+
+This run is itself an audit. When it proposes more than one create, it files one rework parent for its subject first: a `create` with `create_fields.is_bundle_parent: true` built from [parent-issue-template.md](../templates/parent-issue-template.md), and every other create a `make_child` whose `parent` is that row's `#N`. When the input's `parent_issue` names the rework parent already, every create is a `make_child` with `parent: null` instead.
 
 Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says which.
 
 ### 7.2 Evaluate Coherence
 
-Ask: **would these ship together in one PR?** Yes means an explicit single-PR bundle — the parent's title takes the `(one PR)` marker. No means a container: no marker, sibling child-blocks-child relations for ordering.
+Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means a container with sibling child-blocks-child relations for ordering.
 
 Lean sub-issue for tests of the feature being implemented, hardening for the component being built, and platform work under a same-platform parent. Lean independent for platform-specific work under a cross-platform parent, tooling or methodology under a feature parent, and anything that could ship before or after the parent. When uncertain, prefer independent with a blocking relation.
 
@@ -303,9 +305,9 @@ Lean sub-issue for tests of the feature being implemented, hardening for the com
 
 For each parent with children: implementation scope left in the parent (`## Requirements` rather than `## Sub-Issues`) is an `analysis[]` note; a `## Sub-Issues` list that disagrees with the actual children is a `hierarchy[]` entry with action `update_parent_desc`; children spanning 2+ agent domains under a parent lacking the project's multi-agent label is an `agent_mismatch[]` entry, recorded only after validating the replacement label exists.
 
-Read each parent's actual direct children with `issues children [PARENT_ISSUE_ID] --format=safe`, without `--pending`. Count its Done and Canceled children from that read. Neither the § 1.5 active set nor an input item's closed search results establishes a parent's full child set. Closed children remain historical evidence and take no disposition (§ 1.1).
+Read each parent's actual direct children with `issues children [PARENT_ISSUE_ID] --format=safe`, without `--pending`. Count its Done and Canceled children from that read. Neither the § 1.5 active set nor an input item's closed search results establishes a parent's full child set. Closed children remain historical evidence and take no disposition (§ 1.1). A parent with an open child is kept. A non-terminal parent whose children are all Done or Canceled is a `hierarchy[]` `close_parent` entry.
 
-Record findings as `findings.hierarchy[]` in project mode — `make_parent` (`issue`, `children[]`, and `retitle: "[current title] (one PR)"` only when § 7.2 answered yes), `make_child` (`issue`, `parent`), `bundle` (`issues[]`, `new_parent_title`), `update_parent_desc` (`issue`) — or as each issue's `hierarchy` field in issues mode per [audit-output.md](../schemas/audit-output.md). Include the coherence reasoning in `reason`.
+Record findings as `findings.hierarchy[]` in project mode — `make_parent` (`issue`, `children[]`), `make_child` (`issue`, `parent`), `bundle` (`issues[]`, `new_parent_title`), `update_parent_desc` (`issue`), `close_parent` (`issue`) — or as each issue's `hierarchy` field in issues mode per [audit-output.md](../schemas/audit-output.md). Include the coherence reasoning in `reason`.
 
 ---
 
@@ -402,6 +404,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
+- [ ] More than one create files the rework parent first and makes every other create its child (§ 7.1); no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry (§ 6.2, § 7.3)
 
 ---
 
@@ -436,6 +439,6 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
 
    Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). Check every input `supersedes[].identifier` against this same read, with no second tracker list. Echo each confirmed identifier, its title, reason and `when` into the create row's `supersedes[]`. Report each absent identifier in the row's `reason` as not touched and omit it from `supersedes[]`. A confirmed explicit supersession is disposed by its `when`, not treated as a duplicate title. Another title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
 
-5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "none", "parent": null}`.
+5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "make_child", "parent": null}` when the input's `parent_issue` names a rework parent, else `{"action": "none", "parent": null}`.
 
 Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row.

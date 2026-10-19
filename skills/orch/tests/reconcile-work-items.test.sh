@@ -51,7 +51,7 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
 }
 
 {
-  issue "T-1"  "parked container"        "Todo"        "unstarted" "$now" "" $'## Done when\n- [ ] Read children’s shared outcome at the live source'
+  issue "T-1"  "parked container"        "Todo"        "unstarted" "$now" "" $'## Done when\n- [ ] Every child Done or cancelled'
   issue "T-2"  "done child a"            "Done"        "completed" "$now" "T-1"
   issue "T-3"  "done child b"            "Done"        "completed" "$now" "T-1"
   issue "T-4"  "canceled child"          "Canceled"    "canceled"  "$now" "T-1"
@@ -71,6 +71,8 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   issue "T-18" "review all merged"       "In Review"   "started"   "$now"
   issue "T-19" "review open and merged"  "In Review"   "started"   "$now"
   issue "T-20" "review no own pr"        "In Review"   "started"   "$now"
+  issue "T-21" "all-canceled container"  "Todo"        "unstarted" "$now"
+  issue "T-22" "canceled only child"     "Canceled"    "canceled"  "$now" "T-21"
 } | jq -s 'map(if .identifier == "T-15" then .trashed = true else . end)' >"$R/.tracker-fixture/issues.json"
 
 cat >"$TMP/gh-stub" <<'STUB'
@@ -114,13 +116,15 @@ assert_eq "$(sort -u "$LINEAR_CALLS")" "issues list --max --format=raw" "the swe
 : >"$LINEAR_CALLS"
 (cd "$R" && LINEAR_TEAM=kendex RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" >/dev/null 2>&1) || true
 assert_eq "$(sort -u "$LINEAR_CALLS")" "issues list --max --team kendex --format=raw" "the sweep reads the project's team where one is set"
-assert_contains "$OUT" "container-parked issue=T-1" "the parked container is reported"
-assert_contains "$OUT" 'verifying T-1 box=1 trigger="outcome" status=due deadline=- blocked_by=-' "the open container outcome stays visible without a merge"
-assert_not_contains "$OUT" 'verifying-invalid issue=T-1' "a container outcome is not invalid branch work"
-assert_not_contains "$OUT" 'verifying-merge-unread issue=T-1' "a container outcome needs no invented merge time"
+assert_contains "$OUT" "container-parked issue=T-1" "a container whose last child is Done or Canceled is reported for closing"
+assert_contains "$OUT" "container-parked issue=T-21" "a container whose every child is Canceled is reported for closing"
+assert_contains "$OUT" 'reconcile-work-items: verifying-empty issue=T-1' "an open child box leaves the container nothing but container-close"
+assert_not_contains "$OUT" 'verifying T-1 box=' "the child box is no outcome duty"
+assert_not_contains "$OUT" 'verifying-invalid issue=T-1' "an open child box is not invalid branch work"
+assert_not_contains "$OUT" 'verifying-merge-unread issue=T-1' "a container needs no invented merge time"
 
 # The base verification parser rejected this ordinary open box. Restore that
-# behavior in a private copy and prove that the visible outcome line is lost.
+# behavior in a private copy and prove the container reads as invalid.
 TMP_ROOT="$TMP"
 source "$TEST_DIR/lib/growth-state.sh"
 MUTANT_RW="$(mutant_scripts container-outcome/orch reconcile-work-items)/reconcile-work-items" || exit 1
@@ -130,38 +134,24 @@ rm -- "$MUTANT_LIB"
 cp "$SKILL_DIR/scripts/lib/verifying.sh" "$MUTANT_LIB"
 mutate_file "$MUTANT_LIB" 'if $row.container == true then' 'if false then'
 CONTROL_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$MUTANT_RW" 2>&1)" || true
-assert_contains "$CONTROL_OUT" 'verifying-invalid issue=T-1' "control restores the base parser’s skipped outcome"
-assert_not_contains "$CONTROL_OUT" 'verifying T-1 box=1' "control loses the holder’s outcome duty"
+assert_contains "$CONTROL_OUT" 'verifying-invalid issue=T-1' "control restores the base parser’s invalid container"
 
-# Keep missing proof and a missing outcome distinct from proved completion.
-for outcome in missing-proof absent empty proved; do
-  case "$outcome" in
-    missing-proof) description='## Done when
-- [x] Read shared outcome'; expected='box=1 trigger="outcome"' ;;
-    absent) description='Old acceptance criteria'; expected='box=0 trigger="outcome"' ;;
-    empty) description='## Done when'; expected='box=0 trigger="outcome"' ;;
-    proved) description='## Done when
-- [x] Read shared outcome
-  Evidence: holder read passed'; expected='boxes=0' ;;
-  esac
-  jq --arg d "$description" 'map(if .identifier == "T-1" then .description = $d else . end)' "$R/.tracker-fixture/issues.json" >"$TMP/outcome.json"
+# A box beside the child box is an outcome still to move into a child; with
+# none, the container goes to container-close.
+while IFS='|' read -r outcome description expected; do
+  jq --arg d "$(printf '%b' "$description")" 'map(if .identifier == "T-1" then .description = $d else . end)' "$R/.tracker-fixture/issues.json" >"$TMP/outcome.json"
   mv -- "$TMP/outcome.json" "$R/.tracker-fixture/issues.json"
   CASE_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || true
-  if [[ "$outcome" == proved ]]; then
-    assert_contains "$CASE_OUT" 'reconcile-work-items: verifying-empty issue=T-1' "$outcome outcome stays visible with its completion duty"
-  else
-    assert_contains "$CASE_OUT" "verifying T-1 $expected" "$outcome outcome stays visible with its completion duty"
-  fi
-  if [[ "$outcome" == missing-proof ]]; then
-    cp "$SKILL_DIR/scripts/lib/verifying.sh" "$MUTANT_LIB"
-    mutate_file "$MUTANT_LIB" ' or ((.number as $n | $missing | index($n)) != null)' ''
-    CONTROL_OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$MUTANT_RW" 2>&1)" || true
-    assert_not_contains "$CONTROL_OUT" 'verifying T-1 box=1' "control loses a checked outcome without Evidence"
-  fi
-done
+  assert_contains "$CASE_OUT" "$expected" "$outcome container reads its duty"
+done <<'ROWS'
+open-outcome|## Done when\n- [ ] Every child Done or cancelled\n- [ ] Read shared outcome|verifying T-1 box=2 trigger="outcome"
+missing-proof|## Done when\n- [x] Read shared outcome|verifying T-1 box=1 trigger="outcome"
+absent|Old acceptance criteria|reconcile-work-items: verifying-empty issue=T-1
+empty|## Done when|reconcile-work-items: verifying-empty issue=T-1
+proved|## Done when\n- [x] Read shared outcome\n  Evidence: holder read passed|reconcile-work-items: verifying-empty issue=T-1
+ROWS
 
-# A "(one PR)" root with Done children is the single-PR bundle contract
-# working, never a parked container.
+# A "(one PR)" title marks one work item, never a parked container.
 assert_not_contains "$OUT" "container-parked issue=T-16" "a (One PR) bundle root is not container-parked (case-insensitive marker)"
 assert_not_contains "$OUT" "container-parked issue=T-5" "a container with a pending child stays quiet"
 assert_not_contains "$OUT" "T-8" "a closed container stays quiet"

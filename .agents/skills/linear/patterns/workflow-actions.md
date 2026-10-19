@@ -46,8 +46,6 @@ scripts/linear.sh issues add-relation [ISSUE_ID] --blocks|--blocked-by|--related
 scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks|--blocked-by [OTHER_ID]
 ```
 
-A `make_parent` action carrying `retitle` applies the retitle alongside the reparenting.
-
 Blocking-relation shape: SKILL.md § Blocked Label vs Issue Relations; a rejection states the rule the pair failed. A removal whose reason opens `Violation:` adds `--peer-rule-violation`.
 
 Never drop a valid dependency. Use `--related` when the dependency is informational rather than blocking.

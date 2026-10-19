@@ -1,23 +1,19 @@
 # Parent Issue Template
 
-A parent with children is a **container by default**: never orchestrated directly, never its own PR. Each child ships as its own PR, and the container closes when its holder reads the shared outcome at its source.
+A parent with children is a **container**: never orchestrated directly, never its own PR, and it carries no deliverable of its own. Each child ships as its own PR, and the container closes when its last child is Done or Canceled. When to file one is SKILL.md § Disposition.
 
-A **single-PR bundle** — one session, one PR covering every child — is the explicit opt-in exception, marked with `(one PR)` in the parent title. Promoting an existing issue to single-PR parent means retitling it. Prefer a leaf issue with an internal checklist over a single-PR bundle.
+Work that ships in one PR is a leaf work item with an internal checklist, never a parent. A `(one PR)` title marks such a work item; it has no sub-issues. The one exception is the review audit's in-PR bundle, whose children the reviewed issue's own PR works.
 
 ## Template
 
 ```markdown
-[SUMMARY: one or two plain sentences on the children's shared outcome and its impact]
+[SUMMARY: one or two plain sentences on the subject the children share and its impact]
 
-[DONE: one sentence saying how we know the shared outcome is complete]
+Done when every child is Done or cancelled.
 
 ## Done when
 
-- [ ] [Children’s shared outcome, the source to read, and the holder who reads it]
-
-## Acceptance Criteria
-
-- [ ] [Criterion from child [ISSUE_ID]]
+- [ ] Every child Done or cancelled
 
 ## Sub-Issues
 
@@ -38,14 +34,14 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 
 ## Rules
 
-The holder reads the shared outcome at its source. Only a passing read ticks its Done-when box, with a nonblank `Evidence:` line indented directly below it. A failed or unread result leaves the box open.
+The one Done-when box is the parent's whole checklist. When the last child is Done or Canceled, orch's `container-close` ticks it with each child's state as its `Evidence:` line and sets the parent Done, or Canceled when every child was canceled. A goal measure or other outcome the children together produce is its own child: a leaf blocked by the siblings it measures, carrying that box and its holder's read, completed by that holder with `issues complete [CHILD_ID] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
 
 1. `## Sub-Issues`, never `## Requirements`. No implementation detail lives here.
 2. All children share the parent's project. See [dependencies.md](../references/dependencies.md).
 3. Record dependencies under linear SKILL.md § Blocked Label vs Issue Relations.
-4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains. A `(one PR)` title marker outranks the label.
+4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains.
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
-6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping). Omit Acceptance Criteria when the children have none.
+6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping).
 7. A coordination parent has no defect of its own, so its `[REACH]` is the run that produced it — the roadmap layer, the audit, or the merge-pr rebundle that detached its children — named as that run, not as a defect. Such a parent is structural and never `--review-born`.
-8. After any hierarchy change, regenerate Summary, Sub-Issues, and Acceptance Criteria from the current children.
+8. After any hierarchy change, regenerate Summary and Sub-Issues from the current children.
 9. Filing headers follow [issue-description-template.md](issue-description-template.md) § Rules. Keep them under Filing record. Synthesize the opening from all children.

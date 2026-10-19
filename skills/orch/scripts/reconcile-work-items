@@ -8,8 +8,8 @@
 # Checks over every issue of the project's LINEAR_TEAM, or of every team
 # the Linear API key reaches where none is set, read live through the linear
 # skill (`issues list --max [--team]`, archived and trashed issues excluded):
-#   container-parked  a parent in a non-terminal state whose non-canceled
-#                     children are all Done; its holder owes an outcome read
+#   container-parked  a parent in a non-terminal state whose children are
+#                     all Done or Canceled; container-close has not closed it
 #   merged-in-review  an In Review item whose branch-named PRs are all merged
 #                     (at least one), at any age — no later step moves it
 #   started-stale     an In Progress / In Review item untouched for longer
@@ -18,7 +18,8 @@
 #   done-unchecked    a Done item whose description still carries unchecked
 #                     `- [ ]` acceptance criteria — a partial-scope PR's
 #                     `Closes` magic word closed it
-#   verifying         open post-merge or container outcome boxes and their status
+#   verifying         open post-merge boxes, or a container's open boxes besides
+#                     its child box, and their status
 #   verifying-counts  totals for due, overdue, blocked and waiting boxes
 #   verifying-empty   a Verifying issue or container with no unproved box
 #   verifying-invalid a Verifying description missing required box metadata or
@@ -78,7 +79,7 @@ message() {
     clock-failed) printf 'The current time could not be read.\n' ;;
     invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
     pr-probe-failed) printf 'The pull request probe failed. The issue PR state remains unverified.\n' ;;
-    container-parked) printf 'All non-canceled children are Done. Its holder must read the shared outcome and record evidence before closure.\n' ;;
+    container-parked) printf 'Every child is Done or Canceled. Run container-close, which closes the parent; an open box beside its child box moves into its own child first.\n' ;;
     merged-in-review) printf 'Every linked pull request has merged. Complete it with `issues complete --post-merge-at <mergedAt>`, which moves it to Done or Verifying.\n' ;;
     started-stale) printf 'The started issue has passed the stale threshold. If its pull request merged, complete the item. Otherwise finish its lifecycle or restate its scope.\n' ;;
     done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Record evidence and tick proven boxes. Keep post-merge checks on this item in Verifying.\n' ;;
@@ -143,8 +144,8 @@ findings=0
 note() { findings=$((findings + 1)); message "$@"; }
 
 # --- container-parked --------------------------------------------------------
-# Non-terminal parents whose non-canceled children (by parent identifier) are
-# all completed. Trashed/archived rows never count as children or parents.
+# Non-terminal parents whose children (by parent identifier) are all Done or
+# Canceled. Trashed/archived rows never count as children or parents.
 
 safe_issues="$(jq -c '{issues:{nodes: map(select((.trashed // false) == false and .archivedAt == null))}}' "$ISSUES")" \
   || config_error scan-failed scan=container

@@ -4,8 +4,9 @@ set -euo pipefail
 
 # Expected completion state(s) for an issue, keyed by its ROLE in the validation.
 #
-#   bundle-child  A sub-issue processed under its parent session as part of a
-#                 single-PR bundle. A started state passes when the shared
+#   bundle-child  A sub-issue processed under its parent session as part of
+#                 the review audit's in-PR bundle (`Audit Bundle: yes`). A
+#                 started state passes when the shared
 #                 parser proves its branch boxes and their evidence.
 #   container-child  A separate PR unit. It must finish Done before its
 #                    container can close.
@@ -18,7 +19,7 @@ set -euo pipefail
 #
 #   container     A bundle parent whose children are each worked as their own
 #                 PR unit; the container itself is never orchestrated and
-#                 closes after its holder proves the shared outcome. Its state name is
+#                 closes when its last child is Done or Canceled. Its state name is
 #                 not checked here (see build_completion_validation_result:
 #                 the container role gates on state_type instead), so this
 #                 helper emits nothing for it.
@@ -316,11 +317,16 @@ require_issue_header_shape() {
 # One parser owns checklist numbering, ticking, triggers, and post-merge deadlines.
 # merge-pr supplies GitHub's mergedAt; watch and reconcile consume the same
 # per-box deadline in the description without a second tracker field.
-# Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON] [ROLE]
+# `child_box` is the number of a parent's one box, "Every child Done or
+# cancelled" (project-management parent-issue-template.md), or null; a
+# container's closer ticks it. `container_open_boxes` lists every other box
+# still open or missing its Evidence: on a container, an outcome that belongs
+# in its own child item.
+# Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON]
 done_when_parse() {
     local evidence='{}'
     [[ $# -lt 4 ]] || evidence="$4"
-    jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" --argjson evidence "$evidence" --arg role "${5:-issue}" '
+    jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" --argjson evidence "$evidence" '
         def utc_epoch:
             . as $stamp
             | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then
@@ -390,8 +396,10 @@ done_when_parse() {
                        or (.trigger_kind != "release" and $merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))
                     then {box: .number, rule: "post-merge-window"}
                   else empty end]}
-        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))
-        | .outcome_remedy = (if .missing_outcome_box then "Add a shared-outcome box under Done when, then read its source." else null end)
-        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null
+        | .child_box = ([.boxes[] | select(.text | test("^every child done or cancell?ed\\.?\\s*$"; "i")) | .number] | first)
+        | .missing_evidence_boxes as $missing | .child_box as $child
+        | .container_open_boxes = [.boxes[] | select(.number != $child)
+            | select((.checked | not) or (.number as $n | $missing | index($n)) != null) | .number]
+        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null
             elif any(.boxes[]; .post_merge and (.checked | not)) then "Verifying" else "Done" end)'
 }

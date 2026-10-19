@@ -177,7 +177,7 @@ Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree co
 .agents/skills/linear/scripts/linear.sh issues children [ISSUE] --pending --recursive
 ```
 
-For a single-PR bundle, first run `issues validate-completion [ISSUE] --include-children-of [ISSUE]`. A started child whose result has `ok: true` stays attached for this PR's post-merge completion step. Exclude these children from the orphan partition. An unreadable validation result or tracker read stops the merge. Container children remain separate PR units.
+For the review audit's in-PR bundle, first run `issues validate-completion [ISSUE] --include-children-of [ISSUE]`. A started child whose result has `ok: true` stays attached for this PR's post-merge completion step. Exclude these children from the orphan partition. An unreadable validation result or tracker read stops the merge. Container children remain separate PR units.
 
 Partition the remaining children by `state_type`: `backlog` and `unstarted` are **safe** (`[SAFE_IDS]`); anything else is **active**. Both empty → § 5.
 
@@ -365,7 +365,7 @@ Use the output as `MAIN_REPO_ROOT`.
    1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
    2. Run § 3.3. With the head unmoved, return to step 1 and wait.
 
-2. **Complete the issue and report its parent outcome** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
+2. **Complete the issue and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
    The lane owns completion after merge. The overseer owns the remaining post-merge checks on the same item.
 
@@ -395,9 +395,20 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 
-   **Complete the single-PR bundle's children.** This step alone selects each child's proved boxes and completes it at merge. Read `issues children [ISSUE] --recursive --format=safe` without `--pending`. The flat rows carry each child's `.id` and `.state_type`. Include children the GitHub integration already set Done. For each non-canceled child listed in this PR's child `Closes` lines, repeat this step's live read and `issues complete` command with that child's ID, its own box selections and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent. Keep post-merge boxes on each child. This post-merge call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer. A child read or completion failure is a tracker-completion failure. Unchanged reconciliation can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box; report this limitation with the child handoff.
+   **Complete the in-PR bundle's children.** This step alone selects each child's proved boxes and completes it at merge. Read `issues children [ISSUE] --recursive --format=safe` without `--pending`. The flat rows carry each child's `.id` and `.state_type`. Include children the GitHub integration already set Done. For each non-canceled child listed in this PR's child `Closes` lines, repeat this step's live read and `issues complete` command with that child's ID, its own box selections and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent. Keep post-merge boxes on each child. This post-merge call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer. A child read or completion failure is a tracker-completion failure. Unchanged reconciliation can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box; report this limitation with the child handoff.
 
-   **The container outcome is due for its holder’s read.** Read `.parent_id` from the live issue. If it is empty, continue to step 3. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR. Without that marker, children or an `agent:multi` label make it a container. For a container whose children are complete, record `container [PARENT_ID] outcome due for holder read` in § 6. Its holder reads the shared outcome through [oversee-events.md § Verification](../references/oversee-events.md#event-kinds). The last child’s merge supplies no outcome evidence. Repeat this classification for container ancestors. An unreadable parent is a tracker failure.
+   **The container closes when its last child closes.** Read `.parent_id` from the live issue. If it is empty, continue to step 3. Fetch the parent with its bundle; children or an `agent:multi` label make it a container ([skill-rules.md § Coordination](../references/skill-rules.md#coordination)). Not a container → step 3. An unreadable parent is a tracker failure. Close the container through the serialized helper, which keeps it open while a child is open:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
+   ```
+
+   Preserve the helper's stderr diagnostics in § 6. Route its output:
+
+   - `closed [PARENT_ID]` → record the closure in § 6. If this container has a container parent, repeat this step for that parent.
+   - `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6. When `[ISSUE]` is among them and reads Verifying, the overseer closes the container after verification sets it Done. A bare `deferred` means the lock wait expired; report it.
+   - `held [PARENT_ID] [REQUESTS_RESET]` → hold the command under the linear skill's `patterns/workflow-actions.md` § Quota Holds, and climb no further.
+   - A nonzero exit keeps the container open; carry its diagnostic into § 6, climb no further, and report `container [PARENT_ID] stays open; rerun container-close once [CAUSE] is fixed`. A `completion-refused` names an open box beside the child box: an outcome that moves into its own child item, per project-management's parent template.
 
 3. **Sync the main repo** — always runs after a merge.
 
@@ -509,7 +520,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 |-------|-------|
 | Branch | [BRANCH_NAME] (deleted / kept) |
 | Issue Tracker | [ISSUE_ID] → Done / still open — [tracker result or cause from § 5 step 2] |
-| Container | [PARENT_ID]: outcome due for holder read / pending children / read failure |
+| Container | [PARENT_ID] → Done / Canceled / deferred / held — [pending ids or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 tmp/ close-out: [KEPT_LINE_OR_FIRST_REFUSAL_LINE]

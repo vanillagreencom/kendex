@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Close a Linear container after its holder reads the shared outcome and
-# ticks its outcome box with Evidence. Finished children alone do not close it.
-# The overseer's Verification route consumes `closed ID`, `deferred`, `deferred ID...`, or
+# Close a Linear container when its last child is Done or Canceled: it ticks
+# the parent's "Every child Done or cancelled" box and sets Done, or sets
+# Canceled when every child was canceled. merge-pr and the overseer's
+# Verification route consume `closed ID`, `deferred`, `deferred ID...`, or
 # `held ID RESET`.
 # Child summary rows carry `lookup failed` or `unavailable` for unresolved PRs.
 set -euo pipefail
@@ -119,6 +120,10 @@ container_close_message() {
       printf 'container-close: summary-state id=%s state-type=%s\n' "$id" "$state_type"
       printf '%s\n' "container-close: child $id has unexpected summary state: $state_type"
       ;;
+    evidence-failed)
+      printf 'container-close: evidence-failed parent-id=%s\n' "$PARENT_ID"
+      printf '%s\n' "container-close: cannot write the child-box evidence for $PARENT_ID"
+      ;;
     completion-failed)
       printf 'container-close: completion-failed parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: completion failed for $PARENT_ID"
@@ -164,8 +169,13 @@ and validation failures exit 1, naming the cause on stderr; required work may
 remain after Done and the run is safe to repeat once the cause is gone -- including a `gh pr
 list` that failed or would not parse, whether the reason was a rate limit or an
 unauthenticated `gh`. A successful `closed` result may carry completion
-diagnostics on stderr; callers must preserve every one. The holder records the outcome Evidence line before this run. This helper
-ticks no box and supplies no merge time. The run owns the
+diagnostics on stderr; callers must preserve every one. With every child Done
+or Canceled, the run ticks the parent's "Every child Done or cancelled" box
+with an Evidence line naming each child's state, in the update that sets
+Done; any other open box refuses (`completion-refused`) until it moves into
+its own child. A parent whose every child was canceled delivered nothing: it
+is set Canceled, with no summary, and prints `closed <PARENT_ID>`. The run
+supplies no merge time. The run owns the
 completion gate and the bundle summary: a retry carrying validated summary
 evidence completes without the summary flags, so the bundle comment is never
 posted twice. With `gh` absent a child's PR reference is recorded as `lookup
@@ -214,7 +224,8 @@ chmod 700 "$RUN_DIR"
 SUMMARY="$RUN_DIR/summary.md"
 CHILD_ROWS="$RUN_DIR/children.tsv"
 COMPLETE_ERR="$RUN_DIR/complete.err"
-cleanup() { rm -f -- "$SUMMARY" "$CHILD_ROWS" "$COMPLETE_ERR"; rmdir -- "$RUN_DIR" 2>/dev/null || true; }
+EVIDENCE="$RUN_DIR/evidence"
+cleanup() { rm -f -- "$SUMMARY" "$CHILD_ROWS" "$COMPLETE_ERR" "$EVIDENCE"; rmdir -- "$RUN_DIR" 2>/dev/null || true; }
 trap cleanup EXIT
 # A rate-limited completion's inputs outlive the run. The repository lock this
 # run holds owns the path: every run that reads, writes or removes it holds
@@ -273,7 +284,7 @@ print_closed() {
 PARENT="$(parent_json)" || { container_close_message parent-unreadable "$@" >&2; exit 1; }
 PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { container_close_message parent-response "$@" >&2; exit 1; }
-COMPLETE_ARGS=("$PARENT_ID")
+MUTATION=(issues complete "$PARENT_ID")
 if [[ "$PARENT_TYPE" != "completed" ]]; then
 
 PENDING="$("$LINEAR" issues children "$PARENT_ID" --recursive --pending --format=ids)" \
@@ -285,8 +296,13 @@ CHILDREN="$("$LINEAR" issues children "$PARENT_ID" --recursive)" \
 jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) > 0 and
   (.title | type) == "string" and (.state_type | type) == "string")' <<<"$CHILDREN" >/dev/null \
   || { container_close_message children-response "$@" >&2; exit 1; }
+TERMINAL_CHILDREN="$CHILDREN"
 CHILDREN="$(jq '[.[] | select(.state_type != "canceled")]' <<<"$CHILDREN")" \
   || { container_close_message children-response "$@" >&2; exit 1; }
+# Every child canceled: nothing was delivered, so the parent closes Canceled.
+if jq -e 'length == 0' <<<"$CHILDREN" >/dev/null && jq -e 'length > 0' <<<"$TERMINAL_CHILDREN" >/dev/null; then
+  MUTATION=(issues update "$PARENT_ID" --state Canceled)
+else
 
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
   || { container_close_message validation-failed "$@" >&2; exit 1; }
@@ -323,12 +339,22 @@ if [[ "$VALIDATED_PARENT_TYPE" != "completed" && "$HAS_SUMMARY" == "false" ]]; t
       printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
     done < "$CHILD_ROWS"
   fi
-  COMPLETE_ARGS+=(--summary-file "$SUMMARY")
+  MUTATION+=(--summary-file "$SUMMARY")
+fi
+CHILD_BOX="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .child_box as $box
+  | select($box != null and ((.unmet_branch_boxes // []) + (.missing_evidence_boxes // []) | index($box)) != null) | $box' <<<"$VALIDATION")" \
+  || { container_close_message validation-result "$@" >&2; exit 1; }
+if [[ -n "$CHILD_BOX" ]]; then
+  jq -r --arg box "$CHILD_BOX" '"\($box): container-close read every child Done or Canceled: "
+    + (map("\(.id) \(if .state_type == "canceled" then "Canceled" else "Done" end)") | join(", "))' \
+    <<<"$TERMINAL_CHILDREN" > "$EVIDENCE" || { container_close_message evidence-failed "$@" >&2; exit 1; }
+  MUTATION+=(--done-when-met "$CHILD_BOX" --evidence-file "$EVIDENCE")
+fi
 fi
 fi
 
 COMPLETE_RC=0
-"$LINEAR" issues complete ${COMPLETE_ARGS[@]+"${COMPLETE_ARGS[@]}"} >/dev/null 2>"$COMPLETE_ERR" || COMPLETE_RC=$?
+"$LINEAR" "${MUTATION[@]}" >/dev/null 2>"$COMPLETE_ERR" || COMPLETE_RC=$?
 cat -- "$COMPLETE_ERR" >&2 || { container_close_message completion-diagnostics "$@" >&2; exit 1; }
 if [[ $COMPLETE_RC -ne 0 ]]; then
   # The rate-limit line the linear skill's SKILL.md documents. A held parent is

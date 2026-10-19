@@ -131,8 +131,8 @@ post|## Done when\n- [x] branch proof\n  Evidence: branch read\n- [ ] Post-merge
 absent|No checklist.|state-done|-
 ROWS
 
-# Old containers need an outcome; ordinary no-checklist completion above stays
-# supported. The title marker makes a parent with children a single-PR bundle.
+# A container completes under the ordinary checklist rule: with no checklist
+# it needs no box, and its child box stays open until a caller ticks it.
 while IFS='|' read -r name title description expected; do
   printf '%b' "$description" >"$TMP_ROOT/container.md"
   log="$TMP_ROOT/container-$name.jsonl"
@@ -141,19 +141,18 @@ while IFS='|' read -r name title description expected; do
     run_complete "$TMP_ROOT/container.md" "$log" CC-720 >"$TMP_ROOT/container.out" 2>"$TMP_ROOT/container.err" || rc=$?
   if [[ "$expected" == refuse ]]; then
     assert_ne "container $name refuses" "$rc" 0
-    assert_jq "container $name names the missing outcome" "$(cat "$TMP_ROOT/container.err")" '.error == "post-merge-checklist" and .missing_outcome_box == true and (.remedy | type) == "string"'
+    assert_jq "container $name names its open box" "$(cat "$TMP_ROOT/container.err")" '.error == "post-merge-checklist" and .unmet_branch_boxes == [1]'
     assert_not "container $name stays open" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
   else
     assert_eq "container $name completes" "$rc" 0
     assert_jq "container $name requests its checklist state" "$(updates "$log")" ".variables.input.stateId == \"$expected\""
   fi
 done <<'ROWS'
-absent|t|No checklist.|refuse
-empty|t|## Done when|refuse
-post-only|t|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read|refuse
+absent|t|No checklist.|state-done
+empty|t|## Done when|state-done
+post-only|t|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read|state-done
+child-box|t|## Done when\n- [ ] Every child Done or cancelled|refuse
 proved|t|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done
-single-pr-absent|Bundle (one PR)|No checklist.|state-done
-single-pr-post|Bundle (one PR)|## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-in-review
 ROWS
 
 log="$TMP_ROOT/all.jsonl"

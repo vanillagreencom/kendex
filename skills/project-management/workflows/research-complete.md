@@ -126,7 +126,7 @@ Agent-reported refactors go into the audit input as standalone items in step 7 b
 
 **Single domain** → write the requirements into the issue description (§ 6.5) and skip the rest of this section.
 
-**2+ domains** → decompose every requirement, existing and new, into one sub-issue per domain, leaving the parent coordination-only:
+**2+ domains** → decompose every requirement, existing and new, into one sub-issue per domain, leaving the parent coordination-only, the rework parent of [SKILL.md § Disposition](../SKILL.md#disposition):
 
 0. **Place the parent.** **Skip if** `.blocks` holds more than one issue. Read the map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, `[TEAM]` being the blocked issue's identifier prefix: § Routing reads each project's `admits` and `ends_when` from the `### Project map` block; a non-zero exit halts with its error output, and `map-absent` leaves nothing to place. A finding whose `issue` is the blocked issue puts it outside the map: route it per [project-map.md § Routing](../references/project-map.md#routing), then move it with `issues update [BLOCKED_ISSUE_ID] --project "[ROUTE]"`. When the route is `project_needed`, hold the whole decomposition, the step 7 refactors included: build no audit input, leave the blocked issue as it is in § 6.5, and report the project it needs in § 6.6, with the fields [project-map.md § Routing](../references/project-map.md#routing) names. Run this section again once the map lists that project.
 1. One sub-issue per domain, in the parent's project, titled `[Domain verb]: [scope] for [DECISION_ID]`.

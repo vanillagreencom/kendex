@@ -12,15 +12,14 @@ verifying_error() { # KEY [FIELDS...]
 }
 
 # Callers supply live parents and their direct child state facts.
-# Completed children make their container outcome due for its holder, never Done.
+# A container whose every child is Done or Canceled is due for container-close.
 verifying_containers() { # SAFE_ITEMS
   local candidates row description
   candidates="$(jq -c '
     . as $live
     | map(select(.parent_id != null and .parent_id != "")) | group_by(.parent_id)[]
     | .[0].parent_id as $pid
-    | map(select(.state_type != "canceled"))
-    | select(length > 0 and all(.[]; .state_type == "completed"))
+    | select(all(.[]; .state_type == "completed" or .state_type == "canceled"))
     | ($live[] | select(.id == $pid))
     | select(.state_type != "completed" and .state_type != "canceled")
     | select((.title // "") | test("\\(one PR\\)"; "i") | not)
@@ -35,21 +34,19 @@ verifying_containers() { # SAFE_ITEMS
 }
 
 verifying_parse() { # SAFE_ROW
-  local record id desc parsed boxes role
-  # One read for the ID, role and description: an ID holds no unit separator, and the
+  local record id desc parsed boxes
+  # One read for both fields: an ID holds no unit separator, and the
   # final dot keeps the description's trailing newlines through substitution.
-  record="$(jq -r '"\(.id)\u001f\(if .container then "container" else "issue" end)\u001f\(.description // "")."' <<<"$1")" || return 1
+  record="$(jq -r '"\(.id)\u001f\(.description // "")."' <<<"$1")" || return 1
   id="${record%%$'\037'*}"
   desc="${record#*$'\037'}"
-  role="${desc%%$'\037'*}"
-  desc="${desc#*$'\037'}"
-  parsed="$(done_when_parse "${desc%.}" '[]' '' '{}' "$role")" || return 1
+  parsed="$(done_when_parse "${desc%.}" '[]')" || return 1
+  # A container holding only its child box, which container-close ticks,
+  # reads boxes=0; every other open box is an outcome still to move into a child.
   boxes="$(jq -c --argjson row "$1" '
     if $row.container == true then
-      .missing_evidence_boxes as $missing
-      | (if .missing_outcome_box then
-          [{number: 0, text: .outcome_remedy}]
-         else [.boxes[] | select((.checked | not) or ((.number as $n | $missing | index($n)) != null))] end)
+      .container_open_boxes as $open
+      | [.boxes[] | select(.number as $n | $open | index($n) != null)]
       | map(
         . + {trigger: "outcome", trigger_kind: "outcome", trigger_epoch: null,
                deadline_epoch: null, deadline_hours: null, deadline: null, reading: .text, where: "-", why: "-"})

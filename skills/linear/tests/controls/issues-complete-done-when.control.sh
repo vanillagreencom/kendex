@@ -41,14 +41,14 @@ control_replace scripts/lib/issue-validation.sh 1 \
 # Bare completion cannot bypass the shared checklist decision.
 control_expect "bare branch names its box"
 control_replace scripts/lib/issue-validation.sh 1 \
-    '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
-    '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or false or (.missing_evidence_boxes | length) > 0 then null'
+    '        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
+    '        | .completion_state = (if (.errors | length) > 0 or false or (.missing_evidence_boxes | length) > 0 then null'
 
 # The update guard also refuses missing proof. Check completion's own refusal.
 control_expect "bare missing-proof names its box"
 control_replace scripts/lib/issue-validation.sh 1 \
-    '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
-    '        | .completion_state = (if .missing_outcome_box or (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or false then null'
+    '        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null' \
+    '        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or false then null'
 
 control_expect "bare post sets its checklist state"
 control_replace scripts/lib/issue-validation.sh 1 \
@@ -131,18 +131,6 @@ control_expect "bare complete sets its checklist state"
 control_replace scripts/lib/issue-validation.sh 1 \
     "            elif any(.boxes[]; .post_merge and (.checked | not)) then \"Verifying\" else \"Done\" end)'" \
     "            elif any(.boxes[]; .post_merge and (.checked | not)) then \"Verifying\" else \"Todo\" end)'"
-
-control_expect "container absent refuses"
-control_replace scripts/lib/issue-validation.sh 1 \
-    '        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))' \
-    '        | .missing_outcome_box = false'
-
-# A title marker keeps single-PR parents under ordinary checklist completion.
-control_expect "container single-pr-absent completes"
-control_expect "container single-pr-post completes"
-control_replace scripts/commands/issues.sh 1 \
-    '    checklist_role=$(jq -r '"'"'if (.issue.children.nodes | length) > 0 and (.issue.title | test("\\(one PR\\)"; "i") | not) then "container" else "issue" end'"'"' <<<"$issue_result") || return 1' \
-    '    checklist_role=$(jq -r '"'"'if (.issue.children.nodes | length) > 0 and (true or (.issue.title | test("\\(one PR\\)"; "i") | not)) then "container" else "issue" end'"'"' <<<"$issue_result") || return 1'
 
 # Restore early verification before the shared PR supplies a real merge time.
 control_expect "phase premerge-progress selects its state"

@@ -267,19 +267,22 @@ for summary_issue in CC-950 CC-951; do
     '.all_ok == true and (.results | length) == 1 and .results[0].has_summary == true'
 done
 
-# Container outcomes pass through the production parser with no merge input.
+# With every child Done, a container may close on its open child box, which
+# the closer ticks, and on no holder read; any other open box keeps it open.
 export CONTAINER_CHECKLIST_FILE="$TMP_ROOT/container-outcome.md"
-while IFS='|' read -r name description expected branch missing absent; do
+while IFS='|' read -r name description expected child open; do
   printf '%b' "$description" >"$CONTAINER_CHECKLIST_FILE"
   out="$(run_validate CC-930 --include-children-of CC-930 --container 2>"$TMP_ROOT/outcome.err")"
-  check "$name container outcome controls completion" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-930\") | .unmet_branch_boxes == $branch and .missing_evidence_boxes == $missing and .missing_outcome_box == $absent)"
+  check "$name container outcome controls completion" "$out" ".all_ok == $expected and (.results[] | select(.id == \"CC-930\") | .child_box == $child and .container_open_boxes == $open and has(\"remedy\") == ($open != []))"
 done <<'ROWS'
-absent|No checklist|false|[]|[]|true
-empty|## Done when|false|[]|[]|true
-post-only|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: deployment; Deadline: 2026-10-04T00:00:00Z\n  Evidence: holder read passed|false|[]|[]|true
-open|## Done when\n- [ ] Shared outcome at source|false|[1]|[]|false
-missing-evidence|## Done when\n- [x] Shared outcome at source|false|[]|[1]|false
-proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|[]|[]|false
+absent|No checklist|true|null|[]
+empty|## Done when|true|null|[]
+child-open|## Done when\n- [ ] Every child Done or cancelled|true|1|[]
+child-proved|## Done when\n- [x] every child done or canceled.\n  Evidence: container-close read every child Done|true|1|[]
+post-only|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: deployment; Deadline: 2026-10-04T00:00:00Z\n  Evidence: holder read passed|true|null|[]
+open|## Done when\n- [ ] Every child Done or cancelled\n- [ ] Shared outcome at source|false|1|[2]
+missing-evidence|## Done when\n- [x] Shared outcome at source|false|null|[1]
+proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|null|[]
 ROWS
 
 # A template-produced child can finish its branch work before its shared PR

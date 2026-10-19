@@ -17,10 +17,12 @@ control_replace scripts/commands/issues.sh 1 \
     '        if [ "$role" = "container" ]; then' \
     '        if false; then'
 
-control_expect "absent container outcome controls completion"
-control_replace scripts/lib/issue-validation.sh 1 \
-    '        | .missing_outcome_box = ($role == "container" and all(.boxes[]; .post_merge))' \
-    '        | .missing_outcome_box = false'
+# Main's rule: a container closes only once every box, the child box among
+# them, carries a holder's Evidence, so finished children alone never close it.
+control_expect "child-open container outcome controls completion"
+control_replace scripts/commands/issues.sh 1 \
+    '                | .ok = (.ok and $checklist.errors == [] and $checklist.container_open_boxes == [])'"'"') || return 1' \
+    '                | .ok = (.ok and $checklist.completion_state == "Done")'"'"') || return 1'
 
 # Restore child acceptance without the qualified started phase.
 control_expect "qualified child controls bundle acceptance"
