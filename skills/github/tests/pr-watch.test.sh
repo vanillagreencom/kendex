@@ -243,7 +243,7 @@ table \
 for conclusion in cancelled skipped neutral action_required stale; do
   table "armed aggregate $conclusion is silent||$ARMED_ENV;STUB_CI_RAW=$(jq -c --arg c "$conclusion" '.check_runs[0].conclusion=$c' <<<"$CI_GREEN")|rc=0 kinds=none"
 done
-mutant_watch ci-failed-kind 's#"ci-failed"; "current-head CI failed#"ci-silenced"; "current-head CI failed#' '"ci-failed"; "current-head CI failed'
+mutant_watch ci-failed-condition 's#elif any($ci\[\];#elif false and any($ci[];#' 'elif any($ci[];'
 table \
   "must-fail: withholding failed CI loses refresh attention||$REFRESH_ENV;STUB_CI_RAW=$CI_RED|rc=0 kinds=none" \
   "must-fail: withholding failed CI loses armed attention||$ARMED_ENV|rc=0 kinds=none"
