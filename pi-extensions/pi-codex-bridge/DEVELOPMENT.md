@@ -78,15 +78,15 @@ In hosted lanes the platform also guarantees an empty configured set: FLT-1396 o
 
 Native Codex tools must not run. Five guards hold that:
 
-- The launch disables every 0.163.0 default-on feature that runs something outside Pi (`DISABLED_FEATURES`) and sets `web_search="disabled"`.
+- The launch disables every 0.163.0 default-on feature that runs something outside Pi (`DISABLED_FEATURES`). It also sets `web_search="disabled"` and `tools.experimental_request_user_input={enabled=false}` (`LAUNCH_CONFIG`), so Codex offers the model no `request_user_input` tool: no user answers Codex here.
 - Threads run with `sandbox: "read-only"`, `environments: []` (no environment tools, such as `apply_patch` and `exec_command`) and `approvalPolicy: "untrusted"`. The bridge declines every approval request and refuses the turn.
 - After each thread start and resume, `experimentalFeature/list { threadId }` must report no enabled feature outside `REVIEWED_ENABLED_FEATURES`, or the thread is refused with `codex-feature-unreviewed name=<f>` before its first turn.
 - An `item/started` whose type is not in `ALLOWED_ITEM_TYPES` interrupts the turn and refuses it with `codex-native-item type=<t>`.
 - A turn or item on a thread the bridge did not start, such as a Codex sub-agent, stops the child and refuses with `codex-foreign-thread thread=<id>`.
 
-`unified_exec` stays reported enabled in 0.163.0 whatever the launch says. It is reviewed because its tools are not offered while `shell_tool` is off and the thread has no environment.
+`unified_exec` cannot be disabled in 0.163.0: `--disable unified_exec`, `-c features.unified_exec=false` and `experimental_use_unified_exec_tool=false` all leave it reported enabled. It is in `REVIEWED_ENABLED_FEATURES` because its `exec_command` and `write_stdin` tools are not offered while `shell_tool` is off and the thread has no environment; the fixture suite asserts that from the tools Codex sends the model. If Codex ran one anyway, the item audit (`commandExecution` is not an allowed item type) and the declined approval request are the guards that remain.
 
-Models whose Codex catalog entry sets `tool_mode = "code_mode_only"` reach tools only through Codex code mode. `code_mode_host` is disabled, so on those models Codex fails code mode closed and Pi's tools are unreachable.
+Models whose Codex catalog entry sets `tool_mode = "code_mode_only"` reach tools only through Codex code mode. `code_mode_host` is disabled, so on those models Codex fails code mode closed and Pi's tools are unreachable. The app-server exposes no tool mode: neither `model/list` nor `modelProvider/capabilities/read` carries it, so the bridge cannot leave those models out of Pi's list.
 
 ## Model discovery
 

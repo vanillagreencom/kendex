@@ -112,13 +112,16 @@ var ALLOWED_ITEM_TYPES = /* @__PURE__ */ new Set([
   "dynamicToolCall"
 ]);
 var APPROVAL_POLICY = "untrusted";
+var LAUNCH_CONFIG = [
+  'web_search="disabled"',
+  "tools.experimental_request_user_input={enabled=false}"
+];
 function appServerArgs(configOverrides) {
   return [
     "app-server",
     "--stdio",
     ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
-    "-c",
-    'web_search="disabled"',
+    ...LAUNCH_CONFIG.flatMap((setting) => ["-c", setting]),
     ...configOverrides.flatMap((override) => ["-c", override])
   ];
 }

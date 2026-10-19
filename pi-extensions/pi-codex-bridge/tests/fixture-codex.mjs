@@ -106,7 +106,7 @@ test("an enabled feature no review covers refuses the thread before any model re
 	}
 });
 
-test("Codex offers the model no native tool, and a native call it makes runs nothing", { timeout: FIXTURE_TIMEOUT }, async () => {
+test("Codex offers the model no native tool or user-input tool, and such calls run nothing and fail no turn", { timeout: FIXTURE_TIMEOUT }, async () => {
 	const script = [];
 	const world = await fixtureWorld("native", { script });
 	const ran = join(world.root, "NATIVE-RAN");
@@ -115,6 +115,7 @@ test("Codex offers the model no native tool, and a native call it makes runs not
 			functionCall("exec_command", { cmd: `touch ${ran}` }, "native-1"),
 			functionCall("shell", { command: ["touch", ran] }, "native-2"),
 			functionCall("apply_patch", { input: `*** Begin Patch\n*** Add File: ${ran}\n+x\n*** End Patch` }, "native-3"),
+			functionCall("request_user_input", { questions: [{ id: "q", header: "Ask", question: "Which file?", options: [] }] }, "ask-1"),
 		],
 		[message("after native")],
 	);
@@ -123,7 +124,7 @@ test("Codex offers the model no native tool, and a native call it makes runs not
 		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Run a command")] }));
 		const offered = world.mock.requests.flatMap((request) => offeredTools(request.body));
 		assert.ok(offered.includes("read"), `Pi's tool is offered: ${offered}`);
-		for (const native of ["exec_command", "write_stdin", "shell", "apply_patch", "view_image", "web_search", "image_generation", "spawn_agent"]) {
+		for (const native of ["exec_command", "write_stdin", "shell", "apply_patch", "view_image", "web_search", "image_generation", "spawn_agent", "request_user_input", "request_user_input_async"]) {
 			assert.equal(offered.some((name) => name.split(".").at(-1) === native), false, `${native} is offered: ${offered}`);
 		}
 		assert.equal(existsSync(ran), false);
@@ -144,6 +145,9 @@ test("a sub-agent a model with collaboration tools spawns is refused", { timeout
 		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Delegate")] }));
 		assert.equal(end.type, "error");
 		assert.match(end.error.errorMessage, /^codex-(native-item type=subAgentActivity|foreign-thread thread=\S+)$/);
+		const offered = offeredTools(world.mock.requests[0].body);
+		assert.ok(offered.includes("collaboration.spawn_agent"), `the code-mode catalog entry offers sub-agents: ${offered}`);
+		assert.equal(offered.some((name) => /request_user_input/.test(name)), false, `request_user_input is offered: ${offered}`);
 		await bridge.close();
 	} finally {
 		await world.close();

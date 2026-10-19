@@ -104,13 +104,23 @@ export const ALLOWED_ITEM_TYPES: ReadonlySet<string> = new Set([
  * bridge declines every such request. */
 export const APPROVAL_POLICY = "untrusted";
 
+/**
+ * Launch settings beside the feature list. Web search is off, and Codex does
+ * not offer the model `request_user_input`, because no user answers Codex
+ * here. `tools.experimental_request_user_input` is a tools setting, not a
+ * feature, so it leaves the feature audit's list unchanged.
+ */
+export const LAUNCH_CONFIG = [
+	'web_search="disabled"',
+	"tools.experimental_request_user_input={enabled=false}",
+] as const;
+
 export function appServerArgs(configOverrides: readonly string[]): string[] {
 	return [
 		"app-server",
 		"--stdio",
 		...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
-		"-c",
-		'web_search="disabled"',
+		...LAUNCH_CONFIG.flatMap((setting) => ["-c", setting]),
 		...configOverrides.flatMap((override) => ["-c", override]),
 	];
 }
