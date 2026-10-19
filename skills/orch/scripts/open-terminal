@@ -430,6 +430,20 @@ preference_select() {
     ol_entry_model "$preference_entry" || {
       ot_message preference-class-unread "entry=$preference_entry" >&2; printf '%s\n' "$OL_CLASS_ERR" >&2; return 1;
     }
+    # The lane is checked before any skip below, so an exclusion refuses every
+    # entry whatever else drops it; lanes check reads only local settings.
+    preference_pick_args=()
+    if [[ "$preference_named" == true ]]; then
+      # A subshell, so a resolution failure returns from a batch rejudge as well.
+      preference_rc=0
+      preference_lane_dir="$(named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" && printf '%s' "$lane_dir")" || preference_rc=$?
+      case "$preference_rc" in
+        0) ;;
+        4) preference_refused=true; continue ;;
+        *) return 1 ;;
+      esac
+      preference_pick_args=(--lane "$preference_lane_dir" --projected)
+    fi
     OL_HARNESS="$OL_ENTRY_HARNESS" OL_WALK_SKIPS=()
     if ! ol_entry_permitted "$preference_entry"; then
       ot_message entry-permission-untransferable "entry=$preference_entry" \
@@ -452,18 +466,6 @@ preference_select() {
       cloud-task) continue ;;
       *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; return 1 ;;
     esac
-    preference_pick_args=()
-    if [[ "$preference_named" == true ]]; then
-      # A subshell, so a resolution failure returns from a batch rejudge as well.
-      preference_rc=0
-      preference_lane_dir="$(named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" && printf '%s' "$lane_dir")" || preference_rc=$?
-      case "$preference_rc" in
-        0) ;;
-        4) preference_refused=true; continue ;;
-        *) return 1 ;;
-      esac
-      preference_pick_args=(--lane "$preference_lane_dir" --projected)
-    fi
     preference_rc=0
     preference_record="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
     case "$preference_rc" in

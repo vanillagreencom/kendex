@@ -141,31 +141,33 @@ done < "$TMP_ROOT/api-preference-rows"
 # A walk naming a retired account judges each entry's own allowance: a plan
 # entry is refused and skipped, in either order, and the grant entry launches
 # on its live grant. A walk with no entry left ends refused; an exclusion
-# refuses every entry.
+# refuses every entry, one a permission skip would drop as well.
 API_PLAN_FIRST="claude:fable:high,pi@$HOST_STUB:anthropic/claude-opus-5-5:high"
-api_retired_walk() { # REMAINING SETTING PREFERENCE EXPECTED
+api_retired_walk() { # REMAINING SETTING PREFERENCE EXPECTED [FLAGS]
   api_hosted_rows "$1"
-  run_ot "$API_PREFERENCE_ENV;$2;ORCH_LANE_PREFERENCE=$3;flags=--dangerously-skip-permissions" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4428
+  run_ot "$API_PREFERENCE_ENV;$2;ORCH_LANE_PREFERENCE=$3;flags=${5:---dangerously-skip-permissions}" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4428
   walk_hosted="$(typed 'env PI_CODING_AGENT_DIR=/pi bash -lc')"
   assert_eq "$(observe 'rc=0 claim_lanes=eclaude') hosted=${walk_hosted:-0} refused=$(awk '$2 == "lane-refused" {n++} END {print n+0}' <<<"$OUT")" \
-    "$4" "a walk $3 naming an account under $2 with $1 dollars of grant left"
+    "$4" "a walk $3 naming an account under $2 with $1 dollars of grant left${5:+, flags $5}"
 }
-# remaining|setting|preference|expected
+# remaining|setting|preference|expected|flags
 printf '%s\n' \
   "150|$RETIRED_PLAN|$API_PREFERENCE|rc=0 claim_lanes=eclaude hosted=1 refused=0" \
   "150|$RETIRED_PLAN|$API_PLAN_FIRST|rc=0 claim_lanes=eclaude hosted=1 refused=0" \
   "4|$RETIRED_PLAN|$API_PREFERENCE|rc=1 claim_lanes=none hosted=0 refused=1" \
   "150|ORCH_LANE_EXCLUDE=eclaude|$API_PLAN_FIRST|rc=1 claim_lanes=none hosted=0 refused=1" \
+  "150|ORCH_LANE_EXCLUDE=eclaude|pi@$HOST_STUB:anthropic/claude-opus-5-5:high|rc=1 claim_lanes=none hosted=0 refused=1|--permission-mode dontAsk" \
   > "$TMP_ROOT/api-retired-walk-rows"
 api_retired_walk_table() {
-  while IFS='|' read -r credit setting preference expected; do
-    api_retired_walk "$credit" "$setting" "$preference" "$expected"
+  while IFS='|' read -r credit setting preference expected flags; do
+    api_retired_walk "$credit" "$setting" "$preference" "$expected" "$flags"
   done < "$TMP_ROOT/api-retired-walk-rows"
 }
 api_retired_walk_table
 # Each control reruns the table against a mutant of the walk's per-entry
-# verdict: a refusal that ends the walk fails the plan-first row, and a check
-# without the entry's harness and model fails both grant rows.
+# verdict: a refusal that ends the walk fails the plan-first row, a check
+# without the entry's harness and model fails both grant rows, and a check
+# only of an entry the permission skip keeps fails the skipped exclusion row.
 # name|shipped|mutant|failures
 while IFS='|' read -r walk_ctl walk_shipped walk_mutant walk_failures; do
   API_WALK_SHIPPED="$OPEN_TERMINAL"
@@ -179,6 +181,7 @@ while IFS='|' read -r walk_ctl walk_shipped walk_mutant walk_failures; do
 done <<'ROWS'
 skip|4) preference_refused=true; continue ;;|4) ot_message lane-refused "lane=$LANE" >&2; return 1 ;;|1
 scope|named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL"|named_lane_resolve "" ""|2
+order|if [[ "$preference_named" == true ]]; then|if [[ "$preference_named" == true ]] && OL_HARNESS="$OL_ENTRY_HARNESS" && ol_entry_permitted "$preference_entry"; then|1
 ROWS
 API_PREFERENCE_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-api-preference/orch lib/lane-launch.sh)/open-terminal" || exit 1
