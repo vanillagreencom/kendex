@@ -135,16 +135,20 @@ test("Codex offers the model no native tool or user-input tool, and such calls r
 	}
 });
 
-test("a sub-agent a model with collaboration tools spawns is refused", { timeout: FIXTURE_TIMEOUT }, async () => {
+// The scripted spawn is the parent's first model response; a sub-agent's turn
+// would take the next scripted response. Only the parent's two model requests
+// may reach the mock: the spawn request and the parent's answer to its result.
+test("a sub-agent spawn on a code-mode model starts no thread and makes no model request", { timeout: FIXTURE_TIMEOUT }, async () => {
 	const world = await fixtureWorld("subagent", {
 		model: "gpt-6-sol",
-		script: [[{ ...functionCall("spawn_agent", { task_name: "sub", message: "work outside Pi" }, "spawn-1"), namespace: "collaboration" }], [message("sub")], [message("parent")]],
+		script: [[{ ...functionCall("spawn_agent", { task_name: "sub", message: "work outside Pi" }, "spawn-1"), namespace: "collaboration" }], [message("parent")], [message("sub-agent")]],
 	});
 	try {
 		const bridge = world.newBridge();
 		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Delegate")] }));
-		assert.equal(end.type, "error");
-		assert.match(end.error.errorMessage, /^codex-(native-item type=subAgentActivity|foreign-thread thread=\S+)$/);
+		assert.equal(end.reason, "stop", end.error?.errorMessage);
+		assert.equal(end.message.content.at(-1).text, "parent");
+		assert.equal(world.mock.requests.length, 2);
 		const offered = offeredTools(world.mock.requests[0].body);
 		assert.ok(offered.includes("collaboration.spawn_agent"), `the code-mode catalog entry offers sub-agents: ${offered}`);
 		assert.equal(offered.some((name) => /request_user_input/.test(name)), false, `request_user_input is offered: ${offered}`);
@@ -153,3 +157,4 @@ test("a sub-agent a model with collaboration tools spawns is refused", { timeout
 		await world.close();
 	}
 });
+

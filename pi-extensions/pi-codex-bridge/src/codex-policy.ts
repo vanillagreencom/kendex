@@ -107,12 +107,18 @@ export const APPROVAL_POLICY = "untrusted";
 /**
  * Launch settings beside the feature list. Web search is off, and Codex does
  * not offer the model `request_user_input`, because no user answers Codex
- * here. `tools.experimental_request_user_input` is a tools setting, not a
- * feature, so it leaves the feature audit's list unchanged.
+ * here. None of them enables a feature, so the feature audit's list is the
+ * same with them as without.
  */
 export const LAUNCH_CONFIG = [
 	'web_search="disabled"',
 	"tools.experimental_request_user_input={enabled=false}",
+	// A thread tree may hold one thread: the root. Codex then refuses a
+	// sub-agent spawn before the sub-agent's thread exists, so it sends no model
+	// request. A setting under the multi_agent_v2 table that enables no
+	// feature; the catalog's multi-agent runtime reads it even while the
+	// multi_agent feature is off.
+	"features.multi_agent_v2.max_concurrent_threads_per_session=1",
 ] as const;
 
 export function appServerArgs(configOverrides: readonly string[]): string[] {
