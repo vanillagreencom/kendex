@@ -199,14 +199,26 @@ jobs:
           path: guards
           persist-credentials: false
       # The credential scan is this checkout's only reader: fetch it under
-      # the scan's condition, with the full history the scan's range walks.
+      # the scan's condition, the merge commit alone, then that commit's
+      # ancestry, which the scan's range walks, and no other branch.
       - name: the tree under judgement
         if: always() && github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           path: subject
           persist-credentials: false
+      # The token header reaches this one fetch and is never stored.
+      - name: the subject's ancestry
+        if: always() && github.event_name == 'pull_request'
+        working-directory: subject
+        env:
+          SUBJECT: ${{ github.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          git -c "http.$GITHUB_SERVER_URL/.extraheader=AUTHORIZATION: basic $auth" fetch --unshallow --no-tags origin "$SUBJECT"
       - name: secrets (credential scan of the pull request diff)
         if: always() && github.event_name == 'pull_request'
         working-directory: subject

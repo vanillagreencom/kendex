@@ -35,7 +35,8 @@
 #   6. the credential scan: default-branch scripts scan the PR merge ref
 #      and execute no script from it, even when both subject scripts exit 0,
 #      and read the exclusion list from the default branch, even when the
-#      PR adds a row excluding every path.
+#      PR adds a row excluding every path. The subject is a depth-1
+#      checkout plus its own ancestry, fetched on pull_request alone.
 #   7. concurrency: two heads of one PR share a group and cancel, while
 #      merge-group and default-branch runs each keep their own group.
 #   8. action pins: every GitHub-owned or third-party action in a source or
@@ -52,7 +53,8 @@
 # template without merge_group, a render-reach step that fails the job, and
 # an evaluator that refuses every expression, a credential scanner or
 # installer read from the PR, guards checked out at its merge ref, and an
-# exclusion list read from the PR, a concurrency group missing its event,
+# exclusion list read from the PR, a depth-0 subject checkout, a fetch that
+# leaves the shallow boundary, a concurrency group missing its event,
 # and cancellation that also reaches merge groups.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
@@ -369,33 +371,43 @@ assert_eq "those paths are shipped scripts" "yes yes yes yes yes" \
   "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
 
 # The CI job scans every pull request, with its installer in the same step,
-# and fetches the tree it scans with full history under the scan's condition.
+# and, under the scan's condition, checks out the merge commit alone at
+# depth 1, then fetches that one commit's ancestry and no branch or tag.
 secrets_contract() { # TEMPLATE
   awk -v condition="always() && github.event_name == 'pull_request'" '
-    function close_step() { if (checkout && path == "subject") { depth = d; gated = (cond == condition) } }
+    function close_step() {
+      if (checkout && path == "subject") { depth = d; gated = (cond == condition) }
+      if (!checkout && cond == condition && work == "subject" && subject && unshallow) fetched++
+    }
     /^  [A-Za-z0-9_-]+:/ { if (in_job) close_step(); checkout = 0; in_job = ($1 == "ci:") }
     !in_job { next }
-    /^      - / { close_step(); checkout = 0; installed = 0; cond = ""; path = ""; d = "" }
+    /^      - / { close_step(); checkout = 0; installed = 0; cond = ""; path = ""; d = "1"; work = ""; subject = 0; unshallow = 0 }
     /uses: actions\/checkout@/ { checkout = 1 }
     checkout && /^          fetch-depth:/ { d = $2 }
     checkout && /^          path:/ { path = $2 }
     /^        if:/ { cond = $0; sub(/^        if: /, "", cond) }
+    /^        working-directory:/ { work = $2 }
+    $0 == "          SUBJECT: ${{ github.sha }}" { subject = 1 }
+    /^          git -c "http\.\$GITHUB_SERVER_URL\/\.extraheader=AUTHORIZATION: basic \$auth" fetch --unshallow --no-tags origin "\$SUBJECT"$/ { unshallow = 1 }
     $1 ~ /commit-guards\/scripts\/install-gitleaks"?$/ && $2 == "\"$RUNNER_TEMP/gitleaks\"" { installed = 1 }
     $2 ~ /commit-guards\/scripts\/secrets"?$/ && $3 == "--against" && $4 == "HEAD^1" {
       scans++; if (installed && cond == condition && $1 == "PATH=\"$RUNNER_TEMP/gitleaks:$PATH\"") ready++
     }
-    END { close_step(); printf "depth=%s gated=%d scans=%d ready=%d", depth, gated, scans, ready }
+    END { close_step(); printf "depth=%s gated=%d fetched=%d scans=%d ready=%d", depth, gated, fetched, scans, ready }
   ' "$1"
 }
-assert_eq "CI scans pull requests with an installer and full history" "depth=0 gated=1 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
+assert_eq "CI scans pull requests with an installer and the subject's ancestry" "depth=1 gated=1 fetched=1 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
 while IFS='|' read -r scope from to expected; do
   plant "$TEMPLATE" "$from" "$to" "$SANDBOX/secrets-mutant.yml" "$scope"
   assert_eq "must-fail: secrets contract with ${to:-no $from} in $scope" "$expected" "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
 done <<'ROWS'
-ci/secrets (credential scan of the pull request diff)|if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=0 gated=1 scans=1 ready=0
-ci/the tree under judgement|if: always() && github.event_name == 'pull_request'||depth=0 gated=0 scans=1 ready=1
-ci|fetch-depth: 0|fetch-depth: 2|depth=2 gated=1 scans=1 ready=1
-ci|"$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|: # "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|depth=0 gated=1 scans=1 ready=0
+ci/secrets (credential scan of the pull request diff)|if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=1 gated=1 fetched=1 scans=1 ready=0
+ci/the tree under judgement|if: always() && github.event_name == 'pull_request'||depth=1 gated=0 fetched=1 scans=1 ready=1
+ci/the tree under judgement|fetch-depth: 1|fetch-depth: 0|depth=0 gated=1 fetched=1 scans=1 ready=1
+ci/the subject's ancestry|if: always() && github.event_name == 'pull_request'||depth=1 gated=1 fetched=0 scans=1 ready=1
+ci|fetch --unshallow --no-tags|fetch --no-tags|depth=1 gated=1 fetched=0 scans=1 ready=1
+ci|origin "$SUBJECT"|origin "$SUBJECT" "+refs/heads/*:refs/remotes/origin/*"|depth=1 gated=1 fetched=0 scans=1 ready=1
+ci|"$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|: # "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|depth=1 gated=1 fetched=1 scans=1 ready=0
 ROWS
 
 # Read the CI job's checkout inputs and the secrets step from the template.
@@ -415,11 +427,11 @@ credential_checkouts() { # TEMPLATE
     END { if (checkout) print path "|" ref "|" depth }
   ' "$1"
 }
-credential_step() { # TEMPLATE KEY
-  awk -v key="$2" '
+credential_step() { # TEMPLATE STEP-NAME-PREFIX KEY
+  awk -v name="$2" -v key="$3" '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
     !in_job { next }
-    /^      - / { step = /name: secrets \(credential scan/; body = 0 }
+    /^      - / { step = (index($0, "      - name: " name) == 1); body = 0 }
     step && index($0, "        " key ": ") == 1 {
       sub("^        " key ": ", ""); print; next
     }
@@ -579,7 +591,7 @@ if ! GITLEAKS_BIN="$(command -v gitleaks)"; then
 fi
 
 credential_scan() { # TEMPLATE NAME -> exit and credential finding, never its value
-  local wf="$1" root="$SANDBOX/$2" path ref depth branch work body status=0
+  local wf="$1" root="$SANDBOX/$2" path ref depth branch work body fetch status=0
   mkdir -p "$root" "$root/runner/gitleaks"
   cp "$GITLEAKS_BIN" "$root/runner/gitleaks/gitleaks"
   credential_checkouts "$wf" >"$root/checkouts"
@@ -598,13 +610,20 @@ credential_scan() { # TEMPLATE NAME -> exit and credential finding, never its va
     git -C "$root/$path" config gc.auto 0
     git -C "$root/$path" config maintenance.auto false
   done <"$root/checkouts"
-  work="$(credential_step "$wf" working-directory)" || exit 1
-  body="$(credential_step "$wf" body)" || exit 1
+  work="$(credential_step "$wf" "the subject's ancestry" working-directory)" || exit 1
+  fetch="$(credential_step "$wf" "the subject's ancestry" body)" || exit 1
+  [ -n "$fetch" ] || { echo "ancestry step extractor is broken" >&2; exit 1; }
+  (cd -- "$root/${work:-.}" && env -i PATH="$PATH" HOME="$root" GITHUB_SERVER_URL=https://github.com \
+    SUBJECT="$(git -C "$CREDENTIAL_REPO" rev-parse pr-merge)" TOKEN=test-token bash -e -o pipefail -c "$fetch") \
+    >"$root/fetch-out" 2>&1 || { cat "$root/fetch-out" >&2; echo "the ancestry step failed" >&2; exit 1; }
+  work="$(credential_step "$wf" "secrets (credential scan" working-directory)" || exit 1
+  body="$(credential_step "$wf" "secrets (credential scan" body)" || exit 1
   [ -n "$body" ] || { echo "credential step extractor is broken" >&2; exit 1; }
   (cd -- "$root/${work:-.}" && env -i PATH="$PATH" HOME="$root" CI=true GITHUB_ACTIONS=true \
     GITHUB_WORKSPACE="$root" RUNNER_TEMP="$root/runner" bash -e -o pipefail -c "$body") >"$root/out" 2>&1 || status=$?
   printf 'exit=%s\n' "$status"
-  awk '/^secrets: secret=cred.txt:1:aws-access-token$/ { print }' "$root/out"
+  awk '/^secrets: secret=cred.txt:1:aws-access-token$/ { print }
+    /^secrets: range-[a-z]+=/ { sub(/=.*/, ""); print }' "$root/out"
   if [ -e "$root/runner/subject-code-ran" ]; then
     printf 'subject-code=ran\n'
   else
@@ -636,6 +655,12 @@ plant "$TEMPLATE" 'ref: ${{ github.event.repository.default_branch }}' \
 assert_eq "must-fail: guards from the merge ref pass the planted credential" "exit=0
 subject-code=ran" \
   "$(credential_scan "$SANDBOX/pr-guards.yml" pr-guards)"
+# A fetch that leaves the depth-1 boundary in place hands the scan a range
+# it refuses, so the credential is never judged.
+plant "$TEMPLATE" 'fetch --unshallow --no-tags' 'fetch --no-tags' "$SANDBOX/shallow.yml" ci
+assert_eq "must-fail: a shallow subject is refused before the credential is judged" "exit=2
+secrets: range-ref
+subject-code=absent" "$(credential_scan "$SANDBOX/shallow.yml" shallow)"
 
 # --- 4a. The classifier's permission and the default it asks for ---------
 # The classifier reads the repository and nothing else: no read of earlier
