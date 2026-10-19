@@ -41,6 +41,8 @@ STUBEOF
 cat > "$1/gh" <<'STUBEOF'
 #!/usr/bin/env bash
 [[ "$*" != 'repo view --json nameWithOwner -q .nameWithOwner' || -z "${OT_CHECKOUT_REPO-o/r}" ]] || { printf '%s\n' "${OT_CHECKOUT_REPO-o/r}"; exit 0; }
+# A GitHub item's body names no Location, so the overlap hold reads nothing more.
+[[ "$1 $2" != 'issue view' ]] || { echo '{"body":""}'; exit 0; }
 exit 1
 STUBEOF
 # tmux logs every call; $OT_TMUX_FAIL names one subcommand that fails after

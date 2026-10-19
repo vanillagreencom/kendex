@@ -711,6 +711,7 @@
   ".agents/skills/orch/scripts/lib/lane-relaunch.sh",
   ".agents/skills/orch/scripts/lib/lane-state.sh",
   ".agents/skills/orch/scripts/lib/lane-usage.sh",
+  ".agents/skills/orch/scripts/lib/launch-overlap.sh",
   ".agents/skills/orch/scripts/lib/mailbox-append.sh",
   ".agents/skills/orch/scripts/lib/open-terminal-text.sh",
   ".agents/skills/orch/scripts/lib/outside-contribution.sh",

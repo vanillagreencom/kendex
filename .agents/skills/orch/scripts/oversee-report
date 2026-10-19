@@ -64,6 +64,7 @@ message() { # KEY VALUE [CAUSE]
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
       report-written) echo "The report printed above is this file's content." ;;
+      overlap-read) echo "A read the file-overlap hold of a queued item needs failed, as read names, so whether it is held is unknown:" ;;
       report-path) echo "workflow-state progress-report-path gave no path, so where reports live is unknown:" ;;
     esac
     [ -z "${3:-}" ] || printf '%s\n' "$3"
@@ -220,6 +221,11 @@ Rows:
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
                   have no lanes[] record, whatever its status: a record is
                   written at launch, so a key with one has launched.
+                  A key the open-terminal file-overlap hold would refuse
+                  reads `ITEM (held by HOLDER: FILE)`, judged by the same
+                  lib/launch-overlap.sh against the held lanes and the
+                  first --repo's open pull requests; a read it needs that
+                  fails refuses as overlap-read.
   Waiting on you  each owner ask no answer has closed, from `lane-mail
                   pending --item overseer --to owner`, as `Question for you:
                   <text>`, with its recommendation and the time after which
@@ -348,6 +354,8 @@ source "$SCRIPT_DIR/lib/date-ladder.sh"
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/launch-overlap.sh
+source "$SCRIPT_DIR/lib/launch-overlap.sh"
 TRACKER="${OVERSEE_REPORT_TRACKER:-$SCRIPT_DIR/../../linear/scripts/linear.sh}"
 GITHUB="${OVERSEE_REPORT_GITHUB:-$SCRIPT_DIR/../../github/scripts/github.sh}"
 LANE_MAIL="${OVERSEE_REPORT_LANE_MAIL:-$SCRIPT_DIR/../../mailbox/scripts/lane-mail}"
@@ -769,6 +777,31 @@ table() {
   done <<<"$rows"
 }
 
+# next_rows ITEMS: NEXT_ROWS gets the table rows of the upcoming queue keys,
+# one per line; a key the open-terminal overlap hold would refuse names
+# its holder and the shared file (lib/launch-overlap.sh). A key whose tracker
+# its spelling does not name is not judged, as its cells are not read.
+NEXT_ROWS=""
+next_rows() {
+  local item tracker label lanes rc
+  lanes="$(jq -c '.lanes // []' <<<"$STATE_JSON")" || refuse state "$STATE"
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    label="$item"
+    if tracker="$(lane_key_tracker "$item")" && [[ -n "$tracker" ]]; then
+      rc=0
+      overlap_judge "$item" "$tracker" "${REPOS[0]}" "$PROJECT_ROOT" "$TRACKER" "$lanes" '[]' \
+        2>>"$WORK_DIR/overlap.err" || rc=$?
+      case "$rc" in
+        0) ;;
+        1) label+=" (held by $OVERLAP_HOLDER: $OVERLAP_FILE)" ;;
+        *) refuse overlap-read "$item read=$OVERLAP_UNREAD" "$(cat "$WORK_DIR/overlap.err")" ;;
+      esac
+    fi
+    NEXT_ROWS+="$item"$'\t'"$label"$'\n'
+  done <<<"$1"
+}
+
 # running_lanes: reads each running lane once for its rows. BLOCKERS gets one
 # line per thing the lane waits on: an ask the overseer has not answered, a
 # post-PR stop its state records, and red checks on its open pull request.
@@ -985,10 +1018,10 @@ render() {
   # A queued item with any lanes[] record has launched, and a done one stays
   # in the queue until the next selection rewrites it: neither is upcoming.
   list="$(jq -r --argjson n "$UPCOMING" '
-    ((.launch_queue // []) - [.lanes[].item])[:$n][]
-    | [., .] | @tsv' <<<"$STATE_JSON")" \
+    ((.launch_queue // []) - [.lanes[].item])[:$n][]' <<<"$STATE_JSON")" \
     || refuse state "$STATE"
-  table Next "$list"
+  next_rows "$list"
+  table Next "$NEXT_ROWS"
   echo
 
   # The open questions are the overseer mailbox's own record, read through

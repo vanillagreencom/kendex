@@ -69,6 +69,8 @@ if [[ "${1:-} ${2:-}" == 'pr view' && -n "${STUB_PR_STATE:-}" ]]; then
   printf '%s\n' "$STUB_PR_STATE"
   exit 0
 fi
+# A GitHub item's body names no Location, so the overlap hold reads nothing more.
+[[ "${1:-} ${2:-}" != 'issue view' ]] || { echo '{"body":""}'; exit 0; }
 [[ "${1:-}" == repo && -n "${STUB_GH_REPO:-}" ]] || exit 1
 printf '%s\n' "$STUB_GH_REPO"
 EOF
@@ -226,7 +228,7 @@ run_ot() {
 # below. launch is left out too: launch_of ITEM reads it on its own rows. So
 # is wake, whose start a wake reads while a turn that exits at once may be gone.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "launch" and .key != "wake" and .key != "recovery")) | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "touched" and .key != "in_scope" and .key != "launch" and .key != "wake" and .key != "recovery")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
 launch_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .launch | if . == null then null else [.pane, (.server | type), .pid, .start] end' | jq -c .; }
 running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
@@ -605,7 +607,7 @@ retired_under() {
 assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=launched since=iso launched_at=$LAUNCHED_AT" \
   "a record only the lane's worktree state holds retires its session though --state-dir names another directory, and the fresh start renews session_since while launched_at stands"
 SINCE_MUTANT="$(mutant_scripts since-mutant open-terminal)" || exit 1
-mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs)'
+mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs, .touched, .in_scope)'
 assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=launched since=kept launched_at=$LAUNCHED_AT" \
   "control: a relaunch that keeps session_since leaves the fresh start bound to the launch whose session it retired"
 RETIRED_MUTANT="$(mutant_scripts retired-mutant open-terminal)" || exit 1

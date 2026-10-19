@@ -55,6 +55,8 @@ NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 . "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/branch-growth.sh
 . "$SCRIPT_DIR/lib/branch-growth.sh"
+# shellcheck source=lib/launch-overlap.sh
+. "$SCRIPT_DIR/lib/launch-overlap.sh"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -106,7 +108,7 @@ estimate="$production"
 delta=""
 if [ -n "$body" ]; then
   body_text="$(cat -- "$body")" || die body-unreadable "cannot read --body '$body'"
-  if ! grep -qE '^[[:space:]]*([-*+][[:space:]]+)?[*_]*Location[*_]*[[:space:]]*:' <<<"$body_text"; then
+  if ! grep -qE "$LOCATION_LINE_ERE" <<<"$body_text"; then
     printf 'item-tier-error: cause=no-location route=per-subsystem-split\n' >&2
     exit 1
   fi

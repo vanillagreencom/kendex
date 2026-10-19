@@ -17,6 +17,9 @@ ot_message() { # REASON FIELD=VALUE...
     helper-missing) text='The required helper is not executable.' ;;
     launch-blocked) text='An item or its ancestor has a blocker that still holds launch. Merge or complete the named blockers before launching this item.' ;;
     launch-blocked-unread) text='The live blocker read failed. Restore the tracker read before launching this item.' ;;
+    launch-overlap) text='The item touches a file a held lane or an open pull request is changing. Nothing was launched. Wait for the holder to merge, or name the file in scope in the brief, as an append-only addition, and pass --in-scope with it.' ;;
+    launch-overlap-unread) text='A read the file-overlap judgement needs failed: the item, a held lane'"'"'s item, the fleet state, the open pull requests or a git grep, as read names. Nothing was launched. Restore that read before launching this item.' ;;
+    in-scope-unanchored) text='--in-scope answers the file-overlap hold, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
     entry-permission-untransferable) text='The caller permissions cannot transfer to this harness. The preference walk skips this entry.' ;;
     items-missing) text='Specify a work item.' ;;
     tracker-invalid) text='The tracker must be linear or github.' ;;
@@ -820,6 +823,23 @@ this launch check. In Progress and Backlog blockers still hold launch.
 launch-blocked-unread means the live read could not be completed. A relaunch
 or wake of a recorded lane passes this check.
 
+A new fleet launch then refuses as launch-overlap when its touched set shares
+a file with a held lane (running, preparing or parked) or an open pull
+request, under workflows/oversee.md § 2. The touched set is the backticked
+paths on the item's Location line, plus every file tracked here that names a
+backticked path on a body line that deletes or renames it, on the base and
+on each open pull request's head. A held lane's set is its record's touched,
+else its item's, read now; the item's own branch is no holder. changelog.d/
+paths never count. holder is the lane item or #N for a pull request. A
+launch-overlap-unread names the read that failed. A relaunch or wake of a
+recorded lane passes this check.
+  --in-scope PATH   A file the brief names in scope beside its holder, an
+                    append-only addition: that shared file passes the
+                    overlap hold. Repeatable; a directory ending in / covers
+                    the files under it. Recorded as the lane record's
+                    in_scope. Needs --state-dir, refused as
+                    in-scope-unanchored without it.
+
 Every launch that stands under --state-dir is recorded in the oversee
 workflow state that flag names (`workflow-state get oversee .lanes`, created
 when absent); a launch with no --state-dir names no fleet and writes no
@@ -833,7 +853,9 @@ window, whose pane runs the session's local client, its mail_root the local
 worktree), mail_root, surface, model, session_id, session_since
 (the time this launch or relaunch read before its terminal opened), allow_all
 (whether a copilot command grants --allow-all or --yolo), live_display
-(true on a --live-display launch, absent otherwise), and recovery,
+(true on a --live-display launch, absent otherwise), touched (the touched
+set the overlap hold judged, null where it judged none), in_scope (the
+--in-scope paths), and recovery,
 whose private choices lib/lane-relaunch.sh uses for automatic same-harness
 recovery. Legacy records without those choices require a manual relaunch.
 The record also carries launched_at,
@@ -844,7 +866,8 @@ and over_cap, `fleet` or `cloud` where an
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item,
-launched_at and sets status back to running. It keeps over_cap unless it
+launched_at and sets status back to running. It keeps touched and in_scope,
+and keeps over_cap unless it
 passes a cap through --over-cap again, which records that cap. --wake rewrites session_id
 and status, and an item no entry names is record-missing, since this launcher
 never launched it. A state that cannot be created refuses the whole launch as

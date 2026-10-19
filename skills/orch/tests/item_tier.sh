@@ -28,6 +28,7 @@ cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scr
 cp "$ORCH_DIR/../harness-ci/scripts/harness-only" "$LAYOUT/harness-ci/scripts/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" "$ORCH_DIR/scripts/lib/kendex-env.sh" \
+  "$ORCH_DIR/scripts/lib/launch-overlap.sh" \
   "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
 TIER="$LAYOUT/orch/scripts/item-tier"
@@ -281,7 +282,7 @@ assert_no_location_refused
 # Must-fail control: a copy that keeps the Location read but never refuses
 # answers as the script did before the refusal: standard on a guess.
 cp -R "$LAYOUT" "$TMP_ROOT/no-location-refusal"
-awk '/^  if ! grep -qE .*Location/ {hits++; print "  if false; then # " $0; next} {print} END {exit hits == 1 ? 0 : 3}' \
+awk '/^  if ! grep -qE "\$LOCATION_LINE_ERE"/ {hits++; print "  if false; then # " $0; next} {print} END {exit hits == 1 ? 0 : 3}' \
   "$TIER" > "$TMP_ROOT/no-location-refusal/orch/scripts/item-tier"
 TIER_BIN="$TMP_ROOT/no-location-refusal/orch/scripts/item-tier"
 assert_eq "$(run_tier - --body "$TMP_ROOT/no-location-body")" \

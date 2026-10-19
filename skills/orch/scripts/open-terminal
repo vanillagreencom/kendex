@@ -56,6 +56,7 @@ parse_argv() {
   WAIT_SLOT=false
   OVER_CAP=false
   LIVE_DISPLAY=false
+  IN_SCOPE_PATHS=()
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -89,6 +90,8 @@ parse_argv() {
       --wait-slot) WAIT_SLOT=true; shift ;;
       --over-cap) OVER_CAP=true; shift ;;
       --live-display) LIVE_DISPLAY=true; shift ;;
+      --in-scope) need_val "$@"; IN_SCOPE_PATHS+=("$2"); shift 2 ;;
+      --in-scope=*) IN_SCOPE_PATHS+=("${1#--in-scope=}"); need_val --in-scope "${1#--in-scope=}"; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -163,6 +166,8 @@ source "$SCRIPT_DIR/lib/lane-cap.sh"
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 # shellcheck source=lib/cloud-close-log.sh
 source "$SCRIPT_DIR/lib/cloud-close-log.sh"
+# shellcheck source=lib/launch-overlap.sh
+source "$SCRIPT_DIR/lib/launch-overlap.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 # `worktree create --reuse --keep-on-conflict` handed back a tree whose rebase
 # conflicted, unrebased (`worktree create --help`).
@@ -218,7 +223,9 @@ WORKFLOW_STATE_ARGS=()
 if [[ "$FLEET" != true ]]; then
   [[ "$WAIT_SLOT" != true ]] || { ot_message cap-option-unanchored "option=--wait-slot" >&2; exit 1; }
   [[ "$OVER_CAP" != true ]] || { ot_message cap-option-unanchored "option=--over-cap" >&2; exit 1; }
+  [[ ${#IN_SCOPE_PATHS[@]} -eq 0 ]] || { ot_message in-scope-unanchored "option=--in-scope" >&2; exit 1; }
 fi
+IN_SCOPE="$(printf '%s\n' ${IN_SCOPE_PATHS[@]+"${IN_SCOPE_PATHS[@]}"} | jq -Rsc 'split("\n") | map(select(. != ""))')" || exit 1
 [[ "$OVER_CAP" != true || ${#ITEMS[@]} -eq 1 ]] || { ot_message over-cap-items "count=${#ITEMS[@]}" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
@@ -1572,9 +1579,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" --argjson cloud_repo_access "${LAUNCH_REPO_ACCESS:-null}" \
+    --argjson touched "${LAUNCH_TOUCHED:-null}" --argjson in_scope "${IN_SCOPE:-[]}" \
     --arg recovery_cwd "$CLAIM_ROOT" --arg recovery_flags "$LAUNCH_FLAGS" --arg recovery_session "$LAUNCH_SESSION" --argjson recovery_refresh "$LANE_REFRESH" --arg custom "$CMD_TEMPLATE" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
-     | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
+     | map_values(if . == "" then null else . end) + {allow_all: $allow_all, touched: $touched, in_scope: $in_scope} + $tier_record
        + {recovery: (if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)}
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $live_display then {live_display: true} else {} end)
@@ -1612,7 +1620,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
+     | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)
        | if $rec.over_cap == null then . else . + {over_cap: $rec.over_cap} end
        | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
@@ -3891,17 +3899,26 @@ lane_rejudge() { # ITEM
   fi
 }
 
+# A relaunch or wake of a lane the fleet already records passes the launch
+# gates, which judged its first launch. Returns 0 for such a lane, 1 for any
+# other launch and 2 for a fleet state that could not be read.
+launch_recorded() { # KEY
+  local records
+  [[ "$RELAUNCH" == true || "$WAKE" == true ]] || return 1
+  records="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || return 2
+  jq -e --arg item "$1" 'any(.[]; .item == $item)' <<<"$records" >/dev/null
+}
+
 # Linear owns blocker status normalization. A fresh fleet lane must read that
 # live result before creating a worktree or spending a host launch. This local
 # dispatch check implements the existing Ancestor gate, not a new policy.
 launch_blockers_gate() { # ITEM
-  local selected="$1" next="$1" row parent blockers="[]" seen=" " records
+  local selected="$1" next="$1" row parent blockers="[]" seen=" " rc=0
   local linear="$SCRIPT_DIR/../../linear/scripts/linear.sh"
   [[ "$FLEET" == true && "$TRACKER" == linear ]] || return 0
-  if [[ "$RELAUNCH" == true || "$WAKE" == true ]]; then
-    records="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || return 1
-    if jq -e --arg item "$selected" 'any(.[]; .item == $item)' <<<"$records" >/dev/null; then return 0; fi
-  fi
+  launch_recorded "$selected" || rc=$?
+  [[ "$rc" -ne 0 ]] || return 0
+  [[ "$rc" -eq 1 ]] || return 1
   while [[ -n "$next" ]]; do
     if [[ "$seen" == *" $next "* ]] || [[ ! -x "$linear" ]] \
       || ! row="$("$linear" issues get "$next" --format=safe)" \
@@ -3921,6 +3938,33 @@ launch_blockers_gate() { # ITEM
   [[ -n "$blockers" ]] || return 0
   ot_message launch-blocked "item=$selected" "blockers=$blockers" "fix=merge or complete blockers $blockers before launch" >&2
   return 1
+}
+
+# The file-overlap hold (../workflows/oversee.md § 2), judged by
+# lib/launch-overlap.sh after the cap, whose count owns a fleet state that does not parse, and
+# before the worktree or a host launch. LAUNCH_TOUCHED is the touched set the
+# lane record keeps for later launches to compare with.
+LAUNCH_TOUCHED=null
+launch_overlap_gate() { # ITEM KEY
+  local lanes rc=0
+  LAUNCH_TOUCHED=null
+  [[ "$FLEET" == true ]] || return 0
+  launch_recorded "$2" || rc=$?
+  [[ "$rc" -ne 0 ]] || return 0
+  if [[ "$rc" -ne 1 ]] || ! lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')"; then
+    ot_message launch-overlap-unread "item=$1" read=state >&2
+    return 1
+  fi
+  rc=0
+  overlap_judge "$2" "$TRACKER" "$repo" "$CLAIM_ROOT" "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$lanes" "$IN_SCOPE" || rc=$?
+  case "$rc" in
+    0) LAUNCH_TOUCHED="$OVERLAP_TOUCHED" ;;
+    1) ot_message launch-overlap "item=$1" "file=$OVERLAP_FILE" "holder=$OVERLAP_HOLDER" \
+         "fix=wait for $OVERLAP_HOLDER to merge, or name $OVERLAP_FILE in scope in the brief and pass --in-scope $OVERLAP_FILE" >&2
+       return 1 ;;
+    *) ot_message launch-overlap-unread "item=$1" "read=$OVERLAP_UNREAD" >&2
+       return 1 ;;
+  esac
 }
 
 # linear_team_key TEAM [DIR] — prints the key of the Linear team named TEAM, or
@@ -4120,6 +4164,10 @@ for raw in "${ITEMS[@]}"; do
     ot_message overseer-unjudged cause=state-read state=oversee >&2
     failed=$((failed + 1))
     break
+  fi
+  if ! launch_overlap_gate "$item" "$wt_id"; then
+    failed=$((failed + 1))
+    continue
   fi
   if [[ "$LANE_HOST" != local ]]; then
     host_launch_resume admitted || { failed=$((failed + 1)); continue; }

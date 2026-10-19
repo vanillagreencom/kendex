@@ -98,6 +98,7 @@ run_row() { # NAME MODE LEAF_STATE PARENT_STATE RECORD [SCRIPT] [FORMAT]
 
 # One admission contract: fresh and custom launch, ancestor traversal, tracker
 # failures, satisfied relation history, and recorded recovery.
+# An admitted new launch reads its item once more for the file-overlap hold.
 while IFS='|' read -r name mode leaf parent record expected default_format; do
   run_row "$name" "$mode" "$leaf" "$parent" "$record" "$OT" "${default_format:-safe}"
   assert_eq "$RESULT" "$expected" "$name"
@@ -111,14 +112,14 @@ in-progress|fresh|In Progress||no|rc=1 creates=0 key=launch-blocked reads=1
 backlog|cmd|Backlog||no|rc=1 creates=0 key=launch-blocked reads=1
 custom-open|cmd|started||no|rc=1 creates=0 key=launch-blocked reads=1
 ancestor-open|cmd||started|no|rc=1 creates=0 key=launch-blocked reads=3
-verifying|fresh|Verifying||no|rc=0 creates=1 key=none reads=1
-custom-verifying|cmd|Verifying||no|rc=0 creates=1 key=none reads=1
-ancestor-verifying|cmd||Verifying|no|rc=0 creates=1 key=none reads=3
-completed|fresh|completed||no|rc=0 creates=1 key=none reads=1
-canceled|cmd|canceled||no|rc=0 creates=1 key=none reads=1
-clear|cmd|||no|rc=0 creates=1 key=none reads=1
-raw-default|cmd|||no|rc=0 creates=1 key=none reads=1|raw
-compact-default|fresh|||no|rc=0 creates=1 key=none reads=1|compact
+verifying|fresh|Verifying||no|rc=0 creates=1 key=none reads=2
+custom-verifying|cmd|Verifying||no|rc=0 creates=1 key=none reads=2
+ancestor-verifying|cmd||Verifying|no|rc=0 creates=1 key=none reads=4
+completed|fresh|completed||no|rc=0 creates=1 key=none reads=2
+canceled|cmd|canceled||no|rc=0 creates=1 key=none reads=2
+clear|cmd|||no|rc=0 creates=1 key=none reads=2
+raw-default|cmd|||no|rc=0 creates=1 key=none reads=2|raw
+compact-default|fresh|||no|rc=0 creates=1 key=none reads=2|compact
 unread|cmd|unread||no|rc=1 creates=0 key=launch-blocked-unread reads=1
 ancestor-unread|cmd||unread|no|rc=1 creates=0 key=launch-blocked-unread reads=2
 recorded-relaunch|relaunch|unread||yes|rc=0 creates=1 key=none reads=0
@@ -150,7 +151,7 @@ mutate_file "$OT" 'issues get "$next")' 'issues get "$next" --format=safe)'
 # Keep the call and its matched text. Bypassing it must admit the blocked row.
 mutate_file "$OT" 'if ! launch_blockers_gate "$item"; then' 'if false && ! launch_blockers_gate "$item"; then'
 run_row control cmd started '' no
-assert_eq "$RESULT" 'rc=0 creates=1 key=none reads=0' 'must-fail control admits blocked item'
+assert_eq "$RESULT" 'rc=0 creates=1 key=none reads=1' 'must-fail control admits blocked item'
 if [[ -n "${1:-}" ]]; then
   cp -- "$1" "$OT"
   run_row main-control fresh Verifying '' no

@@ -390,6 +390,22 @@ run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-4,KEN-5" \
   "a queued item with a lanes[] record of any status, running, preparing or done, is not Next's"
 
+echo "=== render: Next names a held item and its holder ==="
+# KEN-2 keeps src/a.sh as its touched set and its open #12 changes src/b.sh;
+# KEN-6 names no Location.
+seed_fleet next_held
+jq '(.lanes[] | select(.item == "KEN-2")).touched = ["src/a.sh"]' "$CASE/state.json" > "$CASE/state.next"
+mv -- "$CASE/state.next" "$CASE/state.json"
+for row in 'KEN-4|src/a.sh' 'KEN-5|src/b.sh'; do
+  jq --arg loc "${row#*|}" '.description = "**Location**: `\($loc)`"' "$CASE/linear-${row%%|*}.json" > "$CASE/state.next"
+  mv -- "$CASE/state.next" "$CASE/linear-${row%%|*}.json"
+done
+printf 'src/b.sh\n' > "$CASE/pr-12.txt"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk -F' [|] ' '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print substr($1, 3) }' <<<"$OUT" | paste -sd, -)" \
+  "0|KEN-4 (held by KEN-2: src/a.sh),KEN-5 (held by #12: src/b.sh),KEN-6" \
+  "a queued item sharing a file with a running lane or an open pull request names that holder"
+
 echo "=== render: ORCH_REPORT_COLUMNS picks and orders the columns ==="
 seed_fleet columns
 run ORCH_REPORT_COLUMNS="why it matters, issue" -- render --state "$CASE/state.json" --repo owner/repo
