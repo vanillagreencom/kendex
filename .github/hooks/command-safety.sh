@@ -294,7 +294,7 @@ environment_main_evidence() { # context, then decoded words or conservative text
       # Assignment values never name a builtin or a forwarded executable.
       case "${evidence_roles[$candidate]}" in prefix | syntax) continue ;; esac
       value=${evidence_args[$candidate]}
-      if [ "${evidence_roles[$candidate]}:${evidence_kinds[$candidate]}:$value" = argument:literal:env ] &&
+      if [ "${evidence_roles[$candidate]}:${evidence_kinds[$candidate]}:${value##*/}" = argument:literal:env ] &&
          [ -n "${evidence_unquoted[$candidate]}" ]; then
         limit=${#evidence_args[@]}
         args=("${evidence_args[@]:candidate:limit-candidate}")
