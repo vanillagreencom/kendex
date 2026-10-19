@@ -138,12 +138,16 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
 # replay does and hands the watch OVERSEE_WATCH_REPLACE=PID, the live watch
 # its start may stop and take over.
 # Wait for its claim before reporting success: an accepted job whose command
-# exits during initialization has not left a watch running.
+# exits during initialization has not left a watch running. The claim is the
+# started watch's only where its pid differs from the claim live before the
+# launch, besides naming origin succession and PANE: a new tmux server can
+# hand the replaced watch's pane id to PANE itself, and that watch, started
+# here once before, holds a record whose origin and pane both match.
 watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
   local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc
   shift 6
   local flags=() harness_args=() since="" word skip="" argv=()
-  local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start replace=()
+  local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start replace=() prior=""
   [[ $# -eq 0 ]] || flags=(-- "$@")
   [[ -z "$harness" ]] || harness_args=(--harness "$harness")
   case "$mode" in
@@ -169,6 +173,13 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
       done ;;
     *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=mode); return 1 ;;
   esac
+  rc=0
+  watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?
+  if [[ "$rc" -gt 1 ]]; then
+    WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=claim)
+    return 1
+  fi
+  [[ "$rc" -ne 0 ]] || prior="$WATCH_PID"
   if ! cd -- "$cwd" 2>"$DEP_ERR"; then
     WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=start "dir=$cwd")
     return 1
@@ -195,7 +206,7 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
   while :; do
     rc=0
     watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?
-    if [[ "$rc" -eq 0 && "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$pane" ]]; then
+    if [[ "$rc" -eq 0 && "$WATCH_PID" != "$prior" && "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$pane" ]]; then
       WATCH_HANDOVER_KEY=watch-started
       WATCH_HANDOVER_FIELDS=("pid=$WATCH_PID" "pane=$pane" "log=$WATCH_LOG_FILE" "err=$WATCH_ERR_FILE" "$runner")
       return 0

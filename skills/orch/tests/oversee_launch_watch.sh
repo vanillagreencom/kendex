@@ -592,6 +592,57 @@ resume_watch_control unguarded live oversee '      hand_over_watch ;;' '      [[
 resume_watch_control deferred live lib/watch-handover.sh '  if (( closed )); then' '  if false; then'
 resume_watch_control unclosed released oversee '  [[ "$COMMAND" != resume ]] || closed=(--closed)' '  :'
 
+# The new server can hand the lost pane's id to the resumed pane itself. The
+# watch claiming it was started by an earlier succession, so its record names
+# origin succession and that very pane: both readiness checks hold for it. Its
+# command runs through a copy that waits a second before it execs the
+# stand-in, so the old claim is still live when resume first reads, and resume
+# must report the replay's own pid, never the old one. The id is the one the
+# server hands out after a probe pane's. The control drops the pid comparison
+# and must report the old watch. Sets REUSED_RESULT.
+SLOW_WATCH="$TMP_ROOT/slow-watch/oversee-watch"
+mkdir -p "${SLOW_WATCH%/*}"
+printf '#!/bin/sh\nsleep 1\nexec %s "$@"\n' "$FIXTURE_WATCH" > "$SLOW_WATCH"
+chmod +x "$SLOW_WATCH"
+resume_reused_row() { # [OVERSEE_BIN]
+  local probe reused reported
+  STAND_IN_ENV=(FIXTURE_RECORD_SCRIPT="$SLOW_WATCH")
+  new_predecessor
+  STAND_IN_ENV=()
+  fresh_output
+  jq '.overseer.session_id = "native-claude"' "$FLEET_STATE" > "$FLEET_STATE.next" && mv -- "$FLEET_STATE.next" "$FLEET_STATE"
+  tm kill-window -t "$PRED"
+  probe="$(tm new-window -d -P -F '#{pane_id}' -t fleet)"
+  tm kill-pane -t "$probe"
+  reused="%$(( ${probe#%} + 1 ))"
+  awk -v p="$reused" '/^pane=/ { $0 = "pane=" p } /^origin=/ { $0 = "origin=succession" } { print }' \
+    "$WATCH_PID_FILE" > "$WATCH_PID_FILE.next" && mv -- "$WATCH_PID_FILE.next" "$WATCH_PID_FILE"
+  run_oversee "${1:---}" ${1:+--} resume --wait-secs 20
+  SUCC="$(recorded pane)"
+  NEW=""
+  if watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PID" != "$OLD" && "$WATCH_PANE" == "$SUCC" ]]; then NEW="$WATCH_PID"; fi
+  reported="$(sed -n 's/^oversee: watch-started pid=\([0-9]*\) .* stopped=.*/\1/p' <<<"$OUT")"
+  case "$reported" in
+    "$OLD") reported=old ;;
+    "${NEW:-none}") reported=new ;;
+    *) reported="other:$reported" ;;
+  esac
+  REUSED_RESULT="$RC|$SUCC|$reported"
+  for _ in $(seq 1 100); do
+    if watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PID" != "$OLD" ]]; then watch_stop "$WATCH_PID" "$FLEET_STATE" || true; break; fi
+    sleep 0.1
+  done
+  REUSED_PANE="$reused"
+}
+resume_reused_row
+assert_eq "$REUSED_RESULT" "0|$REUSED_PANE|new" \
+  "resume reports the replay's own claim where the replaced watch's record names the resumed pane" "$WATCH_ERR"
+REUSED_CONTROL="$(mutant_scripts resume-reused lib/watch-handover.sh)" || exit 1
+mutate_file "$REUSED_CONTROL/lib/watch-handover.sh" '"$WATCH_PID" != "$prior" && ' ''
+resume_reused_row "$REUSED_CONTROL/oversee"
+assert_eq "${REUSED_RESULT##*|}" old \
+  "control: without the pid comparison resume reports the replaced watch's claim as the replay's" "$WATCH_ERR"
+
 # The owner's acceptance row: the real watch, started by hand from the
 # predecessor's pane as an overseer starts it, is handed over, and the
 # successor dies right after. The restarted watch reads the successor's pane
