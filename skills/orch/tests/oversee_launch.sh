@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Tests for scripts/oversee: `launch`, a fleet's first overseer opened through
-# the overseer-host adapter from OUTSIDE tmux, and `register`, the session
-# record for a session a person opened by hand. Run over a real tmux server at
-# the person's default socket under a private TMUX_TMPDIR, so a run with no
-# $TMUX and ORCH_TMUX_SESSION set reaches it the way lib/tmux-server.sh says a
-# verb outside tmux reaches the person's own server. claude, codex and
-# copilot are stubs on PATH, and `lanes pick` answers from the lanes-fixture
-# usage bodies.
+# the overseer-host adapter from OUTSIDE tmux, `register`, the session record
+# for a session a person opened by hand, and `resume`, the recorded session
+# reopened by its native id after its server was lost. Run over a real tmux
+# server at the person's default socket under a private TMUX_TMPDIR, so a run
+# with no $TMUX and ORCH_TMUX_SESSION set reaches it the way
+# lib/tmux-server.sh says a verb outside tmux reaches the person's own server.
+# claude, codex and copilot are stubs on PATH, and `lanes pick` answers from
+# the lanes-fixture usage bodies.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/copilot-context-world.sh
@@ -1326,6 +1327,70 @@ STUB
   mv -- "$TMP_ROOT/two-server.saved" "$FLEET_STATE"
 }
 for recorded_mode in register launch; do test_recorded_server "$recorded_mode"; done
+
+echo "=== resume ==="
+# The record a session lost with its tmux server leaves: its pane listed
+# nowhere, its server start an earlier server's, and the native id its hooks
+# bound. OUT is the resume run's output; RESUMED the new pane.
+RESUME_LANES="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot"
+lost_record() { # HARNESS ACCOUNT MODEL EFFORT SESSION_ID
+  jq --arg server "$SERVER_PID" --arg harness "$1" --arg account "$2" --arg model "$3" --arg effort "$4" \
+    --arg id "$5" --arg cwd "$WORK_REAL" '.overseer = {runtime: "tmux", server: $server, server_start: 1,
+      pane: "%999", window: "@999", generation: 5, harness: $harness, account: $account, home: $account,
+      model: $model, effort: $effort, cwd: $cwd, launch_line: "lost", session_id: $id}
+      | if $id == "" then del(.overseer.session_id) else . end' "$TMP_ROOT/resume.saved" > "$FLEET_STATE"
+}
+resume_row() { # HARNESS ACCOUNT MODEL EFFORT RESUME_WORDS [OVERSEE_BIN]
+  lost_record "$1" "$2" "$3" "$4" "native-$1"
+  OVERSEE_BIN="${6:-}" run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
+  RESUMED="$(field "$(keyed resumed "$OUT")" session)"
+  assert_eq "$RC|$(keyed resumed "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')|$(tr '\n' ';' 2>/dev/null < "$TMP_ROOT/argv.$1" | grep -cF -- ";$5;$BRIEF;" || true)" \
+    "0|oversee: resumed session=%N window=@N server=$SOCKET generation=6 lane=$2 session_id=native-$1|1" \
+    "resume on a lost $1 record runs its resume form on the recorded native id with the takeover brief" "$OUT"
+  assert_eq "$(recorded pane)|$(recorded server)|$(recorded server_socket)|$(recorded server_start)|$(recorded generation)|$(recorded cwd)|$(tm display-message -p -t "${RESUMED:-none}" '#{pane_current_path}' 2>/dev/null)|$(recorded launch_line | grep -c "native-$1" || true)|$(recorded session_id)|$(recorded harness_pid | grep -cE '^[0-9]+$' || true)" \
+    "$RESUMED|$SERVER_PID|$SOCKET|$SERVER_START|6|$WORK_REAL|$WORK_REAL|0|none|1" \
+    "the resumed $1 session is registered by its new pane, server and harness pid, in the recorded cwd, its launch line the fresh command"
+}
+test_resume() {
+  cp -- "$FLEET_STATE" "$TMP_ROOT/resume.saved"
+  for row in \
+    "claude|$H/.claude|fable|high|--resume;native-claude" \
+    "codex|$H/.codex|gpt-5.6-sol|high|resume;native-codex" \
+    "copilot|$H/.1copilot|gpt-5.3-codex|high|--resume=native-copilot;-i"; do
+    IFS='|' read -r harness account model effort words <<<"$row"
+    resume_row "$harness" "$account" "$model" "$effort" "$words"
+    # The resumed session is live on this server: a second resume refuses.
+    if [[ "$harness" == claude ]]; then
+      run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
+      assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+        "1|oversee: overseer-live session=$RESUMED server=$SOCKET generation=6|1" \
+        "resume beside the live recorded session refuses overseer-live and opens nothing"
+    fi
+    [[ -z "$RESUMED" ]] || tm kill-window -t "$RESUMED"
+  done
+  # Refusals before anything opens: no native id, and a harness with no
+  # resume form by id.
+  for row in \
+    "claude|$H/.claude|fable|high||session-id-unrecorded generation=5" \
+    "pi|$H/.claude|pi-claude/fable|high|native-pi|resume-unsupported harness=pi"; do
+    IFS='|' read -r harness account model effort id want <<<"$row"
+    lost_record "$harness" "$account" "$model" "$effort" "$id"
+    before="$(cat "$FLEET_STATE")"
+    run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
+    assert_eq "$RC|$(first_line)|$(overseers)|$(cat "$FLEET_STATE")" "1|oversee: $want|0|$before" \
+      "resume on a $harness record ${id:-with no native id} refuses $want, opens nothing and keeps the record" "$OUT"
+  done
+  # Control: the dispatch without resume, as main has it, fails the row.
+  RESUMECTL="$(mutant_scripts resumectl oversee)" || exit 1
+  mutate_file "$RESUMECTL/oversee" '  launch|register|resume) ;;' '  launch|register) ;;'
+  RESUME_SAVED_FAIL="$FAIL"; FAIL=0
+  resume_row claude "$H/.claude" fable high "--resume;native-claude" "$RESUMECTL/oversee" > "$TMP_ROOT/resume-control.out"
+  RESUME_CONTROL="$FAIL|$RC|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-3)"; FAIL="$RESUME_SAVED_FAIL"
+  assert_eq "$RESUME_CONTROL" "2|2|oversee: unknown-command command=resume" \
+    "control: without the resume command the resume rows fail as an unknown command"
+  mv -- "$TMP_ROOT/resume.saved" "$FLEET_STATE"
+}
+test_resume
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

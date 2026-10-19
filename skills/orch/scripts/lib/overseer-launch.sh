@@ -36,7 +36,8 @@
 #                          predecessor's words carried over as its harness
 #                          and the entry's allow
 #   ol_command_line        the harness command for a picked lane, brief
-#                          included, made trusted and put under the lane form
+#                          included, fresh or resuming a native session, made
+#                          trusted and put under the lane form
 #   ol_identity            the launch identity the next record write stores
 #   ol_runtime_supported   the runtime resolved and held to the one these
 #                          launchers can verify a session on
@@ -795,9 +796,10 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
   OL_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
 }
 
-# ol_command_line [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...: the whole
-# command the session runs, into OL_CMD: the harness, FLAG... each quoted,
-# and the brief supplied by --brief or naming HANDOFF; OL_LANE_VAR is the account variable the
+# ol_command_line [--brief TEXT] [--resume ID] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...:
+# the whole command the session runs, into OL_CMD: the harness, FLAG... each quoted,
+# with --resume the harness's words that resume its native session ID, and
+# the brief supplied by --brief or naming HANDOFF; OL_LANE_VAR is the account variable the
 # harness reads, OL_LAUNCH_HOME the home the launch runs under and OL_FORM
 # the form the lane reaches the harness by (lib/lane-launch.sh). OL_IDENTITY
 # is the launch identity the command carries (ol_identity), the model and
@@ -835,12 +837,21 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 #
 # The brief is a positional prompt on claude, codex and pi; copilot takes it
 # as the interactive option's value, which starts the session and submits it.
+# A resumed session takes it as its next turn: claude after `--resume ID`,
+# codex after its `resume ID` subcommand, which takes the flags before it, and
+# copilot beside `--resume=ID`, whose value is optional, so the id is
+# attached. Pi resumes a session file, not an id, so --resume on pi returns 1
+# with OL_REASON=resume-unsupported.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 OL_HANDOFF_PROMPT='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at '
-ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
-  local brief_given=0 caller_brief=""
+ol_command_line() { # [--brief TEXT] [--resume ID] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
+  local brief_given=0 caller_brief="" resume=""
   if [[ "${1:-}" == --brief ]]; then
     caller_brief="$2" brief_given=1
+    shift 2
+  fi
+  if [[ "${1:-}" == --resume ]]; then
+    resume="$2"
     shift 2
   fi
   local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief brief_flag="" brief_join=" " model
@@ -859,6 +870,14 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
   done
+  if [[ -n "$resume" ]]; then
+    case "$harness" in
+      claude) cmd+=" --resume $(printf %q "$resume")" ;;
+      codex) cmd+=" resume $(printf %q "$resume")" ;;
+      copilot) cmd+=" --resume=$(printf %q "$resume")" ;;
+      *) OL_REASON=resume-unsupported; return 1 ;;
+    esac
+  fi
   # Caller text can start with an option word. Copilot needs an attached value;
   # the positional parsers need their end-of-options delimiter.
   if (( brief_given )); then

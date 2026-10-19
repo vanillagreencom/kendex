@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# oversee — the overseer session itself: launch one, or register one a person
-# opened by hand.
+# oversee — the overseer session itself: launch one, register one a person
+# opened by hand, or resume the recorded one after its session was lost.
 #
 # Usage:
 #   oversee launch [--session NAME | --predecessor SESSION] [--cwd DIR]
 #                  [--handoff PATH] [--wait-secs N]
 #   oversee register [--account DIR]
+#   oversee resume [--session NAME] [--handoff PATH] [--wait-secs N]
 #
 #   launch   opens a fleet's FIRST overseer, or with --predecessor its
 #            successor. A first launch is a succession launch with no
@@ -159,6 +160,25 @@
 #            Prints `registered` naming the session and generation, with
 #            `retained` and `fresh` sorted comma-separated field names, or
 #            `none`, from the record writer.
+#   resume   reopens the overseer the fleet state records once a tmux server
+#            loss or a restart has closed its session. Steps 1 to 3 are
+#            launch's, so a recorded session this server still lists refuses
+#            `overseer-live`. A record naming no native `session_id`, the id
+#            the session's own hooks bind (lib/overseer-launch.sh §
+#            ol_record_heal), refuses `session-id-unrecorded` and opens
+#            nothing. In place of steps 4 and 5 the record's launch identity
+#            builds the command: ol_command_line's resume form of the
+#            recorded harness on that id, with the record's model and effort
+#            words, the harness's full-bypass words and the brief naming
+#            --handoff, in the recorded cwd. A harness with no resume form
+#            there, pi, which resumes a session file, refuses
+#            `resume-unsupported`. Steps 6 and 7 follow as on a first launch:
+#            the record names the new pane, its window and server, and the
+#            fresh command for the same identity as its launch line, the one
+#            a successor or a dead-pane relaunch replays. Step 9 is the
+#            resumed session's own: its takeover route claims the watch.
+#            Prints `resumed` naming the session, window, server, generation,
+#            lane and native session id.
 #
 # Options:
 #   --session NAME   The tmux session the window opens in (default
@@ -185,7 +205,7 @@
 # on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
 # `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
 # `overseer-launched`, `registered`, `watch-handover` and `watch-started` are on
-# stdout; `overseer-lane-unobserved`, `watch-restart-failed`,
+# stdout, and so is `resumed`; `overseer-lane-unobserved`, `watch-restart-failed`,
 # `checkout-unsynced` and `fleet-log-unwritten`, the last naming a
 # `checkout-unsynced` row the fleet log could not take, are notices on stderr
 # the run continues past.
@@ -201,13 +221,13 @@ message() { # KEY FIELD=VALUE...
   shift
   case "$key" in
     unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
-    unknown-command) text='The commands are launch and register.' ;;
+    unknown-command) text='The commands are launch, register and resume.' ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     invalid-cwd) text='--cwd names no directory.' ;;
     settings-rejected) text='The settings load failed; nothing is launched from partial settings.' ;;
     runtime-unsupported) text='This launcher reads the new session'\''s account off its tmux pane, so it opens sessions on the tmux runtime alone. ORCH_OVERSEER_HOST names another; nothing was launched.' ;;
-    tmux-missing) text='register runs inside the overseer'\''s own tmux pane; launch reaches a tmux server through $TMUX or ORCH_TMUX_SESSION.' ;;
+    tmux-missing) text='register runs inside the overseer'\''s own tmux pane; launch and resume reach a tmux server through $TMUX or ORCH_TMUX_SESSION.' ;;
     session-unresolved) text='The checkout repository name is invalid, so no default tmux session can be named. Give --session or set ORCH_TMUX_SESSION. Nothing was opened.' ;;
     tmux-session-missing) text='The tmux session named does not exist on the server this run reaches. Nothing was opened; the server field names the socket.' ;;
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
@@ -245,6 +265,9 @@ message() { # KEY FIELD=VALUE...
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
     pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
     registered) text='The session record names this session.' ;;
+    session-id-unrecorded) text='The fleet state records no native session id for its overseer, so there is no session to resume. Nothing was opened. Launch a fresh overseer through oversee launch.' ;;
+    resume-unsupported) text='The recorded harness has no resume form by session id in the overseer launch builder. Nothing was opened. Launch a fresh overseer through oversee launch.' ;;
+    resumed) text='The recorded overseer session runs again in a new pane, and the record names that pane.' ;;
     identity-fallback) text='No SessionStart row of this session stands, so its harness, account and directory are read off its pane and environment, the named fallback. No model or effort is read; a record proven to name this same pane keeps fields the fallback cannot read.' ;;
     context-reader=missing) text='The Copilot context reader could not be configured. The running session is registered, but its context mark has no new reader. Repair the named home and register again.' ;;
     context-reader=next-start) text='The configured Copilot reader loads at the next session start. This running session does not load a newly installed extension.' ;;
@@ -275,7 +298,7 @@ esac
 COMMAND="$1"
 shift
 case "$COMMAND" in
-  launch|register) ;;
+  launch|register|resume) ;;
   *) die_status 2 unknown-command "command=$COMMAND" ;;
 esac
 
@@ -567,40 +590,75 @@ fi
 
 if [[ "$COMMAND" == register ]]; then register; fi
 
-HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
-matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
-  || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
-HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
+# resume's steps 4 and 5: the command built out of the launch identity the
+# record OL_PRIOR holds, into OL_CMD, RESUME_LINE and lane_dir, and CWD the
+# directory the session started in.
+RESUME_LINE="" RESUME_ID=""
+resume_line() {
+  local fields generation harness account model effort words
+  fields="$(jq -r '[.generation, .session_id, .harness, .account, .model, .effort, .cwd, .class]
+    | map(. // "" | tostring) | join("\u001f")' <<<"$OL_PRIOR" 2>"$DEP_ERR")" || die state-unwritable field=overseer
+  IFS=$'\x1f' read -r generation RESUME_ID harness account model effort CWD OL_MODEL_CLASS <<<"$fields"
+  [[ -n "$RESUME_ID" ]] || die session-id-unrecorded "generation=${generation:-none}"
+  # The session ran unattended, whatever words of its launch the record
+  # kept, so the harness's full-bypass words stand as its own flags, the ones
+  # ol_launch_flags keeps beside the recorded model and effort.
+  words="$(launch_choice_permission_write "$harness")" && launch_choice_shell_words "$words" \
+    || die launch-choice-failed "harness=${harness:-none}"
+  ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$harness" "$model" "$effort" "" "$harness" \
+    ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} \
+    || die "$OL_REASON" "session_id=$RESUME_ID" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
+  lane_dir="$account"
+  if ! ol_command_line --resume "$RESUME_ID" "$harness" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then
+    [[ "$OL_REASON" != resume-unsupported ]] || die resume-unsupported "harness=${harness:-none}"
+    die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
+  fi
+  RESUME_LINE="$OL_CMD"
+  # The record's launch line is the fresh command for the same identity: a
+  # successor or a dead-pane relaunch replaying it never resumes a session
+  # that has since ended or handed over.
+  ol_command_line "$harness" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} \
+    || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
+}
+
 QUESTION_OFF=()
 if ! question_policy="$(launch_overseer_question_tool)"; then
   die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
 fi
 [[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
-ol_preference_entries "$(ol_preference)" || die invalid-preference "entry=$OL_BAD_ENTRY"
-(( OL_NAMED > 0 )) || die preference-empty setting=ORCH_OVERSEER_PREFERENCE
+if [[ "$COMMAND" == resume ]]; then
+  resume_line
+else
+  HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
+  matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
+    || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
+  HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
+  ol_preference_entries "$(ol_preference)" || die invalid-preference "entry=$OL_BAD_ENTRY"
+  (( OL_NAMED > 0 )) || die preference-empty setting=ORCH_OVERSEER_PREFERENCE
 
-# The walk and the flags are lib/overseer-launch.sh's ol_walk and
-# ol_launch_flags, the ones `oversee-succeed` takes. A launch here has no
-# caller entry and no predecessor flags to carry, so every entry is a
-# preference entry and every command writes the table's words alone; the
-# walk skips an entry whose harness row names no full-bypass word, pi's.
-rc=0
-ol_walk "$HEADROOM_TRIGGER" "" "${OL_ENTRIES[@]}" || rc=$?
-for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
-  IFS=$'\t' read -r -a fields <<<"$skip"
-  message "${fields[@]}" >&2
-done
-case "$rc" in
-  0) ;;
-  3) die_status 3 no-lane-qualifies "entries=$OL_NAMED" \
-       "walled=$OL_WALKED_WALLED" "unmeasured=$OL_WALKED_UNMEASURED" ;;
-  *) die "$OL_REASON" "${OL_FIELDS[@]}" ;;
-esac
-ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" "$OL_PICK_MODEL" "" \
-  || die "$OL_REASON" "entry=$OL_CHOSEN" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
-lane_dir="$OL_LANE_DIR"
-ol_command_line "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} \
-  || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
+  # The walk and the flags are lib/overseer-launch.sh's ol_walk and
+  # ol_launch_flags, the ones `oversee-succeed` takes. A launch here has no
+  # caller entry and no predecessor flags to carry, so every entry is a
+  # preference entry and every command writes the table's words alone; the
+  # walk skips an entry whose harness row names no full-bypass word, pi's.
+  rc=0
+  ol_walk "$HEADROOM_TRIGGER" "" "${OL_ENTRIES[@]}" || rc=$?
+  for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
+    IFS=$'\t' read -r -a fields <<<"$skip"
+    message "${fields[@]}" >&2
+  done
+  case "$rc" in
+    0) ;;
+    3) die_status 3 no-lane-qualifies "entries=$OL_NAMED" \
+         "walled=$OL_WALKED_WALLED" "unmeasured=$OL_WALKED_UNMEASURED" ;;
+    *) die "$OL_REASON" "${OL_FIELDS[@]}" ;;
+  esac
+  ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" "$OL_PICK_MODEL" "" \
+    || die "$OL_REASON" "entry=$OL_CHOSEN" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
+  lane_dir="$OL_LANE_DIR"
+  ol_command_line "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} \
+    || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
+fi
 
 # Every failure from here closes the session and puts the record back: the
 # close-out is the library's ol_session_abandon, the words are this script's.
@@ -633,7 +691,7 @@ ol_succession_hook() { # STEP
         "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" ;;
     verified)
       [[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2
-      hand_over_watch ;;
+      [[ "$COMMAND" == resume ]] || hand_over_watch ;;
   esac
 }
 # Step 9 of the header: lib/watch-handover.sh's watch_handover, the one
@@ -683,10 +741,10 @@ if [[ -n "$PREDECESSOR" ]]; then
     esac
   fi
 else
-  # A first launch opens at the base index, and a record it
+  # A first launch or a resume opens at the base index, and a record it
   # cannot write closes it again: nothing else would tell it from any other
   # session.
-  ol_session_open "$CWD" overseer "$OL_CMD" --session "$SESSION_NAME" || abandon launch-failed "step=$OL_REASON"
+  ol_session_open "$CWD" overseer "${RESUME_LINE:-$OL_CMD}" --session "$SESSION_NAME" || abandon launch-failed "step=$OL_REASON"
   ol_succession_hook opened
   ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$OL_CMD" \
     || abandon record-unwritten field=overseer step=write
@@ -694,5 +752,10 @@ else
   ol_succession_hook verified
 fi
 trap - HUP TERM INT
+if [[ "$COMMAND" == resume ]]; then
+  message resumed "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" \
+    "generation=$OL_GENERATION" "lane=${lane_dir:-none}" "session_id=$RESUME_ID"
+  exit 0
+fi
 message overseer-launched "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" \
   "generation=$OL_GENERATION" "lane=$lane_dir" ${PREDECESSOR:+"predecessor=$PREDECESSOR"}
