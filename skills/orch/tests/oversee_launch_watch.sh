@@ -131,14 +131,24 @@ fresh_output() { rm -f -- "${TMP_ROOT:?}/work/tmp/oversee-watch.log" "${TMP_ROOT
 # tmux server, directory and arguments, to watch.log, and one `stopped` line
 # when it is stopped. Started by a succession, it first stops the live watch
 # it replaces where the real start does, a succession's watch for its own
-# pane or a watch whose pane its tmux server no longer lists, and otherwise
-# refuses as the real one does (that rule is oversee_watch_lifecycle.sh's).
+# pane, the watch OVERSEE_WATCH_REPLACE names or a watch whose pane its tmux
+# server no longer lists, and otherwise refuses as the real one does (that
+# rule is oversee_watch_lifecycle.sh's). FIXTURE_RECORD_SCRIPT, when set, is
+# the script its record names in place of its own, which a replay runs.
+# FIXTURE_FINISH_HOLD, when set, models a pass still part way through a
+# lane-close: stopped, it releases its record, then runs on until that file
+# exists, when it appends `finished` and its pid to watch.log.
 FIXTURE_WATCH="$TMP_ROOT/fixture/oversee-watch"
 cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 source "$SRC_DIR/lib/watch-pid.sh"
-trap 'watch_pid_release "\$state"; echo "stopped \$\$" >> "$TMP_ROOT/watch.log"; exit 143' TERM
+finish() {
+  [[ -n "\${FIXTURE_FINISH_HOLD:-}" ]] || return 0
+  for _ in \$(seq 1 1200); do [[ ! -e "\$FIXTURE_FINISH_HOLD" ]] || break; sleep 0.1; done
+  echo "finished \$\$" >> "$TMP_ROOT/watch.log"
+}
+trap 'watch_pid_release "\$state"; echo "stopped \$\$" >> "$TMP_ROOT/watch.log"; finish; exit 143' TERM
 state=""
 prev=""
 base=()
@@ -150,7 +160,8 @@ for arg in "\$@"; do
 done
 if [[ "\${OVERSEE_WATCH_ORIGIN:-hand}" == succession ]] && watch_pid_live "\$state"; then
   panes="\$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || panes="\$WATCH_PANE"
-  if [[ "\$WATCH_ORIGIN" != succession || "\$WATCH_PANE" != "\${TMUX_PANE:-}" ]] \
+  if [[ "\$WATCH_PID" != "\${OVERSEE_WATCH_REPLACE:-}" ]] \
+     && [[ "\$WATCH_ORIGIN" != succession || "\$WATCH_PANE" != "\${TMUX_PANE:-}" ]] \
      && grep -qxF -- "\$WATCH_PANE" <<<"\$panes"; then
     echo "oversee-watch: watch-running pid=\$WATCH_PID pane=\$WATCH_PANE" >&2
     exit 1
@@ -163,7 +174,7 @@ if [[ -n "\${OVERSEE_WATCH_LOG_CASE:-}" ]]; then
   printf 'EVENT fixture current-%s\n' "\$OVERSEE_WATCH_LOG_CASE"
   printf 'fixture current-%s\n' "\$OVERSEE_WATCH_LOG_CASE" >&2
 fi
-watch_pid_write "\$state" "\${TMUX_PANE:-none}" "\${OVERSEE_WATCH_ORIGIN:-hand}" "\$0" "\${base[@]}"
+watch_pid_write "\$state" "\${TMUX_PANE:-none}" "\${OVERSEE_WATCH_ORIGIN:-hand}" "\${FIXTURE_RECORD_SCRIPT:-\$0}" "\${base[@]}"
 while :; do sleep 1; done
 EOF
 chmod +x "$FIXTURE_WATCH"
@@ -173,7 +184,9 @@ WATCH_ARGS="--repeat 60 --state $FLEET_STATE --since 2026-01-01T00:00:00Z --repo
 # and the stand-in started by hand from its pane, as an overseer starts its
 # watch, two forks deep so a stopped one is reaped rather than left a zombie
 # that still answers kill -0. STAND_IN_PANE, when set, is the pane the
-# stand-in claims in place of the predecessor's. Sets PRED and OLD.
+# stand-in claims in place of the predecessor's, and STAND_IN_ENV words are
+# added to its environment. Sets PRED and OLD.
+STAND_IN_ENV=()
 new_predecessor() {
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
@@ -184,7 +197,7 @@ new_predecessor() {
   [[ "$RC" -eq 0 && "$PRED" == %* ]] || { printf 'fixture: the first launch failed\n%s\n' "$OUT" >&2; exit 1; }
   # shellcheck disable=SC2086
   ( ( cd "${WATCH_START_CWD:-$TMP_ROOT/work}" || exit 1
-      exec env TMUX_PANE="${STAND_IN_PANE:-$PRED}" CLAUDE_CONFIG_DIR="$H/.claude-old" \
+      exec env TMUX_PANE="${STAND_IN_PANE:-$PRED}" CLAUDE_CONFIG_DIR="$H/.claude-old" ${STAND_IN_ENV[@]+"${STAND_IN_ENV[@]}"} \
         "$FIXTURE_WATCH" $WATCH_ARGS -- --model old --verbose </dev/null >/dev/null 2>&1 ) &
     echo $! > "$TMP_ROOT/stand-in.pid" )
   OLD="$(cat "$TMP_ROOT/stand-in.pid")"
@@ -529,10 +542,11 @@ fi
 # released it with its command and unread log lines retained (released). A
 # new server numbers its panes afresh, so the live claim's id is one the
 # server lists, here the fleet's own first pane, which no restarted watch
-# takes over: resume stops that watch and replays it from the resumed pane
-# before it returns. A released one is replayed there with the log kept. Its
-# controls restore the resume guard on step 9, defer the live claim to the
-# helper and drop --closed, each of which must fail its row.
+# takes over: resume replays that watch from the resumed pane, naming it for
+# the replay to stop and replace, before it returns. A released one is
+# replayed there with the log kept. Its controls restore the resume guard on
+# step 9, defer the live claim to the helper and drop --closed, each of which
+# must fail its row.
 KEEP_PANE="$(tm display-message -p -t "$KEEP_WINDOW" '#{pane_id}')"
 resume_watch_row() { # live|released [OVERSEE_BIN]
   STAND_IN_PANE=""
@@ -610,6 +624,70 @@ chmod +x "$WSTUBS"/*
 WATCH_ENV=(PATH="$WSTUBS:$NO_MANAGER:$BIN:$PATH" ORCH_REPORT=off ORCH_WATCH_MAIL_INTERVAL=0
   OVERSEE_WATCH_SUCCEED="$WSTUBS/succeed" OVERSEE_WATCH_PR_WATCH="$WSTUBS/silent"
   OVERSEE_WATCH_TRACKER="$WSTUBS/silent" OVERSEE_WATCH_LANES="$WSTUBS/lanes")
+
+# `oversee resume` while the watch claiming the lost pane is part way through
+# a lane-close: stopped, the stand-in releases its record and runs on until
+# the row releases it. Its record names the real watch, which the resume
+# replays and which must wait the old one out under watch-finishing before
+# its first pass, the one this gh marks `pass` in watch.log at its auth read.
+# The row holds the old watch until the replay waits, its first pass lands or
+# a minute passes, then reads the order once both have landed, within another
+# minute: a real watch's first pass can take tens of seconds on a loaded
+# host, and the stand-in's own two-minute hold outlasts both. The control
+# stops the old watch in the handover, before the replay starts, which must
+# let the first pass in before the old close ends. Sets FINISH_RESULT and
+# FINISH_ORDER.
+FINISH_BIN="$TMP_ROOT/finish-bin"
+mkdir -p "$FINISH_BIN"
+printf '#!/bin/sh\n[ "$1 $2" != "auth status" ] || { echo pass >> %s/watch.log; echo "Logged in"; }\n' "$TMP_ROOT" > "$FINISH_BIN/gh"
+chmod +x "$FINISH_BIN/gh"
+resume_finishing_row() { # [OVERSEE_BIN]
+  local deadline start
+  rm -f -- "${TMP_ROOT:?}/finish-release"
+  STAND_IN_PANE="$KEEP_PANE"
+  STAND_IN_ENV=(FIXTURE_RECORD_SCRIPT="$SRC_DIR/oversee-watch" FIXTURE_FINISH_HOLD="$TMP_ROOT/finish-release")
+  new_predecessor
+  STAND_IN_PANE="" STAND_IN_ENV=()
+  fresh_output
+  # The long-pass row an earlier watch on this state wrote defers the
+  # replay's first long pass, and its auth read, by up to the cadence.
+  rm -f -- "${TMP_ROOT:?}/state/"*.mail
+  jq '.overseer.session_id = "native-claude"' "$FLEET_STATE" > "$FLEET_STATE.next" && mv -- "$FLEET_STATE.next" "$FLEET_STATE"
+  tm kill-window -t "$PRED"
+  start="$(awk 'END { print NR }' "$TMP_ROOT/watch.log")"
+  ROW_ENV=("${WATCH_ENV[@]}" PATH="$FINISH_BIN:$WSTUBS:$NO_MANAGER:$BIN:$PATH")
+  run_oversee "${1:---}" ${1:+--} resume --wait-secs 20
+  ROW_ENV=()
+  SUCC="$(recorded pane)"
+  NEW=""
+  if watch_pid_live "$FLEET_STATE" && [[ "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$SUCC" ]]; then NEW="$WATCH_PID"; fi
+  deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    grep -q "^oversee-watch: watch-finishing pid=$OLD\$" "$WATCH_ERR" 2>/dev/null && break
+    awk -v s="$start" 'NR > s && $0 == "pass" { f = 1 } END { exit !f }' "$TMP_ROOT/watch.log" && break
+    sleep 0.1
+  done
+  touch "$TMP_ROOT/finish-release"
+  deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    awk -v s="$start" -v f="finished $OLD" 'NR > s && $0 == f { o = 1 } NR > s && $0 == "pass" { p = 1 } END { exit !(o && p) }' \
+      "$TMP_ROOT/watch.log" && break
+    sleep 0.1
+  done
+  FINISH_ORDER="$(awk -v s="$start" -v f="finished $OLD" 'NR > s && ($0 == f || $0 == "pass") && !seen[$0]++ { printf "%s ", ($0 == "pass" ? "pass" : "finished") }' "$TMP_ROOT/watch.log")"
+  FINISH_RESULT="$RC|$(grep -c "^oversee: watch-started pid=${NEW:-none} pane=$SUCC log=$WATCH_LOG_FILE err=$WATCH_ERR stopped=$OLD $SETSID_LINE\$" <<<"$OUT" || true)|$(grep -c "^oversee-watch: watch-taken-over pid=$OLD pane=$KEEP_PANE reason=replace\$" "$WATCH_ERR" || true)|$(grep -c "^oversee-watch: watch-finishing pid=$OLD\$" "$WATCH_ERR" || true)|$FINISH_ORDER"
+  [[ -z "$NEW" ]] || watch_stop "$NEW" "$FLEET_STATE" || true
+}
+echo "=== oversee resume: a replaced watch finishing a lane-close ==="
+resume_finishing_row
+assert_eq "$FINISH_RESULT" "0|1|1|1|finished pass " \
+  "resume's replay takes over the watch it names and waits out its close before its first pass" "$WATCH_ERR"
+FINISH_CONTROL="$(mutant_scripts resume-finishing lib/watch-handover.sh)" || exit 1
+mutate_file "$FINISH_CONTROL/lib/watch-handover.sh" '    watch_start "replace=$old" "$state" "${@:2}" || return 1' \
+  $'    watch_stop "$old" "$state" 2>"$DEP_ERR" || return 1\n    watch_start replay "$state" "${@:2}" || return 1'
+resume_finishing_row "$FINISH_CONTROL/oversee"
+assert_eq "$FINISH_ORDER" "pass finished " \
+  "control: a handover that stops the old watch itself lets the replay's first pass in before the old close ends" "$WATCH_ERR"
 
 # The auth acknowledgement orders the first long pass after the harness exit.
 REAL_GH="$WSTUBS/gh.real"

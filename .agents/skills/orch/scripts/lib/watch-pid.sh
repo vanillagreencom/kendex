@@ -2,9 +2,11 @@
 # The record a repeat-mode `oversee-watch` keeps of itself, beside the fleet
 # state it watches, and the one way to stop it. It is read by
 # `oversee-watch`, which refuses a second watch on one fleet state and takes
-# over the one a succession restarted for its pane or one whose pane is gone,
-# and by lib/watch-handover.sh, through which `oversee-succeed` and `oversee
-# launch` start or restart the running watch from the successor pane.
+# over the one a succession restarted for its pane, one whose pane is gone, or
+# the one its launcher named for replacement, and by lib/watch-handover.sh,
+# through which `oversee-succeed`, `oversee launch` and `oversee resume` start
+# or restart the running watch from the successor pane, the last naming the
+# watch it replaces.
 #
 # Files, in the directory holding the fleet state:
 #   oversee-watch.pid   `key=value` lines: pid (the repeat loop's own pid,

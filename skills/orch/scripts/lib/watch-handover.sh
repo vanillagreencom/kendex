@@ -12,8 +12,8 @@
 #   watch_handover    the running repeat-mode watch named, and a helper
 #                     started that restarts it from the successor pane once
 #                     the predecessor's session is gone; for a predecessor
-#                     whose server closed, the watch stopped and restarted
-#                     there before it returns
+#                     whose server closed, the watch restarted there, with
+#                     leave to replace the live one, before it returns
 #
 # The helper is `oversee-succeed`'s internal `--watch-restart` run (its header,
 # step 6), started through lib/job-unit.sh outside the launcher and anything
@@ -58,21 +58,24 @@ watch_job_launch() { # NAME STATE OUT ERR COMMAND...
 # session closed with its tmux server, PREDECESSOR empty. A later server can
 # hand the lost pane's id to another pane or to SUCCESSOR itself, so a
 # restarted watch cannot tell a claim on it stale and is refused: --closed
-# starts no helper, but stops the claiming watch and replays its command from
-# SUCCESSOR, returning once the replay holds its claim. A stopped watch
-# keeps its log cursor and unread events for it as for any successor.
+# starts no helper, but replays the claiming watch's command from SUCCESSOR
+# with that watch's pid as OVERSEE_WATCH_REPLACE, returning once the replay
+# holds its claim. The replay's start stops the watch so named and waits out
+# a lane-close it is finishing (`oversee-watch` § watch_claim, the one place a
+# live watch is replaced). A stopped watch keeps its log cursor and unread
+# events for it as for any successor.
 #
 # The outcome is WATCH_HANDOVER_KEY with its fields in WATCH_HANDOVER_FIELDS:
 #   0  watch-handover  pid=<the watch handed over> pane=<SUCCESSOR> log=<path>
 #                      and the runner line
 #   0  watch-started  pid=<watch> pane=<SUCCESSOR> log=<path> err=<path>
 #                      [stopped=<pid>] and the runner line: a watch is
-#                      started where none ran, or where --closed stopped the
-#                      live one stopped= names
+#                      started where none ran, or where --closed replaced
+#                      the live one stopped= names
 #   1  watch-restart-failed step=state-path, the detail in DEP_ERR, or
 #                      step=helper pid=<N> error=<key> and the runner's error,
-#                      step=stop pid=<N>, or watch_start's: the caller refuses
-#                      launch before stopping its pane
+#                      or watch_start's: the caller refuses launch before
+#                      stopping its pane
 watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
   local state old fresh=0 closed=0
   if [[ "${1:-}" == --closed ]]; then shift; closed=1; elif [[ -z "$1" ]]; then fresh=1; fi
@@ -111,11 +114,7 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
     return 1
   fi
   if (( closed )); then
-    if ! watch_stop "$old" "$state" 2>"$DEP_ERR"; then
-      WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=stop "pid=$old")
-      return 1
-    fi
-    watch_start replay "$state" "${@:2}" || return 1
+    watch_start "replace=$old" "$state" "${@:2}" || return 1
     # The runner line stays last: its detail is free text.
     WATCH_HANDOVER_FIELDS=("${WATCH_HANDOVER_FIELDS[@]:0:4}" "stopped=$old" "${WATCH_HANDOVER_FIELDS[@]:4}")
     return 0
@@ -135,14 +134,16 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
 
 # Replay a readable retained command with the new pane's server, account,
 # handoff, harness and flags. A stopped watch with no readable command uses
-# the workflow default and reports the unread path.
+# the workflow default and reports the unread path. replace=PID replays as
+# replay does and hands the watch OVERSEE_WATCH_REPLACE=PID, the live watch
+# its start may stop and take over.
 # Wait for its claim before reporting success: an accepted job whose command
 # exits during initialization has not left a watch running.
-watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
+watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
   local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc
   shift 6
   local flags=() harness_args=() since="" word skip="" argv=()
-  local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start
+  local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start replace=()
   [[ $# -eq 0 ]] || flags=(-- "$@")
   [[ -z "$harness" ]] || harness_args=(--harness "$harness")
   case "$mode" in
@@ -155,8 +156,9 @@ watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
       watch_command_fresh
       cwd="$WATCH_CWD" script="$WATCH_SCRIPT"
       argv=(--repeat 60 --state "$state" --since "$since") ;;
-    replay)
+    replay|replace=*)
       name=watch-restart
+      [[ "$mode" != replace=* ]] || replace=("OVERSEE_WATCH_REPLACE=${mode#replace=}")
       for word in ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"}; do
         if [[ -n "$skip" ]]; then skip=""; continue; fi
         case "$word" in
@@ -173,7 +175,7 @@ watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
   fi
   rc=0
   if ! watch_job_launch "$name" "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
-      env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession \
+      env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession ${replace[@]+"${replace[@]}"} \
       "$script" ${argv[@]+"${argv[@]}"} --handoff "$HANDOFF" ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
     WATCH_HANDOVER_KEY=watch-restart-failed
     WATCH_HANDOVER_FIELDS=(step=start "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR")
@@ -185,8 +187,11 @@ watch_start() { # fresh|replay STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
   fi
   [[ "$rc" -eq 0 ]] || return 1
   runner="$JOB_UNIT_LINE"
+  # A replay's start can stop the watch it takes over before it claims
+  # (`oversee-watch` § watch_claim), a stop bounded by WATCH_STOP_SECS, so it
+  # gets that bound on top of its own.
   deadline=$((SECONDS + WATCH_STOP_SECS))
-  [[ "$mode" != replay ]] || deadline=$((SECONDS + 2 * WATCH_STOP_SECS))
+  [[ "$mode" == fresh ]] || deadline=$((SECONDS + 2 * WATCH_STOP_SECS))
   while :; do
     rc=0
     watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?

@@ -967,9 +967,11 @@ Options:
                       state whose recorded watch still runs is refused as
                       watch-running naming that pid, except where that watch
                       is the one `oversee-succeed` restarted for this same
-                      pane after a self-succession, or serves a pane tmux no
-                      longer lists: that watch is stopped and replaced, under
-                      a watch-taken-over note. Every start but a succession's
+                      pane after a self-succession, serves a pane tmux no
+                      longer lists, or is the one `oversee resume` named for
+                      replacement, which claimed its closed server's pane:
+                      that watch is stopped and replaced, under a
+                      watch-taken-over note. Every start but a succession's
                       then prints, under a watch-replayed note, and removes
                       oversee-watch.log and oversee-watch.err beside the
                       state: what a restarted watch printed where no session
@@ -1357,7 +1359,7 @@ ow_message() { # REASON FIELD=VALUE...
     watch-replay-failed) text='The output a restarted watch left beside the fleet state could not be printed or removed, so the start stops rather than lose it or print it twice. The path names the file.' ;;
     watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
     watch-finishing) text='The watch taken over is finishing a lane-close. This start waits for it to exit, so the lane row is committed before this watch reads it and the output of a restarted watch is replayed whole. The close outcome is in the output of the old watch: for one references/waiter-launch.md started, the log in its run directory.' ;;
-    watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
+    watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists, replace the one the launcher of this watch named, as oversee resume names the watch that claimed its closed server'"'"'s pane.' ;;
     watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
     lane-host-busy) text='No lane-host slot freed; the next pass retries.' ;;

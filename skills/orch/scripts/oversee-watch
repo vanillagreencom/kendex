@@ -1058,12 +1058,16 @@ repeat_stop() { # STATUS
 
 # The watch's own record beside the fleet state (lib/watch-pid.sh), which a
 # second start is refused on and `oversee-succeed` restarts this watch from. A
-# live record refuses the start, with two exceptions, whose watch is stopped
+# live record refuses the start, with three exceptions, whose watch is stopped
 # and replaced: the watch a succession restarted for THIS pane, since that
-# start is the successor running its own watch (../workflows/oversee.md § 4), and a watch
-# whose pane tmux no longer lists, which serves an overseer that is gone. This
-# function is the one place a live watch is replaced. The pid recorded is this
-# process's own, so a stop reaches the loop and never a shell that started it.
+# start is the successor running its own watch (../workflows/oversee.md § 4), a watch
+# whose pane tmux no longer lists, which serves an overseer that is gone, and
+# the watch whose pid the launcher of this one named in OVERSEE_WATCH_REPLACE,
+# as `oversee resume` names the watch claiming the pane id of its closed
+# server, which a later server may list again (lib/watch-handover.sh §
+# watch_handover). This function is the one place a live watch is replaced. The
+# pid recorded is this process's own, so a stop reaches the loop and never a
+# shell that started it.
 #
 # oversee-watch.log and .err have one writer: a watch a succession started,
 # through its own stdout and stderr. A start of that origin is reading files it
@@ -1072,9 +1076,14 @@ repeat_stop() { # STATUS
 # prints and removes them, with the runner record the restart wrote beside
 # them, so no event or refusal a restarted watch left unread is lost.
 watch_claim() { # ARGV...
-  local why="" taken=""
+  local why="" taken="" replace="${OVERSEE_WATCH_REPLACE:-}"
+  # Names one watch for this start alone: a launcher this watch later runs
+  # never inherits it.
+  unset OVERSEE_WATCH_REPLACE
   if watch_pid_live "$STATE_FILE"; then
-    if [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]]; then
+    if [[ -n "$replace" && "$WATCH_PID" == "$replace" ]]; then
+      why=replace
+    elif [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]]; then
       why=succession
     elif watch_pane_gone "$WATCH_PANE"; then
       why=pane-gone
