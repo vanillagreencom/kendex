@@ -592,6 +592,43 @@ RUN_ENV=()
 rm -- "$DRAFT_FILE" "$HEAD_FILE"
 # GitHub dismisses the previous review when another Copilot request starts.
 DISMISSED_THEN_ERROR="${HEAD_REVIEW/APPROVED/DISMISSED}"$'\n'"$ERROR_REVIEW"
+# Copilot's own answer, rather than a local file-exclusion list, decides
+# whether a second request can review anything (KEN-4440).
+NO_FILES_REVIEW='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"current-head","state":"COMMENTED","body":"Copilot wasn\u0027t able to review any files in this pull request."}]'
+# A first error, the wait owner's retry, then a no-files answer leaves a
+# saved retry that must not hide Copilot's new answer.
+"$STATE" --state-dir "$TMP_ROOT/state" init KEN-no-files --worktree "$TMP_ROOT/catalog" >/dev/null
+# Columns: label~reviews~stdout~requests~control match~control replacement~control stdout~control requests~saved error outcome
+for row in \
+  "current-head no-files~$NO_FILES_REVIEW~fallback cause=no-files~0~contains(\$no_files)~contains(\$no_files) and false~approval~0" \
+  "earlier-head no-files~${NO_FILES_REVIEW/current-head/earlier-head}~approval~1~| map(select(.user.login == \$reviewer and .commit_id == \$head~| map(select(.user.login == \$reviewer~fallback cause=no-files~0" \
+  "ordinary current-head comment~[{\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"commit_id\":\"current-head\",\"state\":\"COMMENTED\",\"body\":\"The retry loop drops the failed operation.\"}]~approval~0~contains(\$no_files)~contains(\$no_files) or true~fallback cause=no-files~0" \
+  "retried current-head no-files~$NO_FILES_REVIEW~fallback cause=no-files~0~contains(\$no_files)~contains(\$no_files) and false~approval~0~requested" \
+  "error-fallback current-head no-files~$NO_FILES_REVIEW~fallback cause=no-files~0~contains(\$no_files)~contains(\$no_files) and false~fallback cause=error~0~fallback"; do
+  IFS='~' read -r label reviews want_out requests old new control_out control_requests saved_outcome <<<"$row"
+  RUN_ENV=("REVIEWS_JSON=$reviews")
+  args=(--request-review --base-checkout "$BASE")
+  if [[ -n "$saved_outcome" ]]; then
+    "$STATE" --state-dir "$TMP_ROOT/state" update KEN-no-files --arg outcome "$saved_outcome" \
+      '.pr_approval.copilot_error_retries = {"current-head": {review_id: "10", outcome: $outcome}}' >/dev/null
+    saved="$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-no-files '.pr_approval.copilot_error_retries')"
+    args+=(--item KEN-no-files)
+  fi
+  run_action "$RUN" 0 "${args[@]}"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "0|$want_out|$requests" "$label request route" "$ERR"
+  [[ -z "$saved_outcome" ]] || assert_eq "$("$STATE" --state-dir "$TMP_ROOT/state" get KEN-no-files '.pr_approval.copilot_error_retries')" \
+    "$saved" "$label preserves error retry accounting" "$ERR"
+  scripts="$(mutant_scripts "$label-no-files" approval-wait)" || exit 1
+  mutate_file "$scripts/approval-wait" "$old" "$new"
+  run_action "$scripts/approval-wait" 0 "${args[@]}"
+  assert_eq "$RC|$(cat "$OUT")|$REQUESTS" "0|$control_out|$control_requests" "$label control reaches its changed route" "$ERR"
+  if [[ "$RC|$(cat "$OUT")|$REQUESTS" == "0|$want_out|$requests" ]]; then
+    fail "$label control did not turn its request assertion red"
+  else
+    pass "$label control turns its request assertion red"
+  fi
+done
+RUN_ENV=()
 scripts="$(mutant_scripts request-head-work approval-wait)" || exit 1
 mutate_file "$scripts/approval-wait" '    request_runs=$(orch_copilot_check_runs' $'    if false; then\n    request_runs=$(orch_copilot_check_runs'
 mutate_file "$scripts/approval-wait" $'    fi\n    request_rc=0' $'    fi\n    fi\n    request_rc=0'

@@ -233,11 +233,13 @@ The tier holds only while the item and its change stay inside it. Each condition
 7. merge-pr.md § 5 step 1 returns to its § 3.2: the refusal's cause carries no `retry: same-head` line, a set that holds `ci_pending` and `fetch_error` beside the causes that need a change or a reader. A refusal retried on the same head is not this condition.
 8. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode it resolves is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's checks and that step, by a push, or by a retarget that changes the class or moves the pull request onto a base that requires no approval without moving the head.
 
+9. The [Copilot request owner](../references/gates.md#copilot-requests) answers `fallback cause=no-files` for the pushed head. Copilot read no files, so the head needs an internal review before fallback approval.
+
 The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 
-The item then relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state, by the route the checkout leaves it on. `[BRIEF]` is that assignment's `brief=` word:
+At condition 9, set `[BRIEF]` to `small` and relaunch as `/orch small [ISSUE_ID]`: run one internal review round, then take the fallback approval in [copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval) without another Copilot request. For every other condition, the item relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state; `[BRIEF]` is that assignment's `brief=` word. Use the route the checkout leaves it on:
 
 - **In a lane**, run `/orch [BRIEF] [ISSUE_ID]`. `small` runs [small.md](small.md), and `start` routes a worktree cwd to [start-worktree.md](start-worktree.md) ([start.md](start.md) § 1 step 3). Either session's § 1 resolves the item from the existing branch, and its § 2 implements against it.
 - **From the main checkout at condition 1**, no branch was cut: the item takes plain `/orch [BRIEF] [ISSUE_ID]`.
@@ -247,7 +249,7 @@ The item then relaunches at the next class up, as [oversee.md](oversee.md) § It
   .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --transfer [BRANCH]
   ```
 
-- **From the main checkout at conditions 5 through 8**, the branch was pushed. Restore `[BASE_BRANCH]`, then attach the remote branch with `--pr [PR_NUMBER]` when the pull request exists, or `--base [BRANCH]` before it exists. Run `/orch [BRIEF] [ISSUE_ID]` from the path the command prints:
+- **From the main checkout at conditions 5 through 9**, the branch was pushed. Restore `[BASE_BRANCH]`, then attach the remote branch with `--pr [PR_NUMBER]` when the pull request exists, or `--base [BRANCH]` before it exists. Run `/orch [BRIEF] [ISSUE_ID]` from the path the command prints:
 
   ```bash
   git -C [MAIN_REPO_ROOT] checkout [BASE_BRANCH]

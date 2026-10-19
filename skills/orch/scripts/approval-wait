@@ -243,6 +243,8 @@ stop: stdout stays empty and stderr says why.
                  and sends no request. An approval gate prints approval when it
                  requests Copilot or finds existing work at the head. It reads
                  active checks, pending requests and completed reviews first.
+                 A current-head no-files answer takes fallback cause=no-files
+                 even when --item holds a saved error retry at this head.
                  With --item, a saved retry at this head sends no further request;
                  a saved fallback prints fallback cause=error. An error review
                  with no saved retry still permits retry. A failed read is nonzero
@@ -255,6 +257,10 @@ stop: stdout stays empty and stderr says why.
                                                    its declared refresh, to the
                                                    overseer (Refresh review route)
                    fallback cause=off              PR_COPILOT_REQUESTS is off
+                   fallback cause=error            this head's error retry fell back
+                   fallback cause=no-files         Copilot's current-head COMMENTED
+                                                   answer says it could review no files;
+                                                   another request covers the same files
                    fallback cause=refused exit=N   the request exited N, nonzero
                                                    (copilot-request-refused on stderr)
                  The caller then asks the overseer for the head approval, naming
@@ -679,6 +685,8 @@ last_reviews_present=0
 # Copilot's own error sentence is the upstream producer (KEN-3455).
 COPILOT_REVIEWER='copilot-pull-request-reviewer'
 COPILOT_ERROR_SENTENCE='Copilot encountered an error and was unable to review this pull request.'
+# Copilot's no-files answer (KEN-4440); omit its apostrophe from the match.
+COPILOT_NO_FILES_SENTENCE='able to review any files in this pull request'
 # GitHub can re-point an older review to a force-pushed commit. The timeline
 # time, rather than commit_id alone, binds that review to the delivered head.
 HEAD_ARRIVAL_JQ='
@@ -1017,7 +1025,7 @@ read_request_head() {
 # The wait's atomic claim grants its first retry. External actions can read
 # that claim, but cannot spend it again. Both routes retain one request owner.
 run_review_action() (
-  local retry_claimed="${1:-false}" saved_retries retry_outcome
+  local retry_claimed="${1:-false}" saved_retries retry_outcome=none
   if $retry_claimed; then
     REQUEST_REVIEW=true
     RESOLVE_MODE=false
@@ -1067,10 +1075,6 @@ run_review_action() (
           elif .outcome == "requested" or .outcome == "fallback" then .outcome
           else error("error retry outcome") end' <<<"$saved_retries") \
         || { approval_message copilot-retry-state-failed >&2; exit 2; }
-      case "$retry_outcome" in
-        requested) approval_message existing-error-retry >&2; printf 'approval\n'; exit 0 ;;
-        fallback) printf 'fallback cause=error\n'; exit 0 ;;
-      esac
     fi
     # GitHub's automatic request can reach this ready head before the lane.
     # This local request check keeps that work and preserves error-review retry.
@@ -1082,22 +1086,33 @@ run_review_action() (
       || { approval_message request-reviews-unreadable >&2; exit 2; }
     request_arrival=$(jq -er --arg head "$request_head" "$HEAD_ARRIVAL_JQ" <<<"$request_timeline") \
       || { approval_message request-reviews-unreadable >&2; exit 2; }
-    request_review_exists=$(jq -er -s --arg head "$request_head" \
+    request_review_state=$(jq -er -s --arg head "$request_head" --arg no_files "$COPILOT_NO_FILES_SENTENCE" \
       --arg reviewer "${COPILOT_REVIEWER}[bot]" --arg sentence "$COPILOT_ERROR_SENTENCE" --arg arrival "$request_arrival" '
       if length == 0 or any(.[]; type != "array") then error("review pages") else add end
       | map(select(.user.login == $reviewer and .commit_id == $head
           and (.state == "APPROVED" or .state == "COMMENTED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
       | '"$HEAD_REVIEW_JQ"'
       | (map(select(.state != "DISMISSED")) | last) as $latest
-      | if $latest.state == "COMMENTED" and (($latest.body // "") | contains($sentence))
+      | if ($latest | .state == "COMMENTED" and ((.body // "") | contains($no_files)))
+        then "no-files" else
+        if $latest.state == "COMMENTED" and (($latest.body // "") | contains($sentence))
         then false else any(.[]; (.body // "") | contains($sentence) | not) end
+        | if . then "existing" else "missing" end end
       | tostring' <<<"$request_reviews") \
       || { approval_message request-reviews-unreadable >&2; exit 2; }
+    if [[ "$request_review_state" == no-files ]]; then
+      printf 'fallback cause=no-files\n'
+      exit 0
+    fi
+    case "$retry_outcome" in
+      requested) approval_message existing-error-retry >&2; printf 'approval\n'; exit 0 ;;
+      fallback) printf 'fallback cause=error\n'; exit 0 ;;
+    esac
     if [[ "$request_runs" != '[]' ]]; then
       approval_message existing-run >&2
       printf 'approval\n'
       exit 0
-    elif [[ "$request_review_exists" == true ]]; then
+    elif [[ "$request_review_state" == existing ]]; then
       approval_message existing-review >&2
       printf 'approval\n'
       exit 0
