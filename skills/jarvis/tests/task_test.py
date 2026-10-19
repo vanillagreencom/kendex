@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -312,6 +313,96 @@ sys.exit(task.main())
                         self.tmux("kill-window", "-t", self.terminal["window"])
             self.call("cleanup", "--id", task["id"])
 
+    def settle(self, state, reason=None):
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            saved = json.loads(self.record_path.read_text())
+            if saved["state"] == state and reason in (None, saved["reason"]):
+                return saved
+            if saved["state"] in ("blocked", "failed") and saved["state"] != state:
+                break
+            time.sleep(0.05)
+        self.fail(self.record_path.read_text())
+
+    def session(self, verb, *args):
+        result = subprocess.run([str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home), *args],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def jarvis_live(self):
+        return subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"],
+                              env=self.env, capture_output=True, timeout=10).returncode == 0
+
+    def test_failed_succession_ends_task_windows(self):
+        # A successor that fails after its predecessor ended leaves no
+        # controller. Its tasks fail and close, so recovery can create the
+        # managed session again: the worker fails in place, is killed and
+        # leaves the retry to end its successor, or cannot close the task
+        # window and leaves it to Stop.
+        self.tmux("kill-session", "-t", "=jarvis")
+        handoff = self.home / "state/handoff.md"
+        handoff.parent.mkdir()
+        handoff.write_text("# Handoff\n\n## State\n\nwork: TASK-ref\n")
+        start = ("--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual")
+        refuse_close = ("#!" + sys.executable + "\nimport os,sys\n"
+                        + "if '#{@jarvis-task}' in sys.argv: sys.exit(2)\n"
+                        + "os.execv(" + repr(shutil.which("tmux")) + ", ['tmux',*sys.argv[1:]])\n")
+        exits = "#!" + self.env["JARVIS_TEST_BASH"] + "\nexit 1\n"
+        ended_by_controller = {"reason": "controller-ended", "detail": ""}
+        rows = (("exits", exits, None, "succeed"),
+                ("abandoned", "#!" + self.env["JARVIS_TEST_BASH"] + "\nexec sleep 600\n", None, "succeed"),
+                ("close-refused", exits, refuse_close, "stop"))
+        with native_launcher() as launcher:
+            shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", self.home / ".fixture-harness.py")
+            (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.root / "rows.jsonl"),
+                "gate": str(self.root / "gate"), "bash": self.env["JARVIS_TEST_BASH"], "skills": str(self.skills)}))
+
+            def install(name, contents):
+                # Replace, never rewrite: a running process may execute it.
+                staged = self.bin / (name + ".staged")
+                staged.write_bytes(contents)
+                staged.chmod(0o755)
+                os.replace(staged, self.bin / name)
+            for mode, successor, wrapper, recovery in rows:
+                with self.subTest(mode=mode):
+                    install("claude", launcher.read_bytes())
+                    self.session("start", *start)
+                    self.terminal = self.settle("running")["terminal"]
+                    task = self.launch("codex", mode, model="gpt-5")
+                    self.acknowledgement(task)
+                    install("claude", successor.encode())
+                    if wrapper:
+                        install("tmux", wrapper.encode())
+                    self.session("succeed")
+                    if mode == "abandoned":
+                        deadline = time.monotonic() + 30
+                        while json.loads(self.record_path.read_text())["transfer"]["phase"] != "predecessor-ended":
+                            self.assertLess(time.monotonic(), deadline, self.record_path.read_text())
+                            time.sleep(0.05)
+                        os.kill(json.loads(self.record_path.read_text())["worker"]["pid"], signal.SIGKILL)
+                    else:
+                        self.settle("failed", "handover-failed")
+                        self.assertEqual(self.call("status", "--id", task["id"]).get("failure"), ended_by_controller)
+                        self.assertEqual(self.jarvis_live(), wrapper is not None)
+                    if wrapper:
+                        self.bin.joinpath("tmux").unlink()
+                    install("claude", launcher.read_bytes())
+                    if recovery == "stop":
+                        self.session("stop")
+                        self.settle("stopped", "stopped")
+                        self.assertFalse(self.jarvis_live())
+                        self.session("start", *start)
+                    else:
+                        self.session("succeed")
+                    self.settle("running")
+                    ended = self.call("status", "--id", task["id"])
+                    self.assertEqual((ended["completion"]["outcome"], ended.get("failure")), ("failed", ended_by_controller))
+                    windows = self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
+                    self.assertNotIn(task["terminal"]["window"], windows)
+                    self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
+                    self.session("stop")
+                    self.settle("stopped", "stopped")
+
     def test_model_classes_use_production_picker(self):
         if not REAL_KENDEX:
             self.skipTest("kendex executable unavailable")
@@ -476,9 +567,11 @@ while True: signal.pause()
              "test_expired_launch_retains_rollback_ownership"),
             ("picker", "session-backend.sh", (('pick_args+=(--native-model "$model")',
                 'pick_args+=(--model "$model")'),), "test_model_classes_use_production_picker"),
-            ("controller", "session.py", (("if not record or not record.get(\"terminal\"):\n            return\n        paths =",
-                "if True or not record or not record.get(\"terminal\"):\n            return\n        paths ="),),
+            ("controller", "session.py", (('paths = list((self.path.parent / "tasks").glob("*.json"))', "paths = []"),),
              "test_controller_exit_recovers_task_windows"),
+            ("succession", "session.py", (("                        self.end_tasks(record)\n                    except (Refusal",
+                "                        pass\n                    except (Refusal"),),
+             "test_failed_succession_ends_task_windows"),
             ("refusal", "session.py", (("sys.exit(session.main())", "sys.exit(main())"),),
              "test_controller_teardown_refusals"),
             ("interrupt", "task.py", ((
