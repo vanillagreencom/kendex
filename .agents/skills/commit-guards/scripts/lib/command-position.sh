@@ -213,9 +213,10 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
 # comment dropped and its quoted spans masked, so a `<<` only written down does
 # not arm one. A body is dropped only once its terminator line is found: an
 # unterminated body is text the reader could not read, and dropping it would
-# take the rest of the command with it. Each segment then loses its comment.
-command_segments() { # TEXT -> SEGMENTS, one segment per line
-  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cut out=""
+# take the rest of the command with it. Keep the supplied line boundaries so
+# source scanners can judge each original command line after data is removed.
+command_source() { # TEXT -> COMMAND_SOURCE, heredoc data removed
+  local joined=$1 line index count delim expands end term judged=""
   local lines
   lines=()
   while IFS= read -r line; do
@@ -268,6 +269,12 @@ EOF
     fi
     index=$((end + 1))
   done
+  COMMAND_SOURCE=$judged
+}
+command_segments() { # TEXT -> SEGMENTS, one segment per line
+  local joined=${1//\\$NL/ } line cut out=""
+  command_source "$joined"
+  local judged=$COMMAND_SOURCE
   # A quote the reader could not pair leaves the original text to be cut
   # whole, the reach a caller's patterns had before any span was read.
   if mask_spans "$judged"; then

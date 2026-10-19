@@ -1464,12 +1464,16 @@ path_role() { # DIR REL
     *) return 1 ;;
   esac
 }
-# A tree's whole set: each tests/ file path_role reads as a suite.
-skill_suites() { # DIR
+# A tree's whole set: each tests/ file path_role reads as a suite. The release
+# shell battery limits entrypoints here, not the implementations they execute.
+skill_suites() { # DIR [shell]
   local t
   for t in "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
     [ -f "$t" ] || continue
     [ "$(path_role "$1" "${t#"$1"/}")" = suite ] || continue
+    if [ "${2:-}" = shell ]; then
+      case "$t" in *.sh) ;; *) continue ;; esac
+    fi
     printf '%s\n' "$t"
   done
 }
@@ -1484,6 +1488,76 @@ skill_files() { # DIR
       script | lib | helper | module | test-module | suite) printf '%s %s\n' "$role" "$f" ;;
     esac
   done
+}
+# Source language selects a reader, never suite eligibility. In particular,
+# Jarvis shell suites execute Python whose argv list calls the installed CLI.
+# Status 1 is no call (including empty source); status 2 is an unread scan.
+release_file_calls_kendex() { # FILE
+  local f=$1 code header language=other command candidates line answer hit=0
+  code=$(cat -- "$f") || return 2
+  [ -n "$code" ] || return 1
+  header=${code%%$'\n'*}
+  case "$f" in
+    *.py) language=python ;;
+    *.sh | *.bash) language=shell ;;
+    *)
+      if [[ $header =~ ^\#!.*[/\ ]python[0-9.]*([[:space:]]|$) ]]; then
+        language=python
+      elif [[ $header =~ ^\#!.*[/\ ](ba)?sh([[:space:]]|$) ]]; then
+        language=shell
+      fi
+      ;;
+  esac
+  case "$language" in
+    python)
+      # ast owns Python syntax: comments and docstrings cannot become argv.
+      # The literal argv first element is the shape watch.py ships, including
+      # its checked() wrapper rather than a hand-kept subprocess-name table.
+      answer=$(python3 - "$f" <<'PY'
+import ast
+from pathlib import Path
+import sys
+
+tree = ast.parse(Path(sys.argv[1]).read_bytes(), filename=sys.argv[1])
+print(any(isinstance(node, ast.Call) and node.args
+          and isinstance(node.args[0], (ast.List, ast.Tuple))
+          and node.args[0].elts
+          and isinstance(node.args[0].elts[0], ast.Constant)
+          and node.args[0].elts[0].value == 'kendex'
+          for node in ast.walk(tree)))
+PY
+      ) || return 2
+      case "$answer" in True) return 0 ;; False) return 1 ;; *) return 2 ;; esac
+      ;;
+    shell)
+      code=$(sed '/^[[:space:]]*#/d' <<<"$code") || return 2
+      # Shipped github and commit-guards scripts emit ordinary strings naming
+      # kendex. Require a command-shaped occurrence before the shell reader:
+      # it deliberately retains unread syntax, including some emitted prose.
+      command="(^|[;&|()\`])[[:space:]]*((if|elif|then|else|do|exec|command|!)[[:space:]]+)*[\"']?([^[:space:]\"':;|&()=]*/)?kendex[\"']?([[:space:]<>]|$)"
+      candidates=$(grep -E "$command" <<<"$code") || hit=$?
+      case "$hit" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
+      # The shell reader owns heredoc data as well as quoted spans. Its source
+      # phase preserves candidate lines without whole-file quote recovery.
+      command_source "$code"
+      hit=0
+      candidates=$(grep -E "$command" <<<"$COMMAND_SOURCE") || hit=$?
+      case "$hit" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
+      while IFS= read -r line; do
+        # Remove comments before cutting at their separators. Candidate lines
+        # avoid whole-file quote recovery hiding claude-model-classes calls.
+        uncommented "$line"
+        command_segments "$BARE"
+        # Masked whitespace is quoted data, not a command-word boundary.
+        hit=0
+        grep -Eq "$command" <<<"$SEGMENTS" || hit=$?
+        case "$hit" in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+      done <<<"$candidates"
+      return 1
+      ;;
+    other) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 # What the scan holds of each file skill_files lists for the tree SCAN_DIR,
 # loaded once for all of the tree's changed paths, one index per file:
@@ -1942,48 +2016,19 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_script=""
     if [ -n "$release_version" ]; then
       case "$d" in pi-extensions/*) continue ;; esac
+      release_suites=$(skill_suites "$d" shell) || { say scan "$d/tests"; continue; }
+      [ -n "$release_suites" ] || continue
       release_inputs=$(skill_files "$d") || { say scan "$d"; continue; }
       calls_kendex=0
       while read -r role f; do
         [ -n "$f" ] || continue
-        # The release battery runs shell only. Node scripts such as
-        # deep-research mention the engine but cannot enter that battery.
-        case "$f" in
-          *.sh | *.bash) ;;
-          *)
-            release_header=""
-            IFS= read -r release_header < "$f" || [ -n "$release_header" ] || { say scan "$f"; continue; }
-            [[ $release_header =~ ^\#!.*[/\ ](ba)?sh([[:space:]]|$) ]] || continue
-            ;;
-        esac
-        release_code=$(sed '/^[[:space:]]*#/d' -- "$f") || { say scan "$f"; continue; }
-        # Shipped github and commit-guards scripts emit ordinary strings naming
-        # kendex. Require a command-shaped occurrence before the shell reader:
-        # it deliberately retains unread syntax, including some emitted prose.
-        release_command="(^|[;&|()\`])[[:space:]]*((if|elif|then|else|do|exec|command|!)[[:space:]]+)*[\"']?([^[:space:]\"':;|&()=]*/)?kendex[\"']?([[:space:]<>]|$)"
         release_hit=0
-        release_candidates=$(grep -E "$release_command" <<<"$release_code") || release_hit=$?
+        release_file_calls_kendex "$f" || release_hit=$?
         case "$release_hit" in
-          0) ;;
-          1) continue ;;
-          *) say scan "$f"; continue ;;
+          0) calls_kendex=1; break ;;
+          1) ;;
+          *) say scan "$f" ;;
         esac
-        while IFS= read -r release_line; do
-          # Remove the comment before cutting at separators within it. Parse
-          # candidates separately: conservative whole-file quote recovery can
-          # hide the calls in orch's claude-model-classes suite.
-          uncommented "$release_line"
-          command_segments "$BARE"
-          # Masked whitespace is quoted data, not a command-word boundary.
-          release_hit=0
-          grep -Eq "$release_command" <<<"$SEGMENTS" || release_hit=$?
-          case "$release_hit" in
-            0) calls_kendex=1; break ;;
-            1) ;;
-            *) say scan "$f" ;;
-          esac
-        done <<<"$release_candidates"
-        [ "$calls_kendex" -eq 0 ] || break
       done <<<"$release_inputs"
       [ "$calls_kendex" -eq 1 ] || continue
     fi
@@ -2042,7 +2087,11 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         fi
         if [ "$run" = all ]; then
           suite_selection=all
-          run=$(skill_suites "$d")
+          if [ -n "$release_version" ]; then
+            run=$release_suites
+          else
+            run=$(skill_suites "$d")
+          fi
         else
           selected_count=$(count_lines "$run")
           total_count=$(count_lines "$(skill_suites "$d")")

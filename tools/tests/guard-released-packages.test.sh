@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Inputs: tools/guard, skills/orch/*, skills/commit-guards/*,
-# skills/github/*, skills/deep-research/*, skills/harness-ci/tests/change-class.test.sh
+# skills/github/*, skills/deep-research/*, skills/slack/*, skills/bot-instructions/*,
+# skills/jarvis/scripts/lib/watch.py, skills/harness-ci/tests/change-class.test.sh
 # Package selection and PATH are exercised through the production guard and
 # battery. The fixture engines model a command added after a release.
 set -euo pipefail
@@ -11,17 +12,26 @@ git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 
 mkdir -p "$TMP/released" "$TMP/main" "$R/skills/quiet/tests" "$R/skills/nonconsumer/tests"
-for package in deep-research github commit-guards; do
+for package in deep-research github commit-guards slack bot-instructions; do
   cp -R "$REPO/skills/$package" "$R/skills/$package"
 done
 printf '#!/bin/sh\nkendex --version >/dev/null\n' > "$R/skills/demo/scripts/demo.sh"
 cat > "$TMP/released/kendex" <<'SH'
 #!/bin/sh
-case "$1" in --version) echo 'kendex 1.0.0' ;; *) exit 2 ;; esac
+case "$1" in
+  --version) echo 'kendex 1.0.0' ;;
+  project) [ "${2-}" = list ] || exit 2; printf '1.0.0 project list\n' >> "$ENGINE_LOG" ;;
+  *) exit 2 ;;
+esac
 SH
 cat > "$TMP/main/kendex" <<'SH'
 #!/bin/sh
-case "$1" in --version) echo 'kendex 1.1.0' ;; future-command) exit 0 ;; *) exit 2 ;; esac
+case "$1" in
+  --version) echo 'kendex 1.1.0' ;;
+  project) [ "${2-}" = list ] || exit 2; printf '1.1.0 project list\n' >> "$ENGINE_LOG" ;;
+  future-command) exit 0 ;;
+  *) exit 2 ;;
+esac
 SH
 chmod +x "$TMP/released/kendex" "$TMP/main/kendex"
 printf '#!/bin/sh\nexit 97\n' > "$R/skills/nonconsumer/tests/nonconsumer.test.sh"
@@ -49,12 +59,15 @@ entry_points_executable
 git -C "$R" commit -qm 'chore: release suite fixtures'
 BASE="$(git -C "$R" rev-parse HEAD)"
 export SUITE_LOG="$TMP/suite-log"
+export ENGINE_LOG="$TMP/engine-log"
 
 run_release() { # BINARY [GUARD]
   : > "$SUITE_LOG"
+  : > "$ENGINE_LOG"
   RC=0
   OUT="$(cd "$R" && PATH="$TMP/main:$PATH" "${2:-$GUARD}" --released-packages "$1" --range "$BASE" 2>&1)" || RC=$?
   RAN="$(sort "$SUITE_LOG" | tr '\n' ' ')"
+  ENGINE_CALLS="$(cat "$ENGINE_LOG")"
 }
 
 # One changed input runs the whole package, including a suite the input
@@ -70,7 +83,7 @@ done
 # The package rows use whole shipped noncallers, including Node comments and
 # shell strings. Positive rows retain actual caller source with short suites
 # to observe dispatch. The prose rows cover comments and quoted separators.
-while IFS='|' read -r kind input expected; do
+while IFS='|' read -r kind input expected engine_expected; do
   case "$kind" in
     package) printf '\n' >> "$R/skills/$input/README.md" ;;
     prose)
@@ -85,23 +98,65 @@ SH
       ;;
     caller)
       mkdir -p "$R/skills/nonconsumer/scripts"
-      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/producer.sh"
+      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/${input##*/}"
       cat > "$R/skills/nonconsumer/tests/nonconsumer.test.sh" <<'SH'
 #!/bin/sh
 printf 'caller\n' >> "$SUITE_LOG"
 printf 'pass: 1 fail: 0\n'
 SH
       ;;
+    empty | unreadable)
+      mkdir -p "$R/skills/nonconsumer/scripts/lib"
+      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/lib/${input##*/}"
+      [ "$kind" != unreadable ] || chmod 000 "$R/skills/nonconsumer/scripts/lib/${input##*/}"
+      ;;
+    python)
+      mkdir -p "$R/skills/nonconsumer/scripts/lib"
+      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/lib/${input##*/}"
+      cat > "$R/skills/nonconsumer/tests/nonconsumer.test.sh" <<'SH'
+#!/bin/sh
+set -eu
+python3 -B - "${0%/*}/../scripts/lib/watch.py" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location('watch', sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+assert watch.project_roots() == []
+PY
+printf 'caller\n' >> "$SUITE_LOG"
+printf 'pass: 1 fail: 0\n'
+SH
+      cat > "$R/skills/nonconsumer/tests/companion.test.sh" <<'SH'
+#!/bin/sh
+printf 'companion\n' >> "$SUITE_LOG"
+printf 'pass: 1 fail: 0\n'
+SH
+      ;;
     *) bad 'unknown selection fixture kind' "$kind"; exit 1 ;;
   esac
   run_release "$TMP/released/kendex"
-  [ "$RC:${RAN% }" = "$expected" ] && ok "selection $kind: ${input:-no CLI text}" || bad "selection $kind: $input" "$RC $RAN $OUT"
+  matched=1
+  [ "$RC:${RAN% }" = "$expected" ] && [ "$ENGINE_CALLS" = "$engine_expected" ] || matched=0
+  if [ "$expected" = 0: ]; then
+    [[ "$OUT" != *'leg=package-suites package='* ]] || matched=0
+  fi
+  if [ "$kind" = unreadable ]; then
+    [[ "$OUT" == *"guard: scan=skills/nonconsumer/scripts/lib/${input##*/}"* ]] || matched=0
+  fi
+  [ "$matched" -eq 1 ] && ok "selection $kind: ${input:-no CLI text}" || bad "selection $kind: $input" "$RC $RAN engine=$ENGINE_CALLS $OUT"
   git -C "$R" reset -q --hard "$BASE"
   git -C "$R" clean -qfd
 done <<'ROWS'
 package|deep-research|0:
 package|github|0:
 package|commit-guards|0:
+package|slack|0:
+package|bot-instructions|0:
+empty|skills/slack/scripts/lib/__init__.py|0:
+empty|skills/bot-instructions/scripts/lib/__init__.py|0:
+unreadable|skills/slack/scripts/lib/__init__.py|1:
 prose||0:
 prose|https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#the-pre-push-lane|0:
 prose|echo "a title (kendex#537)"|0:
@@ -109,6 +164,7 @@ prose|echo "reinstall; kendex refresh"|0:
 prose|echo ready # reinstall; kendex refresh|0:
 caller|skills/orch/tests/claude-model-classes.sh|0:caller
 caller|skills/harness-ci/tests/change-class.test.sh|0:caller
+python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list
 ROWS
 
 # A selector that includes noncallers must turn the negative row red.
