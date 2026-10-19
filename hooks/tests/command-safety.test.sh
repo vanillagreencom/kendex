@@ -688,6 +688,45 @@ environment_rows() {
 [2,"sh LAUNCH.sh WAIT TOOL --test 'command xargs env'","waiter-result-command-target"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'sudo -n xargs env'","waiter-result-sudo-target"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'env VAR=1 xargs env'","waiter-result-assignment-target"]
+[2,"timeout 5 env -u NAME xargs env","selected-producer-direct-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME xargs env' --build true --mutate true","selected-producer-forwarded-xargs-env"]
+[2,"timeout 5 env -u NAME xargs printenv","selected-producer-direct-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME xargs printenv' --build true --mutate true","selected-producer-forwarded-xargs-printenv"]
+[2,"timeout 5 env -u NAME grep -a . /proc/self/environ","selected-producer-direct-grep-proc"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME grep -a . /proc/self/environ' --build true --mutate true","selected-producer-forwarded-grep-proc"]
+[2,"timeout 5 env -u NAME cat env","selected-producer-direct-cat-evidence"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME cat env' --build true --mutate true","selected-producer-forwarded-cat-evidence"]
+[2,"timeout 5 env -u NAME tr env x","selected-producer-direct-tr-evidence"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME tr env x' --build true --mutate true","selected-producer-forwarded-tr-evidence"]
+[2,"timeout 5 env -u NAME strings env","selected-producer-direct-strings-evidence"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME strings env' --build true --mutate true","selected-producer-forwarded-strings-evidence"]
+[2,"timeout 5 env -u NAME systemctl status env","selected-producer-direct-systemctl-evidence"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME systemctl status env' --build true --mutate true","selected-producer-forwarded-systemctl-evidence"]
+[2,"timeout 5 env -u NAME declare","selected-producer-direct-declare"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME declare' --build true --mutate true","selected-producer-forwarded-declare"]
+[2,"timeout 5 env -u NAME typeset","selected-producer-direct-typeset"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME typeset' --build true --mutate true","selected-producer-forwarded-typeset"]
+[0,"timeout 5 env -u NAME cat ordinary","selected-producer-direct-cat-clean-evidence"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME cat ordinary' --build true --mutate true","selected-producer-forwarded-cat-clean-evidence"]
+[0,"timeout 5 env -u NAME xargs ordinary","selected-producer-direct-xargs-clean-evidence"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME xargs ordinary' --build true --mutate true","selected-producer-forwarded-xargs-clean-evidence"]
+[0,"timeout 5 env -u NAME grep ordinary file","selected-producer-direct-grep-clean-evidence"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME grep ordinary file' --build true --mutate true","selected-producer-forwarded-grep-clean-evidence"]
+[0,"timeout 5 env -u NAME printenv NAME","selected-producer-direct-proved-named"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME printenv NAME' --build true --mutate true","selected-producer-forwarded-proved-named"]
+[0,"timeout 5 env -u NAME bash runner","selected-producer-direct-shell-script"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME bash runner' --build true --mutate true","selected-producer-forwarded-shell-script"]
+[0,"timeout 5 env -u NAME python3 -c \"print(1)\"","selected-producer-direct-interpreter"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME python3 -c \"print(1)\"' --build true --mutate true","selected-producer-forwarded-interpreter"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs env' --build true --mutate true","selected-producer-absolute-test-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs printenv' --build true --mutate true","selected-producer-absolute-test-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME /usr/bin/grep -a . /proc/self/environ' --build true --mutate true","selected-producer-absolute-test-grep-proc"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs env' --mutate true","selected-producer-absolute-build-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs printenv' --mutate true","selected-producer-absolute-build-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 /usr/bin/env -u NAME /usr/bin/grep -a . /proc/self/environ' --mutate true","selected-producer-absolute-build-grep-proc"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs env'","selected-producer-absolute-mutate-xargs-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs printenv'","selected-producer-absolute-mutate-xargs-printenv"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 /usr/bin/env -u NAME /usr/bin/grep -a . /proc/self/environ'","selected-producer-absolute-mutate-grep-proc"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'printenv NAME'","waiter-receipt-printenv-named"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'printenv --help'","waiter-receipt-printenv-help"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'export VAR=1'","waiter-receipt-export-assignment"]
@@ -1438,6 +1477,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
       defect == "unknown-evidence-raw" { swap("if [ \"$evidence_context\" = unknown-head ]; then", "if [ unknown-correction-disabled = unknown-head ]; then") }
+      defect == "selected-producer-unresolved" { swap("environment_main_evidence conservative \"${args[@]:program_pos}\"", "false") }
       defect == "operand-word-boundary" { swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]"); swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]") }
       defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"$evidence_context\" \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"$evidence_context\" \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
@@ -1543,6 +1583,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
+selected-producer-unresolved|FAIL environment: selected-producer-forwarded-xargs-env: exit=0 expected=2
 receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
 receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0
 receiver-line-boundary|FAIL environment: receiver-python-heredoc-whole-line-end: exit=0 expected=2

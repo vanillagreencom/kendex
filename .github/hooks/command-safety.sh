@@ -306,9 +306,19 @@ environment_main_evidence() { # context, then decoded words or conservative text
         [ -z "$program_pos" ] || arg_roles[$program_pos]=command
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
-        case "$mode" in dump-*) return 0 ;; esac
+        case "$mode" in
+          dump-*) return 0 ;;
+          other | unclassified-forwarded)
+            # Recognition alone cannot discharge an unresolved producer.
+            # Retain its complete selected argv, excluding launcher options.
+            if [ -n "$producer_known" ]; then
+              if environment_main_evidence conservative "${args[@]:program_pos}"; then return 0; fi
+              break
+            fi ;;
+          *) break ;;
+        esac
         if [ "$program" = opaque ] && environment_main_evidence conservative "${args[@]:pos}"; then return 0; fi
-        if [ -n "$producer_known" ] || [ "$receiver" != unknown ]; then
+        if [ "$receiver" != unknown ]; then
           if [ "$receiver" = shell ] && [ -z "$source_pos" ] &&
              environment_main_evidence conservative "${args[@]:pos}"; then return 0; fi
           break
