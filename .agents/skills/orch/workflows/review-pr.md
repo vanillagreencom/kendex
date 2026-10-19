@@ -30,7 +30,7 @@ A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: r
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_floor // "micro"'
 ```
 
-An unset field or a run with no state reads `micro`, which raises no class to a reviewed depth. Use that checkout's reviewer command against `[WORKTREE_PATH]`:
+A read that exits 0 with the field unset prints `micro`, which raises no class to a reviewed depth. A nonzero exit from this read runs the full review, as a nonzero `review-depth` exit does. Otherwise use that checkout's reviewer command against `[WORKTREE_PATH]`:
 
 ```bash
 "[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH] --floor "[REVIEW_FLOOR]"

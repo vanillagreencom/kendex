@@ -63,12 +63,13 @@ assert_eq "$(cat "$DEPTH_FIXTURE_ARGS")" "$expected_args" 'the real reader forwa
 
 # A floor is the class a route promised: the class above the one a run escaped
 # from. It raises the depth and never lowers it; the record keeps the measured
-# class. The micro/small row is FLT-1391's escape from micro on Copilot
-# no-files, whose small run measured the same micro diff.
+# class. The micro/small row is a micro escape on Copilot no-files, whose small
+# run measures the same micro diff. floor_line says whether stderr carries the
+# floor's key line, which it does only when the floor changed the depth.
 floor_table() {
-  local command="$1" class measured floor depth expected_status status output before
+  local command="$1" class measured floor depth expected_status floor_line status output before
   before="$FAIL"
-  while read -r class measured floor depth expected_status; do
+  while read -r class measured floor depth expected_status floor_line; do
     status=0
     output="$(DEPTH_FIXTURE_CLASS="$class" DEPTH_FIXTURE_MEASURED="$measured" \
       "$command" --base base-ref --floor "$floor" 2>"$TMP_ROOT/stderr")" || status=$?
@@ -78,12 +79,14 @@ floor_table() {
     else
       assert_eq "$output" '' "$class/floor=$floor publishes no depth"
     fi
+    assert_eq "$(grep -c '^review-depth: floor=' "$TMP_ROOT/stderr" || :)" "$floor_line" "$class/floor=$floor floor line"
   done <<'ROWS'
-micro true small bot 0
-standard true small full 0
-small true micro bot 0
-standard false small absent 3
-micro true trivial absent 2
+micro true small bot 0 1
+standard true small full 0 0
+small true micro bot 0 0
+trivial true micro none 0 0
+standard false small absent 3 0
+micro true trivial absent 2 0
 ROWS
   [ "$FAIL" -eq "$before" ]
 }
@@ -143,10 +146,15 @@ mutant floor-ignored 'if [ -n "$FLOOR" ]; then' 'if false; then'
 assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  micro/floor=small depth' \
   'must-fail control: an ignored floor fails the micro escape row'
 
-mutant floor-as-class 'DEPTH_CLASS="$CHANGE_CLASS"' 'DEPTH_CLASS="${FLOOR:-$CHANGE_CLASS}"'
+mutant floor-as-class 'if [ "$CHANGE_CLASS_RANK" -gt "$MEASURED_RANK" ]; then' 'if true; then'
 (floor_table "$INSTALL/reviewer/scripts/floor-as-class") >"$TMP_ROOT/control.log" 2>&1 || :
 assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  standard/floor=small depth' \
   'must-fail control: a floor taken as the class fails the standard row'
+
+mutant floor-line-always '[ "$DEPTH" = "$MEASURED_DEPTH" ] ||' 'false ||'
+(floor_table "$INSTALL/reviewer/scripts/floor-line-always") >"$TMP_ROOT/control.log" 2>&1 || :
+assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  trivial/floor=micro floor line' \
+  'must-fail control: a floor line that left the depth unchanged fails the trivial row'
 
 printf '\nreview-depth: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

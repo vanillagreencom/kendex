@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# change-class.sh — dev-validate-run's and item-tier's reader of harness-ci's
-# change classifier. CI's .github/actions/change-class reads the shipped
+# change-class.sh — dev-validate-run's, item-tier's and review-depth's reader
+# of harness-ci's change classifier, and the owner of the class order they
+# rank by. CI's .github/actions/change-class reads the shipped
 # scripts from its own trusted checkout. Sourced; it defines the
 # functions below and sets nothing until one runs.
 #
@@ -28,6 +29,14 @@
 #   docs-reader-unreadable. Call it after change_class_read, which resolves the
 #   install.
 #
+# change_class_rank CLASS
+#   Sets CHANGE_CLASS_RANK to CLASS's place in the order
+#   render < trivial < micro < small < standard. Returns 1 for any other word.
+#
+# change_class_floor CLASS
+#   Returns 0 when CLASS is a floor item-tier and review-depth take: a class
+#   at or above micro, the narrowest class a work item runs at.
+#
 # change_class_location_load REPO loads harness-ci's shared path rules, the
 # narrow-change list and CHANGE_CLASS_STANDARD_PATHS from the main checkout.
 # Returns 1 with CHANGE_CLASS_CAUSE on unreadable rules or settings.
@@ -44,7 +53,26 @@ CHANGE_CLASS_CAUSE=""
 CHANGE_CLASS_MEASURED=""
 CHANGE_CLASS_QUEUE_ONLY=""
 CHANGE_CLASS_DOCS_ONLY=""
+CHANGE_CLASS_RANK=""
 CHANGE_CLASS_SCRIPTS=""
+
+change_class_rank() { # CLASS
+  case "$1" in
+    render) CHANGE_CLASS_RANK=0 ;;
+    trivial) CHANGE_CLASS_RANK=1 ;;
+    micro) CHANGE_CLASS_RANK=2 ;;
+    small) CHANGE_CLASS_RANK=3 ;;
+    standard) CHANGE_CLASS_RANK=4 ;;
+    *) return 1 ;;
+  esac
+}
+
+change_class_floor() { # CLASS
+  local micro
+  change_class_rank micro
+  micro="$CHANGE_CLASS_RANK"
+  change_class_rank "$1" && [ "$CHANGE_CLASS_RANK" -ge "$micro" ]
+}
 
 change_class_location_load() { # REPO
   local library="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/lib/change-class.sh" root

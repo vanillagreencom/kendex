@@ -94,10 +94,8 @@ case "$production" in
   '') ;;
   *[!0123456789]*) die invalid-production "--production must be a whole number" ;;
 esac
-case "$floor" in
-  '' | micro | small | standard) ;;
-  *) die invalid-floor "--floor must be micro, small or standard" ;;
-esac
+[ -z "$floor" ] || change_class_floor "$floor" ||
+  die invalid-floor "--floor must be micro, small or standard"
 if { [ -n "$base" ] && [ -z "$head" ]; } || { [ -z "$base" ] && [ -n "$head" ]; }; then
   die range-incomplete "--base and --head are given together"
 fi
@@ -123,21 +121,15 @@ if [ -n "$body" ]; then
   fi
 fi
 
-rank() { # CLASS
-  case "$1" in
-    micro) echo 0 ;;
-    small) echo 1 ;;
-    standard) echo 2 ;;
-    *) die internal-class "no rank for class '$1'" ;;
-  esac
-}
-
 tier=""
+tier_rank=-1
 cause=""
 # The first input naming the widest class decides, and names the cause.
 consider() { # CLASS CAUSE
-  if [ -z "$tier" ] || [ "$(rank "$1")" -gt "$(rank "$tier")" ]; then
+  change_class_rank "$1" || die internal-class "no rank for class '$1'"
+  if [ "$CHANGE_CLASS_RANK" -gt "$tier_rank" ]; then
     tier="$1"
+    tier_rank="$CHANGE_CLASS_RANK"
     cause="$2"
   fi
 }

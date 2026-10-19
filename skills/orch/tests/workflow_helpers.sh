@@ -361,6 +361,8 @@ mkdir -p "$review_base/.agents/skills" "$review_base/skills/harness-ci/scripts"
 cp -R "$REPO_ROOT/skills/harness-ci" "$review_base/.agents/skills/harness-ci"
 cp -R "$SKILL_DIR" "$review_base/.agents/skills/orch"
 cp -R "$REPO_ROOT/skills/reviewer" "$review_base/.agents/skills/reviewer"
+# workflow-state, which the review-floor round trip runs, locks through mailbox.
+cp -R "$REPO_ROOT/skills/mailbox" "$review_base/.agents/skills/mailbox"
 cp "$REPO_ROOT/skills/harness-ci/scripts/change-class" "$review_base/skills/harness-ci/scripts/change-class"
 printf '[]\n' >"$review_base/.kendex-generated.json"
 git -C "$review_base" add .
@@ -412,13 +414,48 @@ review_classification_requires_review() { # workflow
     grep -Eq '^class: class=standard measured=true( |$)' "$review_diagnostic"
 }
 
-review_floor_reviews_micro_diff() { # workflow
-  local answer
-  answer="$(review_depth_run "$1" "$review_micro_subject" small)" || return 1
+# Prints the one fenced line under DOC's HEADING section that matches PATTERN.
+section_fenced_line() { # doc heading pattern
+  local line
+  line="$(awk -v heading="$2" -v pattern="$3" '
+    /^#+ / { inside = ($0 == heading) }
+    /^[[:space:]]*```/ { fenced = !fenced; next }
+    inside && fenced && $0 ~ pattern { sub(/^[[:space:]]+/, ""); print }' "$1")" || return 1
+  [[ -n "$line" && "$line" != *$'\n'* ]] || return 1
+  printf '%s\n' "$line"
+}
+
+# Runs one workflow-state command line from a doc against the fixture state.
+review_floor_state() { # command
+  local command="${1//\[ISSUE_ID\]/floor-issue}"
+  (cd "$review_micro_subject" && env -i ORCH_STATE_DIR="$TMP_ROOT/review-floor-state" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" \
+    bash --noprofile --norc -c "$command" 2>>"$review_diagnostic")
+}
+
+# ../workflows/micro.md § Escape records the floor, review-pr § 1 reads it
+# back and passes what it read to review-depth: the micro diff reviews at none
+# before the escape's write and at bot after it.
+review_floor_reviews_micro_diff() { # micro_workflow review_workflow
+  local record read_back floor answer
+  record="$(section_fenced_line "$1" '## Escape' 'workflow-state set ')" || return 1
+  read_back="$(section_fenced_line "$2" '## 1. Identify Changes' 'workflow-state get ')" || return 1
+  : >"$review_diagnostic"
+  rm -rf -- "$TMP_ROOT/review-floor-state"
+  review_floor_state '.agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --branch micro-subject' >/dev/null || return 1
+  floor="$(review_floor_state "$read_back")" || return 1
+  answer="$(review_depth_run "$2" "$review_micro_subject" "$floor")" || return 1
+  [[ "$answer" == 'change_class=micro review_depth=none native_approval=unchanged' ]] || return 1
+  review_floor_state "$record" >/dev/null || return 1
+  floor="$(review_floor_state "$read_back")" || return 1
+  answer="$(review_depth_run "$2" "$review_micro_subject" "$floor")" || return 1
   [[ "$answer" == 'change_class=micro review_depth=bot native_approval=unchanged' ]]
 }
 
+micro_workflow="$SKILL_DIR/workflows/micro.md"
 review_workflow="$SKILL_DIR/workflows/review-pr.md"
+review_floor_from_micro() { review_floor_reviews_micro_diff "$1" "$review_workflow"; }
+review_floor_from_review() { review_floor_reviews_micro_diff "$micro_workflow" "$1"; }
 if review_classification_requires_review "$review_workflow"; then
   pass "review-pr requires review when the subject classifier forges a trivial verdict"
 else
@@ -428,14 +465,17 @@ assert_doc_mutant_fails review_classification_requires_review "$review_workflow"
   '"[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base' \
   '.agents/skills/reviewer/scripts/review-depth --base' \
   "trusting the malicious subject classifier for the review skip"
-if review_floor_reviews_micro_diff "$review_workflow"; then
-  pass "review-pr passes the recorded review floor, so a micro diff escaped to small gets a bot review"
+if review_floor_reviews_micro_diff "$micro_workflow" "$review_workflow"; then
+  pass "micro's escape records the review floor review-pr reads, so a micro diff escaped to small gets a bot review"
 else
-  fail "review-pr must pass [REVIEW_FLOOR] to review-depth" "$(cat "$review_diagnostic")"
+  fail "micro's escape and review-pr must carry the review floor to review-depth" "$(cat "$review_diagnostic")"
 fi
-assert_doc_mutant_fails review_floor_reviews_micro_diff "$review_workflow" \
+assert_doc_mutant_fails review_floor_from_review "$review_workflow" \
   ' --floor "[REVIEW_FLOOR]"' '' \
   "dropping the review floor from the review-depth command"
+assert_doc_mutant_fails review_floor_from_micro "$micro_workflow" \
+  'review_floor small' 'review_flor small' \
+  "renaming the review floor field micro's escape records"
 
 # The lane's terminal condition is the removal, so § 5 reads [WORKTREE_PATH]
 # back before § 6 writes the summary. The anchor is that read, not the

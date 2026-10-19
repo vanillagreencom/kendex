@@ -16,10 +16,10 @@ The measured class selects package review depth:
 
 --floor CLASS (micro, small or standard) is a class the run already holds,
 as item-tier --floor gives it: the class above the one a run escaped from.
-Depth follows the wider of the measured class and the floor, in the order
-render < trivial < micro < small < standard. The floor only raises: it never
-lowers the measured class, and a failed or unmeasured classifier keeps its
-exit. stderr names the floor when it decided the depth.
+Depth follows the wider of the measured class and the floor, ranked by orch's
+change_class_rank. The floor only raises: it never lowers the measured class,
+and a failed or unmeasured classifier keeps its exit. stderr names the floor
+when it decided the depth.
 
 stdout is one record:
   change_class=CLASS review_depth=none|bot|full native_approval=unchanged
@@ -52,8 +52,7 @@ while [ "$#" -gt 0 ]; do
         --base) BASE="$2" ;;
         --head) HEAD="$2" ;;
         --repo) REPO="$2" ;;
-        --floor)
-          case "$2" in micro|small|standard) FLOOR="$2" ;; *) fail arguments "$1=$2" ;; esac ;;
+        --floor) FLOOR="$2" ;;
       esac
       shift 2 ;;
     *) fail arguments "$1" ;;
@@ -66,6 +65,7 @@ READER="$SCRIPT_DIR/../../orch/scripts/lib/change-class.sh"
 [ -r "$READER" ] || fail reader-absent "$READER"
 # shellcheck source=../../orch/scripts/lib/change-class.sh
 . "$READER" || exit 2
+[ -z "$FLOOR" ] || change_class_floor "$FLOOR" || fail arguments "--floor=$FLOOR"
 CLASS_ERR="$(mktemp "${TMPDIR:-/tmp}/review-depth.XXXXXX")" || fail scratch "${TMPDIR:-/tmp}"
 trap 'rm -f -- "${CLASS_ERR:?}"' EXIT
 
@@ -81,29 +81,23 @@ case "$CHANGE_CLASS_MEASURED" in
     exit 3 ;;
   *) fail classifier-unreadable "$CHANGE_CLASS_MEASURED" ;;
 esac
-class_rank() { # CLASS; sets RANK
+depth_of() { # CLASS; sets DEPTH
   case "$1" in
-    render) RANK=0 ;;
-    trivial) RANK=1 ;;
-    micro) RANK=2 ;;
-    small) RANK=3 ;;
-    standard) RANK=4 ;;
-    *) return 1 ;;
+    render|trivial|micro) DEPTH=none ;;
+    small) DEPTH=bot ;;
+    standard) DEPTH=full ;;
   esac
 }
-class_rank "$CHANGE_CLASS" || fail classifier-unreadable "$CHANGE_CLASS"
-DEPTH_CLASS="$CHANGE_CLASS"
+change_class_rank "$CHANGE_CLASS" || fail classifier-unreadable "$CHANGE_CLASS"
+MEASURED_RANK="$CHANGE_CLASS_RANK"
+depth_of "$CHANGE_CLASS"
 if [ -n "$FLOOR" ]; then
-  MEASURED_RANK="$RANK"
-  class_rank "$FLOOR"
-  if [ "$RANK" -gt "$MEASURED_RANK" ]; then
-    DEPTH_CLASS="$FLOOR"
-    printf 'review-depth: floor=%s change_class=%s\n' "$FLOOR" "$CHANGE_CLASS" >&2
+  MEASURED_DEPTH="$DEPTH"
+  change_class_rank "$FLOOR"
+  if [ "$CHANGE_CLASS_RANK" -gt "$MEASURED_RANK" ]; then
+    depth_of "$FLOOR"
+    [ "$DEPTH" = "$MEASURED_DEPTH" ] ||
+      printf 'review-depth: floor=%s change_class=%s\n' "$FLOOR" "$CHANGE_CLASS" >&2
   fi
 fi
-case "$DEPTH_CLASS" in
-  render|trivial|micro) DEPTH=none ;;
-  small) DEPTH=bot ;;
-  standard) DEPTH=full ;;
-esac
 printf 'change_class=%s review_depth=%s native_approval=unchanged\n' "$CHANGE_CLASS" "$DEPTH"
