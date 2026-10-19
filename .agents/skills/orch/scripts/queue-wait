@@ -213,8 +213,9 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
               armed and fires on its own, so this is NOT a failure of the
               merge — and never a success either; exit_unconfirmed is no
               live arm, and nothing fires. Carries cause still_progressing,
-              stalled, blocked_by_entry_ahead (UNMERGEABLE with no head,
-              behind an entry with a live group; queue_ahead_pr names it), or
+              stalled, blocked_by_entry_ahead (QUEUED or UNMERGEABLE with no
+              head, behind an entry with a live group; queue_ahead_pr names
+              it), or
               progress_unobservable (the entry exists and its head could
               not be read), and unconfirmed_verdict when the last poll held
               a candidate that never reached the confirmation count. Never
@@ -366,8 +367,9 @@ JSON output (always when --json):
                                    # last poll held, which never reached
                                    # QUEUE_WAIT_CONFIRM_POLLS and so routes
                                    # nothing
-    "queue_ahead_pr": <int>,       # only when a headless UNMERGEABLE entry
-                                   # has a live group ahead in the queue read
+    "queue_ahead_pr": <int>,       # only when a headless QUEUED or
+                                   # UNMERGEABLE entry has a live group
+                                   # ahead in the queue read
     "pending_checks": [<string>],  # only on armed_awaiting_checks with
                                    # cause checks_pending: the checks the
                                    # last probe read as pending
@@ -1275,12 +1277,13 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   last_auto_merge=$(jq -r '.data.repository.pullRequest.autoMergeRequest != null' <<<"$queue_json")
   entry_position=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.position // ""' <<<"$queue_json")
   entry_head_oid=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' <<<"$queue_json")
-  # GitHub can hold a headless UNMERGEABLE entry behind a live group.
+  # GitHub can hold a headless QUEUED or UNMERGEABLE entry behind a live group.
   # Positive evidence in the existing queue read suffices. No match in this
   # bounded page leaves the ordinary progress cause in place.
   queue_ahead_pr=$(jq -r '
     .data.repository.pullRequest.mergeQueueEntry as $entry
-    | if $entry.state == "UNMERGEABLE" and $entry.headCommit == null then
+    | if ($entry.state == "QUEUED" or $entry.state == "UNMERGEABLE")
+         and $entry.headCommit == null then
         [$entry.mergeQueue.entries.nodes[]?
          | select(.position < $entry.position and .headCommit.oid != null)]
         | sort_by(.position) | .[0].pullRequest.number // ""

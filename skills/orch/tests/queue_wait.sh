@@ -386,6 +386,8 @@ stage() {
       queue:held_no_group) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.mergeQueue.entries.nodes[0].headCommit = null' <<<"$q_held_ahead")" ;;
       queue:held_group_behind) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.mergeQueue.entries.nodes[0].position = 3' <<<"$q_held_ahead")" ;;
       queue:held_own_group) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.headCommit = {oid:"own222"}' <<<"$q_held_ahead")" ;;
+      queue:queued_ahead) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.state = "QUEUED"' <<<"$q_held_ahead")" ;;
+      queue:queued_no_group) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.state = "QUEUED" | .data.repository.pullRequest.mergeQueueEntry.mergeQueue.entries.nodes[0].headCommit = null' <<<"$q_held_ahead")" ;;
       queue:awaiting_ahead) write_fixture queue "$n" "$(jq '.data.repository.pullRequest.mergeQueueEntry.state = "AWAITING_CHECKS"' <<<"$q_held_ahead")" ;;
       queue:out) write_fixture queue "$n" "$q_out" ;;
       queue:armed) write_fixture queue "$n" "$q_armed_only" ;;
@@ -677,6 +679,8 @@ table '1 1 8 --json --no-check-probe' \
   'a flat count with a run queued is still progressing|open_queued_head,checkruns:last=queued_run|||progressing=true cause=still_progressing' \
   'no head commit on the entry: progress unobservable, no check-run read|open_queued,checkruns:last=c3.0|1 1 4 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkruns_read=false progress_head_polls=0 progress_check_reads=0 last_running_count=null' \
   "an UNMERGEABLE entry behind a live group waits for that entry|state:last=open,queue:last=held_ahead|1 1 4 --json --no-check-probe||$HELD_EXPECT" \
+  "a QUEUED entry behind a live group waits for that entry|state:last=open,queue:last=queued_ahead|1 1 4 --json --no-check-probe||$HELD_EXPECT" \
+  'a QUEUED entry with no group ahead proves no hold|state:last=open,queue:last=queued_no_group|1 1 4 --json --no-check-probe||cause=progress_unobservable has_queue_ahead_pr=false' \
   'an entry ahead without a group proves no hold|state:last=open,queue:last=held_no_group|1 1 4 --json --no-check-probe||cause=progress_unobservable has_queue_ahead_pr=false' \
   'a live group behind this entry proves no hold|state:last=open,queue:last=held_group_behind|1 1 4 --json --no-check-probe||cause=progress_unobservable has_queue_ahead_pr=false' \
   'an entry with its own group keeps its progress cause|state:last=open,queue:last=held_own_group,checkruns:last=c1.1|1 1 4 --json --no-check-probe||cause=still_progressing has_queue_ahead_pr=false' \
@@ -702,6 +706,25 @@ set +e
 CONTROL_RC=$?
 set -e
 assert_eq "$CONTROL_RC" 1 'the held-entry row rejects the disabled-cause control'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+
+CONTROL_SCRIPTS="$(mutant_scripts unmergeable-only/orch queue-wait)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/unmergeable-only/github"
+mutate_file "$CONTROL_SCRIPTS/queue-wait" \
+  '($entry.state == "QUEUED" or $entry.state == "UNMERGEABLE")' \
+  '$entry.state == "UNMERGEABLE"'
+rm "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$TMP_ROOT/unmergeable-only/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+stage 'state:last=open,queue:last=queued_ahead'
+run_wait '' 1 1 4 --json --no-check-probe
+assert_eq "$(json '.cause')" progress_unobservable 'control reaches the old unobservable cause for a QUEUED entry' "$ERR"
+set +e
+( FAIL=0; assert_eq "$(observe "$HELD_EXPECT")" "$HELD_EXPECT" \
+  'hold limited to UNMERGEABLE'; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/unmergeable-only/assertion.log"
+CONTROL_RC=$?
+set -e
+assert_eq "$CONTROL_RC" 1 'the QUEUED held-entry row rejects the UNMERGEABLE-only control'
 rm "$TMP_ROOT/repo/.agents/skills/orch"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
