@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Inputs: tools/guard, skills/orch/tests/run-all.sh
+# Inputs: tools/guard, skills/orch/*, skills/commit-guards/*,
+# skills/github/*, skills/deep-research/*, skills/harness-ci/tests/change-class.test.sh
 # Package selection and PATH are exercised through the production guard and
 # battery. The fixture engines model a command added after a release.
 set -euo pipefail
@@ -10,6 +11,9 @@ git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 
 mkdir -p "$TMP/released" "$TMP/main" "$R/skills/quiet/tests" "$R/skills/nonconsumer/tests"
+for package in deep-research github commit-guards; do
+  cp -R "$REPO/skills/$package" "$R/skills/$package"
+done
 printf '#!/bin/sh\nkendex --version >/dev/null\n' > "$R/skills/demo/scripts/demo.sh"
 cat > "$TMP/released/kendex" <<'SH'
 #!/bin/sh
@@ -63,19 +67,114 @@ for path in skills/demo/scripts/demo.sh skills/demo/README.md .agents/skills/dem
   git -C "$R" clean -qfd
 done
 
-# The URL row comes from commit-guards/scripts/pre-push's help output.
-for help in '' 'https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#the-pre-push-lane'; do
-  cat > "$R/skills/nonconsumer/tests/nonconsumer.test.sh" <<SH
+# The package rows use whole shipped noncallers, including Node comments and
+# shell strings. Positive rows retain actual caller source with short suites
+# to observe dispatch. The prose rows cover comments and quoted separators.
+while IFS='|' read -r kind input expected; do
+  case "$kind" in
+    package) printf '\n' >> "$R/skills/$input/README.md" ;;
+    prose)
+      cat > "$R/skills/nonconsumer/tests/nonconsumer.test.sh" <<SH
 #!/bin/sh
 cat <<'HELP'
-$help
+$input
 HELP
+$input
 exit 97
 SH
+      ;;
+    caller)
+      mkdir -p "$R/skills/nonconsumer/scripts"
+      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/producer.sh"
+      cat > "$R/skills/nonconsumer/tests/nonconsumer.test.sh" <<'SH'
+#!/bin/sh
+printf 'caller\n' >> "$SUITE_LOG"
+printf 'pass: 1 fail: 0\n'
+SH
+      ;;
+    *) bad 'unknown selection fixture kind' "$kind"; exit 1 ;;
+  esac
   run_release "$TMP/released/kendex"
-  [ "$RC:$RAN" = '0:' ] && ok "changed noncaller is excluded: ${help:-no help URL}" || bad "changed noncaller is excluded: ${help:-no help URL}" "$RC $RAN $OUT"
+  [ "$RC:${RAN% }" = "$expected" ] && ok "selection $kind: ${input:-no CLI text}" || bad "selection $kind: $input" "$RC $RAN $OUT"
   git -C "$R" reset -q --hard "$BASE"
+  git -C "$R" clean -qfd
+done <<'ROWS'
+package|deep-research|0:
+package|github|0:
+package|commit-guards|0:
+prose||0:
+prose|https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#the-pre-push-lane|0:
+prose|echo "a title (kendex#537)"|0:
+prose|echo "reinstall; kendex refresh"|0:
+prose|echo ready # reinstall; kendex refresh|0:
+caller|skills/orch/tests/claude-model-classes.sh|0:caller
+caller|skills/harness-ci/tests/change-class.test.sh|0:caller
+ROWS
+
+# A selector that includes noncallers must turn the negative row red.
+printf '\n' >> "$R/skills/nonconsumer/tests/nonconsumer.test.sh"
+python3 - "$GUARD" "$MUTANT_TOOLS/guard" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+needle = 'calls_kendex=0'
+assert source.count(needle) == 1
+mutant = source.replace(needle, 'calls_kendex=1')
+assert mutant != source
+Path(sys.argv[2]).write_text(mutant)
+PY
+chmod +x "$MUTANT_TOOLS/guard"
+run_release "$TMP/released/kendex" "$MUTANT_TOOLS/guard"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *'package=skills/nonconsumer'* ]] \
+  && [[ "$OUT" == *'suite=nonconsumer.test '*'pass=0 fail=1'* ]] \
+  && ok 'control: including a noncaller runs its failing suite' || bad 'control: including a noncaller runs its failing suite' "$RC $OUT"
+git -C "$R" reset -q --hard "$BASE"
+
+# The existing runner owns which orch suites run alone. Discover one of its
+# names, then prove native dispatch puts it after a pooled suite even with a
+# single worker. No elapsed-time assertion or second isolation list is needed.
+alone_names="$(sed -n '/^ALONE=(/,/^)/p' "$REPO/skills/orch/tests/run-all.sh" | sed '1d;$d' | awk '{print $1}')"
+[ -n "$alone_names" ] || { bad 'runner isolation name is available'; exit 1; }
+alone_name=${alone_names%%$'\n'*}
+mkdir -p "$R/skills/orch/tests/lib" "$TMP/native/tools" "$TMP/native/skills/orch" "$TMP/one-worker"
+cp "$GUARD" "$TMP/native/tools/guard"
+cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
+cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
+ln -s "$R/skills/orch/tests" "$TMP/native/skills/orch/tests"
+ln -s "$REPO/skills/orch/scripts" "$TMP/native/skills/orch/scripts"
+ln -s "$REPO/skills/orch/scripts" "$R/skills/orch/scripts"
+ln -s "$REPO/skills/github" "$TMP/native/skills/github"
+ln -s "$REPO/skills/commit-guards" "$TMP/native/skills/commit-guards"
+printf '#!/bin/sh\necho 1\n' > "$TMP/one-worker/nproc"
+chmod +x "$TMP/one-worker/nproc"
+for name in "$alone_name" zzz-pooled; do
+  cat > "$R/skills/orch/tests/$name.sh" <<SH
+#!/bin/sh
+kendex --version >/dev/null
+printf '%s\n' '$name' >> "\$SUITE_LOG"
+printf 'pass: 1 fail: 0\n'
+SH
 done
+OUT=""
+RC=0
+PATH="$TMP/one-worker:$PATH" run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
+order="$(tr '\n' ' ' < "$SUITE_LOG")"
+[ "$RC:$order" = "0:zzz-pooled $alone_name " ] && ok 'orch native dispatch retains runner isolation order' || bad 'orch native dispatch retains runner isolation order' "$RC $order $OUT"
+python3 - "$GUARD" "$TMP/native/tools/guard" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+needle = '[ "$d" = skills/orch ] || release_args=(--battery "$d/tests")'
+assert source.count(needle) == 1
+mutant = source.replace(needle, 'release_args=(--battery "$d/tests")')
+assert mutant != source
+Path(sys.argv[2]).write_text(mutant)
+PY
+PATH="$TMP/one-worker:$PATH" run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
+order="$(tr '\n' ' ' < "$SUITE_LOG")"
+[ "$RC:$order" = "0:$alone_name zzz-pooled " ] && ok 'control: battery dispatch drops orch isolation order' || bad 'control: battery dispatch drops orch isolation order' "$RC $order $OUT"
+git -C "$R" reset -q --hard "$BASE"
+git -C "$R" clean -qfd
 
 printf '\n' >> "$R/skills/demo/README.md"
 python3 - "$GUARD" "$MUTANT_TOOLS/guard" <<'PY'
