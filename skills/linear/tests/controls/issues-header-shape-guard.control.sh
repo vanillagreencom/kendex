@@ -41,8 +41,8 @@ control_replace scripts/commands/issues.sh 1 \
 #    never have its Done-when boxes ticked.
 control_expect "a complete ticking a body that opens with a long header exits zero"
 control_replace scripts/commands/issues.sh 1 \
-	"    update_result=\$(LINEAR_REQUIRE_REACH='' update_issue \"\$issue_id\" \"\${update_args[@]}\")" \
-	'    update_result=$(update_issue "$issue_id" "${update_args[@]}")'
+	"        update_result=\$(LINEAR_REQUIRE_REACH='' update_issue \"\$issue_id\" \"\${update_args[@]}\")" \
+	'        update_result=$(update_issue "$issue_id" "${update_args[@]}")'
 
 # 7. The default. Read as off when unset, every project that never set the key
 #    files header-first bodies.
