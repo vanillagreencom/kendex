@@ -2124,8 +2124,9 @@ jobs:
     with:
       path: .
       strict: true
-      # A package whose kendex suites tools/guard cannot read runs whole: the
-      # whole orch battery took 4152s in merge-group run 39197875058.
+      # Each part renders the catalog and runs its share of the kendex suites;
+      # a part that cannot read which suites those are fails instead of
+      # running the package whole.
       timeout-minutes: 90
       # Exercise this branch's CI scripts, never a binary built from it.
       ref: ${{ github.sha }}

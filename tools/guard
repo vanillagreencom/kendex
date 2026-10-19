@@ -167,13 +167,15 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
       echo "that suite failed; its own output above names the case." ;;
+    kendex-unread)
+      echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex. The parts of a --part run split one list, so this part ran none of that package's suites; its cause is above." ;;
     mapped-suites)
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
     suites)
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
-        *" reason=kendex-unread "*) echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex, so every shell suite of the package ran; its cause is above." ;;
+        *" reason=kendex-unread "*) echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex, so this unsplit run ran every shell suite of the package; its cause is above." ;;
         *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
@@ -354,7 +356,9 @@ case "${1:-}" in
       '--released-packages BINARY [--part K/N] --range BASE: in each changed shell package' \
       '        calling kendex, run the suites a Linux CI leg gives a kendex' \
       '        (run-all.sh --checkout-kendex) with BINARY first on PATH, without scans or' \
-      '        builds. --part K/N runs every Nth of those suites from the Kth.' \
+      '        builds. --part K/N runs every Nth of those suites from the Kth. When that list' \
+      '        cannot be read, a run of more than one part fails and an unsplit run' \
+      '        runs every shell suite of the package.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
       '        the same suite mapper, leaving the full record to merge-group CI.'
@@ -2053,6 +2057,11 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       # holds orch's shards and asks tools/ci-job-set for each suite.
       if release_kendex=$(bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --checkout-kendex <<<"$release_suites"); then
         release_suites=$release_kendex
+      elif [ "$release_parts" -gt 1 ]; then
+        # Every part must split the same list: one part falling back to the
+        # whole package shifts each later suite out of the other parts' shares.
+        say kendex-unread "$d"
+        continue
       else
         note suites "all reason=kendex-unread tree=$d"
       fi

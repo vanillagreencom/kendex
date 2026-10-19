@@ -254,7 +254,8 @@ run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 [ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'kendex suites only: the next engine passes' || bad 'kendex suites only: the next engine passes' "$RC $RAN $OUT"
 
-# Each part runs its share of the selected suites, and the parts cover them.
+# Each part runs its share of the selected suites, and the parts cover them;
+# a part with no share runs nothing.
 while IFS='|' read -r part expected; do
   run_release "$TMP/main/kendex" "$TMP/native/tools/guard" "$part"
   [ "$RC:$RAN" = "$expected" ] && ok "part $part" || bad "part $part" "$RC $RAN $OUT"
@@ -262,6 +263,7 @@ done <<'ROWS'
 1/2|0:zzz-caller 
 2/2|0:zzz-second 
 1/1|0:zzz-caller zzz-second 
+3/3|0:
 ROWS
 for part in 0/2 3/2 2 1/x 1/2/3 /2; do
   run_release "$TMP/main/kendex" "$TMP/native/tools/guard" "$part"
@@ -269,8 +271,9 @@ for part in 0/2 3/2 2 1/x 1/2/3 /2; do
 done
 
 # Must-fail: the whole package, as before this selection, runs the suite
-# no CI shard gives a kendex, and with it the parts' split.
-for edit in 'release_suites=$release_kendex@@:' '[ $((release_index % release_parts + 1)) -ne "$release_part" ] || @@'; do
+# no CI shard gives a kendex, and with it the parts' split and an empty share.
+for edit in 'release_suites=$release_kendex@@:' '[ $((release_index % release_parts + 1)) -ne "$release_part" ] || @@' \
+  $'release_suites=$release_share\n      [ -n "$release_suites" ] || continue@@release_suites=$release_share'; do
   python3 - "$GUARD" "$TMP/native/tools/guard" "$edit" <<'PY'
 from pathlib import Path
 import sys
@@ -282,6 +285,10 @@ assert mutant != source
 Path(sys.argv[2]).write_text(mutant)
 PY
   case "$edit" in
+    'release_suites=$release_share'*)
+      run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 3/3
+      [ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && ok 'control: an empty share runs the whole package' \
+        || bad 'control: an empty share runs the whole package' "$RC $RAN $OUT" ;;
     release_suites=*)
       run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
       [ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && ok 'control: the whole package runs the suite no shard gives a kendex' \
@@ -292,12 +299,33 @@ PY
         || bad 'control: an unsplit part runs the other part too' "$RC $RAN $OUT" ;;
   esac
 done
-# Unreadable selection evidence runs the whole package, under a note.
+# Unreadable selection evidence runs the whole package, under a note, in an
+# unsplit run. A part of a split run fails: its share is of a list the other
+# parts may have read.
 cp "$GUARD" "$TMP/native/tools/guard"
 rm "$TMP/native/tools/ci-job-set"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 [ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && [[ "$OUT" == *'guard-note: suites=all reason=kendex-unread tree=skills/orch'* ]] \
   && ok 'an unread kendex selection runs the whole package' || bad 'an unread kendex selection runs the whole package' "$RC $RAN $OUT"
+run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 2/2
+[ "$RC:$RAN" = '1:' ] && [[ "$OUT" == *'guard: kendex-unread=skills/orch'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
+  && ok 'an unread kendex selection fails a split part' || bad 'an unread kendex selection fails a split part' "$RC $RAN $OUT"
+# Must-fail: a part that falls back as an unsplit run does runs its share of
+# the whole package, a share the other parts did not split.
+python3 - "$GUARD" "$TMP/native/tools/guard" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+needle = 'elif [ "$release_parts" -gt 1 ]; then'
+assert source.count(needle) == 1
+mutant = source.replace(needle, 'elif false; then')
+assert mutant != source
+Path(sys.argv[2]).write_text(mutant)
+PY
+run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 2/2
+[ "$RC:$RAN" = '0:zzz-caller ' ] && ok 'control: a falling-back part runs a share of the whole package' \
+  || bad 'control: a falling-back part runs a share of the whole package' "$RC $RAN $OUT"
+cp "$GUARD" "$TMP/native/tools/guard"
 ln -s "$REPO/tools/ci-job-set" "$TMP/native/tools/ci-job-set"
 git -C "$R" reset -q --hard "$BASE"
 git -C "$R" clean -qfd
