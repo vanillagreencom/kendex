@@ -401,9 +401,10 @@ pub struct EngineReport {
     /// what a proof holds the committed record to. Empty on a report
     /// observed rather than planned, which nothing proves a record by.
     pub record: Lock,
-    /// The commits a held plan read declarations at in place of their
-    /// sources' revisions, each taken from the record. Empty on a plan
-    /// that holds nothing.
+    /// The commits a held plan read packages at in place of their
+    /// sources' revisions, each taken from the record: every pin the plan
+    /// injected, and every own-record reservation the plan read through.
+    /// Empty on a plan that holds nothing.
     pub held: Vec<HeldPin>,
     /// The paths each enabled agent this pass places on at least one
     /// harness names as tracked output in its own definition, by agent
@@ -465,8 +466,9 @@ pub enum DroppedDeclaration {
     },
 }
 
-/// One declaration a held plan read at the commit the record names
-/// rather than at its source's revision.
+/// One package a held plan read at the commit the record names rather
+/// than at its source's revision: a declaration it pinned, or an
+/// installed item it read through that item's own record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeldPin {
     pub held: Held,

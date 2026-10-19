@@ -169,6 +169,20 @@ impl Expansion {
             .collect()
     }
 
+    /// Each hold an item this plan installs reads through, beside that
+    /// item's source: the held readings the plan consumed. A dependency
+    /// that inherits its parent's hold names it under the parent's source,
+    /// which it copied.
+    pub(super) fn held_readings(&self) -> BTreeSet<(String, super::Held)> {
+        self.items
+            .values()
+            .filter_map(|planned| {
+                let (owner, _) = planned.held_by.as_ref()?;
+                Some((planned.decl.source.clone(), owner.clone()))
+            })
+            .collect()
+    }
+
     /// Everything of one kind this plan installs, in name order.
     pub(super) fn of(&self, kind: ItemKind) -> Vec<(&String, &Planned)> {
         self.items

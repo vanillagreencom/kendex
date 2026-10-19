@@ -287,6 +287,9 @@ pub struct DesiredState {
     /// The selector each expansion owner read under. A synthetic hold
     /// keeps the old selector instead.
     pub(super) selector_bases: BTreeMap<(ItemKind, String), SelectorBasis>,
+    /// Each hold an item of the rendered expansion read through, by
+    /// source; `HeldPins::read_by` reports exactly these reservations.
+    pub(super) held_readings: BTreeSet<(String, super::Held)>,
     /// Sources that could not be read (pending remotes, missing paths) and
     /// declared items the source does not carry.
     pub notes: Vec<String>,
@@ -790,6 +793,7 @@ fn compute(
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
     state.refuse_catalog()?;
     state.selector_bases = selector_bases(&expansion, manifest, held);
+    state.held_readings = expansion.held_readings();
     state.kept_members =
         super::bundles::kept_members(lock, manifest, &state.kept_bundles, &expansion);
     let models = consumer_models(env, scope, manifest, &expansion)?;

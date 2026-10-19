@@ -188,6 +188,19 @@ impl HeldPins {
         &self.reservations
     }
 
+    /// The held readings a plan consumed: every pin, since a pin rewrote
+    /// the planning manifest every reader of it consumes, then each
+    /// reservation whose `(source, held)` the plan's expansion read
+    /// through. A reservation no planned item read seeded nothing and is
+    /// left out.
+    pub(crate) fn read_by(&self, read: &BTreeSet<(String, Held)>) -> Vec<HeldPin> {
+        let reserved = self
+            .reservations
+            .iter()
+            .filter(|pin| read.contains(&(pin.source.clone(), pin.held.clone())));
+        self.pins.iter().chain(reserved).cloned().collect()
+    }
+
     fn all(&self) -> impl Iterator<Item = &HeldPin> {
         self.pins.iter().chain(&self.reservations)
     }

@@ -115,7 +115,7 @@ pub struct Row {
 }
 
 /// A commit of a repository source the record trails: one the record
-/// names for the source, or one a held pass read a declaration at, beside
+/// names for the source, or one a held pass read a package at, beside
 /// the commit the source resolves to now. Every render read at the
 /// recorded commit is behind the source by the commits between the two.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,7 +205,7 @@ impl Reading {
 
 /// Each source commit the record trails, once per source and commit: a
 /// source's recorded commit and every commit a held pass read a
-/// declaration at, where the source resolves elsewhere now. A source
+/// package at, where the source resolves elsewhere now. A source
 /// recorded for another repository or revision is not stale but a
 /// different declaration, which [`record`] names.
 pub fn stale(scope: &Scope, lock: &Lock, report: &EngineReport) -> Vec<Stale> {
@@ -236,7 +236,7 @@ pub fn stale(scope: &Scope, lock: &Lock, report: &EngineReport) -> Vec<Stale> {
         .collect()
 }
 
-/// The oldest commit a held pass may read a declaration at: the one the
+/// The oldest commit a held pass may read a package at: the one the
 /// record at the base revision names for it.
 #[derive(Debug, Clone)]
 pub enum Floor {
@@ -383,7 +383,7 @@ pub fn adopted_workflows(report: &EngineReport) -> Vec<Standing> {
 /// the mirror never held is one no resolution produced. A mirror that
 /// cannot answer for a commit is named as such, so the reader fetches it
 /// rather than searching the record for an edit nobody made. Each commit
-/// a held pass read a declaration at renders by construction as the
+/// a held pass read a package at renders by construction as the
 /// record says, so it is held instead to the history of the commit its
 /// source resolves to now, and to `floor`.
 pub fn record(
@@ -691,10 +691,10 @@ fn bundle_problem(
     )
 }
 
-/// A commit a held pass read a declaration at, held from above to the
+/// A commit a held pass read a package at, held from above to the
 /// history of the commit its source resolves to now, since the mirror
 /// fetches every ref the remote serves, and from below to the commit the
-/// base record names for the same declaration, since the head's record
+/// base record names for the same package, since the head's record
 /// is the change's own to write. A source this pass resolved nothing for
 /// leaves nothing to hold the commit to, which is named rather than
 /// passed.

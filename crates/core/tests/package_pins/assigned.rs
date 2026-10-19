@@ -813,3 +813,204 @@ fn repeated_hook_replays_keep_both_pin_notices() {
         );
     }
 }
+
+/// A scope whose lead requires scout, which is assigned y. y moved from A
+/// to B before the install, so y's own record names B while lead, pinned
+/// or not, sits at its own reading.
+struct Reserved {
+    w: World,
+    a: String,
+    b: String,
+}
+
+#[allow(clippy::unwrap_used)]
+fn reserved(pinned_lead: bool, extra: &str) -> Reserved {
+    let w = world();
+    write_skill(
+        &w.upstream,
+        "lead",
+        "dependencies:\n  agents: [scout]\n",
+        "Lead at A.",
+    );
+    write_agent(&w.upstream, "scout", "Scout.");
+    write_skill(&w.upstream, "y", "", "Y at A.");
+    write_skill(&w.upstream, "solo", "", "Solo at A.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nscout = [\"y\"]\n",
+    )
+    .unwrap();
+    let a = commit(&w.upstream, "a");
+    write_skill(&w.upstream, "y", "", "Y at B.");
+    let b = commit(&w.upstream, "b");
+    let pin = if pinned_lead {
+        format!("rev = \"{a}\"\n")
+    } else {
+        String::new()
+    };
+    declare(
+        &w,
+        &format!("[skills.lead]\nsource = \"cat\"\n{pin}{extra}"),
+    );
+    sync_and_apply(&w);
+    assert_eq!(locked_commit(&w, "y"), b);
+    Reserved { w, a, b }
+}
+
+/// The proof row for y's own-record reservation at `commit`.
+fn y_reading(lock: &kendex_core::lock::Lock, commit: &str) -> kendex_core::engine::HeldPin {
+    kendex_core::engine::HeldPin {
+        held: kendex_core::engine::Held::Item {
+            kind: ItemKind::Skill,
+            name: "y".into(),
+        },
+        source: "cat".into(),
+        repo: lock.entries[&entry_key(ItemKind::Skill, "y", HarnessId::Claude)]
+            .source_repo
+            .clone(),
+        commit: commit.to_owned(),
+    }
+}
+
+/// What `verify --at-record` holds `lock` to, under `floor`.
+#[allow(clippy::unwrap_used)]
+fn at_record_problems(
+    w: &World,
+    lock: &kendex_core::lock::Lock,
+    floor: &kendex_core::attest::Floor,
+) -> (EngineReport, Vec<String>) {
+    use kendex_core::attest::{self, Reading};
+    let report = plan_apply(&w.env, &w.scope, &Reading::Recorded.plan_options()).unwrap();
+    let problems = attest::record(&w.env, &w.scope, lock, &report, floor)
+        .unwrap()
+        .unwrap()
+        .problems;
+    (report, problems)
+}
+
+/// A reservation the plan read through is held to the base record: y at
+/// B is refused under a base that already records y at C.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn reservation_reads_enforce_the_base_record_floor() {
+    use kendex_core::attest::Floor;
+    let Reserved { w, b, .. } = reserved(true, "");
+    let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    write_skill(&w.upstream, "y", "", "Y at C.");
+    let c = commit(&w.upstream, "c");
+    fetch_mirrors(&w);
+    let current = audit(&w.env, &w.scope).unwrap().record;
+    let y = entry_key(ItemKind::Skill, "y", HarnessId::Claude);
+    assert_eq!(
+        current.entries[&y].source_commit.as_deref(),
+        Some(c.as_str())
+    );
+
+    let (report, below) = at_record_problems(&w, &installed, &Floor::Record(current));
+    assert!(report.held.contains(&y_reading(&installed, &b)));
+    assert!(!below.is_empty());
+    let (_, at) = at_record_problems(&w, &installed, &Floor::Record(installed.clone()));
+    assert_eq!(at, Vec::<String>::new());
+}
+
+/// A reservation the plan read through is held to its source's history:
+/// y at B is refused once `main` is rewritten past it, though the record
+/// still renders as it says.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn reservation_reads_stay_on_their_sources_history() {
+    use kendex_core::attest::Floor;
+    let Reserved { w, a, b } = reserved(true, "[skills.solo]\nsource = \"cat\"\n");
+    git(&w.upstream, &["branch", "keep", &b]);
+    git(&w.upstream, &["reset", "--hard", "--quiet", &a]);
+    write_skill(&w.upstream, "y", "", "Y at D.");
+    write_skill(&w.upstream, "solo", "", "Solo at D.");
+    let d = commit(&w.upstream, "d");
+    fetch_mirrors(&w);
+    let update = package::update_one(&w.env, &w.scope, ItemKind::Skill, "solo").unwrap();
+    assert_eq!(
+        update.declaration_status,
+        DeclarationStatus::Complete,
+        "{:?}",
+        messages(&update)
+    );
+    apply::execute(&w.env, &update.plan).unwrap();
+    let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    assert_eq!(installed.sources["cat"].commit, d);
+    assert_eq!(locked_commit(&w, "y"), b);
+
+    let (report, problems) = at_record_problems(&w, &installed, &Floor::Open);
+    assert!(report.held.contains(&y_reading(&installed, &b)));
+    assert!(!problems.is_empty());
+}
+
+/// The proof carries a reservation exactly where the plan read through
+/// it. Both rows plan over the same record and manifest; only whether
+/// lead's tip still reaches the agent assigned y differs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn only_reservations_a_plan_reads_through_enter_the_proof() {
+    use kendex_core::engine::Held;
+    for reached in [true, false] {
+        let Reserved { w, b, .. } = reserved(false, "");
+        let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+        let lead = if reached {
+            "dependencies:\n  agents: [scout]\n"
+        } else {
+            ""
+        };
+        write_skill(&w.upstream, "lead", lead, "Lead at C.");
+        write_skill(&w.upstream, "y", "", "Y at C.");
+        commit(&w.upstream, "c");
+        fetch_mirrors(&w);
+        let report = plan_apply(
+            &w.env,
+            &w.scope,
+            &PlanOptions::for_package(ItemKind::Skill, "lead"),
+        )
+        .unwrap();
+        let y = Held::Item {
+            kind: ItemKind::Skill,
+            name: "y".into(),
+        };
+        let read: Vec<_> = report.held.iter().filter(|pin| pin.held == y).collect();
+        let expected = reached.then(|| y_reading(&installed, &b));
+        assert_eq!(
+            read,
+            expected.iter().collect::<Vec<_>>(),
+            "reached={reached}"
+        );
+    }
+}
+
+/// The record reads the same list the proof does: a redeclared source
+/// with a consumed reservation follower keeps its recorded entry.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_consumed_reservation_keeps_its_redeclared_sources_record() {
+    let Reserved { w, b, .. } = reserved(false, "");
+    let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    write_skill(&w.upstream, "y", "", "Y at C.");
+    commit(&w.upstream, "c");
+    fetch_mirrors(&w);
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    let text = fs::read_to_string(&path).unwrap();
+    let source = format!("[sources.cat]\nrepo = \"{REPO}\"\n");
+    assert_eq!(text.matches(&source).count(), 1);
+    let redeclared = text.replace(&source, &format!("{source}rev = \"main\"\n"));
+    assert_ne!(redeclared, text);
+    fs::write(&path, redeclared).unwrap();
+
+    let report = plan_apply(
+        &w.env,
+        &w.scope,
+        &PlanOptions::for_package(ItemKind::Skill, "lead"),
+    )
+    .unwrap();
+    assert_eq!(report.record.sources["cat"], installed.sources["cat"]);
+    let y = entry_key(ItemKind::Skill, "y", HarnessId::Claude);
+    assert_eq!(
+        report.record.entries[&y].source_commit.as_deref(),
+        Some(b.as_str())
+    );
+}

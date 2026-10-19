@@ -802,7 +802,9 @@ fn wanted(
 /// before anything can write it: that manifest is a copy of the pinned
 /// one, and no written manifest may carry a pin as if the person had
 /// chosen it. They come back as the third value for a proof that has to
-/// say where each one came from.
+/// say where each one came from: every pin, and each own-record
+/// reservation an item of the rendered expansion read through. The
+/// record this pass writes and the proof read that one list.
 fn desired_pass<'a>(
     env: &Env,
     scope: &Scope,
@@ -839,7 +841,7 @@ fn desired_pass<'a>(
         pins.unpin(update);
     }
     let held = held_pins
-        .map(|pins| pins.pins().to_vec())
+        .map(|pins| pins.read_by(&state.held_readings))
         .unwrap_or_default();
     Ok((std::borrow::Cow::Owned(planning.into_owned()), state, held))
 }
