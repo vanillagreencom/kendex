@@ -1262,6 +1262,10 @@ while IFS='@' read -r name old new; do
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   mutate_verifying "$MUTANT_WATCH" "$old" "$new"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
+  if [[ "$name" == shared_commit ]]; then
+    WATCH_BIN="$MUTANT_WATCH" watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
+    assert_contains "$OUT" 'EVENT heartbeat' "control: $name exposes its waiting row at heartbeat" "$ERR"
+  fi
   assert_eq "$RC" 0 "control: $name reaches the two-repository judgement" "$ERR"
   case "$name" in
     earliest_floor) assert_contains "$(verification_lines)" 'deadline=2026-10-01T12:00:00Z merged=2026-09-30T00:00:00Z' 'control: an earlier floor admits the older release' "$ERR" ;;
