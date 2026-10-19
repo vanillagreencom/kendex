@@ -164,9 +164,14 @@ class Task(Session):
 
     def close_window(self, record, *, allow_unmarked=False):
         terminal = record["terminal"]
+        # Every controller end walks the task records it finds; a closed
+        # window is never judged again. The caller writes the record.
+        if terminal.get("closed"):
+            return
         allow_unmarked = allow_unmarked or not terminal.get("marked", True)
         self.backend("task-close", terminal["server"], record["server_pid"], record["server_started_at"],
                      terminal["pane"], terminal["window"], self.path.stem, str(allow_unmarked).lower())
+        terminal["closed"] = True
 
     def complete(self, outcome):
         with self.locked():
@@ -194,6 +199,7 @@ class Task(Session):
                               failure={"reason": "controller-ended", "detail": ""})
                 self.write(record)
             self.close_window(record)
+            self.write(record)
 
     def cleanup(self):
         with self.locked():

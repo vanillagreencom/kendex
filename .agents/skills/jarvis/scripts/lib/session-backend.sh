@@ -91,6 +91,13 @@ case "$verb" in
     export TMUX="$1,0,0"
     rc=0
     tmux_pane_live "$2" "$3" "$4" "$1" || rc=$?
+    # The recorded server serves this home's socket until it exits. Another
+    # server answering that socket proves the recorded window is beyond any
+    # close, whatever process now holds the recorded pid.
+    if [[ "$rc" == 2 ]] && serving="$(tmux display-message -p '#{pid}' 2>/dev/null)" \
+      && [[ -n "$serving" && "$serving" != "$2" ]]; then
+      rc=1
+    fi
     [[ "$rc" != 1 ]] || exit 0
     [[ "$rc" == 0 ]] || { printf 'jarvis-task: terminal=unread\n%s\n' "$TMUX_PANE_DETAIL" >&2; exit 1; }
     actual="$(tmux display-message -p -t "$4" '#{@jarvis-task}')" || exit 1

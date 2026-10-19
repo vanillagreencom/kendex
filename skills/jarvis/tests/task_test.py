@@ -313,6 +313,45 @@ sys.exit(task.main())
                         self.tmux("kill-window", "-t", self.terminal["window"])
             self.call("cleanup", "--id", task["id"])
 
+    def test_replaced_server_task_leaves_lifecycle_open(self):
+        # A task record outlives its controller's tmux server. Once another
+        # tmux holds that server's pid, Stop, Start and cleanup still succeed.
+        unrelated = ["tmux", "-L", self.label + "-unrelated", "-f", os.devnull]
+        self.addCleanup(subprocess.run, [*unrelated, "kill-server"], env=self.env, capture_output=True, timeout=10)
+        other = subprocess.run([*unrelated, "new-session", "-d", "-P", "-F", "#{pid}\t#{start_time}",
+                                self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                               env=self.env, capture_output=True, text=True, timeout=10, check=True)
+        other_pid, other_started = other.stdout.strip().split("\t")
+        self.record_path.write_text(json.dumps(dict(json.loads(self.record_path.read_text()), pending={"generation": 1})))
+        task = self.launch("codex", model="gpt-5")
+        self.acknowledgement(task)
+        self.call("complete", "--id", task["id"], "--outcome", "failed")
+        self.tmux("kill-window", "-t", task["terminal"]["window"])
+        path = self.record_path.parent / "tasks" / (task["id"] + ".json")
+        path.write_text(json.dumps(dict(json.loads(path.read_text()), server_pid=int(other_pid),
+                                        server_started_at=int(other_started))))
+        with native_launcher() as launcher:
+            shutil.copyfile(launcher, self.bin / "claude")
+            self.bin.joinpath("claude").chmod(0o755)
+            shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", self.home / ".fixture-harness.py")
+            (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.root / "rows.jsonl"),
+                "gate": str(self.root / "gate"), "bash": self.env["JARVIS_TEST_BASH"], "skills": str(self.skills)}))
+            self.session("stop")
+            self.settle("stopped", "stopped")
+            self.assertFalse(self.jarvis_live())
+            self.session("start", "--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual")
+            self.settle("running")
+        subprocess.run([*unrelated, "has-session"], env=self.env, capture_output=True, timeout=10, check=True)
+        # A closed window is not judged again: cleanup succeeds while no
+        # tmux server can be read.
+        wrapper = self.bin / "tmux"
+        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nexit 2\n")
+        wrapper.chmod(0o755)
+        self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
+        wrapper.unlink()
+        self.session("stop")
+        self.settle("stopped", "stopped")
+
     def settle(self, state, reason=None):
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
@@ -593,6 +632,10 @@ while True: signal.pause()
              "test_failed_succession_ends_task_windows"),
             ("refusal", "session.py", (("sys.exit(session.main())", "sys.exit(main())"),),
              "test_controller_teardown_refusals"),
+            ("replaced-server", "session-backend.sh", (('      rc=1\n    fi\n', '      :\n    fi\n'),),
+             "test_replaced_server_task_leaves_lifecycle_open"),
+            ("closed-window", "task.py", (('        if terminal.get("closed"):\n            return\n', ''),),
+             "test_replaced_server_task_leaves_lifecycle_open"),
             ("interrupt", "task.py", ((
                 "if signal.getsignal(signum) != signal.SIG_IGN:",
                 "if False and signal.getsignal(signum) != signal.SIG_IGN:"),),
