@@ -111,6 +111,7 @@ print(json.dumps({"config_dir": row["account"]}))
                 previous = self.wait()
                 before = json.loads(self.record.read_text())
                 native_count = len(self.started())
+                predecessor_argv = self.started()[-1]["argv"]
                 contents = self.handoff()
                 account = self.root / ("next-" + state + "-" + target)
                 account.mkdir()
@@ -171,7 +172,8 @@ print(json.dumps({"config_dir": row["account"]}))
                         self.assertIn("--effort", argv)
                         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
                         self.assertEqual(argv[argv.index("--effort") + 1], "high")
-                        self.assertFalse(any(word.startswith("--settings") for word in argv))
+                        self.assertEqual([word for word in argv if word.startswith("--settings")],
+                                         [word for word in predecessor_argv if word.startswith("--settings")])
                     elif target == "codex":
                         self.assertIn("model_reasoning_effort=high", argv)
                         self.assertNotIn("-m", argv)
