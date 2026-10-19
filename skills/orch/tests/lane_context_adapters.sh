@@ -640,8 +640,11 @@ while IFS='|' read -r row compaction stub record argument want key; do
   if [[ -n "$key" ]]; then
     assert_eq "$(grep -cxF -- "$key" "$T/panel.err" || true)" 1 "pi pre-panel $row reports $key"
   fi
+  if [[ "$argument" == none ]]; then
+    assert_eq "$(grep -c '^lane-context: window-argument=' "$T/panel.err" || true)" 0 "pi pre-panel $row warns of no window argument"
+  fi
 done <<'ROWS'
-registry|false|1000000|||rc=0 verdict=room|
+registry|false|1000000|||rc=0 verdict=room|lane-context: window-argument=
 typed-window|false|1000000||272000|rc=0 verdict=room|lane-context: window-argument=272000
 five-arguments|false|1000000||none|rc=0 verdict=room|
 no-source|false||||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable

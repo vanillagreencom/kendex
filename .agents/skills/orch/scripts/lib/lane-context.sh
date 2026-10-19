@@ -1028,10 +1028,10 @@ copilot_reading_pending() {
 # payload supplies, but for its window: HARNESS SESSION TRANSCRIPT BOX
 # PROJECT. A session runs it from its own shell tool, where no payload exists,
 # so a window there could only be a number the caller typed, and the adapter
-# finds a Pi window itself (lane_adapter_pi_reading). A sixth argument is the
-# window the earlier review-pr text passed, which a lane that loaded that text
-# still sends: it reads, unused, with one warning naming this form, until the
-# next kendex major release. The caller's launch home stays in the harness
+# finds a Pi window itself (lane_adapter_pi_reading). A sixth argument, empty
+# or not, is the window the earlier review-pr text passed, which a lane that
+# loaded that text still sends: it reads, unused, with one warning naming this
+# form, until the next kendex major release. The caller's launch home stays in the harness
 # environment. The only stdout result is the existing reserve judge's
 # room/due answer; an unavailable read exits nonzero. The hook keeps its own
 # callbacks and never enters this arm.
@@ -1044,7 +1044,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "$#" in
     5) ;;
     6)
-      [ -z "$6" ] || printf '%s\n' "lane-context: window-argument=$6" \
+      printf '%s\n' "lane-context: window-argument=$6" \
         'The window argument is no longer read: run lane-context.sh HARNESS SESSION TRANSCRIPT BOX PROJECT.' >&2
       ;;
     *)

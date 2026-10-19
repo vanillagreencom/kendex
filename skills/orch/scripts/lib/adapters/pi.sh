@@ -4,9 +4,10 @@
 # writes, and the window, which Pi keeps in its model registry and never in
 # that file: the pi-hooks carrier puts it on the turn-end and tool-call
 # payloads as `context_window`, from the session's own `getContextUsage()`.
-# A run with no payload, a lane's own pre-panel check from its Bash tool or
-# the lane mail wake's turn end, takes the window the session's record holds
-# or reads Pi's registry itself (lane_adapter_pi_reading).
+# A read with no payload window, the pre-panel check a lane runs from its own
+# shell or a hook payload from a pi-hooks carrier that sends no
+# `context_window`, takes the window the session's record holds or reads Pi's
+# registry itself (lane_adapter_pi_reading).
 #
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
 # its settings file, so open-terminal reads that value before a Pi launch
@@ -29,8 +30,8 @@
 #
 # The window is a verified point only while effective settings disable
 # compaction, and is then the first of: WINDOW, the one a hook payload named;
-# the window BOX's record holds for the same SESSION and model, which a turn
-# end with a payload wrote; Pi's own registry for the reading's model
+# the window BOX's record holds for the same SESSION and model
+# (lane_adapter_pi_record_window); Pi's own registry for the reading's model
 # (lane_adapter_pi_registry_window). With none it is empty, which the judge
 # refuses as unmeasured. A number a caller types is no source: the pre-panel
 # command passes no WINDOW. Settings errors are reported without discarding
@@ -71,9 +72,11 @@ lane_adapter_pi_reading() { # UNREAD WINDOW [DIR] [SESSION] [BOX]
 # The window BOX's context record holds for a Pi reading of SESSION on MODEL,
 # and nothing where BOX or SESSION is empty, no record stands or it is another
 # session's, model's or harness's, or a gap record. Read through
-# lane_context_record_fields, which owns the record's shape. A turn end of the
-# same session wrote it, from the window its payload named or from this same
-# chain; a model switched since names another window.
+# lane_context_record_fields, which owns the record's shape. Any read of the
+# same session through this chain may have written it, a turn end, an
+# attached-launch check or the pre-panel command, with the window that read
+# found: its payload's, an earlier record's or the registry's. A model
+# switched since names another window.
 lane_adapter_pi_record_window() { # BOX SESSION MODEL
   local record
   { [ -n "$1" ] && [ -n "$2" ] && [ -r "$1/$LANE_CONTEXT_RECORD" ]; } || return 0
@@ -152,10 +155,12 @@ lane_adapter_pi_enabled() { # FILE
 }
 
 # Whether the pi-hooks carrier Pi loads for a session started in DIR puts the
-# model's `context_window` on its payloads, the one place a Pi window reaches
-# the lane-mail-check hook: 0 where the installed carrier, the project's or
-# else the user's, names that field, 1 where none installed does. A carrier
-# that predates the field leaves every Pi reading without a window; one that
+# model's `context_window` on its payloads: 0 where the installed carrier, the
+# project's or else the user's, names that field, 1 where none installed does.
+# The payload window is the session's own, from its `getContextUsage()`, and
+# the only one the overseer's tool-call judgement takes; a carrier that
+# predates the field leaves those calls unjudged and every turn end judged on
+# a record or registry window for the transcript's model instead. One that
 # puts it on the Stop payload alone leaves the overseer's tool calls
 # unjudged, and its turn ends judged.
 lane_adapter_pi_window_read() { # DIR
