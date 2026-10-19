@@ -715,11 +715,6 @@ jobs:
         with:
           toolchain: stable
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
-        with:
-          key: change-class-kendex
-          save-if: ${{ github.event_name != 'pull_request' }}
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
@@ -1319,11 +1314,6 @@ jobs:
         if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
         with:
           node-version: 22.19.0
-          cache: npm
-          cache-dependency-path: |
-            pi-extensions/pi-caveman/package-lock.json
-            pi-extensions/pi-claude-bridge/package-lock.json
-            .github/workflows/skill-tests.yml
 
       - name: deep-research node suite
         if: matrix.shard == 'node'
@@ -1740,7 +1730,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.crate }}
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # The keychain store links dbus in every crate; the app shell links
       # webkit and gtk in its own.
       - name: System dependencies
@@ -1840,7 +1830,7 @@ jobs:
           # The leg is in the key because the kendex-cli legs compile
           # different target sets and would otherwise race one entry.
           key: ${{ matrix.crate }}-${{ matrix.leg }}
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # pi_carrier.rs is a unix test, so with bun installed it runs here too
       # instead of skipping on the platform the app ships on.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -2011,10 +2001,6 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: lint
-          save-if: ${{ github.event_name != 'pull_request' }}
       - name: System dependencies for the keychain store and the app shell
         run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
       - name: cargo clippy
@@ -2053,7 +2039,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # rust-toolchain.toml overrides the toolchain the action installed, so
       # the target belongs on the pinned one — an action `targets:` input
       # lands on the other and surfaces as E0463 at compile time. `rustc
@@ -2083,7 +2069,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       - name: compile
         timeout-minutes: 25
         run: cargo test --workspace --locked --no-run
@@ -2161,12 +2147,15 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       - name: System dependencies for the keychain store
         run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
+          # The workflow is the key input, so a changed group can miss main.
+          cache: ${{ github.event_name != 'merge_group' && 'npm' || '' }}
           cache-dependency-path: .github/workflows/skill-tests.yml
       - name: Install the freely installable harness CLIs
         # Latest releases detect changes in harness file readers. Version
