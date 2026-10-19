@@ -242,8 +242,10 @@ fi
 # signal, LANE_CLOSE_STOP_STATUS a stop that fails, 4 being the protocol's
 # answer for an item whose worktree is gone, LANE_CLOSE_STOP_SANDBOX a 4 that
 # is instead a provider's own lane-stopped answer for a sandbox in that state,
-# and LANE_CLOSE_STOP_OUT the answer it prints in place of the protocol's line.
+# LANE_CLOSE_STOP_OUT the answer it prints in place of the protocol's line, and
+# LANE_CLOSE_STOP_DELAY the seconds its round trip and signal grace take.
 if [[ "$1" == stop ]]; then
+  [[ -z "${LANE_CLOSE_STOP_DELAY:-}" ]] || sleep "$LANE_CLOSE_STOP_DELAY"
   case "${LANE_CLOSE_STOP_STATUS:-0}" in
     0) ;;
     4)
@@ -2334,6 +2336,22 @@ EOF
 else
   printf '  skip  timer wiring requires timeout or gtimeout, as the production read bound does\n'
 fi
+
+# A Daytona stop's round trip and signal grace can take most of the close
+# bound. The status reads after it get the whole bound (KEN-4444); the control
+# starts the bound before the stop again and times out with the harness gone.
+# Real elapsed time: this is the deadline's timer wiring.
+SLOW_STOP_CONTROL="$(mutant slow-stop '    close_deadline=$((close_deadline + SECONDS - stop_started))' '    :')"
+for owner in "$SCRIPT" "$SLOW_STOP_CONTROL"; do
+  write_state running pi /host linear owner/repo; write_panes bash; printf '\n' >"$SCREEN"
+  LANE_CLOSE_STOP_DELAY=3.5 LANE_CLOSE_READ_DELAY=0.5 LANE_CLOSE_WAIT_SECS=4 \
+    LANE_CLOSE_HOST_PANE=verb LANE_CLOSE_POST_STOP=delayed LANE_CLOSE_PROVIDER_SCREEN="$SCREEN" \
+    run_close "$owner" --park --pr 7
+  got="rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=pi pane=%7 processes=1$' <<<"$ERR" || true) park=$(park_count) status=$(jq -r '.lanes[0].status' "$STATE")"
+  want='rc=0 timeout=0 park=1 status=parked'
+  [[ "$owner" == "$SCRIPT" ]] || want='rc=1 timeout=1 park=0 status=running'
+  assert_eq "$got" "$want" 'a hosted Pi stop that takes most of the bound parks on the first attempt; the bound-before-stop control times out'
+done
 
 MUTANT="$(mutant pi-failed-read '  pane_state_readable "$current_state" || return 2' '  :')"
 for response in status-failed capture-failed; do

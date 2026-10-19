@@ -197,7 +197,8 @@ harness there either it refuses as stop-failed cause=identity-unread or
 cause=identity-stale. No directory is read, so a lane whose worktree its own
 close-out removed, or one recreated at the same path, stops all the same. The
 close then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read
-exited. A hosted pane read as unjudged after successful provider status and
+exited, a bound the hosted stop's own provider call does not spend.
+A hosted pane read as unjudged after successful provider status and
 capture reads keeps waiting. A failed read before the stop or during this wait
 refuses as pane-read-failed; a pane that never reads exited ends as exit-timeout.
 A hosted stop answering status 4 beside a stop-worktree-removed item=ITEM line
@@ -1454,7 +1455,7 @@ stop_answered_worktree_removed() { # STDERR_FILE
     END { exit !found }' "$1"
 }
 stop_harness() {
-  local out err rc=0 removed=false wake_pid wake_start fields=("item=$ITEM" "harness=$harness")
+  local out err rc=0 removed=false wake_pid wake_start stop_started fields=("item=$ITEM" "harness=$harness")
   if [[ "$harness" == copilot && -n "$pane_id" ]]; then
     source "$SCRIPT_DIR/lib/pane-write.sh"
     local kind=pane target="$pane_id" expect=copilot
@@ -1469,7 +1470,12 @@ stop_harness() {
   if [[ -n "$host" ]]; then
     [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
     err="$(mktemp)" || { message stop-failed "${fields[@]}" "cause=stderr-unsaved" >&2; exit 1; }
+    stop_started=$SECONDS
     out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop --item "$ITEM" --harness "$harness" 2>"$err")" || rc=$?
+    # The exit wait's bound is stop_and_await_exit's close_deadline. It starts
+    # once the hosted stop returns: the provider round trip and its signal
+    # grace would otherwise spend the time the status read needs.
+    close_deadline=$((close_deadline + SECONDS - stop_started))
     cat -- "$err" >&2
     if [[ "$rc" -eq "$STOP_WORKTREE_REMOVED" ]] && stop_answered_worktree_removed "$err"; then removed=true; fi
     rm -f -- "$err"
