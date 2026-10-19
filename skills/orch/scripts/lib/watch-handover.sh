@@ -11,7 +11,9 @@
 #                     output appended beside the fleet state
 #   watch_handover    the running repeat-mode watch named, and a helper
 #                     started that restarts it from the successor pane once
-#                     the predecessor's session is gone
+#                     the predecessor's session is gone; for a predecessor
+#                     whose server closed, the watch stopped and restarted
+#                     there before it returns
 #
 # The helper is `oversee-succeed`'s internal `--watch-restart` run (its header,
 # step 6), started through lib/job-unit.sh outside the launcher and anything
@@ -53,22 +55,27 @@ watch_job_launch() { # NAME STATE OUT ERR COMMAND...
 # LANE_VAR and LANE_HOME, its HARNESS and its FLAG words, which the restarted
 # watch runs under. Its stdout and stderr go to oversee-watch.err, which the
 # next watch start prints. --closed names a successor whose predecessor's
-# session closed with its tmux server, PREDECESSOR empty, so the helper waits
-# on no session: a later server can hand that pane id to another pane or to
-# SUCCESSOR itself. A stopped watch keeps its log cursor and unread events
-# for it as for any successor.
+# session closed with its tmux server, PREDECESSOR empty. A later server can
+# hand the lost pane's id to another pane or to SUCCESSOR itself, so a
+# restarted watch cannot tell a claim on it stale and is refused: --closed
+# starts no helper, but stops the claiming watch and replays its command from
+# SUCCESSOR, returning once the replay holds its claim. A stopped watch
+# keeps its log cursor and unread events for it as for any successor.
 #
 # The outcome is WATCH_HANDOVER_KEY with its fields in WATCH_HANDOVER_FIELDS:
 #   0  watch-handover  pid=<the watch handed over> pane=<SUCCESSOR> log=<path>
 #                      and the runner line
 #   0  watch-started  pid=<watch> pane=<SUCCESSOR> log=<path> err=<path>
-#                      and the runner line: no watch ran, so one is started
+#                      [stopped=<pid>] and the runner line: a watch is
+#                      started where none ran, or where --closed stopped the
+#                      live one stopped= names
 #   1  watch-restart-failed step=state-path, the detail in DEP_ERR, or
-#                      step=helper pid=<N> error=<key> and the runner's error:
-#                      the caller refuses launch before stopping its pane
+#                      step=helper pid=<N> error=<key> and the runner's error,
+#                      step=stop pid=<N>, or watch_start's: the caller refuses
+#                      launch before stopping its pane
 watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
-  local state old fresh=0
-  if [[ "${1:-}" == --closed ]]; then shift; elif [[ -z "$1" ]]; then fresh=1; fi
+  local state old fresh=0 closed=0
+  if [[ "${1:-}" == --closed ]]; then shift; closed=1; elif [[ -z "$1" ]]; then fresh=1; fi
   WATCH_HANDOVER_KEY="" WATCH_HANDOVER_FIELDS=()
   if ! state="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")"; then
     WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=state-path)
@@ -102,6 +109,16 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
   if ! watch_argv_read "$state" 2>"$DEP_ERR"; then
     WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=argv "pid=$old")
     return 1
+  fi
+  if (( closed )); then
+    if ! watch_stop "$old" "$state" 2>"$DEP_ERR"; then
+      WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=stop "pid=$old")
+      return 1
+    fi
+    watch_start replay "$state" "${@:2}" || return 1
+    # The runner line stays last: its detail is free text.
+    WATCH_HANDOVER_FIELDS=("${WATCH_HANDOVER_FIELDS[@]:0:4}" "stopped=$old" "${WATCH_HANDOVER_FIELDS[@]:4}")
+    return 0
   fi
   local cwd="$WATCH_CWD" script="$WATCH_SCRIPT" argv_count="${#WATCH_ARGV[@]}"
   local argv=(${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"})
