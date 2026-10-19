@@ -6,7 +6,7 @@
 # requires: [command-safety]
 # description: Block plain rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
 # summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. Quoted programs and heredocs sent as data pass; the refusal gives a safe cleanup pattern.
-# safety: A quote-aware command scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Quoted-delimiter heredocs sent to cat, Python, Node, Ruby or Perl and quoted inline programs for those interpreters are data. Shell, eval, source, unquoted-delimiter and unknown-receiver bodies retain scanning. Inline programs containing shell command substitutions retain conservative scanning, as do unsupported or incomplete syntax and piped heredocs. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
+# safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the quote-aware boundary parser: quoted-delimiter heredocs sent to cat, Python, Node, Ruby or Perl and quoted inline programs for those interpreters are data when their receiver and word boundary are proved. Shell, eval, source, unquoted-delimiter and unknown-receiver bodies retain scanning. Combined redirections, executable substitutions, grouped input routing, dollar-quoted words, pipelines and incomplete syntax retain the original scan; literal backticks inside quoted data stay data. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
 
 set -euo pipefail
@@ -96,38 +96,38 @@ COMMAND=$(printf '%s' "$INPUT" \
 # depends on its environment-evidence parser and is not a callable interface.
 # Keep only the word/body boundary here, leaving the operand rules below alone.
 command_regions() {
-  local text=$1 i=0 n=${#1} c next word value quote depth expanded quoted
-  local receiver="" inline="" redirect="" out="" op delimiter body line found doc tabs
-  local doc_receivers=() delimiters=() strip_tabs=() expands=() quotes=()
+  local LC_ALL=C
+  local text=$1 i=0 n=${#1} c next word value quote quoted remaining span
+  local receiver="" inline="" redirect="" out="" op delimiter line found doc tabs body_start line_start
+  local doc_receivers=() delimiters=() strip_tabs=() expands=()
   while [ "$i" -lt "$n" ]; do
     c=${text:$i:1}; next=${text:$((i + 1)):1}
     case "$c" in
       ' ' | $'\t') out=$out$c; i=$((i + 1)); continue ;;
       $'\n' | ';' | '&' | '|')
-        # A pipeline can execute a data receiver's output as shell code.
-        # Its forwarding contract is outside this small boundary parser.
+        # These operators can forward input or change the receiver. Commit no
+        # masking unless the whole command stays within the supported grammar.
         [ "$c" != '|' ] || return 1
+        [ "$c$next" != '&>' ] || return 1
         out=$out$c; i=$((i + 1))
         receiver=""; inline=""
         if [ "$c" = $'\n' ]; then
           for ((doc=0; doc<${#delimiters[@]}; doc++)); do
-            delimiter=${delimiters[$doc]}; body=""; found=""
-            while [ "$i" -lt "$n" ]; do
-              line=""
-              while [ "$i" -lt "$n" ] && [ "${text:$i:1}" != $'\n' ]; do
-                line=$line${text:$i:1}; i=$((i + 1))
-              done
+            delimiter=${delimiters[$doc]}; found=""; body_start=$i
+            # One stream per body avoids slicing the whole UTF-8 command for
+            # every byte of a file-writing heredoc.
+            while IFS= read -r line; do
+              line_start=$i; i=$((i + ${#line}))
               [ "$i" -ge "$n" ] || i=$((i + 1))
               tabs=$line
               if [ "${strip_tabs[$doc]}" = 1 ]; then
                 while [[ $tabs == $'\t'* ]]; do tabs=${tabs#$'\t'}; done
               fi
               if [ "$tabs" = "$delimiter" ]; then found=1; break; fi
-              body=$body$line$'\n'
-            done
+            done <<< "${text:$i}"
             [ -n "$found" ] || return 1
             if [ "${doc_receivers[$doc]}" != data ] || [ "${expands[$doc]}" = 1 ]; then
-              out=$out$body
+              out=$out${text:$body_start:$((line_start - body_start))}
             fi
             out=$out$'\n'
           done
@@ -148,23 +148,31 @@ command_regions() {
         out=$out$op; redirect=$op; continue ;;
       '#')
         # Shell comments cannot introduce a heredoc that consumes later lines.
-        while [ "$i" -lt "$n" ] && [ "${text:$i:1}" != $'\n' ]; do
-          out=$out${text:$i:1}; i=$((i + 1))
-        done
+        remaining=${text:$i}; span=${remaining%%$'\n'*}
+        out=$out$span; i=$((i + ${#span}))
         continue ;;
+      '(' | ')') return 1 ;;
     esac
 
-    word=""; value=""; quote=""; depth=0; expanded=""; quoted=""; quotes=()
+    word=""; value=""; quote=""; quoted=""
     while [ "$i" -lt "$n" ]; do
       c=${text:$i:1}; next=${text:$((i + 1)):1}
-      if [ -z "$quote" ] && [ "$depth" -eq 0 ]; then
+      if [ -z "$quote" ]; then
         case "$c" in ' ' | $'\t' | $'\n' | ';' | '&' | '|' | '<' | '>') break ;; esac
+        case "$c" in '(' | ')') return 1 ;; esac
+        # Dollar quoting has different escape or translation semantics. It
+        # cannot establish a program word's boundary with ordinary quotes.
+        case "$c$next" in "\$'" | '$"') return 1 ;; esac
       fi
-      word=$word$c; i=$((i + 1))
-      if [ "$quote" = "'" ]; then
-        if [ "$c" = "'" ]; then quote=""; else value=$value$c; fi
+      if [ -z "$quote" ] && [ "$c" = "'" ]; then
+        remaining=${text:$((i + 1))}
+        [[ $remaining == *"'"* ]] || return 1
+        span=${remaining%%"'"*}
+        word=$word"'$span'"; value=$value$span
+        i=$((i + ${#span} + 2)); quoted=1
         continue
       fi
+      word=$word$c; i=$((i + 1))
       if [ "$c" = '\' ]; then
         [ "$i" -lt "$n" ] || return 1
         if [ "$quote" = '"' ]; then
@@ -172,17 +180,10 @@ command_regions() {
         fi
         word=$word$next; value=$value$next; i=$((i + 1)); quoted=1; continue
       fi
-      if [ "$c" = '$' ] && [ "$next" = '(' ]; then
-        quotes[$depth]=$quote; depth=$((depth + 1)); quote=""; expanded=1
-        word=$word$next; value=$value'$('; i=$((i + 1)); continue
-      fi
-      if [ "$c" = '`' ]; then expanded=1; fi
-      if [ -z "$quote" ] && [ "$depth" -gt 0 ]; then
-        case "$c" in
-          '(') quotes[$depth]=""; depth=$((depth + 1)) ;;
-          ')') depth=$((depth - 1)); quote=${quotes[$depth]} ;;
-        esac
-      fi
+      # Executable substitutions can contain their own command lines and
+      # heredocs. Literal single-quoted and escaped bytes never reach here.
+      case "$c$next" in '$(') return 1 ;; esac
+      [ "$c" != '`' ] || return 1
       case "$c" in
         '"' | "'")
           if [ "$quote" = "$c" ]; then quote=""; quoted=1; continue
@@ -190,7 +191,8 @@ command_regions() {
       esac
       value=$value$c
     done
-    [ -z "$quote" ] && [ "$depth" -eq 0 ] || return 1
+    [ -z "$quote" ] || return 1
+    case "$word" in '{' | '}') return 1 ;; esac
     if [ -n "$redirect" ]; then
       case "$redirect" in
         '<<' | '<<-')
@@ -201,24 +203,27 @@ command_regions() {
       esac
       redirect=""
     elif [ -z "$receiver" ]; then
-      case "$value" in
-        *=* | if | then | elif | while | until | do | '!' | time | '{' | '(') ;;
-        *)
-          case "${value##*/}" in
-            cat) receiver=data ;;
-            python | python3 | node | ruby | perl) receiver=data; inline=options ;;
-            *) receiver=code ;;
-          esac ;;
-      esac
+      # Quoted keywords and quoted assignment names are executable words.
+      # Only their literal shell spellings can precede a receiver.
+      if [[ ! $word =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+        case "$word" in
+          if | then | elif | while | until | do | '!' | time) ;;
+          *)
+            case "${value##*/}" in
+              cat) receiver=data ;;
+              python | python3 | node | ruby | perl) receiver=data; inline=options ;;
+              *) receiver=code ;;
+            esac ;;
+        esac
+      fi
     elif [ "$inline" = argument ]; then
-      # Double-quoted programs still perform shell substitutions before the
-      # interpreter starts. Keep their whole word when that boundary is unclear.
-      if [ -n "$quoted" ] && [ -z "$expanded" ]; then word=__program_data__; fi
+      [ -z "$quoted" ] || word=__program_data__
       inline=""
     elif [ "$inline" = options ]; then
       case "$value" in
         -c | -e | --eval) inline=argument ;;
-        -*) ;;
+        # Other options can consume the next word, including a program flag.
+        # Without their argument grammar, that word is not proved inline code.
         *) inline="" ;;
       esac
     fi
@@ -227,10 +232,6 @@ command_regions() {
   [ "${#delimiters[@]}" -eq 0 ] && [ -z "$redirect" ] || return 1
   COMMAND=$out
 }
-
-# Incomplete syntax retains the original conservative scan, never a partial
-# masking result. Parsing reads submitted text only; it executes none of it.
-command_regions "$COMMAND" || :
 
 # The whole rule, built from named parts so each one is readable on its own.
 # The parts count WHEREVER they stand in the command. There is no
@@ -297,11 +298,6 @@ UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 # its rm verb. Option values can run nested removals before Git sees them,
 # so their text and every separator must reach both operand checks.
 GIT_RM="(${RM_EDGE}git(${GAP}+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path)${GAP}+${WORD}|${GAP}+-[^${ENDERS}${SPACE_ANY}]*)*${GAP}+)rm($|[${ENDERS}${SPACE_ANY}])"
-while [[ $COMMAND =~ $GIT_RM ]]; do
-  git_prefix=${BASH_REMATCH[1]}
-  git_suffix=${BASH_REMATCH[0]#"$git_prefix"rm}
-  COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/"${git_prefix}__${git_suffix}"}
-done
 
 # The harness has no shared-root ownership check.
 # With HOME=/shared/home, rm -rf /shared/home/* is a refused direct glob.
@@ -313,25 +309,42 @@ SHARED_BOUNDARY="[\"']*($|[${ENDERS}<>${SPACE_ANY}])"
 SHARED_END="[\"']*(${SHARED_SLASH})?${SHARED_BOUNDARY}"
 # Apple's regex rejects an empty alternative; an optional suffix accepts none.
 SHARED_ROOT="\"*\\\$(${SHARED_NAMES}|\\{${SHARED_NAMES}([^[:alnum:]_}][^}]*)?\\})${SHARED_END}"
-SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"
-[[ ! $COMMAND =~ $SHARED_RE ]] || refuse refused shared-root
-for root_name in TMPDIR TMP TEMP AGENT_TMPDIR HOME; do
-  root_value=${!root_name-}
-  [ -n "$root_value" ] || continue
-  while [[ $root_value == */ && $root_value != / ]]; do root_value=${root_value%/}; done
-  literal_root=$root_value
-  literal_end=$SHARED_END
-  if [ "$root_value" = / ]; then literal_root=''; literal_end="${SHARED_SLASH}${SHARED_BOUNDARY}"; fi
-  for metachar in '\' '.' '[' ']' '(' ')' '{' '}' '*' '+' '?' '^' '$' '|'; do
-    literal_root=${literal_root//"$metachar"/\\"$metachar"}
+
+rm_reason() {
+  local COMMAND=$1 git_prefix git_suffix root_name root_value literal_root literal_end metachar SHARED_RE
+  RM_REASON=""
+  while [[ $COMMAND =~ $GIT_RM ]]; do
+    git_prefix=${BASH_REMATCH[1]}
+    git_suffix=${BASH_REMATCH[0]#"$git_prefix"rm}
+    COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/"${git_prefix}__${git_suffix}"}
   done
-  SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+[\"']*${literal_root}${literal_end}"
-  [[ ! $COMMAND =~ $SHARED_RE ]] || refuse refused shared-root
-done
 
-if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
-  exit 0
+  SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"
+  [[ ! $COMMAND =~ $SHARED_RE ]] || { RM_REASON=shared-root; return 0; }
+  for root_name in TMPDIR TMP TEMP AGENT_TMPDIR HOME; do
+    root_value=${!root_name-}
+    [ -n "$root_value" ] || continue
+    while [[ $root_value == */ && $root_value != / ]]; do root_value=${root_value%/}; done
+    literal_root=$root_value
+    literal_end=$SHARED_END
+    if [ "$root_value" = / ]; then literal_root=''; literal_end="${SHARED_SLASH}${SHARED_BOUNDARY}"; fi
+    for metachar in '\' '.' '[' ']' '(' ')' '{' '}' '*' '+' '?' '^' '$' '|'; do
+      literal_root=${literal_root//"$metachar"/\\"$metachar"}
+    done
+    SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+[\"']*${literal_root}${literal_end}"
+    [[ ! $COMMAND =~ $SHARED_RE ]] || { RM_REASON=shared-root; return 0; }
+  done
+  [[ ! $COMMAND =~ $UNSAFE_RE ]] || RM_REASON=recursive-rm
+}
+
+# Most tool calls need only the operand judgment. Parse bodies only to prove
+# that a raw refusal names data. Unproved syntax retains that original refusal.
+rm_reason "$COMMAND"
+[ -n "$RM_REASON" ] || exit 0
+raw_reason=$RM_REASON
+if command_regions "$COMMAND"; then
+  rm_reason "$COMMAND"
+  [ -n "$RM_REASON" ] || exit 0
+  refuse refused "$RM_REASON"
 fi
-
-# Keep the refusal key stable for existing callers.
-refuse refused recursive-rm
+refuse refused "$raw_reason"

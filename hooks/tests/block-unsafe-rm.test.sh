@@ -135,6 +135,12 @@ escaped delimiter|command|0|-|cat <<\\EOF\nrm -rf $X\nEOF
 tab stripped delimiter|command|0|-|cat <<-'\''EOF'\''\n\trm -rf $X\n\tEOF
 multiple data bodies|command|0|-|cat <<'\''A'\'' <<'\''B'\''\nrm -rf $X\nA\nrm -rf $HOME\nB
 quoted heredoc marker|command|0|-|python3 -c '\''s = "<<EOF rm -rf $X"'\''
+literal backticks in program|command|0|-|python3 -c '\''s = "`rm -rf $X`"'\''
+literal backticks in heredoc|command|0|-|cat <<'\''EOF'\''\n`rm -rf $X`\nEOF
+escaped backticks in program|command|0|-|python3 -c "print('\''\\`rm -rf $X\\`'\'')"
+guarded shared root as data|command|0|-|cat <<'\''EOF'\''\nrm -rf "${HOME:?}"\nEOF
+assignment before data receiver|command|0|-|MODE=test python3 -c '\''s = "rm -rf $HOME"'\''
+quoted data receiver|command|0|-|"python3" -c '\''s = "rm -rf $HOME"'\''
 '
 }
 executable_body_rows() {
@@ -154,6 +160,21 @@ inline program piped to shell|command|2|block-unsafe-rm: refused=recursive-rm|py
 data redirected to shell|command|2|block-unsafe-rm: refused=recursive-rm|cat > >(bash) <<'\''EOF'\''\nrm -rf $X\nEOF
 mixed heredocs|command|2|block-unsafe-rm: refused=shared-root|cat <<'\''A'\''; bash <<'\''B'\''\nrm -rf $X\nA\nrm -rf $HOME\nB
 incomplete data heredoc|command|2|block-unsafe-rm: refused=recursive-rm|cat <<'\''EOF'\''\nrm -rf $X
+combined redirect receiver|command|2|block-unsafe-rm: refused=shared-root|bash -s &>/dev/null python3 <<'\''EOF'\''\nrm -rf $HOME\nEOF
+combined append receiver|command|2|block-unsafe-rm: refused=shared-root|bash -s \046>>/dev/null python3 <<'\''EOF'\''\nrm -rf $HOME\nEOF
+backtick eval receiver|command|2|block-unsafe-rm: refused=shared-root|eval `\ncat <<'\''EOF'\''\nrm -rf "$HOME"\nEOF\n`
+backtick shell receiver|command|2|block-unsafe-rm: refused=recursive-rm|cat `bash <<'\''EOF'\''\nrm -rf "$X/sub"\nEOF\n`
+subshell input receiver|command|2|block-unsafe-rm: refused=shared-root|( bash; cat ) <<'\''EOF'\''\nrm -rf $HOME\nEOF
+brace group input receiver|command|2|block-unsafe-rm: refused=shared-root|{ bash; cat; } <<'\''EOF'\''\nrm -rf $HOME\nEOF
+data before unproved receiver|command|2|block-unsafe-rm: refused=shared-root|python3 -c '\''s = "rm -rf $X"'\''; bash -s &>/dev/null python3 <<'\''EOF'\''\nrm -rf $HOME\nEOF
+python dollar quote boundary|command|2|block-unsafe-rm: refused=shared-root|python3 -c $\047a\134\047\047 ; rm -rf $HOME ; echo \134\047
+node dollar quote boundary|command|2|block-unsafe-rm: refused=shared-root|node -e $\047a\134\047\047 ; rm -rf $HOME ; echo \134\047
+ruby dollar quote boundary|command|2|block-unsafe-rm: refused=shared-root|ruby -e $\047a\134\047\047 ; rm -rf $HOME ; echo \134\047
+perl dollar quote boundary|command|2|block-unsafe-rm: refused=shared-root|perl -e $\047a\134\047\047 ; rm -rf $HOME ; echo \134\047
+quoted keyword receiver|command|2|block-unsafe-rm: refused=shared-root|"if" python3 <<'\''EOF'\''\nrm -rf $HOME\nEOF
+quoted assignment receiver|command|2|block-unsafe-rm: refused=shared-root|"MODE=test" python3 <<'\''EOF'\''\nrm -rf $HOME\nEOF
+option argument owns program flag|command|2|block-unsafe-rm: refused=shared-root|python3 -W -c '\''rm -rf $HOME'\''
+option terminator owns program flag|command|2|block-unsafe-rm: refused=shared-root|python3 -- -c '\''rm -rf $HOME'\''
 '
 }
 data_body_rows
@@ -163,11 +184,20 @@ skill_load_control body-raw-scan "$HOOK" 'command_regions() {' \
   'python replacement heredoc' 'file writing heredoc' 'python replacement inline'
 skill_load_control body-always-refuse "$HOOK" 'set -euo pipefail' \
   'exit 2' HOOK data_body_rows \
-  'python replacement heredoc' 'file writing heredoc' 'python replacement inline'
+  'python replacement heredoc' 'file writing heredoc' 'python replacement inline' \
+  'literal backticks in program' 'literal backticks in heredoc' \
+  'escaped backticks in program' 'guarded shared root as data'
 skill_load_control body-always-allow "$HOOK" 'set -euo pipefail' \
   'exit 0' HOOK executable_body_rows \
   'real removal' 'shell inline' 'eval inline' 'source inline' 'shell heredoc' \
-  'expanding data heredoc' 'after data heredoc' 'unknown receiver heredoc'
+  'expanding data heredoc' 'after data heredoc' 'unknown receiver heredoc' \
+  'combined redirect receiver' 'combined append receiver' \
+  'backtick eval receiver' 'backtick shell receiver' \
+  'subshell input receiver' 'brace group input receiver' 'data before unproved receiver' \
+  'python dollar quote boundary' 'node dollar quote boundary' \
+  'ruby dollar quote boundary' 'perl dollar quote boundary' \
+  'quoted keyword receiver' 'quoted assignment receiver' \
+  'option argument owns program flag' 'option terminator owns program flag'
 
 # Agents use git rm to remove tracked paths. These tool payloads are scanned,
 # never run; a following plain rm must retain its own refusal.
