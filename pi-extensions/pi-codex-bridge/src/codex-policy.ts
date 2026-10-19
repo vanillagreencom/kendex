@@ -100,8 +100,10 @@ export const ALLOWED_ITEM_TYPES: ReadonlySet<string> = new Set([
 	"dynamicToolCall",
 ]);
 
-/** A native tool that survives the lists above asks before it runs, and the
- * bridge declines every such request. */
+/** Codex asks before a command outside its known-safe set and outside the
+ * exec-policy allow rules, and the bridge declines each such request. A
+ * known-safe or allow-rule command runs without asking; the item audit stops
+ * it only after it starts. 0.163.0 has no stricter policy. */
 export const APPROVAL_POLICY = "untrusted";
 
 /**

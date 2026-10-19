@@ -14,7 +14,7 @@ import { listCodexModels, startAppServer, type Launch } from "./app-server.js";
 import { requireCodexLogin } from "./auth-presence.js";
 import { ALLOWED_ITEM_TYPES, APPROVAL_POLICY, threadConfig, unreviewedFeature } from "./codex-policy.js";
 import { buildDynamicTools, type DynamicToolCatalog } from "./dynamic-tools.js";
-import type { IncomingNotification, IncomingRequest, ProtocolClient } from "./json-rpc.js";
+import { CodexRequestError, type IncomingNotification, type IncomingRequest, type ProtocolClient } from "./json-rpc.js";
 import { API_ID, codexEffort, PROVIDER_ID } from "./models.js";
 import {
 	decodeDynamicToolCall,
@@ -44,7 +44,12 @@ export const MAX_PENDING_CALLS = 64;
 /** How long model discovery may hold Pi's startup. */
 export const DISCOVERY_DEADLINE_MS = 15_000;
 
-export type Connect = (launch: Launch) => Promise<ProtocolClient>;
+/** How long the version check plus the app-server handshake may take. */
+export const HANDSHAKE_DEADLINE_MS = 15_000;
+
+/** Start a connected client for `launch`. The connection owns its child from
+ * the spawn and stops it when `signal` aborts before the handshake ends. */
+export type Connect = (launch: Launch, signal: AbortSignal) => Promise<ProtocolClient>;
 
 type Queued =
 	| { kind: "event"; event: Exclude<CodexEvent, { type: "mcpStartup" | "ignored" }>; raw: unknown }
@@ -92,6 +97,8 @@ interface ThreadRecord {
 	lastTurnId: string | null;
 	/** That turn while Codex has not completed it. */
 	activeTurnId: string | null;
+	/** The turn the bridge last asked Codex to interrupt. */
+	interruptedTurnId: string | null;
 	/** Calls of the active turn that wait for Pi's results, in arrival order. */
 	pending: PendingToolCall[];
 	queue: ThreadQueue;
@@ -120,6 +127,8 @@ export interface BridgeOptions {
 	configOverrides?: readonly string[];
 	/** Test seam: how a launch becomes a connected client. */
 	connect?: Connect;
+	/** Test seam: the version check and handshake deadline. */
+	handshakeDeadlineMs?: number;
 }
 
 /**
@@ -132,7 +141,11 @@ export class CodexBridge {
 	readonly #launch: Launch;
 	readonly #connect: Connect;
 	#client: Promise<ProtocolClient> | undefined;
+	/** Aborts the open that #client stands for, which stops its child. */
+	#opening: AbortController | undefined;
 	#current: ProtocolClient | undefined;
+	/** Children being stopped; close waits for each. */
+	#stopping = new Set<Promise<void>>();
 	#threads = new Map<string, ThreadRecord>();
 
 	constructor(options: BridgeOptions) {
@@ -143,8 +156,9 @@ export class CodexBridge {
 			cwd: options.cwd ?? process.cwd(),
 			env: options.env ?? process.env,
 			configOverrides: options.configOverrides ?? [],
+			handshakeTimeoutMs: options.handshakeDeadlineMs ?? HANDSHAKE_DEADLINE_MS,
 		};
-		this.#connect = options.connect ?? ((launch) => startAppServer(launch));
+		this.#connect = options.connect ?? ((launch, signal) => startAppServer(launch, signal));
 	}
 
 	/** Pi's stream entry point. A missing login throws before any process starts. */
@@ -166,26 +180,37 @@ export class CodexBridge {
 			const client = await Promise.race([this.#client ??= this.#open(), deadline]);
 			return { models: await Promise.race([listCodexModels(client), deadline]) };
 		} catch (error) {
-			this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
+			void this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
 			return { models: [], notice: firstLine(error) };
 		} finally {
 			clearTimeout(timer);
 		}
 	}
 
+	/** Stop the child, and every stream on it, and wait for the child to exit. */
 	async close(): Promise<void> {
-		this.#closeClient(new Error("codex-bridge-closed"));
+		await this.#closeClient(new Error("codex-bridge-closed"));
 		this.#threads.clear();
+		await Promise.all(this.#stopping);
+	}
+
+	#stop(client: ProtocolClient, reason: Error): Promise<void> {
+		const stopped = Promise.resolve(client.kill(reason)).finally(() => this.#stopping.delete(stopped));
+		this.#stopping.add(stopped);
+		return stopped;
 	}
 
 	// --- Client and router ---------------------------------------------------
 
 	#open(): Promise<ProtocolClient> {
-		const opening = this.#connect(this.#launch).then((client) => {
+		const controller = new AbortController();
+		this.#opening = controller;
+		const opening = this.#connect(this.#launch, controller.signal).then((client) => {
 			if (this.#client !== opening) {
-				client.kill(new Error("codex-bridge-closed"));
+				void this.#stop(client, new Error("codex-bridge-closed"));
 				throw new Error("codex-bridge-closed");
 			}
+			this.#opening = undefined;
 			this.#current = client;
 			client.on("request", (frame) => this.#onRequest(client, frame));
 			client.on("notification", (frame) => this.#onNotification(client, frame));
@@ -193,36 +218,52 @@ export class CodexBridge {
 			return client;
 		});
 		opening.catch(() => {
-			if (this.#client === opening) this.#client = undefined;
+			if (this.#client === opening) {
+				this.#client = undefined;
+				this.#opening = undefined;
+			}
 		});
 		return opening;
 	}
 
-	#closeClient(reason: Error): void {
-		const opening = this.#client;
+	/** Release the client: abort an open still in its handshake, which stops
+	 * that child, or stop the connected child. */
+	async #closeClient(reason: Error): Promise<void> {
+		const opening = this.#opening;
+		const current = this.#current;
 		this.#client = undefined;
-		this.#current?.kill(reason);
+		this.#opening = undefined;
 		this.#current = undefined;
-		opening?.then((client) => client.kill(reason), () => undefined);
+		opening?.abort(reason);
+		if (current !== undefined) await this.#stop(current, reason);
 	}
 
 	#onClosed(client: ProtocolClient, error: Error): void {
 		if (this.#current !== client) return;
+		void this.#stop(client, error);
 		this.#current = undefined;
 		this.#client = undefined;
 		for (const record of this.#threads.values()) record.queue.push({ kind: "refusal", error, turnId: null });
 		this.#threads.clear();
 	}
 
-	/** A guard that cannot be held by refusing one turn: stop the child and
-	 * every process it started, and fail every stream on it. */
+	/** A guard that cannot be held by refusing one turn: fail every stream on
+	 * the child and stop it (see ProtocolClient.kill for what that reaches). */
 	#breach(client: ProtocolClient, error: Error): void {
-		client.kill(error);
+		void this.#stop(client, error);
 	}
 
+	/** Stop the record's active turn. Codex refusing that while the client is
+	 * open leaves a turn running that the bridge cannot stop: a breach. */
 	#interrupt(client: ProtocolClient, record: ThreadRecord): void {
-		if (record.activeTurnId === null) return;
-		void client.request("turn/interrupt", { threadId: record.threadId, turnId: record.activeTurnId }).catch(() => undefined);
+		const turnId = record.activeTurnId;
+		if (turnId === null || record.interruptedTurnId === turnId) return;
+		record.interruptedTurnId = turnId;
+		void client.request("turn/interrupt", { threadId: record.threadId, turnId }).catch((error) => {
+			// A turn that ended before the interrupt reached Codex needs no stop.
+			if (error instanceof CodexRequestError && error.kind === "no-active-turn") return;
+			if (this.#current === client) this.#breach(client, new Error(`codex-interrupt-failed thread=${record.threadId} turn=${turnId}`));
+		});
 	}
 
 	/** Refuse the turn a server request belongs to; a request no thread of
@@ -321,7 +362,7 @@ export class CodexBridge {
 	}
 
 	#record(threadId: string, tools: DynamicToolCatalog, lastTurnId: string | null): ThreadRecord {
-		return { threadId, tools, lastTurnId, activeTurnId: null, pending: [], queue: new ThreadQueue(), streaming: false, lastUsed: Date.now() };
+		return { threadId, tools, lastTurnId, activeTurnId: null, interruptedTurnId: null, pending: [], queue: new ThreadQueue(), streaming: false, lastUsed: Date.now() };
 	}
 
 	/** Answer a turn the bridge no longer continues, so Codex does not wait on
@@ -339,7 +380,7 @@ export class CodexBridge {
 		try {
 			return await client.requestDecoded("config/read", { cwd: this.#launch.cwd }, decodeMcpServerNames);
 		} catch (error) {
-			throw new Error(`codex-mcp-names-unread\n${firstLine(error)}`);
+			throw new Error(`codex-mcp-names-unread\n${firstLine(error)}\nCodex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`codex\` with that CODEX_HOME to see the error.`);
 		}
 	}
 
@@ -384,16 +425,24 @@ export class CodexBridge {
 	/** A cold resume, used only when Codex's latest turn is Pi's boundary. */
 	async #resumeThread(client: ProtocolClient, model: Model<string>, threadId: string, turnId: string, tools: DynamicToolCatalog): Promise<ThreadRecord | undefined> {
 		const names = await this.#mcpServerNames(client);
-		const resumed = await client.requestDecoded("thread/resume", {
-			threadId,
-			model: model.id,
-			cwd: this.#launch.cwd,
-			approvalPolicy: APPROVAL_POLICY,
-			sandbox: "read-only",
-			config: threadConfig(names),
-			excludeTurns: true,
-			initialTurnsPage: { limit: 1, sortDirection: "desc", itemsView: "notLoaded" },
-		}, decodeThreadResume);
+		let resumed: { threadId: string; lastTurnId: string | null };
+		try {
+			resumed = await client.requestDecoded("thread/resume", {
+				threadId,
+				model: model.id,
+				cwd: this.#launch.cwd,
+				approvalPolicy: APPROVAL_POLICY,
+				sandbox: "read-only",
+				config: threadConfig(names),
+				excludeTurns: true,
+				initialTurnsPage: { limit: 1, sortDirection: "desc", itemsView: "notLoaded" },
+			}, decodeThreadResume);
+		} catch (error) {
+			// A CODEX_HOME without the thread: a fresh home, another home, or pruned
+			// sessions. Pi's transcript still holds the conversation to replay.
+			if (error instanceof CodexRequestError && error.kind === "thread-not-found") return undefined;
+			throw error;
+		}
 		if (resumed.lastTurnId !== turnId) return undefined;
 		const record = this.#record(resumed.threadId, tools, turnId);
 		this.#register(record);
@@ -409,31 +458,37 @@ export class CodexBridge {
 	/**
 	 * Which Codex thread serves this transcript. Pi's latest clean pi-codex
 	 * message names a thread, a turn and a tool signature. The bridge continues
-	 * that thread only when the signature matches Pi's current tools and the
-	 * thread's latest turn is that turn; otherwise it starts a new thread and
-	 * replays the transcript, so Codex never holds turns Pi has dropped or calls
-	 * a tool Pi no longer has.
+	 * that thread only when the signature matches Pi's current tools, nothing
+	 * but user input and that turn's tool results follows the message, and the
+	 * thread's latest turn is that turn. Otherwise it starts a new thread and
+	 * replays the transcript, so Codex never holds turns Pi has dropped, misses
+	 * another model's turns, or calls a tool Pi no longer has. Any turn the plan
+	 * does not continue is abandoned, so Codex is not left waiting on it.
 	 */
 	async #plan(client: ProtocolClient, model: Model<string>, messages: Message[], tools: DynamicToolCatalog): Promise<Plan> {
 		const boundary = findBoundary(messages);
-		if (boundary !== undefined && boundary.toolSignature === tools.signature) {
-			const after = afterBoundary(messages, boundary);
-			const record = this.#threads.get(boundary.threadId);
-			if (record !== undefined) {
-				if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && record.pending.length > 0) {
-					return { record, mode: "continue", input: after.input, answers: answerToolCalls(record.pending, after.toolResults) };
-				}
-				if (boundary.stopReason === "stop" && record.activeTurnId === null && record.lastTurnId === boundary.turnId) {
-					return { record, mode: "turn", input: after.input };
-				}
-				this.#abandon(client, record);
-			} else if (boundary.stopReason === "stop") {
-				const resumed = await this.#resumeThread(client, model, boundary.threadId, boundary.turnId, tools);
-				if (resumed !== undefined) return { record: resumed, mode: "turn", input: after.input };
+		const record = boundary === undefined ? undefined : this.#threads.get(boundary.threadId);
+		if (record?.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
+		const after = boundary === undefined ? undefined : afterBoundary(messages, boundary);
+		const matches = boundary !== undefined && after!.clean && boundary.toolSignature === tools.signature;
+		let plan: Plan | undefined;
+		if (matches && record !== undefined) {
+			if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && record.pending.length > 0) {
+				plan = { record, mode: "continue", input: after!.input, answers: answerToolCalls(record.pending, after!.toolResults) };
+			} else if (boundary.stopReason === "stop" && record.activeTurnId === null && record.lastTurnId === boundary.turnId) {
+				plan = { record, mode: "turn", input: after!.input };
 			}
 		}
-		const record = await this.#startThread(client, model, messages, tools);
-		return { record, mode: "turn", input: replayInput(messages) };
+		for (const other of this.#threads.values()) {
+			if (other !== plan?.record && other.activeTurnId !== null && !other.streaming) this.#abandon(client, other);
+		}
+		if (plan !== undefined) return plan;
+		if (matches && record === undefined && boundary.stopReason === "stop") {
+			const resumed = await this.#resumeThread(client, model, boundary.threadId, boundary.turnId, tools);
+			if (resumed !== undefined) return { record: resumed, mode: "turn", input: after!.input };
+		}
+		const started = await this.#startThread(client, model, messages, tools);
+		return { record: started, mode: "turn", input: replayInput(messages) };
 	}
 
 	// --- Streams -------------------------------------------------------------
@@ -451,6 +506,7 @@ export class CodexBridge {
 		};
 		let record: ThreadRecord | undefined;
 		let client: ProtocolClient | undefined;
+		let owned = false;
 		const signal = options?.signal;
 		// Armed before the first await: an abort during the version check, the
 		// handshake or thread setup ends the stream at once. Setup that completes
@@ -458,9 +514,14 @@ export class CodexBridge {
 		let rejectAborted: ((error: Error) => void) | undefined;
 		const aborted = new Promise<never>((_, reject) => (rejectAborted = reject));
 		aborted.catch(() => undefined);
+		// Once a turn runs, the abort also ends the stream at once rather than
+		// when Codex completes the interrupted turn.
 		const onAbort = () => {
-			rejectAborted?.(new Error("codex-request-aborted"));
-			if (client !== undefined && record !== undefined) this.#interrupt(client, record);
+			const error = new Error("codex-request-aborted");
+			rejectAborted?.(error);
+			if (client === undefined || record === undefined || !owned || record.activeTurnId === null) return;
+			this.#interrupt(client, record);
+			record.queue.push({ kind: "refusal", error, turnId: record.activeTurnId });
 		};
 		signal?.addEventListener("abort", onAbort, { once: true });
 		try {
@@ -470,8 +531,8 @@ export class CodexBridge {
 			client = await Promise.race([this.#client ??= this.#open(), aborted]);
 			const plan = await Promise.race([this.#plan(client, model, messages, tools), aborted]);
 			record = plan.record;
-			if (record.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
 			record.streaming = true;
+			owned = true;
 			record.lastUsed = Date.now();
 
 			if (plan.mode === "continue") {
@@ -504,14 +565,17 @@ export class CodexBridge {
 			stream.push({ type: "start", partial: output });
 			await this.#consume(stream, output, model, record, options);
 		} catch (error) {
-			if (client !== undefined && record !== undefined && record.activeTurnId !== null) this.#abandon(client, record);
+			// An abort that came before the handshake ended releases that open,
+			// which stops its child, so the next stream starts a fresh one.
+			if (client === undefined && signal?.aborted) void this.#closeClient(new Error("codex-request-aborted"));
+			if (client !== undefined && record !== undefined && owned && record.activeTurnId !== null) this.#abandon(client, record);
 			output.stopReason = signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : "codex-bridge-error";
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		} finally {
 			signal?.removeEventListener("abort", onAbort);
-			if (record !== undefined) record.streaming = false;
+			if (record !== undefined && owned) record.streaming = false;
 		}
 	}
 
@@ -572,6 +636,7 @@ export class CodexBridge {
 					await options?.onProviderStreamEvent?.(next.raw, model);
 					addToolCall(next.requestId, next.call);
 				}
+				if (options?.signal?.aborted) throw new Error("codex-request-aborted");
 				closeBlocks();
 				output.stopReason = "toolUse";
 				stream.push({ type: "done", reason: "toolUse", message: output });
@@ -605,11 +670,18 @@ export class CodexBridge {
 					break;
 				}
 				case "tokenUsage":
-					output.usage.input += event.usage.input;
-					output.usage.output += event.usage.output;
-					output.usage.cacheRead += event.usage.cacheRead;
-					output.usage.cacheWrite += event.usage.cacheWrite;
-					output.usage.totalTokens += event.usage.total;
+					// Pi reads a message's usage as the context of its latest model
+					// request, so each request's usage replaces the last. Codex counts
+					// cached and cache-written tokens inside its input count; Pi keeps
+					// them apart, as its own Responses adapter does.
+					output.usage = {
+						input: Math.max(0, event.usage.input - event.usage.cacheRead - event.usage.cacheWrite),
+						output: event.usage.output,
+						cacheRead: event.usage.cacheRead,
+						cacheWrite: event.usage.cacheWrite,
+						totalTokens: event.usage.total,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					};
 					break;
 				case "turnCompleted":
 					record.activeTurnId = null;

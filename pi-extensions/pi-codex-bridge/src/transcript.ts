@@ -43,12 +43,18 @@ export function userInput(content: string | Array<TextContent | ImageContent>): 
 		: { type: "image", url: `data:${item.mimeType};base64,${item.data}` });
 }
 
-/** What follows a boundary: the user input for Codex and the tool results. */
-export function afterBoundary(messages: readonly Message[], boundary: Boundary): { input: JsonObject[]; toolResults: ToolResultMessage[] } {
+/**
+ * What follows a boundary: the user input for Codex and the tool results.
+ * `clean` is false when anything else follows: another model's turn, a
+ * pi-codex message that errored or was aborted, or tool results after a
+ * boundary that called no tool. Codex then does not hold what Pi holds.
+ */
+export function afterBoundary(messages: readonly Message[], boundary: Boundary): { input: JsonObject[]; toolResults: ToolResultMessage[]; clean: boolean } {
 	const later = messages.slice(boundary.index + 1);
 	return {
 		input: later.flatMap((message) => message.role === "user" ? userInput(message.content) : []),
 		toolResults: later.filter((message): message is ToolResultMessage => message.role === "toolResult"),
+		clean: later.every((message) => message.role === "user" || (message.role === "toolResult" && boundary.stopReason === "toolUse")),
 	};
 }
 

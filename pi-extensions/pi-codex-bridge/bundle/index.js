@@ -177,6 +177,63 @@ function codexChildEnvironment(codexHome, env = process.env) {
 import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 
+// src/process-tree.ts
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+function parseProcStat(pid, stat) {
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  const ppid = Number(fields[1]);
+  const pgid = Number(fields[2]);
+  const start = fields[19];
+  if (!Number.isInteger(ppid) || !Number.isInteger(pgid) || start === void 0) return void 0;
+  return { pid, ppid, pgid, start };
+}
+function parsePsRows(output) {
+  return output.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), start: match[4] }] : [];
+  });
+}
+function processTable() {
+  if (process.platform === "linux") {
+    return readdirSync("/proc").flatMap((name) => {
+      if (!/^\d+$/.test(name)) return [];
+      try {
+        const row = parseProcStat(Number(name), readFileSync(`/proc/${name}/stat`, "utf8"));
+        return row ? [row] : [];
+      } catch {
+        return [];
+      }
+    });
+  }
+  if (process.platform === "darwin") return parsePsRows(execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,lstart="], { encoding: "utf8" }));
+  return [];
+}
+function descendantsOf(root, table = processTable()) {
+  const children = /* @__PURE__ */ new Map();
+  for (const row of table) children.set(row.ppid, [...children.get(row.ppid) ?? [], row]);
+  const found = [];
+  const queue = [root];
+  while (queue.length > 0) {
+    for (const child of children.get(queue.shift()) ?? []) {
+      found.push({ pid: child.pid, pgid: child.pgid, start: child.start });
+      queue.push(child.pid);
+    }
+  }
+  return found;
+}
+function killSurvivors(recorded) {
+  const now = new Map(processTable().map((row) => [row.pid, row]));
+  for (const process_ of recorded) {
+    const current = now.get(process_.pid);
+    if (current === void 0 || current.start !== process_.start) continue;
+    try {
+      process.kill(current.pgid === current.pid ? -current.pid : current.pid, "SIGKILL");
+    } catch {
+    }
+  }
+}
+
 // src/protocol.ts
 function invalid(method, field) {
   return new Error(`codex-protocol-invalid method=${method} field=${field}`);
@@ -228,6 +285,13 @@ function decodeFrame(value, decodeResult) {
   const params = frame.params === void 0 || frame.params === null ? {} : object(frame.params, name, "params");
   if (frame.id === void 0) return { kind: "notification", method: name, params };
   return { kind: "request", id: requestId(frame.id), method: name, params };
+}
+var REQUEST_FAILURES = [
+  { method: "thread/resume", code: -32600, message: /^no rollout found for thread id \S+$/, kind: "thread-not-found" },
+  { method: "turn/interrupt", code: -32600, message: /^no active turn to interrupt$/, kind: "no-active-turn" }
+];
+function classifyRequestFailure(method, code, message) {
+  return REQUEST_FAILURES.find((row) => row.method === method && row.code === code && row.message.test(message))?.kind ?? null;
 }
 function decodeVersion(stdout) {
   const match = /^codex-cli (\S+)\s*$/.exec(stdout);
@@ -380,21 +444,33 @@ function decodeEvent(method, params) {
 }
 
 // src/json-rpc.ts
-function firstLine(text2) {
-  return text2.split("\n", 1)[0].slice(0, 300);
-}
+var TERMINATE_GRACE_MS = 3e3;
+var CodexRequestError = class extends Error {
+  method;
+  code;
+  kind;
+  constructor(method, code, kind) {
+    super(`codex-request-failed method=${method} code=${code ?? "null"}${kind === null ? "" : ` cause=${kind}`}`);
+    this.method = method;
+    this.code = code;
+    this.kind = kind;
+  }
+};
 var CodexProtocolClient = class extends EventEmitter {
   #child;
   #killGroup;
+  #graceMs;
   #nextId = 0;
   #pending = /* @__PURE__ */ new Map();
   #closed = false;
   #killReason;
+  #termination;
   /** `killGroup` is true when the child leads its own process group. */
-  constructor(child, killGroup) {
+  constructor(child, killGroup, graceMs = TERMINATE_GRACE_MS) {
     super();
     this.#child = child;
     this.#killGroup = killGroup;
+    this.#graceMs = graceMs;
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on("line", (line) => this.#receive(line));
     child.stderr.resume();
@@ -423,16 +499,41 @@ var CodexProtocolClient = class extends EventEmitter {
   }
   kill(reason) {
     this.#killReason ??= reason;
-    const child = this.#child;
-    if (child.exitCode === null && child.signalCode === null && child.pid !== void 0) {
-      try {
-        if (this.#killGroup) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }
     this.#close(reason);
+    this.#termination ??= this.#terminate();
+    return this.#termination;
+  }
+  async #terminate() {
+    const child = this.#child;
+    const exited = new Promise((resolve2) => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve2();
+      else child.once("exit", () => resolve2());
+    });
+    if (child.exitCode !== null || child.signalCode !== null || child.pid === void 0) return;
+    const pid = child.pid;
+    const below = this.#killGroup ? descendantsOf(pid) : [];
+    const signal = (name) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      try {
+        if (this.#killGroup) process.kill(-pid, name);
+        else child.kill(name);
+      } catch {
+        child.kill(name);
+      }
+    };
+    child.stdin.end();
+    signal("SIGTERM");
+    let timer;
+    const graceful = await Promise.race([
+      exited.then(() => true),
+      new Promise((resolve2) => timer = setTimeout(() => resolve2(false), this.#graceMs))
+    ]);
+    clearTimeout(timer);
+    if (!graceful) {
+      signal("SIGKILL");
+      await exited;
+    }
+    killSurvivors(below);
   }
   #send(method, params, decode) {
     if (this.#closed) return Promise.reject(this.#killReason ?? new Error("codex-app-server-closed"));
@@ -470,9 +571,7 @@ var CodexProtocolClient = class extends EventEmitter {
       if (!pending) return;
       this.#pending.delete(frame.id);
       if (frame.kind === "error") {
-        const detail = pending.decode === void 0 && frame.message ? `
-${firstLine(frame.message)}` : "";
-        pending.reject(new Error(`codex-request-failed method=${pending.method} code=${frame.code ?? "null"}${detail}`));
+        pending.reject(new CodexRequestError(pending.method, frame.code, classifyRequestFailure(pending.method, frame.code, frame.message)));
         return;
       }
       if (pending.decode === void 0) {
@@ -508,14 +607,15 @@ var INITIALIZE_PARAMS = {
     requestAttestation: false
   }
 };
-async function assertSupportedCodex(launch) {
+async function assertSupportedCodex(launch, signal) {
   let stdout;
   try {
     ({ stdout } = await execFileAsync(launch.executable, ["--version"], {
       env: codexChildEnvironment(launch.codexHome, launch.env),
       encoding: "utf8",
       maxBuffer: 4096,
-      timeout: 1e4
+      timeout: launch.handshakeTimeoutMs,
+      signal
     }));
   } catch (error) {
     throw new Error(`codex-version-unreadable executable=${launch.executable} code=${error.code ?? "unknown"}`);
@@ -525,8 +625,9 @@ async function assertSupportedCodex(launch) {
     throw new Error(`codex-version-unsupported found=${found} expected=${SUPPORTED_CODEX_VERSION}`);
   }
 }
-async function startAppServer(launch, spawn = nodeSpawn) {
-  await assertSupportedCodex(launch);
+async function startAppServer(launch, signal, spawn = nodeSpawn) {
+  await assertSupportedCodex(launch, signal);
+  signal.throwIfAborted();
   const group = process.platform !== "win32";
   const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
     cwd: launch.cwd,
@@ -535,7 +636,23 @@ async function startAppServer(launch, spawn = nodeSpawn) {
     windowsHide: true
   });
   const client = new CodexProtocolClient(child, group);
-  await client.request("initialize", INITIALIZE_PARAMS);
+  const stop = () => void client.kill(signal.reason instanceof Error ? signal.reason : new Error("codex-request-aborted"));
+  signal.addEventListener("abort", stop, { once: true });
+  let timer;
+  try {
+    await Promise.race([
+      client.request("initialize", INITIALIZE_PARAMS),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`codex-handshake-timeout after_ms=${launch.handshakeTimeoutMs}`)), launch.handshakeTimeoutMs);
+      })
+    ]);
+  } catch (error) {
+    await client.kill(error);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", stop);
+  }
   client.notify("initialized");
   return client;
 }
@@ -660,7 +777,8 @@ function afterBoundary(messages, boundary) {
   const later = messages.slice(boundary.index + 1);
   return {
     input: later.flatMap((message) => message.role === "user" ? userInput(message.content) : []),
-    toolResults: later.filter((message) => message.role === "toolResult")
+    toolResults: later.filter((message) => message.role === "toolResult"),
+    clean: later.every((message) => message.role === "user" || message.role === "toolResult" && boundary.stopReason === "toolUse")
   };
 }
 function text(content) {
@@ -703,6 +821,7 @@ var MAX_THREADS = 16;
 var MAX_QUEUED_EVENTS = 1024;
 var MAX_PENDING_CALLS = 64;
 var DISCOVERY_DEADLINE_MS = 15e3;
+var HANDSHAKE_DEADLINE_MS = 15e3;
 var ThreadQueue = class {
   #items = [];
   #wake;
@@ -733,7 +852,7 @@ var ThreadQueue = class {
 function emptyUsage() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
-function firstLine2(error) {
+function firstLine(error) {
   return (error instanceof Error ? error.message : "codex-bridge-error").split("\n", 1)[0];
 }
 var CodexBridge = class {
@@ -741,7 +860,11 @@ var CodexBridge = class {
   #launch;
   #connect;
   #client;
+  /** Aborts the open that #client stands for, which stops its child. */
+  #opening;
   #current;
+  /** Children being stopped; close waits for each. */
+  #stopping = /* @__PURE__ */ new Set();
   #threads = /* @__PURE__ */ new Map();
   constructor(options) {
     this.codexHome = options.codexHome;
@@ -750,9 +873,10 @@ var CodexBridge = class {
       codexHome: options.codexHome,
       cwd: options.cwd ?? process.cwd(),
       env: options.env ?? process.env,
-      configOverrides: options.configOverrides ?? []
+      configOverrides: options.configOverrides ?? [],
+      handshakeTimeoutMs: options.handshakeDeadlineMs ?? HANDSHAKE_DEADLINE_MS
     };
-    this.#connect = options.connect ?? ((launch) => startAppServer(launch));
+    this.#connect = options.connect ?? ((launch, signal) => startAppServer(launch, signal));
   }
   /** Pi's stream entry point. A missing login throws before any process starts. */
   streamSimple = (model, context, options) => {
@@ -772,23 +896,33 @@ var CodexBridge = class {
       const client = await Promise.race([this.#client ??= this.#open(), deadline]);
       return { models: await Promise.race([listCodexModels(client), deadline]) };
     } catch (error) {
-      this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
-      return { models: [], notice: firstLine2(error) };
+      void this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
+      return { models: [], notice: firstLine(error) };
     } finally {
       clearTimeout(timer);
     }
   }
+  /** Stop the child, and every stream on it, and wait for the child to exit. */
   async close() {
-    this.#closeClient(new Error("codex-bridge-closed"));
+    await this.#closeClient(new Error("codex-bridge-closed"));
     this.#threads.clear();
+    await Promise.all(this.#stopping);
+  }
+  #stop(client, reason) {
+    const stopped = Promise.resolve(client.kill(reason)).finally(() => this.#stopping.delete(stopped));
+    this.#stopping.add(stopped);
+    return stopped;
   }
   // --- Client and router ---------------------------------------------------
   #open() {
-    const opening = this.#connect(this.#launch).then((client) => {
+    const controller = new AbortController();
+    this.#opening = controller;
+    const opening = this.#connect(this.#launch, controller.signal).then((client) => {
       if (this.#client !== opening) {
-        client.kill(new Error("codex-bridge-closed"));
+        void this.#stop(client, new Error("codex-bridge-closed"));
         throw new Error("codex-bridge-closed");
       }
+      this.#opening = void 0;
       this.#current = client;
       client.on("request", (frame) => this.#onRequest(client, frame));
       client.on("notification", (frame) => this.#onNotification(client, frame));
@@ -796,32 +930,47 @@ var CodexBridge = class {
       return client;
     });
     opening.catch(() => {
-      if (this.#client === opening) this.#client = void 0;
+      if (this.#client === opening) {
+        this.#client = void 0;
+        this.#opening = void 0;
+      }
     });
     return opening;
   }
-  #closeClient(reason) {
-    const opening = this.#client;
+  /** Release the client: abort an open still in its handshake, which stops
+   * that child, or stop the connected child. */
+  async #closeClient(reason) {
+    const opening = this.#opening;
+    const current = this.#current;
     this.#client = void 0;
-    this.#current?.kill(reason);
+    this.#opening = void 0;
     this.#current = void 0;
-    opening?.then((client) => client.kill(reason), () => void 0);
+    opening?.abort(reason);
+    if (current !== void 0) await this.#stop(current, reason);
   }
   #onClosed(client, error) {
     if (this.#current !== client) return;
+    void this.#stop(client, error);
     this.#current = void 0;
     this.#client = void 0;
     for (const record of this.#threads.values()) record.queue.push({ kind: "refusal", error, turnId: null });
     this.#threads.clear();
   }
-  /** A guard that cannot be held by refusing one turn: stop the child and
-   * every process it started, and fail every stream on it. */
+  /** A guard that cannot be held by refusing one turn: fail every stream on
+   * the child and stop it (see ProtocolClient.kill for what that reaches). */
   #breach(client, error) {
-    client.kill(error);
+    void this.#stop(client, error);
   }
+  /** Stop the record's active turn. Codex refusing that while the client is
+   * open leaves a turn running that the bridge cannot stop: a breach. */
   #interrupt(client, record) {
-    if (record.activeTurnId === null) return;
-    void client.request("turn/interrupt", { threadId: record.threadId, turnId: record.activeTurnId }).catch(() => void 0);
+    const turnId = record.activeTurnId;
+    if (turnId === null || record.interruptedTurnId === turnId) return;
+    record.interruptedTurnId = turnId;
+    void client.request("turn/interrupt", { threadId: record.threadId, turnId }).catch((error) => {
+      if (error instanceof CodexRequestError && error.kind === "no-active-turn") return;
+      if (this.#current === client) this.#breach(client, new Error(`codex-interrupt-failed thread=${record.threadId} turn=${turnId}`));
+    });
   }
   /** Refuse the turn a server request belongs to; a request no thread of
    * this bridge owns is a breach. */
@@ -910,7 +1059,7 @@ var CodexBridge = class {
     }
   }
   #record(threadId, tools, lastTurnId) {
-    return { threadId, tools, lastTurnId, activeTurnId: null, pending: [], queue: new ThreadQueue(), streaming: false, lastUsed: Date.now() };
+    return { threadId, tools, lastTurnId, activeTurnId: null, interruptedTurnId: null, pending: [], queue: new ThreadQueue(), streaming: false, lastUsed: Date.now() };
   }
   /** Answer a turn the bridge no longer continues, so Codex does not wait on
    * it, and stop it. */
@@ -927,7 +1076,8 @@ var CodexBridge = class {
       return await client.requestDecoded("config/read", { cwd: this.#launch.cwd }, decodeMcpServerNames);
     } catch (error) {
       throw new Error(`codex-mcp-names-unread
-${firstLine2(error)}`);
+${firstLine(error)}
+Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`codex\` with that CODEX_HOME to see the error.`);
     }
   }
   /** Refuse a thread on which any feature no review covers is enabled, before
@@ -969,16 +1119,22 @@ ${firstLine2(error)}`);
   /** A cold resume, used only when Codex's latest turn is Pi's boundary. */
   async #resumeThread(client, model, threadId, turnId, tools) {
     const names = await this.#mcpServerNames(client);
-    const resumed = await client.requestDecoded("thread/resume", {
-      threadId,
-      model: model.id,
-      cwd: this.#launch.cwd,
-      approvalPolicy: APPROVAL_POLICY,
-      sandbox: "read-only",
-      config: threadConfig(names),
-      excludeTurns: true,
-      initialTurnsPage: { limit: 1, sortDirection: "desc", itemsView: "notLoaded" }
-    }, decodeThreadResume);
+    let resumed;
+    try {
+      resumed = await client.requestDecoded("thread/resume", {
+        threadId,
+        model: model.id,
+        cwd: this.#launch.cwd,
+        approvalPolicy: APPROVAL_POLICY,
+        sandbox: "read-only",
+        config: threadConfig(names),
+        excludeTurns: true,
+        initialTurnsPage: { limit: 1, sortDirection: "desc", itemsView: "notLoaded" }
+      }, decodeThreadResume);
+    } catch (error) {
+      if (error instanceof CodexRequestError && error.kind === "thread-not-found") return void 0;
+      throw error;
+    }
     if (resumed.lastTurnId !== turnId) return void 0;
     const record = this.#record(resumed.threadId, tools, turnId);
     this.#register(record);
@@ -993,31 +1149,37 @@ ${firstLine2(error)}`);
   /**
    * Which Codex thread serves this transcript. Pi's latest clean pi-codex
    * message names a thread, a turn and a tool signature. The bridge continues
-   * that thread only when the signature matches Pi's current tools and the
-   * thread's latest turn is that turn; otherwise it starts a new thread and
-   * replays the transcript, so Codex never holds turns Pi has dropped or calls
-   * a tool Pi no longer has.
+   * that thread only when the signature matches Pi's current tools, nothing
+   * but user input and that turn's tool results follows the message, and the
+   * thread's latest turn is that turn. Otherwise it starts a new thread and
+   * replays the transcript, so Codex never holds turns Pi has dropped, misses
+   * another model's turns, or calls a tool Pi no longer has. Any turn the plan
+   * does not continue is abandoned, so Codex is not left waiting on it.
    */
   async #plan(client, model, messages, tools) {
     const boundary = findBoundary(messages);
-    if (boundary !== void 0 && boundary.toolSignature === tools.signature) {
-      const after = afterBoundary(messages, boundary);
-      const record2 = this.#threads.get(boundary.threadId);
-      if (record2 !== void 0) {
-        if (boundary.stopReason === "toolUse" && record2.activeTurnId === boundary.turnId && record2.pending.length > 0) {
-          return { record: record2, mode: "continue", input: after.input, answers: answerToolCalls(record2.pending, after.toolResults) };
-        }
-        if (boundary.stopReason === "stop" && record2.activeTurnId === null && record2.lastTurnId === boundary.turnId) {
-          return { record: record2, mode: "turn", input: after.input };
-        }
-        this.#abandon(client, record2);
-      } else if (boundary.stopReason === "stop") {
-        const resumed = await this.#resumeThread(client, model, boundary.threadId, boundary.turnId, tools);
-        if (resumed !== void 0) return { record: resumed, mode: "turn", input: after.input };
+    const record = boundary === void 0 ? void 0 : this.#threads.get(boundary.threadId);
+    if (record?.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
+    const after = boundary === void 0 ? void 0 : afterBoundary(messages, boundary);
+    const matches = boundary !== void 0 && after.clean && boundary.toolSignature === tools.signature;
+    let plan;
+    if (matches && record !== void 0) {
+      if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && record.pending.length > 0) {
+        plan = { record, mode: "continue", input: after.input, answers: answerToolCalls(record.pending, after.toolResults) };
+      } else if (boundary.stopReason === "stop" && record.activeTurnId === null && record.lastTurnId === boundary.turnId) {
+        plan = { record, mode: "turn", input: after.input };
       }
     }
-    const record = await this.#startThread(client, model, messages, tools);
-    return { record, mode: "turn", input: replayInput(messages) };
+    for (const other of this.#threads.values()) {
+      if (other !== plan?.record && other.activeTurnId !== null && !other.streaming) this.#abandon(client, other);
+    }
+    if (plan !== void 0) return plan;
+    if (matches && record === void 0 && boundary.stopReason === "stop") {
+      const resumed = await this.#resumeThread(client, model, boundary.threadId, boundary.turnId, tools);
+      if (resumed !== void 0) return { record: resumed, mode: "turn", input: after.input };
+    }
+    const started = await this.#startThread(client, model, messages, tools);
+    return { record: started, mode: "turn", input: replayInput(messages) };
   }
   // --- Streams -------------------------------------------------------------
   async #run(stream, model, context, options) {
@@ -1033,13 +1195,17 @@ ${firstLine2(error)}`);
     };
     let record;
     let client;
+    let owned = false;
     const signal = options?.signal;
     let rejectAborted;
     const aborted = new Promise((_, reject) => rejectAborted = reject);
     aborted.catch(() => void 0);
     const onAbort = () => {
-      rejectAborted?.(new Error("codex-request-aborted"));
-      if (client !== void 0 && record !== void 0) this.#interrupt(client, record);
+      const error = new Error("codex-request-aborted");
+      rejectAborted?.(error);
+      if (client === void 0 || record === void 0 || !owned || record.activeTurnId === null) return;
+      this.#interrupt(client, record);
+      record.queue.push({ kind: "refusal", error, turnId: record.activeTurnId });
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
@@ -1049,8 +1215,8 @@ ${firstLine2(error)}`);
       client = await Promise.race([this.#client ??= this.#open(), aborted]);
       const plan = await Promise.race([this.#plan(client, model, messages, tools), aborted]);
       record = plan.record;
-      if (record.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
       record.streaming = true;
+      owned = true;
       record.lastUsed = Date.now();
       if (plan.mode === "continue") {
         const payload = { method: "item/tool/call", answers: plan.answers, steer: plan.input };
@@ -1082,14 +1248,15 @@ ${firstLine2(error)}`);
       stream.push({ type: "start", partial: output });
       await this.#consume(stream, output, model, record, options);
     } catch (error) {
-      if (client !== void 0 && record !== void 0 && record.activeTurnId !== null) this.#abandon(client, record);
+      if (client === void 0 && signal?.aborted) void this.#closeClient(new Error("codex-request-aborted"));
+      if (client !== void 0 && record !== void 0 && owned && record.activeTurnId !== null) this.#abandon(client, record);
       output.stopReason = signal?.aborted ? "aborted" : "error";
       output.errorMessage = error instanceof Error ? error.message : "codex-bridge-error";
       stream.push({ type: "error", reason: output.stopReason, error: output });
       stream.end();
     } finally {
       signal?.removeEventListener("abort", onAbort);
-      if (record !== void 0) record.streaming = false;
+      if (record !== void 0 && owned) record.streaming = false;
     }
   }
   /** Read the thread's queue until the turn completes or Codex waits on a
@@ -1148,6 +1315,7 @@ ${firstLine2(error)}`);
           await options?.onProviderStreamEvent?.(next.raw, model);
           addToolCall(next.requestId, next.call);
         }
+        if (options?.signal?.aborted) throw new Error("codex-request-aborted");
         closeBlocks();
         output.stopReason = "toolUse";
         stream.push({ type: "done", reason: "toolUse", message: output });
@@ -1181,11 +1349,14 @@ ${firstLine2(error)}`);
           break;
         }
         case "tokenUsage":
-          output.usage.input += event.usage.input;
-          output.usage.output += event.usage.output;
-          output.usage.cacheRead += event.usage.cacheRead;
-          output.usage.cacheWrite += event.usage.cacheWrite;
-          output.usage.totalTokens += event.usage.total;
+          output.usage = {
+            input: Math.max(0, event.usage.input - event.usage.cacheRead - event.usage.cacheWrite),
+            output: event.usage.output,
+            cacheRead: event.usage.cacheRead,
+            cacheWrite: event.usage.cacheWrite,
+            totalTokens: event.usage.total,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+          };
           break;
         case "turnCompleted":
           record.activeTurnId = null;
@@ -1207,7 +1378,7 @@ ${event.error.split("\n", 1)[0]}` : ""}`);
 };
 
 // src/package-config.ts
-import { existsSync as existsSync2, readFileSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2, resolve } from "node:path";
 var SETTINGS_CHANGED_EVENT = "kendex:extension-settings-changed";
@@ -1313,7 +1484,7 @@ function deepFreeze(value) {
 }
 function readText(path) {
   try {
-    return { kind: "text", text: readFileSync(path, "utf8") };
+    return { kind: "text", text: readFileSync2(path, "utf8") };
   } catch (error) {
     const code = error?.code;
     if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
@@ -1434,7 +1605,11 @@ async function piCodexBridge(pi) {
   if (hasCodexLogin(codexHome)) {
     const discovered = await bridge.discoverModels();
     models = buildPiModels(discovered.models);
-    notice = discovered.notice;
+    if (discovered.notice !== void 0) notice = `${discovered.notice}
+Pi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
+  } else {
+    notice = `${LOGIN_MISSING_KEY} home=${codexHome}
+Pi Codex offers no models until the Codex CLI is signed in: codex login`;
   }
   pi.registerProvider(piAi.createProvider({
     id: PROVIDER_ID,
@@ -1452,10 +1627,8 @@ async function piCodexBridge(pi) {
   }));
   pi.on("session_start", (_event, ctx) => {
     if (notice === void 0) return;
-    const text2 = `${notice}
-Pi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
-    if (ctx.hasUI) ctx.ui.notify(text2, "warning");
-    else process.stderr.write(`${text2}
+    if (ctx.hasUI) ctx.ui.notify(notice, "warning");
+    else process.stderr.write(`${notice}
 `);
     notice = void 0;
   });

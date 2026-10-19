@@ -77,6 +77,22 @@ export function decodeFrame(value: unknown, decodeResult: (id: RequestId, result
 	return { kind: "request", id: requestId(frame.id), method: name, params };
 }
 
+// --- Request failures --------------------------------------------------------
+
+export type RequestFailureKind = "thread-not-found" | "no-active-turn";
+
+/** The JSON-RPC error replies the bridge acts on, matched on method, code and
+ * Codex 0.163.0's message text; tests/unit-protocol.mjs holds a real reply
+ * for each row. */
+const REQUEST_FAILURES: ReadonlyArray<{ method: string; code: number; message: RegExp; kind: RequestFailureKind }> = [
+	{ method: "thread/resume", code: -32600, message: /^no rollout found for thread id \S+$/, kind: "thread-not-found" },
+	{ method: "turn/interrupt", code: -32600, message: /^no active turn to interrupt$/, kind: "no-active-turn" },
+];
+
+export function classifyRequestFailure(method: string, code: number | null, message: string): RequestFailureKind | null {
+	return REQUEST_FAILURES.find((row) => row.method === method && row.code === code && row.message.test(message))?.kind ?? null;
+}
+
 // --- Version -----------------------------------------------------------------
 
 /** `codex --version` prints `codex-cli <version>`. */

@@ -71,7 +71,7 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 		cwd: project,
 		executable: CODEX,
 		configOverrides,
-		connect: (launch) => startAppServer(launch, recordingSpawn),
+		connect: (launch, signal) => startAppServer(launch, signal, recordingSpawn),
 	});
 	return {
 		root,
@@ -88,17 +88,55 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 		sentMethods: () => sentLines.flatMap((line) => line.split("\n").filter(Boolean)).map((line) => JSON.parse(line).method).filter(Boolean),
 		addLateServer: () => appendFileSync(homeConfig, `\n${serverTable("late_marker", markers.late)}`),
 		startedMarkers: () => Object.entries(markers).filter(([, path]) => existsSync(path)).map(([key]) => key),
+		/** The pids of this world's marker servers that run now, read from the
+		 * process table, so a server that has not yet recorded itself counts. */
+		runningMarkers: () => readdirSync("/proc").filter((name) => /^\d+$/.test(name)).filter((pid) => {
+			try {
+				const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+				return cmdline.includes(markerScript) && cmdline.includes(root) && !readFileSync(`/proc/${pid}/stat`, "utf8").includes(") Z ");
+			} catch {
+				return false;
+			}
+		}).map(Number),
+		/** Every pid a marker server recorded. */
+		markerPids: () => Object.values(markers).flatMap((path) => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map(Number) : []),
+		/** Stop the mock, every Codex child's process group and every marker
+		 * server, then remove the world. */
 		async close() {
 			await mock.close();
 			for (const { child } of children) {
 				if (child.exitCode === null && child.signalCode === null) {
-					child.kill("SIGKILL");
+					try {
+						process.kill(-child.pid, "SIGKILL");
+					} catch {
+						child.kill("SIGKILL");
+					}
 					await new Promise((resolve) => child.once("exit", resolve));
 				}
 			}
-			rmSync(root, { recursive: true, force: true });
+			for (const path of Object.values(markers)) {
+				if (!existsSync(path)) continue;
+				for (const pid of readFileSync(path, "utf8").trim().split("\n").map(Number)) {
+					// Only while the pid still names the marker this world started.
+					if (!isMarker(pid)) continue;
+					try {
+						process.kill(pid, "SIGKILL");
+					} catch {
+						// It exited after the check.
+					}
+				}
+			}
+			rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 		},
 	};
+}
+
+function isMarker(pid) {
+	try {
+		return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(markerScript);
+	} catch {
+		return false;
+	}
 }
 
 /** Every file under `dir` whose bytes hold `needle`, `skip` excepted. */

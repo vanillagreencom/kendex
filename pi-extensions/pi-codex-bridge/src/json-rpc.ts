@@ -1,7 +1,26 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
-import { decodeFrame, type JsonObject, type RequestId, type ServerFrame } from "./protocol.js";
+import { descendantsOf, killSurvivors } from "./process-tree.js";
+import { classifyRequestFailure, decodeFrame, type JsonObject, type RequestFailureKind, type RequestId, type ServerFrame } from "./protocol.js";
+
+/** How long Codex has to stop itself and its MCP servers after SIGTERM. */
+export const TERMINATE_GRACE_MS = 3000;
+
+/** A JSON-RPC error reply, keyed by method and code. `kind` names a cause the
+ * bridge acts on; Codex's own text is never part of the message. */
+export class CodexRequestError extends Error {
+	readonly method: string;
+	readonly code: number | null;
+	readonly kind: RequestFailureKind | null;
+
+	constructor(method: string, code: number | null, kind: RequestFailureKind | null) {
+		super(`codex-request-failed method=${method} code=${code ?? "null"}${kind === null ? "" : ` cause=${kind}`}`);
+		this.method = method;
+		this.code = code;
+		this.kind = kind;
+	}
+}
 
 type PendingRequest = {
 	method: string;
@@ -21,30 +40,36 @@ export interface ProtocolClient {
 	notify(method: string, params?: JsonObject): void;
 	respond(id: RequestId, result: unknown): void;
 	respondError(id: RequestId, code: number, message: string): void;
-	/** Stop the child and every process it started. */
-	kill(reason: Error): void;
+	/**
+	 * Fail every request with `reason`, then stop the child. Codex gets stdin
+	 * EOF and SIGTERM to its process group, and its own teardown stops the MCP
+	 * servers it started in their own groups. A child still running after the
+	 * grace gets SIGKILL. Once it has exited, each process recorded below it
+	 * before the first signal that still runs gets SIGKILL, with its group when
+	 * it leads one. Resolves after that. On Windows only the child is signalled.
+	 */
+	kill(reason: Error): Promise<void>;
 	on(event: "request", listener: (frame: IncomingRequest) => void): this;
 	on(event: "notification", listener: (frame: IncomingNotification) => void): this;
 	on(event: "closed", listener: (error: Error) => void): this;
 }
 
-function firstLine(text: string): string {
-	return text.split("\n", 1)[0].slice(0, 300);
-}
-
 export class CodexProtocolClient extends EventEmitter implements ProtocolClient {
 	readonly #child: ChildProcessWithoutNullStreams;
 	readonly #killGroup: boolean;
+	readonly #graceMs: number;
 	#nextId = 0;
 	#pending = new Map<RequestId, PendingRequest>();
 	#closed = false;
 	#killReason: Error | undefined;
+	#termination: Promise<void> | undefined;
 
 	/** `killGroup` is true when the child leads its own process group. */
-	constructor(child: ChildProcessWithoutNullStreams, killGroup: boolean) {
+	constructor(child: ChildProcessWithoutNullStreams, killGroup: boolean, graceMs = TERMINATE_GRACE_MS) {
 		super();
 		this.#child = child;
 		this.#killGroup = killGroup;
+		this.#graceMs = graceMs;
 		const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 		lines.on("line", (line) => this.#receive(line));
 		// Codex logs to stderr; the bridge neither reads nor forwards it.
@@ -78,19 +103,48 @@ export class CodexProtocolClient extends EventEmitter implements ProtocolClient 
 		this.#write({ id, error: { code, message } });
 	}
 
-	kill(reason: Error): void {
+	kill(reason: Error): Promise<void> {
 		this.#killReason ??= reason;
-		const child = this.#child;
-		// The handle is ours until its exit event, so the pid still names it.
-		if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
-			try {
-				if (this.#killGroup) process.kill(-child.pid, "SIGKILL");
-				else child.kill("SIGKILL");
-			} catch {
-				child.kill("SIGKILL");
-			}
-		}
 		this.#close(reason);
+		this.#termination ??= this.#terminate();
+		return this.#termination;
+	}
+
+	async #terminate(): Promise<void> {
+		const child = this.#child;
+		const exited = new Promise<void>((resolve) => {
+			if (child.exitCode !== null || child.signalCode !== null) resolve();
+			else child.once("exit", () => resolve());
+		});
+		// The handle is ours until its exit event, so the pid still names it.
+		if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
+		const pid = child.pid;
+		const below = this.#killGroup ? descendantsOf(pid) : [];
+		const signal = (name: NodeJS.Signals) => {
+			if (child.exitCode !== null || child.signalCode !== null) return;
+			try {
+				if (this.#killGroup) process.kill(-pid, name);
+				else child.kill(name);
+			} catch {
+				child.kill(name);
+			}
+		};
+		child.stdin.end();
+		signal("SIGTERM");
+		let timer: NodeJS.Timeout | undefined;
+		const graceful = await Promise.race([
+			exited.then(() => true),
+			new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), this.#graceMs))),
+		]);
+		clearTimeout(timer);
+		if (!graceful) {
+			signal("SIGKILL");
+			await exited;
+		}
+		// Codex's teardown stops the MCP servers it started in their own
+		// process groups. A process recorded below the child that still runs,
+		// because the child was SIGKILLed or ignored its teardown, stops here.
+		killSurvivors(below);
 	}
 
 	#send(method: string, params: JsonObject, decode: ((result: unknown) => unknown) | undefined): Promise<unknown> {
@@ -132,9 +186,9 @@ export class CodexProtocolClient extends EventEmitter implements ProtocolClient 
 			if (!pending) return;
 			this.#pending.delete(frame.id);
 			if (frame.kind === "error") {
-				// A failed config/read can echo configuration text; name only the code.
-				const detail = pending.decode === undefined && frame.message ? `\n${firstLine(frame.message)}` : "";
-				pending.reject(new Error(`codex-request-failed method=${pending.method} code=${frame.code ?? "null"}${detail}`));
+				// Codex's error text can quote configuration lines, so it is
+				// classified here and never passed on.
+				pending.reject(new CodexRequestError(pending.method, frame.code, classifyRequestFailure(pending.method, frame.code, frame.message)));
 				return;
 			}
 			if (pending.decode === undefined) {

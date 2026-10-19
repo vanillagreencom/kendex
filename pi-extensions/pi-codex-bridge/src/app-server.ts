@@ -18,6 +18,8 @@ export interface Launch {
 	/** Test seam: extra `-c` overrides, such as a local mock model provider. The
 	 * extension factory never sets it. */
 	configOverrides: readonly string[];
+	/** How long the version check plus the handshake may take. */
+	handshakeTimeoutMs: number;
 }
 
 export const INITIALIZE_PARAMS = {
@@ -32,14 +34,15 @@ export const INITIALIZE_PARAMS = {
 	},
 };
 
-export async function assertSupportedCodex(launch: Launch): Promise<void> {
+export async function assertSupportedCodex(launch: Launch, signal?: AbortSignal): Promise<void> {
 	let stdout: string;
 	try {
 		({ stdout } = await execFileAsync(launch.executable, ["--version"], {
 			env: codexChildEnvironment(launch.codexHome, launch.env),
 			encoding: "utf8",
 			maxBuffer: 4096,
-			timeout: 10_000,
+			timeout: launch.handshakeTimeoutMs,
+			signal,
 		}));
 	} catch (error) {
 		throw new Error(`codex-version-unreadable executable=${launch.executable} code=${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
@@ -50,10 +53,15 @@ export async function assertSupportedCodex(launch: Launch): Promise<void> {
 	}
 }
 
-/** Start one `codex app-server` child and complete the handshake. */
-export async function startAppServer(launch: Launch, spawn: SpawnFunction = nodeSpawn): Promise<ProtocolClient> {
-	await assertSupportedCodex(launch);
-	// Its own process group, so a breach stops the MCP servers it started too.
+/**
+ * Start one `codex app-server` child and complete the handshake. The client
+ * owns the child from the spawn: a handshake that misses its deadline, or a
+ * `signal` that aborts first, stops the child before this rejects.
+ */
+export async function startAppServer(launch: Launch, signal: AbortSignal, spawn: SpawnFunction = nodeSpawn): Promise<ProtocolClient> {
+	await assertSupportedCodex(launch, signal);
+	signal.throwIfAborted();
+	// Its own process group, so termination signals reach Codex's helpers.
 	const group = process.platform !== "win32";
 	const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
 		cwd: launch.cwd,
@@ -62,7 +70,23 @@ export async function startAppServer(launch: Launch, spawn: SpawnFunction = node
 		windowsHide: true,
 	});
 	const client = new CodexProtocolClient(child, group);
-	await client.request("initialize", INITIALIZE_PARAMS);
+	const stop = () => void client.kill(signal.reason instanceof Error ? signal.reason : new Error("codex-request-aborted"));
+	signal.addEventListener("abort", stop, { once: true });
+	let timer: NodeJS.Timeout | undefined;
+	try {
+		await Promise.race([
+			client.request("initialize", INITIALIZE_PARAMS),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error(`codex-handshake-timeout after_ms=${launch.handshakeTimeoutMs}`)), launch.handshakeTimeoutMs);
+			}),
+		]);
+	} catch (error) {
+		await client.kill(error as Error);
+		throw error;
+	} finally {
+		clearTimeout(timer);
+		signal.removeEventListener("abort", stop);
+	}
 	client.notify("initialized");
 	return client;
 }

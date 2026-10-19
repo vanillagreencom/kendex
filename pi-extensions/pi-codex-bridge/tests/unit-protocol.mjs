@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { CodexProtocolClient } from "../src/json-rpc.ts";
-import { decodeMcpServerNames } from "../src/protocol.ts";
+import { classifyRequestFailure, decodeMcpServerNames } from "../src/protocol.ts";
 
 const SENTINEL = "SENTINEL-mcp-env-value-1658";
 
@@ -65,5 +65,19 @@ for (const [name, result] of [
 ]) {
 	test(`a malformed config/read is refused: ${name}`, () => {
 		assert.throws(() => decodeMcpServerNames(result), (error) => error.message.startsWith("codex-protocol-invalid method=config/read"));
+	});
+}
+
+// Real Codex 0.163.0 replies, captured from the app-server, beside replies the
+// table must not match.
+for (const [method, code, message, kind] of [
+	["thread/resume", -32600, "no rollout found for thread id 01a15600-0000-7000-8000-000000000000", "thread-not-found"],
+	["turn/interrupt", -32600, "no active turn to interrupt", "no-active-turn"],
+	["thread/resume", -32603, "no rollout found for thread id 01a15600-0000-7000-8000-000000000000", null],
+	["thread/start", -32600, "no rollout found for thread id x", null],
+	["thread/resume", -32600, "failed to load configuration: invalid transport\nin `mcp_servers.nope`\n", null],
+]) {
+	test(`a ${method} ${code} reply is classified ${kind}`, () => {
+		assert.equal(classifyRequestFailure(method, code, message), kind);
 	});
 }

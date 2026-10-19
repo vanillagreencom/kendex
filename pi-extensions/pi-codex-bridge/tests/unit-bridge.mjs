@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { CodexBridge } from "../src/bridge.ts";
+import { CodexRequestError } from "../src/json-rpc.ts";
 import { buildDynamicTools } from "../src/dynamic-tools.ts";
 import { LOST_TOOL_RESULT_TEXT } from "../src/tool-pairing.ts";
 import { FakeClient, TURN, THREAD, finish, model, readTool, system, toolResult, user } from "./lib/fake-client.mjs";
@@ -150,7 +151,6 @@ for (const row of [
 	{ name: "a configured MCP server starting", send: (client) => client.notification("mcpServer/startupStatus/updated", { threadId: THREAD, name: "marker", status: "starting", error: null, failureReason: null }), key: "codex-mcp-started name=marker", killed: true },
 	{ name: "a native item starting", send: (client) => client.notification("item/started", { threadId: THREAD, turnId: TURN, item: { type: "commandExecution" }, startedAtMs: 1 }), key: "codex-native-item type=commandExecution", killed: false },
 	{ name: "a turn on a thread Pi did not start", send: (client) => client.notification("turn/started", { threadId: "thread-sub", turn: { id: "turn-sub" } }), key: "codex-foreign-thread thread=thread-sub", killed: true },
-	{ name: "an approval request", send: (client) => client.serverRequest("rpc-approve", "item/commandExecution/requestApproval", { threadId: THREAD, turnId: TURN }), key: "codex-native-approval-declined method=item/commandExecution/requestApproval", killed: false },
 ]) {
 	test(`the turn is refused on ${row.name}`, async () => {
 		const client = new FakeClient({ "turn/start": () => { row.send(client); return { turn: { id: TURN } }; } });
@@ -218,4 +218,206 @@ test("model discovery that stalls gives no models and a keyed notice instead of 
 	const discovered = await bridge.discoverModels(50);
 	assert.deepEqual(discovered, { models: [], notice: "codex-discovery-timeout after_ms=50" });
 	assert.equal(stalled.killed?.message, "codex-discovery-timeout after_ms=50");
+});
+
+// Each server request the bridge does not serve: the exact answer Codex gets,
+// the key the stream fails with, and the turn interrupted.
+for (const row of [
+	{ method: "item/commandExecution/requestApproval", answer: { decision: "decline" }, key: "codex-native-approval-declined method=item/commandExecution/requestApproval" },
+	{ method: "item/fileChange/requestApproval", answer: { decision: "decline" }, key: "codex-native-approval-declined method=item/fileChange/requestApproval" },
+	{ method: "execCommandApproval", answer: { decision: "abort" }, key: "codex-native-approval-declined method=execCommandApproval" },
+	{ method: "applyPatchApproval", answer: { decision: "abort" }, key: "codex-native-approval-declined method=applyPatchApproval" },
+	{ method: "item/tool/requestUserInput", error: [-32601, "codex-server-request-refused"], key: "codex-server-request-refused method=item/tool/requestUserInput" },
+]) {
+	test(`the bridge answers ${row.method} by refusing it`, async () => {
+		const client = new FakeClient({ "turn/start": () => { client.serverRequest("rpc-x", row.method, { threadId: THREAD, turnId: TURN }); return { turn: { id: TURN } }; } });
+		const bridge = bridgeFor(client);
+		const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Hello")] }));
+		assert.equal(end.error.errorMessage, row.key);
+		assert.deepEqual(client.responses, row.answer ? [["rpc-x", row.answer]] : []);
+		assert.deepEqual(client.errors, row.error ? [["rpc-x", ...row.error]] : []);
+		assert.ok(methods(client, "turn/interrupt").length > 0);
+		await bridge.close();
+	});
+}
+
+test("Codex receives the reviewed sandbox, approval policy and empty environments", async () => {
+	const client = new FakeClient({ "turn/start": () => { client.complete(); return { turn: { id: TURN } }; } });
+	const bridge = bridgeFor(client);
+	await finish(bridge.streamSimple(model, { messages: [system(), user("Hello")] }));
+	const [[, start]] = methods(client, "thread/start");
+	const [[, turn]] = methods(client, "turn/start");
+	assert.deepEqual([start.sandbox, start.approvalPolicy, start.environments, turn.approvalPolicy, turn.environments], ["read-only", "untrusted", [], "untrusted", []]);
+	await bridge.close();
+});
+
+// A name read that fails, or that Codex answers in a shape the decoder
+// refuses, starts and resumes no thread.
+for (const row of [
+	{ name: "failed, at a new thread", configRead: () => { throw new CodexRequestError("config/read", -32603, null); }, cold: false },
+	{ name: "malformed, at a new thread", configRead: () => ({ config: { mcp_servers: "fixture" } }), cold: false },
+	{ name: "failed, at a cold resume", configRead: () => { throw new CodexRequestError("config/read", -32603, null); }, cold: true },
+]) {
+	test(`a name read that is ${row.name} refuses the turn`, async () => {
+		const client = new FakeClient({ "config/read": row.configRead });
+		const bridge = bridgeFor(client);
+		const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:${THREAD}:${TURN}:${readSignature}`, timestamp: 3 };
+		const messages = row.cold ? [system(), user("First"), boundary, user("Second", 4)] : [system(), user("Hello")];
+		const end = await finish(bridge.streamSimple(model, { messages }));
+		assert.equal(end.error.errorMessage.split("\n")[0], "codex-mcp-names-unread");
+		assert.equal(methods(client, "thread/start").length, 0);
+		assert.equal(methods(client, "thread/resume").length, 0);
+		await bridge.close();
+	});
+}
+
+test("a cold resume of a thread Codex does not hold starts a new thread with the replay", async () => {
+	const client = new FakeClient({
+		"thread/resume": () => { throw new CodexRequestError("thread/resume", -32600, "thread-not-found"); },
+		"thread/start": () => ({ thread: { id: "thread-new" } }),
+		"turn/start": (params) => { client.text("fresh", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); return { turn: { id: TURN } }; },
+	});
+	const bridge = bridgeFor(client);
+	const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:thread-gone:${TURN}:${readSignature}`, timestamp: 3 };
+	const end = await finish(bridge.streamSimple(model, { messages: [system(), user("First"), boundary, user("Second", 4)] }));
+	assert.equal(end.reason, "stop", end.error?.errorMessage);
+	assert.equal(methods(client, "turn/start").at(-1)[1].threadId, "thread-new");
+	assert.match(methods(client, "turn/start").at(-1)[1].input[0].text, /^Conversation so far/);
+	await bridge.close();
+});
+
+test("a tool-set change during a tool batch answers the open call as lost and interrupts that turn", async () => {
+	let threads = 0;
+	const client = new FakeClient({
+		"thread/start": () => ({ thread: { id: `thread-${++threads}` } }),
+		"turn/start": (params) => {
+			if (params.threadId === "thread-1") client.toolCall("rpc-1", "call-1");
+			else { client.text("new thread", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); }
+			return { turn: { id: TURN } };
+		},
+	});
+	const bridge = bridgeFor(client);
+	const first = await finish(bridge.streamSimple(model, { messages: [system(), user("Read")] }));
+	assert.equal(first.reason, "toolUse");
+	const write = { name: "write", description: "Write", parameters: { type: "object" } };
+	const next = await finish(bridge.streamSimple(model, { messages: [system([readTool, write]), user("Read"), first.message, toolResult("call-1")] }));
+	assert.equal(next.reason, "stop", next.error?.errorMessage);
+	assert.deepEqual(client.responses, [["rpc-1", { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false }]]);
+	assert.deepEqual(methods(client, "turn/interrupt").map(([, params]) => params), [{ threadId: "thread-1", turnId: TURN }]);
+	await bridge.close();
+});
+
+// Another model's turn, or a pi-codex message that failed, after the boundary
+// means Codex lacks part of the transcript: warm and cold paths both replay.
+const otherTurn = { role: "assistant", content: [{ type: "text", text: "OTHER-MODEL" }], api: "anthropic-messages", provider: "anthropic", model: "claude", stopReason: "stop", timestamp: 5 };
+for (const row of [
+	{ name: "another provider's turn, warm", warm: true, between: otherTurn },
+	{ name: "a pi-codex turn that errored, warm", warm: true, between: { ...otherTurn, provider: "pi-codex", api: "codex-app-server", stopReason: "error" } },
+	{ name: "another provider's turn, cold", warm: false, between: otherTurn },
+]) {
+	test(`a turn Codex never saw after the boundary starts a new thread: ${row.name}`, async () => {
+		let threads = 0;
+		const client = new FakeClient({
+			"thread/start": () => ({ thread: { id: `thread-${++threads}` } }),
+			"thread/resume": (params) => ({ thread: { id: params.threadId }, initialTurnsPage: { data: [{ id: TURN }] } }),
+			"turn/start": (params) => { client.text("answer", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); return { turn: { id: TURN } }; },
+		});
+		const bridge = bridgeFor(client);
+		let boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:thread-1:${TURN}:${readSignature}`, timestamp: 3 };
+		if (row.warm) boundary = (await finish(bridge.streamSimple(model, { messages: [system(), user("Q1")] }))).message;
+		const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Q1"), boundary, user("Q2", 4), row.between, user("Q3", 6)] }));
+		assert.equal(end.reason, "stop", end.error?.errorMessage);
+		assert.equal(methods(client, "thread/resume").length, 0);
+		const [, params] = methods(client, "turn/start").at(-1);
+		assert.equal(params.threadId, row.warm ? "thread-2" : "thread-1");
+		assert.equal(methods(client, "thread/start").length, row.warm ? 2 : 1);
+		if (row.between.stopReason === "stop") assert.match(params.input[0].text, /OTHER-MODEL/);
+		await bridge.close();
+	});
+}
+
+test("each message reports the usage of its latest model request, cache tokens apart", async () => {
+	const usage = (input, cached, output, total) => ({ threadId: THREAD, turnId: TURN, tokenUsage: { last: { inputTokens: input, cachedInputTokens: cached, cacheWriteInputTokens: 0, outputTokens: output, reasoningOutputTokens: 0, totalTokens: total }, total: {}, modelContextWindow: null } });
+	const client = new FakeClient({ "turn/start": () => { client.toolCall("rpc-1", "call-1"); return { turn: { id: TURN } }; } });
+	client.on("responded", () => {
+		// The tool-call request's usage arrives after its call, then the next request's.
+		client.notification("thread/tokenUsage/updated", usage(100, 40, 10, 110));
+		client.notification("thread/tokenUsage/updated", usage(130, 100, 5, 135));
+		client.text("done");
+		client.complete();
+	});
+	const bridge = bridgeFor(client);
+	const first = await finish(bridge.streamSimple(model, { messages: [system(), user("Read")] }));
+	const second = await finish(bridge.streamSimple(model, { messages: [system(), user("Read"), first.message, toolResult("call-1")] }));
+	assert.deepEqual(second.message.usage, { input: 30, output: 5, cacheRead: 100, cacheWrite: 0, totalTokens: 135, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+	await bridge.close();
+});
+
+for (const row of [
+	{ name: "Codex rejects it for another cause", error: () => new CodexRequestError("turn/interrupt", -32603, null), killed: "codex-interrupt-failed thread=thread-1 turn=turn-1" },
+	{ name: "the turn had already ended", error: () => new CodexRequestError("turn/interrupt", -32600, "no-active-turn"), killed: undefined },
+]) {
+	test(`a rejected interrupt: ${row.name}`, async () => {
+		const client = new FakeClient({
+			"turn/start": () => { client.notification("item/started", { threadId: THREAD, turnId: TURN, item: { type: "commandExecution" }, startedAtMs: 1 }); return { turn: { id: TURN } }; },
+			"turn/interrupt": () => { throw row.error(); },
+		});
+		const bridge = bridgeFor(client);
+		const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Hello")] }));
+		assert.equal(end.error.errorMessage, "codex-native-item type=commandExecution");
+		await new Promise(setImmediate);
+		assert.equal(client.killed?.message, row.killed);
+		await bridge.close();
+	});
+}
+
+test("a second stream on a thread another stream drives is refused and leaves that stream running", { timeout: 5000 }, async () => {
+	let turns = 0;
+	const client = new FakeClient({ "turn/start": () => { if (++turns === 1) client.complete("turn-1"); return { turn: { id: `turn-${turns}` } }; } });
+	const bridge = bridgeFor(client);
+	const first = await finish(bridge.streamSimple(model, { messages: [system(), user("Q1")] }));
+	const transcript = [system(), user("Q1"), first.message, user("Q2", 4)];
+	const one = bridge.streamSimple(model, { messages: transcript });
+	while (methods(client, "turn/start").length < 2) await new Promise(setImmediate);
+	const two = await finish(bridge.streamSimple(model, { messages: transcript }));
+	assert.equal(two.error.errorMessage, `codex-thread-busy thread=${THREAD}`);
+	assert.equal(methods(client, "turn/interrupt").length, 0);
+	client.text("second", "turn-2");
+	client.complete("turn-2");
+	const end = await finish(one);
+	assert.equal(end.reason, "stop", end.error?.errorMessage);
+	assert.equal(end.message.content.at(-1).text, "second");
+	await bridge.close();
+});
+
+test("an abort during a running turn ends the stream at once, and a queued call does not end it as toolUse", { timeout: 5000 }, async () => {
+	const client = new FakeClient({ "turn/start": () => ({ turn: { id: TURN } }) });
+	const bridge = bridgeFor(client);
+	const abort = new AbortController();
+	const stream = bridge.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: abort.signal });
+	while (methods(client, "turn/start").length < 1) await new Promise(setImmediate);
+	await new Promise(setImmediate);
+	// The call reaches the queue first, then the abort: Codex never completes
+	// the interrupted turn here, so only the bridge can end the stream.
+	client.emit("request", { kind: "request", id: "rpc-late", method: "item/tool/call", params: { threadId: THREAD, turnId: TURN, callId: "call-late", namespace: null, tool: "read", arguments: {} } });
+	abort.abort();
+	const end = await finish(stream);
+	assert.equal(end.reason, "aborted");
+	assert.equal(end.error.errorMessage, "codex-request-aborted");
+	assert.ok(methods(client, "turn/interrupt").length > 0);
+	await bridge.close();
+});
+
+test("an abort ends a running turn's stream even when Codex never completes the turn", { timeout: 5000 }, async () => {
+	const client = new FakeClient({ "turn/start": () => ({ turn: { id: TURN } }) });
+	const bridge = bridgeFor(client);
+	const abort = new AbortController();
+	const stream = bridge.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: abort.signal });
+	while (methods(client, "turn/start").length < 1) await new Promise(setImmediate);
+	await new Promise(setImmediate);
+	abort.abort();
+	const end = await finish(stream);
+	assert.equal(end.reason, "aborted");
+	assert.deepEqual(methods(client, "turn/interrupt").map(([, params]) => params), [{ threadId: THREAD, turnId: TURN }]);
+	await bridge.close();
 });

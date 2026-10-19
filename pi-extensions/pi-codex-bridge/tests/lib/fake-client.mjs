@@ -52,7 +52,8 @@ export class FakeClient extends EventEmitter {
 	}
 
 	kill(reason) {
-		this.killed ??= reason;
+		if (this.killed !== undefined) return;
+		this.killed = reason;
 		this.emit("closed", reason);
 	}
 

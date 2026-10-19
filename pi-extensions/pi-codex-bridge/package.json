@@ -56,11 +56,11 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --preserve-symlinks --platform=node --format=esm --target=node22 --outfile=bundle/index.js --external:@earendil-works/pi-ai --external:@earendil-works/pi-coding-agent",
     "prepack": "npm run build",
-    "test:unit": "node --import tsx --test tests/unit-*.mjs",
+    "test:unit": "node --import tsx --test --test-force-exit tests/unit-*.mjs",
     "test:ci": "npm run build && npm run typecheck && npm run test:unit && npm run test:fixture",
     "test": "set -a && [ -f .env.test ] && . ./.env.test; set +a && npm run test:ci && tests/int-smoke.sh",
     "typecheck": "tsc --noEmit",
-    "test:fixture": "node --import tsx --test tests/fixture-*.mjs"
+    "test:fixture": "node --import tsx --test --test-force-exit tests/fixture-*.mjs"
   },
   "files": [
     "bundle/",

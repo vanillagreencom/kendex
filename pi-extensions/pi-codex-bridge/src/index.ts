@@ -1,6 +1,6 @@
 import * as piAi from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { hasCodexLogin, resolveCodexHome } from "./auth-presence.js";
+import { hasCodexLogin, LOGIN_MISSING_KEY, resolveCodexHome } from "./auth-presence.js";
 import { CodexBridge } from "./bridge.js";
 import { API_ID, buildPiModels, PROVIDER_ID } from "./models.js";
 import { installSettingsCacheRefresh, readPackageConfig } from "./package-config.js";
@@ -23,7 +23,9 @@ export default async function piCodexBridge(pi: ExtensionAPI): Promise<void> {
 	if (hasCodexLogin(codexHome)) {
 		const discovered = await bridge.discoverModels();
 		models = buildPiModels(discovered.models);
-		notice = discovered.notice;
+		if (discovered.notice !== undefined) notice = `${discovered.notice}\nPi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
+	} else {
+		notice = `${LOGIN_MISSING_KEY} home=${codexHome}\nPi Codex offers no models until the Codex CLI is signed in: codex login`;
 	}
 
 	pi.registerProvider(piAi.createProvider({
@@ -42,9 +44,8 @@ export default async function piCodexBridge(pi: ExtensionAPI): Promise<void> {
 	}));
 	pi.on("session_start", (_event, ctx) => {
 		if (notice === undefined) return;
-		const text = `${notice}\nPi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
-		if (ctx.hasUI) ctx.ui.notify(text, "warning");
-		else process.stderr.write(`${text}\n`);
+		if (ctx.hasUI) ctx.ui.notify(notice, "warning");
+		else process.stderr.write(`${notice}\n`);
 		notice = undefined;
 	});
 	pi.on("session_shutdown", async () => {

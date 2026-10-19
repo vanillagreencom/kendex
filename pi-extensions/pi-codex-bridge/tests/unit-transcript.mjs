@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { encodeResponseId, findBoundary, replayInput } from "../src/transcript.ts";
+import { afterBoundary, encodeResponseId, findBoundary, replayInput } from "../src/transcript.ts";
 
 const image = (data) => ({ type: "image", mimeType: "image/png", data });
 const assistant = (stopReason, responseId, extra = {}) => ({ role: "assistant", content: [{ type: "text", text: "answer" }], api: "codex-app-server", provider: "pi-codex", model: "m", stopReason, responseId, timestamp: 3, ...extra });
@@ -35,3 +35,19 @@ test("only a clean pi-codex message with the bridge's id is a boundary", () => {
 	assert.deepEqual(findBoundary([assistant("stop", id), assistant("error", id), assistant("aborted", id), assistant("stop", "resp_other")]), { index: 0, threadId: "t", turnId: "u", toolSignature: "s", stopReason: "stop" });
 	assert.equal(findBoundary([assistant("stop", id, { provider: "openai" })]), undefined);
 });
+
+// What may follow a boundary while Codex still holds the transcript.
+const user = (text) => ({ role: "user", content: text, timestamp: 6 });
+const result = { role: "toolResult", toolCallId: "c", toolName: "read", content: [], isError: false, timestamp: 7 };
+for (const [name, stopReason, later, clean] of [
+	["user input", "stop", [user("next")], true],
+	["the boundary's tool results and user input", "toolUse", [result, user("next")], true],
+	["another provider's turn", "stop", [user("q"), assistant("stop", undefined, { provider: "anthropic" }), user("r")], false],
+	["a pi-codex turn that errored", "stop", [user("q"), assistant("error", undefined), user("r")], false],
+	["tool results after a boundary that called no tool", "stop", [result], false],
+]) {
+	test(`after a boundary: ${name}`, () => {
+		const messages = [assistant(stopReason, encodeResponseId("t", "u", "s")), ...later];
+		assert.equal(afterBoundary(messages, findBoundary(messages)).clean, clean);
+	});
+}

@@ -35,7 +35,11 @@ export async function startMockResponses(script) {
 	return {
 		requests,
 		port: server.address().port,
-		close: () => new Promise((resolve) => server.close(resolve)),
+		// A response still open, as for a stalled row, would hold close forever.
+		close: () => new Promise((resolve) => {
+			server.close(resolve);
+			server.closeAllConnections();
+		}),
 	};
 }
 

@@ -33,6 +33,9 @@ test("without a Codex login the provider advertises no model and refuses with th
 		assert.deepEqual(provider.getModels(), []);
 		assert.equal(await provider.auth.apiKey.check(), undefined);
 		assert.throws(() => provider.streamSimple(model, { messages: [system(), user("Hello")] }), (error) => error.message.split("\n")[0] === `codex-login-missing home=${home}`);
+		const notices = [];
+		for (const handler of pi.handlers.get("session_start") ?? []) handler({ reason: "startup" }, { hasUI: true, ui: { notify: (text, level) => notices.push([text.split("\n")[0], level]) } });
+		assert.deepEqual(notices, [[`codex-login-missing home=${home}`, "warning"]]);
 		for (const handler of pi.handlers.get("session_shutdown") ?? []) await handler({}, {});
 	} finally {
 		for (const [name, value] of Object.entries(saved)) {

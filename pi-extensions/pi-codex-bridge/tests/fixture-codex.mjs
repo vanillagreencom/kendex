@@ -5,10 +5,13 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { ARG_SENTINEL, ENV_SENTINEL, filesHolding, fixtureWorld, piModel } from "./lib/codex-fixture.mjs";
+import { goneWithin } from "./lib/stub-codex.mjs";
 import { finish, readTool, system, toolResult, user } from "./lib/fake-client.mjs";
 import { functionCall, message, offeredTools } from "./lib/mock-responses.mjs";
 
-const FIXTURE_TIMEOUT = 60_000;
+// Each row stops its world from t.after, which runs even when the row times
+// out, and `--test-force-exit` ends the file once every row has reported.
+const FIXTURE_TIMEOUT = 30_000;
 
 function captureStderr() {
 	const lines = [];
@@ -20,7 +23,7 @@ function captureStderr() {
 	return { text: () => lines.join(""), restore: () => (process.stderr.write = write) };
 }
 
-test("configured MCP servers stay off at start and at cold resume, and their values reach nothing the bridge writes", { timeout: FIXTURE_TIMEOUT }, async () => {
+test("configured MCP servers stay off at start and at cold resume, and their values reach nothing the bridge writes", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const world = await fixtureWorld("mcp-off", {
 		script: [
 			[functionCall("read", { path: "fixture.txt" }, "call-1")],
@@ -29,86 +32,86 @@ test("configured MCP servers stay off at start and at cold resume, and their val
 		],
 	});
 	const stderr = captureStderr();
-	const events = [];
-	try {
-		const model = piModel(world.model);
-		const transcript = [system([readTool]), user("Read the fixture")];
-		const first = world.newBridge();
-		const toolUse = await finish(first.streamSimple(model, { messages: transcript }));
-		assert.equal(toolUse.reason, "toolUse", toolUse.error?.errorMessage);
-		assert.equal(toolUse.message.content.at(-1).name, "read");
-		transcript.push(toolUse.message, toolResult("call-1", "FIXTURE-VALUE"));
-		const answer = await finish(first.streamSimple(model, { messages: transcript }, { onProviderStreamEvent: (event) => void events.push(event) }));
-		assert.equal(answer.reason, "stop", answer.error?.errorMessage);
-		assert.equal(answer.message.content.at(-1).text, "first answer");
-		const toolOutput = world.mock.requests[1].body.input.find((item) => item.type === "function_call_output");
-		assert.equal(toolOutput.call_id, "call-1");
-		assert.match(JSON.stringify(toolOutput.output), /FIXTURE-VALUE/);
-		await first.close();
-
-		// A fresh bridge and app-server: the cold resume path.
-		transcript.push(answer.message, user("And again", 9));
-		const second = world.newBridge();
-		const resumed = await finish(second.streamSimple(model, { messages: transcript }));
-		assert.equal(resumed.reason, "stop", resumed.error?.errorMessage);
-		assert.equal(resumed.message.content.at(-1).text, "second answer");
-		await second.close();
-
-		const methods = world.sentMethods();
-		assert.equal(methods.filter((method) => method === "thread/start").length, 1);
-		assert.equal(methods.filter((method) => method === "thread/resume").length, 1);
-		assert.equal(methods.filter((method) => method === "config/read").length, 2);
-		assert.deepEqual(world.startedMarkers(), []);
-
-		// The env and argument sentinels of both configured servers.
-		const seen = [stderr.text(), JSON.stringify(events), JSON.stringify([toolUse, answer, resumed]), JSON.stringify(world.children.map(({ command, args, env }) => ({ command, args, env })))].join("\n");
-		for (const sentinel of [ENV_SENTINEL, ARG_SENTINEL]) {
-			assert.equal(seen.includes(sentinel), false, `${sentinel} reached the bridge's output, events or child argv`);
-			assert.deepEqual(filesHolding(world.root, sentinel, [world.homeConfig, world.projectConfig]), [], `${sentinel} reached a file outside the config that declares it`);
-		}
-	} finally {
+	t.after(async () => {
 		stderr.restore();
 		await world.close();
+	});
+	const events = [];
+	const model = piModel(world.model);
+	const transcript = [system([readTool]), user("Read the fixture")];
+	const first = world.newBridge();
+	const toolUse = await finish(first.streamSimple(model, { messages: transcript }));
+	assert.equal(toolUse.reason, "toolUse", toolUse.error?.errorMessage);
+	assert.equal(toolUse.message.content.at(-1).name, "read");
+	transcript.push(toolUse.message, toolResult("call-1", "FIXTURE-VALUE"));
+	const answer = await finish(first.streamSimple(model, { messages: transcript }, { onProviderStreamEvent: (event) => void events.push(event) }));
+	assert.equal(answer.reason, "stop", answer.error?.errorMessage);
+	assert.equal(answer.message.content.at(-1).text, "first answer");
+	const toolOutput = world.mock.requests[1].body.input.find((item) => item.type === "function_call_output");
+	assert.equal(toolOutput.call_id, "call-1");
+	assert.match(JSON.stringify(toolOutput.output), /FIXTURE-VALUE/);
+	await first.close();
+
+	// A fresh bridge and app-server: the cold resume path.
+	transcript.push(answer.message, user("And again", 9));
+	const second = world.newBridge();
+	const resumed = await finish(second.streamSimple(model, { messages: transcript }));
+	assert.equal(resumed.reason, "stop", resumed.error?.errorMessage);
+	assert.equal(resumed.message.content.at(-1).text, "second answer");
+	await second.close();
+
+	const methods = world.sentMethods();
+	assert.equal(methods.filter((method) => method === "thread/start").length, 1);
+	assert.equal(methods.filter((method) => method === "thread/resume").length, 1);
+	assert.equal(methods.filter((method) => method === "config/read").length, 2);
+	assert.deepEqual(world.startedMarkers(), []);
+
+	// The env and argument sentinels of both configured servers.
+	const seen = [stderr.text(), JSON.stringify(events), JSON.stringify([toolUse, answer, resumed]), JSON.stringify(world.children.map(({ command, args, env }) => ({ command, args, env })))].join("\n");
+	for (const sentinel of [ENV_SENTINEL, ARG_SENTINEL]) {
+		assert.equal(seen.includes(sentinel), false, `${sentinel} reached the bridge's output, events or child argv`);
+		assert.deepEqual(filesHolding(world.root, sentinel, [world.homeConfig, world.projectConfig]), [], `${sentinel} reached a file outside the config that declares it`);
 	}
 });
 
-test("a server that appears after the name read starts and the bridge stops the app-server", { timeout: FIXTURE_TIMEOUT }, async () => {
+// The late server keeps running after stdin closes, so only the bridge's
+// stop, through Codex's own teardown, ends it.
+test("a server that appears after the name read starts, and the bridge stops it with the app-server", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const world = await fixtureWorld("mcp-late", { script: [[message("unreached")]] });
-	try {
-		world.onWrite((line) => {
-			if (line.includes('"method":"thread/start"')) world.addLateServer();
-		});
-		const bridge = world.newBridge();
-		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Hello")] }));
-		assert.equal(end.type, "error");
-		assert.equal(end.error.errorMessage, "codex-mcp-started name=late_marker");
-		const [appServer] = world.children;
-		if (appServer.child.exitCode === null && appServer.child.signalCode === null) await new Promise((resolve) => appServer.child.once("exit", resolve));
-		assert.equal(appServer.child.signalCode, "SIGKILL");
-		assert.equal(world.mock.requests.length, 0);
-		await bridge.close();
-	} finally {
-		await world.close();
+	t.after(() => world.close());
+	world.onWrite((line) => {
+		if (line.includes('"method":"thread/start"')) world.addLateServer();
+	});
+	const bridge = world.newBridge();
+	const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Hello")] }));
+	assert.equal(end.type, "error");
+	assert.equal(end.error.errorMessage, "codex-mcp-started name=late_marker");
+	await bridge.close();
+	const [appServer] = world.children;
+	assert.ok(appServer.child.exitCode !== null || appServer.child.signalCode !== null, "the app-server exited");
+	// Any late server Codex forked before it stopped exists once close has
+	// waited for the app-server's exit.
+	for (const pid of [...new Set([...world.markerPids(), ...world.runningMarkers()])]) {
+		assert.equal(await goneWithin(pid), true, `MCP server ${pid} still runs after the breach and close`);
 	}
+	assert.equal(world.mock.requests.length, 0);
 });
 
-test("an enabled feature no review covers refuses the thread before any model request", { timeout: FIXTURE_TIMEOUT }, async () => {
+test("an enabled feature no review covers refuses the thread before any model request", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const world = await fixtureWorld("feature", { userConfig: "[features]\nmemories = true\n", script: [[message("unreached")]] });
-	try {
-		const bridge = world.newBridge();
-		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Hello")] }));
-		assert.equal(end.error?.errorMessage, "codex-feature-unreviewed name=memories");
-		assert.equal(world.mock.requests.length, 0);
-		assert.equal(world.sentMethods().includes("turn/start"), false);
-		await bridge.close();
-	} finally {
-		await world.close();
-	}
+	t.after(() => world.close());
+	const bridge = world.newBridge();
+	const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Hello")] }));
+	assert.equal(end.error?.errorMessage, "codex-feature-unreviewed name=memories");
+	assert.equal(world.mock.requests.length, 0);
+	assert.equal(world.sentMethods().includes("turn/start"), false);
+	await bridge.close();
 });
 
-test("Codex offers the model no native tool or user-input tool, and such calls run nothing and fail no turn", { timeout: FIXTURE_TIMEOUT }, async () => {
+test("Codex offers the model no native tool or user-input tool, and such calls run nothing and fail no turn", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const script = [];
 	const world = await fixtureWorld("native", { script });
+	t.after(() => world.close());
 	const ran = join(world.root, "NATIVE-RAN");
 	script.push(
 		[
@@ -119,42 +122,49 @@ test("Codex offers the model no native tool or user-input tool, and such calls r
 		],
 		[message("after native")],
 	);
-	try {
-		const bridge = world.newBridge();
-		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Run a command")] }));
-		const offered = world.mock.requests.flatMap((request) => offeredTools(request.body));
-		assert.ok(offered.includes("read"), `Pi's tool is offered: ${offered}`);
-		for (const native of ["exec_command", "write_stdin", "shell", "apply_patch", "view_image", "web_search", "image_generation", "spawn_agent", "request_user_input", "request_user_input_async"]) {
-			assert.equal(offered.some((name) => name.split(".").at(-1) === native), false, `${native} is offered: ${offered}`);
-		}
-		assert.equal(existsSync(ran), false);
-		assert.equal(end.reason, "stop", end.error?.errorMessage);
-		await bridge.close();
-	} finally {
-		await world.close();
+	const bridge = world.newBridge();
+	const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Run a command")] }));
+	const offered = world.mock.requests.flatMap((request) => offeredTools(request.body));
+	assert.ok(offered.includes("read"), `Pi's tool is offered: ${offered}`);
+	for (const native of ["exec_command", "write_stdin", "shell", "apply_patch", "view_image", "web_search", "image_generation", "spawn_agent", "request_user_input", "request_user_input_async"]) {
+		assert.equal(offered.some((name) => name.split(".").at(-1) === native), false, `${native} is offered: ${offered}`);
 	}
+	assert.equal(existsSync(ran), false);
+	assert.equal(end.reason, "stop", end.error?.errorMessage);
+	await bridge.close();
 });
 
 // The scripted spawn is the parent's first model response; a sub-agent's turn
 // would take the next scripted response. Only the parent's two model requests
 // may reach the mock: the spawn request and the parent's answer to its result.
-test("a sub-agent spawn on a code-mode model starts no thread and makes no model request", { timeout: FIXTURE_TIMEOUT }, async () => {
+test("a sub-agent spawn on a code-mode model starts no thread and makes no model request", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const world = await fixtureWorld("subagent", {
 		model: "gpt-6-sol",
 		script: [[{ ...functionCall("spawn_agent", { task_name: "sub", message: "work outside Pi" }, "spawn-1"), namespace: "collaboration" }], [message("parent")], [message("sub-agent")]],
 	});
-	try {
-		const bridge = world.newBridge();
-		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Delegate")] }));
-		assert.equal(end.reason, "stop", end.error?.errorMessage);
-		assert.equal(end.message.content.at(-1).text, "parent");
-		assert.equal(world.mock.requests.length, 2);
-		const offered = offeredTools(world.mock.requests[0].body);
-		assert.ok(offered.includes("collaboration.spawn_agent"), `the code-mode catalog entry offers sub-agents: ${offered}`);
-		assert.equal(offered.some((name) => /request_user_input/.test(name)), false, `request_user_input is offered: ${offered}`);
-		await bridge.close();
-	} finally {
-		await world.close();
-	}
+	t.after(() => world.close());
+	const bridge = world.newBridge();
+	const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Delegate")] }));
+	assert.equal(end.reason, "stop", end.error?.errorMessage);
+	assert.equal(end.message.content.at(-1).text, "parent");
+	assert.equal(world.mock.requests.length, 2);
+	const offered = offeredTools(world.mock.requests[0].body);
+	assert.ok(offered.includes("collaboration.spawn_agent"), `the code-mode catalog entry offers sub-agents: ${offered}`);
+	assert.equal(offered.some((name) => /request_user_input/.test(name)), false, `request_user_input is offered: ${offered}`);
+	await bridge.close();
 });
 
+test("another model's turn after Pi's boundary reaches Codex through a new thread", { timeout: FIXTURE_TIMEOUT }, async (t) => {
+	const world = await fixtureWorld("other-provider", { script: [[message("first")], [message("after switch")]] });
+	t.after(() => world.close());
+	const model = piModel(world.model);
+	const bridge = world.newBridge();
+	const first = await finish(bridge.streamSimple(model, { messages: [system([readTool]), user("Q1")] }));
+	assert.equal(first.reason, "stop", first.error?.errorMessage);
+	const other = { role: "assistant", content: [{ type: "text", text: "OTHER-PROVIDER-ANSWER-MARKER" }], api: "anthropic-messages", provider: "anthropic", model: "claude", stopReason: "stop", usage: first.message.usage, timestamp: 5 };
+	const next = await finish(bridge.streamSimple(model, { messages: [system([readTool]), user("Q1"), first.message, user("Q2", 4), other, user("Q3", 6)] }));
+	assert.equal(next.reason, "stop", next.error?.errorMessage);
+	assert.equal(world.sentMethods().filter((method) => method === "thread/start").length, 2);
+	assert.match(JSON.stringify(world.mock.requests[1].body.input), /OTHER-PROVIDER-ANSWER-MARKER/);
+	await bridge.close();
+});
