@@ -157,7 +157,10 @@ class Browser(World):
     def test_profile_endpoints(self):
         # The normal suite supplies only Chromium's external HTTP/file
         # interface. JARVIS_TEST_CHROMIUM selects a real browser command.
-        browser = os.environ.get("JARVIS_TEST_CHROMIUM") or str(self.executable("chromium-fixture", '''import http.server,json,sys,uuid
+        # The fixture serves from socketserver.TCPServer: http.server.HTTPServer's
+        # bind runs socket.getfqdn, a reverse lookup that stalls on macOS runners
+        # past the 10-second endpoint deadline.
+        browser = os.environ.get("JARVIS_TEST_CHROMIUM") or str(self.executable("chromium-fixture", '''import http.server,json,socketserver,sys,uuid
 from pathlib import Path
 profile=Path(next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--user-data-dir=')))
 port=int(next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--remote-debugging-port=')))
@@ -169,15 +172,15 @@ target='/devtools/browser/'+str(uuid.uuid4())
 url=sys.argv[-1]
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        value={'webSocketDebuggerUrl':'ws://127.0.0.1:'+str(self.server.server_port)+target} if self.path=='/json/version' else [{'url':url}]
+        value={'webSocketDebuggerUrl':'ws://127.0.0.1:'+str(self.server.server_address[1])+target} if self.path=='/json/version' else [{'url':url}]
         body=json.dumps(value).encode()
         self.send_response(200)
         self.send_header('Content-Length',str(len(body)))
         self.end_headers()
         self.wfile.write(body)
     def log_message(self,*args): pass
-server=http.server.HTTPServer(('127.0.0.1',port),Handler)
-marker.write_text(str(server.server_port)+'\\n'+target+'\\n')
+server=socketserver.TCPServer(('127.0.0.1',port),Handler)
+marker.write_text(str(server.server_address[1])+'\\n'+target+'\\n')
 server.serve_forever()
 '''))
         children = []
