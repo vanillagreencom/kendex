@@ -75,12 +75,12 @@ pub(super) struct Planned {
 
 impl Planned {
     /// Switch this item on for a requirer, or an agent that loads it, that
-    /// is on, returning whether it was off. A derived item is on while any
-    /// of them is on: the first one walked wrote its switch, and a later
-    /// one that is on must not be left armed beside a companion the first
-    /// parked. A declaration the person wrote is theirs and is never turned
-    /// on here. The caller walks a turned-on item again so its own
-    /// companions follow.
+    /// is on, returning whether this turned it on. A derived item is on
+    /// while any of them is on: the first one walked wrote its switch, and
+    /// a later one that is on must not be left armed beside a companion
+    /// the first parked. A declaration the person wrote is theirs and is
+    /// never turned on here. The caller walks a turned-on item again so
+    /// its own companions follow.
     fn turn_on(&mut self) -> bool {
         let turned_on = self.derived_from.is_some() && !self.decl.enabled;
         if turned_on {

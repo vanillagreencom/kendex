@@ -139,24 +139,29 @@ fn a_required_agent_brings_the_skills_its_assignment_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
-    let rows: [(&str, &str, &[&str]); 3] = [
+    // Each row: the declarations, the skills scout is warned it lacks, and
+    // whether linear is written on Claude Code switched off.
+    let rows: [(&str, &str, &[&str], bool); 3] = [
         (
             "kept removed",
             "\n[suppressed]\nskill = [\"linear\"]\n",
             &["linear"],
+            false,
         ),
         (
             "switched off",
             "\n[skills.linear]\nsource = \"cat\"\nenabled = false\n",
             &[],
+            true,
         ),
         (
             "pinned to another tool",
             "\n[skills.linear]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
             &[],
+            false,
         ),
     ];
-    for (what, declarations, unresolved) in rows {
+    for (what, declarations, unresolved, parked) in rows {
         let f = scout_fixture(declarations, "[\"github\", \"linear\"]");
 
         let report = audit(&f.env, &f.scope).unwrap();
@@ -174,10 +179,17 @@ fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
             report.warnings
         );
         apply::execute(&f.env, &report.plan).unwrap();
+        let lock = lock_of(&f);
         assert!(
-            lock_of(&f).entries.contains_key("agent:scout:claude"),
+            lock.entries.contains_key("agent:scout:claude"),
             "{what}: the agent itself installs"
         );
+        if parked {
+            assert!(
+                !lock.entries["skill:linear:claude"].enabled,
+                "{what}: scout turned on a skill the person switched off"
+            );
+        }
     }
 }
 
@@ -215,36 +227,48 @@ fn an_agent_does_not_require_the_skill_that_requires_it() {
     }
 }
 
-/// Two agents both assigned `shared`, each required by one skill: `scout`
-/// by a skill switched off, `helper` by one switched on. `shared` is on
-/// while an agent that loads it is on, whichever requirer's agent is read
-/// first, and so it is when the switched-off skill requires `shared`
-/// itself.
+/// Two agents both assigned `shared`, which requires `github`, each
+/// required by one skill: `scout` by a skill switched off, `helper` by one
+/// switched on. `shared` and `github` are on while an agent that loads
+/// `shared` is on, whichever requirer's agent is read first, and so they
+/// are when the switched-off skill requires `shared` itself. With only the
+/// switched-off `scout` loading it, `shared` stays parked.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on() {
     let scout = "dependencies:\n  agents: [scout]\n";
     let helper = "dependencies:\n  agents: [helper]\n";
     let requires_shared = "dependencies:\n  required: [shared]\n";
-    // Each row: skill `a`'s dependencies and switch, then skill `b`'s.
-    let rows: [(&str, &str, bool, &str, bool); 3] = [
-        ("off requirer read first", scout, false, helper, true),
-        ("on requirer read first", helper, true, scout, false),
+    let requires_shared_and_scout = "dependencies:\n  required: [shared]\n  agents: [scout]\n";
+    // Each row: skill `a`'s dependencies and switch, then skill `b`'s,
+    // then whether `shared` and `github` end up on.
+    let rows: [(&str, &str, bool, &str, bool, bool); 4] = [
+        ("off requirer read first", scout, false, helper, true, true),
+        ("on requirer read first", helper, true, scout, false, true),
         (
             "off skill requires shared itself",
             requires_shared,
             false,
             helper,
             true,
+            true,
+        ),
+        (
+            "only an off agent loads shared",
+            requires_shared_and_scout,
+            false,
+            "",
+            true,
+            false,
         ),
     ];
-    for (what, a, a_on, b, b_on) in rows {
+    for (what, a, a_on, b, b_on, on) in rows {
         let f = fixture(&format!(
             "[skills.a]\nsource = \"cat\"\nenabled = {a_on}\n\n[skills.b]\nsource = \"cat\"\nenabled = {b_on}\n"
         ));
         skill(&f.source, "a", a);
         skill(&f.source, "b", b);
-        skill(&f.source, "shared", "");
+        skill(&f.source, "shared", "dependencies:\n  required: [github]\n");
         fs::create_dir_all(f.source.join("agents")).unwrap();
         for agent in ["scout", "helper"] {
             fs::write(
@@ -261,14 +285,18 @@ fn an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on() {
 
         apply_now(&f);
         let lock = lock_of(&f);
-        let shared = lock
-            .entries
-            .get("skill:shared:claude")
-            .unwrap_or_else(|| panic!("{what}: shared installs"));
-        assert!(shared.enabled, "{what}: {:?}", shared.reasons);
-        assert!(
-            lock.entries["agent:helper:claude"].enabled,
-            "{what}: helper is on"
-        );
+        for name in ["shared", "github"] {
+            let entry = lock
+                .entries
+                .get(&format!("skill:{name}:claude"))
+                .unwrap_or_else(|| panic!("{what}: {name} installs"));
+            assert_eq!(entry.enabled, on, "{what}: {name} {:?}", entry.reasons);
+        }
+        if on {
+            assert!(
+                lock.entries["agent:helper:claude"].enabled,
+                "{what}: helper is on"
+            );
+        }
     }
 }

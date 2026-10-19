@@ -181,7 +181,7 @@ fn walk(
     // reporting everything twice.
     let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
     // An agent's assignment edge brings only skills nothing else holds
-    // ([`agent_assignment`]), so every agent waits until no hard edge is
+    // ([`held_elsewhere`]), so every agent waits until no hard edge is
     // left to walk: a skill some item requires is held by then, however
     // deep, and keeps its own revision.
     let mut agents: VecDeque<Node> = VecDeque::new();
@@ -1009,7 +1009,7 @@ fn wanted_by(
         state,
         &mut wanted,
     );
-    // An agent's assignment edge is soft ([`agent_assignment`]): a skill
+    // An agent's assignment edge is soft ([`held_elsewhere`]): a skill
     // it brings that will not install, kept removed or out of reach of
     // the tool, leaves the declarations complete, and the agent pass
     // warns for it (`agent_skills::warn_uninstalled`). Its names are this
@@ -1050,8 +1050,9 @@ fn declared_by(
 /// a row may name a skill another source carries, and one nothing installs
 /// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
 /// agent that will not read or parse needs nothing; the renderer reports it.
-/// [`wanted_by`] keeps as the edge's only the skills [`held_elsewhere`]
-/// leaves it.
+/// [`wanted_by`] makes the edge's required skills only those
+/// [`held_elsewhere`] finds the scope does not hold; the rest follow only
+/// the agent's switch.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
