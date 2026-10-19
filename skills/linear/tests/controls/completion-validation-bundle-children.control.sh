@@ -24,11 +24,6 @@ control_replace scripts/lib/issue-validation.sh 1 \
     '        | .container_open_boxes = [.boxes[] | select(.number != $child)' \
     '        | .container_open_boxes = [.boxes[] | select(true)'
 
-control_expect "done-unsummarized container child names its remedy"
-control_replace scripts/lib/issue-validation.sh 1 \
-    $'\t\t''  elif $role == "container-child" and $state_ok and ($has_summary | not) then' \
-    $'\t\t''  elif false then'
-
 # Restore child acceptance without the qualified started phase.
 control_expect "qualified child controls bundle acceptance"
 control_replace scripts/lib/issue-validation.sh 1 \

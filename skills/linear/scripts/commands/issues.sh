@@ -297,13 +297,13 @@ Validate-Completion:
   closing when its last child is Done or Canceled. The container's state passes for any live state (canceled
   fails closed) and needs no pre-posted summary: `issues complete --summary`
   posts it at completion time. Its expanded children must each be Done with
-  a summary; a Done child without one carries a `remedy`. all_ok answers
-  "every row validated"; whether the container may close is container-close's
-  decision. The container's row reports the facts that decision reads:
+  a summary. all_ok answers "every row validated"; whether the container may
+  close, and the remedy for each refusal, is container-close's decision. The
+  container's row reports the facts that decision reads:
   `child_box`, the number of its "Every child Done or cancelled" box or null,
   which the closer ticks; `container_open_boxes`, every other box still open
-  or missing its Evidence line, with a `remedy` to move each into its own
-  child; `errors`; and `has_summary`. They do not gate its `ok`.
+  or missing its Evidence line; `errors`; and `has_summary`. They do not gate
+  its `ok`.
   No merge time is needed.
   The flag fails closed:
   it requires exactly one issue ID plus --include-children-of naming that
@@ -361,7 +361,7 @@ Examples:
   issues.sh complete PROJ-42 --done-when-met all --evidence-file proof.txt
   issues.sh complete PROJ-42 --done-when-met 1,3 --evidence-file proof.txt
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # In-PR bundle validation
-  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # May the container close?
+  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # Container close facts (container-close decides)
 
   # Bundle operations (single API call)
   issues.sh get PROJ-42 --with-bundle            # Issue + recursive children + pending_count

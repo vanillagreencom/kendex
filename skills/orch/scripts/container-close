@@ -172,12 +172,16 @@ unauthenticated `gh`. A successful `closed` result may carry completion
 diagnostics on stderr; callers must preserve every one. With every child Done
 or Canceled, the run ticks the parent's "Every child Done or cancelled" box
 with an Evidence line naming each child's state, in the update that sets
-Done. A refusal prints each refused row on stderr, with its `remedy`, before
+Done. A refusal prints each refused row on stderr, with the `remedy` for its
+cause, before
 `container-close: completion-refused parent-id=<PARENT_ID> cause=<CAUSE>`:
-`open-box`, any other open box, until it moves into its own child, whether
-the children were Done or every one was canceled; `child-not-ok`, a Done
-child that fails validation, such as one with no summary; `parent-canceled`,
-a Canceled parent with a Done child. A parent whose every child was canceled
+`open-box`, any other box open or missing its Evidence, until it moves into
+its own child, whether the children were Done or every one was canceled;
+`checklist-invalid`, a Post-merge box whose fields fail the checklist rule,
+until they are corrected; `child-not-ok`, a Done child that fails
+validation, such as one with no summary; `parent-canceled`, a Canceled
+parent with a Done child, until the parent moves to a live state or the
+Done child is detached. A parent whose every child was canceled
 delivered nothing: it is set Canceled, with no summary and its child box left
 open, and prints `closed <PARENT_ID>` after the stderr line `container-close:
 canceled parent-id=<PARENT_ID>`. One already Done or Canceled is left as it
@@ -302,9 +306,24 @@ jq -e '(.state_type | type) == "string" and (.in_pr_bundle | type) == "boolean"'
 # root reads no child and an open child defers before the validation's
 # per-child reads. pending is the `children --pending` filter. The
 # validation reports facts; its parent row's ok does not decide the close.
+# remedy pairs each refusal cause with the fix printed on its refused rows.
 CLOSE_DEFS='def pending: .state_type != "completed" and .state_type != "canceled";
-  def open_box: .container_open_boxes != [] or .errors != [];
-  def refused_child($id): .id != $id and .ok == false;'
+  def open_box: .container_open_boxes != [];
+  def checklist_invalid: .errors != [];
+  def refused_child($id): .id != $id and .ok == false;
+  def boxes: map(tostring) | unique | join(", ");
+  def remedy($cause; $id):
+    if $cause == "open-box" then
+      "Move each open box of \($id) (\(.container_open_boxes | boxes)) into its own child item, then rerun container-close."
+    elif $cause == "checklist-invalid" then
+      "Correct the Post-merge fields of each box of \($id) that errors names (\([.errors[].box] | boxes)), then rerun container-close."
+    elif $cause == "child-not-ok" then
+      "On \(.id): " + ([if .state_ok then empty else "set it Done" end,
+        if .has_summary then empty else "post a comment headed ## Completion Summary with comments create \(.id) --body-file SUMMARY_FILE" end]
+        | join("; ")) + ", then rerun container-close."
+    elif $cause == "parent-canceled" then
+      "Move \($id) to a live state so it closes Done, or detach its Done children if it stays Canceled, then rerun container-close."
+    else error("no remedy for \($cause)") end;'
 CLOSE_DECISION="$CLOSE_DEFS"'
   $parent.state_type as $state
   | if $parent.in_pr_bundle then "refuse:in-pr-bundle"
@@ -313,6 +332,7 @@ CLOSE_DECISION="$CLOSE_DEFS"'
     elif any($children[]; pending) then "keep"
     elif $validation == null then "read:validation"
     elif $validation.results[] | select(.id == $id) | open_box then "refuse:open-box"
+    elif $validation.results[] | select(.id == $id) | checklist_invalid then "refuse:checklist-invalid"
     elif any($validation.results[]; refused_child($id)) then "refuse:child-not-ok"
     elif all($children[]; .state_type == "canceled") then
       if $state == "completed" or $state == "canceled" then "noop:\($state)" else "close-canceled" end
@@ -339,7 +359,7 @@ while :; do
       jq -e --arg id "$PARENT_ID" '(.results | type) == "array" and ([.results[] | select(.id == $id)] | length) == 1 and
         all(.results[]; if .id == $id then (.has_summary | type) == "boolean" and (.container_open_boxes | type) == "array"
           and (.errors | type) == "array" and ((.child_box | type) as $t | $t == "null" or $t == "number")
-          else (.ok | type) == "boolean" end)' <<<"$VALIDATION" >/dev/null \
+          else (.ok | type) == "boolean" and (.state_ok | type) == "boolean" and (.has_summary | type) == "boolean" end)' <<<"$VALIDATION" >/dev/null \
         || { container_close_message validation-result "$@" >&2; exit 1; }
       ;;
     *) break ;;
@@ -358,8 +378,9 @@ case "$DECISION" in
   refuse:*)
     REFUSAL="${DECISION#refuse:}"
     jq -c --arg id "$PARENT_ID" --arg cause "$REFUSAL" "$CLOSE_DEFS"'.results[]
-      | select(if $cause == "child-not-ok" then refused_child($id) else .id == $id end)' <<<"$VALIDATION" >&2 \
-      || { container_close_message validation-result "$@" >&2; exit 1; }
+      | select(if $cause == "child-not-ok" then refused_child($id) else .id == $id end)
+      | . + {remedy: remedy($cause; $id)}' <<<"$VALIDATION" >&2 \
+      || { container_close_message decision-failed "$@" >&2; exit 1; }
     container_close_message completion-refused "$@" >&2
     exit 1
     ;;

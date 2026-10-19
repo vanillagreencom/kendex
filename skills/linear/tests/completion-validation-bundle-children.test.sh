@@ -273,13 +273,13 @@ for summary_issue in CC-950 CC-951; do
 done
 
 # The container's row reports its child box, which the closer ticks, and
-# every other open box, with a remedy; container-close decides the close on
+# every other open box; container-close decides the close and its remedy on
 # them, so they leave the row's ok to its state.
 export CONTAINER_CHECKLIST_FILE="$TMP_ROOT/container-outcome.md"
 while IFS='|' read -r name description child open; do
   printf '%b' "$description" >"$CONTAINER_CHECKLIST_FILE"
   out="$(run_validate CC-930 --include-children-of CC-930 --container 2>"$TMP_ROOT/outcome.err")"
-  check "$name container outcome controls completion" "$out" ".all_ok == true and (.results[] | select(.id == \"CC-930\") | .ok == true and .child_box == $child and .container_open_boxes == $open and has(\"remedy\") == ($open != []))"
+  check "$name container outcome controls completion" "$out" ".all_ok == true and (.results[] | select(.id == \"CC-930\") | .ok == true and .child_box == $child and .container_open_boxes == $open)"
 done <<'ROWS'
 absent|No checklist|null|[]
 empty|## Done when|null|[]
@@ -359,14 +359,3 @@ out="$(CHILD_SUMMARY=false run_validate CC-910 --include-children-of CC-910)"
 check "started child still needs its summary" "$out" '.all_ok == false and (.results[] | select(.id == "CC-912") | .state_ok == true and .has_summary == false and .ok == false)'
 out="$(CHILD_STATE=Verifying run_validate CC-912)"
 check "Verifying remains invalid for a session root" "$out" '.all_ok == false and .results[0].state_ok == false'
-
-# container-close prints each refused row; a Done container child with no
-# summary carries the remedy that clears its refusal.
-while IFS='|' read -r name state state_type summary remedy; do
-  result="$(build_completion_validation_result CC-931 "$state" CC-930 "$summary" container-child "$state_type")"
-  check "$name container child names its remedy" "$result" "has(\"remedy\") == $remedy"
-done <<'ROWS'
-done-unsummarized|Done|completed|false|true
-done-summarized|Done|completed|true|false
-open-unsummarized|In Progress|started|false|false
-ROWS

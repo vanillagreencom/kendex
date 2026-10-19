@@ -85,11 +85,11 @@ completion_state_matches() {
 # has_summary does not gate `ok`: the summary is posted by `issues complete
 # --summary` at completion time, after this validation runs. Its row also
 # reports the checklist facts container-close decides the close on; they do
-# not gate `ok`, because that decision is container-close's.
+# not gate `ok`, because that decision, and the remedy for each refusal, is
+# container-close's.
 #
 # Output shape is stable: {id, state, state_type, state_ok, has_summary, ok},
-# plus the container's checklist fields, and a `remedy` on a container with
-# an open box or a Done container child with no summary.
+# plus the container's checklist fields.
 build_completion_validation_result() {
 	local issue_id="$1"
 	local state="$2"
@@ -138,9 +138,6 @@ build_completion_validation_result() {
 		'{id: $id, state: $state, state_type: $state_type, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}
 		| if $role == "container" then
 			. + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes, child_box, container_open_boxes})
-			+ (if $checklist.container_open_boxes != [] then {remedy: "Move each open box into its own child item, then rerun container-close."} else {} end)
-		  elif $role == "container-child" and $state_ok and ($has_summary | not) then
-			. + {remedy: "Post a comment headed ## Completion Summary on \($id) with comments create \($id) --body-file SUMMARY_FILE, then rerun container-close."}
 		  else . end'
 }
 

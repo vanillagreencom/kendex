@@ -217,7 +217,8 @@ run_linked_close() { (cd "$CALLER_TWO" && "$SCRIPT" "$CALLER_TWO" PARENT-1); }
 # One table drives the close decision through every row. A row's result is
 # the exit status, stdout, the parent's state after, the keyed stderr lines
 # and the Linear calls made. Each Done child carries its Completion Summary
-# unless the row names it bare.
+# unless the row names it bare. refused_rows reads the rows a refusal prints
+# on stderr as ID=TYPE, TYPE being the type of the row's remedy.
 close_row() { # STATE IN_PR DESCRIPTION CHILDREN BARE [SCRIPT]
   reset_state
   printf '%s\n' "$1" >"$FAKE_LINEAR_ROOT/parent.state"
@@ -234,16 +235,21 @@ close_row() { # STATE IN_PR DESCRIPTION CHILDREN BARE [SCRIPT]
     "$(sed -n 's/^container-close: \([a-z-]*\) parent-id=PARENT-1/\1/p' "$TMP_ROOT/close-row.err" | paste -sd, -)" \
     "$(sed 's/^issues://' "$FAKE_LINEAR_ROOT/linear.calls" | paste -sd, -)"
 }
+refused_rows() { jq -Rr 'fromjson? | objects | "\(.id)=\(.remedy | type)"' "$TMP_ROOT/close-row.err" | paste -sd, -; }
 CHILD_BOX_DONE='## Done when\n- [ ] Every child Done or cancelled'
 OUTCOME_BESIDE="$CHILD_BOX_DONE\n- [ ] Shared outcome at source"
+MALFORMED_POST_MERGE="$CHILD_BOX_DONE\n- [x] Post-merge: Read health; Where: service; Why after merge: deployment; Deadline: bogus\n  Evidence: holder read passed"
 NO_CHILDREN='[]'
 ALL_DONE='[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"}]'
 DONE_AND_CANCELED='[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"}]'
 ONE_OPEN='[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-3","title":"three","state":"Canceled","state_type":"canceled"}]'
 ALL_CANCELED='[{"id":"CHILD-1","title":"one","state":"Canceled","state_type":"canceled"},{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"}]'
+# Linear lets a team add completed states besides Done.
+COMPLETED_NOT_DONE='[{"id":"CHILD-1","title":"one","state":"Released","state_type":"completed"},{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"}]'
 READ=get,children,validate-completion
-while IFS='|' read -r row state in_pr description children bare want evidence summary; do
+while IFS='|' read -r row state in_pr description children bare want refused evidence summary; do
   assert_eq "$(close_row "$state" "$in_pr" "$description" "${!children}" "$bare")" "$want" "$row decides the container's close" "$TMP_ROOT/close-row.err"
+  assert_eq "$(refused_rows)" "$refused" "$row prints each refused row with its remedy" "$TMP_ROOT/close-row.err"
   if [[ -n "$evidence" ]]; then
     assert_file_contains "$FAKE_LINEAR_ROOT/parent.description" '- [x] Every child Done or cancelled' "$row ticks the child box"
     assert_file_contains "$FAKE_LINEAR_ROOT/parent.description" "  Evidence: container-close read every child Done or Canceled: $evidence" "$row records each child's state as Evidence"
@@ -252,34 +258,38 @@ while IFS='|' read -r row state in_pr description children bare want evidence su
   fi
   assert_eq "$(sed -n 's/^- //p' "$FAKE_LINEAR_ROOT/summary.body" 2>/dev/null | paste -sd ';' -)" "$summary" "$row posts its bundle summary"
 done <<ROWS
-in-PR bundle root, every child canceled|In Review|yes|$CHILD_BOX_DONE|ALL_CANCELED||1::In Review:in-pr-bundle:get||
-no children|In Progress|no|$CHILD_BOX_DONE|NO_CHILDREN||1::In Progress:no-children:get,children||
-child box, a child open|In Progress|no|$CHILD_BOX_DONE|ONE_OPEN||0:deferred CHILD-2:In Progress::get,children||
-outcome box beside the child box|In Progress|no|$OUTCOME_BESIDE|ALL_DONE||1::In Progress:completion-refused cause=open-box:$READ||
-outcome box beside the child box, every child canceled|In Progress|no|$OUTCOME_BESIDE|ALL_CANCELED||1::In Progress:completion-refused cause=open-box:$READ||
-outcome box beside the child box on a Done parent, every child canceled|Done|no|$OUTCOME_BESIDE|ALL_CANCELED||1::Done:completion-refused cause=open-box:$READ||
-a Done child with no summary|In Progress|no|$CHILD_BOX_DONE|ALL_DONE|CHILD-2|1::In Progress:completion-refused cause=child-not-ok:$READ||
-child box, every child canceled|In Progress|no|$CHILD_BOX_DONE|ALL_CANCELED||0:closed PARENT-1:Canceled:canceled:$READ,update||
-parent already Canceled, every child canceled|Canceled|no|$CHILD_BOX_DONE|ALL_CANCELED||0:closed PARENT-1:Canceled:canceled:$READ||
-parent already Done, every child Canceled|Done|no|$CHILD_BOX_DONE|ALL_CANCELED||0:closed PARENT-1:Done::$READ||
-child box, every child Done|In Progress|no|$CHILD_BOX_DONE|ALL_DONE||0:closed PARENT-1:Done::$READ,complete|CHILD-1 Done, CHILD-2 Done|CHILD-1 ✓ one — PR #101;CHILD-2 ✓ two — PR #102
-child box, Done and Canceled|In Progress|no|$CHILD_BOX_DONE|DONE_AND_CANCELED||0:closed PARENT-1:Done::$READ,complete|CHILD-1 Done, CHILD-2 Canceled|CHILD-1 ✓ one — PR #101
-child box on a parent another route set Done|Done|no|$CHILD_BOX_DONE|ALL_DONE||0:closed PARENT-1:Done::$READ,complete|CHILD-1 Done, CHILD-2 Done|
-no checklist, every child Done|In Progress|no||ALL_DONE||0:closed PARENT-1:Done::$READ,complete||CHILD-1 ✓ one — PR #101;CHILD-2 ✓ two — PR #102
-a Canceled parent with a Done child|Canceled|no|$CHILD_BOX_DONE|DONE_AND_CANCELED||1::Canceled:completion-refused cause=parent-canceled:$READ||
+in-PR bundle root, every child canceled|In Review|yes|$CHILD_BOX_DONE|ALL_CANCELED||1::In Review:in-pr-bundle:get|||
+no children|In Progress|no|$CHILD_BOX_DONE|NO_CHILDREN||1::In Progress:no-children:get,children|||
+child box, a child open|In Progress|no|$CHILD_BOX_DONE|ONE_OPEN||0:deferred CHILD-2:In Progress::get,children|||
+outcome box beside the child box|In Progress|no|$OUTCOME_BESIDE|ALL_DONE||1::In Progress:completion-refused cause=open-box:$READ|PARENT-1=string||
+outcome box beside the child box, every child canceled|In Progress|no|$OUTCOME_BESIDE|ALL_CANCELED||1::In Progress:completion-refused cause=open-box:$READ|PARENT-1=string||
+outcome box beside the child box on a Done parent, every child canceled|Done|no|$OUTCOME_BESIDE|ALL_CANCELED||1::Done:completion-refused cause=open-box:$READ|PARENT-1=string||
+a ticked post-merge box with malformed fields|In Progress|no|$MALFORMED_POST_MERGE|ALL_DONE||1::In Progress:completion-refused cause=checklist-invalid:$READ|PARENT-1=string||
+a Done child with no summary|In Progress|no|$CHILD_BOX_DONE|ALL_DONE|CHILD-2|1::In Progress:completion-refused cause=child-not-ok:$READ|CHILD-2=string||
+a completed child in a state other than Done|In Progress|no|$CHILD_BOX_DONE|COMPLETED_NOT_DONE||1::In Progress:completion-refused cause=child-not-ok:$READ|CHILD-1=string||
+child box, every child canceled|In Progress|no|$CHILD_BOX_DONE|ALL_CANCELED||0:closed PARENT-1:Canceled:canceled:$READ,update|||
+parent already Canceled, every child canceled|Canceled|no|$CHILD_BOX_DONE|ALL_CANCELED||0:closed PARENT-1:Canceled:canceled:$READ|||
+parent already Done, every child Canceled|Done|no|$CHILD_BOX_DONE|ALL_CANCELED||0:closed PARENT-1:Done::$READ|||
+child box, every child Done|In Progress|no|$CHILD_BOX_DONE|ALL_DONE||0:closed PARENT-1:Done::$READ,complete||CHILD-1 Done, CHILD-2 Done|CHILD-1 ✓ one — PR #101;CHILD-2 ✓ two — PR #102
+child box, Done and Canceled|In Progress|no|$CHILD_BOX_DONE|DONE_AND_CANCELED||0:closed PARENT-1:Done::$READ,complete||CHILD-1 Done, CHILD-2 Canceled|CHILD-1 ✓ one — PR #101
+child box on a parent another route set Done|Done|no|$CHILD_BOX_DONE|ALL_DONE||0:closed PARENT-1:Done::$READ,complete||CHILD-1 Done, CHILD-2 Done|
+no checklist, every child Done|In Progress|no||ALL_DONE||0:closed PARENT-1:Done::$READ,complete|||CHILD-1 ✓ one — PR #101;CHILD-2 ✓ two — PR #102
+a Canceled parent with a Done child|Canceled|no|$CHILD_BOX_DONE|DONE_AND_CANCELED||1::Canceled:completion-refused cause=parent-canceled:$READ|PARENT-1=string||
 ROWS
 
-# Controls, each in a disposable copy: main's pending filter defers a
-# canceled child forever; this branch's first all-canceled close set the
-# parent Canceled unread; main's helper ticks nothing, so the open child box
-# refuses the close of a container whose children are all Done.
+# Controls, each in a disposable copy: a pending filter that keeps canceled
+# children defers forever; an all-canceled close that skips the open-box read
+# cancels an open outcome unread; a close that skips the tick leaves the
+# child box open and refuses every-Done children; a refusal that prints no
+# refused row, or a row without its remedy, leaves the caller nothing to
+# follow.
 CANCELED_MUTANT="$SANDBOX/skills/orch/scripts/container-close-canceled-mutant"
 cp "$SCRIPT" "$CANCELED_MUTANT"
 mutate_file "$CANCELED_MUTANT" 'def pending: .state_type != "completed" and .state_type != "canceled";' 'def pending: .state_type != "completed";'
 assert_eq "$(close_row 'In Progress' no "$CHILD_BOX_DONE" "$DONE_AND_CANCELED" '' "$CANCELED_MUTANT")" '0:deferred CHILD-2:In Progress::get,children' "canceled control exposes the endless deferral"
 CANCEL_MUTANT="$SANDBOX/skills/orch/scripts/container-close-cancel-mutant"
 cp "$SCRIPT" "$CANCEL_MUTANT"
-mutate_file "$CANCEL_MUTANT" 'def open_box: .container_open_boxes != [] or .errors != [];' 'def open_box: false;'
+mutate_file "$CANCEL_MUTANT" 'def open_box: .container_open_boxes != [];' 'def open_box: false;'
 control_rc=0
 ( FAIL=0; assert_eq "$(close_row 'In Progress' no "$OUTCOME_BESIDE" "$ALL_CANCELED" '' "$CANCEL_MUTANT")" "1::In Progress:completion-refused cause=open-box:$READ" 'open outcome refuses'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/cancel-control.log" || control_rc=$?
 assert_eq "$control_rc" 1 "cancel control: an open outcome box on an all-canceled parent is canceled unread"
@@ -289,6 +299,19 @@ mutate_file "$TICK_MUTANT" 'if [[ -n "$CHILD_BOX" ]]; then' 'if false; then'
 control_rc=0
 ( FAIL=0; assert_eq "$(close_row 'In Progress' no "$CHILD_BOX_DONE" "$ALL_DONE" '' "$TICK_MUTANT")" "0:closed PARENT-1:Done::$READ,complete" 'child box closes'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/tick-control.log" || control_rc=$?
 assert_eq "$control_rc" 1 "tick control: an unticked child box keeps every-Done children from closing the parent"
+for control in unprinted unremedied; do
+  mutant="$SANDBOX/skills/orch/scripts/container-close-$control-mutant"
+  cp "$SCRIPT" "$mutant"
+  if [[ "$control" == unprinted ]]; then
+    mutate_file "$mutant" '| select(if $cause == "child-not-ok" then refused_child($id) else .id == $id end)' '| select(false)'
+  else
+    mutate_file "$mutant" '| . + {remedy: remedy($cause; $id)}' '| .'
+  fi
+  close_row 'In Progress' no "$OUTCOME_BESIDE" "$ALL_DONE" '' "$mutant" >/dev/null
+  control_rc=0
+  ( FAIL=0; assert_eq "$(refused_rows)" 'PARENT-1=string' 'refused row with its remedy'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/$control-control.log" || control_rc=$?
+  assert_eq "$control_rc" 1 "$control control: the refused rows column reddens"
+done
 
 # The owner must distinguish completed state from successful required effects.
 while IFS='|' read -r initial effect first_result; do
