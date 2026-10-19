@@ -1,6 +1,6 @@
 # Job units
 
-Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `ci-wait`, `queue-wait`, `lane-mail wait` and the repeat watch), and the watch handover helper `scripts/lib/watch-handover.sh` starts for `oversee-succeed` and `oversee launch --predecessor`, and the watch that helper restarts. These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
+Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `ci-wait`, `queue-wait`, `lane-mail wait` and the repeat watch), and the watch handover helper `scripts/lib/watch-handover.sh` starts for `oversee-succeed`, `oversee launch --predecessor` and `oversee resume`, and the watch that helper restarts. These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
 
 `job-unit.sh attach RECORD -- ARGV` is the one start that is not detached: it runs the job as the caller's own child, leading a process group of its own in the caller's session, and waits for it. The child forks through the github skill's group-leader prefix, `scripts/lib/group-leader.sh`, so an install without the github skill beside orch refuses the start as `group-leader-missing`, exit 2, and starts nothing. That prefix runs perl, so a host without perl refuses the start as `missing-command commands=perl`, exit 2, and starts nothing. `dev-validate-run --attached` starts its run this way. A host whose agent warden kills detached jobs needs it: the job stays inside the calling agent's process tree, where a unit or a `setsid` job does not.
 
@@ -35,7 +35,7 @@ Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-v
 
 ## Runner line
 
-The launch prints the runner line and records it. `dev-validate-run` and a waiter launch write it as the first line of the job's log, `oversee-succeed` and `oversee launch --predecessor` put it at the end of their `watch-handover` lines, and the helper at the end of its `watch-restarted` line.
+The launch prints the runner line and records it. `dev-validate-run` and a waiter launch write it as the first line of the job's log, `oversee-succeed`, `oversee launch --predecessor` and `oversee resume` put it at the end of their `watch-handover` lines, and the helper at the end of its `watch-restarted` line.
 
 | Line | Meaning |
 |---|---|

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Tests for what `oversee launch --predecessor` does to the fleet watch: the
-# watch served the predecessor's pane, which the succession stops, so the
-# launch hands it to the successor pane through lib/watch-handover.sh, the
-# handover `oversee-succeed` runs. Run over a real tmux server at the default
+# Tests for what `oversee launch --predecessor` and `oversee resume` do to
+# the fleet watch: the watch served the predecessor's pane, which the
+# succession stops or the lost server closed, so the launch hands it to the
+# new pane through lib/watch-handover.sh, the handover `oversee-succeed` runs. Run over a real tmux server at the default
 # socket under a private TMUX_TMPDIR, from outside tmux as oversee_launch.sh
 # runs the verb, whose suite owns everything else a launch does. The watch
 # handed over is a stand-in that records itself through lib/watch-pid.sh, as
@@ -514,6 +514,54 @@ EOF
 else
   printf '  skip  the process-group kill row needs setsid\n'
 fi
+
+# `oversee resume` serves its new pane as a succession does. The recorded
+# overseer's session is gone with its server and its native id is bound; the
+# watch it ran may still hold its claim on the lost pane (live), or have
+# released it with its command and unread log lines retained (released). A
+# live claim is restarted from the resumed pane; a released one is replayed
+# there with the log kept. Its controls restore the resume guard on step 9
+# and drop --closed, each of which must fail its row.
+resume_watch_row() { # live|released [OVERSEE_BIN]
+  new_predecessor
+  fresh_output
+  [[ "$1" == live ]] || watch_stop "$OLD" "$FLEET_STATE"
+  printf 'EVENT fixture retained\n' > "$WATCH_LOG_FILE"
+  jq '.overseer.session_id = "native-claude"' "$FLEET_STATE" > "$FLEET_STATE.next" && mv -- "$FLEET_STATE.next" "$FLEET_STATE"
+  tm kill-window -t "$PRED"
+  run_oversee "${2:---}" ${2:+--} resume --wait-secs 20
+  SUCC="$(recorded pane)"
+  NEW=""
+  if [[ "$1" == live ]]; then
+    wait_restart
+    assert_eq "$RC|$(grep -c "^oversee: watch-handover pid=$OLD pane=$SUCC " <<<"$OUT")|$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|${NEW:+restarted}|$(started_line "${NEW:-none}" | sed 's/ lane=.*//')" \
+      "0|1|1|restarted|pane=$SUCC origin=succession" \
+      "resume hands the watch still claiming the lost pane to the resumed pane"
+  else
+    if watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PANE" == "$SUCC" ]]; then NEW="$WATCH_PID"; fi
+    assert_eq "$RC|$(grep -c "^oversee: watch-started pid=${NEW:-none} pane=$SUCC " <<<"$OUT")|$(started_line "${NEW:-none}" | sed 's/ tmux=[^ ]* / /')|$(grep -c '^EVENT fixture retained$' "$WATCH_LOG_FILE")" \
+      "0|1|pane=$SUCC origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness claude -- --model fable --effort high $COMPACT $QUESTION_OFF $BYPASS|1" \
+      "resume replays the released watch's command from the resumed pane and keeps its unread log lines"
+  fi
+  [[ -z "$NEW" ]] || watch_stop "$NEW" "$FLEET_STATE" || true
+}
+resume_watch_control() { # NAME CASE FROM TO
+  local dir saved_fail="$FAIL" control_fail
+  dir="$(mutant_scripts "resume-watch-$1" oversee)" || exit 1
+  rm -- "${dir:?}/oversee-watch"
+  cp -p -- "$FIXTURE_WATCH" "$dir/oversee-watch"
+  mutate_file "$dir/oversee" "$3" "$4"
+  FAIL=0
+  resume_watch_row "$2" "$dir/oversee" > "$TMP_ROOT/resume-watch-control.out"
+  control_fail="$FAIL"
+  FAIL="$saved_fail"
+  ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE" || true
+  assert_eq "$(( control_fail > 0 ))" 1 "control: the $1 oversee copy fails the $2 resume watch row" "$TMP_ROOT/resume-watch-control.out"
+}
+echo "=== oversee resume: the fleet watch ==="
+for RESUME_CASE in live released; do resume_watch_row "$RESUME_CASE"; done
+resume_watch_control unguarded live '      hand_over_watch ;;' '      [[ "$COMMAND" == resume ]] || hand_over_watch ;;'
+resume_watch_control unclosed released '  [[ "$COMMAND" != resume ]] || closed=(--closed)' '  :'
 
 # The owner's acceptance row: the real watch, started by hand from the
 # predecessor's pane as an overseer starts it, is handed over, and the

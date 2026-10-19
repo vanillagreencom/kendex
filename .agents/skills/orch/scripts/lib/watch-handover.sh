@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 #
 # The fleet watch handed from a stopped overseer's pane to its successor's.
-# Both overseer launchers run it: `oversee launch` and `oversee-succeed`,
-# each on the
+# Both overseer launchers run it: `oversee`, on launch and resume, and
+# `oversee-succeed`, each on the
 # `verified` step of lib/overseer-launch.sh § ol_succession, before the stop
 # that commits the succession. One owner, so neither launcher can leave the
 # watch reading a pane the other would have handed on.
@@ -52,7 +52,11 @@ watch_job_launch() { # NAME STATE OUT ERR COMMAND...
 # the helper started as the job watch-handover-<stamp>, handed the successor's
 # LANE_VAR and LANE_HOME, its HARNESS and its FLAG words, which the restarted
 # watch runs under. Its stdout and stderr go to oversee-watch.err, which the
-# next watch start prints.
+# next watch start prints. --closed names a successor whose predecessor's
+# session closed with its tmux server, PREDECESSOR empty, so the helper waits
+# on no session: a later server can hand that pane id to another pane or to
+# SUCCESSOR itself. A stopped watch keeps its log cursor and unread events
+# for it as for any successor.
 #
 # The outcome is WATCH_HANDOVER_KEY with its fields in WATCH_HANDOVER_FIELDS:
 #   0  watch-handover  pid=<the watch handed over> pane=<SUCCESSOR> log=<path>
@@ -62,8 +66,9 @@ watch_job_launch() { # NAME STATE OUT ERR COMMAND...
 #   1  watch-restart-failed step=state-path, the detail in DEP_ERR, or
 #                      step=helper pid=<N> error=<key> and the runner's error:
 #                      the caller refuses launch before stopping its pane
-watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
-  local state old
+watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
+  local state old fresh=0
+  if [[ "${1:-}" == --closed ]]; then shift; elif [[ -z "$1" ]]; then fresh=1; fi
   WATCH_HANDOVER_KEY="" WATCH_HANDOVER_FIELDS=()
   if ! state="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")"; then
     WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=state-path)
@@ -76,11 +81,11 @@ watch_handover() { # PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS [FLAG...]
     1)
       # A fresh reader starts at line one. A successor keeps its cursor
       # and unread events, even when its prior watch has already stopped.
-      if [[ -z "$1" ]] && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; } 2>"$DEP_ERR"; then
+      if (( fresh )) && ! { : > "$WATCH_LOG_FILE" && : > "$WATCH_ERR_FILE"; } 2>"$DEP_ERR"; then
         WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=logs)
         return 1
       fi
-      if [[ -z "$1" ]]; then
+      if (( fresh )); then
         watch_start fresh "$state" "${@:2}"; return $?
       fi
       if ! watch_argv_read "$state" 2>"$DEP_ERR"; then

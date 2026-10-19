@@ -1331,34 +1331,72 @@ for recorded_mode in register launch; do test_recorded_server "$recorded_mode"; 
 echo "=== resume ==="
 # The record a session lost with its tmux server leaves: its pane listed
 # nowhere, its server start an earlier server's, and the native id its hooks
-# bound. OUT is the resume run's output; RESUMED the new pane.
+# bound. The rows run from their own directory, whose fleet state holds the
+# record, while the record's cwd names the work checkout, so the directory the
+# session opens in is told from the one the command was typed in. OUT is the
+# resume run's output; RESUMED the new pane.
 RESUME_LANES="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot"
-lost_record() { # HARNESS ACCOUNT MODEL EFFORT SESSION_ID
+lost_record() { # HARNESS ACCOUNT MODEL EFFORT SESSION_ID [CWD] [LAUNCH_LINE]
   jq --arg server "$SERVER_PID" --arg harness "$1" --arg account "$2" --arg model "$3" --arg effort "$4" \
-    --arg id "$5" --arg cwd "$WORK_REAL" '.overseer = {runtime: "tmux", server: $server, server_start: 1,
+    --arg id "$5" --arg cwd "${6:-$WORK_REAL}" --arg line "${7:-lost}" '.overseer = {runtime: "tmux", server: $server, server_start: 1,
       pane: "%999", window: "@999", generation: 5, harness: $harness, account: $account, home: $account,
-      model: $model, effort: $effort, cwd: $cwd, launch_line: "lost", session_id: $id}
+      model: $model, effort: $effort, cwd: $cwd, launch_line: $line, session_id: $id}
       | if $id == "" then del(.overseer.session_id) else . end' "$TMP_ROOT/resume.saved" > "$FLEET_STATE"
 }
-resume_row() { # HARNESS ACCOUNT MODEL EFFORT RESUME_WORDS [OVERSEE_BIN]
-  lost_record "$1" "$2" "$3" "$4" "native-$1"
-  OVERSEE_BIN="${6:-}" run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
+# line_words LINE — the words a shell reads LINE as, one per line.
+line_words() { (eval "set -- $1" && printf '%s\n' "$@"); }
+# words_in FILE WORDS — how many of the ;-separated WORDS stand as a whole
+# line of FILE.
+words_in() {
+  local word words n=0
+  IFS=';' read -r -a words <<<"$2"
+  for word in "${words[@]}"; do grep -qxF -- "$word" "$1" 2>/dev/null && n=$((n + 1)); done
+  echo "$n"
+}
+resume_row() { # HARNESS ACCOUNT MODEL EFFORT RESUME_WORDS FLAG_WORDS [OVERSEE_BIN] [LAUNCH_LINE]
+  local flags n
+  flags="$6;$(launch_choice_permission_write "$1")" || { echo "fixture: no $1 permission word in the launch table" >&2; exit 1; }
+  n="$(tr ';' '\n' <<<"$flags" | wc -l | tr -d ' ')"
+  lost_record "$1" "$2" "$3" "$4" "native-$1" "$WORK_REAL" "${8:-lost}"
+  OVERSEE_BIN="${7:-}" run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
   RESUMED="$(field "$(keyed resumed "$OUT")" session)"
-  assert_eq "$RC|$(keyed resumed "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')|$(tr '\n' ';' 2>/dev/null < "$TMP_ROOT/argv.$1" | grep -cF -- ";$5;$BRIEF;" || true)" \
-    "0|oversee: resumed session=%N window=@N server=$SOCKET generation=6 lane=$2 session_id=native-$1|1" \
-    "resume on a lost $1 record runs its resume form on the recorded native id with the takeover brief" "$OUT"
-  assert_eq "$(recorded pane)|$(recorded server)|$(recorded server_socket)|$(recorded server_start)|$(recorded generation)|$(recorded cwd)|$(tm display-message -p -t "${RESUMED:-none}" '#{pane_current_path}' 2>/dev/null)|$(recorded launch_line | grep -c "native-$1" || true)|$(recorded session_id)|$(recorded harness_pid | grep -cE '^[0-9]+$' || true)" \
-    "$RESUMED|$SERVER_PID|$SOCKET|$SERVER_START|6|$WORK_REAL|$WORK_REAL|0|none|1" \
-    "the resumed $1 session is registered by its new pane, server and harness pid, in the recorded cwd, its launch line the fresh command"
+  printf '%s\n' "$OUT" > "$TMP_ROOT/resume.out"
+  assert_eq "$RC|$(keyed resumed "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')|$(tr '\n' ';' 2>/dev/null < "$TMP_ROOT/argv.$1" | grep -cF -- ";$5;$BRIEF;" || true)|$(words_in "$TMP_ROOT/argv.$1" "$flags")" \
+    "0|oversee: resumed session=%N window=@N server=$SOCKET generation=6 lane=$2 session_id=native-$1|1|$n" \
+    "resume on a lost $1 record runs its resume form on the recorded native id with its model, effort and full-bypass words and the takeover brief" "$TMP_ROOT/resume.out"
+  assert_eq "$(recorded pane)|$(recorded server)|$(recorded server_socket)|$(recorded server_start)|$(recorded generation)|$(recorded cwd)|$(tm display-message -p -t "${RESUMED:-none}" '#{pane_current_path}' 2>/dev/null)|$(recorded session_id)|$(recorded harness_pid | grep -cE '^[0-9]+$' || true)" \
+    "$RESUMED|$SERVER_PID|$SOCKET|$SERVER_START|6|$WORK_REAL|$WORK_REAL|none|1" \
+    "the resumed $1 session is registered by its new pane, server and harness pid, in the recorded cwd"
+  line_words "$(recorded launch_line)" > "$TMP_ROOT/resume-line" 2>/dev/null || :
+  assert_eq "$(words_in "$TMP_ROOT/resume-line" "$BRIEF")|$(words_in "$TMP_ROOT/resume-line" "$flags")|$(grep -cF -e "native-$1" -e --resume "$TMP_ROOT/resume-line" || true)|$(grep -cxF resume "$TMP_ROOT/resume-line" || true)" \
+    "1|$n|0|0" \
+    "the resumed $1 record's launch line is the fresh command: the brief, model, effort and full-bypass words, no resume words"
+}
+# resume_control NAME FROM TO — the claude resume row over an oversee copy
+# with FROM replaced by TO, which must fail it.
+resume_control() {
+  local dir saved_fail="$FAIL"
+  dir="$(mutant_scripts "resume-$1" oversee)" || exit 1
+  mutate_file "$dir/oversee" "$2" "$3"
+  FAIL=0
+  resume_row claude "$H/.claude" fable high "--resume;native-claude" "--model;fable;--effort;high" "$dir/oversee" > "$TMP_ROOT/resume-control.out"
+  [[ -z "$RESUMED" ]] || tm kill-window -t "$RESUMED" 2>/dev/null || :
+  local control_fail="$FAIL"
+  FAIL="$saved_fail"
+  assert_eq "$(( control_fail > 0 ))" 1 "control: the $1 oversee copy fails the resume row" "$TMP_ROOT/resume-control.out"
 }
 test_resume() {
   cp -- "$FLEET_STATE" "$TMP_ROOT/resume.saved"
+  local work_state="$FLEET_STATE" resume_run="$TMP_ROOT/resume-run"
+  mkdir -p "$resume_run/tmp"
+  FLEET_STATE="$resume_run/tmp/workflow-state-oversee.json"
+  RUN_DIR="$resume_run"
   for row in \
-    "claude|$H/.claude|fable|high|--resume;native-claude" \
-    "codex|$H/.codex|gpt-5.6-sol|high|resume;native-codex" \
-    "copilot|$H/.1copilot|gpt-5.3-codex|high|--resume=native-copilot;-i"; do
-    IFS='|' read -r harness account model effort words <<<"$row"
-    resume_row "$harness" "$account" "$model" "$effort" "$words"
+    "claude|$H/.claude|fable|high|--resume;native-claude|--model;fable;--effort;high" \
+    "codex|$H/.codex|gpt-5.6-sol|high|resume;native-codex|-m;gpt-5.6-sol;-c;model_reasoning_effort=high" \
+    "copilot|$H/.1copilot|gpt-5.3-codex|high|--resume=native-copilot;-i|--model;gpt-5.3-codex;--reasoning-effort;high"; do
+    IFS='|' read -r harness account model effort words flags <<<"$row"
+    resume_row "$harness" "$account" "$model" "$effort" "$words" "$flags"
     # The resumed session is live on this server: a second resume refuses.
     if [[ "$harness" == claude ]]; then
       run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
@@ -1368,26 +1406,50 @@ test_resume() {
     fi
     [[ -z "$RESUMED" ]] || tm kill-window -t "$RESUMED"
   done
-  # Refusals before anything opens: no native id, and a harness with no
-  # resume form by id.
+  # The record's model is its comparison form; a Claude exact id's window
+  # stands in the launch line alone, and the resume and its record keep it.
+  local window_line="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model 'claude-opus-5-5[1m]' --effort high $BYPASS '$BRIEF'"
+  resume_row claude "$H/.claude" claude-opus-5-5 high "--resume;native-claude" "--model;claude-opus-5-5[1m];--effort;high" "" "$window_line"
+  [[ -z "$RESUMED" ]] || tm kill-window -t "$RESUMED"
+  # Refusals before anything opens: no native id, a recorded cwd gone since,
+  # a harness with no resume form by id, and options resume does not take.
   for row in \
-    "claude|$H/.claude|fable|high||session-id-unrecorded generation=5" \
-    "pi|$H/.claude|pi-claude/fable|high|native-pi|resume-unsupported harness=pi"; do
-    IFS='|' read -r harness account model effort id want <<<"$row"
-    lost_record "$harness" "$account" "$model" "$effort" "$id"
+    "1|claude|$H/.claude|fable|high||$WORK_REAL||session-id-unrecorded generation=5 path=$FLEET_STATE" \
+    "1|claude|$H/.claude|fable|high|native-claude|$TMP_ROOT/gone||invalid-cwd dir=$TMP_ROOT/gone" \
+    "1|pi|$H/.claude|pi-claude/fable|high|native-pi|$WORK_REAL||resume-unsupported harness=pi" \
+    "2|claude|$H/.claude|fable|high|native-claude|$WORK_REAL|--cwd;$WORK_REAL|option-conflict command=resume cwd=$WORK_REAL account=none" \
+    "2|claude|$H/.claude|fable|high|native-claude|$WORK_REAL|--account;$H/.claude|option-conflict command=resume cwd=none account=$H/.claude"; do
+    IFS='|' read -r want_rc harness account model effort id cwd args want <<<"$row"
+    IFS=';' read -r -a args <<<"$args"
+    lost_record "$harness" "$account" "$model" "$effort" "$id" "$cwd"
     before="$(cat "$FLEET_STATE")"
-    run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
-    assert_eq "$RC|$(first_line)|$(overseers)|$(cat "$FLEET_STATE")" "1|oversee: $want|0|$before" \
-      "resume on a $harness record ${id:-with no native id} refuses $want, opens nothing and keeps the record" "$OUT"
+    run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume ${args[@]+"${args[@]}"} --wait-secs 20
+    assert_eq "$RC|$(first_line)|$(overseers)|$(cat "$FLEET_STATE")" "$want_rc|oversee: $want|0|$before" \
+      "resume on a $harness record ${id:-with no native id} in ${cwd##*/} ${args[*]:-} refuses ${want%% *}, opens nothing and keeps the record" "$OUT"
   done
-  # Control: the dispatch without resume, as main has it, fails the row.
-  RESUMECTL="$(mutant_scripts resumectl oversee)" || exit 1
-  mutate_file "$RESUMECTL/oversee" '  launch|register|resume) ;;' '  launch|register) ;;'
-  RESUME_SAVED_FAIL="$FAIL"; FAIL=0
-  resume_row claude "$H/.claude" fable high "--resume;native-claude" "$RESUMECTL/oversee" > "$TMP_ROOT/resume-control.out"
-  RESUME_CONTROL="$FAIL|$RC|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-3)"; FAIL="$RESUME_SAVED_FAIL"
-  assert_eq "$RESUME_CONTROL" "2|2|oversee: unknown-command command=resume" \
-    "control: without the resume command the resume rows fail as an unknown command"
+  # A checkout with no oversee state records no overseer: resume names the
+  # path it read and creates no state there.
+  local nostate="$TMP_ROOT/resume-nostate"
+  mkdir -p "$nostate"
+  RUN_DIR="$nostate" run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
+  assert_eq "$RC|$(first_line)|$(overseers)|$(if [[ -e "$nostate/tmp/workflow-state-oversee.json" ]]; then echo written; else echo absent; fi)" \
+    "1|oversee: state-missing path=$nostate/tmp/workflow-state-oversee.json|0|absent" \
+    "resume from a checkout with no oversee state refuses state-missing naming it and writes no state" "$OUT"
+  # Controls, each a resume_line copy the rows above must reject: the main
+  # dispatch without resume, the resumed command without its flags, no fresh
+  # launch line recorded, and the typing directory in place of the record's.
+  resume_control resumectl '  launch|register|resume) ;;' '  launch|register) ;;'
+  resume_control noflags \
+    '  if ! ol_command_line --resume "$RESUME_ID" "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then' \
+    '  if ! ol_command_line --resume "$RESUME_ID" "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD"; then'
+  resume_control noline \
+    $'  # that has since ended or handed over.\n  ol_command_line "$OL_HARNESS"' \
+    $'  # that has since ended or handed over.\n  OL_CMD=""; : "$OL_HARNESS"'
+  resume_control typedcwd \
+    '  [[ -n "$recorded_cwd" ]] && CWD="$(cd -- "$recorded_cwd" 2>/dev/null && pwd -P)" \' \
+    '  [[ -n "$recorded_cwd" ]] && CWD="$(pwd -P)" \'
+  unset RUN_DIR
+  FLEET_STATE="$work_state"
   mv -- "$TMP_ROOT/resume.saved" "$FLEET_STATE"
 }
 test_resume
