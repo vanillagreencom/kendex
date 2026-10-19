@@ -118,19 +118,13 @@ skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
   'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
 
 # Tool calls routinely quote cleanup source while rewriting another script.
-# Receivers and quote state decide whether that source is shell input.
+# Literal boundaries and the closed Python string grammar prove data input.
 data_body_rows() {
   first_table 'python replacement heredoc|command|0|-|python3 - <<'\''PY'\''\ns = '\''rm -rf "$scratch"'\''\ns.replace(s, "cleanup")\nPY
 file writing heredoc|command|0|-|cat > tmp/helper.py <<'\''EOF'\''\ns = '\''rm -rf "$scratch"'\''\nEOF
 python replacement inline|command|0|-|python3 -c '\''s = """rm -rf "$scratch"\n"""; print(s)'\''
 literal double quoted program|command|0|-|python3 -c "s = '\''rm -rf /shared/home'\''"
 python shared inline|command|0|-|python -c '\''s = "rm -rf $HOME"'\''
-node inline|command|0|-|node -e '\''const s = "rm -rf $X";'\''
-ruby inline|command|0|-|ruby -e '\''s = "rm -rf $X"'\''
-perl inline|command|0|-|perl -e '\''$s = "rm -rf $X";'\''
-node heredoc|command|0|-|node <<"JS"\nconst s = '\''rm -rf $HOME'\'';\nJS
-ruby heredoc|command|0|-|ruby <<'\''RB'\''\ns = "rm -rf $X"\nRB
-perl heredoc|command|0|-|perl <<'\''PL'\''\n$s = "rm -rf $X";\nPL
 escaped delimiter|command|0|-|cat <<\\EOF\nrm -rf $X\nEOF
 tab stripped delimiter|command|0|-|cat <<-'\''EOF'\''\n\trm -rf $X\n\tEOF
 quoted heredoc marker|command|0|-|python3 -c '\''s = "<<EOF rm -rf $X"'\''
@@ -138,10 +132,18 @@ literal backticks in program|command|0|-|python3 -c '\''s = "`rm -rf $X`"'\''
 literal backticks in heredoc|command|0|-|cat <<'\''EOF'\''\n`rm -rf $X`\nEOF
 guarded shared root as data|command|0|-|cat <<'\''EOF'\''\nrm -rf "${HOME:?}"\nEOF
 quoted data receiver|command|0|-|"python3" -c '\''s = "rm -rf $HOME"'\''
+assigned string replacement|command|0|-|python3 -c '\''s = "rm -rf $HOME"; s = s.replace(s, "cleanup"); print(s)'\''
+call names inside string|command|0|-|python3 -c '\''s = "rm -rf $HOME os.system eval exec __import__"'\''
 '
 }
 executable_body_rows() {
-  first_table 'real removal|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$scratch/x"
+  first_table 'node inline|command|2|block-unsafe-rm: refused=recursive-rm|node -e '\''const s = "rm -rf $X";'\''
+ruby inline|command|2|block-unsafe-rm: refused=recursive-rm|ruby -e '\''s = "rm -rf $X"'\''
+perl inline|command|2|block-unsafe-rm: refused=recursive-rm|perl -e '\''$s = "rm -rf $X";'\''
+node heredoc|command|2|block-unsafe-rm: refused=shared-root|node <<"JS"\nconst s = '\''rm -rf $HOME'\'';\nJS
+ruby heredoc|command|2|block-unsafe-rm: refused=recursive-rm|ruby <<'\''RB'\''\ns = "rm -rf $X"\nRB
+perl heredoc|command|2|block-unsafe-rm: refused=recursive-rm|perl <<'\''PL'\''\n$s = "rm -rf $X";\nPL
+real removal|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf "$scratch/x"
 shell inline|command|2|block-unsafe-rm: refused=recursive-rm|bash -c '\''rm -rf "$X/sub"'\''
 eval inline|command|2|block-unsafe-rm: refused=recursive-rm|eval '\''rm -rf $X'\''
 source inline|command|2|block-unsafe-rm: refused=recursive-rm|source <(echo '\''rm -rf $X'\'')
@@ -209,6 +211,102 @@ skill_load_control body-always-allow "$HOOK" 'set -euo pipefail' \
   'assignment before data receiver' 'file then source' 'inline exec inherits stdin' \
   'file program inherits stdin' 'nested parameter inline boundary' \
   'parameter fabricated heredoc' 'quoted parameter fabricated heredoc'
+
+# Bash tools also run real interpreter programs. Exercise both producers at
+# the one classifier, then execute the refused program with a recording rm.
+# The recorder is always first on PATH, even if an assertion fails, so these
+# regressions cannot remove anything. Every row must reach that recorder.
+mkdir -p "$TMP_ROOT/record-bin"
+cat >"$TMP_ROOT/record-bin/rm" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >>"${RM_RECORD:?}"
+SH
+chmod +x "$TMP_ROOT/record-bin/rm"
+interpreter_body_rows() {
+  local name reason program form command record="$TMP_ROOT/record-rm" execution
+  command -v python3 >/dev/null || { echo 'interpreter-rows: missing=python3' >&2; return 1; }
+  while IFS='|' read -r name reason program; do
+    [ -n "$name" ] || continue
+    for form in inline heredoc; do
+      case "$form" in
+        inline) command="python3 -c '$program'" ;;
+        heredoc) command="python3 - <<'PY'"$'\n'"$program"$'\nPY' ;;
+      esac
+      run_hook "$command"
+      assert_eq "rc=$rc first=$(first_line)" \
+        "rc=2 first=block-unsafe-rm: refused=$reason" "$name $form refuses"
+      : >"$record"
+      execution=0
+      env PATH="$TMP_ROOT/record-bin:$PATH" HOME="$TMP_ROOT/record-home" \
+        RM_RECORD="$record" "$BASH_BIN" -c "$command" \
+        </dev/null >"$TMP_ROOT/record-stdout" 2>"$TMP_ROOT/record-stderr" || execution=$?
+      assert_eq "$execution" 0 "$name $form executes with recording rm"
+      assert_eq "$(cat "$record")" $'-rf\n'"$TMP_ROOT/record-home" \
+        "$name $form reaches recording rm"
+    done
+  done <<'ROWS'
+os system|recursive-rm|import os; os.system("rm -rf $HOME")
+subprocess run|recursive-rm|import subprocess; subprocess.run("rm -rf $HOME", shell=True, check=True)
+os popen|recursive-rm|import os; os.popen("rm -rf $HOME").read()
+os exec|recursive-rm|import os; os.execv("/bin/sh", ["sh", "-c", "rm -rf $HOME"])
+os spawn|recursive-rm|import os; os.spawnvp(os.P_WAIT, "sh", ["sh", "-c", "rm -rf $HOME"])
+pty spawn|recursive-rm|import pty; pty.spawn(["sh", "-c", "rm -rf $HOME"])
+process alias|recursive-rm|from os import system as start; start("rm -rf $HOME")
+arbitrary callable|shared-root|s = "rm -rf $HOME"; launch = __import__("os").system; launch(s)
+dynamic eval|shared-root|s = "rm -rf $HOME"; eval("__import__(\"os\").system(s)")
+dynamic exec|shared-root|s = "rm -rf $HOME"; exec("import os; os.system(s)")
+dynamic import|shared-root|s = "rm -rf $HOME"; __import__("os").system(s)
+dynamic getattr|shared-root|import os; s = "rm -rf $HOME"; getattr(os, "system")(s)
+dynamic compile|shared-root|s = "rm -rf $HOME"; exec(compile("import os; os.system(s)", "inline", "exec"))
+unproved string type|recursive-rm|from os import system as s; s("rm -rf $HOME")
+unproved method|shared-root|s = "rm -rf $HOME"; s.format(__import__("os").system(s))
+interpolated string|shared-root|import os; s = "rm -rf $HOME"; f"{os.system(s)}"
+unproved expression|shared-root|s = "rm -rf $HOME"; (lambda: __import__("os").system(s))()
+ROWS
+}
+interpreter_body_rows
+skill_load_control interpreter-unproved "$HOOK" 'python_data_program() {' \
+  '  return 0' HOOK interpreter_body_rows \
+  'os system inline refuses' 'os system heredoc refuses' \
+  'arbitrary callable inline refuses' 'dynamic eval inline refuses' \
+  'dynamic exec heredoc refuses' 'dynamic import inline refuses' \
+  'dynamic getattr heredoc refuses' 'dynamic compile inline refuses' \
+  'unproved string type inline refuses' 'unproved method heredoc refuses' \
+  'interpolated string inline refuses' 'unproved expression heredoc refuses'
+
+# Unsupported interpreters keep the raw judge even for harmless programs.
+# Executable representatives also prove the unchanged shell/refusal boundary;
+# unavailable optional runtimes still have their payload refusal asserted.
+other_interpreter_rows() {
+  local name reason runtime command record="$TMP_ROOT/record-other" execution
+  while IFS='|' read -r name reason runtime command; do
+    [ -n "$name" ] || continue
+    run_hook "$command"
+    assert_eq "rc=$rc first=$(first_line)" \
+      "rc=2 first=block-unsafe-rm: refused=$reason" "$name refuses"
+    if ! command -v "$runtime" >/dev/null; then
+      printf '  unavailable recording runtime: %s\n' "$runtime"
+      continue
+    fi
+    : >"$record"
+    execution=0
+    env PATH="$TMP_ROOT/record-bin:$PATH" HOME="$TMP_ROOT/record-home" \
+      RM_RECORD="$record" "$BASH_BIN" -c "$command" \
+      </dev/null >"$TMP_ROOT/record-stdout" 2>"$TMP_ROOT/record-stderr" || execution=$?
+    assert_eq "$execution" 0 "$name executes with recording rm"
+    assert_eq "$(cat "$record")" $'-rf\n'"$TMP_ROOT/record-home" "$name reaches recording rm"
+  done <<'ROWS'
+shell shared removal|shared-root|bash|rm -rf $HOME
+node process|recursive-rm|node|node -e 'require("child_process").execSync("rm -rf $HOME")'
+perl process|recursive-rm|perl|perl -e '$HOME=$ENV{HOME}; system("rm -rf $HOME")'
+ruby process|recursive-rm|ruby|ruby -e 'system("rm -rf $HOME")'
+ROWS
+}
+other_interpreter_rows
+skill_load_control other-interpreter-allow "$HOOK" 'set -euo pipefail' \
+  'exit 0' HOOK other_interpreter_rows \
+  'shell shared removal refuses' 'node process refuses' 'perl process refuses' 'ruby process refuses'
 
 # Agents use git rm to remove tracked paths. These tool payloads are scanned,
 # never run; a following plain rm must retain its own refusal.

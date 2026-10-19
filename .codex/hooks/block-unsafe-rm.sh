@@ -5,8 +5,8 @@
 # matcher: Bash
 # requires: [command-safety]
 # description: Block plain rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
-# summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. A complete literal interpreter program or quoted heredoc sent as data passes; the refusal gives a safe cleanup pattern.
-# safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the boundary parser. Masking requires one complete simple command whose words are literal: safe unquoted bytes, single-quoted text, or double-quoted text without expansions or escapes. A quoted-delimiter heredoc is data for cat with an optional literal output file, Python with a lone dash, or Node, Ruby or Perl with no argument or a lone dash. A literal quoted inline program is data for Python -c or Node, Ruby or Perl -e (also Node --eval), with no other arguments or redirections. Only whitespace may follow the command or closing delimiter. Inline or file programs with heredoc stdin, expanded words, multiple commands or heredocs, and all unproved syntax keep the original scan. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
+# summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. Literal cat heredocs and Python programs limited to string assignments, string replacement and printing strings pass; other program syntax keeps the raw scan. The refusal gives a safe cleanup pattern.
+# safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the boundary parser. Masking requires one complete simple command whose words are literal: safe unquoted bytes, single-quoted text, or double-quoted text without expansions or escapes. A quoted-delimiter heredoc is data for cat with an optional literal output file. Python with a lone dash or a literal quoted -c program, with no other arguments or redirections, must also pass one closed string-program grammar: unprefixed string literals, assignments to names holding strings, string replacement with string arguments, and builtin print of a string. Only previously assigned string names may be read. Process starts, dynamic code, arbitrary calls or aliases, imports, other interpreters and all unknown Python syntax keep the original raw scan. Only whitespace may follow the command or closing delimiter. Inline or file programs with heredoc stdin, expanded words, multiple commands or heredocs, and all unproved syntax keep the original scan. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
 
 set -euo pipefail
@@ -94,11 +94,57 @@ COMMAND=$(printf '%s' "$INPUT" \
 
 # These hooks ship as standalone scripts; command-safety's receiver decision
 # depends on its environment-evidence parser and is not a callable interface.
-# Keep only the word/body boundary here, leaving the operand rules below alone.
+# Keep the word/body boundary and the closed Python data grammar here, leaving
+# the operand rules below alone. Both inline and stdin programs use this judge.
+python_data_program() {
+  # Only literal strings and previously assigned strings have a proved type.
+  # The only calls are builtin print and str.replace with string arguments.
+  # All other calls (process starts, dynamic code, aliases and unknown APIs),
+  # imports, attributes, string prefixes and unrecognized grammar fail closed.
+  # Tokenize the whole body once with jq, never scan shrinking shell suffixes.
+  jq -en --arg program "$1" '
+    def token: .tokens[.i];
+    def take($value):
+      if token.value == $value then .i += 1 else error("syntax") end;
+    def atom:
+      if token.kind == "string" then
+        until(token.kind != "string"; .i += 1)
+      elif token.kind == "name" and .strings[token.value] == true then .i += 1
+      else error("unproved string") end;
+    def expression:
+      atom | until(token.value != ".";
+        take(".") | take("replace") | take("(") | atom |
+        take(",") | atom | take(")"));
+    def statement:
+      if token.kind == "name" and .tokens[.i + 1].value == "=" then
+        token.value as $name | .i += 2 | expression | .strings[$name] = true
+      elif token.value == "print" and .strings.print != true then
+        .i += 1 | take("(") | expression | take(")")
+      else expression end;
+    # Triple quotes precede short strings. Escapes stay inside their string;
+    # interpolation prefixes, comments and every unlisted byte remain gaps.
+    [ $program | match(
+      "(?<string>\"\"\"(?:[^\"\\\\]|\\\\[^\\r]|\"(?!\"\"))*\"\"\"|\u0027\u0027\u0027(?:[^\u0027\\\\]|\\\\[^\\r]|\u0027(?!\u0027\u0027))*\u0027\u0027\u0027|\"(?:[^\"\\\\\\r\\n]|\\\\[^\\r\\n])*\"|\u0027(?:[^\u0027\\\\\\r\\n]|\\\\[^\\r\\n])*\u0027)|(?<space>[ \\t]+)|(?<end>[;\\n])|(?<name>[A-Za-z_][A-Za-z0-9_]*)|(?<punct>[=.,()])";
+      "g") ] as $matches |
+    if ([$matches[].string] | join("")) != $program then false
+    else
+      {tokens: [$matches[] | .captures[] | select(.string != null) |
+        {kind: .name, value: .string} | select(.kind != "space")],
+       i: 0, strings: {}} |
+      until(.i >= (.tokens | length);
+        if token.kind == "end" then .i += 1
+        else statement |
+          if token == null or token.kind == "end" then . else error("tail") end
+        end) | true
+    end
+  ' >/dev/null 2>&1
+}
+
 command_regions() {
   local LC_ALL=C
   local text=$1 i=0 n=${#1} c next value quoted remaining span op=""
   local delimiter="" strip_tabs=0 output="" line tabs found="" receiver count
+  local program="" body_start body_end
   local words=() word_quotes=()
   # Mask only one complete simple data command. A literal word consists of
   # safe unquoted bytes, single-quoted bytes, or double-quoted bytes with no
@@ -165,26 +211,23 @@ command_regions() {
   # command can consume it in this masking grammar.
   case "$receiver" in
     cat) [ "$count" -eq 1 ] && [ -n "$delimiter" ] || return 1 ;;
-    python | python3 | node | ruby | perl)
+    python | python3)
       [ -z "$output" ] || return 1
       if [ -n "$delimiter" ]; then
-        case "$receiver" in
-          python | python3) [ "$count" -eq 2 ] && [ "${words[1]}" = '-' ] || return 1 ;;
-          *) [ "$count" -eq 1 ] || { [ "$count" -eq 2 ] && [ "${words[1]}" = '-' ]; } || return 1 ;;
-        esac
+        [ "$count" -eq 2 ] && [ "${words[1]}" = '-' ] || return 1
       else
         [ "$count" -eq 3 ] && [ -n "${word_quotes[2]}" ] || return 1
-        case "$receiver:${words[1]}" in
-          python:-c | python3:-c | node:-e | node:--eval | ruby:-e | perl:-e) ;;
-          *) return 1 ;;
-        esac
+        [ "${words[1]}" = '-c' ] || return 1
+        program=${words[2]}
       fi ;;
     *) return 1 ;;
   esac
   if [ -n "$delimiter" ]; then
     # Consume each body as one byte-locale line stream, including its closing
     # delimiter. Only whitespace may follow the complete data command.
+    body_start=$i
     while IFS= read -r line; do
+      body_end=$i
       i=$((i + ${#line})); [ "$i" -ge "$n" ] || i=$((i + 1))
       tabs=$line
       if [ "$strip_tabs" = 1 ]; then
@@ -193,9 +236,13 @@ command_regions() {
       if [ "$tabs" = "$delimiter" ]; then found=1; break; fi
     done <<< "${text:$i}"
     [ -n "$found" ] || return 1
+    program=${text:$body_start:$((body_end - body_start))}
   fi
   remaining=${text:$i}
   [[ $remaining =~ ^[[:space:]]*$ ]] || return 1
+  if [ "$receiver" != cat ]; then
+    python_data_program "$program" || return 1
+  fi
   COMMAND=""
 }
 
