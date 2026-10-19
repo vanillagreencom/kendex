@@ -124,7 +124,8 @@ SCRUB_ENV="$(bash -c 'source "$1" && printf "env" && printf " -u %s" "${LANE_LAU
 [[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 
 echo "=== every command open-terminal builds takes the question tool away ==="
-# HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT. FLAGS `-` passes no --launch-flags;
+# HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT[|PI MODEL]. FLAGS `-` passes no --launch-flags;
+# a Pi launch naming a model declares it to second-opinion ahead of the command.
 # an ITEM spelled REPO#N launches GitHub item N of REPO.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
@@ -137,9 +138,9 @@ for row in \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
   "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
   "opencode|-|CC-4|opencode --prompt '/orch start CC-4 $UNATTENDED_TEXT'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
-  "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5 $UNATTENDED_TEXT'|a caller's own copy of the words is carried once" \
+  "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5 $UNATTENDED_TEXT'|a caller's own copy of the words is carried once|sonnet:high" \
   ; do
-  IFS='|' read -r harness flags item want what <<<"$row"
+  IFS='|' read -r harness flags item want what declared <<<"$row"
   root="$TMP_ROOT/wt/$item"
   flag_args=()
   [[ "$flags" == - ]] || flag_args=(--launch-flags "$flags")
@@ -148,7 +149,9 @@ for row in \
     item="${item#*#}"
     root="$TMP_ROOT/wt/issue-$item"
   fi
-  want="export KENDEX_LANE_ORIGIN='$root' && export KENDEX_USER_EMAIL='' && $SCRUB_ENV $want"
+  want="export KENDEX_USER_EMAIL='' && $SCRUB_ENV $want"
+  [[ -z "$declared" ]] || want="export SECOND_OPINION_CURRENT_MODEL='$declared' && $want"
+  want="export KENDEX_LANE_ORIGIN='$root' && $want"
   launch "$item" --harness "$harness" ${flag_args[@]+"${flag_args[@]}"}
   assert_eq "rc=$RC cmd=$CMD" "rc=0 cmd=$want" "render: $what"
   case "$harness:$item" in

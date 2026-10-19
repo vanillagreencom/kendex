@@ -2993,6 +2993,18 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   return 1
 }
 
+# The shell text that declares a Pi lane's model to the second-opinion skill,
+# `export SECOND_OPINION_CURRENT_MODEL=MODEL && `, empty for any other launch
+# or a Pi launch naming no model. Pi fronts a selectable model that
+# second-opinion cannot detect, so its cross-model check refuses a Pi session
+# that declares none (second-opinion --help). The lane's own shell runs it
+# ahead of the harness; pane agents start from the tmux session's environment,
+# run models of their own, and do not inherit it.
+lane_model_export() {
+  [[ "$LAUNCH_HARNESS" == pi && -n "$LAUNCH_MODEL" ]] || return 0
+  printf 'export SECOND_OPINION_CURRENT_MODEL=%s && ' "$(lane_single_quote "$LAUNCH_MODEL")"
+}
+
 # The launch from the lane marker to the lane record, for the item the loop
 # below has resolved: its worktree, command and host fields are the loop's own
 # variables. Returns 1 on any failure, its keyed line already printed. Every
@@ -3143,6 +3155,7 @@ launch_finish() {
     # Older hosted launches wrote state under the remote project setting.
     # Keep the successor on the judge's file even when the provider exports tmp.
     [[ -z "$RELAUNCH_HANDOFF_DIR" ]] || run="export ORCH_STATE_DIR=$(lane_single_quote "$RELAUNCH_HANDOFF_DIR") && $run"
+    run="$(lane_model_export)$run"
     # Keep the marked launch root when a lane's tool shell changes directory.
     run="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$remote_path") && $run"
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
@@ -3202,6 +3215,7 @@ launch_finish() {
   fi
   if [[ "$LANE_HOST" == local ]]; then
     cmd="export KENDEX_USER_EMAIL='' && $cmd"
+    cmd="$(lane_model_export)$cmd"
     cmd="export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"
     if [[ -n "$brief_prompt_file" ]]; then
       # Login shells can change directory during startup. Keep the explicit

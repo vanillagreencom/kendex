@@ -267,4 +267,76 @@ assert_eq "$(observe "rc=0 relaunchgate=1")" "rc=0 relaunchgate=1" \
   "control: a Pi relaunch that asks the provider relaunches on a held row whose pool nobody read"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
 
+echo "=== a Pi lane declares its launch model to second-opinion ==="
+# The launched command replayed, a hosted one inside the provider's login
+# shell, with a `pi` that runs the real `second-opinion detect` from a
+# hermetic install, as the lane's review step does from its own tool shell.
+# The roster names claude then codex, each a stub CLI with no room check, so
+# detect prints the first target running a model other than the lane's, or
+# `none` where it refuses.
+SO_PROJECT="$TMP_ROOT/so-project"
+SO_BIN="$TMP_ROOT/so-bin"
+mkdir -p "$SO_PROJECT/.agents/skills" "$SO_BIN"
+git -C "$SO_PROJECT" init -q
+git -C "$SO_PROJECT" config gc.auto 0
+git -C "$SO_PROJECT" config maintenance.auto false
+# shellcheck source=../../second-opinion/tests/lib/install.bash
+source "$TEST_DIR/../../second-opinion/tests/lib/install.bash"
+second_opinion_install "$TEST_DIR/../../second-opinion" "$SO_PROJECT/.agents/skills" || exit 1
+printf '#!/bin/sh\nexit 0\n' > "$SO_BIN/review-cli"
+cat > "$SO_BIN/pi" <<'STUB'
+#!/usr/bin/env bash
+detect="$(cd "$SO_PROJECT" && .agents/skills/second-opinion/scripts/second-opinion detect 2>> "$SO_ERR")" || true
+printf 'declared=%s detect=%s\n' "${SECOND_OPINION_CURRENT_MODEL-unset}" "${detect:-empty}" >> "$SO_LOG"
+STUB
+chmod +x "$SO_BIN/review-cli" "$SO_BIN/pi"
+lane_detect() { # HOST LANE ENV_LIST; sets LANE_DETECT
+  local line
+  run_ot "$3" --host "$1" --harness pi --lane "$2" --repo o/r KEN-2294
+  [[ "$RC" == 0 ]] || { LANE_DETECT=launch-failed; printf '%s\n' "$OUT" >&2; return; }
+  if [[ "$1" == local ]]; then
+    line="$(sed -n 's/^clear; //p' "$RUN/tmux.log")"
+  else
+    # The provider's quoted argument, decoded by the shell.
+    line="$(grep -m1 '^exec bash -lc ' "$RUN/tmux.log")" && eval "set -- ${line#exec }" && line="$3"
+  fi
+  [[ -n "$line" ]] || { LANE_DETECT=unrendered; return; }
+  : > "$RUN/so.log"
+  env -i PATH="$PATH" HOME="$TMP_ROOT" SO_BIN="$SO_BIN" SO_PROJECT="$SO_PROJECT" \
+    SO_LOG="$RUN/so.log" SO_ERR="$RUN/so.err" SECOND_OPINION_MODELS='claude codex' \
+    SECOND_OPINION_CLAUDE_CMD="$SO_BIN/review-cli" SECOND_OPINION_CODEX_CMD="$SO_BIN/review-cli" \
+    "$BASH" -lc 'PATH="$SO_BIN:$PATH"; cd() { return 0; }; eval "$1"' \
+    so-probe "$line" > "$RUN/so-replay.out" 2>> "$RUN/so.err" || true
+  LANE_DETECT="$(paste -sd';' "$RUN/so.log")"
+}
+api_hosted_rows 150
+API_HOST_ENV="$HARNESS_UP;LANE_HOST_STUB_ACCOUNTS=$API_ROWS;ORCH_LANE_CLOUD_CREDIT_FLOOR=5;flags=--model anthropic/claude-opus-5-5 --thinking high"
+LOCAL_ENV='cmd=pi --model pi-claude/sonnet:high'
+printf '%s\n' \
+  "$HOST_STUB|$H/.eclaude|$API_HOST_ENV|declared=anthropic/claude-opus-5-5 detect=codex" \
+  "$HOST_STUB|$H/.eclaude|$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/gpt-5.5 --thinking high|declared=github-copilot/gpt-5.5 detect=claude" \
+  "local|$H/.claude|$LOCAL_ENV|declared=pi-claude/sonnet:high detect=codex" \
+  > "$TMP_ROOT/lane-detect-rows"
+while IFS='|' read -r host lane env_list expected; do
+  lane_detect "$host" "$lane" "$env_list"
+  assert_eq "$LANE_DETECT" "$expected" \
+    "a Pi lane on ${host##*/} passes second-opinion detect with a target of another model: ${env_list##*--model }" "$RUN/so.err"
+done < "$TMP_ROOT/lane-detect-rows"
+# Must-fail controls: the launcher without the export, on each route, leaves
+# the lane undeclared and detect refuses it as it did before.
+PI_OT_SHIPPED="$OPEN_TERMINAL"
+printf '%s\n' \
+  "$HOST_STUB|$H/.eclaude|$API_HOST_ENV|run" \
+  "local|$H/.claude|$LOCAL_ENV|cmd" \
+  > "$TMP_ROOT/lane-detect-controls"
+while IFS='|' read -r host lane env_list var; do
+  OPEN_TERMINAL="$(mutant_scripts "ctl-pi-model-export-$var/orch" open-terminal)/open-terminal" || exit 1
+  orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-model-export-$var/orch"
+  mutate_file "$OPEN_TERMINAL" "$var=\"\$(lane_model_export)\$$var\"" "$var=\"\$$var\""
+  lane_detect "$host" "$lane" "$env_list"
+  assert_eq "$LANE_DETECT" 'declared=unset detect=none' \
+    "control: without the export a Pi lane on ${host##*/} is refused by detect as undeclared"
+  OPEN_TERMINAL="$PI_OT_SHIPPED"
+done < "$TMP_ROOT/lane-detect-controls"
+
 lane_suite_end
