@@ -233,60 +233,6 @@ environment_rows() {
     [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
-[0,"job-launcher env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE bash runner","unknown-launcher-named-unsets"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME bash runner'","unknown-fallback-forwarded-unset"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME bash -c \"env -u OTHER bash runner\"'","unknown-fallback-forwarded-nested-safe"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env NAME=value printenv NAME'","unknown-fallback-forwarded-named-target"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME bash runner env'","unknown-fallback-forwarded-script-argument"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'S=set workflow-state \"$S\" oversee key value'","unknown-fallback-forwarded-assignment"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'tool --mode set'","unknown-fallback-forwarded-set-data"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'tool --doc \"set -e\"'","unknown-fallback-forwarded-set-text"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'S=env tool'","unknown-fallback-forwarded-env-assignment"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME'","unknown-fallback-forwarded-option-only"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'S=set job-launcher env -u NAME bash -c \"env\"'","unknown-fallback-forwarded-shell-dump"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -0' --build true --mutate true","unknown-fallback-forwarded-absolute-null"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME' --build true --mutate true","unknown-fallback-forwarded-absolute-option-only"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env NAME=value' --build true --mutate true","unknown-fallback-forwarded-absolute-assignment-only"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME bash -c \"env\"' --build true --mutate true","unknown-fallback-forwarded-absolute-shell-dump"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME bash runner' --build true --mutate true","unknown-fallback-forwarded-absolute-unset"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env --help' --build true --mutate true","unknown-fallback-forwarded-absolute-help"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env --version' --build true --mutate true","unknown-fallback-forwarded-absolute-version"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test '(timeout 5 \"env\")' --build true --mutate true","compound-context-test-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test '(timeout 5 \"/usr/bin/env\")' --build true --mutate true","compound-context-test-absolute-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build '(timeout 5 \"env\")' --mutate true","compound-context-build-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build '(timeout 5 \"/usr/bin/env\")' --mutate true","compound-context-build-absolute-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate '(timeout 5 \"env\")'","compound-context-mutate-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate '(timeout 5 \"/usr/bin/env\")'","compound-context-mutate-absolute-env"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 \"env\"' --build true --mutate true","compound-context-simple-test-data"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 \"/usr/bin/env\"' --build true --mutate true","compound-context-simple-test-absolute-data"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 \"env\"' --mutate true","compound-context-simple-build-data"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 \"/usr/bin/env\"' --mutate true","compound-context-simple-build-absolute-data"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 \"env\"'","compound-context-simple-mutate-data"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 \"/usr/bin/env\"'","compound-context-simple-mutate-absolute-data"]
-[2,"sh LAUNCH.sh WAIT TOOL --test '(bash -c \"timeout 5 \\\"env\\\"\")'","compound-context-inherited-shell"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"(timeout 5 \\\"env\\\")\"'","compound-context-nested-shell"]
-[2,"sh LAUNCH.sh WAIT TOOL --test '( (timeout 5 \"env\") )'","compound-context-nested-parentheses"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'printf $(timeout 5 \"env\")'","compound-context-substitution"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'printf `timeout 5 \"env\"`'","compound-context-backtick"]
-[0,"sh LAUNCH.sh WAIT TOOL --test '(timeout 5 ordinary)'","compound-context-ordinary"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'printf \"(timeout 5 env)\"'","compound-context-quoted-syntax-data"]
-[2,"(timeout 5 \"env\")","compound-context-direct"]
-[0,"timeout 5 \"env\"","compound-context-direct-simple-data"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'true; timeout 5 \"env\"'","compound-context-list"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'true && timeout 5 \"env\"'","compound-context-and-list"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'false || timeout 5 \"env\"'","compound-context-or-list"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'timeout 5 \"env\" | cat'","compound-context-pipeline"]
-[2,"sh LAUNCH.sh WAIT TOOL --test 'timeout 5 \"env\" &'","compound-context-background-list"]
-[0,"sh LAUNCH.sh WAIT TOOL --test 'timeout 5 \"env\";'","compound-context-simple-terminator-data"]
-[0,"sh LAUNCH.sh WAIT TOOL --test '\ntimeout 5 \"env\"\n'","compound-context-simple-newline-data"]
-[2,"job-launcher env","unknown-launcher-bare-env"]
-[2,"job-launcher env -u NAME","unknown-launcher-unset-without-target"]
-[2,"job-launcher env -0","unknown-launcher-null-env"]
-[2,"job-launcher env NAME=value printenv","unknown-launcher-dump-target"]
-[2,"job-launcher env -u NAME bash -c 'env'","unknown-launcher-shell-dump"]
-[0,"S=set; workflow-state \"$S\" oversee key value","unknown-launcher-set-assignment-data"]
-[0,"tool --mode set","unknown-launcher-set-argument-data"]
-[0,"cat > tmp/note.md <<'EOF'\nset -e\nenv -u NAME runner\nEOF","unknown-launcher-quoted-heredoc-data"]
 [0,"bash scripts/lib/jarvis-env.sh DIR -- node FILE","operand-env-script"]
 [0,"unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE\nbash scripts/lib/jarvis-env.sh tmp/package-repair-VGS-1735-standins -- node \"$PWD/tmp/package-repair-VGS-1735.js\" > tmp/package-repair-VGS-1735.log 2>&1\nruntime_status=$?\ncat tmp/package-repair-VGS-1735.log\nprintf 'runtime-1 exit=%s\\n' \"$runtime_status\"\nexit \"$runtime_status\"","operand-env-reported-command"]
 [0,"bash wrapper.sh --path 'scripts/lib/jarvis-env.sh'","operand-env-quoted-path"]
@@ -716,45 +662,6 @@ environment_rows() {
 [2,"sh LAUNCH.sh WAIT TOOL --test 'command xargs env'","waiter-result-command-target"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'sudo -n xargs env'","waiter-result-sudo-target"]
 [2,"sh LAUNCH.sh WAIT TOOL --test 'env VAR=1 xargs env'","waiter-result-assignment-target"]
-[2,"timeout 5 env -u NAME xargs env","selected-producer-direct-xargs-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME xargs env' --build true --mutate true","selected-producer-forwarded-xargs-env"]
-[2,"timeout 5 env -u NAME xargs printenv","selected-producer-direct-xargs-printenv"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME xargs printenv' --build true --mutate true","selected-producer-forwarded-xargs-printenv"]
-[2,"timeout 5 env -u NAME grep -a . /proc/self/environ","selected-producer-direct-grep-proc"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME grep -a . /proc/self/environ' --build true --mutate true","selected-producer-forwarded-grep-proc"]
-[2,"timeout 5 env -u NAME cat env","selected-producer-direct-cat-evidence"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME cat env' --build true --mutate true","selected-producer-forwarded-cat-evidence"]
-[2,"timeout 5 env -u NAME tr env x","selected-producer-direct-tr-evidence"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME tr env x' --build true --mutate true","selected-producer-forwarded-tr-evidence"]
-[2,"timeout 5 env -u NAME strings env","selected-producer-direct-strings-evidence"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME strings env' --build true --mutate true","selected-producer-forwarded-strings-evidence"]
-[2,"timeout 5 env -u NAME systemctl status env","selected-producer-direct-systemctl-evidence"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME systemctl status env' --build true --mutate true","selected-producer-forwarded-systemctl-evidence"]
-[2,"timeout 5 env -u NAME declare","selected-producer-direct-declare"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME declare' --build true --mutate true","selected-producer-forwarded-declare"]
-[2,"timeout 5 env -u NAME typeset","selected-producer-direct-typeset"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME typeset' --build true --mutate true","selected-producer-forwarded-typeset"]
-[0,"timeout 5 env -u NAME cat ordinary","selected-producer-direct-cat-clean-evidence"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME cat ordinary' --build true --mutate true","selected-producer-forwarded-cat-clean-evidence"]
-[0,"timeout 5 env -u NAME xargs ordinary","selected-producer-direct-xargs-clean-evidence"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME xargs ordinary' --build true --mutate true","selected-producer-forwarded-xargs-clean-evidence"]
-[0,"timeout 5 env -u NAME grep ordinary file","selected-producer-direct-grep-clean-evidence"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME grep ordinary file' --build true --mutate true","selected-producer-forwarded-grep-clean-evidence"]
-[0,"timeout 5 env -u NAME printenv NAME","selected-producer-direct-proved-named"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME printenv NAME' --build true --mutate true","selected-producer-forwarded-proved-named"]
-[0,"timeout 5 env -u NAME bash runner","selected-producer-direct-shell-script"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME bash runner' --build true --mutate true","selected-producer-forwarded-shell-script"]
-[0,"timeout 5 env -u NAME python3 -c \"print(1)\"","selected-producer-direct-interpreter"]
-[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 env -u NAME python3 -c \"print(1)\"' --build true --mutate true","selected-producer-forwarded-interpreter"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs env' --build true --mutate true","selected-producer-absolute-test-xargs-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs printenv' --build true --mutate true","selected-producer-absolute-test-xargs-printenv"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME /usr/bin/grep -a . /proc/self/environ' --build true --mutate true","selected-producer-absolute-test-grep-proc"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs env' --mutate true","selected-producer-absolute-build-xargs-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs printenv' --mutate true","selected-producer-absolute-build-xargs-printenv"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 /usr/bin/env -u NAME /usr/bin/grep -a . /proc/self/environ' --mutate true","selected-producer-absolute-build-grep-proc"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs env'","selected-producer-absolute-mutate-xargs-env"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 /usr/bin/env -u NAME /usr/bin/xargs printenv'","selected-producer-absolute-mutate-xargs-printenv"]
-[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 /usr/bin/env -u NAME /usr/bin/grep -a . /proc/self/environ'","selected-producer-absolute-mutate-grep-proc"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'printenv NAME'","waiter-receipt-printenv-named"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'printenv --help'","waiter-receipt-printenv-help"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'export VAR=1'","waiter-receipt-export-assignment"]
@@ -957,13 +864,13 @@ environment_rows() {
 [0,"for ITEM in first; do git status; done","loop-without-known-dump"]
 [0,"case WORD in NAME) git status;; esac","case-without-known-dump"]
 [0,"printf '%s' 'function f { env; }'","quoted-function-data"]
-[0,"printf '%s' \u0063oproc set","syntax-arguments-are-data"]
-[0,"\"function\" set","quoted-head-is-an-executable"]
-[0,"\"if\" set","quoted-control-word-is-an-executable"]
-[0,"fun\\ction set","escaped-head-is-an-executable"]
-[0,"/usr/bin/time set","pathname-basename-is-not-syntax"]
-[0,"command function f set","launcher-target-is-not-syntax"]
-[0,"env NAME=value function f set","env-target-is-not-syntax"]
+[0,"printf '%s' \u0063oproc env","syntax-arguments-are-data"]
+[0,"\"function\" env","quoted-head-is-an-executable"]
+[0,"\"if\" env","quoted-control-word-is-an-executable"]
+[0,"fun\\ction env","escaped-head-is-an-executable"]
+[0,"/usr/bin/time env","pathname-basename-is-not-syntax"]
+[0,"command function f env","launcher-target-is-not-syntax"]
+[0,"env NAME=value function f env","env-target-is-not-syntax"]
 [0,"# function f { env; }\ngit status","syntax-comment-data"]
 [2,"{ env | grep NAME; }","brace-conservative-filter"]
 [2,"for ITEM in env; do :; done","loop-data-conservative"]
@@ -978,7 +885,7 @@ environment_rows() {
 [2,"printf '%s' `env`","backtick-dump"]
 [0,"printf '%s' 'env | grep NAME'","quoted-data"]
 [0,"printf '%s' '$(env)'","single-quoted-substitution"]
-[0,"printf '%s' set","argument-data"]
+[0,"printf '%s' env","argument-data"]
 [0,"printf '%s' 'env'","quoted-argument-data"]
 [0,"# env\ngit status","comment-data"]
 [2,"\"env\"","quoted-producer"]
@@ -1182,7 +1089,7 @@ environment_rows() {
 [2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY env","documented-waiter-environment-output"]
 [2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait $(printenv)","documented-waiter-executable-substitution"]
 [2,"sh wrap.sh env","ken-3998-refuse-wrapper-no-program"]
-[2,"receiver one two env -u NAME","ken-3998-refuse-ordinary-receiver-no-program"]
+[0,"receiver one two env -u NAME","ken-3998-refuse-ordinary-receiver-no-program"]
 [0,"receiver one two env -i -u NAME --unset=OTHER -C build NAME=value program extra words > out","ken-3998-launcher-any-receiver-arity"]
 [0,"receiver 'env' 'set' 'declare -x'","ken-3998-quoted-arguments-any-receiver"]
 [2,"if :; then printf '%s' 'env set declare -x'; fi","ken-3998-compound-quoted-data"]
@@ -1456,37 +1363,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   [[ -d $environment_controls && ! -L $environment_controls ]] || { echo 'command-safety-test: control-scratch=not-a-directory' >&2; exit 1; }
   environment_controls="$(cd -- "$environment_controls" && pwd -P)" || { echo 'command-safety-test: control-scratch=resolve-failed' >&2; exit 1; }
   trap 'rm -rf -- "$scratch" "${environment_controls:?}"' EXIT
-  # KEN-4430: each required allow and refuse row must detect a hook that
-  # ignores the payload. Keep the production source below the planted exit.
-  for control in refuse allow; do
-    mutant="$environment_controls/always-$control.sh"
-    control_labels=()
-    case "$control" in
-      refuse)
-        printf '%s\n' '#!/usr/bin/env bash' 'exit 2' >"$mutant"
-        control_labels=(unknown-launcher-named-unsets unknown-launcher-set-assignment-data unknown-launcher-set-argument-data unknown-launcher-quoted-heredoc-data unknown-fallback-forwarded-unset unknown-fallback-forwarded-nested-safe unknown-fallback-forwarded-assignment unknown-fallback-forwarded-set-data unknown-fallback-forwarded-set-text unknown-fallback-forwarded-env-assignment)
-        control_actual=2; control_expected=0 ;;
-      allow)
-        printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$mutant"
-        control_labels=(unknown-launcher-bare-env unknown-launcher-unset-without-target unknown-launcher-null-env unknown-launcher-dump-target unknown-launcher-shell-dump bare-env bare-printenv shell-state unknown-fallback-forwarded-option-only unknown-fallback-forwarded-shell-dump)
-        control_actual=0; control_expected=2 ;;
-    esac
-    cat "$hook_source" >>"$mutant"
-    control_status=0
-    env "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows "${control_labels[@]}" \
-      >"$environment_controls/always-$control.log" 2>&1 || control_status=$?
-    for row_label in "${control_labels[@]}"; do
-      if [ "$control_status" -eq 1 ] && grep -F \
-        "FAIL environment: $row_label: exit=$control_actual expected=$control_expected " \
-        "$environment_controls/always-$control.log" >/dev/null; then
-        printf 'PASS control always-%s detects %s\n' "$control" "$row_label"; passed=$((passed + 1))
-      else
-        printf 'FAIL control always-%s missed %s: exit=%s\n' "$control" "$row_label" "$control_status"
-        cat "$environment_controls/always-$control.log"
-        failed=$((failed + 1))
-      fi
-    done
-  done
   planted=""
   while IFS='|' read -r defect failed_row; do
     if [ "$defect" = empty-copies ]; then
@@ -1504,15 +1380,15 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
-      defect == "unknown-evidence-raw" { swap("if [ \"$evidence_context\" = unknown-head ]; then", "if [ unknown-correction-disabled = unknown-head ]; then") }
-      defect == "selected-producer-unresolved" { swap("environment_main_evidence conservative \"${args[@]:program_pos}\"", "false") }
-      defect == "compound-context-loss" { swap("[ \"$command_context\" = simple ]", "true") }
-      defect == "operand-word-boundary" { swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]"); swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]") }
-      defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"$evidence_context\" \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"$evidence_context\" \"${args[@]}\"; then mode=dump-unknown; fi") }
+      defect == "operand-word-boundary" { swap("(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)", "(^|[^A-Za-z0-9_])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)") }
+      defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[$program_pos]}\"; }; then mode=dump-unknown; fi") }
+      defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
+      defect == "forwarded-registry-cut" { swap("[ -n \"$forwarded_argument\" ] && [ \"${#heredocs[@]}\" -gt 0 ] &&", "false &&") }
+      defect == "recursive-context-loss" { swap("[ -z \"${forwarded_argument:-}\" ] || executable_contexts[cursor]=forwarded", ":") }
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
-        print "    if environment_main_evidence conservative \"$source\"; then mode=dump-unknown; return; fi"; changed++
+        print "    if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++
       }
       defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
       defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$incoming_sources\" ]", "false") }
@@ -1522,11 +1398,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print "           [ \"${stage_roles[$candidate]}:${stage_kinds[$candidate]}\" = argument:literal ] && [ -z \"${stage_unquoted[$candidate]}\" ]; then"
         print "          code=${#executable_texts[@]}; executable_texts[code]=$value; executable_stages[code]=$stage; executable_contexts[code]=conservative; continue"
         print "        fi"
-        print "        case \"${value##*/}\" in env) ;; *) if environment_main_evidence conservative \"$value\"; then return 0; fi; continue ;; esac"
+        print "        case \"${value##*/}\" in env) ;; *) if environment_main_evidence \"$value\"; then return 0; fi; continue ;; esac"
         changed++
       }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
-      defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence conservative \"$text\"; then return 0; fi") }
+      defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
       defect == "file-body-retained" { swap("main_text=${main_text:0:body_start}${body//[!$'\''\\n'\'']/ }${main_text:body_end}", ":") }
       defect == "piped-file-body-mask" { swap("[ \"${separators[$stage]}\" != \"|\" ] &&", "true &&") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
@@ -1545,10 +1421,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
       }
       defect == "unproved-records" { swap("unrouted | dump-unknown) return 0 ;;", "unrouted) return 0 ;; dump-unknown) continue ;;") }
-      defect == "syntax-routing" { swap("unsupported=1; compound=1; command_context=compound; fi", "unsupported=\"\"; compound=\"\"; command_context=simple; fi") }
+      defect == "syntax-routing" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=\"\"; fi") }
       defect == "suffix-first-word" && /for \(\(candidate=0;/ {
         swap("candidate<${#stage_args[@]}", "candidate<1 && candidate<${#stage_args[@]}")
       }
+      defect == "suffix-stage-only" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=1; fi") }
       defect == "suffix-launcher" { swap("environment_producer shell \"$scan\"", "environment_producer shell \"$scan\"; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
       defect == "suffix-set" { swap("environment_producer \"$1\" \"$unsupported${2:-}\" command-head", "environment_producer \"$1\" \"$unsupported${2:-}\" command-head; [ \"$program\" != set ] || mode=dump-unknown") }
       defect == "unset-command-head" { swap("arg_roles[env_head]=unset-launcher", "arg_roles[env_head]=prefix") }
@@ -1588,7 +1465,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "receiver-line-boundary" { swap("if [[ $remaining =~ ^[A-Za-z0-9_]+ ]]; then", "if [[ $remaining =~ ^[[:space:]]*[A-Za-z0-9_]+ ]]; then") }
       defect == "receiver-body-forwarding" { swap("body_decisions[doc]=fallback", ":") }
       { print }
-      END { if (changed != (defect == "operand-word-boundary" ? 4 : 1)) exit 1 }
+      END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
     if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
     fi
@@ -1612,8 +1489,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
-compound-context-loss|FAIL environment: compound-context-test-env: exit=0 expected=2
-selected-producer-unresolved|FAIL environment: selected-producer-forwarded-xargs-env: exit=0 expected=2
 receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
 receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0
 receiver-line-boundary|FAIL environment: receiver-python-heredoc-whole-line-end: exit=0 expected=2
@@ -1643,6 +1518,7 @@ no-check|FAIL environment: operand-command-declare: exit=0 expected=2
 no-check|FAIL environment: operand-command-systemctl: exit=0 expected=2
 operand-word-boundary|FAIL environment: operand-env-script: exit=2 expected=0
 operand-word-boundary|FAIL environment: operand-env-reported-command: exit=2 expected=0
+operand-word-boundary|FAIL environment: operand-env-quoted-path: exit=2 expected=0
 operand-word-boundary|FAIL environment: operand-export-script: exit=2 expected=0
 operand-word-boundary|FAIL environment: operand-declare-script: exit=2 expected=0
 operand-word-boundary|FAIL environment: time-option-data: exit=2 expected=0
@@ -1650,12 +1526,12 @@ operand-word-boundary|FAIL environment: punctuated-path-data: exit=2 expected=0
 exec-context|FAIL environment: r12-exec-list-unnamed-declaration: exit=0 expected=2
 exec-context|FAIL environment: r12-builtin-list-unnamed-declaration: exit=0 expected=2
 exec-context|FAIL environment: r12-command-exec-list-unnamed-declaration: exit=0 expected=2
+exec-context|FAIL environment: r12-exec-list-nonreader-argument: exit=0 expected=2
+exec-context|FAIL environment: r12-builtin-list-nonreader-argument: exit=0 expected=2
 main-command-cut|FAIL environment: r12-body-after-later-header-wrapper: exit=0 expected=2
 flat-main-command|FAIL environment: r12-body-before-later-wrapper: exit=2 expected=0
 main-evidence-cut|FAIL environment: r12-brace-stdout-body-main-refusal: exit=0 expected=2
-unknown-evidence-raw|FAIL environment: unknown-fallback-forwarded-unset: exit=2 expected=0
-unknown-evidence-raw|FAIL environment: unknown-fallback-forwarded-assignment: exit=2 expected=0
-unknown-evidence-raw|FAIL environment: unknown-fallback-forwarded-set-data: exit=2 expected=0
+main-evidence-cut|FAIL environment: r12-brace-shell-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-brace-shell-declaration-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-brace-shell-typeset-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-if-shell-declaration-body-main-refusal: exit=0 expected=2
@@ -1685,6 +1561,7 @@ main-evidence-cut|FAIL environment: punctuated-argument-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-group-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: split-string-named-read: exit=0 expected=2
+main-evidence-cut|FAIL environment: split-string-quoted-data: exit=0 expected=2
 main-command-cut|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
 late-check|FAIL environment: explicit-policy-off: exit=0 expected=2
 unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
@@ -1728,6 +1605,11 @@ split-forwarded-argv|FAIL environment: waiter-forwarded-systemctl-quoted-verb: e
 split-forwarded-argv|FAIL environment: waiter-forwarded-quoted-cat-and-path: exit=0 expected=2
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-proc-operand: exit=0 expected=2
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-systemctl-operand: exit=0 expected=2
+unclassified-head-only|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
+recursive-context-loss|FAIL environment: waiter-recursive-test-bash-env: exit=0 expected=2
+forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-xargs: exit=0 expected=2
+forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-timeout: exit=0 expected=2
+forwarded-registry-cut|FAIL environment: waiter-registry-test-execute-body: exit=0 expected=2
 producer-implicit-clean|FAIL environment: waiter-result-test-xargs-env: exit=0 expected=2
 unresolved-redirect-loss|FAIL environment: waiter-result-grep-redirect: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
@@ -1739,6 +1621,8 @@ piped-file-body-mask|FAIL environment: redirected-cat-body-piped-to-interpreter:
 heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
 unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
 suffix-first-word|FAIL environment: unsupported-list-evidence: exit=0 expected=2
+suffix-stage-only|FAIL environment: unsupported-list-evidence: exit=0 expected=2
+suffix-stage-only|FAIL environment: unsupported-pipe-evidence: exit=0 expected=2
 head-basename|FAIL environment: pathname-basename-is-not-syntax: exit=2 expected=0
 quoted-head|FAIL environment: quoted-control-word-is-an-executable: exit=2 expected=0
 array-head|FAIL environment: array-function-is-an-executable: exit=2 expected=0
