@@ -555,15 +555,21 @@ while True: signal.pause()
                     self.acknowledgement(record, "quit")
                     self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip(), "0")
                     self.tmux("send-keys", "-t", pane, "finish", "Enter")
+                # tmux marks the pane dead at pty EOF and sets its status only after reaping the child.
                 deadline = time.monotonic() + 10
+                status = ""
                 while time.monotonic() < deadline:
                     dead = self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip()
                     if dead == "1":
-                        break
+                        if not suspended:
+                            break
+                        status = self.tmux("display-message", "-p", "-t", pane, "#{pane_dead_status}").stdout.strip()
+                        if status:
+                            break
                     time.sleep(0.02)
                 self.assertEqual(dead, "1")
                 if suspended:
-                    self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead_status}").stdout.strip(), "23")
+                    self.assertEqual(status, "23")
 
     def test_browser_profile_control(self):
         path = self.skills / "jarvis/scripts/lib/task.py"
