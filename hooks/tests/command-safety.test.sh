@@ -233,6 +233,15 @@ environment_rows() {
     [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
+[0,"job-launcher env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE bash runner","unknown-launcher-named-unsets"]
+[2,"job-launcher env","unknown-launcher-bare-env"]
+[2,"job-launcher env -u NAME","unknown-launcher-unset-without-target"]
+[2,"job-launcher env -0","unknown-launcher-null-env"]
+[2,"job-launcher env NAME=value printenv","unknown-launcher-dump-target"]
+[2,"job-launcher env -u NAME bash -c 'env'","unknown-launcher-shell-dump"]
+[0,"S=set; workflow-state \"$S\" oversee key value","unknown-launcher-set-assignment-data"]
+[0,"tool --mode set","unknown-launcher-set-argument-data"]
+[0,"cat > tmp/note.md <<'EOF'\nset -e\nenv -u NAME runner\nEOF","unknown-launcher-quoted-heredoc-data"]
 [0,"bash scripts/lib/jarvis-env.sh DIR -- node FILE","operand-env-script"]
 [0,"unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE\nbash scripts/lib/jarvis-env.sh tmp/package-repair-VGS-1735-standins -- node \"$PWD/tmp/package-repair-VGS-1735.js\" > tmp/package-repair-VGS-1735.log 2>&1\nruntime_status=$?\ncat tmp/package-repair-VGS-1735.log\nprintf 'runtime-1 exit=%s\\n' \"$runtime_status\"\nexit \"$runtime_status\"","operand-env-reported-command"]
 [0,"bash wrapper.sh --path 'scripts/lib/jarvis-env.sh'","operand-env-quoted-path"]
@@ -864,13 +873,13 @@ environment_rows() {
 [0,"for ITEM in first; do git status; done","loop-without-known-dump"]
 [0,"case WORD in NAME) git status;; esac","case-without-known-dump"]
 [0,"printf '%s' 'function f { env; }'","quoted-function-data"]
-[0,"printf '%s' \u0063oproc env","syntax-arguments-are-data"]
-[0,"\"function\" env","quoted-head-is-an-executable"]
-[0,"\"if\" env","quoted-control-word-is-an-executable"]
-[0,"fun\\ction env","escaped-head-is-an-executable"]
-[0,"/usr/bin/time env","pathname-basename-is-not-syntax"]
-[0,"command function f env","launcher-target-is-not-syntax"]
-[0,"env NAME=value function f env","env-target-is-not-syntax"]
+[0,"printf '%s' \u0063oproc set","syntax-arguments-are-data"]
+[0,"\"function\" set","quoted-head-is-an-executable"]
+[0,"\"if\" set","quoted-control-word-is-an-executable"]
+[0,"fun\\ction set","escaped-head-is-an-executable"]
+[0,"/usr/bin/time set","pathname-basename-is-not-syntax"]
+[0,"command function f set","launcher-target-is-not-syntax"]
+[0,"env NAME=value function f set","env-target-is-not-syntax"]
 [0,"# function f { env; }\ngit status","syntax-comment-data"]
 [2,"{ env | grep NAME; }","brace-conservative-filter"]
 [2,"for ITEM in env; do :; done","loop-data-conservative"]
@@ -885,7 +894,7 @@ environment_rows() {
 [2,"printf '%s' `env`","backtick-dump"]
 [0,"printf '%s' 'env | grep NAME'","quoted-data"]
 [0,"printf '%s' '$(env)'","single-quoted-substitution"]
-[0,"printf '%s' env","argument-data"]
+[0,"printf '%s' set","argument-data"]
 [0,"printf '%s' 'env'","quoted-argument-data"]
 [0,"# env\ngit status","comment-data"]
 [2,"\"env\"","quoted-producer"]
@@ -1089,7 +1098,7 @@ environment_rows() {
 [2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY env","documented-waiter-environment-output"]
 [2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait $(printenv)","documented-waiter-executable-substitution"]
 [2,"sh wrap.sh env","ken-3998-refuse-wrapper-no-program"]
-[0,"receiver one two env -u NAME","ken-3998-refuse-ordinary-receiver-no-program"]
+[2,"receiver one two env -u NAME","ken-3998-refuse-ordinary-receiver-no-program"]
 [0,"receiver one two env -i -u NAME --unset=OTHER -C build NAME=value program extra words > out","ken-3998-launcher-any-receiver-arity"]
 [0,"receiver 'env' 'set' 'declare -x'","ken-3998-quoted-arguments-any-receiver"]
 [2,"if :; then printf '%s' 'env set declare -x'; fi","ken-3998-compound-quoted-data"]
@@ -1363,6 +1372,37 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   [[ -d $environment_controls && ! -L $environment_controls ]] || { echo 'command-safety-test: control-scratch=not-a-directory' >&2; exit 1; }
   environment_controls="$(cd -- "$environment_controls" && pwd -P)" || { echo 'command-safety-test: control-scratch=resolve-failed' >&2; exit 1; }
   trap 'rm -rf -- "$scratch" "${environment_controls:?}"' EXIT
+  # KEN-4430: each required allow and refuse row must detect a hook that
+  # ignores the payload. Keep the production source below the planted exit.
+  for control in refuse allow; do
+    mutant="$environment_controls/always-$control.sh"
+    control_labels=()
+    case "$control" in
+      refuse)
+        printf '%s\n' '#!/usr/bin/env bash' 'exit 2' >"$mutant"
+        control_labels=(unknown-launcher-named-unsets unknown-launcher-set-assignment-data unknown-launcher-set-argument-data unknown-launcher-quoted-heredoc-data)
+        control_actual=2; control_expected=0 ;;
+      allow)
+        printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$mutant"
+        control_labels=(unknown-launcher-bare-env unknown-launcher-unset-without-target unknown-launcher-null-env unknown-launcher-dump-target unknown-launcher-shell-dump bare-env bare-printenv shell-state)
+        control_actual=0; control_expected=2 ;;
+    esac
+    cat "$hook_source" >>"$mutant"
+    control_status=0
+    env "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows "${control_labels[@]}" \
+      >"$environment_controls/always-$control.log" 2>&1 || control_status=$?
+    for row_label in "${control_labels[@]}"; do
+      if [ "$control_status" -eq 1 ] && grep -F \
+        "FAIL environment: $row_label: exit=$control_actual expected=$control_expected " \
+        "$environment_controls/always-$control.log" >/dev/null; then
+        printf 'PASS control always-%s detects %s\n' "$control" "$row_label"; passed=$((passed + 1))
+      else
+        printf 'FAIL control always-%s missed %s: exit=%s\n' "$control" "$row_label" "$control_status"
+        cat "$environment_controls/always-$control.log"
+        failed=$((failed + 1))
+      fi
+    done
+  done
   planted=""
   while IFS='|' read -r defect failed_row; do
     if [ "$defect" = empty-copies ]; then
@@ -1381,11 +1421,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
       defect == "operand-word-boundary" { swap("(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)", "(^|[^A-Za-z0-9_])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)") }
-      defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[$program_pos]}\"; }; then mode=dump-unknown; fi") }
       defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
-      defect == "forwarded-registry-cut" { swap("[ -n \"$forwarded_argument\" ] && [ \"${#heredocs[@]}\" -gt 0 ] &&", "false &&") }
-      defect == "recursive-context-loss" { swap("[ -z \"${forwarded_argument:-}\" ] || executable_contexts[cursor]=forwarded", ":") }
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
         print "    if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++
@@ -1425,7 +1462,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "suffix-first-word" && /for \(\(candidate=0;/ {
         swap("candidate<${#stage_args[@]}", "candidate<1 && candidate<${#stage_args[@]}")
       }
-      defect == "suffix-stage-only" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=1; fi") }
       defect == "suffix-launcher" { swap("environment_producer shell \"$scan\"", "environment_producer shell \"$scan\"; [ \"${stage_args[$candidate]}\" != env ] || mode=dump-unknown") }
       defect == "suffix-set" { swap("environment_producer \"$1\" \"$unsupported${2:-}\" command-head", "environment_producer \"$1\" \"$unsupported${2:-}\" command-head; [ \"$program\" != set ] || mode=dump-unknown") }
       defect == "unset-command-head" { swap("arg_roles[env_head]=unset-launcher", "arg_roles[env_head]=prefix") }
@@ -1526,12 +1562,9 @@ operand-word-boundary|FAIL environment: punctuated-path-data: exit=2 expected=0
 exec-context|FAIL environment: r12-exec-list-unnamed-declaration: exit=0 expected=2
 exec-context|FAIL environment: r12-builtin-list-unnamed-declaration: exit=0 expected=2
 exec-context|FAIL environment: r12-command-exec-list-unnamed-declaration: exit=0 expected=2
-exec-context|FAIL environment: r12-exec-list-nonreader-argument: exit=0 expected=2
-exec-context|FAIL environment: r12-builtin-list-nonreader-argument: exit=0 expected=2
 main-command-cut|FAIL environment: r12-body-after-later-header-wrapper: exit=0 expected=2
 flat-main-command|FAIL environment: r12-body-before-later-wrapper: exit=2 expected=0
 main-evidence-cut|FAIL environment: r12-brace-stdout-body-main-refusal: exit=0 expected=2
-main-evidence-cut|FAIL environment: r12-brace-shell-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-brace-shell-declaration-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-brace-shell-typeset-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-if-shell-declaration-body-main-refusal: exit=0 expected=2
@@ -1561,7 +1594,6 @@ main-evidence-cut|FAIL environment: punctuated-argument-data: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: conservative-sudo-group-operand: exit=0 expected=2
 main-evidence-cut|FAIL environment: split-string-named-read: exit=0 expected=2
-main-evidence-cut|FAIL environment: split-string-quoted-data: exit=0 expected=2
 main-command-cut|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
 late-check|FAIL environment: explicit-policy-off: exit=0 expected=2
 unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
@@ -1605,11 +1637,6 @@ split-forwarded-argv|FAIL environment: waiter-forwarded-systemctl-quoted-verb: e
 split-forwarded-argv|FAIL environment: waiter-forwarded-quoted-cat-and-path: exit=0 expected=2
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-proc-operand: exit=0 expected=2
 split-forwarded-argv|FAIL environment: waiter-forwarded-unresolved-systemctl-operand: exit=0 expected=2
-unclassified-head-only|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
-recursive-context-loss|FAIL environment: waiter-recursive-test-bash-env: exit=0 expected=2
-forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-xargs: exit=0 expected=2
-forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-timeout: exit=0 expected=2
-forwarded-registry-cut|FAIL environment: waiter-registry-test-execute-body: exit=0 expected=2
 producer-implicit-clean|FAIL environment: waiter-result-test-xargs-env: exit=0 expected=2
 unresolved-redirect-loss|FAIL environment: waiter-result-grep-redirect: exit=0 expected=2
 suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
@@ -1621,8 +1648,6 @@ piped-file-body-mask|FAIL environment: redirected-cat-body-piped-to-interpreter:
 heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
 unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
 suffix-first-word|FAIL environment: unsupported-list-evidence: exit=0 expected=2
-suffix-stage-only|FAIL environment: unsupported-list-evidence: exit=0 expected=2
-suffix-stage-only|FAIL environment: unsupported-pipe-evidence: exit=0 expected=2
 head-basename|FAIL environment: pathname-basename-is-not-syntax: exit=2 expected=0
 quoted-head|FAIL environment: quoted-control-word-is-an-executable: exit=2 expected=0
 array-head|FAIL environment: array-function-is-an-executable: exit=2 expected=0

@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, literal cat bodies retain their data contract, and unknown receivers retain conservative shell-word detection. Unquoted body expansions are checked independently, and unsupported forwarded contexts retain conservative refusal. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, and literal cat bodies retain their data contract. Unknown receivers classify unquoted literal env arguments with the shared producer option grammar and check their selected targets; set in an ordinary argument or assignment remains data. Unknown registered bodies and unsupported forwarded contexts retain conservative refusal. Unquoted body expansions are checked independently. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -1124,9 +1124,13 @@ environment_dump() { # command kind; arguments are already decoded data
     stage_stdin[stage]=$stdin_program; stage_sources[stage]=$data_source
     scan=$unsupported
     if [ "$receiver" = shell ] || [ "$program" = opaque ]; then scan=1; fi
+    # An unrecognized launcher can forward env argv too. Judge its options
+    # at the producer, without treating other argument words as builtins.
+    if [ -z "$scan" ] && [ "$receiver" = unknown ] && [ "$mode" = other ] &&
+       [ "$pos" -lt "${#args[@]}" ]; then scan=arguments; fi
     if [ -n "$scan" ]; then
       case "$mode" in dump-*) return 0 ;; esac
-      [ -z "$redirect_evidence" ] || return 0
+      [ "$scan" = arguments ] || [ -z "$redirect_evidence" ] || return 0
       stage_args=(${args[@]+"${args[@]}"}); stage_kinds=(${arg_kinds[@]+"${arg_kinds[@]}"})
       stage_unquoted=(${arg_unquoted[@]+"${arg_unquoted[@]}"})
       stage_roles=(${arg_roles[@]+"${arg_roles[@]}"})
@@ -1137,6 +1141,11 @@ environment_dump() { # command kind; arguments are already decoded data
          [ "${stage_kinds[$pos]:-}" = literal ] && [[ ${stage_args[$pos]:-} != [-+]* ]] &&
          [ "${stage_roles[$pos]:-}" = argument ]; then script_pos=$pos; fi
       for ((candidate=0; candidate<${#stage_args[@]}; candidate++)); do
+        value=${stage_args[$candidate]}
+        if [ "$scan" = arguments ]; then
+          [ "${stage_roles[$candidate]}:${stage_kinds[$candidate]}:$value" = argument:literal:env ] &&
+            [ -n "${stage_unquoted[$candidate]}" ] || continue
+        fi
         [ "${stage_kinds[$candidate]}" != ansi-escaped ] || return 0
         [ "$candidate" -ge "$main_start" ] || continue
         value=${stage_args[$candidate]}
@@ -1159,8 +1168,10 @@ environment_dump() { # command kind; arguments are already decoded data
            [ -z "${stage_unquoted[$candidate]}" ] && [ -z "$input_redirect$output" ]; then continue; fi
         if [ -z "$script_pos" ] || [ "$candidate" -le "$script_pos" ] ||
            [ "${stage_roles[$candidate]}:${stage_kinds[$candidate]}" != argument:literal ]; then
-          if environment_main_evidence "$value"; then return 0; fi
-          continue
+          if [ "$scan" != arguments ]; then
+            if environment_main_evidence "$value"; then return 0; fi
+            continue
+          fi
         fi
         # Waiter launchers execute forwarded argv. Keep each selected program
         # beside its operands before considering a quoted command string.
@@ -1170,7 +1181,11 @@ environment_dump() { # command kind; arguments are already decoded data
         arg_unquoted=("${stage_unquoted[@]:candidate:limit-candidate}")
         arg_roles=()
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
-        environment_producer shell "$scan"
+        if [ "$scan" = arguments ]; then
+          environment_producer shell conservative
+        else
+          environment_producer shell "$scan"
+        fi
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
         case "$mode" in dump-*) return 0 ;; esac
