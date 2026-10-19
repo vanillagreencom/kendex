@@ -72,7 +72,9 @@ class OwnerUnanswered(MailWorld):
         at(-700)
         self.owner("yes", "--re", asks[0], "--delivery-id", next(key))
         self.owner("no, sibling", "--re", asks[0], "--delivery-id", next(key))
+        at(-655)
         self.mail(self.home, "notice", "ruling reported", "--to", "owner", "--ref", asks[0])
+        self.owner("same second as the reply", "--re", asks[0], "--delivery-id", next(key))
         at(-650)
         self.owner("correction after the reply", "--re", asks[0], "--delivery-id", next(key))
         at(-600)
@@ -102,7 +104,7 @@ class OwnerUnanswered(MailWorld):
                                           record("2", "Handled " + request, "done") +
                                           record("3", "Handled " + quiet, "done, No reply needed"))
         (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived, "kept"))
-        return ["correction after the reply", "same second as a handled request", "unanswered",
+        return ["same second as the reply", "correction after the reply", "same second as a handled request", "unanswered",
                 "request handled without no reply"]
 
     def test_table(self):

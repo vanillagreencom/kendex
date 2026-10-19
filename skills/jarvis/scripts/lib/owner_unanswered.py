@@ -68,8 +68,10 @@ def unanswered(lane, over, logged):
         if ask is not None:
             # A later reply to the ask covers every earlier answer to it; a
             # resolution closes them all. lane-mail lets a reply ref name an
-            # owner ask or note, never an owner answer.
-            if ask in closed or any(reply["ref"] == ask and reply.get("at", "") >= row.get("at", "")
+            # owner ask or note, never an owner answer. Stamps are whole
+            # seconds and the two boxes share no order, so a reply in the
+            # answer's own second covers nothing.
+            if ask in closed or any(reply["ref"] == ask and reply.get("at", "") > row.get("at", "")
                                     for reply in replies):
                 continue
         handled = False
