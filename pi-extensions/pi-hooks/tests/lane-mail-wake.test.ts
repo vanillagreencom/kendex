@@ -85,12 +85,13 @@ function laneMail(lane: string, ...args: string[]): string {
 }
 
 /** The receipt oversee-watch reads: the directive is read once the lane's cursor passes its line. */
-function directiveState(lane: string, id: string): "directive-read" | "directive-unread" {
+function directiveState(lane: string, id: string): "directive-read" | "directive-unread" | "directive-unjudged" {
 	const receipts = laneMail(lane, "drain", "--item", ITEM, "--root", lane, "--after", "0", "--receipts").split("\n");
-	const cursor = /^receipts cursor=(\d+) /.exec(receipts.find((line) => line.startsWith("receipts ")) ?? "");
+	const cursor = /^receipts cursor=(missed|\d+) /.exec(receipts.find((line) => line.startsWith("receipts ")) ?? "");
 	if (cursor === null) throw new Error(`lane-mail drain --receipts printed no cursor:\n${receipts.join("\n")}`);
 	const row = receipts.find((line) => line.split(" ")[1] === id);
 	if (row === undefined) throw new Error(`lane-mail drain --receipts lists no directive ${id}`);
+	if (cursor[1] === "missed") return "directive-unjudged";
 	return Number(row.split(" ")[0]) <= Number(cursor[1]) ? "directive-read" : "directive-unread";
 }
 
