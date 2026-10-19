@@ -191,7 +191,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
 			registerRendered(join(project, ".pi"), TOOL_RESULT_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
 			const listeners: { run: (ctx: Record<string, unknown>) => Promise<unknown>; payload: Record<string, unknown> }[] = [
-				{ run: (ctx) => installCarrier().handler(SETTLE_LISTENER)(boundary(), ctx), payload: { hook_event_name: "Stop", stop_hook_active: false, working_agents: 0 } },
+				{ run: (ctx) => installCarrier().handler(SETTLE_LISTENER)(boundary(), ctx), payload: { hook_event_name: "Stop", stop_hook_active: false, working_agents: 0, pi_run_outcome: "completed" } },
 				{
 					run: (ctx) => installCarrier().handler(TOOL_RESULT_LISTENER)(toolResultEvent("bash", { command: "ls" }, "ok"), ctx),
 					payload: { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_response: "ok" },
@@ -231,7 +231,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			expect(readLog(failed)).toBe("");
 			delete process.env.PI_SUBAGENT_CHILD_AGENT;
 			await installCarrier().handler(SETTLE_LISTENER)({ ...boundary(), outcome: "error" }, trusted(project));
-			expect(readLog(log)).toBe(stopPayload(false));
+			expect(readLog(log)).toBe(stopPayload(false, "error"));
 			expect(readLog(failed)).toBe(failurePayload);
 		} finally {
 			delete process.env.PI_SUBAGENT_CHILD_AGENT;
@@ -634,7 +634,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 					}
 					if (on) expect(JSON.parse(readLog(log))).toEqual(listener === SESSION_START_LISTENER
 						? { hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID }
-						: { hook_event_name: "Stop", stop_hook_active: false, working_agents: 0, session_id: SESSION_ID });
+						: { hook_event_name: "Stop", stop_hook_active: false, working_agents: 0, pi_run_outcome: "completed", session_id: SESSION_ID });
 					else expect(readLog(log)).toBe("");
 				}
 			}
