@@ -123,23 +123,20 @@ data_body_rows() {
   first_table 'python replacement heredoc|command|0|-|python3 - <<'\''PY'\''\ns = '\''rm -rf "$scratch"'\''\ns.replace(s, "cleanup")\nPY
 file writing heredoc|command|0|-|cat > tmp/helper.py <<'\''EOF'\''\ns = '\''rm -rf "$scratch"'\''\nEOF
 python replacement inline|command|0|-|python3 -c '\''s = """rm -rf "$scratch"\n"""; print(s)'\''
+literal double quoted program|command|0|-|python3 -c "s = '\''rm -rf /shared/home'\''"
 python shared inline|command|0|-|python -c '\''s = "rm -rf $HOME"'\''
 node inline|command|0|-|node -e '\''const s = "rm -rf $X";'\''
 ruby inline|command|0|-|ruby -e '\''s = "rm -rf $X"'\''
 perl inline|command|0|-|perl -e '\''$s = "rm -rf $X";'\''
-double quoted program|command|0|-|python3 -c "print('\''rm -rf $X'\'')"
 node heredoc|command|0|-|node <<"JS"\nconst s = '\''rm -rf $HOME'\'';\nJS
 ruby heredoc|command|0|-|ruby <<'\''RB'\''\ns = "rm -rf $X"\nRB
 perl heredoc|command|0|-|perl <<'\''PL'\''\n$s = "rm -rf $X";\nPL
 escaped delimiter|command|0|-|cat <<\\EOF\nrm -rf $X\nEOF
 tab stripped delimiter|command|0|-|cat <<-'\''EOF'\''\n\trm -rf $X\n\tEOF
-multiple data bodies|command|0|-|cat <<'\''A'\'' <<'\''B'\''\nrm -rf $X\nA\nrm -rf $HOME\nB
 quoted heredoc marker|command|0|-|python3 -c '\''s = "<<EOF rm -rf $X"'\''
 literal backticks in program|command|0|-|python3 -c '\''s = "`rm -rf $X`"'\''
 literal backticks in heredoc|command|0|-|cat <<'\''EOF'\''\n`rm -rf $X`\nEOF
-escaped backticks in program|command|0|-|python3 -c "print('\''\\`rm -rf $X\\`'\'')"
 guarded shared root as data|command|0|-|cat <<'\''EOF'\''\nrm -rf "${HOME:?}"\nEOF
-assignment before data receiver|command|0|-|MODE=test python3 -c '\''s = "rm -rf $HOME"'\''
 quoted data receiver|command|0|-|"python3" -c '\''s = "rm -rf $HOME"'\''
 '
 }
@@ -150,7 +147,7 @@ eval inline|command|2|block-unsafe-rm: refused=recursive-rm|eval '\''rm -rf $X'\
 source inline|command|2|block-unsafe-rm: refused=recursive-rm|source <(echo '\''rm -rf $X'\'')
 shell heredoc|command|2|block-unsafe-rm: refused=recursive-rm|bash <<'\''EOF'\''\nrm -rf "$X/sub"\nEOF
 expanding data heredoc|command|2|block-unsafe-rm: refused=recursive-rm|cat <<EOF\n$(rm -rf "$X/sub")\nEOF
-after data heredoc|command|2|block-unsafe-rm: refused=recursive-rm|python3 - <<'\''PY'\''\ns = "rm -rf $HOME"\nPY\nrm -rf "$X/sub"
+after data heredoc|command|2|block-unsafe-rm: refused=shared-root|python3 - <<'\''PY'\''\ns = "rm -rf $HOME"\nPY\nrm -rf "$X/sub"
 unknown receiver heredoc|command|2|block-unsafe-rm: refused=recursive-rm|unrecognized-tool <<'\''EOF'\''\nrm -rf "$X/sub"\nEOF
 quoted unknown receiver|command|2|block-unsafe-rm: refused=recursive-rm|"python\\3" <<'\''EOF'\''\nrm -rf $X\nEOF
 carriage return in receiver|command|2|block-unsafe-rm: refused=recursive-rm|python3\r <<'\''EOF'\''\nrm -rf $X\nEOF
@@ -175,6 +172,16 @@ quoted keyword receiver|command|2|block-unsafe-rm: refused=shared-root|"if" pyth
 quoted assignment receiver|command|2|block-unsafe-rm: refused=shared-root|"MODE=test" python3 <<'\''EOF'\''\nrm -rf $HOME\nEOF
 option argument owns program flag|command|2|block-unsafe-rm: refused=shared-root|python3 -W -c '\''rm -rf $HOME'\''
 option terminator owns program flag|command|2|block-unsafe-rm: refused=shared-root|python3 -- -c '\''rm -rf $HOME'\''
+double quoted program|command|2|block-unsafe-rm: refused=recursive-rm|python3 -c "print('\''rm -rf $X'\'')"
+multiple data bodies|command|2|block-unsafe-rm: refused=shared-root|cat <<'\''A'\'' <<'\''B'\''\nrm -rf $X\nA\nrm -rf $HOME\nB
+escaped backticks in program|command|2|block-unsafe-rm: refused=recursive-rm|python3 -c "print('\''\\`rm -rf $X\\`'\'')"
+assignment before data receiver|command|2|block-unsafe-rm: refused=shared-root|MODE=test python3 -c '\''s = "rm -rf $HOME"'\''
+file then source|command|2|block-unsafe-rm: refused=shared-root|cat > cleanup.sh <<'\''EOF'\''\nrm -rf "$HOME"\nEOF\nsource cleanup.sh
+inline exec inherits stdin|command|2|block-unsafe-rm: refused=shared-root|python3 -c '\''import os; os.execl("/bin/bash", "bash", "-s")'\'' <<'\''EOF'\''\nrm -rf "$HOME"\nEOF
+file program inherits stdin|command|2|block-unsafe-rm: refused=shared-root|python3 helper.py <<'\''EOF'\''\nrm -rf "$HOME"\nEOF
+nested parameter inline boundary|command|2|block-unsafe-rm: refused=shared-root|python3 -c "${code:-"#a'\''b"}"; rm -rf "$HOME"; echo \134\047; :
+parameter fabricated heredoc|command|2|block-unsafe-rm: refused=shared-root|echo ${X:-a;cat <<'\''EOF'\''}\nrm -rf $HOME\nEOF}
+quoted parameter fabricated heredoc|command|2|block-unsafe-rm: refused=shared-root|echo "${X:-"x;cat <<'\''EOF'\''"}"\nrm -rf $HOME\nEOF}
 '
 }
 data_body_rows
@@ -186,7 +193,7 @@ skill_load_control body-always-refuse "$HOOK" 'set -euo pipefail' \
   'exit 2' HOOK data_body_rows \
   'python replacement heredoc' 'file writing heredoc' 'python replacement inline' \
   'literal backticks in program' 'literal backticks in heredoc' \
-  'escaped backticks in program' 'guarded shared root as data'
+  'guarded shared root as data'
 skill_load_control body-always-allow "$HOOK" 'set -euo pipefail' \
   'exit 0' HOOK executable_body_rows \
   'real removal' 'shell inline' 'eval inline' 'source inline' 'shell heredoc' \
@@ -197,7 +204,11 @@ skill_load_control body-always-allow "$HOOK" 'set -euo pipefail' \
   'python dollar quote boundary' 'node dollar quote boundary' \
   'ruby dollar quote boundary' 'perl dollar quote boundary' \
   'quoted keyword receiver' 'quoted assignment receiver' \
-  'option argument owns program flag' 'option terminator owns program flag'
+  'option argument owns program flag' 'option terminator owns program flag' \
+  'double quoted program' 'multiple data bodies' 'escaped backticks in program' \
+  'assignment before data receiver' 'file then source' 'inline exec inherits stdin' \
+  'file program inherits stdin' 'nested parameter inline boundary' \
+  'parameter fabricated heredoc' 'quoted parameter fabricated heredoc'
 
 # Agents use git rm to remove tracked paths. These tool payloads are scanned,
 # never run; a following plain rm must retain its own refusal.

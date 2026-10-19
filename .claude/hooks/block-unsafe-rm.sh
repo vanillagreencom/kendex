@@ -5,8 +5,8 @@
 # matcher: Bash
 # requires: [command-safety]
 # description: Block plain rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call. Not run on antigravity: its required command-safety companion does not name antigravity, whose payload is toolCall.args.
-# summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. Quoted programs and heredocs sent as data pass; the refusal gives a safe cleanup pattern.
-# safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the quote-aware boundary parser: quoted-delimiter heredocs sent to cat, Python, Node, Ruby or Perl and quoted inline programs for those interpreters are data when their receiver and word boundary are proved. Shell, eval, source, unquoted-delimiter and unknown-receiver bodies retain scanning. Combined redirections, executable substitutions, grouped input routing, dollar-quoted words, pipelines and incomplete syntax retain the original scan; literal backticks inside quoted data stay data. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
+# summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. A complete literal interpreter program or quoted heredoc sent as data passes; the refusal gives a safe cleanup pattern.
+# safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the boundary parser. Masking requires one complete simple command whose words are literal: safe unquoted bytes, single-quoted text, or double-quoted text without expansions or escapes. A quoted-delimiter heredoc is data for cat with an optional literal output file, Python with a lone dash, or Node, Ruby or Perl with no argument or a lone dash. A literal quoted inline program is data for Python -c or Node, Ruby or Perl -e (also Node --eval), with no other arguments or redirections. Only whitespace may follow the command or closing delimiter. Inline or file programs with heredoc stdin, expanded words, multiple commands or heredocs, and all unproved syntax keep the original scan. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
 
 set -euo pipefail
@@ -97,140 +97,106 @@ COMMAND=$(printf '%s' "$INPUT" \
 # Keep only the word/body boundary here, leaving the operand rules below alone.
 command_regions() {
   local LC_ALL=C
-  local text=$1 i=0 n=${#1} c next word value quote quoted remaining span
-  local receiver="" inline="" redirect="" out="" op delimiter line found doc tabs body_start line_start
-  local doc_receivers=() delimiters=() strip_tabs=() expands=()
+  local text=$1 i=0 n=${#1} c next value quoted remaining span op=""
+  local delimiter="" strip_tabs=0 output="" line tabs found="" receiver count
+  local words=() word_quotes=()
+  # Mask only one complete simple data command. A literal word consists of
+  # safe unquoted bytes, single-quoted bytes, or double-quoted bytes with no
+  # expansion or escaping. Anything else leaves the whole raw scan intact.
   while [ "$i" -lt "$n" ]; do
     c=${text:$i:1}; next=${text:$((i + 1)):1}
     case "$c" in
-      ' ' | $'\t') out=$out$c; i=$((i + 1)); continue ;;
-      $'\n' | ';' | '&' | '|')
-        # These operators can forward input or change the receiver. Commit no
-        # masking unless the whole command stays within the supported grammar.
-        [ "$c" != '|' ] || return 1
-        [ "$c$next" != '&>' ] || return 1
-        out=$out$c; i=$((i + 1))
-        receiver=""; inline=""
-        if [ "$c" = $'\n' ]; then
-          for ((doc=0; doc<${#delimiters[@]}; doc++)); do
-            delimiter=${delimiters[$doc]}; found=""; body_start=$i
-            # One stream per body avoids slicing the whole UTF-8 command for
-            # every byte of a file-writing heredoc.
-            while IFS= read -r line; do
-              line_start=$i; i=$((i + ${#line}))
-              [ "$i" -ge "$n" ] || i=$((i + 1))
-              tabs=$line
-              if [ "${strip_tabs[$doc]}" = 1 ]; then
-                while [[ $tabs == $'\t'* ]]; do tabs=${tabs#$'\t'}; done
-              fi
-              if [ "$tabs" = "$delimiter" ]; then found=1; break; fi
-            done <<< "${text:$i}"
-            [ -n "$found" ] || return 1
-            if [ "${doc_receivers[$doc]}" != data ] || [ "${expands[$doc]}" = 1 ]; then
-              out=$out${text:$body_start:$((line_start - body_start))}
-            fi
-            out=$out$'\n'
-          done
-          delimiters=(); strip_tabs=(); expands=(); doc_receivers=()
-        fi
-        continue ;;
+      ' ' | $'\t') i=$((i + 1)); continue ;;
+      $'\n') i=$((i + 1)); break ;;
       '<' | '>')
-        [ "$next" != '(' ] || return 1
+        [ -z "$op" ] || return 1
         op=$c; i=$((i + 1))
-        if [ "$next" = "$c" ]; then
-          op=$op$next; i=$((i + 1))
-          case "${text:$i:1}" in
-            '<' | '-') op=$op${text:$i:1}; i=$((i + 1)) ;;
-          esac
-        elif [ "$next" = '&' ] || [ "$next" = '|' ] || [ "$next" = '>' ]; then
-          op=$op$next; i=$((i + 1))
-        fi
-        out=$out$op; redirect=$op; continue ;;
-      '#')
-        # Shell comments cannot introduce a heredoc that consumes later lines.
-        remaining=${text:$i}; span=${remaining%%$'\n'*}
-        out=$out$span; i=$((i + ${#span}))
+        if [ "$c$next" = '<<' ]; then
+          op='<<'; i=$((i + 1))
+          if [ "${text:$i:1}" = '-' ]; then op='<<-'; i=$((i + 1)); fi
+        elif [ "$c" != '>' ]; then return 1; fi
         continue ;;
-      '(' | ')') return 1 ;;
     esac
-
-    word=""; value=""; quote=""; quoted=""
+    value=""; quoted=""
     while [ "$i" -lt "$n" ]; do
-      c=${text:$i:1}; next=${text:$((i + 1)):1}
-      if [ -z "$quote" ]; then
-        case "$c" in ' ' | $'\t' | $'\n' | ';' | '&' | '|' | '<' | '>') break ;; esac
-        case "$c" in '(' | ')') return 1 ;; esac
-        # Dollar quoting has different escape or translation semantics. It
-        # cannot establish a program word's boundary with ordinary quotes.
-        case "$c$next" in "\$'" | '$"') return 1 ;; esac
-      fi
-      if [ -z "$quote" ] && [ "$c" = "'" ]; then
-        remaining=${text:$((i + 1))}
-        [[ $remaining == *"'"* ]] || return 1
-        span=${remaining%%"'"*}
-        word=$word"'$span'"; value=$value$span
-        i=$((i + ${#span} + 2)); quoted=1
-        continue
-      fi
-      word=$word$c; i=$((i + 1))
-      if [ "$c" = '\' ]; then
-        [ "$i" -lt "$n" ] || return 1
-        if [ "$quote" = '"' ]; then
-          case "$next" in '$' | '`' | '"' | '\' | $'\n') ;; *) value=$value$c ;; esac
-        fi
-        word=$word$next; value=$value$next; i=$((i + 1)); quoted=1; continue
-      fi
-      # Executable substitutions can contain their own command lines and
-      # heredocs. Literal single-quoted and escaped bytes never reach here.
-      case "$c$next" in '$(') return 1 ;; esac
-      [ "$c" != '`' ] || return 1
+      c=${text:$i:1}
       case "$c" in
-        '"' | "'")
-          if [ "$quote" = "$c" ]; then quote=""; quoted=1; continue
-          elif [ -z "$quote" ]; then quote=$c; quoted=1; continue; fi ;;
+        ' ' | $'\t' | $'\n' | '<' | '>') break ;;
+        "'")
+          remaining=${text:$((i + 1))}
+          [[ $remaining == *"'"* ]] || return 1
+          span=${remaining%%"'"*}
+          value=$value$span; quoted=1; i=$((i + ${#span} + 2)) ;;
+        '"')
+          remaining=${text:$((i + 1))}
+          [[ $remaining == *'"'* ]] || return 1
+          span=${remaining%%'"'*}
+          # These bytes are literal inside ordinary double quotes. The
+          # positive class excludes every shell expansion and escape opener.
+          [[ $span =~ ^[^\$\`\\]*$ ]] || return 1
+          value=$value$span; quoted=1; i=$((i + ${#span} + 2)) ;;
+        '\')
+          next=${text:$((i + 1)):1}
+          [[ $next =~ ^[A-Za-z0-9_./:=+-]$ ]] || return 1
+          value=$value$next; quoted=1; i=$((i + 2)) ;;
+        [A-Za-z0-9_./:=+-]) value=$value$c; i=$((i + 1)) ;;
+        *) return 1 ;;
       esac
-      value=$value$c
     done
-    [ -z "$quote" ] || return 1
-    case "$word" in '{' | '}') return 1 ;; esac
-    if [ -n "$redirect" ]; then
-      case "$redirect" in
+    if [ -n "$op" ]; then
+      case "$op" in
+        '>') [ -z "$output" ] && [ -n "$value" ] || return 1; output=$value ;;
         '<<' | '<<-')
-          doc=${#delimiters[@]}; delimiters[$doc]=$value
-          strip_tabs[$doc]=0; [ "$redirect" != '<<-' ] || strip_tabs[$doc]=1
-          expands[$doc]=1; [ -z "$quoted" ] || expands[$doc]=0
-          doc_receivers[$doc]=$receiver ;;
+          [ -z "$delimiter" ] && [ -n "$quoted" ] || return 1
+          [[ $value =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+          delimiter=$value
+          [ "$op" != '<<-' ] || strip_tabs=1 ;;
       esac
-      redirect=""
-    elif [ -z "$receiver" ]; then
-      # Quoted keywords and quoted assignment names are executable words.
-      # Only their literal shell spellings can precede a receiver.
-      if [[ ! $word =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-        case "$word" in
-          if | then | elif | while | until | do | '!' | time) ;;
-          *)
-            case "${value##*/}" in
-              cat) receiver=data ;;
-              python | python3 | node | ruby | perl) receiver=data; inline=options ;;
-              *) receiver=code ;;
-            esac ;;
-        esac
-      fi
-    elif [ "$inline" = argument ]; then
-      [ -z "$quoted" ] || word=__program_data__
-      inline=""
-    elif [ "$inline" = options ]; then
-      case "$value" in
-        -c | -e | --eval) inline=argument ;;
-        # Other options can consume the next word, including a program flag.
-        # Without their argument grammar, that word is not proved inline code.
-        *) inline="" ;;
-      esac
+      op=""
+    else
+      count=${#words[@]}; words[$count]=$value; word_quotes[$count]=$quoted
     fi
-    out=$out$word
   done
-  [ "${#delimiters[@]}" -eq 0 ] && [ -z "$redirect" ] || return 1
-  COMMAND=$out
+  [ -z "$op" ] && [ "${#words[@]}" -gt 0 ] || return 1
+  receiver=${words[0]##*/}; count=${#words[@]}
+  # Inline programs leave stdin for the program to consume or pass to exec.
+  # Heredoc masking therefore requires a stdin-program invocation, never an
+  # inline or file program. cat may write one literal file, but no later
+  # command can consume it in this masking grammar.
+  case "$receiver" in
+    cat) [ "$count" -eq 1 ] && [ -n "$delimiter" ] || return 1 ;;
+    python | python3 | node | ruby | perl)
+      [ -z "$output" ] || return 1
+      if [ -n "$delimiter" ]; then
+        case "$receiver" in
+          python | python3) [ "$count" -eq 2 ] && [ "${words[1]}" = '-' ] || return 1 ;;
+          *) [ "$count" -eq 1 ] || { [ "$count" -eq 2 ] && [ "${words[1]}" = '-' ]; } || return 1 ;;
+        esac
+      else
+        [ "$count" -eq 3 ] && [ -n "${word_quotes[2]}" ] || return 1
+        case "$receiver:${words[1]}" in
+          python:-c | python3:-c | node:-e | node:--eval | ruby:-e | perl:-e) ;;
+          *) return 1 ;;
+        esac
+      fi ;;
+    *) return 1 ;;
+  esac
+  if [ -n "$delimiter" ]; then
+    # Consume each body as one byte-locale line stream, including its closing
+    # delimiter. Only whitespace may follow the complete data command.
+    while IFS= read -r line; do
+      i=$((i + ${#line})); [ "$i" -ge "$n" ] || i=$((i + 1))
+      tabs=$line
+      if [ "$strip_tabs" = 1 ]; then
+        while [[ $tabs == $'\t'* ]]; do tabs=${tabs#$'\t'}; done
+      fi
+      if [ "$tabs" = "$delimiter" ]; then found=1; break; fi
+    done <<< "${text:$i}"
+    [ -n "$found" ] || return 1
+  fi
+  remaining=${text:$i}
+  [[ $remaining =~ ^[[:space:]]*$ ]] || return 1
+  COMMAND=""
 }
 
 # The whole rule, built from named parts so each one is readable on its own.
