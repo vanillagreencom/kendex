@@ -1407,7 +1407,9 @@ jobs:
 
       # Like pi-claude-bridge below, the package's CI entry point is `test:ci`:
       # its `test` script also runs the live smoke against a real Codex login,
-      # which a runner does not have. `test:ci` runs the login-free suites.
+      # which a runner does not have. `test:ci` runs the login-free suites,
+      # the fixture suites among them: they drive the Codex CLI release the
+      # lockfile pins through a mock model provider on 127.0.0.1.
       # `npm ci` keeps the bundle check below tied to the lockfile.
       - name: pi-codex-bridge suite
         if: matrix.shard == 'node'

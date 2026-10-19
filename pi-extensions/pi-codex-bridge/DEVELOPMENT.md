@@ -94,6 +94,11 @@ The extension factory lists models through the bridge's own app-server client, u
 
 ## Tests
 
-`npm run test:ci` builds the published bundle, checks TypeScript and runs `tests/unit-*.mjs`. `tests/lib/fake-client.mjs` stands in for one app-server connection, so the bridge's router, planner and streams run unchanged.
+`npm run test:ci` builds the published bundle, checks TypeScript and runs two login-free suites:
+
+- `tests/unit-*.mjs` run against `tests/lib/fake-client.mjs`, which stands in for one app-server connection, so the bridge's router, planner and streams run unchanged.
+- `tests/fixture-*.mjs` run the real Codex CLI 0.163.0 from the `@openai/codex` dev dependency through the bridge's own start path. `tests/lib/codex-fixture.mjs` builds a scratch `CODEX_HOME` with a user marker MCP server and a trusted project that declares another, and `tests/lib/mock-responses.mjs` serves scripted model responses on 127.0.0.1 as a Codex model provider. The bridge receives that provider through its `configOverrides` test seam, which the extension factory never sets.
+
+The fixture suites hold the MCP guards at thread start and cold resume, the startup abort, the feature audit, and the native-tool guards. They also scan the bridge's stderr, stream events, child argv and environment, and every file Codex or the bridge wrote, for the env and argument sentinels of the configured servers.
 
 `tests/int-smoke.sh` runs Pi against the real Codex login. It runs only when `PI_CODEX_BRIDGE_LIVE=1`.

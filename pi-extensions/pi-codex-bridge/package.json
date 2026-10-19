@@ -32,7 +32,6 @@
       ]
     }
   },
-  "dependencies": {},
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.86.0",
     "@earendil-works/pi-coding-agent": ">=0.86.0"
@@ -48,6 +47,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "1.0.0",
     "@earendil-works/pi-coding-agent": "1.0.0",
+    "@openai/codex": "0.163.0",
     "@types/node": "^24.3.0",
     "esbuild": "^0.28.0",
     "tsx": "^4.21.0",
@@ -57,9 +57,10 @@
     "build": "esbuild src/index.ts --bundle --preserve-symlinks --platform=node --format=esm --target=node22 --outfile=bundle/index.js --external:@earendil-works/pi-ai --external:@earendil-works/pi-coding-agent",
     "prepack": "npm run build",
     "test:unit": "node --import tsx --test tests/unit-*.mjs",
-    "test:ci": "npm run build && npm run typecheck && npm run test:unit",
+    "test:ci": "npm run build && npm run typecheck && npm run test:unit && npm run test:fixture",
     "test": "set -a && [ -f .env.test ] && . ./.env.test; set +a && npm run test:ci && tests/int-smoke.sh",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:fixture": "node --import tsx --test tests/fixture-*.mjs"
   },
   "files": [
     "bundle/",
