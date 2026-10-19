@@ -122,7 +122,7 @@ skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
 data_body_rows() {
   first_table 'python replacement heredoc|command|0|-|python3 - <<'\''PY'\''\ns = '\''rm -rf "$scratch"'\''\ns.replace(s, "cleanup")\nPY
 file writing heredoc|command|0|-|cat > tmp/helper.py <<'\''EOF'\''\ns = '\''rm -rf "$scratch"'\''\nEOF
-python replacement inline|command|0|-|python3 -c '\''s = "rm -rf \\"$scratch\\""; print(s)'\''
+python replacement inline|command|0|-|python3 -c '\''s = """rm -rf "$scratch"\n"""; print(s)'\''
 python shared inline|command|0|-|python -c '\''s = "rm -rf $HOME"'\''
 node inline|command|0|-|node -e '\''const s = "rm -rf $X";'\''
 ruby inline|command|0|-|ruby -e '\''s = "rm -rf $X"'\''
