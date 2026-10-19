@@ -89,9 +89,27 @@ api_retired_result() { # what a named launch did: created, typed, refused
     "$(awk '/^create / { for(i=1;i<=NF;i++) if($i == "--account") print $(i+1) }' "$RUN/host.log" 2>/dev/null)" \
     "${typed_ssh:-0}" "$(awk '$2 == "lane-refused" {n++} END {print n+0}' <<<"$OUT")"
 }
-run_ot "$API_ENV;$RETIRED_PLAN" --host "$HOST_STUB" --harness pi --lane "$H/.eclaude" --repo o/r KEN-4428
-assert_eq "$(api_retired_result)" "rc=0 account=$H/.eclaude launched=1 refused=0" \
-  'a retired account launches a named Pi lane on its live API grant'
+api_retired_grant() { # SPELLING ENV
+  run_ot "$API_ENV;$RETIRED_PLAN$2" --host "$HOST_STUB" --harness pi --lane "$1" --repo o/r KEN-4428
+  assert_eq "$(api_retired_result)" "rc=0 account=$H/.eclaude launched=1 refused=0" \
+    "a retired account launches a named Pi lane on its live API grant, spelled $1"
+}
+# spelling|env
+while IFS='|' read -r retired_spelling retired_env; do
+  api_retired_grant "$retired_spelling" "$retired_env"
+done <<ROWS
+$H/.eclaude|
+work|;ORCH_LANE_ALIASES=eclaude=work
+ROWS
+# The control asks lanes check without the launch's harness and model.
+API_RETIRED_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-api-retired/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-api-retired/orch"
+mutate_file "$OPEN_TERMINAL" 'named_lane_resolve "$LAUNCH_HARNESS" "$LAUNCH_MODEL"' 'named_lane_resolve "" ""'
+API_RETIRED_SAVED_FAIL="$FAIL"; FAIL=0
+api_retired_grant "$H/.eclaude" '' > "$TMP_ROOT/api-retired-control.out"
+API_RETIRED_CONTROL="$FAIL"; FAIL="$API_RETIRED_SAVED_FAIL"; OPEN_TERMINAL="$API_RETIRED_SHIPPED"
+assert_eq "$API_RETIRED_CONTROL" 1 'control: a named check without the launch model fails the retired grant launch row'
 run_ot "$HARNESS_UP;$RETIRED_PLAN;flags=--model fable --effort high" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4429
 assert_eq "$(api_retired_result)" 'rc=1 account= launched=0 refused=1' \
   'a retired account stays refused for a named plan launch'
@@ -120,6 +138,19 @@ printf '%s\n' \
 while IFS='|' read -r credit flags expected preference; do
   api_preference_case "$credit" "$flags" "$expected" "$preference"
 done < "$TMP_ROOT/api-preference-rows"
+# A walk naming a retired account judges each entry's own allowance: the grant
+# entry launches on its live grant, and the plan entry it falls to is refused.
+# remaining|expected
+while IFS='|' read -r credit expected; do
+  api_hosted_rows "$credit"
+  run_ot "$API_PREFERENCE_ENV;$RETIRED_PLAN;flags=--dangerously-skip-permissions" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4428
+  walk_hosted="$(typed 'env PI_CODING_AGENT_DIR=/pi bash -lc')"
+  assert_eq "$(observe 'rc=0 claim_lanes=eclaude') hosted=${walk_hosted:-0} refused=$(awk '$2 == "lane-refused" {n++} END {print n+0}' <<<"$OUT")" \
+    "$expected" "a walk naming a retired account with $credit dollars of grant left"
+done <<'ROWS'
+150|rc=0 claim_lanes=eclaude hosted=1 refused=0
+4|rc=1 claim_lanes=none hosted=0 refused=1
+ROWS
 API_PREFERENCE_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-api-preference/orch lib/lane-launch.sh)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-api-preference/orch"

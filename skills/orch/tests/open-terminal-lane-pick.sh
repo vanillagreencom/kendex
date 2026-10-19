@@ -30,7 +30,7 @@ echo "=== a lane is resolved before anything launches ==="
 # account is full" after spawning worktrees has already done the expensive
 # half. An explicit --lane that is not a directory is a typo, not a config
 # dir; one carrying the claim record's field separator can never be counted.
-# A named lane ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused, by
+# A named lane `lanes check` refuses for the launch is refused, by
 # alias or by path alike, and an excluded lane's alias before a same-named cwd
 # directory can stand in for it. A lanes check that fails for another reason
 # (a malformed setting) is reported as that failure, never as a covered lane.
@@ -67,7 +67,7 @@ assert_eq "$(observe 'rc=0 launched=1 cmd_lane=eclaude')|$(grep -c '^list ' "$TM
 alias_scripts="$(mutant_scripts alias-list/orch open-terminal)" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/alias-list/orch"
 mutate_file "$alias_scripts/open-terminal" \
-  'lane_dir="$("$LANES_CLI" check "$LANE" ${1:+--harness "$1"} ${2:+--native-model "$2"})"' \
+  'lane_dir="$("$LANES_CLI" check "$LANE" ${harness:+--harness "$harness"} ${model:+--native-model "$model"})"' \
   'lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" '\''map(select(.alias == $a)) | first | .config_dir // empty'\'')"'
 OPEN_TERMINAL="$alias_scripts/open-terminal"
 : > "$TMP_ROOT/alias-lanes.log"
@@ -463,7 +463,7 @@ table \
   "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work KEN-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
   "a preference skips the model its live claim projects past the wall|$NAMED_PREFERENCE;prep=claude_claim|--harness claude --lane $H/.claude KEN-1644|rc=0 launched=1 cmd_lane=claude cmd_model=opus" \
   "a preference checks an excluded alias before a same-named directory|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;ORCH_LANE_EXCLUDE=claude;cwd=$COLLIDE|--harness claude --lane work KEN-1645|rc=1 launched=nolog refused=lane=work"
-pi_control ctl-preference-projected open-terminal 'preference_pick_args=(--lane "$lane_dir" --projected)' 'preference_pick_args=(--lane "$lane_dir")' \
+pi_control ctl-preference-projected open-terminal 'preference_pick_args=(--lane "$preference_lane_dir" --projected)' 'preference_pick_args=(--lane "$preference_lane_dir")' \
   "$NAMED_PREFERENCE;prep=claude_claim" --harness claude --lane "$H/.claude" KEN-1644
 assert_eq "$(observe "rc=0 launched=1 cmd_model=fable")" "rc=0 launched=1 cmd_model=fable" \
   "control: without projected use the preference launches the walled first model"

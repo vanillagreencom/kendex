@@ -270,9 +270,10 @@ Options:
                     `lanes --help` (pick); `auto:<h>` picks for
                     harness <h>; a config dir
                     is used literally; any other value is looked up as a lane
-                    alias. A named lane (alias or config dir) that
-                    ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
-                    as `lanes check` decides. Refuses to launch when no lane
+                    alias. A named lane (alias or config dir) is refused
+                    where `lanes check` refuses it for the launch's harness
+                    and model: ORCH_LANE_EXCLUDE always, ORCH_LANE_RETIRE for
+                    every launch but a Pi anthropic/ one on the API grant. Refuses to launch when no lane
                     is under the usage threshold, rather than launching into
                     a wall. EVERY lane launch on a harness the flag table names
                     is asked for its model, and for its reasoning effort where

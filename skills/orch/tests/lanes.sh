@@ -721,15 +721,24 @@ api_case 'a partial grant with no spent figure is dropped' "$API_ENV" 'host-acco
 api_control api-spent-shape lanes \
   '[[ "$credit_spent" =~ ^[0-9]+([.][0-9]{1,2})?$ ]] || bad="${bad:-credit-spent}"' ':' \
   'host-accounts --harness pi --json' '.' '0:[]'
-for detail in api-credit-tokens-unreadable api-credit-tokens-undated api-credit-model-unpriced api-credit-reading-unavailable; do
+# A retired plan leaves an unread grant unread: retirement reduces the plan
+# rows alone, so the grant row keeps its own status and detail.
+while IFS='|' read -r unread_policy detail; do
   printf 'account=%s\tharness=pi\tstatus=unreachable\tdetail=%s\n' "$H/.eclaude" "$detail" > "$API_ROWS"
-  run_lanes "$API_ENV" pick --lane "$H/.eclaude" --harness pi --model anthropic/claude-opus-5-5 --json
+  run_lanes "$API_ENV$unread_policy" pick --lane "$H/.eclaude" --harness pi --model anthropic/claude-opus-5-5 --json
   assert_eq "$RC:$(jq -c '[.status, .detail, .refusal.cause]' <<<"$OUT")" \
-    "5:[\"unreachable\",\"$detail\",\"api-credit\"]" 'an unread provider token record keeps its detail and refuses'
-  run_lanes "$API_ENV" pick --harness pi --model anthropic/claude-opus-5-5 --json
-  assert_eq "$RC:$(jq -c '[.unmeasured, .refusals[0].refusal.cause]' <<<"$OUT")" '5:[1,"api-credit"]' 'the chooser refuses an unread API account'
+    "5:[\"unreachable\",\"$detail\",\"api-credit\"]" "an unread provider token record keeps its detail and refuses${unread_policy:+ under $unread_policy}"
+  run_lanes "$API_ENV$unread_policy" pick --harness pi --model anthropic/claude-opus-5-5 --json
+  assert_eq "$RC:$(jq -c '[.unmeasured, .refusals[0].refusal.cause]' <<<"$OUT")" '5:[1,"api-credit"]' \
+    "the chooser refuses an unread API account${unread_policy:+ under $unread_policy}"
   assert_eq "$(grep -c '^lanes: copilot-pool-' "$ERR" || true)" 0 'an API-credit refusal names no Copilot setting'
-done
+done <<'UNREAD'
+|api-credit-tokens-unreadable
+|api-credit-tokens-undated
+|api-credit-model-unpriced
+|api-credit-reading-unavailable
+;ORCH_LANE_RETIRE=eclaude=2000-01-01|api-credit-tokens-unreadable
+UNREAD
 
 echo "=== a retired plan leaves its account's API grant to the grant's own expiry ==="
 # One account holds a Claude plan, now retired, and an API grant that expires
@@ -764,7 +773,7 @@ table \
 # The control lets the grant exemption cover every row of a retired account.
 API_RETIRED_SHIPPED="$LANES"
 API_RETIRED_MUTANT="$(mutant_scripts api-retired-plan lanes)" || exit 1
-mutate_file "$API_RETIRED_MUTANT/lanes" '"$mode" != discovery && -z "$credit_fields" ]]' '"$mode" != discovery && -z "x" ]]'
+mutate_file "$API_RETIRED_MUTANT/lanes" '(api_grant_row($v[15] != ""; $v[3]) | not)) as $retired' 'false) as $retired'
 LANES="$API_RETIRED_MUTANT/lanes"; API_RETIRED_SAVED="$FAIL"; FAIL=0
 api_case 'the retired plan is still no plan pick' "$API_RETIRED" 'pick --harness claude --json' '.config_dir // "none"' '3:"none"' \
   > "$TMP_ROOT/api-retired-plan.out"

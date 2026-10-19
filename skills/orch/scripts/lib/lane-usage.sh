@@ -191,7 +191,8 @@ parse_usage_samples() { # HARNESS CURRENT_JSON PRIOR_JSON
 
 # The tier inputs of one pick over LANES, `lanes`' JSON array of records, as
 # TIER_POOL, the launch's spending pool, TIER_RETIRE, each account's
-# ORCH_LANE_RETIRE date, TIER_CLOUD_REPO, the accounts a cloud-session launch
+# ORCH_LANE_RETIRE date for a cloud-credit pick, where retirement ends the
+# credit, and empty for any other pool, TIER_CLOUD_REPO, the accounts a cloud-session launch
 # may take, null for any other launch, and TIER_REPO, the checkout's
 # github.com repository they were judged against. Read once per pick: an
 # expiring credit is tier 0 only where the kind declares it, and a cloud
@@ -206,8 +207,8 @@ lane_tier_inputs() { # LANES HARNESS MODEL
 	TIER_POOL="$pool"
 	lane_capability launch launch
 	case "$pool" in
-		plan | copilot) ;;
-		cloud-credit | api-credit)
+		plan | copilot | api-credit) ;;
+		cloud-credit)
 			while IFS= read -r dir; do
 				lane_retire_date "$dir" silent; date="$LANE_RETIRE_DATE"
 				[[ -z "$date" ]] || TIER_RETIRE="$(jq -c --arg d "$dir" --arg v "$date" '. + {($d): $v}' <<<"$TIER_RETIRE")" || return 1

@@ -22,7 +22,7 @@
 #              [--binding-floor] [--projected] [--no-cache] [--json]
 #   lanes host-accounts [--harness claude|codex|copilot|pi|all] [--no-cache] [--json]
 #   lanes context [--json]
-#   lanes check <config-dir|name>
+#   lanes check <config-dir|name> [--harness H] [--model NAME | --native-model NAME]
 #   lanes state <item> [--json]
 #   lanes facts --state-dir DIR ITEM
 #
@@ -332,15 +332,18 @@
 #         handoff, the judge the hook uses, or at a HEADROOM at or
 #         below ORCH_HANDOFF_HEADROOM_PCT (default 3), or on a seat at or below
 #         ORCH_OVERSEER_SEAT_RESERVE_PCT. The caller's own row uses the ordinary
-#         mark. An account room on its credits (see pick) is never marked by
-#         headroom; its HEADROOM is its balance. A Pi lane on an anthropic/
-#         model is judged on its account's API grant as pick --lane judges
-#         it: HEADROOM is the grant's share left, and the plan windows never
-#         mark it.
+#         mark. A Codex account room on its credits (see pick) is never
+#         marked by headroom; its HEADROOM is its balance. A Pi lane on an
+#         anthropic/ model is judged on its account's API grant as pick --lane
+#         judges it: its HEADROOM is the grant's share left, and it is marked
+#         only when the grant is walled (at or below
+#         ORCH_LANE_CLOUD_CREDIT_FLOOR, locked or expired), never by that
+#         share or by the plan windows.
 #         --json carries `binding_bucket`, `credits` and `binding_resets_at`;
 #         the last is when the binding window resets, a credits row's spent
 #         plan window, in whole-second UTC with a Z, so a headroom
-#         refusal can say when the account returns. It also carries `server`, the tmux server the row's
+#         refusal can say when the account returns. A Pi grant lane's is
+#         null: a grant that ends returns nothing. It also carries `server`, the tmux server the row's
 #         `pane` belongs to, since pane ids restart at %0 on every server.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
@@ -604,13 +607,13 @@
 #                      UTC date; from it on, `list` shows it as `retired` and
 #                      nothing inside it is read. A malformed pair, or a date
 #                      naming no calendar day, is refused. It retires the
-#                      plan alone: a provider harness=pi row carrying an API
-#                      grant for the account keeps its figures, and the grant
-#                      ends at its own `resets_at` (see pick, tier 0).
+#                      plan alone: a provider harness=pi row for the account's
+#                      API grant keeps its figures, or its unread status, and
+#                      the grant ends at its own `resets_at` (see pick, tier 0;
+#                      check).
 #                      Both reach an account a lane host reports as well as a
-#                      config dir on this machine: the setting says the account
-#                      is not this fleet's to use, which a copy of it on another
-#                      machine does not change.
+#                      config dir on this machine: a copy of the account on
+#                      another machine is the same account.
 #   ORCH_MODEL_RECOVERY_LIMIT (default 3): refuse this item's Nth consecutive
 #                      model-switch recovery after N-1 successful replacements.
 #                      A replacement's first turn without a mismatch resets it.
@@ -1144,7 +1147,7 @@ message() {
       ;;
     lane-retired)
       printf 'lanes: lane-retired dir=%s date=%s\n' "$1" "$2"
-      printf '%s\n' "ORCH_LANE_RETIRE retired this lane; nothing launches under it"
+      printf '%s\n' "ORCH_LANE_RETIRE retired this lane's plan; only a Pi anthropic/ launch on its API grant runs under it"
       ;;
     context-claims)
       printf 'lanes: context-claims exit=%s\n' "1"
@@ -3020,9 +3023,10 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # CACHE is the form written to the usage cache: the provider's row for an
 # account the policy admits, nothing for an excluded one, and for a retired one
 # its account, harness and a `status=retired` marker with no usage figure. A
-# retired account's harness=pi row carrying credit-* fields is the exception
-# in every mode: retirement ends the plan, and the grant ends at its own
-# credit-expires (`lanes --help` § pick, tier 0), so that row stays whole. The
+# retired account's API grant row (lib/lane-model.sh api_grant_row) is the
+# exception in every mode: retirement ends the plan, and the grant ends at its
+# own credit-expires (`lanes --help` § pick, tier 0), so that row stays whole,
+# an unread grant keeping its own status and detail. The
 # marker keeps the row a reading, so a listing that wants readings still
 # reports the account retired rather than unlisted; it is never read under a
 # policy that does not retire the account, since the record it sits in is
@@ -3032,7 +3036,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 	local rows="$1" want="$2" mode="${3:-}" sample_at="${4:-null}" line field key value bad retire said rest alias
 	local batch_args=() selected id claims wall wall_file kind payload normalized_result=""
 	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
-	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field
+	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field retired
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		account=""; harness=""; status="ok"; detail=""; seat=""; bad=""; said=""
@@ -3105,11 +3109,10 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		[[ "$mode" != readings || -n "$said" ]] || selected=false
 		if [[ "$mode" != discovery ]] && lane_excluded "$account"; then selected=false; fi
 		lane_alias_for "$account" silent; alias="$LANE_ALIAS"
-		if lane_retired "$account" silent; then
-			retire="$LANE_RETIRE_DATE"
-			if [[ "$mode" != seats && "$mode" != canon && "$mode" != discovery && -z "$credit_fields" ]]; then
-				status=retired detail="retired on $retire (ORCH_LANE_RETIRE)"
-			fi
+		# The decoder below reduces a retired row unless it is an API grant.
+		retired=""
+		if lane_retired "$account" silent && [[ "$mode" != seats && "$mode" != canon && "$mode" != discovery ]]; then
+			retired=yes
 		fi
 		retire="$LANE_RETIRE_DATE"
 		if [[ "$selected" == true && "$mode" != cache && "$mode" != discovery ]]; then
@@ -3125,25 +3128,28 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		fi
 		batch_args+=("$account" "$harness" "$status" "$detail" "$seat" "$said" "$s_pct" "$w_pct" "$m_pct" "$mo_pct"
 			"$m_label" "$s_reset" "$w_reset" "$m_reset" "$mo_reset" "$credit_fields" "$credit_limit" "$credit_spent"
-			"$credit_remaining" "$credit_expires" "$alias" "$id" "$retire" "$claims" "$wall" "$wall_file" "$line" "$selected")
+			"$credit_remaining" "$credit_expires" "$alias" "$id" "$retire" "$claims" "$wall" "$wall_file" "$line" "$selected" "$retired")
 	done <<<"$rows"
 	local decoded
 	decoded="$(jq -nr --arg mode "$mode" --argjson sample_at "$sample_at" --args "$LANE_MODEL_JQ$LANE_EMIT_JQ$ACCOUNT_WALL_JQ"'
 		def nz: if . == "" then null else . end;
 		$ARGS.positional as $a
-		| [range(0; ($a | length); 28) as $i
-		   | $a[$i:$i+28] as $v
+		| [range(0; ($a | length); 29) as $i
+		   | $a[$i:$i+29] as $v
+		   | ($v[28] != "" and (api_grant_row($v[15] != ""; $v[3]) | not)) as $retired
+		   | (if $retired then "retired" else $v[2] end) as $status
+		   | (if $retired then "retired on \($v[22]) (ORCH_LANE_RETIRE)" else $v[3] end) as $detail
 		   | if $v[15] != "" and ((try ($v[16] | tonumber) catch 0) <= 0 or (try ($v[19] | fromdateiso8601) catch null) == null)
 		     then {kind: "invalid", payload: $v[0]}
 		     elif $v[27] != "true" or $mode == "canon" then empty
 		     elif $mode == "cache" then
-		       {kind: "text", payload: (if $v[2] == "retired" then "account=\($v[0])	harness=\($v[1])	status=retired" else $v[26] end)}
+		       {kind: "text", payload: (if $status == "retired" then "account=\($v[0])	harness=\($v[1])	status=retired" else $v[26] end)}
 		     elif $mode == "seats" then
 		       if $v[4] == "1" then {kind: "text", payload: $v[21]} else empty end
 		     elif $mode == "discovery" then
-		       if $v[15] != "" or ($v[3] | startswith("api-credit-")) then {kind: "text", payload: "true"} else empty end
+		       if api_grant_row($v[15] != ""; $v[3]) then {kind: "text", payload: "true"} else empty end
 		     else
-		       (if $v[2] == "retired" then {} else
+		       (if $status == "retired" then {} else
 		         {session_5h_pct: ($v[6] | fromjson), weekly_pct: ($v[7] | fromjson),
 		          model_pct: ($v[8] | fromjson), monthly_pct: ($v[9] | fromjson),
 		          credits: (if $v[15] == "" then null else {unit: "usd", limit_dollars: ($v[16] | tonumber),
@@ -3153,16 +3159,16 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		             else [{label: ($v[10] | nz), pct: ($v[8] | tonumber), resets_at: ($v[13] | nz)}] end),
 		          resets: {session: ($v[11] | nz), weekly: ($v[12] | nz), model: ($v[13] | nz), monthly: ($v[14] | nz)}} end) as $b
 		       | if $mode == "normalized" then
-		           {kind: "account", payload: {harness: $v[1], config_dir: $v[0], status: $v[2], detail: $v[3], plan: "", through: "host",
+		           {kind: "account", payload: {harness: $v[1], config_dir: $v[0], status: $status, detail: $detail, plan: "", through: "host",
 		              buckets: $b, reset_buckets: $b, prior_buckets: {}, has_reading: ($v[5] != "")}}
 		         elif $mode == "buckets" then {kind: "json", payload: ($b | tojson)}
 		         else
-		           (if $v[24] == "" then null else account_wall_read($v[24]) end) as $w
+		           (if $v[24] == "" or $retired then null else account_wall_read($v[24]) end) as $w
 		           | (if $w == "unreadable" then {} elif $w != null then ($b | account_wall_apply($w; $v[21])) else $b end) as $b
 		           | (if $w == "unreadable" then {kind: "wall-error", payload: $v[25]} else empty end),
 		             {kind: "json", payload: (emit_lane_row($v[20]; $v[1]; $v[0]; $v[21];
-		                (if $w == "unreadable" then "error" else $v[2] end);
-		                (if $w == "unreadable" then "wall record unreadable" else $v[3] end);
+		                (if $w == "unreadable" then "error" else $status end);
+		                (if $w == "unreadable" then "wall record unreadable" else $detail end);
 		                ""; $v[22]; (if $v[1] == "pi" and $b.credits.unit == "usd" then 0 else $v[23] | fromjson end);
 		                null; false; "host"; $b; {}; null; 1; $sample_at) | tojson)}
 		         end
@@ -3522,8 +3528,8 @@ pick_host_rows() { # HARNESS [MODEL]
 		# A failed command returned no reading to repair. Both pick forms
 		# preserve its busy or timeout diagnostic and fail as a command.
 		[[ "$pool" != api-credit || "$HOSTED_READ" != failed ]] || return 1
-		HOSTED_ROWS="$(jq -c --arg pool "$pool" \
-			'def api_credit: .credits != null or ((.detail // "") | startswith("api-credit-"));
+		HOSTED_ROWS="$(jq -c --arg pool "$pool" "$LANE_MODEL_JQ"'
+			 def api_credit: api_grant_row(.credits != null; .detail);
 			 map(select(if $pool == "api-credit" then api_credit else (api_credit | not) end))' <<<"$HOSTED_ROWS")" || return 1
 	fi
 }

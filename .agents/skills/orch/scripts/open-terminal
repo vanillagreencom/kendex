@@ -301,9 +301,10 @@ fi
 # Exits unless lanes clears the lane $1 names. lanes owns the name, alias and
 # retirement matching: its exit 4 is a lane a setting excludes or retires, and
 # any other failure is lanes failing, never reported as a covered lane. The
-# launch's harness and model, where known, tell it which allowance is spent:
-# retirement refuses a plan launch and leaves an API grant launch to the judge.
-lane_check() { # DIR [HARNESS MODEL]
+# launch's harness and model, each empty where the launch names none, tell it
+# which allowance is spent: retirement refuses a plan launch and leaves an API
+# grant launch to the judge.
+lane_check() { # DIR HARNESS MODEL
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
   local rc=0
   "$LANES_CLI" check "$1" ${2:+--harness "$2"} ${3:+--native-model "$3"} >/dev/null || rc=$?
@@ -313,9 +314,10 @@ lane_check() { # DIR [HARNESS MODEL]
     *) ot_message lane-resolution-failed "exit=$rc" >&2; exit 1 ;;
   esac
 }
-# Resolves and checks a caller-named lane once, before its model is judged.
-named_lane_resolve() { # [HARNESS MODEL]
-  local alias_rc=0
+# Resolves and checks a caller-named lane for the launch's harness and model,
+# before its usage is judged.
+named_lane_resolve() { # HARNESS MODEL
+  local harness="$1" model="$2" alias_rc=0
   lane_dir="$LANE"
   # A value carrying a `/` is meant as a path, so a miss there is a typo,
   # not an alias. A bare word is resolved as a lane alias — the discovered
@@ -333,7 +335,7 @@ named_lane_resolve() { # [HARNESS MODEL]
     # failed would otherwise end the run here with no line naming why, and
     # an empty result is the alias-not-found answer the branch below reads.
     alias_rc=0
-    lane_dir="$("$LANES_CLI" check "$LANE" ${1:+--harness "$1"} ${2:+--native-model "$2"})" || alias_rc=$?
+    lane_dir="$("$LANES_CLI" check "$LANE" ${harness:+--harness "$harness"} ${model:+--native-model "$model"})" || alias_rc=$?
     case "$alias_rc" in
       0) ;;
       4) ot_message lane-refused "lane=$LANE" "exit=$alias_rc" >&2; exit 1 ;;
@@ -346,7 +348,7 @@ named_lane_resolve() { # [HARNESS MODEL]
   fi
   # Whether a setting excludes or retires the lane is lanes' decision, asked
   # of the resolved directory so an alias and a path answer alike.
-  lane_check "$lane_dir" "${1:-}" "${2:-}"
+  lane_check "$lane_dir" "$harness" "$model"
 }
 
 # Keep the caller's input for every preference walk, including a batch's
@@ -369,10 +371,11 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
     ot_message invalid-preference "entry=$OL_BAD_ENTRY" >&2; exit 1;
   }
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-  preference_pick_args=()
+  # A named lane is resolved for each entry, whose harness and model name the
+  # allowance the lane settings judge (preference_select).
+  preference_named=true
   case "$LANE" in
-    ''|auto|auto:*) ;;
-    *) named_lane_resolve; preference_pick_args=(--lane "$lane_dir" --projected) ;;
+    ''|auto|auto:*) preference_named=false ;;
   esac
   preference_input=()
   if [[ -n "$CMD_INPUT" ]]; then
@@ -406,6 +409,7 @@ export ORCH_MODEL_LINES_HELD=1
 # changes.
 preference_select() {
   local preference_entry preference_rc preference_word preference_record preference_mode="$TERMINAL_MODE"
+  local preference_lane_dir preference_pick_args
   local preference_index=0 preference_room="" preference_err
   if [[ -z "$preference_mode" ]]; then
     if tmux_server_named; then preference_mode=tmux; else preference_mode=gui; fi
@@ -442,6 +446,12 @@ preference_select() {
       cloud-task) continue ;;
       *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; return 1 ;;
     esac
+    preference_pick_args=()
+    if [[ "$preference_named" == true ]]; then
+      # A subshell, so a refusal returns from a batch rejudge as well.
+      preference_lane_dir="$(named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" && printf '%s' "$lane_dir")" || return 1
+      preference_pick_args=(--lane "$preference_lane_dir" --projected)
+    fi
     preference_rc=0
     preference_record="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
     case "$preference_rc" in
