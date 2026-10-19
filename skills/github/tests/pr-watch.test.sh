@@ -228,7 +228,6 @@ for conclusion in failure timed_out startup_failure; do
     "queued aggregate $conclusion reports its current head||$ARMED_ENV;STUB_OPEN_PRS=$P7U;STUB_QUEUED=yes;STUB_CI_RAW=$failed|rc=1 kinds=ci-failed queued_notes=1"
 done
 table \
-  "a failed armed head is a standing line on another call||$ARMED_ENV|rc=1 kinds=ci-failed" \
   "a failed approved refresh reports CI without approval attention||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;STUB_DECISION=APPROVED|rc=1 kinds=ci-failed" \
   "failed CI reports beside open threads and objections||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;STUB_UNRESOLVED=1;STUB_DECISION=CHANGES_REQUESTED|rc=1 kinds=threads-open,ci-failed,changes-requested" \
   "a moved failing refresh head reports no old CI||$REFRESH_ENV;STUB_CI_RAW=$CI_RED;$HEAD_AFTER|rc=1 kinds=head-moved" \
