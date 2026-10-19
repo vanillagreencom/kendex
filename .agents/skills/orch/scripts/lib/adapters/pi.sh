@@ -4,6 +4,9 @@
 # writes, and the window, which Pi keeps in its model registry and never in
 # that file: the pi-hooks carrier puts it on the turn-end and tool-call
 # payloads as `context_window`, from the session's own `getContextUsage()`.
+# A run with no payload, a lane's own pre-panel check from its Bash tool or
+# the lane mail wake's turn end, takes the window the session's record holds
+# or reads Pi's registry itself (lane_adapter_pi_reading).
 #
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
 # its settings file, so open-terminal reads that value before a Pi launch
@@ -22,26 +25,77 @@
 # spends (lib/overseer-launch.sh § ol_account).
 # The context is the message's input plus the cache it was read from and
 # written to, and its output, which the next request sends back: the sum Pi's
-# own `totalTokens` is (`Usage`, @earendil-works/pi-ai). `$2` is the window the payload
-# named. It is a verified point only while effective settings disable
-# compaction. Settings errors are reported without discarding the token count.
-lane_adapter_pi_reading() { # UNREAD WINDOW [DIR]
-  local window="" rc=0
+# own `totalTokens` is (`Usage`, @earendil-works/pi-ai).
+#
+# The window is a verified point only while effective settings disable
+# compaction, and is then the first of: WINDOW, the one a hook payload named;
+# the window BOX's record holds for the same SESSION and model, which a turn
+# end with a payload wrote; Pi's own registry for the reading's model
+# (lane_adapter_pi_registry_window). With none it is empty, which the judge
+# refuses as unmeasured. A number a caller types is no source: the pre-panel
+# command passes no WINDOW. Settings errors are reported without discarding
+# the token count.
+lane_adapter_pi_reading() { # UNREAD WINDOW [DIR] [SESSION] [BOX]
+  local off=false rc=0 reading tokens window model
   lane_adapter_pi_compaction_on "${3:-$PWD}" || rc=$?
   case "$rc" in
     0) ;; # Enabled compaction has no verified point in this reader.
-    1) window="${2:-}" ;;
+    1) off=true ;;
     *) printf 'pi-settings=%s\n%s\n' "$LANE_ADAPTER_PI_FILE" "$LANE_ADAPTER_PI_CAUSE" >&2 ;;
   esac
-  jq -Rnr --arg unread "$1" --arg window "$window" '
+  reading=$(jq -Rnr --arg unread "$1" '
     [inputs | fromjson? | .message? | objects
      | select((.usage | type) == "object")
      | (if (.provider // "") != "" and (.model // "") != "" then "\(.provider)/\(.model)" else .model end) as $model
      | .usage
      | if has("input") or has("output") or has("cacheRead") or has("cacheWrite")
-       then "\((.input // 0) + (.output // 0) + (.cacheRead // 0) + (.cacheWrite // 0))\t\($window)\t\($model // "")"
+       then "\((.input // 0) + (.output // 0) + (.cacheRead // 0) + (.cacheWrite // 0))\t\t\($model // "")"
        else $unread end]
-    | last // empty'
+    | last // empty') || return
+  case "$reading" in
+    '') return 0 ;;
+    *$'\t'*) ;;
+    *) printf '%s\n' "$reading"; return 0 ;;
+  esac
+  tokens=${reading%%$'\t'*}
+  model=${reading##*$'\t'}
+  window=""
+  if [ "$off" = true ]; then
+    window=${2:-}
+    [ -n "$window" ] || window=$(lane_adapter_pi_record_window "${5:-}" "${4:-}" "$model")
+    [ -n "$window" ] || window=$(lane_adapter_pi_registry_window "$model")
+  fi
+  printf '%s\t%s\t%s\n' "$tokens" "$window" "$model"
+}
+
+# The window BOX's context record holds for a Pi reading of SESSION on MODEL,
+# and nothing where BOX or SESSION is empty, no record stands or it is another
+# session's, model's or harness's, or a gap record. Read through
+# lane_context_record_fields, which owns the record's shape. A turn end of the
+# same session wrote it, from the window its payload named or from this same
+# chain; a model switched since names another window.
+lane_adapter_pi_record_window() { # BOX SESSION MODEL
+  local record
+  { [ -n "$1" ] && [ -n "$2" ] && [ -r "$1/$LANE_CONTEXT_RECORD" ]; } || return 0
+  record=$(cat -- "$1/$LANE_CONTEXT_RECORD" 2>/dev/null) || return 0
+  lane_context_record_fields "$record" || return 0
+  [ "$LANE_CTX_HARNESS" = pi ] && [ "$LANE_CTX_SESSION" = "$2" ] && [ "$LANE_CTX_MODEL" = "$3" ] || return 0
+  printf '%s\n' "$LANE_CTX_WINDOW"
+}
+
+# The context window Pi's model registry holds for MODEL, `provider/id`, read
+# through the SDK of the `pi` on PATH by pi-registry-window.mjs beside this
+# file, offline and against the Pi user directory the settings above are read
+# from; nothing where MODEL names no provider, no `pi` or `node` is on PATH,
+# or the registry names no window. The read takes about a second, so it runs
+# only where no payload or record named one.
+lane_adapter_pi_registry_window() { # MODEL
+  local pi
+  case "$1" in */*) ;; *) return 0 ;; esac
+  pi=$(command -v pi) || return 0
+  command -v node >/dev/null || return 0
+  PI_OFFLINE=1 PI_CODING_AGENT_DIR="$(lane_adapter_pi_agent_dir)" \
+    node "${BASH_SOURCE[0]%/*}/pi-registry-window.mjs" "$pi" "${1%%/*}" "${1#*/}" 2>/dev/null || :
 }
 
 # The Pi user directory: PI_CODING_AGENT_DIR, else the home's `.pi/agent`.

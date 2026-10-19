@@ -587,6 +587,73 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   rm -- "$PANEL_HOME/.cache/lane-mail/copilot-usage/s1"
 fi
 
+# A Pi lane runs the pre-panel command from its Bash tool, where no payload
+# names a window. The window comes from the session's record or Pi's own
+# model registry, never from a number the lane types. The registry is read
+# through the SDK of the `pi` on PATH, so a stub install stands in for Pi: its
+# `bin/pi` links into a package whose ModelRuntime names STUB_PI_WINDOW for
+# anthropic/claude-opus-5-5 alone, and shadows any real Pi on this machine.
+PI_STUB="$TMP_ROOT/pi-stub"
+PI_STUB_PKG="$PI_STUB/lib/node_modules/@earendil-works/pi-coding-agent"
+mkdir -p "$PI_STUB/bin" "$PI_STUB_PKG/dist/bundle"
+printf '%s\n' '{"name":"@earendil-works/pi-coding-agent","type":"module","exports":{".":{"import":"./dist/index.js"}}}' \
+  > "$PI_STUB_PKG/package.json"
+printf '%s\n' '#!/usr/bin/env node' > "$PI_STUB_PKG/dist/bundle/cli.js"
+chmod +x "$PI_STUB_PKG/dist/bundle/cli.js"
+cat > "$PI_STUB_PKG/dist/index.js" <<'STUB'
+export const ModelRuntime = {
+  async create() {
+    return {
+      getModel(provider, id) {
+        const window = Number(process.env.STUB_PI_WINDOW);
+        return provider === "anthropic" && id === "claude-opus-5-5" && window > 0 ? { contextWindow: window } : undefined;
+      },
+    };
+  },
+};
+STUB
+ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js "$PI_STUB/bin/pi"
+PI_PANEL_AGENT="$TMP_ROOT/pi-panel-agent"
+PI_PANEL_BOX="$TMP_ROOT/pi-panel-box"
+mkdir -p "$PI_PANEL_AGENT" "$PI_PANEL_BOX"
+pi_line claude-opus-5-5 146108 anthropic > "$T/pi-panel"
+pi_panel_read() { # STUB_WINDOW [WINDOW_ARGUMENT]
+  local out rc=0
+  out=$(env -i PATH="$PI_STUB/bin:$PATH" HOME="$PANEL_HOME" PI_CODING_AGENT_DIR="$PI_PANEL_AGENT" \
+    STUB_PI_WINDOW="$1" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
+    "$BASH" "$LIB" pi s1 "$T/pi-panel" "$PI_PANEL_BOX" "$PI_READ_PROJECT" "${@:2}" 2>"$T/panel.err") || rc=$?
+  printf 'rc=%s verdict=%s' "$rc" "$out"
+}
+# `row|compaction enabled|registry window|record session and model|window
+# argument, `none` for the five-argument form|answer|keyed stderr line`. At
+# 146108 tokens and the 150000 reserve, 272000 is due and 1000000 is room.
+while IFS='|' read -r row compaction stub record argument want key; do
+  printf '{"compaction":{"enabled":%s}}\n' "$compaction" > "$PI_PANEL_AGENT/settings.json"
+  rm -f -- "$PI_PANEL_BOX/context.json"
+  if [[ -n "$record" ]]; then
+    read -r record_session record_model <<<"$record"
+    "$BASH" -c 'source "$1"; lane_context_record "$2" pi 100000 1000000 "$3" "$4"' _ \
+      "$LIB" "$PI_PANEL_BOX" "$record_model" "$record_session"
+  fi
+  if [[ "$argument" == none ]]; then got=$(pi_panel_read "$stub"); else got=$(pi_panel_read "$stub" "$argument"); fi
+  assert_eq "$got" "$want" "pi pre-panel $row: $want" "$T/panel.err"
+  if [[ -n "$key" ]]; then
+    assert_eq "$(grep -cxF -- "$key" "$T/panel.err" || true)" 1 "pi pre-panel $row reports $key"
+  fi
+done <<'ROWS'
+registry|false|1000000|||rc=0 verdict=room|
+typed-window|false|1000000||272000|rc=0 verdict=room|lane-context: window-argument=272000
+five-arguments|false|1000000||none|rc=0 verdict=room|
+no-source|false||||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
+record|false||s1 anthropic/claude-opus-5-5||rc=0 verdict=room|
+record-other-session|false||s2 anthropic/claude-opus-5-5||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
+record-other-model|false||s1 anthropic/claude-opus-4-8||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
+compaction-on|true|1000000|||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
+ROWS
+printf '%s\n' '{"compaction":{"enabled":false}}' > "$PI_PANEL_AGENT/settings.json"
+pi_panel_read 1000000 "" >/dev/null
+assert_eq "$(jq -c '[.session_id, .model, .window]' "$PI_PANEL_BOX/context.json" 2>/dev/null || echo absent)" \
+  '["s1","anthropic/claude-opus-5-5",1000000]' 'pi pre-panel records the window the registry named'
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   echo "=== must-fail controls ==="
   # control NAME FILE OLD NEW PATTERN — a copy of the library whose FILE has OLD
@@ -667,6 +734,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'window full: 800000 of 800000 on copilot: rc=1'
   control window-full-limit lane-context.sh '  [ "$1" -ge "$2" ]' '  [ "$1" -gt "$2" ]' \
     'window full: 1000000 of 1000000 on claude: rc=0'
+  control pi-record-session adapters/pi.sh '[ "$LANE_CTX_SESSION" = "$2" ] && ' '' \
+    'pi pre-panel record-other-session: rc=2 verdict='
   control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \
     'user {"compaction":{"enabled":false}} and project {"compaction":{"enabled":true}}: rc=0'
   control owned-claude-session adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \
