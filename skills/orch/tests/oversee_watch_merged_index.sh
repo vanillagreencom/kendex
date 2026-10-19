@@ -19,7 +19,8 @@ for arg in "$@"; do
     measure=true
     old='def lane_merged($item; $owner; $pr; $since):'
     [[ "$arg" == *"$old"* ]] || exit 1
-    arg="${arg/"$old"/"$old (length | debug) as \$visits |"}"
+    replacement="$old (length | debug) as \$visits |"
+    arg="${arg/"$old"/$replacement}"
   fi
   args+=("$arg")
 done
