@@ -1744,12 +1744,14 @@ MERGED_SEARCH_PAGE=1000
 # uses its mergedAt for the publication floor and its merge commit for containment.
 MERGED_ITEM_ROWS=""
 MERGED_ITEM_HITS=""
+# The shared Verifying read returns the latest epoch and repository member.
+MERGED_ITEM_AT=""
+MERGED_ITEM_REPO=""
 merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [ITEM_SEARCH] [ITEMS_JSON] [BRANCH]
   local item="$1" repo="$2" pr="$3" since="${4:-null}" floor="${5:-}"
   local branch list named search rows errf="$WORK_DIR/merged.err"
   local fields=number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body
   branch="${9:-}"
-  [[ -n "$branch" ]] || branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
   if [[ -n "${6:-}" ]]; then
     local read_file="$6/${repo//\//%}.merged" key value
     if [[ ! -f "$read_file" ]]; then
@@ -1759,13 +1761,24 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [I
         gh pr list --repo "$repo" --search "$search" --limit "$MERGED_SEARCH_PAGE" --state merged --json "$fields" >>"$read_file" 2>"$errf" \
           || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
       done
-      # Bodies are ownership evidence. Retain only the merge fields after
-      # lane_merged has judged each item, once per repository and pass.
-      if ! named="$(jq -rs --argjson cap "$MERGED_SEARCH_PAGE" --argjson items "$8" --arg owner "${repo%%/*}" \
+      # Index candidate mentions once; lane_merged still owns the judgement.
+      # Prefixes at punctuation retain Closes keys followed by non-alphanumerics.
+      if ! named="$(jq -rs --argjson cap "$MERGED_SEARCH_PAGE" --argjson items "$8" --arg owner "${repo%%/*}" --arg repo "$repo" \
         "$LANE_MERGED_JQ"' if any(.[]; length >= $cap) then "null" else
-          (reduce (add // [])[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)) as $rows
+          ($items | map({key: ascii_downcase, value: true}) | from_entries) as $keys
+          | (reduce (add // [])[] as $row ({};
+              ($row.number | tostring) as $number
+              | if has($number) then . else .[$number] = $row end))
+          | (reduce .[] as $row ({};
+              ([$row.headRefName, $row.title, $row.body] | map(. // "") | join("\n") | ascii_downcase
+                | [scan("[a-z0-9._-]+") | . as $word
+                    | ($word, (match("[._-]"; "g") | $word[:.offset]))
+                    | select($keys[.] == true)] | unique) as $named
+              | reduce $named[] as $key (.; .[$key] += [$row]))) as $rows
           | $items[] as $item
-          | "\($item)\t\($rows | lane_merged($item; $owner; null; null) | map({at, mergeCommit}) | tojson)"
+          | (($rows[$item | ascii_downcase] // []) | lane_merged($item; $owner; null; null) | map({at, mergeCommit})) as $read
+          | ($read | max_by(.at) // null) as $latest
+          | "\($item)\t\($latest.at // null)\t\({($repo | ascii_downcase): $latest} | tojson)"
         end' "$read_file" 2>"$errf")"; then
         die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
       fi
@@ -1775,9 +1788,11 @@ merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [I
       done <<<"$named"
       : >"$read_file" || die state-write-failed "" "path=$read_file"
     fi
-    MERGED_ITEM_ROWS="$(cat "$read_file.$item")" || die pr-list-invalid "" "repo=$repo" "search=$item"
+    IFS=$'\t' read -r MERGED_ITEM_AT MERGED_ITEM_REPO <"$read_file.$item" \
+      || die pr-list-invalid "" "repo=$repo" "search=$item"
     return 0
   else
+  [[ -n "$branch" ]] || branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
   list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json "$fields" 2>"$errf")" \
     || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
   # A cloud session's branch names no item, so its pull request is found
@@ -5390,9 +5405,9 @@ owed_accounts() { # HOST
 # lane filtering. Deadlines remain per box in the issue description.
 verifying_read() { # SAFE_ITEMS
   local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
-  local rows row id boxes merged merged_repos merged_rows repo out lines due line prior key rc floor read_dir search items
+  local rows row id branch boxes merged merged_repos repo out lines due line prior key rc floor read_dir search items
   local state="${PW_SEEN[0]}" errf="$WORK_DIR/verifying.err"
-  # One record per issue, its ID then the row: owed_read admits no unit
+  # One record per issue, its ID, branch and row: owed_read admits no unit
   # separator in an ID, and tojson keeps the row on one line.
   # An issue cannot merge before its creation. Missing creation evidence
   # leaves the repository read unbounded rather than hiding an older merge.
@@ -5408,7 +5423,7 @@ verifying_read() { # SAFE_ITEMS
           then . + [[$term]] else .[-1] += [$term] end)
        | map(select(length > 0) | query) | join("\t")),
       ($items | map(.id) | tojson),
-      ($items[] | "\(.id)\u001f\(tojson)")' <<<"$1")" \
+      ($items[] | "\(.id)\u001f\(.id | ascii_downcase)\u001f\(tojson)")' <<<"$1")" \
     || die tracker-list-invalid "" "team=$LINEAR_TEAM"
   floor="${rows%%$'\n'*}"
   if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
@@ -5427,7 +5442,7 @@ verifying_read() { # SAFE_ITEMS
   # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
   source "$lib"
   read_dir="$(mktemp -d "$WORK_DIR/verifying.XXXXXX")" || die state-write-failed "" "path=$WORK_DIR"
-  while IFS=$'\037' read -r id row; do
+  while IFS=$'\037' read -r id branch row; do
     [[ -n "$id" ]] || continue
     if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then
       ow_message verifying-invalid "issue=$id" >&2
@@ -5439,18 +5454,15 @@ verifying_read() { # SAFE_ITEMS
     # verifying_parse prints compact JSON, where this text can only be a
     # box's own field: a quote inside a value is escaped.
     if [[ "$boxes" == *'"needs_merge":true'* ]]; then
-      merged_rows=""
+      merged_repos=""
       for repo in "${REPOS[@]}"; do
-        merged_item_read "$id" "$repo" null null "$floor" "$read_dir" "$search" "$items"
-        merged_rows+="${merged_rows:+,}$MERGED_ITEM_ROWS"
+        merged_item_read "$id" "$repo" null null "$floor" "$read_dir" "$search" "$items" "$branch"
+        if [[ "$MERGED_ITEM_AT" != null ]] && { [[ "$merged" == null ]] || (( MERGED_ITEM_AT > merged )); }; then
+          merged="$MERGED_ITEM_AT"
+        fi
+        merged_repos+="${merged_repos:+,}${MERGED_ITEM_REPO:1:$((${#MERGED_ITEM_REPO} - 2))}"
       done
-      # The latest merge across repositories, then each repository's own.
-      out="$(jq -nc --argjson rows "[$merged_rows]" '[$ARGS.positional, $rows] | transpose
-        | ([.[][1][].at] | max),
-          reduce .[] as [$repo, $read] ({}; . + {($repo | ascii_downcase): ($read | max_by(.at) // null)})' \
-        --args "${REPOS[@]}")" || die verifying-invalid "" "issue=$id"
-      merged="${out%%$'\n'*}"
-      merged_repos="${out#*$'\n'}"
+      merged_repos="{$merged_repos}"
     fi
     # Both helpers leave their answer in LANE_ROW; read here, they fork
     # nothing per issue.

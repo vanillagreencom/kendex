@@ -1,0 +1,185 @@
+# Baseline: e796f8673bf2a93d15e6a5cd3d0e47d58340d407 (main).
+# Production functions for equality and must-fail cost controls.
+merged_item_read() { # ITEM REPO PR [SINCE_EPOCH] [SINCE_UTC] [PASS_READ_DIR] [ITEM_SEARCH] [ITEMS_JSON] [BRANCH]
+  local item="$1" repo="$2" pr="$3" since="${4:-null}" floor="${5:-}"
+  local branch list named search rows errf="$WORK_DIR/merged.err"
+  local fields=number,headRefName,headRepositoryOwner,mergedAt,mergeCommit,title,body
+  branch="${9:-}"
+  [[ -n "$branch" ]] || branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+  if [[ -n "${6:-}" ]]; then
+    local read_file="$6/${repo//\//%}.merged" key value
+    if [[ ! -f "$read_file" ]]; then
+      local -a searches=()
+      IFS=$'\t' read -ra searches <<<"${7:-${floor:+merged:>=$floor}}"
+      for search in "${searches[@]}"; do
+        gh pr list --repo "$repo" --search "$search" --limit "$MERGED_SEARCH_PAGE" --state merged --json "$fields" >>"$read_file" 2>"$errf" \
+          || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
+      done
+      # Bodies are ownership evidence. Retain only the merge fields after
+      # lane_merged has judged each item, once per repository and pass.
+      if ! named="$(jq -rs --argjson cap "$MERGED_SEARCH_PAGE" --argjson items "$8" --arg owner "${repo%%/*}" \
+        "$LANE_MERGED_JQ"' if any(.[]; length >= $cap) then "null" else
+          (reduce (add // [])[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)) as $rows
+          | $items[] as $item
+          | "\($item)\t\($rows | lane_merged($item; $owner; null; null) | map({at, mergeCommit}) | tojson)"
+        end' "$read_file" 2>"$errf")"; then
+        die pr-list-invalid "$(cat "$errf")" "repo=$repo" "search=$item"
+      fi
+      [[ "$named" != null ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
+      while IFS=$'\t' read -r key value; do
+        printf '%s\n' "$value" >"$read_file.$key" || die state-write-failed "" "path=$read_file.$key"
+      done <<<"$named"
+      : >"$read_file" || die state-write-failed "" "path=$read_file"
+    fi
+    MERGED_ITEM_ROWS="$(cat "$read_file.$item")" || die pr-list-invalid "" "repo=$repo" "search=$item"
+    return 0
+  else
+  list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json "$fields" 2>"$errf")" \
+    || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
+  # A cloud session's branch names no item, so its pull request is found
+  # by the key in its title or body; lane_own judges what this returns.
+  # GitHub text search cannot ask for the key's place in a title scope or
+  # after Closes, so mentions come back too, bounded by --since.
+  search="\"$item\" in:title,body${floor:+ merged:>=$floor}"
+  named="$(gh pr list --repo "$repo" --search "$search" --state merged --limit "$MERGED_SEARCH_PAGE" --json "$fields" 2>"$errf")" \
+    || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "search=$item"
+  fi
+  if ! rows="$(jq -rs --arg item "$item" --arg repo "$repo" --arg owner "${repo%%/*}" --argjson pr "$pr" --argjson since "$since" \
+    --argjson cap "$MERGED_SEARCH_PAGE" "$LANE_MERGED_JQ"'
+    if (.[1] | length) >= $cap then "null" else
+      (add // [] | reduce .[] as $row ([]; if any(.[]; .number == $row.number) then . else . + [$row] end)
+       | lane_merged($item; $owner; $pr; $since)) as $rows
+      | ($rows | tojson), ($rows[] | "\(.number) \($item | ascii_downcase) \($repo)")
+    end' \
+    <<<"$list$named" 2>"$errf")"; then
+    die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+  fi
+  [[ "$rows" != null ]] || die merged-search-truncated "" "repo=$repo" "item=$item" "limit=$MERGED_SEARCH_PAGE"
+  MERGED_ITEM_ROWS="${rows%%$'\n'*}"
+  MERGED_ITEM_HITS=""; [[ "$rows" != *$'\n'* ]] || MERGED_ITEM_HITS="${rows#*$'\n'}"
+}
+
+verifying_read() { # SAFE_ITEMS
+  local lib="$SKILLS_DIR/linear/scripts/lib/issue-validation.sh"
+  local rows row id boxes merged merged_repos merged_rows repo out lines due line prior key rc floor read_dir search items
+  local state="${PW_SEEN[0]}" errf="$WORK_DIR/verifying.err"
+  # One record per issue, its ID then the row: owed_read admits no unit
+  # separator in an ID, and tojson keeps the row on one line.
+  # An issue cannot merge before its creation. Missing creation evidence
+  # leaves the repository read unbounded rather than hiding an older merge.
+  rows="$(jq -r 'map(select(.state == "verifying")) as $items
+    | ($items | map(try (.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null)
+       | if length > 0 and all(.[]; . != null) then min | todateiso8601 else "" end) as $floor
+    | (if $floor == "" then "" else "merged:>=" + $floor + " " end) as $prefix
+    | def query: $prefix + "(" + join(" OR ") + ") in:title,body";
+      $floor,
+      (reduce $items[] as $row ([[]];
+        ("(head:" + ($row.id | ascii_downcase) + " OR " + ($row.id | tojson) + ")") as $term
+        | if (.[-1] | length) >= 3 or (.[-1] + [$term] | query | length) > 256
+          then . + [[$term]] else .[-1] += [$term] end)
+       | map(select(length > 0) | query) | join("\t")),
+      ($items | map(.id) | tojson),
+      ($items[] | "\(.id)\u001f\(tojson)")' <<<"$1")" \
+    || die tracker-list-invalid "" "team=$LINEAR_TEAM"
+  floor="${rows%%$'\n'*}"
+  if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
+  search="${rows%%$'\n'*}"
+  if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
+  items="${rows%%$'\n'*}"
+  if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
+  # Rebuild the due set after the complete inventory, including valid items
+  # after a checklist that Linear accepted but the box parser cannot read.
+  state="$(awk -F'\t' '$1 != "verifying-deadline" { print }' <<<"$state")"
+  if [[ -z "$rows" ]]; then
+    lane_row_commit "$state"
+    return 0
+  fi
+  [[ -r "$lib" ]] || die missing-linear "" "path=$lib"
+  # shellcheck source=../../../linear/scripts/lib/issue-validation.sh
+  source "$lib"
+  read_dir="$(mktemp -d "$WORK_DIR/verifying.XXXXXX")" || die state-write-failed "" "path=$WORK_DIR"
+  while IFS=$'\037' read -r id row; do
+    [[ -n "$id" ]] || continue
+    if ! boxes="$(verifying_parse "$row" 2>"$errf")"; then
+      ow_message verifying-invalid "issue=$id" >&2
+      cat -- "$errf" >&2
+      continue
+    fi
+    merged=null
+    merged_repos='{}'
+    # verifying_parse prints compact JSON, where this text can only be a
+    # box's own field: a quote inside a value is escaped.
+    if [[ "$boxes" == *'"needs_merge":true'* ]]; then
+      merged_rows=""
+      for repo in "${REPOS[@]}"; do
+        merged_item_read "$id" "$repo" null null "$floor" "$read_dir" "$search" "$items"
+        merged_rows+="${merged_rows:+,}$MERGED_ITEM_ROWS"
+      done
+      # The latest merge across repositories, then each repository's own.
+      out="$(jq -nc --argjson rows "[$merged_rows]" '[$ARGS.positional, $rows] | transpose
+        | ([.[][1][].at] | max),
+          reduce .[] as [$repo, $read] ({}; . + {($repo | ascii_downcase): ($read | max_by(.at) // null)})' \
+        --args "${REPOS[@]}")" || die verifying-invalid "" "issue=$id"
+      merged="${out%%$'\n'*}"
+      merged_repos="${out#*$'\n'}"
+    fi
+    # Both helpers leave their answer in LANE_ROW; read here, they fork
+    # nothing per issue.
+    lane_row_get verifying-deadline "${PW_SEEN[0]}" "$id" >/dev/null \
+      || die state-read-failed "" "row=verifying-deadline" "issue=$id"
+    prior="$LANE_ROW"
+    rc=0
+    boxes="$(verifying_judge "$row" "$merged" "$merged_repos" "$PASS_NOW" "$boxes" "$WORK_DIR/verifying-release.err" gh "$read_dir" 2>"$errf")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      read -r key _ <"$errf" || key=verifying-invalid
+      [[ "$rc" -eq 1 || "$rc" -eq 2 ]] || die "$key" "$(cat "$errf")" "issue=$id"
+      # An unread item cannot clear a previously reported deadline.
+      if [[ "$rc" -eq 2 && -n "$prior" ]]; then
+        lane_row_set verifying-deadline "$state" "$id" "$prior" >/dev/null
+        state="$LANE_ROW"
+      fi
+      ow_message verifying-invalid "issue=$id" >&2
+      cat -- "$errf" >&2
+      continue
+    fi
+    # The box lines, a record separator, then the due keys. tojson escapes
+    # every control character a field holds, so the separator is unique.
+    out="$(jq -r --arg id "$id" --argjson row "$row" "$VERIFYING_LINE_JQ"'
+      ([.[] | verifying_line($id; $row)] | join("\n")) + "\u001e"
+      + ([.[] | select(.status == "due" or .status == "overdue")
+          | "box=\(.number) trigger=\(.trigger | tojson) status=\(.status) deadline=\(.deadline)"] | join("\n"))' <<<"$boxes")" \
+      || die verifying-invalid "" "issue=$id"
+    lines="${out%%$'\036'*}"
+    due="${out#*$'\036'}"
+    [[ -n "$lines" ]] || lines="verifying $id boxes=0"
+    VERIFYING_LINES+="$lines"$'\n'
+    # The existing row also records a valid read with no due boxes. This
+    # distinguishes first-read completion from an unchanged empty due set.
+    key="${due//$'\n'/|}"
+    [[ -n "$key" ]] || key=-
+    [[ "$lines" != "verifying $id boxes=0" ]] || key=boxes=0
+    lane_row_set verifying-deadline "$state" "$id" "$key" >/dev/null
+    state="$LANE_ROW"
+    [[ "$prior" != "$key" ]] || continue
+    if [[ "$key" == boxes=0 ]]; then
+      VERIFYING_EVENT_LINES+="$lines"$'\n'
+      echo "EVENT verifying-deadline $id boxes=0"
+      PASS_EVENT=1
+    fi
+    [[ -n "$due" ]] || continue
+    while IFS= read -r row; do
+      # The saved row already holds each due box key. A changed sibling must
+      # not repeat this box's instructions before the full heartbeat.
+      [[ "|$prior|" != *"|$row|"* ]] || continue
+      while IFS= read -r line; do
+        [[ "$line" != "verifying $id ${row%% *} "* ]] || VERIFYING_EVENT_LINES+="$line"$'\n'
+      done <<<"$lines"
+      echo "EVENT verifying-deadline $id $row"
+      PASS_EVENT=1
+    done <<<"$due"
+  done <<<"$rows"
+  VERIFYING_LINES="${VERIFYING_LINES%$'\n'}"
+  VERIFYING_EVENT_LINES="${VERIFYING_EVENT_LINES%$'\n'}"
+  rm -r -- "$read_dir" || die state-write-failed "" "path=$read_dir"
+  lane_row_commit "$state"
+}

@@ -1240,7 +1240,15 @@ two_repo_world() {
   printf '%s\n' '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-01T00:00:00Z","mergeCommit":{"oid":"1111111111111111111111111111111111111111"}}]' >"$STUB_DIR/merged.owner_repo.json"
   printf '%s\n' '[{"number":2,"headRefName":"ken-1","mergedAt":"2026-09-30T00:00:00Z","mergeCommit":{"oid":"2222222222222222222222222222222222222222"}}]' >"$STUB_DIR/merged.owner_other.json"
   printf '%s\n' '[{"tagName":"v2","publishedAt":"2026-10-01T12:00:00Z","isDraft":false},{"tagName":"v1","publishedAt":"2026-09-30T12:00:00Z","isDraft":false}]' >"$STUB_DIR/releases.owner_other.json"
-  printf '%s\n' '{"status":"ahead"}' >"$STUB_DIR/compare.owner_other_compare_2222222222222222222222222222222222222222...v2.json"
+  local oid tag status
+  while IFS='|' read -r oid tag status; do
+    printf '{"status":"%s"}\n' "$status" >"$STUB_DIR/compare.owner_other_compare_$oid...$tag.json"
+  done <<'ROWS'
+2222222222222222222222222222222222222222|v1|ahead
+2222222222222222222222222222222222222222|v2|ahead
+1111111111111111111111111111111111111111|v1|behind
+1111111111111111111111111111111111111111|v2|behind
+ROWS
 }
 want_two='verifying KEN-1 box=1 trigger="release owner/other v*" status=due deadline=2026-10-02T12:00:00Z merged=2026-10-01T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"'
 two_repo_world release_two_repos
@@ -1254,10 +1262,14 @@ while IFS='@' read -r name old new; do
   ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
   mutate_verifying "$MUTANT_WATCH" "$old" "$new"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json"
-  if [[ "rc=$RC $(verification_lines)" != "rc=0 $want_two" ]]; then pass "control: $name violates the two-repository release"; else fail "control: $name violates the two-repository release" "$OUT"; fi
+  assert_eq "$RC" 0 "control: $name reaches the two-repository judgement" "$ERR"
+  case "$name" in
+    earliest_floor) assert_contains "$(verification_lines)" 'deadline=2026-10-01T12:00:00Z merged=2026-09-30T00:00:00Z' 'control: an earlier floor admits the older release' "$ERR" ;;
+    shared_commit) assert_contains "$(verification_lines)" 'status=waiting deadline=- merged=2026-10-01T00:00:00Z' 'control: another repository commit loses the contained release' "$ERR" ;;
+  esac
 done <<'ROWS'
-earliest_floor@([.[][1][].at] | max)@([.[][1][].at] | min)
-shared_commit@($read | max_by(.at) // null)@($rows[0] | max_by(.at) // null)
+earliest_floor@(( MERGED_ITEM_AT > merged ))@(( MERGED_ITEM_AT < merged ))
+shared_commit@{($repo | ascii_downcase): $latest}@{($repo | ascii_downcase): ($latest | .mergeCommit.oid = "1111111111111111111111111111111111111111")}
 ROWS
 
 # A failed or incomplete merged inventory stops the pass with its own key.
@@ -1385,15 +1397,16 @@ WORK_BASE="$WORK"
 WORK_ROWS='merge_one|1|KEN-30=t|6
 merge_boxes|1|KEN-30=t,t,t,t|6
 merge_issues|1|KEN-30=t KEN-31=t KEN-32=t|18
-release_one|1|KEN-30=r|10
-release_boxes|1|KEN-30=r,r,r|14
-release_candidates|5|KEN-30=r|10
-mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|27'
+release_one|1|KEN-30=r|9
+release_boxes|1|KEN-30=r,r,r|13
+release_candidates|5|KEN-30=r|9
+mixed|5|KEN-30=r,t KEN-31=t,t KEN-32=r,r|25'
 while IFS='|' read -r name candidates issues want; do
   # shellcheck disable=SC2086 # ISSUES is a word list of ID=BOXES specs.
   work_world "work_$name" "$candidates" $issues
   work_pass
-  assert_eq "rc=$RC events=$(verification_events) work=$WORK" "rc=0 events= work=$want" "$name reads in bulk records" "$ERR"
+  assert_eq "rc=$RC events=$(verification_events)" "rc=0 events=" "$name reads in bulk records" "$ERR"
+  assert_le "$WORK" "$want" "$name keeps the bulk-read jq ceiling" "$ERR"
 done <<<"$WORK_ROWS"
 # Ten Verifying items, five with release boxes, share each repository read.
 # Restoring the base callers makes this same call-count contract fail.
@@ -1518,7 +1531,7 @@ while IFS='@' read -r name row old new; do
   assert_eq "$RC" 0 "control: $name reaches the stage result" "$ERR"
   if [[ "$WORK" -gt "$want" ]]; then pass "control: $name exceeds the bulk-record work"; else fail "control: $name exceeds the bulk-record work" "work=$WORK want=$want"; fi
 done <<'ROWS'
-issue_id@merge_issues@  while IFS=$'\037' read -r id row; do@  while IFS=$'\037' read -r id row; do id="$(jq -r .id <<<"$row")"
+issue_id@merge_issues@  while IFS=$'\037' read -r id branch row; do@  while IFS=$'\037' read -r id branch row; do id="$(jq -r .id <<<"$row")"
 box_field@release_boxes@      [[ "$oid" != invalid ]]@      glob="$(jq -rn --arg glob "$glob" '$glob')"; [[ "$oid" != invalid ]]
 release_tag@release_candidates@        [[ -n "$at" ]] || continue@        [[ -n "$at" ]] || continue; tag="$(jq -rn --arg tag "$tag" '$tag')"
 box_update@release_boxes@      fired_at+=@      boxes="$(jq -c . <<<"$boxes")"; fired_at+=
