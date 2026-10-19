@@ -111,7 +111,7 @@ The overseer's death, wall and identity come from its own session rows, `lib/ses
 
 ## Container close
 
-`container-close` owns Linear container closure and `sync-base` owns base resolution, fetch, checkout ownership and the fast-forward. Both contracts are in their own `--help`. Completion validation inside `container-close` reports facts and decides nothing: it must provide exactly one parent result, with Boolean `has_summary`, array `container_open_boxes` and `errors`, and a numeric or null `child_box`, and a Boolean `ok` on every child result. The helper's one decision table reads those rows; it never reads `all_ok`, and never infers that a later child completion came from a parent cascade.
+`container-close` owns Linear container closure and `sync-base` owns base resolution, fetch, checkout ownership and the fast-forward. Both contracts are in their own `--help`. Completion validation inside `container-close` reports facts and decides nothing: it must provide exactly one parent result, with Boolean `has_summary`, array `container_open_boxes` and `errors`, and a numeric or null `child_box`, and Boolean `ok`, `state_ok` and `has_summary` on every child result. The helper's one decision table reads those rows; it never reads `all_ok`, and never infers that a later child completion came from a parent cascade.
 
 ## Codex app worktree routing
 

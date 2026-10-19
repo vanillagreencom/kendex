@@ -113,6 +113,8 @@ case "$resource:$action" in
       wrong_summary_type) printf '{"all_ok":true,"results":[{"id":"PARENT-1","has_summary":"false","ok":true,"errors":[],"container_open_boxes":[]}]}\n' ;;
       wrong_child_box) printf '{"all_ok":true,"results":[{"id":"PARENT-1","has_summary":false,"ok":true,"errors":[],"container_open_boxes":[],"child_box":"1"}]}\n' ;;
       wrong_child_ok) printf '{"all_ok":true,"results":[{"id":"PARENT-1","has_summary":false,"ok":true,"errors":[],"container_open_boxes":[]},{"id":"CHILD-1","ok":"true"}]}\n' ;;
+      missing_child_state_ok) printf '{"all_ok":false,"results":[{"id":"PARENT-1","has_summary":false,"ok":true,"errors":[],"container_open_boxes":[]},{"id":"CHILD-1","ok":false,"has_summary":true}]}\n' ;;
+      missing_child_summary) printf '{"all_ok":false,"results":[{"id":"PARENT-1","has_summary":false,"ok":true,"errors":[],"container_open_boxes":[]},{"id":"CHILD-1","ok":false,"state_ok":true}]}\n' ;;
       *) printf '{"all_ok":true,"results":[{"id":"PARENT-1","state_type":"started","has_summary":%s,"ok":true,"errors":[],"container_open_boxes":[]}]}\n' "$has_summary" ;;
     esac
     ;;
@@ -522,7 +524,24 @@ missing_errors|validation-result
 wrong_summary_type|validation-result
 wrong_child_box|validation-result
 wrong_child_ok|validation-result
+missing_child_state_ok|validation-result
+missing_child_summary|validation-result
 ROWS
+
+# Control: a shape check without the child state_ok and has_summary clauses
+# lets a row the child-not-ok remedy cannot read reach the refusal.
+CHILD_SHAPE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-child-shape-mutant"
+cp "$SCRIPT" "$CHILD_SHAPE_MUTANT"
+mutate_file "$CHILD_SHAPE_MUTANT" ' and (.state_ok | type) == "boolean" and (.has_summary | type) == "boolean" end)' ' end)'
+for validation_mode in missing_child_state_ok missing_child_summary; do
+  reset_state
+  printf '%s\n' "$validation_mode" > "$FAKE_LINEAR_ROOT/validation.mode"
+  printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+  rc=0; (cd "$CALLER_ONE" && "$CHILD_SHAPE_MUTANT" "$SANDBOX" PARENT-1) >/dev/null 2>"$TMP_ROOT/child-shape.err" || rc=$?
+  control_rc=0
+  ( FAIL=0; assert_eq "$rc:$(sed -n 's/^container-close: \([a-z-]*\) parent-id=PARENT-1$/\1/p' "$TMP_ROOT/child-shape.err")" '1:validation-result' 'child row shape'; [[ "$FAIL" == 0 ]] ) >"$TMP_ROOT/child-shape-control.log" || control_rc=$?
+  assert_eq "$control_rc" 1 "child-shape control: $validation_mode passes the shape check without its clause"
+done
 
 # The summary is written once — a later run short-circuits on the completed
 # parent and never rebuilds it — so a lookup failure must not bake a reference

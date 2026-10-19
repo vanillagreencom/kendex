@@ -178,10 +178,10 @@ cause, before
 `open-box`, any other box open or missing its Evidence, until it moves into
 its own child, whether the children were Done or every one was canceled;
 `checklist-invalid`, a Post-merge box whose fields fail the checklist rule,
-until they are corrected; `child-not-ok`, a Done child that fails
-validation, such as one with no summary; `parent-canceled`, a Canceled
-parent with a Done child, until the parent moves to a live state or the
-Done child is detached. A parent whose every child was canceled
+until they are corrected; `child-not-ok`, a completed child that fails
+validation: not in Done, or with no summary; `parent-canceled`, a Canceled
+parent with a Done child, until the parent moves to a live state. A parent
+whose every child was canceled
 delivered nothing: it is set Canceled, with no summary and its child box left
 open, and prints `closed <PARENT_ID>` after the stderr line `container-close:
 canceled parent-id=<PARENT_ID>`. One already Done or Canceled is left as it
@@ -322,7 +322,7 @@ CLOSE_DEFS='def pending: .state_type != "completed" and .state_type != "canceled
         if .has_summary then empty else "post a comment headed ## Completion Summary with comments create \(.id) --body-file SUMMARY_FILE" end]
         | join("; ")) + ", then rerun container-close."
     elif $cause == "parent-canceled" then
-      "Move \($id) to a live state so it closes Done, or detach its Done children if it stays Canceled, then rerun container-close."
+      "Move \($id) to a live state so it closes Done, then rerun container-close."
     else error("no remedy for \($cause)") end;'
 CLOSE_DECISION="$CLOSE_DEFS"'
   $parent.state_type as $state
