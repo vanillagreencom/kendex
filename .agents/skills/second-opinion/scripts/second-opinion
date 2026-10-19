@@ -146,7 +146,9 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              this names the model its command runs
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
                              hyphens become underscores); claude and codex
-                             have defaults (below). copilot has none: Copilot
+                             have defaults (below). Codex commands also receive
+                             --disable hooks --json, including overrides.
+                             copilot has none: Copilot
                              CLI documents no headless mode that is read-only,
                              so SECOND_OPINION_COPILOT_CMD names a command you
                              have checked cannot write
@@ -258,7 +260,7 @@ Default commands:
           a result envelope is read the same way; text output passes through
           unchanged.
   codex:  codex exec -s read-only -c model_reasoning_effort=xhigh
-            --disable hooks --ephemeral
+            --ephemeral --disable hooks --json
           Claude adds --model from kendex tier-model claude 2 (standard).
           An unresolved class uses the harness default with one notice.
           Codex uses its harness default.
@@ -1026,7 +1028,7 @@ target_model() {
 # entry, not code.
 
 DEFAULT_CLAUDE_CMD="claude -p --output-format json --no-session-persistence --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
-DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --disable hooks --ephemeral"
+DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 DEFAULT_CLAUDE_RESOLVED=0
 resolve_default_model() {
   local var model
@@ -2606,6 +2608,10 @@ run_target_cli() {
     echo "{\"error\": \"Unknown target: $TARGET_CLI — set $(target_cmd_var "$TARGET_CLI")\"}" >&2
     return 2
   fi
+  # A configured Codex command must not inherit lane Stop hooks whose handoff
+  # writes its read-only sandbox cannot make. JSON events carry the assistant
+  # answer without depending on those writes or scraping stderr's prompt echo.
+  [[ $(harness_model "$TARGET_CLI") != codex ]] || cmd="$cmd --disable hooks --json"
   # shellcheck disable=SC2086
   (
     cd -- "$CWD" || exit
@@ -2615,6 +2621,21 @@ run_target_cli() {
     run_with_timeout "$TIMEOUT" "$STDERR_TMP" $cmd < "$prompt_file"
   ) || rc=$?
   return "$rc"
+}
+
+# Codex's documented --json stream carries completed assistant text on stdout:
+# https://developers.openai.com/codex/noninteractive#make-output-machine-readable
+# Keep text-producing configured wrappers working; only unwrap an event stream.
+unwrap_codex_events() {
+  [[ $(harness_model "$TARGET_CLI") == codex ]] || return 0
+  jq -se 'any(.[]; .type? == "thread.started")' <<<"$RESULT" >/dev/null 2>&1 || return 0
+  RESULT=$(jq -sr '
+    if .[-1].type == "turn.completed" then
+      [ .[] | select(.type == "item.completed" and .item.type == "agent_message")
+        | .item.text | select(type == "string") ] | last // ""
+    else "" end' <<<"$RESULT") || {
+    echo "second-opinion: codex-events-read-failed target=$TARGET_CLI" >&2; exit 1
+  }
 }
 
 # Claude Code's --output-format json prints one result envelope; its `result`
@@ -2823,6 +2844,7 @@ collect_response() {
     resolve_default_model
     attempt_started=$(date +%s)
     RESULT=$(run_target_cli "$invocation_prompt") || EXIT_CODE=$?
+    if [[ $EXIT_CODE -eq 0 ]]; then unwrap_codex_events; fi
     unwrap_result_envelope
     attempt_finished=$(date +%s)
     attempt_seconds=$((attempt_finished - attempt_started))
