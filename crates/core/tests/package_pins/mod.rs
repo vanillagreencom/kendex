@@ -577,56 +577,92 @@ fn removing_a_plugin_by_kind_does_not_panic() {
 
 /// A skill held at a revision requires the agent `scout`, which loads
 /// `linear`. The agent comes from the held revision, and so does a skill
-/// its assignment alone brings; a skill the scope holds for any other
-/// reason, however deep, keeps its own revision and follows its source,
-/// with the declarations complete and no reason from scout.
+/// its assignment alone brings. A skill the scope holds or requires for
+/// any other reason, however deep and whichever is walked first, keeps
+/// its requirer's revision and follows its source, with the
+/// declarations complete and no reason from scout. In the last two rows
+/// an unpinned `w` requires the agent `helper`, which loads `y`, and `y`
+/// requires `linear`: the held skill is named before `w` or after it, so
+/// either agent's assignment is read first. `linear` and `echo` require
+/// each other in every row, and echo's requirement, inside what scout's
+/// assignment brought, takes nothing from scout.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision() {
-    let rows: [(&str, &str, &str, bool); 3] = [
-        ("brought by scout alone", "", "Linear one.", true),
+    let rows: [(&str, &str, &str, &str, bool); 5] = [
+        ("brought by scout alone", "lead", "", "Linear one.", true),
         (
             "declared, following its source",
+            "lead",
             "\n[skills.linear]\nsource = \"cat\"\n",
             "Linear two.",
             false,
         ),
         (
             "required two steps below a declared skill",
+            "lead",
             "\n[skills.x]\nsource = \"cat\"\n",
             "Linear two.",
             false,
         ),
+        (
+            "required below another agent's skill, scout read first",
+            "lead",
+            "\n[skills.w]\nsource = \"cat\"\n",
+            "Linear two.",
+            false,
+        ),
+        (
+            "required below another agent's skill, helper read first",
+            "zlead",
+            "\n[skills.w]\nsource = \"cat\"\n",
+            "Linear two.",
+            false,
+        ),
     ];
-    for (what, declarations, body, by_scout) in rows {
+    for (what, lead, declarations, body, by_scout) in rows {
         let w = world();
         write_skill(
             &w.upstream,
-            "lead",
+            lead,
             "dependencies:\n  agents: [scout]\n",
             "Lead.",
         );
         write_skill(&w.upstream, "x", "dependencies:\n  required: [y]\n", "X.");
         write_skill(
             &w.upstream,
+            "w",
+            "dependencies:\n  agents: [helper]\n",
+            "W.",
+        );
+        write_skill(
+            &w.upstream,
             "y",
             "dependencies:\n  required: [linear]\n",
             "Y.",
         );
-        write_skill(&w.upstream, "linear", "", "Linear one.");
+        let loops = "dependencies:\n  required: [echo]\n";
+        write_skill(&w.upstream, "linear", loops, "Linear one.");
+        write_skill(
+            &w.upstream,
+            "echo",
+            "dependencies:\n  required: [linear]\n",
+            "Echo.",
+        );
         write_agent(&w.upstream, "scout", "Scout.");
+        write_agent(&w.upstream, "helper", "Helper.");
         fs::write(
             w.upstream.join("kendex.toml"),
-            "[agent-skills]\nscout = [\"linear\"]\n",
+            "[agent-skills]\nscout = [\"linear\"]\nhelper = [\"y\"]\n",
         )
         .unwrap();
         let first = commit(&w.upstream, "one");
         declare(
             &w,
-            &format!("[skills.lead]\nsource = \"cat\"\nrev = \"{first}\"\n{declarations}"),
+            &format!("[skills.{lead}]\nsource = \"cat\"\nrev = \"{first}\"\n{declarations}"),
         );
         sync_and_apply(&w);
-        write_skill(&w.upstream, "linear", "", "Linear two.");
+        write_skill(&w.upstream, "linear", loops, "Linear two.");
         commit(&w.upstream, "two");
         sync_and_apply(&w);
 

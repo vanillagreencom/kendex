@@ -165,8 +165,81 @@ fn walk(
     expansion: &mut Expansion,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
-    mut queue: VecDeque<Node>,
+    queue: VecDeque<Node>,
 ) -> BTreeMap<String, Vec<HarnessId>> {
+    // An agent's assignment decides a skill's revision and reasons only
+    // while nothing else requires the skill (`Expansion::add`). A pass that
+    // finds a requirer for a skill an assignment brought let the
+    // assignment decide that skill and all it requires, so the walk starts
+    // again from here with no assignment bringing that skill. Each restart
+    // yields one more skill, so the walk ends.
+    let start = expansion.clone();
+    let retired = state.retired.clone();
+    let mut wanted = loop {
+        if let Some(wanted) = closure(manifest, expansion, catalogs, state, queue.clone()) {
+            break wanted;
+        }
+        expansion.restart_from(&start);
+        state.retired.clone_from(&retired);
+    };
+    carry_kept_retired_edges(expansion, state);
+    // The revision each item is wanted at is known only now, once every
+    // requirer has added its reason, and the walk must read it before
+    // withholding spreads.
+    expansion.report_rev_disagreements(state);
+    settle_after_walk(catalogs.env, catalogs.scope, manifest, state, &mut wanted);
+    withhold_requirers(
+        &crate::manifest::manifest_file_name(catalogs.env, catalogs.scope),
+        &mut wanted,
+        expansion,
+        state,
+    );
+    // A reference filtered to no tool installs nothing, so it is no edge:
+    // the finding beside it already says the dependency is missing, and an
+    // edge here would have the cycle note claim a co-install the graph
+    // rejected.
+    let edges: BTreeMap<Node, BTreeSet<Node>> = wanted
+        .iter()
+        .map(|((kind, parent), found)| {
+            let deps = found
+                .deps
+                .iter()
+                .filter(|dep| !dep.on.is_empty())
+                .map(|dep| (dep.kind, dep.name.clone()))
+                .collect();
+            ((*kind, parent.clone()), deps)
+        })
+        .collect();
+    let withheld: BTreeMap<&Node, BTreeSet<HarnessId>> = wanted
+        .iter()
+        .filter(|(_, found)| !found.withheld.is_empty())
+        .map(|(node, found)| (node, found.withheld.keys().copied().collect()))
+        .collect();
+    for members in cycles(&edges) {
+        if let Some(note) = co_install(&members, expansion, &withheld, &state.rev_conflicts) {
+            state.notes.push(note);
+        }
+    }
+    let left_out = wanted
+        .iter()
+        .filter(|((kind, _), found)| *kind == ItemKind::Hook && !found.left_out.is_empty())
+        .map(|((_, name), found)| (name.clone(), found.left_out.clone()))
+        .collect();
+    record(wanted, state);
+    left_out
+}
+
+/// One pass of [`walk`] from `queue`: every item it reaches walked, and
+/// what each came to. `None` once a skill an agent's assignment brought
+/// yields to a requirer (`Expansion::add`), since what the pass derived
+/// below that skill came from the assignment's revision.
+fn closure(
+    manifest: &Manifest,
+    expansion: &mut Expansion,
+    catalogs: &mut Catalogs,
+    state: &mut DesiredState,
+    mut queue: VecDeque<Node>,
+) -> Option<BTreeMap<Node, Wanted>> {
     // A hook's withholding is read off the companions below it, so one the
     // queue did not start with is walked the first time it is required,
     // grown or not: the walk past a pin starts from an expansion the first
@@ -180,10 +253,11 @@ fn walk(
     // item is what stops a pair of items that require each other from
     // reporting everything twice.
     let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
-    // An agent's assignment edge brings only skills nothing else holds
-    // ([`agent_assignment`]), so every agent waits until no hard edge is
-    // left to walk: a skill some item requires is held by then, however
-    // deep, and keeps its own revision.
+    // Every agent waits until no other edge is left to walk, so a skill
+    // those edges require is held before any assignment is read
+    // ([`agent_assignment`]), and only a requirement below an assigned
+    // skill starts the walk again.
+    let yields = expansion.yield_count();
     let mut agents: VecDeque<Node> = VecDeque::new();
     while let Some((kind, parent)) = queue.pop_front().or_else(|| agents.pop_front()) {
         // A declaration no tool here can hold installs nothing, so it needs
@@ -236,53 +310,12 @@ fn walk(
                 }
             }
         }
+        if expansion.yield_count() > yields {
+            return None;
+        }
         wanted.insert((kind, parent.clone()), found);
     }
-    carry_kept_retired_edges(expansion, state);
-    // The revision each item is wanted at is known only now, once every
-    // requirer has added its reason, and the walk must read it before
-    // withholding spreads.
-    expansion.report_rev_disagreements(state);
-    settle_after_walk(catalogs.env, catalogs.scope, manifest, state, &mut wanted);
-    withhold_requirers(
-        &crate::manifest::manifest_file_name(catalogs.env, catalogs.scope),
-        &mut wanted,
-        expansion,
-        state,
-    );
-    // A reference filtered to no tool installs nothing, so it is no edge:
-    // the finding beside it already says the dependency is missing, and an
-    // edge here would have the cycle note claim a co-install the graph
-    // rejected.
-    let edges: BTreeMap<Node, BTreeSet<Node>> = wanted
-        .iter()
-        .map(|((kind, parent), found)| {
-            let deps = found
-                .deps
-                .iter()
-                .filter(|dep| !dep.on.is_empty())
-                .map(|dep| (dep.kind, dep.name.clone()))
-                .collect();
-            ((*kind, parent.clone()), deps)
-        })
-        .collect();
-    let withheld: BTreeMap<&Node, BTreeSet<HarnessId>> = wanted
-        .iter()
-        .filter(|(_, found)| !found.withheld.is_empty())
-        .map(|(node, found)| (node, found.withheld.keys().copied().collect()))
-        .collect();
-    for members in cycles(&edges) {
-        if let Some(note) = co_install(&members, expansion, &withheld, &state.rev_conflicts) {
-            state.notes.push(note);
-        }
-    }
-    let left_out = wanted
-        .iter()
-        .filter(|((kind, _), found)| *kind == ItemKind::Hook && !found.left_out.is_empty())
-        .map(|((_, name), found)| (name.clone(), found.left_out.clone()))
-        .collect();
-    record(wanted, state);
-    left_out
+    Some(wanted)
 }
 
 /// Of `tools`, each one `hook`'s pin alone keeps it off, those the walk
@@ -1048,14 +1081,16 @@ fn declared_by(
 ///
 /// The assignment is what the agent loads, not what it needs to install,
 /// so its edge is soft: it brings only a skill the scope does not already
-/// hold, and a skill held for any other reason — declared, a set's,
-/// required by another item or brought by another agent, the skill that
-/// requires this agent among them — keeps its own declaration, revision
-/// and reasons, with no revision disagreement, finding or reason from
-/// this edge. [`walk`]
-/// reads every agent after the hard edges, so which skills are held
-/// does not turn on walk order; [`wanted_by`] drops the findings on the
-/// skills this edge does bring.
+/// hold and nothing outside this assignment requires. A skill held or
+/// required for any other reason — declared, a set's, required at any
+/// depth by an item this assignment did not bring, or brought by another
+/// agent, the skill that requires this agent among them — keeps its own
+/// declaration, revision and reasons, with no revision disagreement,
+/// finding or reason from this edge, whatever the walk order:
+/// `Expansion::add` yields a skill an assignment brought to the first
+/// such requirement that reaches it, and [`walk`] starts again without
+/// it. [`wanted_by`] drops the findings on the skills this edge does
+/// bring.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
@@ -1069,6 +1104,7 @@ fn agent_assignment(
     };
     let available: Vec<String> = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill)
         .into_iter()
+        .filter(|skill| !expansion.yielded(skill))
         .filter(|skill| !expansion.contains(ItemKind::Skill, skill) || brought_here(skill))
         .collect();
     let required_skills = match crate::mapping::declared_skills(manifest, agent) {
