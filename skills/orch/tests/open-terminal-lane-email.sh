@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Lane launch suppresses the operator email in the child process, including
 # addresses in project files. Exercise the built local and hosted commands.
+# The launch write refuses the pane the launch runs from; run_ot clears
+# TMUX_PANE unless a row sets it.
 # Inputs: skills/linear/scripts/*
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -123,5 +125,15 @@ owner_email="$(cd "$SANDBOX" && env -i HOME="$SANDBOX" PATH="$PATH" \
   "$BASH" -c 'source "$1/../../mailbox/scripts/lib/mailbox-append.sh"; ROOT="$PWD"; owner_tracker_settings "$1/../../mailbox/scripts"; printf "%s" "$OWNER_TRACKER_EMAIL"' \
   owner-settings "$SCRIPTS_DIR")" || exit 1
 assert_eq "$owner_email" owner@example.com "the overseer still resolves its owner email"
+
+# The stub names a run's first window %1.
+self_refused() { printf 'rc=%s self=%s' "$RC" "$(grep -c '^pane-write: pane-self pane=%1$' <<<"$OUT" || true)"; }
+run_ot "TMUX_PANE=%1;$CHOICE_CMD" --harness claude CC-760
+assert_eq "$(self_refused)" 'rc=1 self=1' "a launch run from the window it opened is refused pane-self"
+# run_ot without its TMUX_PANE setting inherits the suite's pane.
+declare -f run_ot > "$TMP_ROOT/run-ot-control.sh"
+mutate_file "$TMP_ROOT/run-ot-control.sh" 'TMUX_PANE=' ''
+assert_eq "$(export TMUX_PANE=%1; source "$TMP_ROOT/run-ot-control.sh"; run_ot "$CHOICE_CMD" --harness claude CC-760; self_refused)" \
+  'rc=1 self=1' "control: run_ot that inherits TMUX_PANE=%1 is refused pane-self"
 
 lane_suite_end

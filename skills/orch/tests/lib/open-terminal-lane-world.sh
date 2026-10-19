@@ -233,11 +233,14 @@ run_ot() {
   # launch makes, is named at open-terminal's validation gate. The pane is
   # replayed from the tmux log and no process here changes under a wait, so
   # OT_SLEEP_INSTANT spends each bound's looks in no wall time; lane_launch,
-  # whose rows race a real process tree, keeps the real sleep.
+  # whose rows race a real process tree, keeps the real sleep. TMUX_PANE is
+  # cleared, and a row's ENV can set it: the launch write refuses the caller's
+  # own pane, and the stub names windows %1, %2, ..., ids the pane running the
+  # suite can hold.
   OUT=$(cd "$cwd" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     LANE_HOST_STUB_DIR="$RUN/remote" OT_SLEEP_INSTANT=1 \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
-    TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
+    TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree.path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$OPEN_TERMINAL" ${flag_args[@]+"${flag_args[@]}"} "$@" 2>&1)

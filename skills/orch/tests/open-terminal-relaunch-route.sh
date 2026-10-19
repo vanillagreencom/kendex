@@ -183,9 +183,12 @@ run_ot() {
     fi
   fi
   [[ "$REQUIRE_PREPARED" != true ]] || selection_env+=(OT_HANDOFF_READY_FILE="$RUN/ready")
+  # TMUX_PANE is cleared ahead of RUN_ENV: the launch write refuses the
+  # caller's own pane, and the stub names this run's window %1, an id the pane
+  # running the suite can hold.
   OUT="$(env LINEAR_TEAM= LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_MAX_PCT=95 ORCH_LANE_ALIASES=eclaude=work ORCH_LANE_COPILOT_POOL="$pool" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host.log" LANE_HOST_STUB_CREATE_LINE="$create_line" \
-    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 OT_HARNESS_SCREEN="$screen" "${selection_env[@]}" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
+    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 OT_HARNESS_SCREEN="$screen" TMUX_PANE= "${selection_env[@]}" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     RELAUNCH_FIXTURE="$HOST_STUB" RELAUNCH_LIVE="$RUN/live" RELAUNCH_READY="$RUN/ready" \
@@ -710,6 +713,13 @@ run_ot claude "$HARNESS_SCREEN" claude
 SEED_LANES='[]'
 assert_eq "closed=$(closed)" "closed=1" "control: a stop on every failure closes a relaunch that took"
 OPEN_TERMINAL="$SHIPPED"
+# run_ot without its TMUX_PANE setting, run from the pane the stub names the
+# relaunch window, inherits that pane and the launch write refuses it.
+declare -f run_ot > "$TMP_ROOT/run-ot-control.sh"
+mutate_file "$TMP_ROOT/run-ot-control.sh" 'TMUX_PANE=' ''
+assert_eq "$(export TMUX_PANE=%1; source "$TMP_ROOT/run-ot-control.sh"; run_ot claude "$HARNESS_SCREEN" claude
+  printf 'rc=%s self=%s' "$RC" "$(said '^pane-write: pane-self pane=%1$')")" 'rc=1 self=1' \
+  "control: run_ot that inherits TMUX_PANE=%1 is refused pane-self"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
