@@ -4,22 +4,24 @@ import { join } from "node:path";
 
 export const LOGIN_MISSING_KEY = "codex-login-missing";
 
-/** Resolve the one Codex home whose CLI login this bridge may use. */
+/** Resolve the one Codex home whose CLI login this bridge may use. A blank
+ * `CODEX_HOME` counts as unset, as Codex itself treats it. */
 export function resolveCodexHome(env: NodeJS.ProcessEnv = process.env, userHome = homedir()): string {
-	const configured = env.CODEX_HOME;
-	if (typeof configured === "string" && configured.trim().length > 0) return configured;
-	return join(userHome, ".codex");
+	const configured = env.CODEX_HOME?.trim();
+	return configured ? configured : join(userHome, ".codex");
 }
 
-/** Check only for the login file. Credential contents remain owned by Codex. */
+/**
+ * Whether the login file exists. The file is never opened: Codex owns its
+ * contents and its refresh. A keyring login (`cli_auth_credentials_store =
+ * "keyring"`) keeps no such file, so it reads as absent.
+ */
 export function hasCodexLogin(codexHome: string): boolean {
 	return existsSync(join(codexHome, "auth.json"));
 }
 
-export function loginMissingMessage(codexHome: string): string {
-	return `${LOGIN_MISSING_KEY} home=${codexHome}`;
-}
-
 export function requireCodexLogin(codexHome: string): void {
-	if (!hasCodexLogin(codexHome)) throw new Error(loginMissingMessage(codexHome));
+	if (!hasCodexLogin(codexHome)) {
+		throw new Error(`${LOGIN_MISSING_KEY} home=${codexHome}\nSign in with the Codex CLI first: codex login`);
+	}
 }

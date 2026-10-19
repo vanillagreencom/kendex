@@ -1,103 +1,79 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { promisify } from "node:util";
+import { appServerArgs, SUPPORTED_CODEX_VERSION } from "./codex-policy.js";
 import { codexChildEnvironment } from "./codex-environment.js";
-import { CodexProtocolClient } from "./json-rpc.js";
-import { INITIALIZE_PARAMS, type CodexModel, type JsonObject } from "./protocol.js";
+import { CodexProtocolClient, type ProtocolClient } from "./json-rpc.js";
+import { decodeModelPage, decodeVersion, type CodexModel } from "./protocol.js";
 
 const execFileAsync = promisify(execFile);
-export const SUPPORTED_CODEX_VERSION = "0.154.0";
 
-export const APP_SERVER_ARGS = [
-	"app-server",
-	"--stdio",
-	"--disable", "shell_tool",
-	"--disable", "apps",
-	"--disable", "plugins",
-	"--disable", "remote_plugin",
-	"--disable", "multi_agent",
-	"--disable", "browser_use",
-	"--disable", "computer_use",
-	"--disable", "image_generation",
-	"--disable", "view_image",
-	"--disable", "sleep_tool",
-	"--disable", "hooks",
-	"-c", 'web_search="disabled"',
-] as const;
+export type SpawnFunction = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
 
-function object(value: unknown, key: string): JsonObject {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error(`codex-protocol-invalid-${key}`);
-	}
-	return value as JsonObject;
+/** Everything one app-server launch needs. */
+export interface Launch {
+	executable: string;
+	codexHome: string;
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	/** Test seam: extra `-c` overrides, such as a local mock model provider. The
+	 * extension factory never sets it. */
+	configOverrides: readonly string[];
 }
 
-export async function assertSupportedCodex(
-	executable: string,
-	codexHome: string,
-	env: NodeJS.ProcessEnv = process.env,
-): Promise<void> {
-	const childEnv = codexChildEnvironment(codexHome, env);
-	const { stdout } = await execFileAsync(executable, ["--version"], {
-		env: childEnv,
-		encoding: "utf8",
-		maxBuffer: 4096,
-	});
-	if (stdout.trim() !== `codex-cli ${SUPPORTED_CODEX_VERSION}`) {
-		throw new Error(`codex-version-unsupported expected=${SUPPORTED_CODEX_VERSION}`);
+export const INITIALIZE_PARAMS = {
+	clientInfo: {
+		name: "pi_codex_bridge",
+		title: "Pi Codex bridge",
+		version: "1.0.0",
+	},
+	capabilities: {
+		experimentalApi: true,
+		requestAttestation: false,
+	},
+};
+
+export async function assertSupportedCodex(launch: Launch): Promise<void> {
+	let stdout: string;
+	try {
+		({ stdout } = await execFileAsync(launch.executable, ["--version"], {
+			env: codexChildEnvironment(launch.codexHome, launch.env),
+			encoding: "utf8",
+			maxBuffer: 4096,
+			timeout: 10_000,
+		}));
+	} catch (error) {
+		throw new Error(`codex-version-unreadable executable=${launch.executable} code=${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
+	}
+	const found = decodeVersion(stdout);
+	if (found !== SUPPORTED_CODEX_VERSION) {
+		throw new Error(`codex-version-unsupported found=${found} expected=${SUPPORTED_CODEX_VERSION}`);
 	}
 }
 
-export async function startAppServer(
-	executable: string,
-	codexHome: string,
-	env: NodeJS.ProcessEnv = process.env,
-): Promise<CodexProtocolClient> {
-	await assertSupportedCodex(executable, codexHome, env);
-	const child = spawn(executable, [...APP_SERVER_ARGS], {
-		env: codexChildEnvironment(codexHome, env),
-		stdio: ["pipe", "pipe", "pipe"],
+/** Start one `codex app-server` child and complete the handshake. */
+export async function startAppServer(launch: Launch, spawn: SpawnFunction = nodeSpawn): Promise<ProtocolClient> {
+	await assertSupportedCodex(launch);
+	// Its own process group, so a breach stops the MCP servers it started too.
+	const group = process.platform !== "win32";
+	const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
+		cwd: launch.cwd,
+		env: codexChildEnvironment(launch.codexHome, launch.env),
+		detached: group,
+		windowsHide: true,
 	});
-	const client = new CodexProtocolClient(child);
-	await client.request("initialize", INITIALIZE_PARAMS as unknown as JsonObject);
+	const client = new CodexProtocolClient(child, group);
+	await client.request("initialize", INITIALIZE_PARAMS);
 	client.notify("initialized");
 	return client;
 }
 
-export async function listCodexModels(client: CodexProtocolClient): Promise<CodexModel[]> {
+export async function listCodexModels(client: ProtocolClient): Promise<CodexModel[]> {
 	const models: CodexModel[] = [];
 	let cursor: string | null = null;
 	do {
-		const response = object(await client.request("model/list", {
-			includeHidden: false,
-			...(cursor === null ? {} : { cursor }),
-		}), "model-list");
-		if (!Array.isArray(response.data)) throw new Error("codex-protocol-invalid-model-list-data");
-		for (const raw of response.data) {
-			const model = object(raw, "model");
-			const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
-				? model.supportedReasoningEfforts
-				: [];
-			if (
-				typeof model.id !== "string"
-				|| typeof model.model !== "string"
-				|| typeof model.displayName !== "string"
-				|| typeof model.description !== "string"
-				|| typeof model.hidden !== "boolean"
-				|| !Array.isArray(model.inputModalities)
-				|| !Array.isArray(model.supportedReasoningEfforts)
-				|| reasoningEfforts.some((entry) => {
-					const effort = object(entry, "model-reasoning-effort");
-					return typeof effort.reasoningEffort !== "string" || typeof effort.description !== "string";
-				})
-				|| typeof model.defaultReasoningEffort !== "string"
-				|| typeof model.isDefault !== "boolean"
-			) throw new Error("codex-protocol-invalid-model");
-			models.push(model as unknown as CodexModel);
-		}
-		if (response.nextCursor !== null && typeof response.nextCursor !== "string") {
-			throw new Error("codex-protocol-invalid-model-cursor");
-		}
-		cursor = response.nextCursor as string | null;
+		const page: { models: CodexModel[]; nextCursor: string | null } = await client.requestDecoded("model/list", { includeHidden: false, ...(cursor === null ? {} : { cursor }) }, decodeModelPage);
+		models.push(...page.models);
+		cursor = page.nextCursor;
 	} while (cursor !== null);
 	return models;
 }

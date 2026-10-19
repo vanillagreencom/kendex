@@ -1,17 +1,164 @@
 // src/index.ts
 import * as piAi from "@earendil-works/pi-ai";
 
+// src/auth-presence.ts
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+var LOGIN_MISSING_KEY = "codex-login-missing";
+function resolveCodexHome(env = process.env, userHome = homedir()) {
+  const configured = env.CODEX_HOME?.trim();
+  return configured ? configured : join(userHome, ".codex");
+}
+function hasCodexLogin(codexHome) {
+  return existsSync(join(codexHome, "auth.json"));
+}
+function requireCodexLogin(codexHome) {
+  if (!hasCodexLogin(codexHome)) {
+    throw new Error(`${LOGIN_MISSING_KEY} home=${codexHome}
+Sign in with the Codex CLI first: codex login`);
+  }
+}
+
+// src/bridge.ts
+import {
+  collapseSystemMessages,
+  createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools
+} from "@earendil-works/pi-ai";
+
 // src/app-server.ts
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn as nodeSpawn } from "node:child_process";
 import { promisify } from "node:util";
 
+// src/codex-policy.ts
+var SUPPORTED_CODEX_VERSION = "0.163.0";
+var DISABLED_FEATURES = [
+  "shell_tool",
+  "apps",
+  "plugins",
+  "remote_plugin",
+  "multi_agent",
+  "browser_use",
+  "computer_use",
+  "image_generation",
+  "view_image",
+  "sleep_tool",
+  "hooks",
+  "unified_exec",
+  "unified_exec_tty",
+  "write_stdin_approval",
+  "shell_snapshot",
+  "code_mode_host",
+  "code_mode_interrupt",
+  "workspace_dependencies",
+  "worktrees",
+  "in_app_local_automation",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "in_app_browser",
+  "browser_annotation_api",
+  "skill_mcp_dependency_install",
+  "tool_call_mcp_elicitation",
+  "auth_elicitation",
+  "tool_suggest",
+  "skill_search",
+  "goals",
+  "guardian_approval",
+  "daemon_auto_start",
+  "in_app_chat",
+  "in_app_dictation",
+  "in_app_voice",
+  "in_app_updates",
+  "realtime_conversation"
+];
+var REVIEWED_ENABLED_FEATURES = /* @__PURE__ */ new Map([
+  // `--disable unified_exec`, `-c features.unified_exec=false` and
+  // `experimental_use_unified_exec_tool=false` all leave it reported on in
+  // 0.163.0. Its exec_command and write_stdin tools are not offered while
+  // shell_tool is off and the thread has no environment; the fixture suite
+  // reads the tools Codex offers the model to hold that.
+  ["unified_exec", "tools not offered: shell_tool off, environments []"],
+  ["api_key_cyber_access_programs", "API-key access programs; no tool"],
+  ["api_key_model_discovery", "API-key model listing; no tool"],
+  ["cli_daybreak", "access-program selection; no tool"],
+  ["compaction_image_budget", "compaction image budget; no tool"],
+  ["content_item_kinds", "content item kinds; no tool"],
+  ["enable_request_compression", "request compression; no tool"],
+  ["fast_mode", "service tier; no tool"],
+  ["ultrafast_mode", "service tier; no tool"],
+  ["guardian_reuse_parent_compaction", "guardian setting; guardian_approval is off"],
+  ["instant_interrupt", "interrupt latency; no tool"],
+  ["mentions_v2", "input mention parsing; no tool"],
+  ["plugin_sharing", "plugin sharing; plugins are off"],
+  ["system_proxy_fallback", "proxy transport; no tool"],
+  ["unbounded_connection_retries", "transport retries; no tool"],
+  ["collaboration_modes", "stage removed in 0.163.0"],
+  ["item_ids", "stage removed in 0.163.0"],
+  ["resize_all_images", "stage removed in 0.163.0"],
+  ["sqlite", "stage removed in 0.163.0"],
+  ["steer", "stage removed in 0.163.0"],
+  ["terminal_resize_reflow", "stage removed in 0.163.0"],
+  ["tool_search_always_defer_mcp_tools", "stage removed in 0.163.0"],
+  ["tui_app_server", "stage removed in 0.163.0"]
+]);
+var ALLOWED_ITEM_TYPES = /* @__PURE__ */ new Set([
+  "userMessage",
+  "agentMessage",
+  "reasoning",
+  "plan",
+  "contextCompaction",
+  "dynamicToolCall"
+]);
+var APPROVAL_POLICY = "untrusted";
+function appServerArgs(configOverrides) {
+  return [
+    "app-server",
+    "--stdio",
+    ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
+    "-c",
+    'web_search="disabled"',
+    ...configOverrides.flatMap((override) => ["-c", override])
+  ];
+}
+function threadConfig(mcpServerNames) {
+  return {
+    mcp_servers: Object.fromEntries(mcpServerNames.map((name) => [name, { enabled: false }]))
+  };
+}
+function unreviewedFeature(enabled) {
+  return [...enabled].sort().find((name) => !REVIEWED_ENABLED_FEATURES.has(name));
+}
+
 // src/codex-environment.ts
-var CREDENTIAL_NAME = /(?:AUTH|CREDENTIAL|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_KEY|API_KEY|SECRET|TOKEN)/i;
+var INHERITED = /* @__PURE__ */ new Set([
+  "PATH",
+  "HOME",
+  "LANG",
+  "LANGUAGE",
+  "TMPDIR",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE"
+]);
+function inherited(name) {
+  return INHERITED.has(name) || name.startsWith("LC_");
+}
 function codexChildEnvironment(codexHome, env = process.env) {
   const child = {};
   for (const [name, value] of Object.entries(env)) {
-    if (name !== "CODEX_HOME" && CREDENTIAL_NAME.test(name)) continue;
-    child[name] = value;
+    if (value !== void 0 && inherited(name)) child[name] = value;
   }
   child.CODEX_HOME = codexHome;
   return child;
@@ -20,29 +167,241 @@ function codexChildEnvironment(codexHome, env = process.env) {
 // src/json-rpc.ts
 import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
+
+// src/protocol.ts
+function invalid(method, field) {
+  return new Error(`codex-protocol-invalid method=${method} field=${field}`);
+}
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function object(value, method, field) {
+  if (!isObject(value)) throw invalid(method, field);
+  return value;
+}
+function string(value, method, field) {
+  if (typeof value !== "string") throw invalid(method, field);
+  return value;
+}
+function nullableString(value, method, field) {
+  if (value === null || value === void 0) return null;
+  return string(value, method, field);
+}
+function array(value, method, field) {
+  if (!Array.isArray(value)) throw invalid(method, field);
+  return value;
+}
+function count(value, method, field) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw invalid(method, field);
+  return value;
+}
+function requestId(value) {
+  if (typeof value === "string" || typeof value === "number" && Number.isInteger(value)) return value;
+  throw invalid("jsonrpc", "id");
+}
+function decodeFrame(value, decodeResult) {
+  const frame = object(value, "jsonrpc", "frame");
+  const method = frame.method;
+  if (method === void 0) {
+    const id = requestId(frame.id);
+    if (frame.error !== void 0) {
+      const error = isObject(frame.error) ? frame.error : {};
+      return {
+        kind: "error",
+        id,
+        code: typeof error.code === "number" ? error.code : null,
+        message: typeof error.message === "string" ? error.message : ""
+      };
+    }
+    return { kind: "response", id, result: decodeResult(id, frame.result) };
+  }
+  const name = string(method, "jsonrpc", "method");
+  const params = frame.params === void 0 || frame.params === null ? {} : object(frame.params, name, "params");
+  if (frame.id === void 0) return { kind: "notification", method: name, params };
+  return { kind: "request", id: requestId(frame.id), method: name, params };
+}
+function decodeVersion(stdout) {
+  const match = /^codex-cli (\S+)\s*$/.exec(stdout);
+  if (!match) throw invalid("--version", "stdout");
+  return match[1];
+}
+function decodeModelPage(result) {
+  const method = "model/list";
+  const page = object(result, method, "result");
+  const models = array(page.data, method, "data").map((raw) => {
+    const model = object(raw, method, "data[]");
+    return {
+      model: string(model.model, method, "data[].model"),
+      displayName: string(model.displayName, method, "data[].displayName"),
+      hidden: model.hidden === true,
+      inputModalities: array(model.inputModalities, method, "data[].inputModalities").map((entry) => string(entry, method, "data[].inputModalities[]")),
+      reasoningEfforts: array(model.supportedReasoningEfforts, method, "data[].supportedReasoningEfforts").map((entry) => string(object(entry, method, "data[].supportedReasoningEfforts[]").reasoningEffort, method, "data[].supportedReasoningEfforts[].reasoningEffort"))
+    };
+  });
+  return { models, nextCursor: nullableString(page.nextCursor, method, "nextCursor") };
+}
+function decodeThreadStart(result) {
+  const method = "thread/start";
+  const thread = object(object(result, method, "result").thread, method, "thread");
+  return { threadId: string(thread.id, method, "thread.id") };
+}
+function decodeThreadResume(result) {
+  const method = "thread/resume";
+  const response = object(result, method, "result");
+  const thread = object(response.thread, method, "thread");
+  const page = object(response.initialTurnsPage, method, "initialTurnsPage");
+  const turns = array(page.data, method, "initialTurnsPage.data");
+  const last = turns.length === 0 ? null : string(object(turns[0], method, "initialTurnsPage.data[0]").id, method, "initialTurnsPage.data[0].id");
+  return { threadId: string(thread.id, method, "thread.id"), lastTurnId: last };
+}
+function decodeTurnStart(result) {
+  const method = "turn/start";
+  const turn = object(object(result, method, "result").turn, method, "turn");
+  return { turnId: string(turn.id, method, "turn.id") };
+}
+function decodeMcpServerNames(result) {
+  const method = "config/read";
+  const config = object(object(result, method, "result").config, method, "config");
+  const servers = config.mcp_servers;
+  if (servers === void 0 || servers === null) return [];
+  return Object.keys(object(servers, method, "config.mcp_servers")).sort();
+}
+function decodeFeaturePage(result) {
+  const method = "experimentalFeature/list";
+  const page = object(result, method, "result");
+  const enabled = [];
+  for (const raw of array(page.data, method, "data")) {
+    const feature = object(raw, method, "data[]");
+    const name = string(feature.name, method, "data[].name");
+    if (typeof feature.enabled !== "boolean") throw invalid(method, "data[].enabled");
+    if (feature.enabled) enabled.push(name);
+  }
+  return { enabled, nextCursor: nullableString(page.nextCursor, method, "nextCursor") };
+}
+function decodeDynamicToolCall(params) {
+  const method = "item/tool/call";
+  return {
+    threadId: string(params.threadId, method, "threadId"),
+    turnId: string(params.turnId, method, "turnId"),
+    callId: string(params.callId, method, "callId"),
+    namespace: nullableString(params.namespace, method, "namespace"),
+    tool: string(params.tool, method, "tool"),
+    arguments: object(params.arguments, method, "arguments")
+  };
+}
+function requestThreadId(params) {
+  return typeof params.threadId === "string" ? params.threadId : null;
+}
+function usage(value, method) {
+  const last = object(object(value, method, "tokenUsage").last, method, "tokenUsage.last");
+  return {
+    input: count(last.inputTokens, method, "tokenUsage.last.inputTokens"),
+    output: count(last.outputTokens, method, "tokenUsage.last.outputTokens"),
+    cacheRead: count(last.cachedInputTokens, method, "tokenUsage.last.cachedInputTokens"),
+    cacheWrite: count(last.cacheWriteInputTokens, method, "tokenUsage.last.cacheWriteInputTokens"),
+    total: count(last.totalTokens, method, "tokenUsage.last.totalTokens")
+  };
+}
+function decodeEvent(method, params) {
+  switch (method) {
+    case "item/agentMessage/delta":
+    case "item/reasoning/summaryTextDelta":
+      return {
+        type: method === "item/agentMessage/delta" ? "agentDelta" : "reasoningDelta",
+        threadId: string(params.threadId, method, "threadId"),
+        turnId: string(params.turnId, method, "turnId"),
+        itemId: string(params.itemId, method, "itemId"),
+        delta: string(params.delta, method, "delta")
+      };
+    case "item/started": {
+      const item = object(params.item, method, "item");
+      return {
+        type: "itemStarted",
+        threadId: string(params.threadId, method, "threadId"),
+        turnId: string(params.turnId, method, "turnId"),
+        itemType: string(item.type, method, "item.type")
+      };
+    }
+    case "item/completed": {
+      const item = object(params.item, method, "item");
+      if (item.type !== "agentMessage") return { type: "ignored", method };
+      return {
+        type: "agentMessageCompleted",
+        threadId: string(params.threadId, method, "threadId"),
+        turnId: string(params.turnId, method, "turnId"),
+        itemId: string(item.id, method, "item.id"),
+        text: string(item.text, method, "item.text")
+      };
+    }
+    case "turn/started":
+      return {
+        type: "turnStarted",
+        threadId: string(params.threadId, method, "threadId"),
+        turnId: string(object(params.turn, method, "turn").id, method, "turn.id")
+      };
+    case "turn/completed": {
+      const turn = object(params.turn, method, "turn");
+      const status = string(turn.status, method, "turn.status");
+      if (status !== "completed" && status !== "interrupted" && status !== "failed") throw invalid(method, "turn.status");
+      const error = turn.error === null || turn.error === void 0 ? null : object(turn.error, method, "turn.error");
+      return {
+        type: "turnCompleted",
+        threadId: string(params.threadId, method, "threadId"),
+        turnId: string(turn.id, method, "turn.id"),
+        status,
+        error: error === null ? null : nullableString(error.message, method, "turn.error.message")
+      };
+    }
+    case "thread/tokenUsage/updated":
+      return {
+        type: "tokenUsage",
+        threadId: string(params.threadId, method, "threadId"),
+        turnId: string(params.turnId, method, "turnId"),
+        usage: usage(params.tokenUsage, method)
+      };
+    case "mcpServer/startupStatus/updated":
+      return {
+        type: "mcpStartup",
+        name: string(params.name, method, "name"),
+        status: string(params.status, method, "status")
+      };
+    default:
+      return { type: "ignored", method };
+  }
+}
+
+// src/json-rpc.ts
+function firstLine(text2) {
+  return text2.split("\n", 1)[0].slice(0, 300);
+}
 var CodexProtocolClient = class extends EventEmitter {
-  child;
+  #child;
+  #killGroup;
   #nextId = 0;
   #pending = /* @__PURE__ */ new Map();
   #closed = false;
-  constructor(child) {
+  #killReason;
+  /** `killGroup` is true when the child leads its own process group. */
+  constructor(child, killGroup) {
     super();
-    this.child = child;
+    this.#child = child;
+    this.#killGroup = killGroup;
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on("line", (line) => this.#receive(line));
     child.stderr.resume();
-    child.once("error", (error) => this.#close(error));
+    child.stdin.on("error", () => void 0);
+    child.once("error", (error) => {
+      this.#close(new Error(`codex-spawn-failed code=${error.code ?? "unknown"}`));
+    });
     child.once("exit", (code, signal) => {
-      this.#close(new Error(`codex-app-server-exit code=${code ?? "null"} signal=${signal ?? "null"}`));
+      this.#close(this.#killReason ?? new Error(`codex-app-server-exit code=${code ?? "null"} signal=${signal ?? "null"}`));
     });
   }
-  request(method, params = {}) {
-    if (this.#closed) return Promise.reject(new Error("codex-app-server-closed"));
-    const id = this.#nextId++;
-    return new Promise((resolve2, reject) => {
-      this.#pending.set(id, { resolve: resolve2, reject });
-      this.#write({ method, id, params });
-    });
+  request(method, params) {
+    return this.#send(method, params, void 0);
+  }
+  requestDecoded(method, params, decode) {
+    return this.#send(method, params, decode);
   }
   notify(method, params) {
     this.#write(params === void 0 ? { method } : { method, params });
@@ -53,36 +412,70 @@ var CodexProtocolClient = class extends EventEmitter {
   respondError(id, code, message) {
     this.#write({ id, error: { code, message } });
   }
-  close() {
-    if (!this.#closed) this.child.kill();
+  kill(reason) {
+    this.#killReason ??= reason;
+    const child = this.#child;
+    if (child.exitCode === null && child.signalCode === null && child.pid !== void 0) {
+      try {
+        if (this.#killGroup) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    }
+    this.#close(reason);
+  }
+  #send(method, params, decode) {
+    if (this.#closed) return Promise.reject(this.#killReason ?? new Error("codex-app-server-closed"));
+    const id = this.#nextId++;
+    return new Promise((resolve2, reject) => {
+      this.#pending.set(id, { method, decode, resolve: resolve2, reject });
+      this.#write({ method, id, params });
+    });
   }
   #write(message) {
-    if (this.#closed) throw new Error("codex-app-server-closed");
-    this.child.stdin.write(`${JSON.stringify(message)}
+    if (this.#closed) return;
+    this.#child.stdin.write(`${JSON.stringify(message)}
 `);
   }
-  #receive(line) {
-    let message;
+  #decodeResult(id, result) {
+    const decode = this.#pending.get(id)?.decode;
+    if (decode === void 0) return result;
     try {
-      message = JSON.parse(line);
-    } catch {
-      this.child.kill();
-      this.#close(new Error("codex-protocol-invalid-json"));
+      return { decoded: decode(result) };
+    } catch (error) {
+      return { failed: error instanceof Error ? error : new Error("codex-protocol-decode-failed") };
+    }
+  }
+  #receive(line) {
+    if (this.#closed) return;
+    let frame;
+    try {
+      frame = JSON.parse(line, (key, value) => key === "" ? decodeFrame(value, (id, result) => this.#decodeResult(id, result)) : value);
+    } catch (error) {
+      this.kill(new Error(error instanceof SyntaxError ? "codex-protocol-invalid-json" : error.message));
       return;
     }
-    if (message.id !== void 0 && message.method === void 0) {
-      const pending = this.#pending.get(message.id);
+    if (frame.kind === "response" || frame.kind === "error") {
+      const pending = this.#pending.get(frame.id);
       if (!pending) return;
-      this.#pending.delete(message.id);
-      if (message.error !== void 0) pending.reject(new Error("codex-protocol-request-failed"));
-      else pending.resolve(message.result);
+      this.#pending.delete(frame.id);
+      if (frame.kind === "error") {
+        const detail = pending.decode === void 0 && frame.message ? `
+${firstLine(frame.message)}` : "";
+        pending.reject(new Error(`codex-request-failed method=${pending.method} code=${frame.code ?? "null"}${detail}`));
+        return;
+      }
+      if (pending.decode === void 0) {
+        pending.resolve(frame.result);
+        return;
+      }
+      const outcome = frame.result;
+      if (outcome.failed) pending.reject(outcome.failed);
+      else pending.resolve(outcome.decoded);
       return;
     }
-    if (message.method !== void 0 && message.id !== void 0) {
-      this.emit("request", message);
-      return;
-    }
-    if (message.method !== void 0) this.emit("notification", message);
+    this.emit(frame.kind, frame);
   }
   #close(error) {
     if (this.#closed) return;
@@ -93,7 +486,8 @@ var CodexProtocolClient = class extends EventEmitter {
   }
 };
 
-// src/protocol.ts
+// src/app-server.ts
+var execFileAsync = promisify(execFile);
 var INITIALIZE_PARAMS = {
   clientInfo: {
     name: "pi_codex_bridge",
@@ -105,62 +499,33 @@ var INITIALIZE_PARAMS = {
     requestAttestation: false
   }
 };
-
-// src/app-server.ts
-var execFileAsync = promisify(execFile);
-var SUPPORTED_CODEX_VERSION = "0.154.0";
-var APP_SERVER_ARGS = [
-  "app-server",
-  "--stdio",
-  "--disable",
-  "shell_tool",
-  "--disable",
-  "apps",
-  "--disable",
-  "plugins",
-  "--disable",
-  "remote_plugin",
-  "--disable",
-  "multi_agent",
-  "--disable",
-  "browser_use",
-  "--disable",
-  "computer_use",
-  "--disable",
-  "image_generation",
-  "--disable",
-  "view_image",
-  "--disable",
-  "sleep_tool",
-  "--disable",
-  "hooks",
-  "-c",
-  'web_search="disabled"'
-];
-function object(value, key) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`codex-protocol-invalid-${key}`);
+async function assertSupportedCodex(launch) {
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(launch.executable, ["--version"], {
+      env: codexChildEnvironment(launch.codexHome, launch.env),
+      encoding: "utf8",
+      maxBuffer: 4096,
+      timeout: 1e4
+    }));
+  } catch (error) {
+    throw new Error(`codex-version-unreadable executable=${launch.executable} code=${error.code ?? "unknown"}`);
   }
-  return value;
-}
-async function assertSupportedCodex(executable, codexHome, env = process.env) {
-  const childEnv = codexChildEnvironment(codexHome, env);
-  const { stdout } = await execFileAsync(executable, ["--version"], {
-    env: childEnv,
-    encoding: "utf8",
-    maxBuffer: 4096
-  });
-  if (stdout.trim() !== `codex-cli ${SUPPORTED_CODEX_VERSION}`) {
-    throw new Error(`codex-version-unsupported expected=${SUPPORTED_CODEX_VERSION}`);
+  const found = decodeVersion(stdout);
+  if (found !== SUPPORTED_CODEX_VERSION) {
+    throw new Error(`codex-version-unsupported found=${found} expected=${SUPPORTED_CODEX_VERSION}`);
   }
 }
-async function startAppServer(executable, codexHome, env = process.env) {
-  await assertSupportedCodex(executable, codexHome, env);
-  const child = spawn(executable, [...APP_SERVER_ARGS], {
-    env: codexChildEnvironment(codexHome, env),
-    stdio: ["pipe", "pipe", "pipe"]
+async function startAppServer(launch, spawn = nodeSpawn) {
+  await assertSupportedCodex(launch);
+  const group = process.platform !== "win32";
+  const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
+    cwd: launch.cwd,
+    env: codexChildEnvironment(launch.codexHome, launch.env),
+    detached: group,
+    windowsHide: true
   });
-  const client = new CodexProtocolClient(child);
+  const client = new CodexProtocolClient(child, group);
   await client.request("initialize", INITIALIZE_PARAMS);
   client.notify("initialized");
   return client;
@@ -169,57 +534,15 @@ async function listCodexModels(client) {
   const models = [];
   let cursor = null;
   do {
-    const response = object(await client.request("model/list", {
-      includeHidden: false,
-      ...cursor === null ? {} : { cursor }
-    }), "model-list");
-    if (!Array.isArray(response.data)) throw new Error("codex-protocol-invalid-model-list-data");
-    for (const raw of response.data) {
-      const model = object(raw, "model");
-      const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts) ? model.supportedReasoningEfforts : [];
-      if (typeof model.id !== "string" || typeof model.model !== "string" || typeof model.displayName !== "string" || typeof model.description !== "string" || typeof model.hidden !== "boolean" || !Array.isArray(model.inputModalities) || !Array.isArray(model.supportedReasoningEfforts) || reasoningEfforts.some((entry) => {
-        const effort = object(entry, "model-reasoning-effort");
-        return typeof effort.reasoningEffort !== "string" || typeof effort.description !== "string";
-      }) || typeof model.defaultReasoningEffort !== "string" || typeof model.isDefault !== "boolean") throw new Error("codex-protocol-invalid-model");
-      models.push(model);
-    }
-    if (response.nextCursor !== null && typeof response.nextCursor !== "string") {
-      throw new Error("codex-protocol-invalid-model-cursor");
-    }
-    cursor = response.nextCursor;
+    const page = await client.requestDecoded("model/list", { includeHidden: false, ...cursor === null ? {} : { cursor } }, decodeModelPage);
+    models.push(...page.models);
+    cursor = page.nextCursor;
   } while (cursor !== null);
   return models;
 }
 
-// src/auth-presence.ts
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-var LOGIN_MISSING_KEY = "codex-login-missing";
-function resolveCodexHome(env = process.env, userHome = homedir()) {
-  const configured = env.CODEX_HOME;
-  if (typeof configured === "string" && configured.trim().length > 0) return configured;
-  return join(userHome, ".codex");
-}
-function hasCodexLogin(codexHome) {
-  return existsSync(join(codexHome, "auth.json"));
-}
-function loginMissingMessage(codexHome) {
-  return `${LOGIN_MISSING_KEY} home=${codexHome}`;
-}
-function requireCodexLogin(codexHome) {
-  if (!hasCodexLogin(codexHome)) throw new Error(loginMissingMessage(codexHome));
-}
-
-// src/bridge.ts
-import {
-  collapseSystemMessages,
-  createAssistantMessageEventStream,
-  getCurrentSystemPrompt,
-  getCurrentTools
-} from "@earendil-works/pi-ai";
-
 // src/dynamic-tools.ts
+import { createHash } from "node:crypto";
 var TOOL_NAME_LIMIT = 64;
 function baseName(name) {
   const normalized = name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, TOOL_NAME_LIMIT);
@@ -237,438 +560,35 @@ function buildDynamicTools(tools) {
       name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
     }
     piNameByCodexName.set(name, tool.name);
-    declarations.push({
-      type: "function",
-      name,
-      description: tool.description,
-      inputSchema: tool.parameters
-    });
+    declarations.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
   }
-  return {
-    declarations,
-    piNameByCodexName,
-    signature: JSON.stringify(declarations)
-  };
+  const signature = createHash("sha256").update(JSON.stringify(declarations)).digest("hex").slice(0, 16);
+  return { declarations, piNameByCodexName, signature };
 }
-
-// src/tool-pairing.ts
-function toolResultText(result) {
-  const parts = [];
-  for (const item of result.content) {
-    if (item.type === "text") parts.push(item.text);
-    else if (item.type === "image") parts.push(`[image ${item.mimeType}]`);
-  }
-  return parts.join("\n");
-}
-function deliverToolResults(client, pending, results) {
-  const seen = /* @__PURE__ */ new Set();
-  for (const result of results) {
-    if (seen.has(result.toolCallId)) throw new Error(`codex-tool-result-duplicate call=${result.toolCallId}`);
-    seen.add(result.toolCallId);
-    const call = pending.get(result.toolCallId);
-    if (!call) throw new Error(`codex-tool-result-unmatched call=${result.toolCallId}`);
-    if (call.piToolName !== result.toolName) {
-      throw new Error(`codex-tool-result-name-mismatch call=${result.toolCallId}`);
-    }
-  }
-  if (seen.size !== pending.size) {
-    throw new Error(`codex-tool-result-missing count=${pending.size - seen.size}`);
-  }
-  for (const result of results) {
-    const call = pending.get(result.toolCallId);
-    if (!call) throw new Error(`codex-tool-result-unmatched call=${result.toolCallId}`);
-    client.respond(call.requestId, {
-      contentItems: [{ type: "inputText", text: toolResultText(result) }],
-      success: !result.isError
-    });
-    pending.delete(result.toolCallId);
-  }
-}
-
-// src/bridge.ts
-var PROVIDER_ID = "pi-codex";
-var API_ID = "codex-app-server";
-function asObject(value, key) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`codex-protocol-invalid-${key}`);
-  }
-  return value;
-}
-function emptyUsage() {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-  };
-}
-function outputMessage(model, threadId) {
-  return {
-    role: "assistant",
-    content: [],
-    api: API_ID,
-    provider: PROVIDER_ID,
-    model: model.id,
-    responseId: threadId,
-    usage: emptyUsage(),
-    stopReason: "pending",
-    timestamp: Date.now()
-  };
-}
-function textInput(content) {
-  if (typeof content === "string") return [{ type: "text", text: content, text_elements: [] }];
-  return content.map((item) => {
-    if (item.type === "text") return { type: "text", text: item.text, text_elements: [] };
-    return { type: "image", url: `data:${item.mimeType};base64,${item.data}` };
-  });
-}
-function serializedHistory(messages) {
-  return messages.filter((message) => message.role !== "system").map((message) => {
-    if (message.role === "user") {
-      const text = typeof message.content === "string" ? message.content : message.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
-      return `User:
-${text}`;
-    }
-    if (message.role === "assistant") {
-      const text = message.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
-      return `Assistant:
-${text}`;
-    }
-    return `Tool ${message.toolName}:
-${message.content.filter((item) => item.type === "text").map((item) => item.text).join("\n")}`;
-  }).join("\n\n");
-}
-function latestThreadId(messages) {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.provider === PROVIDER_ID && message.responseId) {
-      return message.responseId;
-    }
-  }
-  return void 0;
-}
-function inputAfterThreadMessage(messages, threadId) {
-  if (threadId === void 0) {
-    return [{ type: "text", text: serializedHistory(messages), text_elements: [] }];
-  }
-  let boundary = -1;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.responseId === threadId) {
-      boundary = index;
-      break;
-    }
-  }
-  return messages.slice(boundary + 1).flatMap((message) => message.role === "user" ? textInput(message.content) : []);
-}
-function toolResultsAfterThreadMessage(messages, threadId) {
-  let boundary = -1;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.responseId === threadId) {
-      boundary = index;
-      break;
-    }
-  }
-  return messages.slice(boundary + 1).filter((message) => message.role === "toolResult");
-}
-function responseThread(value) {
-  const result = asObject(value, "thread-response");
-  const thread = asObject(result.thread, "thread");
-  if (typeof thread.id !== "string") throw new Error("codex-protocol-invalid-thread-id");
-  return { thread: { id: thread.id } };
-}
-function responseTurn(value) {
-  const result = asObject(value, "turn-response");
-  const turn = asObject(result.turn, "turn");
-  if (typeof turn.id !== "string") throw new Error("codex-protocol-invalid-turn-id");
-  return { turn: { id: turn.id } };
-}
-function dynamicToolCall(message) {
-  const params = asObject(message.params, "dynamic-tool-call");
-  if (typeof params.threadId !== "string" || typeof params.turnId !== "string" || typeof params.callId !== "string" || params.namespace !== null && typeof params.namespace !== "string" || typeof params.tool !== "string") throw new Error("codex-protocol-invalid-dynamic-tool-call");
-  return {
-    threadId: params.threadId,
-    turnId: params.turnId,
-    callId: params.callId,
-    namespace: params.namespace,
-    tool: params.tool,
-    arguments: asObject(params.arguments, "dynamic-tool-arguments")
-  };
-}
-function updateUsage(output, params) {
-  const tokenUsage = asObject(params.tokenUsage, "token-usage");
-  const last = asObject(tokenUsage.last, "token-usage-last");
-  const input = typeof last.inputTokens === "number" ? last.inputTokens : 0;
-  const outputTokens = typeof last.outputTokens === "number" ? last.outputTokens : 0;
-  const cacheRead = typeof last.cachedInputTokens === "number" ? last.cachedInputTokens : 0;
-  const cacheWrite = typeof last.cacheWriteInputTokens === "number" ? last.cacheWriteInputTokens : 0;
-  output.usage = {
-    input,
-    output: outputTokens,
-    cacheRead,
-    cacheWrite,
-    totalTokens: typeof last.totalTokens === "number" ? last.totalTokens : input + outputTokens,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-  };
-}
-var CodexBridge = class {
-  executable;
-  codexHome;
-  cwd;
-  env;
-  startClient;
-  #sessions = /* @__PURE__ */ new Map();
-  constructor(options) {
-    this.executable = options.executable ?? "codex";
-    this.codexHome = options.codexHome;
-    this.cwd = options.cwd ?? process.cwd();
-    this.env = options.env ?? process.env;
-    this.startClient = options.startClient ?? startAppServer;
-  }
-  streamSimple = (model, context, options) => {
-    const stream = createAssistantMessageEventStream();
-    void this.#run(stream, model, context, options);
-    return stream;
-  };
-  async close() {
-    for (const session of this.#sessions.values()) session.client.close();
-    this.#sessions.clear();
-  }
-  async #session(model, threadId, tools, systemPrompt) {
-    const existing = threadId === void 0 ? void 0 : this.#sessions.get(threadId);
-    if (existing) {
-      if (existing.modelId !== model.id) throw new Error("codex-model-changed-start-new-session");
-      if (existing.toolSignature !== tools.signature) throw new Error("codex-tool-set-changed-start-new-session");
-      return existing;
-    }
-    const client = await this.startClient(this.executable, this.codexHome, this.env);
-    if (threadId !== void 0) {
-      const resumed = responseThread(await client.request("thread/resume", {
-        threadId,
-        model: model.id,
-        cwd: this.cwd,
-        approvalPolicy: "never",
-        sandbox: "read-only"
-      }));
-      const session2 = {
-        client,
-        threadId: resumed.thread.id,
-        modelId: model.id,
-        toolSignature: tools.signature,
-        tools,
-        pending: /* @__PURE__ */ new Map()
-      };
-      this.#sessions.set(session2.threadId, session2);
-      return session2;
-    }
-    const started = responseThread(await client.request("thread/start", {
-      model: model.id,
-      cwd: this.cwd,
-      approvalPolicy: "never",
-      sandbox: "read-only",
-      baseInstructions: systemPrompt,
-      dynamicTools: tools.declarations,
-      ephemeral: false
-    }));
-    const session = {
-      client,
-      threadId: started.thread.id,
-      modelId: model.id,
-      toolSignature: tools.signature,
-      tools,
-      pending: /* @__PURE__ */ new Map()
-    };
-    this.#sessions.set(session.threadId, session);
-    return session;
-  }
-  async #run(stream, model, context, options) {
-    const transcript = collapseSystemMessages(context);
-    const tools = buildDynamicTools(getCurrentTools(transcript.messages));
-    let output = outputMessage(model);
-    let session;
-    let ended = false;
-    let textIndex;
-    let thinkingIndex;
-    let toolEndTimer;
-    const cleanup = () => {
-      if (toolEndTimer !== void 0) clearTimeout(toolEndTimer);
-      if (session) {
-        session.client.off("request", onRequest);
-        session.client.off("notification", onNotification);
-        session.client.off("closed", onClosed);
-      }
-      options?.signal?.removeEventListener("abort", onAbort);
-    };
-    const fail = (error) => {
-      if (ended) return;
-      ended = true;
-      cleanup();
-      if (session) {
-        session.client.close();
-        this.#sessions.delete(session.threadId);
-      }
-      output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-      output.errorMessage = error instanceof Error ? error.message : "codex-bridge-error";
-      stream.push({ type: "error", reason: output.stopReason, error: output });
-      stream.end();
-    };
-    const finishToolBatch = () => {
-      if (ended || !session || session.pending.size === 0) return;
-      ended = true;
-      cleanup();
-      output.stopReason = "toolUse";
-      stream.push({ type: "done", reason: "toolUse", message: output });
-      stream.end();
-    };
-    const onRequest = (message) => {
-      if (ended || !session || message.id === void 0 || typeof message.method !== "string") return;
-      if (message.method !== "item/tool/call") {
-        const key = message.method === "account/chatgptAuthTokens/refresh" ? "codex-credential-refresh-refused" : "codex-native-tool-refused";
-        session.client.respondError(message.id, -32601, key);
-        fail(new Error(`${key} method=${message.method}`));
-        return;
-      }
-      try {
-        const call = dynamicToolCall(message);
-        if (call.threadId !== session.threadId || call.turnId !== session.activeTurnId) {
-          throw new Error("codex-tool-call-session-mismatch");
-        }
-        if (call.namespace !== null) throw new Error("codex-tool-call-namespace-refused");
-        const piToolName = session.tools.piNameByCodexName.get(call.tool);
-        if (!piToolName) throw new Error(`codex-tool-call-unknown tool=${call.tool}`);
-        if (session.pending.has(call.callId)) throw new Error(`codex-tool-call-duplicate call=${call.callId}`);
-        session.pending.set(call.callId, { requestId: message.id, params: call, piToolName });
-        const contentIndex = output.content.length;
-        const toolCall = { type: "toolCall", id: call.callId, name: piToolName, arguments: call.arguments };
-        output.content.push(toolCall);
-        stream.push({ type: "toolcall_start", contentIndex, partial: output });
-        stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: output });
-        if (toolEndTimer !== void 0) clearTimeout(toolEndTimer);
-        toolEndTimer = setTimeout(finishToolBatch, 0);
-      } catch (error) {
-        session.client.respondError(message.id, -32602, "codex-tool-call-refused");
-        fail(error);
-      }
-    };
-    const onNotification = (message) => {
-      if (ended || !session || typeof message.method !== "string") return;
-      try {
-        const params = asObject(message.params ?? {}, "notification");
-        if (typeof params.threadId === "string" && params.threadId !== session.threadId) return;
-        if (typeof params.turnId === "string" && session.activeTurnId && params.turnId !== session.activeTurnId) return;
-        if (message.method === "item/agentMessage/delta") {
-          if (typeof params.delta !== "string") throw new Error("codex-protocol-invalid-agent-delta");
-          if (textIndex === void 0) {
-            textIndex = output.content.length;
-            output.content.push({ type: "text", text: "" });
-            stream.push({ type: "text_start", contentIndex: textIndex, partial: output });
-          }
-          const content = output.content[textIndex];
-          if (content.type !== "text") throw new Error("codex-text-state-invalid");
-          content.text += params.delta;
-          stream.push({ type: "text_delta", contentIndex: textIndex, delta: params.delta, partial: output });
-          return;
-        }
-        if (message.method === "item/reasoning/summaryTextDelta") {
-          if (typeof params.delta !== "string") throw new Error("codex-protocol-invalid-reasoning-delta");
-          if (thinkingIndex === void 0) {
-            thinkingIndex = output.content.length;
-            output.content.push({ type: "thinking", thinking: "" });
-            stream.push({ type: "thinking_start", contentIndex: thinkingIndex, partial: output });
-          }
-          const content = output.content[thinkingIndex];
-          if (content.type !== "thinking") throw new Error("codex-thinking-state-invalid");
-          content.thinking += params.delta;
-          stream.push({ type: "thinking_delta", contentIndex: thinkingIndex, delta: params.delta, partial: output });
-          return;
-        }
-        if (message.method === "thread/tokenUsage/updated") {
-          updateUsage(output, params);
-          return;
-        }
-        if (message.method !== "turn/completed") return;
-        const turn = asObject(params.turn, "completed-turn");
-        if (turn.id !== session.activeTurnId) return;
-        if (turn.status === "completed") {
-          ended = true;
-          cleanup();
-          if (thinkingIndex !== void 0) {
-            const content = output.content[thinkingIndex];
-            if (content.type === "thinking") stream.push({ type: "thinking_end", contentIndex: thinkingIndex, content: content.thinking, partial: output });
-          }
-          if (textIndex !== void 0) {
-            const content = output.content[textIndex];
-            if (content.type === "text") stream.push({ type: "text_end", contentIndex: textIndex, content: content.text, partial: output });
-          }
-          session.activeTurnId = void 0;
-          output.stopReason = "stop";
-          stream.push({ type: "done", reason: "stop", message: output });
-          stream.end();
-          return;
-        }
-        if (turn.status === "interrupted") {
-          fail(new Error("codex-turn-interrupted"));
-          return;
-        }
-        fail(new Error("codex-turn-failed"));
-      } catch (error) {
-        fail(error);
-      }
-    };
-    const onClosed = () => fail(new Error("codex-app-server-closed"));
-    const onAbort = () => {
-      if (!session?.activeTurnId || ended) return;
-      void session.client.request("turn/interrupt", {
-        threadId: session.threadId,
-        turnId: session.activeTurnId
-      }).catch(fail);
-    };
-    try {
-      const threadId = latestThreadId(transcript.messages);
-      session = await this.#session(model, threadId, tools, getCurrentSystemPrompt(transcript.messages));
-      output = outputMessage(model, session.threadId);
-      stream.push({ type: "start", partial: output });
-      session.client.on("request", onRequest);
-      session.client.on("notification", onNotification);
-      session.client.on("closed", onClosed);
-      options?.signal?.addEventListener("abort", onAbort, { once: true });
-      if (session.pending.size > 0) {
-        const results = toolResultsAfterThreadMessage(transcript.messages, session.threadId);
-        deliverToolResults(session.client, session.pending, results);
-        return;
-      }
-      if (session.activeTurnId !== void 0) throw new Error("codex-turn-already-active");
-      const turn = responseTurn(await session.client.request("turn/start", {
-        threadId: session.threadId,
-        input: inputAfterThreadMessage(transcript.messages, threadId),
-        model: model.id,
-        effort: options?.reasoning ?? null
-      }));
-      session.activeTurnId = turn.turn.id;
-    } catch (error) {
-      fail(error);
-    }
-  }
-};
 
 // src/models.ts
+import { clampThinkingLevel } from "@earendil-works/pi-ai";
+var PROVIDER_ID = "pi-codex";
+var API_ID = "codex-app-server";
 var PI_CONTEXT_ACCOUNTING_LIMIT = 128e3;
 var PI_OUTPUT_ACCOUNTING_LIMIT = 32e3;
+var PI_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+function thinkingLevelMap(efforts) {
+  const map = { off: efforts.includes("none") ? "none" : null };
+  for (const level of PI_LEVELS) map[level] = efforts.includes(level) ? level : null;
+  return map;
+}
 function buildPiModels(models) {
   return models.filter((model) => !model.hidden).map((model) => {
-    const efforts = model.supportedReasoningEfforts.map((entry) => entry.reasoningEffort).filter((effort) => effort.length > 0);
-    const thinkingLevelMap = Object.fromEntries(efforts.map((effort) => [effort, effort]));
+    const efforts = model.reasoningEfforts.filter((effort) => effort.length > 0);
     return {
       id: model.model,
       name: model.displayName,
-      api: "codex-app-server",
-      provider: "pi-codex",
-      baseUrl: "codex-app-server",
+      api: API_ID,
+      provider: PROVIDER_ID,
+      baseUrl: API_ID,
       reasoning: efforts.length > 0,
-      thinkingLevelMap,
+      thinkingLevelMap: thinkingLevelMap(efforts),
       input: model.inputModalities.includes("image") ? ["text", "image"] : ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: PI_CONTEXT_ACCOUNTING_LIMIT,
@@ -676,6 +596,606 @@ function buildPiModels(models) {
     };
   });
 }
+function codexEffort(model, level) {
+  if (!model.reasoning) return null;
+  const clamped = level === void 0 ? "off" : clampThinkingLevel(model, level);
+  return model.thinkingLevelMap?.[clamped] ?? null;
+}
+
+// src/tool-pairing.ts
+var LOST_TOOL_RESULT_TEXT = "tool-result-lost=interrupted\nPi Codex bridge: the result of this tool call was lost (the turn was interrupted). Treat the call as failed; it may or may not have executed. Run the tool again if its output is still needed.";
+function contentItems(result) {
+  const items = result.content.map((item) => item.type === "text" ? { type: "inputText", text: item.text } : { type: "inputImage", imageUrl: `data:${item.mimeType};base64,${item.data}` });
+  return items.length > 0 ? items : [{ type: "inputText", text: "" }];
+}
+function answerToolCalls(pending, results) {
+  const byCall = new Map(pending.map((call) => [call.callId, call]));
+  const resultByCall = /* @__PURE__ */ new Map();
+  for (const result of results) {
+    if (resultByCall.has(result.toolCallId)) throw new Error(`codex-tool-result-duplicate call=${result.toolCallId}`);
+    const call = byCall.get(result.toolCallId);
+    if (!call) throw new Error(`codex-tool-result-unmatched call=${result.toolCallId}`);
+    if (call.piToolName !== result.toolName) throw new Error(`codex-tool-result-name-mismatch call=${result.toolCallId}`);
+    resultByCall.set(result.toolCallId, result);
+  }
+  return pending.map((call) => {
+    const result = resultByCall.get(call.callId);
+    return {
+      requestId: call.requestId,
+      result: result ? { contentItems: contentItems(result), success: !result.isError } : { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false }
+    };
+  });
+}
+
+// src/transcript.ts
+var RESPONSE_ID_PREFIX = "codex-thread";
+function encodeResponseId(threadId, turnId, toolSignature) {
+  return `${RESPONSE_ID_PREFIX}:${threadId}:${turnId}:${toolSignature}`;
+}
+function findBoundary(messages) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== "assistant" || message.provider !== PROVIDER_ID) continue;
+    if (message.stopReason !== "stop" && message.stopReason !== "toolUse") continue;
+    const parts = message.responseId?.split(":");
+    if (parts?.length !== 4 || parts[0] !== RESPONSE_ID_PREFIX || parts.some((part) => part.length === 0)) continue;
+    return { index, threadId: parts[1], turnId: parts[2], toolSignature: parts[3], stopReason: message.stopReason };
+  }
+  return void 0;
+}
+function userInput(content) {
+  if (typeof content === "string") return [{ type: "text", text: content, text_elements: [] }];
+  return content.map((item) => item.type === "text" ? { type: "text", text: item.text, text_elements: [] } : { type: "image", url: `data:${item.mimeType};base64,${item.data}` });
+}
+function afterBoundary(messages, boundary) {
+  const later = messages.slice(boundary.index + 1);
+  return {
+    input: later.flatMap((message) => message.role === "user" ? userInput(message.content) : []),
+    toolResults: later.filter((message) => message.role === "toolResult")
+  };
+}
+function text(content) {
+  if (typeof content === "string") return content;
+  return content.flatMap((item) => item.type === "text" && typeof item.text === "string" ? [item.text] : []).join("\n");
+}
+function historyEntry(message) {
+  if (message.role === "user") return `User:
+${text(message.content)}`;
+  if (message.role === "toolResult") return `Tool result (${message.toolName}):
+${text(message.content)}`;
+  const parts = message.content.flatMap((item) => {
+    if (item.type === "text") return [item.text];
+    if (item.type === "toolCall") return [`[called ${item.name} ${JSON.stringify(item.arguments)}]`];
+    return [];
+  });
+  return `Assistant:
+${parts.join("\n")}`;
+}
+function historyImages(message) {
+  if (message.role !== "user" && message.role !== "toolResult") return [];
+  if (typeof message.content === "string") return [];
+  return message.content.flatMap((item) => item.type === "image" ? [{ type: "image", url: `data:${item.mimeType};base64,${item.data}` }] : []);
+}
+function replayInput(messages) {
+  const conversation = messages.filter((message) => message.role !== "system");
+  let start = conversation.length;
+  while (start > 0 && conversation[start - 1].role === "user") start--;
+  const history = conversation.slice(0, start);
+  const trailing = conversation.slice(start).flatMap((message) => message.role === "user" ? userInput(message.content) : []);
+  if (history.length === 0) return trailing;
+  const replay = `Conversation so far, replayed from Pi:
+
+${history.map(historyEntry).join("\n\n")}`;
+  return [{ type: "text", text: replay, text_elements: [] }, ...history.flatMap(historyImages), ...trailing];
+}
+
+// src/bridge.ts
+var MAX_THREADS = 16;
+var MAX_QUEUED_EVENTS = 1024;
+var MAX_PENDING_CALLS = 64;
+var DISCOVERY_DEADLINE_MS = 15e3;
+var ThreadQueue = class {
+  #items = [];
+  #wake;
+  #full = false;
+  push(item) {
+    if (this.#full) return;
+    if (this.#items.length >= MAX_QUEUED_EVENTS - 1) {
+      this.#full = true;
+      this.#items.push({ kind: "refusal", error: new Error(`codex-request-queue-full limit=${MAX_QUEUED_EVENTS}`), turnId: null });
+    } else {
+      this.#items.push(item);
+    }
+    this.#wake?.();
+  }
+  async next() {
+    while (this.#items.length === 0) await new Promise((resolve2) => this.#wake = resolve2);
+    this.#wake = void 0;
+    return this.#items.shift();
+  }
+  /** The tool call at the head of the queue, taken, if one is there. */
+  takeToolCall() {
+    const head = this.#items[0];
+    if (head?.kind !== "toolCall") return void 0;
+    this.#items.shift();
+    return head;
+  }
+};
+function emptyUsage() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+function firstLine2(error) {
+  return (error instanceof Error ? error.message : "codex-bridge-error").split("\n", 1)[0];
+}
+var CodexBridge = class {
+  codexHome;
+  #launch;
+  #connect;
+  #client;
+  #current;
+  #threads = /* @__PURE__ */ new Map();
+  constructor(options) {
+    this.codexHome = options.codexHome;
+    this.#launch = {
+      executable: options.executable ?? "codex",
+      codexHome: options.codexHome,
+      cwd: options.cwd ?? process.cwd(),
+      env: options.env ?? process.env,
+      configOverrides: options.configOverrides ?? []
+    };
+    this.#connect = options.connect ?? ((launch) => startAppServer(launch));
+  }
+  /** Pi's stream entry point. A missing login throws before any process starts. */
+  streamSimple = (model, context, options) => {
+    requireCodexLogin(this.codexHome);
+    const stream = createAssistantMessageEventStream();
+    void this.#run(stream, model, context, options);
+    return stream;
+  };
+  /** The account's models through this bridge's own client, bounded by a
+   * deadline so a stalled Codex cannot hold Pi's startup. */
+  async discoverModels(deadlineMs = DISCOVERY_DEADLINE_MS) {
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`codex-discovery-timeout after_ms=${deadlineMs}`)), deadlineMs);
+    });
+    try {
+      const client = await Promise.race([this.#client ??= this.#open(), deadline]);
+      return { models: await Promise.race([listCodexModels(client), deadline]) };
+    } catch (error) {
+      this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
+      return { models: [], notice: firstLine2(error) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async close() {
+    this.#closeClient(new Error("codex-bridge-closed"));
+    this.#threads.clear();
+  }
+  // --- Client and router ---------------------------------------------------
+  #open() {
+    const opening = this.#connect(this.#launch).then((client) => {
+      if (this.#client !== opening) {
+        client.kill(new Error("codex-bridge-closed"));
+        throw new Error("codex-bridge-closed");
+      }
+      this.#current = client;
+      client.on("request", (frame) => this.#onRequest(client, frame));
+      client.on("notification", (frame) => this.#onNotification(client, frame));
+      client.on("closed", (error) => this.#onClosed(client, error));
+      return client;
+    });
+    opening.catch(() => {
+      if (this.#client === opening) this.#client = void 0;
+    });
+    return opening;
+  }
+  #closeClient(reason) {
+    const opening = this.#client;
+    this.#client = void 0;
+    this.#current?.kill(reason);
+    this.#current = void 0;
+    opening?.then((client) => client.kill(reason), () => void 0);
+  }
+  #onClosed(client, error) {
+    if (this.#current !== client) return;
+    this.#current = void 0;
+    this.#client = void 0;
+    for (const record of this.#threads.values()) record.queue.push({ kind: "refusal", error, turnId: null });
+    this.#threads.clear();
+  }
+  /** A guard that cannot be held by refusing one turn: stop the child and
+   * every process it started, and fail every stream on it. */
+  #breach(client, error) {
+    client.kill(error);
+  }
+  #interrupt(client, record) {
+    if (record.activeTurnId === null) return;
+    void client.request("turn/interrupt", { threadId: record.threadId, turnId: record.activeTurnId }).catch(() => void 0);
+  }
+  /** Refuse the turn a server request belongs to; a request no thread of
+   * this bridge owns is a breach. */
+  #refuse(client, threadId, error) {
+    const records = threadId === null ? [...this.#threads.values()].filter((record) => record.activeTurnId !== null) : [this.#threads.get(threadId)];
+    for (const record of records) {
+      if (record === void 0) {
+        this.#breach(client, new Error(`codex-foreign-thread thread=${threadId}`));
+        return;
+      }
+      this.#interrupt(client, record);
+      record.queue.push({ kind: "refusal", error, turnId: record.activeTurnId });
+    }
+  }
+  #onNotification(client, frame) {
+    let event;
+    try {
+      event = decodeEvent(frame.method, frame.params);
+    } catch (error) {
+      this.#breach(client, error);
+      return;
+    }
+    if (event.type === "ignored") return;
+    if (event.type === "mcpStartup") {
+      if (event.status === "starting") this.#breach(client, new Error(`codex-mcp-started name=${event.name}`));
+      return;
+    }
+    const record = this.#threads.get(event.threadId);
+    if (record === void 0) {
+      if (event.type === "turnStarted" || event.type === "itemStarted") {
+        this.#breach(client, new Error(`codex-foreign-thread thread=${event.threadId}`));
+      }
+      return;
+    }
+    if (event.type === "itemStarted" && !ALLOWED_ITEM_TYPES.has(event.itemType)) {
+      this.#interrupt(client, record);
+      record.queue.push({ kind: "refusal", error: new Error(`codex-native-item type=${event.itemType}`), turnId: event.turnId });
+      return;
+    }
+    record.queue.push({ kind: "event", event, raw: frame });
+  }
+  #onRequest(client, frame) {
+    const { id, method, params } = frame;
+    if (method === "item/tool/call") {
+      let call;
+      try {
+        call = decodeDynamicToolCall(params);
+      } catch (error2) {
+        client.respondError(id, -32602, "codex-tool-call-refused");
+        this.#refuse(client, requestThreadId(params), error2);
+        return;
+      }
+      const record = this.#threads.get(call.threadId);
+      if (record === void 0) {
+        client.respondError(id, -32602, "codex-tool-call-refused");
+        this.#breach(client, new Error(`codex-foreign-thread thread=${call.threadId}`));
+        return;
+      }
+      record.queue.push({ kind: "toolCall", requestId: id, call, raw: frame });
+      return;
+    }
+    let error;
+    if (method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval") {
+      client.respond(id, { decision: "decline" });
+      error = new Error(`codex-native-approval-declined method=${method}`);
+    } else if (method === "execCommandApproval" || method === "applyPatchApproval") {
+      client.respond(id, { decision: "abort" });
+      error = new Error(`codex-native-approval-declined method=${method}`);
+    } else if (method === "account/chatgptAuthTokens/refresh") {
+      client.respondError(id, -32601, "codex-credential-refresh-refused");
+      error = new Error(`codex-credential-refresh-refused method=${method}`);
+    } else {
+      client.respondError(id, -32601, "codex-server-request-refused");
+      error = new Error(`codex-server-request-refused method=${method}`);
+    }
+    this.#refuse(client, requestThreadId(params), error);
+  }
+  // --- Threads -------------------------------------------------------------
+  #register(record) {
+    this.#threads.delete(record.threadId);
+    this.#threads.set(record.threadId, record);
+    while (this.#threads.size > MAX_THREADS) {
+      const idle = [...this.#threads.values()].filter((candidate) => candidate !== record && !candidate.streaming && candidate.activeTurnId === null).sort((a, b) => a.lastUsed - b.lastUsed)[0];
+      if (idle === void 0) throw new Error(`codex-thread-table-full limit=${MAX_THREADS}`);
+      this.#threads.delete(idle.threadId);
+    }
+  }
+  #record(threadId, tools, lastTurnId) {
+    return { threadId, tools, lastTurnId, activeTurnId: null, pending: [], queue: new ThreadQueue(), streaming: false, lastUsed: Date.now() };
+  }
+  /** Answer a turn the bridge no longer continues, so Codex does not wait on
+   * it, and stop it. */
+  #abandon(client, record) {
+    for (const answer of answerToolCalls(record.pending, [])) client.respond(answer.requestId, answer.result);
+    record.pending = [];
+    this.#interrupt(client, record);
+    record.activeTurnId = null;
+  }
+  /** Names only: `config/read` is decoded to the configured MCP server names
+   * inside its own parse. A read that fails refuses the thread. */
+  async #mcpServerNames(client) {
+    try {
+      return await client.requestDecoded("config/read", { cwd: this.#launch.cwd }, decodeMcpServerNames);
+    } catch (error) {
+      throw new Error(`codex-mcp-names-unread
+${firstLine2(error)}`);
+    }
+  }
+  /** Refuse a thread on which any feature no review covers is enabled, before
+   * its first turn. */
+  async #auditFeatures(client, threadId) {
+    const enabled = [];
+    let cursor = null;
+    do {
+      const page = await client.requestDecoded("experimentalFeature/list", { threadId, ...cursor === null ? {} : { cursor } }, decodeFeaturePage);
+      enabled.push(...page.enabled);
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    const unreviewed = unreviewedFeature(enabled);
+    if (unreviewed !== void 0) throw new Error(`codex-feature-unreviewed name=${unreviewed}`);
+  }
+  async #startThread(client, model, messages, tools) {
+    const names = await this.#mcpServerNames(client);
+    const { threadId } = await client.requestDecoded("thread/start", {
+      model: model.id,
+      cwd: this.#launch.cwd,
+      approvalPolicy: APPROVAL_POLICY,
+      sandbox: "read-only",
+      baseInstructions: getCurrentSystemPrompt(messages),
+      dynamicTools: tools.declarations,
+      ephemeral: false,
+      environments: [],
+      config: threadConfig(names)
+    }, decodeThreadStart);
+    const record = this.#record(threadId, tools, null);
+    this.#register(record);
+    try {
+      await this.#auditFeatures(client, threadId);
+    } catch (error) {
+      this.#threads.delete(threadId);
+      throw error;
+    }
+    return record;
+  }
+  /** A cold resume, used only when Codex's latest turn is Pi's boundary. */
+  async #resumeThread(client, model, threadId, turnId, tools) {
+    const names = await this.#mcpServerNames(client);
+    const resumed = await client.requestDecoded("thread/resume", {
+      threadId,
+      model: model.id,
+      cwd: this.#launch.cwd,
+      approvalPolicy: APPROVAL_POLICY,
+      sandbox: "read-only",
+      config: threadConfig(names),
+      excludeTurns: true,
+      initialTurnsPage: { limit: 1, sortDirection: "desc", itemsView: "notLoaded" }
+    }, decodeThreadResume);
+    if (resumed.lastTurnId !== turnId) return void 0;
+    const record = this.#record(resumed.threadId, tools, turnId);
+    this.#register(record);
+    try {
+      await this.#auditFeatures(client, record.threadId);
+    } catch (error) {
+      this.#threads.delete(record.threadId);
+      throw error;
+    }
+    return record;
+  }
+  /**
+   * Which Codex thread serves this transcript. Pi's latest clean pi-codex
+   * message names a thread, a turn and a tool signature. The bridge continues
+   * that thread only when the signature matches Pi's current tools and the
+   * thread's latest turn is that turn; otherwise it starts a new thread and
+   * replays the transcript, so Codex never holds turns Pi has dropped or calls
+   * a tool Pi no longer has.
+   */
+  async #plan(client, model, messages, tools) {
+    const boundary = findBoundary(messages);
+    if (boundary !== void 0 && boundary.toolSignature === tools.signature) {
+      const after = afterBoundary(messages, boundary);
+      const record2 = this.#threads.get(boundary.threadId);
+      if (record2 !== void 0) {
+        if (boundary.stopReason === "toolUse" && record2.activeTurnId === boundary.turnId && record2.pending.length > 0) {
+          return { record: record2, mode: "continue", input: after.input, answers: answerToolCalls(record2.pending, after.toolResults) };
+        }
+        if (boundary.stopReason === "stop" && record2.activeTurnId === null && record2.lastTurnId === boundary.turnId) {
+          return { record: record2, mode: "turn", input: after.input };
+        }
+        this.#abandon(client, record2);
+      } else if (boundary.stopReason === "stop") {
+        const resumed = await this.#resumeThread(client, model, boundary.threadId, boundary.turnId, tools);
+        if (resumed !== void 0) return { record: resumed, mode: "turn", input: after.input };
+      }
+    }
+    const record = await this.#startThread(client, model, messages, tools);
+    return { record, mode: "turn", input: replayInput(messages) };
+  }
+  // --- Streams -------------------------------------------------------------
+  async #run(stream, model, context, options) {
+    const output = {
+      role: "assistant",
+      content: [],
+      api: API_ID,
+      provider: PROVIDER_ID,
+      model: model.id,
+      usage: emptyUsage(),
+      stopReason: "pending",
+      timestamp: Date.now()
+    };
+    let record;
+    let client;
+    const signal = options?.signal;
+    let rejectAborted;
+    const aborted = new Promise((_, reject) => rejectAborted = reject);
+    aborted.catch(() => void 0);
+    const onAbort = () => {
+      rejectAborted?.(new Error("codex-request-aborted"));
+      if (client !== void 0 && record !== void 0) this.#interrupt(client, record);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      if (signal?.aborted) throw new Error("codex-request-aborted");
+      const messages = collapseSystemMessages(context).messages;
+      const tools = buildDynamicTools(getCurrentTools(messages));
+      client = await Promise.race([this.#client ??= this.#open(), aborted]);
+      const plan = await Promise.race([this.#plan(client, model, messages, tools), aborted]);
+      record = plan.record;
+      if (record.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
+      record.streaming = true;
+      record.lastUsed = Date.now();
+      if (plan.mode === "continue") {
+        const payload = { method: "item/tool/call", answers: plan.answers, steer: plan.input };
+        const sent = await options?.onPayload?.(payload, model) ?? payload;
+        for (const answer of sent.answers) client.respond(answer.requestId, answer.result);
+        record.pending = [];
+        if (sent.steer.length > 0) {
+          await client.request("turn/steer", { threadId: record.threadId, expectedTurnId: record.activeTurnId, input: sent.steer });
+        }
+      } else {
+        if (plan.input.length === 0) throw new Error("codex-turn-input-empty");
+        const effort = codexEffort(model, options?.reasoning);
+        const params = {
+          threadId: record.threadId,
+          input: plan.input,
+          model: model.id,
+          approvalPolicy: APPROVAL_POLICY,
+          environments: [],
+          ...effort === null ? {} : { effort }
+        };
+        const sent = await options?.onPayload?.(params, model) ?? params;
+        const { turnId } = await client.requestDecoded("turn/start", sent, decodeTurnStart);
+        record.activeTurnId = turnId;
+        record.lastTurnId = turnId;
+      }
+      await options?.onResponse?.({ status: 200, headers: {} }, model);
+      output.responseId = encodeResponseId(record.threadId, record.activeTurnId, tools.signature);
+      if (signal?.aborted) throw new Error("codex-request-aborted");
+      stream.push({ type: "start", partial: output });
+      await this.#consume(stream, output, model, record, options);
+    } catch (error) {
+      if (client !== void 0 && record !== void 0 && record.activeTurnId !== null) this.#abandon(client, record);
+      output.stopReason = signal?.aborted ? "aborted" : "error";
+      output.errorMessage = error instanceof Error ? error.message : "codex-bridge-error";
+      stream.push({ type: "error", reason: output.stopReason, error: output });
+      stream.end();
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+      if (record !== void 0) record.streaming = false;
+    }
+  }
+  /** Read the thread's queue until the turn completes or Codex waits on a
+   * tool call. Codex holds a turn on each `item/tool/call` until the bridge
+   * answers it, so that request is what ends a tool batch. */
+  async #consume(stream, output, model, record, options) {
+    const textIndex = /* @__PURE__ */ new Map();
+    const thinkingIndex = /* @__PURE__ */ new Map();
+    const closeBlocks = () => {
+      for (const index of thinkingIndex.values()) {
+        const block = output.content[index];
+        if (block.type === "thinking") stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
+      }
+      for (const index of textIndex.values()) {
+        const block = output.content[index];
+        if (block.type === "text") stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: output });
+      }
+    };
+    const appendText = (itemId, delta) => {
+      let index = textIndex.get(itemId);
+      if (index === void 0) {
+        index = output.content.length;
+        textIndex.set(itemId, index);
+        output.content.push({ type: "text", text: "" });
+        stream.push({ type: "text_start", contentIndex: index, partial: output });
+      }
+      const block = output.content[index];
+      if (block.type !== "text") throw new Error("codex-text-state-invalid");
+      block.text += delta;
+      stream.push({ type: "text_delta", contentIndex: index, delta, partial: output });
+    };
+    const addToolCall = (requestId2, call) => {
+      if (call.turnId !== record.activeTurnId) throw new Error(`codex-tool-call-turn-mismatch turn=${call.turnId}`);
+      if (call.namespace !== null) throw new Error(`codex-tool-call-namespace-refused namespace=${call.namespace}`);
+      const piToolName = record.tools.piNameByCodexName.get(call.tool);
+      if (piToolName === void 0) throw new Error(`codex-tool-call-unknown tool=${call.tool}`);
+      if (record.pending.some((pending) => pending.callId === call.callId)) throw new Error(`codex-tool-call-duplicate call=${call.callId}`);
+      if (record.pending.length >= MAX_PENDING_CALLS) throw new Error(`codex-tool-calls-full limit=${MAX_PENDING_CALLS}`);
+      record.pending.push({ requestId: requestId2, callId: call.callId, piToolName });
+      const contentIndex = output.content.length;
+      const toolCall = { type: "toolCall", id: call.callId, name: piToolName, arguments: call.arguments };
+      output.content.push(toolCall);
+      stream.push({ type: "toolcall_start", contentIndex, partial: output });
+      stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: output });
+    };
+    while (true) {
+      const item = await record.queue.next();
+      if (item.kind === "refusal") {
+        if (item.turnId !== null && item.turnId !== record.activeTurnId) continue;
+        throw item.error;
+      }
+      await options?.onProviderStreamEvent?.(item.raw, model);
+      if (item.kind === "toolCall") {
+        addToolCall(item.requestId, item.call);
+        for (let next = record.queue.takeToolCall(); next !== void 0; next = record.queue.takeToolCall()) {
+          await options?.onProviderStreamEvent?.(next.raw, model);
+          addToolCall(next.requestId, next.call);
+        }
+        closeBlocks();
+        output.stopReason = "toolUse";
+        stream.push({ type: "done", reason: "toolUse", message: output });
+        stream.end();
+        return;
+      }
+      const event = item.event;
+      if (event.turnId !== record.activeTurnId) continue;
+      switch (event.type) {
+        case "agentDelta":
+          appendText(event.itemId, event.delta);
+          break;
+        case "agentMessageCompleted": {
+          const index = textIndex.get(event.itemId);
+          const shown = index === void 0 ? "" : output.content[index].text;
+          if (event.text.length > shown.length && event.text.startsWith(shown)) appendText(event.itemId, event.text.slice(shown.length));
+          break;
+        }
+        case "reasoningDelta": {
+          let index = thinkingIndex.get(event.itemId);
+          if (index === void 0) {
+            index = output.content.length;
+            thinkingIndex.set(event.itemId, index);
+            output.content.push({ type: "thinking", thinking: "" });
+            stream.push({ type: "thinking_start", contentIndex: index, partial: output });
+          }
+          const block = output.content[index];
+          if (block.type !== "thinking") throw new Error("codex-thinking-state-invalid");
+          block.thinking += event.delta;
+          stream.push({ type: "thinking_delta", contentIndex: index, delta: event.delta, partial: output });
+          break;
+        }
+        case "tokenUsage":
+          output.usage.input += event.usage.input;
+          output.usage.output += event.usage.output;
+          output.usage.cacheRead += event.usage.cacheRead;
+          output.usage.cacheWrite += event.usage.cacheWrite;
+          output.usage.totalTokens += event.usage.total;
+          break;
+        case "turnCompleted":
+          record.activeTurnId = null;
+          if (event.status === "completed") {
+            closeBlocks();
+            output.stopReason = "stop";
+            stream.push({ type: "done", reason: "stop", message: output });
+            stream.end();
+            return;
+          }
+          if (event.status === "interrupted") throw new Error(options?.signal?.aborted ? "codex-request-aborted" : "codex-turn-interrupted");
+          throw new Error(`codex-turn-failed${event.error ? `
+${event.error.split("\n", 1)[0]}` : ""}`);
+        default:
+          break;
+      }
+    }
+  }
+};
 
 // src/package-config.ts
 import { existsSync as existsSync2, readFileSync } from "node:fs";
@@ -811,11 +1331,11 @@ function readSettingsFilesAt(paths, now) {
     now,
     () => deepFreeze(
       paths.flatMap((path, index) => {
-        const text = texts[index] ?? readText(path);
-        if (text.kind === "absent") return [];
-        if (text.kind === "unreadable") return [{ kind: "malformed", path, error: text.error }];
+        const text2 = texts[index] ?? readText(path);
+        if (text2.kind === "absent") return [];
+        if (text2.kind === "unreadable") return [{ kind: "malformed", path, error: text2.error }];
         try {
-          const parsed = JSON.parse(text.text);
+          const parsed = JSON.parse(text2.text);
           return [{ kind: "parsed", path, settings: isRecord(parsed) ? parsed : {} }];
         } catch (error) {
           return [{ kind: "malformed", path, error: error instanceof Error ? error.message : String(error) }];
@@ -897,51 +1417,43 @@ async function piCodexBridge(pi) {
   installSettingsCacheRefresh(pi);
   if (readPackageConfig(PACKAGE_ID).enabled === false) return;
   if (globalState[OWNER] !== void 0) return;
-  globalState[OWNER] = true;
   const codexHome = resolveCodexHome();
   const bridge = new CodexBridge({ codexHome });
-  try {
-    let models = [];
-    if (hasCodexLogin(codexHome)) {
-      const discovery = await startAppServer(bridge.executable, codexHome);
-      try {
-        models = buildPiModels(await listCodexModels(discovery));
-      } finally {
-        discovery.close();
-      }
-    }
-    const guardedStream = (...args) => {
-      requireCodexLogin(codexHome);
-      return bridge.streamSimple(...args);
-    };
-    const provider = piAi.createProvider({
-      id: "pi-codex",
-      name: "Pi Codex",
-      baseUrl: "codex-app-server",
-      auth: {
-        apiKey: {
-          name: "Codex CLI login",
-          check: async () => hasCodexLogin(codexHome) ? { type: "api_key", source: "Codex CLI login" } : void 0,
-          resolve: async () => hasCodexLogin(codexHome) ? { auth: {}, source: "Codex CLI login" } : void 0
-        }
-      },
-      models,
-      api: {
-        stream: guardedStream,
-        streamSimple: guardedStream
-      }
-    });
-    pi.registerProvider(provider);
-    pi.on("session_shutdown", async () => {
-      await bridge.close();
-      if (globalState[OWNER] === bridge) globalState[OWNER] = void 0;
-    });
-    globalState[OWNER] = bridge;
-  } catch (error) {
-    globalState[OWNER] = void 0;
-    await bridge.close();
-    throw error;
+  globalState[OWNER] = bridge;
+  let notice;
+  let models = [];
+  if (hasCodexLogin(codexHome)) {
+    const discovered = await bridge.discoverModels();
+    models = buildPiModels(discovered.models);
+    notice = discovered.notice;
   }
+  pi.registerProvider(piAi.createProvider({
+    id: PROVIDER_ID,
+    name: "Pi Codex",
+    baseUrl: API_ID,
+    auth: {
+      apiKey: {
+        name: "Codex CLI login",
+        check: async () => hasCodexLogin(codexHome) ? { type: "api_key", source: "Codex CLI login" } : void 0,
+        resolve: async () => hasCodexLogin(codexHome) ? { auth: {}, source: "Codex CLI login" } : void 0
+      }
+    },
+    models,
+    api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple }
+  }));
+  pi.on("session_start", (_event, ctx) => {
+    if (notice === void 0) return;
+    const text2 = `${notice}
+Pi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
+    if (ctx.hasUI) ctx.ui.notify(text2, "warning");
+    else process.stderr.write(`${text2}
+`);
+    notice = void 0;
+  });
+  pi.on("session_shutdown", async () => {
+    await bridge.close();
+    if (globalState[OWNER] === bridge) globalState[OWNER] = void 0;
+  });
 }
 export {
   piCodexBridge as default

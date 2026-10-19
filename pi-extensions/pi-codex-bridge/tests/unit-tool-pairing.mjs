@@ -1,72 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deliverToolResults } from "../src/tool-pairing.ts";
+import { answerToolCalls, LOST_TOOL_RESULT_TEXT } from "../src/tool-pairing.ts";
 
-function pendingCall(requestId, callId, piToolName = "read") {
-	return {
-		requestId,
-		piToolName,
-		params: {
-			threadId: "thread-1",
-			turnId: "turn-1",
-			callId,
-			namespace: null,
-			tool: "read",
-			arguments: {},
-		},
-	};
+const call = (requestId, callId, piToolName = "read") => ({ requestId, callId, piToolName });
+const result = (callId, content, { toolName = "read", isError = false } = {}) => ({ role: "toolResult", toolCallId: callId, toolName, content, isError, timestamp: 1 });
+
+test("each pending call is answered by its own RPC id, images as data URLs, lost calls as failed", () => {
+	const answers = answerToolCalls([call("rpc-a", "a"), call("rpc-b", "b", "bash"), call("rpc-c", "c")], [
+		result("b", [{ type: "text", text: "exit 1" }], { toolName: "bash", isError: true }),
+		result("a", [{ type: "text", text: "pixels:" }, { type: "image", mimeType: "image/png", data: "iVBORw0K" }]),
+	]);
+	assert.deepEqual(answers, [
+		{ requestId: "rpc-a", result: { contentItems: [{ type: "inputText", text: "pixels:" }, { type: "inputImage", imageUrl: "data:image/png;base64,iVBORw0K" }], success: true } },
+		{ requestId: "rpc-b", result: { contentItems: [{ type: "inputText", text: "exit 1" }], success: false } },
+		{ requestId: "rpc-c", result: { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false } },
+	]);
+});
+
+for (const [name, results, key] of [
+	["an unknown call id", [result("other", [])], "codex-tool-result-unmatched call=other"],
+	["a repeated call id", [result("a", []), result("a", [])], "codex-tool-result-duplicate call=a"],
+	["another tool's name", [result("a", [], { toolName: "bash" })], "codex-tool-result-name-mismatch call=a"],
+]) {
+	test(`a result batch with ${name} is refused whole`, () => {
+		assert.throws(() => answerToolCalls([call("rpc-a", "a")], results), { message: key });
+	});
 }
-
-function result(callId, toolName = "read", isError = false) {
-	return {
-		role: "toolResult",
-		toolCallId: callId,
-		toolName,
-		content: [{ type: "text", text: `result-${callId}` }],
-		isError,
-		timestamp: 1,
-	};
-}
-
-test("tool results answer the app-server RPC id and preserve success", () => {
-	const sent = [];
-	const pending = new Map([
-		["call-a", pendingCall("rpc-a", "call-a")],
-		["call-b", pendingCall("rpc-b", "call-b", "bash")],
-	]);
-	deliverToolResults({ respond: (id, value) => sent.push([id, value]) }, pending, [
-		result("call-a"),
-		result("call-b", "bash", true),
-	]);
-	assert.deepEqual(sent, [
-		["rpc-a", { contentItems: [{ type: "inputText", text: "result-call-a" }], success: true }],
-		["rpc-b", { contentItems: [{ type: "inputText", text: "result-call-b" }], success: false }],
-	]);
-	assert.equal(pending.size, 0);
-});
-
-test("a mismatched batch sends no partial response", () => {
-	const sent = [];
-	const pending = new Map([
-		["call-a", pendingCall("rpc-a", "call-a")],
-		["call-b", pendingCall("rpc-b", "call-b")],
-	]);
-	assert.throws(
-		() => deliverToolResults({ respond: (id, value) => sent.push([id, value]) }, pending, [result("call-a")]),
-		/codex-tool-result-missing count=1/,
-	);
-	assert.deepEqual(sent, []);
-	assert.equal(pending.size, 2);
-});
-
-test("an unknown or duplicate call id is refused", () => {
-	const responder = { respond: () => assert.fail("a refused batch must not answer") };
-	assert.throws(
-		() => deliverToolResults(responder, new Map([["call-a", pendingCall("rpc-a", "call-a")]]), [result("other")]),
-		/codex-tool-result-unmatched call=other/,
-	);
-	assert.throws(
-		() => deliverToolResults(responder, new Map([["call-a", pendingCall("rpc-a", "call-a")]]), [result("call-a"), result("call-a")]),
-		/codex-tool-result-duplicate call=call-a/,
-	);
-});
