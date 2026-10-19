@@ -9,26 +9,50 @@ use std::path::{Path, PathBuf};
 use kendex_core::source_read::NOT_RENDERED;
 
 use super::deps_cli::tree;
-use super::verify_records::{commit, kendex, repository, said, write};
+use super::verify_records::{commit, git, kendex, repository, said, write};
 use crate::test_util::rooted;
+
+/// Copies the files under `root/package` that Git does not ignore into
+/// `dest/package`. Tracked and new untracked files are both copied, so a
+/// file the change under test adds is in the fixture; a cache a script run
+/// left in the checkout, `scripts/__pycache__` say, is not, since the
+/// render omits it and the fixture catalog would then hold what the render
+/// cannot.
+#[allow(clippy::unwrap_used)]
+fn copy_unignored(root: &Path, package: &str, dest: &Path) {
+    let listed = git(
+        root,
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            package,
+        ],
+    );
+    for relative in listed.split('\0').filter(|name| !name.is_empty()) {
+        let source = root.join(relative);
+        let kind = match fs::symlink_metadata(&source) {
+            Ok(meta) => meta.file_type(),
+            // Listed from the index, deleted in the working tree under test.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => panic!("read {relative}: {error}"),
+        };
+        assert!(kind.is_file(), "Jarvis fixture requires regular files");
+        let target = dest.join(relative);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, fs::read(source).unwrap()).unwrap();
+    }
+}
 
 #[allow(clippy::unwrap_used)]
 fn installed(home: &Path) -> (PathBuf, PathBuf, String) {
     let catalog = home.join("catalog");
     let project = home.join("assistant");
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for (path, bytes) in tree(&checkout.join("skills/jarvis")) {
-        let Some(file) = path.strip_prefix("file:") else {
-            assert!(
-                path.starts_with("dir:"),
-                "Jarvis fixture requires regular files"
-            );
-            continue;
-        };
-        let dest = catalog.join("skills/jarvis").join(file);
-        fs::create_dir_all(dest.parent().unwrap()).unwrap();
-        fs::write(dest, bytes).unwrap();
-    }
+    copy_unignored(&checkout, "skills/jarvis", &catalog);
     for name in [
         "cpa",
         "legal",
@@ -131,6 +155,45 @@ fn release(catalog: &Path) {
     );
     fs::remove_file(catalog.join("skills/jarvis/references/browser.md")).unwrap();
     commit(catalog, "Jarvis N+1");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_fixture_copy_leaves_out_what_git_ignores() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let checkout = root.join("checkout");
+    write(&checkout.join(".gitignore"), "__pycache__/\n");
+    write(&checkout.join("skills/jarvis/SKILL.md"), "# Jarvis\n");
+    repository(&checkout);
+    commit(&checkout, "Jarvis");
+    write(
+        &checkout.join("skills/jarvis/scripts/added"),
+        "new in the change under test\n",
+    );
+    write(
+        &checkout.join("skills/jarvis/scripts/__pycache__/x.pyc"),
+        "bytecode\n",
+    );
+    // The whole-directory read this copy replaces reaches the cache.
+    assert!(
+        tree(&checkout.join("skills/jarvis"))
+            .iter()
+            .any(|(entry, _)| entry == "file:scripts/__pycache__/x.pyc")
+    );
+    let catalog = root.join("catalog");
+    copy_unignored(&checkout, "skills/jarvis", &catalog);
+    assert_eq!(
+        tree(&catalog.join("skills/jarvis")),
+        vec![
+            ("dir:scripts".to_owned(), Vec::new()),
+            ("file:SKILL.md".to_owned(), b"# Jarvis\n".to_vec()),
+            (
+                "file:scripts/added".to_owned(),
+                b"new in the change under test\n".to_vec()
+            ),
+        ]
+    );
 }
 
 #[test]
