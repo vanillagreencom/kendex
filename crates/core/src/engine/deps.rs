@@ -180,7 +180,12 @@ fn walk(
     // item is what stops a pair of items that require each other from
     // reporting everything twice.
     let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
-    while let Some((kind, parent)) = queue.pop_front() {
+    // An agent's assignment edge brings only skills nothing else holds
+    // ([`agent_assignment`]), so every agent waits until no hard edge is
+    // left to walk: a skill some item requires is held by then, however
+    // deep, and keeps its own revision.
+    let mut agents: VecDeque<Node> = VecDeque::new();
+    while let Some((kind, parent)) = queue.pop_front().or_else(|| agents.pop_front()) {
         // A declaration no tool here can hold installs nothing, so it needs
         // nothing either; the declaration itself reports that.
         let Some(parent_decl) = expansion.decl_of(kind, &parent) else {
@@ -219,7 +224,16 @@ fn walk(
             }
             let node = (*dep_kind, dep.clone());
             if seen.insert(node.clone()) || grew {
-                queue.push_back(node);
+                match node.0 {
+                    ItemKind::Agent => agents.push_back(node),
+                    ItemKind::Skill
+                    | ItemKind::Hook
+                    | ItemKind::Command
+                    | ItemKind::McpServer
+                    | ItemKind::Plugin
+                    | ItemKind::PiExtension
+                    | ItemKind::OutputStyle => queue.push_back(node),
+                }
             }
         }
         wanted.insert((kind, parent.clone()), found);
@@ -989,11 +1003,11 @@ fn wanted_by(
         state,
         &mut wanted,
     );
-    // An agent's assignment is what it loads, not what it needs to
-    // install: an assigned skill the person turned away or keeps on
-    // another tool leaves the declarations complete, and the agent pass
-    // warns for one the scope lacks (`agent_skills::warn_uninstalled`).
-    // Its names are this catalog's own, so `resolve` misses none of them.
+    // An agent's assignment edge is soft ([`agent_assignment`]): a skill
+    // it brings that will not install, kept removed or out of reach of
+    // the tool, leaves the declarations complete, and the agent pass
+    // warns for it (`agent_skills::warn_uninstalled`). Its names are this
+    // catalog's own, so `resolve` misses none of them.
     if kind == ItemKind::Agent {
         wanted.findings.truncate(resolved);
     }
@@ -1032,10 +1046,16 @@ fn declared_by(
 /// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
 /// agent that will not read or parse needs nothing; the renderer reports it.
 ///
-/// A skill that requires the agent is left out: it is there for its own
-/// reason, and an edge back to it would keep it suppressed when it alone
-/// is removed. Every item the walk starts from is read before the agent,
-/// so each declared requirer is already among the agent's reasons.
+/// The assignment is what the agent loads, not what it needs to install,
+/// so its edge is soft: it brings only a skill the scope does not already
+/// hold, and a skill held for any other reason — declared, a set's,
+/// required by another item or brought by another agent, the skill that
+/// requires this agent among them — keeps its own declaration, revision
+/// and reasons, with no revision disagreement, finding or reason from
+/// this edge. [`walk`]
+/// reads every agent after the hard edges, so which skills are held
+/// does not turn on walk order; [`wanted_by`] drops the findings on the
+/// skills this edge does bring.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
@@ -1043,17 +1063,13 @@ fn agent_assignment(
     agent: &str,
     path: &std::path::Path,
 ) -> Dependencies {
-    let requirers: BTreeSet<String> = expansion
-        .package_reasons(ItemKind::Agent, agent)
-        .into_iter()
-        .filter_map(|reason| match reason {
-            Reason::RequiredBy { by } if by.kind == ItemKind::Skill => Some(by.name),
-            Reason::RequiredBy { .. } | Reason::Requested | Reason::MemberOf { .. } => None,
-        })
-        .collect();
+    let brought_here = |skill: &str| match expansion.derived_from(ItemKind::Skill, skill) {
+        Some(Reason::RequiredBy { by }) => by.kind == ItemKind::Agent && by.name == agent,
+        Some(Reason::Requested | Reason::MemberOf { .. }) | None => false,
+    };
     let available: Vec<String> = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill)
         .into_iter()
-        .filter(|skill| !requirers.contains(skill))
+        .filter(|skill| !expansion.contains(ItemKind::Skill, skill) || brought_here(skill))
         .collect();
     let required_skills = match crate::mapping::declared_skills(manifest, agent) {
         Some((declared, _)) => declared

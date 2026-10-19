@@ -1,1 +1,1 @@
-- An agent a skill requires through `dependencies.agents` now installs with the skills its catalog assigns to it. A consumer `[agent-skills]` row for the agent replaces that assignment with the row's skills from the same catalog.
+- An agent a skill requires through `dependencies.agents` now installs with the skills its catalog assigns to it. A consumer `[agent-skills]` row for the agent replaces that assignment with the row's skills from the same catalog. An assigned skill the scope already holds keeps its own declaration and revision.

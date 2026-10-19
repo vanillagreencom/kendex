@@ -574,3 +574,77 @@ fn removing_a_plugin_by_kind_does_not_panic() {
     );
     assert!(report.is_ok(), "{report:?}");
 }
+
+/// A skill held at a revision requires the agent `scout`, which loads
+/// `linear`. The agent comes from the held revision, and so does a skill
+/// its assignment alone brings; a skill the scope holds for any other
+/// reason, however deep, keeps its own revision and follows its source,
+/// with the declarations complete and no reason from scout.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision() {
+    let rows: [(&str, &str, &str, bool); 3] = [
+        ("brought by scout alone", "", "Linear one.", true),
+        (
+            "declared, following its source",
+            "\n[skills.linear]\nsource = \"cat\"\n",
+            "Linear two.",
+            false,
+        ),
+        (
+            "required two steps below a declared skill",
+            "\n[skills.x]\nsource = \"cat\"\n",
+            "Linear two.",
+            false,
+        ),
+    ];
+    for (what, declarations, body, by_scout) in rows {
+        let w = world();
+        write_skill(
+            &w.upstream,
+            "lead",
+            "dependencies:\n  agents: [scout]\n",
+            "Lead.",
+        );
+        write_skill(&w.upstream, "x", "dependencies:\n  required: [y]\n", "X.");
+        write_skill(
+            &w.upstream,
+            "y",
+            "dependencies:\n  required: [linear]\n",
+            "Y.",
+        );
+        write_skill(&w.upstream, "linear", "", "Linear one.");
+        write_agent(&w.upstream, "scout", "Scout.");
+        fs::write(
+            w.upstream.join("kendex.toml"),
+            "[agent-skills]\nscout = [\"linear\"]\n",
+        )
+        .unwrap();
+        let first = commit(&w.upstream, "one");
+        declare(
+            &w,
+            &format!("[skills.lead]\nsource = \"cat\"\nrev = \"{first}\"\n{declarations}"),
+        );
+        sync_and_apply(&w);
+        write_skill(&w.upstream, "linear", "", "Linear two.");
+        commit(&w.upstream, "two");
+        sync_and_apply(&w);
+
+        let report = audit(&w.env, &w.scope).unwrap();
+        assert_eq!(
+            report.declaration_status,
+            kendex_core::engine::DeclarationStatus::Complete,
+            "{what}: {:?}",
+            messages(&report)
+        );
+        assert!(installed_body(&w, "linear").contains(body), "{what}");
+        let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+        let reasons =
+            &lock.entries[&entry_key(ItemKind::Skill, "linear", HarnessId::Claude)].reasons;
+        let scouts = reasons.iter().any(|reason| {
+            matches!(reason, kendex_core::lock::Reason::RequiredBy { by }
+                if by.kind == ItemKind::Agent && by.name == "scout")
+        });
+        assert_eq!(scouts, by_scout, "{what}: {reasons:?}");
+    }
+}
