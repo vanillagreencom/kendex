@@ -274,6 +274,9 @@ sys.exit(task.main())
         self.tmux("new-session", "-d", "-s", "unrelated", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
         task = self.launch("codex", model="gpt-5")
         self.acknowledgement(task)
+        # A pane split into the task window carries no task mark of its own.
+        self.tmux("split-window", "-d", "-t", task["terminal"]["pane"],
+                  self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
         self.tmux("kill-window", "-t", self.terminal["window"])
         # The replacement is a real managed controller, using the existing
         # native fixture and SessionStart carrier rather than a mocked worker.

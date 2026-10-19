@@ -522,13 +522,15 @@ class Session:
     def end_task_session(self):
         # Task windows open in the controller's session, so once no controller
         # remains they alone hold its name against the next Start. One server
-        # command ends the session only while every pane in it carries a task
-        # mark: a controller pane, or a foreign session of that name, keeps it.
+        # command ends the session only while every window in it holds a pane
+        # with a task mark, the window task-close ends: a controller window, or
+        # a foreign session of that name, keeps it. A pane split into a task
+        # window, such as a Pi pane agent's, carries no mark of its own.
         # A session left standing refuses that Start with name-conflict, so a
         # failure here is logged and never fails the controller's own end.
         if not shutil.which("tmux"):
             return
-        unmarked = "#{W:#{P:#{?#{@jarvis-task},,x}}}"
+        unmarked = "#{W:#{?#{P:#{?#{@jarvis-task},x,}},,x}}"
         try:
             self.tmux("if-shell", "-F", "-t", "=jarvis:", "#{==:" + unmarked + ",}", "kill-session -t =jarvis", check=False)
         except (OSError, subprocess.TimeoutExpired) as failure:
