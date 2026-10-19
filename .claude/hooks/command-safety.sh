@@ -849,6 +849,7 @@ environment_program_text() {
 
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
+  local command_context=${command_context:-simple} evidence_context command_stages=0
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos data_source piped_source="" pipeline="" heredoc_input=${heredoc_input:-}
   local receiver receiver_pattern receiver_option receiver_named
@@ -917,7 +918,7 @@ environment_dump() { # command kind; arguments are already decoded data
       # quotes. Saving only the enclosing quote grants no inner permission.
       if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
         if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; needs_target=""
+        word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; command_context=compound; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -983,9 +984,9 @@ environment_dump() { # command kind; arguments are already decoded data
           word=""; active=""; kind=literal; bare=1; quoted=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
-            '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
+            '(') compound=1; command_context=compound; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
             ')')
-              compound=1; n=${#closers[@]}
+              compound=1; command_context=compound; n=${#closers[@]}
               if [ "$n" -gt 0 ]; then quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'; fi
               [ "${#closers[@]}" -ge "$math_depth" ] || math_depth=0
               [ -z "$quote" ] || bare=""
@@ -1031,7 +1032,11 @@ environment_dump() { # command kind; arguments are already decoded data
         *) word=$word$c; active=1 ;;
       esac
     done
-    [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
+    if [ -n "$quote" ] || [ "${#closers[@]}" -ne 0 ]; then
+      compound=1
+      # Expansion-only parsing holds literal body data in a synthetic quote.
+      [ "$1:$quote:${#closers[@]}" = 'expansions:":0' ] || command_context=compound
+    fi
     if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   # A shell can end a submission before a registered body is read. Evidence
@@ -1063,8 +1068,16 @@ environment_dump() { # command kind; arguments are already decoded data
   for ((i=0; i<=n; i++)); do
     if [ "$i" -lt "$n" ]; then
       [ "${kinds[$i]}" = operator ] || continue
-      [ "${tokens[$i]}" != '|' ] || pipeline=1
-      case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
+      case "${tokens[$i]}" in
+        '|') pipeline=1; command_context=compound ;;
+        '&&' | '||' | '&') command_context=compound ;;
+        ';') ;;
+        *) continue ;;
+      esac
+    fi
+    if [ "$start" -lt "$i" ]; then
+      command_stages=$((command_stages + 1))
+      [ "$command_stages" -eq 1 ] || command_context=compound
     fi
     starts[stage]=$start; ends[stage]=$i
     separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
@@ -1122,7 +1135,7 @@ environment_dump() { # command kind; arguments are already decoded data
     # Main excluded initial assignments before its first reserved head.
     # Later unsupported stages remain part of that complete suffix.
     [ -n "$unsupported" ] || main_start=$head_start
-    if [ -n "$syntax_head" ]; then unsupported=1; compound=1; fi
+    if [ -n "$syntax_head" ]; then unsupported=1; compound=1; command_context=compound; fi
     if [ "$pos" -ge "${#args[@]}" ]; then
       program=opaque
     fi
@@ -1135,15 +1148,20 @@ environment_dump() { # command kind; arguments are already decoded data
       for ((j=program_pos+1; j<${#args[@]}; j++)); do arg_roles[j]=argument; done
     fi
     environment_program_text
+    # Only proved simple command syntax receives the unknown-argv grammar.
+    # Actual syntax survives recursion; conservative recursion alone does not
+    # establish compound syntax. Both fallback paths consume this decision.
+    evidence_context=conservative
+    if [ "$command_context" = simple ] && [ -z "$unsupported$syntax_head$producer_known" ] && [ "$receiver" = unknown ]; then
+      evidence_context=unknown-head
+    fi
     # Supported shell source keeps this classification check in its queue.
     # Other unclassified forwarded argv retains the complete read evidence.
     if [ "$mode" = unclassified-forwarded ]; then
       mode=other
-      local evidence_context=conservative
-      if [ -z "$unsupported$syntax_head$producer_known" ] && [ "$receiver" = unknown ]; then evidence_context=unknown-head; fi
       if [ -z "$stdin_program" ] && { [ -n "$redirect_evidence" ] || environment_main_evidence "$evidence_context" "${args[@]}"; }; then mode=dump-unknown; fi
     elif [ -z "$unsupported$syntax_head$producer_known" ] && [ "$receiver" = unknown ] && [ "$mode" = other ] &&
-         [ "$pos" -lt "${#args[@]}" ] && environment_main_evidence unknown-head "${args[@]}"; then
+         [ "$pos" -lt "${#args[@]}" ] && environment_main_evidence "$evidence_context" "${args[@]}"; then
       mode=dump-unknown
     fi
     # Keep pipe input before the body fallback: an opaque receiver can execute it.

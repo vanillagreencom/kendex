@@ -251,6 +251,34 @@ environment_rows() {
 [0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env -u NAME bash runner' --build true --mutate true","unknown-fallback-forwarded-absolute-unset"]
 [0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env --help' --build true --mutate true","unknown-fallback-forwarded-absolute-help"]
 [0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 /usr/bin/env --version' --build true --mutate true","unknown-fallback-forwarded-absolute-version"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test '(timeout 5 \"env\")' --build true --mutate true","compound-context-test-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test '(timeout 5 \"/usr/bin/env\")' --build true --mutate true","compound-context-test-absolute-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build '(timeout 5 \"env\")' --mutate true","compound-context-build-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build '(timeout 5 \"/usr/bin/env\")' --mutate true","compound-context-build-absolute-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate '(timeout 5 \"env\")'","compound-context-mutate-env"]
+[2,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate '(timeout 5 \"/usr/bin/env\")'","compound-context-mutate-absolute-env"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 \"env\"' --build true --mutate true","compound-context-simple-test-data"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test 'timeout 5 \"/usr/bin/env\"' --build true --mutate true","compound-context-simple-test-absolute-data"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 \"env\"' --mutate true","compound-context-simple-build-data"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build 'timeout 5 \"/usr/bin/env\"' --mutate true","compound-context-simple-build-absolute-data"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 \"env\"'","compound-context-simple-mutate-data"]
+[0,"sh LAUNCH.sh WAIT .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha HEAD --test true --build true --mutate 'timeout 5 \"/usr/bin/env\"'","compound-context-simple-mutate-absolute-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test '(bash -c \"timeout 5 \\\"env\\\"\")'","compound-context-inherited-shell"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'bash -c \"(timeout 5 \\\"env\\\")\"'","compound-context-nested-shell"]
+[2,"sh LAUNCH.sh WAIT TOOL --test '( (timeout 5 \"env\") )'","compound-context-nested-parentheses"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'printf $(timeout 5 \"env\")'","compound-context-substitution"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'printf `timeout 5 \"env\"`'","compound-context-backtick"]
+[0,"sh LAUNCH.sh WAIT TOOL --test '(timeout 5 ordinary)'","compound-context-ordinary"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'printf \"(timeout 5 env)\"'","compound-context-quoted-syntax-data"]
+[2,"(timeout 5 \"env\")","compound-context-direct"]
+[0,"timeout 5 \"env\"","compound-context-direct-simple-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'true; timeout 5 \"env\"'","compound-context-list"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'true && timeout 5 \"env\"'","compound-context-and-list"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'false || timeout 5 \"env\"'","compound-context-or-list"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'timeout 5 \"env\" | cat'","compound-context-pipeline"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'timeout 5 \"env\" &'","compound-context-background-list"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'timeout 5 \"env\";'","compound-context-simple-terminator-data"]
+[0,"sh LAUNCH.sh WAIT TOOL --test '\ntimeout 5 \"env\"\n'","compound-context-simple-newline-data"]
 [2,"job-launcher env","unknown-launcher-bare-env"]
 [2,"job-launcher env -u NAME","unknown-launcher-unset-without-target"]
 [2,"job-launcher env -0","unknown-launcher-null-env"]
@@ -1478,6 +1506,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
       defect == "unknown-evidence-raw" { swap("if [ \"$evidence_context\" = unknown-head ]; then", "if [ unknown-correction-disabled = unknown-head ]; then") }
       defect == "selected-producer-unresolved" { swap("environment_main_evidence conservative \"${args[@]:program_pos}\"", "false") }
+      defect == "compound-context-loss" { swap("[ \"$command_context\" = simple ]", "true") }
       defect == "operand-word-boundary" { swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]"); swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]") }
       defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"$evidence_context\" \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"$evidence_context\" \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
@@ -1516,7 +1545,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
       }
       defect == "unproved-records" { swap("unrouted | dump-unknown) return 0 ;;", "unrouted) return 0 ;; dump-unknown) continue ;;") }
-      defect == "syntax-routing" { swap("unsupported=1; compound=1; fi", "unsupported=\"\"; compound=\"\"; fi") }
+      defect == "syntax-routing" { swap("unsupported=1; compound=1; command_context=compound; fi", "unsupported=\"\"; compound=\"\"; command_context=simple; fi") }
       defect == "suffix-first-word" && /for \(\(candidate=0;/ {
         swap("candidate<${#stage_args[@]}", "candidate<1 && candidate<${#stage_args[@]}")
       }
@@ -1583,6 +1612,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
+compound-context-loss|FAIL environment: compound-context-test-env: exit=0 expected=2
 selected-producer-unresolved|FAIL environment: selected-producer-forwarded-xargs-env: exit=0 expected=2
 receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
 receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0
