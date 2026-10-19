@@ -7,8 +7,8 @@
 control_expect "a create opening with a **Source**: line is refused"
 control_expect "a create whose first non-empty line is Reached by: is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
-	'		| if $first != null and ($first.text | header) then' \
-	'		| if false then'
+	'		  elif $first != null and ($first.text | header) then' \
+	'		  elif false then'
 
 # 2. The length check. Without it a header of any length files.
 control_expect "a create with a 501-character **Symptom**: line is refused"
@@ -34,7 +34,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
 #    create refuses.
 control_expect "an update --description-file with a 501-character header is refused"
 control_replace scripts/commands/issues.sh 1 \
-	'        require_issue_header_shape "$description" || return 1' \
+	'        require_issue_header_shape "$description" "${stored_description%.}" || return 1' \
 	'        :'
 
 # 6. The complete exemption. Without it an issue filed before the guard can
@@ -85,3 +85,18 @@ control_expect "an owner-shaped opening **Brad, what you do:** Run the check. Co
 control_replace scripts/lib/issue-validation.sh 1 \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then [] else . end | first) as $first'
+
+# The stored-body exemption. Without it an owner ask over a body filed
+# header-first, and the rollback or close writing that body back, are refused.
+control_expect "an owner ask over a stored body opening with **Source**: exits zero"
+control_expect "the rollback or close writing the stored body back without the action line exits zero"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'		| if $moves_action then' \
+	'		| if false then'
+
+# The exemption's one check. Without it an owner action of any length is
+# written over an unchanged stored body.
+control_expect "a 501-character owner action over the unchanged stored body is refused"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'			([$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)] | first // empty)' \
+	'			empty'
