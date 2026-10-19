@@ -138,18 +138,47 @@ printf '%s\n' \
 while IFS='|' read -r credit flags expected preference; do
   api_preference_case "$credit" "$flags" "$expected" "$preference"
 done < "$TMP_ROOT/api-preference-rows"
-# A walk naming a retired account judges each entry's own allowance: the grant
-# entry launches on its live grant, and the plan entry it falls to is refused.
-# remaining|expected
-while IFS='|' read -r credit expected; do
-  api_hosted_rows "$credit"
-  run_ot "$API_PREFERENCE_ENV;$RETIRED_PLAN;flags=--dangerously-skip-permissions" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4428
+# A walk naming a retired account judges each entry's own allowance: a plan
+# entry is refused and skipped, in either order, and the grant entry launches
+# on its live grant. A walk with no entry left ends refused; an exclusion
+# refuses every entry.
+API_PLAN_FIRST="claude:fable:high,pi@$HOST_STUB:anthropic/claude-opus-5-5:high"
+api_retired_walk() { # REMAINING SETTING PREFERENCE EXPECTED
+  api_hosted_rows "$1"
+  run_ot "$API_PREFERENCE_ENV;$2;ORCH_LANE_PREFERENCE=$3;flags=--dangerously-skip-permissions" --host local --harness claude --lane "$H/.eclaude" --repo o/r KEN-4428
   walk_hosted="$(typed 'env PI_CODING_AGENT_DIR=/pi bash -lc')"
   assert_eq "$(observe 'rc=0 claim_lanes=eclaude') hosted=${walk_hosted:-0} refused=$(awk '$2 == "lane-refused" {n++} END {print n+0}' <<<"$OUT")" \
-    "$expected" "a walk naming a retired account with $credit dollars of grant left"
+    "$4" "a walk $3 naming an account under $2 with $1 dollars of grant left"
+}
+# remaining|setting|preference|expected
+printf '%s\n' \
+  "150|$RETIRED_PLAN|$API_PREFERENCE|rc=0 claim_lanes=eclaude hosted=1 refused=0" \
+  "150|$RETIRED_PLAN|$API_PLAN_FIRST|rc=0 claim_lanes=eclaude hosted=1 refused=0" \
+  "4|$RETIRED_PLAN|$API_PREFERENCE|rc=1 claim_lanes=none hosted=0 refused=1" \
+  "150|ORCH_LANE_EXCLUDE=eclaude|$API_PLAN_FIRST|rc=1 claim_lanes=none hosted=0 refused=1" \
+  > "$TMP_ROOT/api-retired-walk-rows"
+api_retired_walk_table() {
+  while IFS='|' read -r credit setting preference expected; do
+    api_retired_walk "$credit" "$setting" "$preference" "$expected"
+  done < "$TMP_ROOT/api-retired-walk-rows"
+}
+api_retired_walk_table
+# Each control reruns the table against a mutant of the walk's per-entry
+# verdict: a refusal that ends the walk fails the plan-first row, and a check
+# without the entry's harness and model fails both grant rows.
+# name|shipped|mutant|failures
+while IFS='|' read -r walk_ctl walk_shipped walk_mutant walk_failures; do
+  API_WALK_SHIPPED="$OPEN_TERMINAL"
+  OPEN_TERMINAL="$(mutant_scripts "ctl-api-walk-$walk_ctl/orch" open-terminal)/open-terminal" || exit 1
+  orch_fixture_shared_libs "$TMP_ROOT/ctl-api-walk-$walk_ctl/orch"
+  mutate_file "$OPEN_TERMINAL" "$walk_shipped" "$walk_mutant"
+  API_WALK_SAVED_FAIL="$FAIL"; FAIL=0
+  api_retired_walk_table > "$TMP_ROOT/api-walk-$walk_ctl-control.out"
+  API_WALK_CONTROL="$FAIL"; FAIL="$API_WALK_SAVED_FAIL"; OPEN_TERMINAL="$API_WALK_SHIPPED"
+  assert_eq "$API_WALK_CONTROL" "$walk_failures" "control: the $walk_ctl mutant of the walk's per-entry verdict fails the retired walk table"
 done <<'ROWS'
-150|rc=0 claim_lanes=eclaude hosted=1 refused=0
-4|rc=1 claim_lanes=none hosted=0 refused=1
+skip|4) preference_refused=true; continue ;;|4) ot_message lane-refused "lane=$LANE" >&2; return 1 ;;|1
+scope|named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL"|named_lane_resolve "" ""|2
 ROWS
 API_PREFERENCE_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-api-preference/orch lib/lane-launch.sh)/open-terminal" || exit 1

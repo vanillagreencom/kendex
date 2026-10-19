@@ -272,8 +272,12 @@ Options:
                     is used literally; any other value is looked up as a lane
                     alias. A named lane (alias or config dir) is refused
                     where `lanes check` refuses it for the launch's harness
-                    and model: ORCH_LANE_EXCLUDE always, ORCH_LANE_RETIRE for
-                    every launch but a Pi anthropic/ one on the API grant. Refuses to launch when no lane
+                    and model (`lanes --help`, check). Under
+                    ORCH_LANE_PREFERENCE the lane is checked for each entry's
+                    harness and model: an entry it refuses is skipped, as an
+                    entry whose pick finds no room is, and a walk that admits
+                    no entry after a refusal is refused as lane-refused, which
+                    an exclusion, refusing every entry, always is. Refuses to launch when no lane
                     is under the usage threshold, rather than launching into
                     a wall. EVERY lane launch on a harness the flag table names
                     is asked for its model, and for its reasoning effort where
