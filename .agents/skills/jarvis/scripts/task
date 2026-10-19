@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Task records and windows share the session runtime's carrier.
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+export JARVIS_BASH="$BASH"
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'jarvis-task: dependency=python3\n' >&2
+  exit 2
+fi
+exec python3 "$SCRIPT_DIR/lib/task.py" "$@"
