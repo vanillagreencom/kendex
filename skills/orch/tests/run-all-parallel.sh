@@ -518,9 +518,11 @@ assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$TEST_DIR/$2.sh"
   "control: --alone left unread runs every suite pooled"
 
 echo "=== 10. a suite past its bound is stopped and reported under its own name ==="
-# Batteries, each run on one worker. clock: three suites that sleep two
-# seconds, then pass, so the third starts four seconds into the run and cannot
-# end before six. trapped: one suite that prints a row, then loops until TERM,
+# Batteries, each run on one worker. suite-clock: three suites on a clock
+# that advances only at suite launch, to 0, 10 and 20 seconds, each held until
+# the runner has checked its bound, so no wall-clock read, sleep or poll
+# decides which suite a bound stops. clock: three suites that sleep two
+# seconds, then pass. trapped: one suite that prints a row, then loops until TERM,
 # on which it exits 0. hang: the hang the bound exists for, one suite that
 # prints a row, then blocks on a child that set up its own process group and
 # ignores TERM, as GNU timeout does once it has sent its signal and while it
@@ -534,7 +536,7 @@ bound_battery() { # DIR KIND
       # Advance only at suite launch. Release each suite after the runner
       # checks its bound, so host scheduling cannot decide the control.
       mutate_file "$1/run-all.sh" 'started=$SECONDS' $'unset SECONDS\nSECONDS=0\nstarted=$SECONDS'
-      mutate_file "$1/run-all.sh" '      SLOT_START[k]=$SECONDS' $'      SECONDS=$((next * 3))\n      SLOT_START[k]=$SECONDS'
+      mutate_file "$1/run-all.sh" '      SLOT_START[k]=$SECONDS' $'      SECONDS=$((next * 10))\n      SLOT_START[k]=$SECONDS'
       mutate_file "$1/run-all.sh" '    if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then' \
         $'    if [ -n "$base" ]; then\n      touch "$TEST_DIR/$base.release"\n      wait "${SLOT_PID[k]}"\n    fi\n    if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then'
       for name in c1 c2 c3; do
@@ -636,13 +638,20 @@ edit_of() { # NAME
 # Every rule run-all.sh's header states for the bounds, one row each: the
 # battery and settings that reach the rule, the outcome they give, the defect
 # planted in that rule alone, and the outcome under it. A setting written
-# VAR=+N is the time N seconds after its run starts. An outcome is a pattern;
-# the one `*` stands where load decides whether the deadline found the third
-# clock suite started. Rows sharing a battery and settings with no `+` share one
-# run of the unmutated runner.
+# VAR=+N is the time N seconds after its run starts. An outcome is a pattern.
+# Rows sharing a battery and settings with no `+` share one run of the
+# unmutated runner. The suite-clock rows set each bound to 15, between the
+# second suite's launch at 10 and the third's at 20. A suite bound counted from
+# the run start then stops the third suite alone. The deadline reaches
+# run-all.sh as two whole-second wall-clock reads, this file's and the
+# runner's, which run-all.sh offsets by its own SECONDS: it lands at 15, or up
+# to a second earlier and earlier again by any delay between this file's read
+# and the runner's start, so it stays past 10 while that delay is under four
+# seconds.
 # RULE|BATTERY|SETTINGS|OUTCOME|CONTROL|CONTROL OUTCOME
-BOUND_ROWS='the suite bound counts from the suite own start, so a suite that starts late keeps its whole bound|suite-clock|RUN_ALL_SUITE_SECS=5|rc=0 red= stops= child=never-started mark=|suite-from-run|rc=1 red=c3 stops=c3:suite-timeout:seconds=5:none child=never-started mark=
-the deadline counts from the run start, so a suite that starts late gets only the time left|clock|RUN_ALL_DEADLINE_EPOCH=+6|rc=1 red=c3 stops=c3:run-deadline:started=*:none child=never-started mark=|deadline-from-suite|rc=0 red= stops= child=never-started mark=
+BOUND_ROWS='the suite bound counts from the suite own start, so a suite that starts late keeps its whole bound|suite-clock|RUN_ALL_SUITE_SECS=15|rc=0 red= stops= child=never-started mark=|suite-from-run|rc=1 red=c3 stops=c3:suite-timeout:seconds=15:none child=never-started mark=
+the deadline counts from the run start, so a suite that starts late gets only the time left|suite-clock|RUN_ALL_DEADLINE_EPOCH=+15|rc=1 red=c3 stops=c3:run-deadline:started=yes:none child=never-started mark=|deadline-from-suite|rc=0 red= stops= child=never-started mark=
+a suite still running at the deadline is stopped|suite-clock|RUN_ALL_DEADLINE_EPOCH=+15|rc=1 red=c3 stops=c3:run-deadline:started=yes:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
 a suite still running at its bound is stopped|clock|RUN_ALL_SUITE_SECS=1|rc=1 red=c1 c2 c3 stops=c1:suite-timeout:seconds=1:none c2:suite-timeout:seconds=1:none c3:suite-timeout:seconds=1:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
 with both bounds set and the suite bound the earlier, the suite bound stops the suite|trapped|RUN_ALL_SUITE_SECS=2 RUN_ALL_DEADLINE_EPOCH=+5|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|deadline-always|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=
 with both bounds set and the deadline the earlier, the deadline stops the suite|trapped|RUN_ALL_SUITE_SECS=6 RUN_ALL_DEADLINE_EPOCH=+3|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=|later-wins|rc=1 red=trapped stops=trapped:suite-timeout:seconds=6:ok-before-hang child=never-started mark=
