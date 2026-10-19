@@ -234,6 +234,16 @@ environment_rows() {
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
 [0,"job-launcher env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE bash runner","unknown-launcher-named-unsets"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME bash runner'","unknown-fallback-forwarded-unset"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME bash -c \"env -u OTHER bash runner\"'","unknown-fallback-forwarded-nested-safe"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env NAME=value printenv NAME'","unknown-fallback-forwarded-named-target"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME bash runner env'","unknown-fallback-forwarded-script-argument"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'S=set workflow-state \"$S\" oversee key value'","unknown-fallback-forwarded-assignment"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'tool --mode set'","unknown-fallback-forwarded-set-data"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'tool --doc \"set -e\"'","unknown-fallback-forwarded-set-text"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'S=env tool'","unknown-fallback-forwarded-env-assignment"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'job-launcher env -u NAME'","unknown-fallback-forwarded-option-only"]
+[2,"sh LAUNCH.sh WAIT TOOL --test 'S=set job-launcher env -u NAME bash -c \"env\"'","unknown-fallback-forwarded-shell-dump"]
 [2,"job-launcher env","unknown-launcher-bare-env"]
 [2,"job-launcher env -u NAME","unknown-launcher-unset-without-target"]
 [2,"job-launcher env -0","unknown-launcher-null-env"]
@@ -1380,11 +1390,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     case "$control" in
       refuse)
         printf '%s\n' '#!/usr/bin/env bash' 'exit 2' >"$mutant"
-        control_labels=(unknown-launcher-named-unsets unknown-launcher-set-assignment-data unknown-launcher-set-argument-data unknown-launcher-quoted-heredoc-data)
+        control_labels=(unknown-launcher-named-unsets unknown-launcher-set-assignment-data unknown-launcher-set-argument-data unknown-launcher-quoted-heredoc-data unknown-fallback-forwarded-unset unknown-fallback-forwarded-nested-safe unknown-fallback-forwarded-assignment unknown-fallback-forwarded-set-data unknown-fallback-forwarded-set-text unknown-fallback-forwarded-env-assignment)
         control_actual=2; control_expected=0 ;;
       allow)
         printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$mutant"
-        control_labels=(unknown-launcher-bare-env unknown-launcher-unset-without-target unknown-launcher-null-env unknown-launcher-dump-target unknown-launcher-shell-dump bare-env bare-printenv shell-state)
+        control_labels=(unknown-launcher-bare-env unknown-launcher-unset-without-target unknown-launcher-null-env unknown-launcher-dump-target unknown-launcher-shell-dump bare-env bare-printenv shell-state unknown-fallback-forwarded-option-only unknown-fallback-forwarded-shell-dump)
         control_actual=0; control_expected=2 ;;
     esac
     cat "$hook_source" >>"$mutant"
@@ -1420,12 +1430,13 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
-      defect == "operand-word-boundary" { swap("(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)", "(^|[^A-Za-z0-9_])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)") }
-      defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi") }
+      defect == "unknown-evidence-raw" { swap("if [ \"$evidence_context\" = unknown-head ]; then", "if [ unknown-correction-disabled = unknown-head ]; then") }
+      defect == "operand-word-boundary" { swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]"); swap("[^A-Za-z0-9_.-]", "[^A-Za-z0-9_]") }
+      defect == "unresolved-redirect-loss" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"$evidence_context\" \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"$evidence_context\" \"${args[@]}\"; then mode=dump-unknown; fi") }
       defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "literal-source-veto" && $0 == "    if [ -n \"$unproved\" ]; then" {
-        print "    if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++
+        print "    if environment_main_evidence conservative \"$source\"; then mode=dump-unknown; return; fi"; changed++
       }
       defect == "exec-context" { swap("program=opaque; unsupported=1; compound=1", "program=opaque") }
       defect == "quoted-data-cut" { swap("[ \"$1\" = shell ] && [ -z \"${2:-}$unsupported$incoming_sources\" ]", "false") }
@@ -1435,11 +1446,11 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print "           [ \"${stage_roles[$candidate]}:${stage_kinds[$candidate]}\" = argument:literal ] && [ -z \"${stage_unquoted[$candidate]}\" ]; then"
         print "          code=${#executable_texts[@]}; executable_texts[code]=$value; executable_stages[code]=$stage; executable_contexts[code]=conservative; continue"
         print "        fi"
-        print "        case \"${value##*/}\" in env) ;; *) if environment_main_evidence \"$value\"; then return 0; fi; continue ;; esac"
+        print "        case \"${value##*/}\" in env) ;; *) if environment_main_evidence conservative \"$value\"; then return 0; fi; continue ;; esac"
         changed++
       }
       defect == "main-command-cut" { swap("if environment_main_command \"$1\"; then return 0; fi", "if false; then return 0; fi") }
-      defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence \"$text\"; then return 0; fi") }
+      defect == "flat-main-command" { swap("if environment_main_command \"$1\"; then return 0; fi", "if environment_main_evidence conservative \"$text\"; then return 0; fi") }
       defect == "file-body-retained" { swap("main_text=${main_text:0:body_start}${body//[!$'\''\\n'\'']/ }${main_text:body_end}", ":") }
       defect == "piped-file-body-mask" { swap("[ \"${separators[$stage]}\" != \"|\" ] &&", "true &&") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
@@ -1501,7 +1512,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "receiver-line-boundary" { swap("if [[ $remaining =~ ^[A-Za-z0-9_]+ ]]; then", "if [[ $remaining =~ ^[[:space:]]*[A-Za-z0-9_]+ ]]; then") }
       defect == "receiver-body-forwarding" { swap("body_decisions[doc]=fallback", ":") }
       { print }
-      END { if (changed != 1) exit 1 }
+      END { if (changed != (defect == "operand-word-boundary" ? 4 : 1)) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
     if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
     fi
@@ -1554,7 +1565,6 @@ no-check|FAIL environment: operand-command-declare: exit=0 expected=2
 no-check|FAIL environment: operand-command-systemctl: exit=0 expected=2
 operand-word-boundary|FAIL environment: operand-env-script: exit=2 expected=0
 operand-word-boundary|FAIL environment: operand-env-reported-command: exit=2 expected=0
-operand-word-boundary|FAIL environment: operand-env-quoted-path: exit=2 expected=0
 operand-word-boundary|FAIL environment: operand-export-script: exit=2 expected=0
 operand-word-boundary|FAIL environment: operand-declare-script: exit=2 expected=0
 operand-word-boundary|FAIL environment: time-option-data: exit=2 expected=0
@@ -1565,6 +1575,9 @@ exec-context|FAIL environment: r12-command-exec-list-unnamed-declaration: exit=0
 main-command-cut|FAIL environment: r12-body-after-later-header-wrapper: exit=0 expected=2
 flat-main-command|FAIL environment: r12-body-before-later-wrapper: exit=2 expected=0
 main-evidence-cut|FAIL environment: r12-brace-stdout-body-main-refusal: exit=0 expected=2
+unknown-evidence-raw|FAIL environment: unknown-fallback-forwarded-unset: exit=2 expected=0
+unknown-evidence-raw|FAIL environment: unknown-fallback-forwarded-assignment: exit=2 expected=0
+unknown-evidence-raw|FAIL environment: unknown-fallback-forwarded-set-data: exit=2 expected=0
 main-evidence-cut|FAIL environment: r12-brace-shell-declaration-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-brace-shell-typeset-body-main-refusal: exit=0 expected=2
 main-evidence-cut|FAIL environment: r12-if-shell-declaration-body-main-refusal: exit=0 expected=2
