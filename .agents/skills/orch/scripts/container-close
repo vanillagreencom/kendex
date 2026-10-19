@@ -181,8 +181,9 @@ diagnostics on stderr; callers must preserve every one. With every child Done
 or Canceled, the run ticks the parent's "Every child Done or cancelled" box
 with an Evidence line naming each child's state, in the update that sets
 Done; any other open box refuses (`completion-refused`) until it moves into
-its own child. A parent whose every child was canceled delivered nothing: it
-is set Canceled, with no summary and its box left open, and prints `closed
+its own child, whether the children were Done or every one was canceled. A
+parent whose every child was canceled delivered nothing: it is set Canceled,
+with no summary and its child box left open, and prints `closed
 <PARENT_ID>` after the stderr line `container-close: canceled
 parent-id=<PARENT_ID>`. A parent another route already set Done takes the same
 child validation and tick, with no summary. An in-PR bundle root, whose safe
@@ -315,14 +316,6 @@ jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) 
 TERMINAL_CHILDREN="$CHILDREN"
 CHILDREN="$(jq '[.[] | select(.state_type != "canceled")]' <<<"$CHILDREN")" \
   || { container_close_message children-response "$@" >&2; exit 1; }
-# Every child canceled: nothing was delivered, so the parent closes Canceled.
-# A parent another route already completed keeps its completed state.
-if jq -e 'length == 0' <<<"$CHILDREN" >/dev/null && jq -e 'length > 0' <<<"$TERMINAL_CHILDREN" >/dev/null; then
-  if [[ "$PARENT_TYPE" != "completed" ]]; then
-    MUTATION=(issues update "$PARENT_ID" --state Canceled)
-    CANCEL_PARENT=true
-  fi
-else
 
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
   || { container_close_message validation-failed "$@" >&2; exit 1; }
@@ -330,6 +323,26 @@ jq -e --arg id "$PARENT_ID" '(.results | if type == "array" then [.[] | select(.
   (.all_ok | type) == "boolean" and (.results | type) == "array" and ($parent | length) == 1 and
   ($parent[0].state_type | type) == "string" and ($parent[0].state_type | length) > 0 and ($parent[0].has_summary | type) == "boolean"' \
   <<<"$VALIDATION" >/dev/null || { container_close_message validation-result "$@" >&2; exit 1; }
+# Every child canceled: nothing was delivered, so the parent closes Canceled,
+# once the parser finds no outcome box beside the child box to read first.
+# Its state alone does not refuse: a Canceled parent's retry closes again,
+# and a parent another route already completed keeps its completed state.
+if jq -e 'length == 0' <<<"$CHILDREN" >/dev/null && jq -e 'length > 0' <<<"$TERMINAL_CHILDREN" >/dev/null; then
+  PARENT_OPEN="$(jq -c --arg id "$PARENT_ID" '.results[] | select(.id == $id)
+    | if (.container_open_boxes | type) == "array" and (.errors | type) == "array"
+      then select(.container_open_boxes != [] or .errors != []) else error("parent-row") end' <<<"$VALIDATION")" \
+    || { container_close_message validation-result "$@" >&2; exit 1; }
+  if [[ -n "$PARENT_OPEN" ]]; then
+    printf '%s\n' "$PARENT_OPEN" >&2
+    container_close_message completion-refused "$@" >&2
+    exit 1
+  fi
+  if [[ "$PARENT_TYPE" != "completed" ]]; then
+    MUTATION=(issues update "$PARENT_ID" --state Canceled)
+    CANCEL_PARENT=true
+  fi
+else
+
 ALL_OK="$(jq -r '.all_ok' <<<"$VALIDATION")" \
   || { container_close_message validation-json "$@" >&2; exit 1; }
 if [[ "$ALL_OK" != "true" ]]; then

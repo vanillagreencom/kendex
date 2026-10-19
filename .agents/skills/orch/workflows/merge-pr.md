@@ -408,7 +408,7 @@ Use the output as `MAIN_REPO_ROOT`.
    - `closed [PARENT_ID]` → record `[PARENT_ID] → Canceled` in § 6 when the helper's stderr carries `container-close: canceled parent-id=[PARENT_ID]`, else `[PARENT_ID] → Done`. If this container has a container parent, repeat this step for that parent.
    - `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6. When `[ISSUE]` is among them and reads Verifying, the overseer closes the container after verification sets it Done. A bare `deferred` means the lock wait expired; report it.
    - `held [PARENT_ID] [HOLD_RESET]` → hold the command under the linear skill's `patterns/workflow-actions.md` § Quota Holds, and climb no further.
-   - A nonzero exit keeps the container open; carry its diagnostic into § 6, climb no further, and report `container [PARENT_ID] stays open; rerun container-close once [CAUSE] is fixed`. A `completion-refused` names an open box beside the child box: an outcome that moves into its own child item, per project-management's parent template.
+   - A nonzero exit keeps the container open; carry its diagnostic into § 6, climb no further, and report `container [PARENT_ID] stays open; rerun container-close once [CAUSE] is fixed`. A `completion-refused` prints each refused row: an open box beside the child box is an outcome that moves into its own child item, per project-management's parent template, and a Done child with `has_summary: false` takes its `## Completion Summary` comment first.
 
 3. **Sync the main repo** — always runs after a merge.
 

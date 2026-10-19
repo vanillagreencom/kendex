@@ -127,7 +127,9 @@ if [[ "$query" == *"GetIssueWithBundle"* ]]; then
   CC-930)
     # The parent-checklist matrix needs one Done child to reach --container.
     # The earlier multi-child scenario retains both children.
-    if [[ -n "${CONTAINER_CHECKLIST_FILE:-}" ]]; then
+    if [[ -n "${CONTAINER_ALL_CANCELED:-}" ]]; then
+      bundle_parent CC-930 "$(bundle_child CC-931 Canceled canceled CC-930)" Todo unstarted
+    elif [[ -n "${CONTAINER_CHECKLIST_FILE:-}" ]]; then
       bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930)" Todo unstarted
     else
       bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930),$(bundle_child CC-932 Done completed CC-930)" Todo unstarted
@@ -249,7 +251,7 @@ check "E: all_ok false while a child is open" "$outE" '.all_ok == false'
 # --- Scenario F: --container fails closed on misuse ------------------------
 # The flag asserts "this bundle may complete now", so it must name exactly one
 # target, pair with --include-children-of for that same target, and expand to
-# at least one non-canceled child. A leaf or mismatched invocation is a caller
+# at least one child. A leaf or mismatched invocation is a caller
 # error (nonzero exit), never a passing validation.
 run_status rcF1 run_validate CC-901 --include-children-of CC-901 --container >/dev/null 2>&1
 run_status rcF2 run_validate CC-930 --container >/dev/null 2>&1
@@ -288,6 +290,17 @@ child-words-continue|## Done when\n- [ ] Every child Done or cancelled and docs 
 open|## Done when\n- [ ] Every child Done or cancelled\n- [ ] Shared outcome at source|false|1|[2]
 missing-evidence|## Done when\n- [x] Shared outcome at source|false|null|[1]
 proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|null|[]
+ROWS
+
+# Every child canceled leaves the container's own row, so its closer reads
+# an outcome box beside the child box before it sets the parent Canceled.
+while IFS='|' read -r name description expected open; do
+  printf '%b' "$description" >"$CONTAINER_CHECKLIST_FILE"
+  out="$(CONTAINER_ALL_CANCELED=1 run_validate CC-930 --include-children-of CC-930 --container 2>"$TMP_ROOT/all-canceled.err")"
+  check "$name all-canceled container returns its own row" "$out" ".all_ok == $expected and (.results | length) == 1 and .results[0].id == \"CC-930\" and .results[0].container_open_boxes == $open"
+done <<'ROWS'
+child-open|## Done when\n- [ ] Every child Done or cancelled|true|[]
+open|## Done when\n- [ ] Every child Done or cancelled\n- [ ] Shared outcome at source|false|[2]
 ROWS
 
 # The review audit's in-PR bundle root is one work item: --container refuses

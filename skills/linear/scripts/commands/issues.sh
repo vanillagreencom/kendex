@@ -304,8 +304,9 @@ Validate-Completion:
   No merge time is needed.
   The flag fails closed:
   it requires exactly one issue ID plus --include-children-of naming that
-  same issue, and errors (exit 1) when the bundle has no non-canceled
-  children — a leaf cannot validate as a container. A child of a container
+  same issue, and errors (exit 1) when the bundle has no children — a leaf
+  cannot validate as a container. With every child canceled the result
+  carries the container's row alone. A child of a container
   validates alone as its own session root. Use it only for containers;
   the review audit's in-PR bundle uses the default bundle-child contract above,
   and --container refuses its root, whose safe read reports `in_pr_bundle`
@@ -3668,8 +3669,8 @@ validate_completion() {
     # --container asserts "this bundle may complete now", so it fails CLOSED
     # on any invocation that cannot prove it: exactly one positional target,
     # a paired --include-children-of naming that same target, and (checked
-    # after expansion below) at least one non-canceled child. The flag may
-    # appear after the positionals, so the role is assigned post-parse.
+    # after expansion below) at least one child. The flag may appear after
+    # the positionals, so the role is assigned post-parse.
     if [ "$container_mode" = "true" ]; then
         if [ ${#issue_ids[@]} -ne 1 ]; then
             echo '{"error": "--container requires exactly one issue ID"}' >&2
@@ -3709,6 +3710,15 @@ validate_completion() {
             echo "{\"error\": \"--container fail-closed: $include_children_of is an in-PR bundle root (in_pr_bundle) — it validates with plain validate-completion, never as a container\"}" >&2
             return 1
         fi
+        # Container fail-closed, part 2: a bundle with no child at all proves
+        # nothing about its children — a leaf mistakenly validated as a
+        # container must error, not pass. Every child canceled leaves the
+        # parent's row alone, so container-close reads its open boxes before
+        # it sets the parent Canceled.
+        if [ "$container_mode" = "true" ] && [ "$(jq -r '.children | length' <<<"$bundle")" = 0 ]; then
+            echo "{\"error\": \"--container fail-closed: no children found under $include_children_of\"}" >&2
+            return 1
+        fi
         local child_ids
         child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
@@ -3719,14 +3729,6 @@ validate_completion() {
                 roles+=("bundle-child")
             fi
         done
-    fi
-
-    # Container fail-closed, part 2: a bundle that expanded to zero
-    # non-canceled children proves nothing about "children all Done" — a
-    # leaf mistakenly validated as a container must error, not pass.
-    if [ "$container_mode" = "true" ] && [ ${#issue_ids[@]} -le 1 ]; then
-        echo "{\"error\": \"--container fail-closed: no non-canceled children found under $include_children_of\"}" >&2
-        return 1
     fi
 
     local results="[]"
