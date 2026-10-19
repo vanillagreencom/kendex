@@ -236,6 +236,11 @@ fn walk(
                 }
             }
         }
+        for skill in found.loads_held.iter().filter(|_| parent_decl.enabled) {
+            if expansion.turn_on_held(ItemKind::Skill, skill) {
+                queue.push_back((ItemKind::Skill, skill.clone()));
+            }
+        }
         wanted.insert((kind, parent.clone()), found);
     }
     carry_kept_retired_edges(expansion, state);
@@ -387,6 +392,7 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
 /// with the tools it lands on; the findings on the parent; and the tools
 /// the parent itself is withheld from, with why, because a hook whose
 /// companion will not be written there is not written there either.
+#[derive(Default)]
 struct Wanted {
     deps: Vec<Dep>,
     findings: Vec<ItemWarning>,
@@ -409,6 +415,10 @@ struct Wanted {
     /// companion and the pass judges pins: each asked again with the pin
     /// dropped ([`withheld_past_pin`]).
     left_out: Vec<HarnessId>,
+    /// For an agent, the assigned skills the scope already holds
+    /// ([`held_elsewhere`]): its edge brings none of them, and [`walk`]
+    /// only switches each on while the agent is on.
+    loads_held: Vec<String>,
 }
 
 impl Wanted {
@@ -574,13 +584,8 @@ fn withhold_kept_retired(
             let found = wanted
                 .entry((kind, name.clone()))
                 .or_insert_with(|| Wanted {
-                    deps: Vec::new(),
-                    findings: Vec::new(),
-                    answered: Vec::new(),
-                    withheld: BTreeMap::new(),
-                    retired_companions: BTreeMap::new(),
                     armed: true,
-                    left_out: Vec::new(),
+                    ..Wanted::default()
                 });
             let companion = (dep_kind, dep.clone());
             found.withhold_for(tools.iter().copied(), Withholding::Retired, &companion);
@@ -900,13 +905,8 @@ fn wanted_by(
     let catalog = catalogs.get(&own.0, own.1.as_deref(), state)?;
     let sealed = &catalog.sealed;
     let mut wanted = Wanted {
-        deps: Vec::new(),
-        findings: Vec::new(),
-        answered: Vec::new(),
-        withheld: BTreeMap::new(),
-        retired_companions: BTreeMap::new(),
         armed: parent_decl.enabled,
-        left_out: Vec::new(),
+        ..Wanted::default()
     };
     let dir = match catalog.offer(kind, parent) {
         Offer::Item(_, dir) => dir,
@@ -919,9 +919,15 @@ fn wanted_by(
         }
         Offer::NotOffered | Offer::Silent => return Some(wanted),
     };
-    let Some(declared) = declared_by(catalog, manifest, expansion, kind, parent, &dir) else {
+    let Some(mut declared) = declared_by(catalog, manifest, kind, parent, &dir) else {
         return Some(wanted);
     };
+    if kind == ItemKind::Agent {
+        (wanted.loads_held, declared.required_skills) = declared
+            .required_skills
+            .into_iter()
+            .partition(|skill| held_elsewhere(expansion, parent, skill));
+    }
     let header = hook_header(sealed, kind, &dir);
     if let Ok(Some(own)) = &header
         && state.judge_pins
@@ -1021,13 +1027,12 @@ fn wanted_by(
 fn declared_by(
     catalog: &OpenCatalog,
     manifest: &Manifest,
-    expansion: &Expansion,
     kind: ItemKind,
     parent: &str,
     dir: &std::path::Path,
 ) -> Option<Dependencies> {
     match kind {
-        ItemKind::Agent => Some(agent_assignment(catalog, manifest, expansion, parent, dir)),
+        ItemKind::Agent => Some(agent_assignment(catalog, manifest, parent, dir)),
         ItemKind::Skill
         | ItemKind::Hook
         | ItemKind::Command
@@ -1045,32 +1050,15 @@ fn declared_by(
 /// a row may name a skill another source carries, and one nothing installs
 /// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
 /// agent that will not read or parse needs nothing; the renderer reports it.
-///
-/// The assignment is what the agent loads, not what it needs to install,
-/// so its edge is soft: it brings only a skill the scope does not already
-/// hold, and a skill held for any other reason — declared, a set's,
-/// required by another item or brought by another agent, the skill that
-/// requires this agent among them — keeps its own declaration, revision
-/// and reasons, with no revision disagreement, finding or reason from
-/// this edge. [`walk`]
-/// reads every agent after the hard edges, so which skills are held
-/// does not turn on walk order; [`wanted_by`] drops the findings on the
-/// skills this edge does bring.
+/// [`wanted_by`] keeps as the edge's only the skills [`held_elsewhere`]
+/// leaves it.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
-    expansion: &Expansion,
     agent: &str,
     path: &std::path::Path,
 ) -> Dependencies {
-    let brought_here = |skill: &str| match expansion.derived_from(ItemKind::Skill, skill) {
-        Some(Reason::RequiredBy { by }) => by.kind == ItemKind::Agent && by.name == agent,
-        Some(Reason::Requested | Reason::MemberOf { .. }) | None => false,
-    };
-    let available: Vec<String> = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill)
-        .into_iter()
-        .filter(|skill| !expansion.contains(ItemKind::Skill, skill) || brought_here(skill))
-        .collect();
+    let available = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill);
     let required_skills = match crate::mapping::declared_skills(manifest, agent) {
         Some((declared, _)) => declared
             .iter()
@@ -1090,6 +1078,27 @@ fn agent_assignment(
     Dependencies {
         required_skills,
         ..Dependencies::default()
+    }
+}
+
+/// Whether the scope holds `skill`, which `agent`'s assignment names, for
+/// any reason but this agent's edge. The assignment is what the agent
+/// loads, not what it needs to install, so its edge is soft: it brings
+/// only a skill the scope does not already hold, and a skill held for any
+/// other reason — declared, a set's, required by another item or brought
+/// by another agent, the skill that requires this agent among them —
+/// keeps its own declaration, revision and reasons, with no revision
+/// disagreement, finding or reason from this edge. Only its switch
+/// follows the agent: one brought in parked is switched on while the
+/// agent is on ([`walk`]), never one the person declared off. [`walk`]
+/// reads every agent after the hard edges, so which skills are held does
+/// not turn on walk order; [`wanted_by`] drops the findings on the skills
+/// this edge does bring.
+fn held_elsewhere(expansion: &Expansion, agent: &str, skill: &str) -> bool {
+    match expansion.derived_from(ItemKind::Skill, skill) {
+        Some(Reason::RequiredBy { by }) => by.kind != ItemKind::Agent || by.name != agent,
+        Some(Reason::Requested | Reason::MemberOf { .. }) => true,
+        None => expansion.contains(ItemKind::Skill, skill),
     }
 }
 

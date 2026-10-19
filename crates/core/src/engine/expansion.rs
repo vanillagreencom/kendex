@@ -73,6 +73,23 @@ pub(super) struct Planned {
     held_by: Option<(super::Held, SelectorBasis)>,
 }
 
+impl Planned {
+    /// Switch this item on for a requirer, or an agent that loads it, that
+    /// is on, returning whether it was off. A derived item is on while any
+    /// of them is on: the first one walked wrote its switch, and a later
+    /// one that is on must not be left armed beside a companion the first
+    /// parked. A declaration the person wrote is theirs and is never turned
+    /// on here. The caller walks a turned-on item again so its own
+    /// companions follow.
+    fn turn_on(&mut self) -> bool {
+        let turned_on = self.derived_from.is_some() && !self.decl.enabled;
+        if turned_on {
+            self.decl.enabled = true;
+        }
+        turned_on
+    }
+}
+
 #[derive(Default, Clone)]
 pub(super) struct Expansion {
     items: BTreeMap<(ItemKind, String), Planned>,
@@ -326,15 +343,7 @@ impl Expansion {
                 derived_from: Some(reason_owning.clone()),
                 held_by: held_by.clone(),
             });
-        // A derived item is on while any requirer that brings it in is on:
-        // the first requirer walked wrote its switch, and a later one that
-        // is on must not be left armed beside a companion the first parked.
-        // A declaration the person wrote is theirs and is never turned on
-        // here. The item is walked again so its own companions follow.
-        let turned_on = planned.derived_from.is_some() && decl.enabled && !planned.decl.enabled;
-        if turned_on {
-            planned.decl.enabled = true;
-        }
+        let turned_on = decl.enabled && planned.turn_on();
         let wanted_at = match carried_by_a_set {
             true => &planned.chosen_rev,
             false => &planned.decl.rev,
@@ -361,6 +370,17 @@ impl Expansion {
             planned.harnesses.push(harness);
         }
         fresh || turned_on
+    }
+
+    /// Switch on a skill the scope already holds for an agent that loads
+    /// it and is on, by [`Planned::turn_on`]'s rule, returning whether
+    /// that turned it on. The agent's assignment edge brings no skill the
+    /// scope holds, so this adds no reason and leaves the declaration's
+    /// source and revision as they are (`deps::held_elsewhere`).
+    pub(super) fn turn_on_held(&mut self, kind: ItemKind, name: &str) -> bool {
+        self.items
+            .get_mut(&(kind, name.to_owned()))
+            .is_some_and(Planned::turn_on)
     }
 
     fn held_owner(

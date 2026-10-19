@@ -214,3 +214,61 @@ fn an_agent_does_not_require_the_skill_that_requires_it() {
         );
     }
 }
+
+/// Two agents both assigned `shared`, each required by one skill: `scout`
+/// by a skill switched off, `helper` by one switched on. `shared` is on
+/// while an agent that loads it is on, whichever requirer's agent is read
+/// first, and so it is when the switched-off skill requires `shared`
+/// itself.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on() {
+    let scout = "dependencies:\n  agents: [scout]\n";
+    let helper = "dependencies:\n  agents: [helper]\n";
+    let requires_shared = "dependencies:\n  required: [shared]\n";
+    // Each row: skill `a`'s dependencies and switch, then skill `b`'s.
+    let rows: [(&str, &str, bool, &str, bool); 3] = [
+        ("off requirer read first", scout, false, helper, true),
+        ("on requirer read first", helper, true, scout, false),
+        (
+            "off skill requires shared itself",
+            requires_shared,
+            false,
+            helper,
+            true,
+        ),
+    ];
+    for (what, a, a_on, b, b_on) in rows {
+        let f = fixture(&format!(
+            "[skills.a]\nsource = \"cat\"\nenabled = {a_on}\n\n[skills.b]\nsource = \"cat\"\nenabled = {b_on}\n"
+        ));
+        skill(&f.source, "a", a);
+        skill(&f.source, "b", b);
+        skill(&f.source, "shared", "");
+        fs::create_dir_all(f.source.join("agents")).unwrap();
+        for agent in ["scout", "helper"] {
+            fs::write(
+                f.source.join(format!("agents/{agent}.md")),
+                format!("---\nname: {agent}\ndescription: Finds things\n---\nBody.\n"),
+            )
+            .unwrap();
+        }
+        fs::write(
+            f.source.join("kendex.toml"),
+            "[agent-skills]\nscout = [\"shared\"]\nhelper = [\"shared\"]\n",
+        )
+        .unwrap();
+
+        apply_now(&f);
+        let lock = lock_of(&f);
+        let shared = lock
+            .entries
+            .get("skill:shared:claude")
+            .unwrap_or_else(|| panic!("{what}: shared installs"));
+        assert!(shared.enabled, "{what}: {:?}", shared.reasons);
+        assert!(
+            lock.entries["agent:helper:claude"].enabled,
+            "{what}: helper is on"
+        );
+    }
+}
