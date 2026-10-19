@@ -42,9 +42,10 @@ const DEPENDENT_KINDS: [(ItemKind, ItemKind); 5] = [
 ];
 
 /// The kinds every walk starts from. An agent is walked only once a skill
-/// requires it: one the person declared took its skills at `add` time or
-/// was told not to (`--no-auto-skills`, a set's agents), and walking it
-/// would install them anyway.
+/// requires it: one the person declared alone took its skills at `add`
+/// time or was told not to (`--no-auto-skills`, a set's agents). One a
+/// skill requires brings its assignment whichever way it is declared, and
+/// the consumer's `[agent-skills]` row is what changes it.
 const DECLARING_KINDS: [ItemKind; 2] = [ItemKind::Skill, ItemKind::Hook];
 
 /// What an item's frontmatter declares it needs, `found` being what
@@ -904,13 +905,8 @@ fn wanted_by(
         }
         Offer::NotOffered | Offer::Silent => return Some(wanted),
     };
-    let declared = if kind == ItemKind::Agent {
-        agent_assignment(catalog, manifest, parent, &dir)
-    } else {
-        let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
-            return Some(wanted);
-        };
-        declared
+    let Some(declared) = declared_by(catalog, manifest, expansion, kind, parent, &dir) else {
+        return Some(wanted);
     };
     let header = hook_header(sealed, kind, &dir);
     if let Ok(Some(own)) = &header
@@ -981,6 +977,7 @@ fn wanted_by(
     if kind == ItemKind::Hook && wanted.armed {
         wanted.withhold(unresolved, Withholding::Requires);
     }
+    let resolved = wanted.findings.len();
     derive(
         kind,
         parent,
@@ -992,7 +989,39 @@ fn wanted_by(
         state,
         &mut wanted,
     );
+    // An agent's assignment is what it loads, not what it needs to
+    // install: an assigned skill the person turned away or keeps on
+    // another tool leaves the declarations complete, and the agent pass
+    // warns for one the scope lacks (`agent_skills::warn_uninstalled`).
+    // Its names are this catalog's own, so `resolve` misses none of them.
+    if kind == ItemKind::Agent {
+        wanted.findings.truncate(resolved);
+    }
     Some(wanted)
+}
+
+/// What `parent`, offered at `dir`, declares it needs: an agent's
+/// assignment ([`agent_assignment`]), every other kind's own frontmatter.
+/// `None` where that frontmatter will not read, which the renderer
+/// reports.
+fn declared_by(
+    catalog: &OpenCatalog,
+    manifest: &Manifest,
+    expansion: &Expansion,
+    kind: ItemKind,
+    parent: &str,
+    dir: &std::path::Path,
+) -> Option<Dependencies> {
+    match kind {
+        ItemKind::Agent => Some(agent_assignment(catalog, manifest, expansion, parent, dir)),
+        ItemKind::Skill
+        | ItemKind::Hook
+        | ItemKind::Command
+        | ItemKind::McpServer
+        | ItemKind::Plugin
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, dir).ok(),
+    }
 }
 
 /// The skills an agent a skill requires loads, as its required skills: the
@@ -1002,13 +1031,30 @@ fn wanted_by(
 /// a row may name a skill another source carries, and one nothing installs
 /// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
 /// agent that will not read or parse needs nothing; the renderer reports it.
+///
+/// A skill that requires the agent is left out: it is there for its own
+/// reason, and an edge back to it would keep it suppressed when it alone
+/// is removed. Every item the walk starts from is read before the agent,
+/// so each declared requirer is already among the agent's reasons.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
+    expansion: &Expansion,
     agent: &str,
     path: &std::path::Path,
 ) -> Dependencies {
-    let available = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill);
+    let requirers: BTreeSet<String> = expansion
+        .package_reasons(ItemKind::Agent, agent)
+        .into_iter()
+        .filter_map(|reason| match reason {
+            Reason::RequiredBy { by } if by.kind == ItemKind::Skill => Some(by.name),
+            Reason::RequiredBy { .. } | Reason::Requested | Reason::MemberOf { .. } => None,
+        })
+        .collect();
+    let available: Vec<String> = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill)
+        .into_iter()
+        .filter(|skill| !requirers.contains(skill))
+        .collect();
     let required_skills = match crate::mapping::declared_skills(manifest, agent) {
         Some((declared, _)) => declared
             .iter()

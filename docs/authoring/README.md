@@ -88,7 +88,7 @@ A description is never guessed: an empty one stays empty and is a check finding.
 
 ## Skill dependencies
 
-`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses that support agents at the install scope, and brings the skills this catalog assigns to it ([Agent skills](#agent-skills)). A consumer `[agent-skills]` row for the agent limits those skills to the row. A harness that cannot install the agent gets a warning on the skill. The skill still installs there. Agents have no optional dependency list. Skills cannot declare hook dependencies.
+`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses that support agents at the install scope, and brings the skills this catalog assigns to it ([Agent skills](#agent-skills)). A consumer `[agent-skills]` row for the agent replaces that assignment: the agent brings the row's skills this catalog offers, and a row skill from another catalog warns until it is installed. An assigned skill that is not installed gives the agent's warning, not a missing-dependency finding. A harness that cannot install the agent gets a warning on the skill. The skill still installs there. Agents have no optional dependency list. Skills cannot declare hook dependencies.
 
 ```yaml
 dependencies:
@@ -137,7 +137,7 @@ The consumer can replace an assignment in its own `[agent-skills]` table. Skills
 
 Claude Code receives `skills:` frontmatter for preload. Cursor installs the agent as a rule and omits the skill list. The other harnesses receive a `## Required Skills` section with paths to the skills.
 
-Adding an agent normally installs its available assigned skills. A bundle or `--no-auto-skills` can leave them out. Install and apply warn once per agent and missing skill when the scope has no install declaration for it. A skill installed through a bundle or dependency satisfies the assignment. Install the skill, or remove it from the agent's `[agent-skills]` row. An unresolved consumer assignment warns and the agent still renders with its available skills. A recorded fork with an unavailable skill refuses the operation.
+Adding an agent normally installs its available assigned skills. A bundle or `--no-auto-skills` can leave them out. An agent that a skill requires brings its assigned skills even when it is declared with `--no-auto-skills` or comes from a bundle; the consumer `[agent-skills]` row changes them. Install and apply warn once per agent and missing skill when the scope has no install declaration for it. A skill installed through a bundle or dependency satisfies the assignment. Install the skill, or remove it from the agent's `[agent-skills]` row. An unresolved consumer assignment warns and the agent still renders with its available skills. A recorded fork with an unavailable skill refuses the operation.
 
 ## Agent models
 

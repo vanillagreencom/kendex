@@ -1,1 +1,1 @@
-- An agent a skill requires through `dependencies.agents` now installs with the skills assigned to it, as `kendex add --agent` does. A consumer `[agent-skills]` row for the agent limits them to that row.
+- An agent a skill requires through `dependencies.agents` now installs with the skills its catalog assigns to it. A consumer `[agent-skills]` row for the agent replaces that assignment with the row's skills from the same catalog.
