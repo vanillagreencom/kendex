@@ -3660,6 +3660,30 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
     || overseer_note overseer-notice-failed "channel=lane-mail"
 }
 
+# The owner's channel: one `lane-mail notice --to owner` through the overseer
+# mailbox, which the owner relay carries out, for a case only the owner can
+# act on. A walled or dead overseer reads no mailbox directive, so a notice
+# its own channels carry reaches nobody until a successor opens. lane-mail
+# refusing the text as `owner-notice-repeated` is the owner already holding
+# those words, which counts as sent. Returns 1, noted, where it is not sent.
+overseer_owner_notice() { # NOTICE ERR_FILE
+  local refusal
+  "$LANE_MAIL" notice --item overseer --to owner --file "$1" >/dev/null 2>"$2" && return 0
+  IFS= read -r refusal <"$2" || refusal=""
+  case "$refusal" in
+    "lane-mail: owner-notice-repeated="*) return 0 ;;
+  esac
+  overseer_note overseer-notice-failed "channel=owner"
+  return 1
+}
+
+# Whether this pass's wall is on the account itself, a login or access the
+# harness reports refused (lib/lane-state.sh § lane_auth_failure), off
+# the pane or the session's rows: no usage reset lifts it.
+overseer_auth_wall() {
+  [[ "$OV_SOURCE" == auth || ( "$OV_SOURCE" == rows && "$SESSION_ROWS_WALL_KIND" == auth ) ]]
+}
+
 # The notice every channel carries, written once into WORK_DIR: the fleet log
 # reads it as the text of its record and the overseer mailbox as the body of an
 # owner note, so the two cannot describe the case differently.
@@ -3669,6 +3693,11 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
 # record names this session (overseer_record_read), which the key alone does
 # not say: an earlier server handed the same pid and pane id left the same
 # one. The no-line plan names which of the three shapes left it with no line.
+#
+# An auth wall also reaches the owner, once per episode since the caller
+# delivers only on a case's first reading: the successor moves the fleet off
+# that account, and only the owner can sign it in again or restore its access.
+# A usage wall lifts at its reset, and its successor is the whole remedy.
 overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
   local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
   local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text headline
@@ -3708,9 +3737,12 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
     printf -v headline 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s, source=%s. %s' \
       "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text"
   fi
+  [[ "$kind" != walled ]] || ! overseer_auth_wall \
+    || headline+=' Its account refused the login or its access, which no usage reset lifts: sign the account in again or restore its access.'
   printf '%s\n' "$headline" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
+  [[ "$kind" != walled ]] || ! overseer_auth_wall || overseer_owner_notice "$notice" "$errf" || true
 }
 
 # Exit 3 from the launcher is `lanes pick`'s own "no lane clears the bound",
@@ -3718,7 +3750,9 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
 # successor. One notice on the two channels the recovery already uses, the row
 # marked reported, because a retry would walk the same accounts and refuse
 # again. A reserve refusal leaves the current session live; real failures stop
-# repeat mode.
+# repeat mode, and with the overseer down and no successor coming, the same
+# notice goes to the owner once (overseer_owner_notice): the reported row
+# keeps every later pass from sending it again.
 #
 # The account fields come from this pass's existing `--check-marks` result,
 # never from the banner or from the requested recovery mode. Reserve refusal
@@ -3745,7 +3779,7 @@ overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW KIND
   local account="" resets=""
   [[ "$OVERSEER_MARK_READ" -ne 1 ]] || { account="$OVERSEER_MARK_ACCOUNT"; resets="$OVERSEER_MARK_RESETS"; }
   local remedy="Start a fresh overseer by hand once an account qualifies."
-  if [[ "$OV_SOURCE" == auth || ( "$OV_SOURCE" == rows && "$SESSION_ROWS_WALL_KIND" == auth ) ]]; then
+  if overseer_auth_wall; then
     account="" resets=""
     remedy="The login failed and has no usage reset. Sign in to an account, then start a fresh overseer by hand."
   elif [[ -n "$account" && -n "$resets" ]]; then
@@ -3755,6 +3789,7 @@ overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW KIND
     "$window" "$pane" "$remedy" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
+  overseer_owner_notice "$notice" "$errf" || true
   ow_message overseer-recovery-blocked "pane=$pane" \
     "account=${account:-unknown}" "resets=${resets:-none}" >&2
 }
@@ -4113,16 +4148,10 @@ overseer_context_gap() { # PANE IDENTITY GAP
 # stands as sent.
 overseer_gap_alert() { # PANE GAP
   local notice="$WORK_DIR/overseer-context-gap.txt" record="$WORK_DIR/overseer-context-gap.json"
-  local errf="$WORK_DIR/overseer-context-gap.err" refusal
+  local errf="$WORK_DIR/overseer-context-gap.err"
   printf 'overseer-context-unmeasured: the overseer in pane %s has recorded no context reading on two consecutive watch passes, gap=%s, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill'"'"'s references/overseer-session-events.md.\n' \
     "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 1; }
-  if ! "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf"; then
-    IFS= read -r refusal <"$errf" || refusal=""
-    case "$refusal" in
-      "lane-mail: owner-notice-repeated="*) ;;
-      *) overseer_note overseer-notice-failed "channel=owner"; return 1 ;;
-    esac
-  fi
+  overseer_owner_notice "$notice" "$errf" || return 1
   ol_fleet_log "$notice" "$record" "$errf" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     || overseer_note overseer-notice-failed "channel=fleet-log"
   ow_message overseer-context-alerted "pane=$1" "gap=$2" >&2
@@ -4298,7 +4327,7 @@ overseer_judge() { # PANE
   case "$OV_STATE" in
     exited) OV_VERDICT=exited ;;
     walled)
-      if [[ "$OV_SOURCE" == auth || ( "$OV_SOURCE" == rows && "$SESSION_ROWS_WALL_KIND" == auth ) ]]; then
+      if overseer_auth_wall; then
         OV_VERDICT=walled
       elif [[ "$OV_SOURCE" == rows ]]; then
         if ! overseer_marks_judge || [[ "$OVERSEER_MARK_KEY" != below-mark ]]; then OV_VERDICT=walled

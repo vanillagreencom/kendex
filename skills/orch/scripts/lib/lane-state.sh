@@ -70,8 +70,12 @@ USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reach
 AUTH_FAILURE_RE=$'^[[:space:]\xc2\xa0]*(⎿[[:space:]\xc2\xa0]*|■[[:space:]]*|✗[[:space:]]*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages[.] Please run /login)'
 # Claude's `auth status` reads current account authentication, not the result
 # held by an already running terminal session. Its StopFailure hook supplies
-# authentication_failed after a failed turn; session-rows.sh consumes it where
-# callers have rows. Pane-driven callers still need the current turn's error:
+# the turn's error kind; session-rows.sh consumes it where callers have rows.
+# AUTH_FAILURE_ERRORS is the one table of the kinds that refuse every turn on
+# the session's account until someone acts on that account: a failed login, a
+# subscription the organization disabled, an account on hold, its billing.
+# No reset lifts them, so they read as a login wall and never as a usage mark.
+# The kinds are the StopFailure matcher values the hooks reference lists. Pane-driven callers still need the current turn's error:
 # a previous successful row cannot settle a later login failure.
 # https://code.claude.com/docs/en/cli-reference
 # https://code.claude.com/docs/en/hooks#stopfailure
@@ -87,8 +91,14 @@ AUTH_FAILURE_RE=$'^[[:space:]\xc2\xa0]*(⎿[[:space:]\xc2\xa0]*|■[[:space:]]*|
 # The captured terminal error is therefore needed for pane-driven callers.
 # https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/troubleshoot-copilot-cli-auth
 # https://github.com/github/copilot-sdk/blob/main/docs/setup/backend-services.md
-AUTH_FAILURE_ERROR=authentication_failed
-lane_auth_failure() { [[ "${2:-}" == "$AUTH_FAILURE_ERROR" ]] || grep -Eq -- "$AUTH_FAILURE_RE" <<<"$1"; }
+AUTH_FAILURE_ERRORS='authentication_failed oauth_org_not_allowed account_on_hold billing_error'
+lane_auth_failure() { # SCREEN [ERROR_KIND]
+  local kind
+  for kind in $AUTH_FAILURE_ERRORS; do
+    [[ "${2:-}" != "$kind" ]] || return 0
+  done
+  grep -Eq -- "$AUTH_FAILURE_RE" <<<"$1"
+}
 MODEL_CAPACITY='Selected model is at capacity'
 # The marker each harness draws at column 0 for a submitted user message
 # echoed into the transcript AND for the composer the lane sits at: Claude

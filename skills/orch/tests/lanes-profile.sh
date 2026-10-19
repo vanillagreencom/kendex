@@ -46,6 +46,9 @@ ACTIVE='{"account":{"has_claude_max":true},"organization":{"organization_type":"
 SHIPPED="$LANES"
 CLASSIFY="$(mutant_scripts profile-classify lanes)"
 mutate_file "$CLASSIFY/lanes" 'detail="$profile_detail"' ': "$profile_detail"'
+STATUS_CONTROL="$(mutant_scripts profile-status lanes)"
+mutate_file "$STATUS_CONTROL/lanes" '		status=plan_ended
+' ''
 ACTIVE_CONTROL="$(mutant_scripts profile-active lanes)"
 mutate_file "$ACTIVE_CONTROL/lanes" '$org.organization_type == "claude_free"' '$org.organization_type != null'
 mutate_file "$ACTIVE_CONTROL/lanes" '$org.subscription_status == "canceled"' '$org.subscription_status != null'
@@ -89,6 +92,7 @@ for row in \
   "unreachable|503|200|$LAPSED|claude|max|baseline|0|$SHIPPED" \
   "codex-refused|403|200|$LAPSED|codex|max|same|0|$SHIPPED" \
   "control-classify|403|200|$LAPSED|claude|max|ended|1|$CLASSIFY/lanes" \
+  "control-status|403|200|$LAPSED|claude|max|ended|1|$STATUS_CONTROL/lanes" \
   "control-active|403|200|$ACTIVE|claude|free|same|1|$ACTIVE_CONTROL/lanes" \
   "control-http|429|200|$LAPSED|claude|max|baseline|0|$HTTP_CONTROL/lanes" \
   "control-harness|403|200|$LAPSED|codex|max|same|0|$HARNESS_CONTROL/lanes" \
@@ -105,11 +109,14 @@ for row in \
   if [[ "$name" == fallback-* ]]; then
     if [[ "$code" == 401 ]]; then DETAIL_401="$detail"; else DETAIL_403="$detail"; fi
   fi
-  status=refused
+  # A confirmed ended plan reads `plan_ended`, which the shared judge walls;
+  # every other refusal stays a reading nobody made.
+  status=refused verdict=unmeasured
   [[ "$code" != 429 ]] || status=rate_limited
   [[ "$code" != 503 ]] || status=unreachable
-  got="$(jq -r '.[0].status' <<<"$out") calls=$(awk '$1 == "profile" { n++ } END { print n+0 }' "$H/curl.log")"
-  want="$status calls=$calls"
+  [[ "$cause" != ended ]] || status=plan_ended verdict=walled
+  got="$(jq -r '"\(.[0].status) \(.[0].verdict)"' <<<"$out") calls=$(awk '$1 == "profile" { n++ } END { print n+0 }' "$H/curl.log")"
+  want="$status $verdict calls=$calls"
   if [[ "$cause" == ended ]]; then
     # Assert the response's plan values, not human sentence wording.
     old="$DETAIL_403"; [[ "$code" != 401 ]] || old="$DETAIL_401"
@@ -130,7 +137,7 @@ for row in \
     fi
     if [[ "$cause" == ended ]]; then
       cached="$(profile_run "$script" "$code" transport list --harness "$harness" --json --cache-only)"
-      assert_eq "$(jq -r '.[0].detail' <<<"$cached")" "$detail" "$name keeps the recorded cause on the cached refusal"
+      assert_eq "$(jq -r '"\(.[0].status) \(.[0].verdict) \(.[0].detail)"' <<<"$cached")" "plan_ended walled $detail" "$name keeps the recorded cause on the cached refusal"
       assert_eq "$(awk 'END { print NR }' "$H/curl.log")" 2 "$name posts no request for a cached refusal"
     fi
   fi

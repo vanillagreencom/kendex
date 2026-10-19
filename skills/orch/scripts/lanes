@@ -70,7 +70,9 @@
 #         that answered any other code outside 2xx, 401 and 403 included, which
 #         is a reading of the credential it was asked through and not a read
 #         that was never made; `expired`, a login proven dead, or a failed
-#         Codex renewal that section lists as `expired`; `no_credentials`;
+#         Codex renewal that section lists as `expired`; `plan_ended`, a plan
+#         that admits no launch, which reads `walled` with binding_bucket
+#         `plan` at 100 percent used and no reset; `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
 #         included. A lane whose usage REFRESH met a 429 while the host still
@@ -85,7 +87,8 @@
 #         it goes only to a login proven dead and to those Codex outcomes.
 #         An endpoint refusal names its HTTP code in `detail` unless a Claude
 #         usage 401 or 403 has a profile that confirms an ended plan. That
-#         detail names the free plan and canceled subscription.
+#         refusal reads `plan_ended`, its detail naming the free plan and
+#         canceled subscription.
 #         Where ORCH_LANE_HOST names a provider that implements the OPTIONAL
 #         `accounts` verb, its answer is merged in: one further row per account
 #         the PROVIDER holds a credential for, carrying the windows read
@@ -193,7 +196,7 @@
 #         fleet state that cannot be read refuses the pick with exit 1.
 #         --for-overseer judges seats as ordinary accounts, with no reserve.
 #         --json prints that lane's whole record, which carries headroom_pct,
-#         binding_bucket (session, weekly, model, monthly or credits), the matching
+#         binding_bucket (session, weekly, model, monthly, credits or plan), the matching
 #         binding_resets_at, claims, burn_pct_per_lane_hour,
 #         projected_headroom_pct, selection_score, and qualifying_count from that same
 #         judgement, with the two rooms projected_headroom_pct is the smaller
@@ -1903,6 +1906,7 @@ record_usage_refusal() {
 	local profile_detail
 	if [[ "$harness" == claude && ( "$HTTP_CODE" == 401 || "$HTTP_CODE" == 403 ) ]] &&
 		profile_detail="$(claude_refusal_plan_detail "$token")"; then
+		status=plan_ended
 		detail="$profile_detail"
 	fi
 	write_usage_refusal "$harness" "$dir" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true

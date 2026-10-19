@@ -81,6 +81,16 @@ def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 # in max_binding, which must stay.
 def lane_measured: (.status == "ok" or .status == "rate_limited");
 
+# `plan_ended`, the status of an account whose plan no longer admits a launch:
+# a provider row reading its copy refused for the organization, or a usage
+# refusal on this machine that the account profile confirms as an ended plan.
+# No reset and no later read brings room back, so the account binds as a full
+# wall, bucket `plan`, and never as a reading nobody made: an unmeasured
+# account leaves a standing mark unjudged for as long as the account stays
+# ended, where a wall moves every judge onto another account.
+def lane_ended: .status == "plan_ended";
+def ended_wall: {bucket: "plan", label: null, pct: 100, resets_at: null};
+
 # Whether a provider harness=pi row is an Anthropic API grant
 # (schemas/lane-host.md, accounts): it carries the grant in credit fields, or
 # it is an unread grant whose detail names an api-credit- cause. A raw row and
@@ -127,7 +137,8 @@ def model_binding($model):
 # A record whose usage could not be read answers null whatever its other fields
 # say: a window nobody read is not an empty one.
 def binding_bucket:
-  if ((lane_measured | not) or .headroom_pct == null
+  if lane_ended then ended_wall
+  elif ((lane_measured | not) or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
         label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
@@ -136,7 +147,8 @@ def binding_bucket:
   end;
 
 def lane_binding($model):
-  if (lane_measured | not) then null
+  if lane_ended then ended_wall
+  elif (lane_measured | not) then null
   elif $model != "" then model_binding($model)
   else binding_bucket
   end;

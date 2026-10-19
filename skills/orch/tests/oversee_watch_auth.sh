@@ -8,6 +8,27 @@ source "$TEST_DIR/lib/oversee-watch-harness.sh"
 source "$TEST_DIR/lib/overseer-watch-case.sh"
 CLAUDE_AUTH='  ⎿  Login expired · Please run /login'
 COMPOSER=$'❯\xc2\xa0'
+# The rows a vsys overseer on an account whose organization disabled
+# subscription access wrote: three failed turns, each a StopFailure the
+# stop-failure-row hook recorded with Claude Code's error kind and message.
+OAUTH_MESSAGE='Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access'
+auth_rows() { # ERROR
+  local at
+  if [[ "$1" != oauth_org_not_allowed ]]; then
+    jq -nc --arg error "$1" '{harness:"claude",event:"StopFailure",error:$error}'
+    return
+  fi
+  for at in 1792383331 1792383354 1792384489; do
+    jq -nc --argjson at "$at" --arg message "$OAUTH_MESSAGE" \
+      '{at:$at,event:"StopFailure",harness:"claude",session_id:"5f0c1d2e-vsys",error:"oauth_org_not_allowed",message:$message,account:"/home/method/.1claude"}'
+  done
+}
+# The owner notices the overseer mailbox holds whose text opens with KEY.
+owner_notices() { # KEY
+  local file="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
+  [[ -f "$file" ]] || { echo 0; return; }
+  jq -r --arg key "$1:" 'select(.to == "owner" and (.text | startswith($key))) | .text' "$file" | awk 'END { print NR }'
+}
 auth_case() { # NAME [ROW_ERROR]
   overseer_case "$1" idle
   touch "$STUB_DIR/repeat-child"
@@ -15,20 +36,32 @@ auth_case() { # NAME [ROW_ERROR]
   if [[ -n "${2:-}" ]]; then
     local rows="$CASE_REPO_ROOT/tmp/lane-mail/overseer/session-7000-9.jsonl"
     mkdir -p "${rows%/*}"
-    jq -nc --arg error "$2" '{harness:"claude",event:"StopFailure",error:$error}' > "$rows"
+    auth_rows "$2" > "$rows"
+    # The account read that sighting met: a refused usage query, so the
+    # account judgement measured nothing.
+    [[ "$2" != oauth_org_not_allowed ]] \
+      || printf 'oversee-succeed: mark-unmeasured kind=headroom reason=headroom-none succession=on\n' > "$STUB_DIR/succeed.check"
     jq --arg rows "$rows" '.overseer.session_rows=$rows' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp"
     mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
   else
     printf '%s\n' '❯ watch the fleet' "$CLAUDE_AUTH" "$COMPOSER" > "$STUB_DIR/pane-$PANE.txt"
   fi
 }
-for shape in pane authentication_failed; do
+for shape in pane authentication_failed oauth_org_not_allowed; do
   error="$shape"; [[ "$shape" != pane ]] || error=""
   auth_case "auth_$shape" "$error"
   run TMUX_PANE="$PANE" -- --max-loops 1
-  assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" 'rc=3 launched=1' "$shape login failure starts succession on the first watch pass" "$ERR"
+  assert_eq "rc=$RC launched=$(succeed_calls --walled-pane) owner=$(owner_notices overseer-walled)" 'rc=3 launched=1 owner=1' \
+    "$shape login failure starts succession on the first watch pass with one owner notice" "$ERR"
   assert_contains "$OUT" "EVENT overseer-walled $PANE window=$WINDOW passes=1" "first-pass wall event" "$ERR"
 done
+OWNER_CONTROL="$(mutant_scripts auth-owner/orch oversee-watch)"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-owner/github"
+mutate_file "$OWNER_CONTROL/oversee-watch" '! overseer_auth_wall || overseer_owner_notice "$notice" "$errf" || true' '! overseer_auth_wall || true'
+auth_case owner_control oauth_org_not_allowed
+WATCH_BIN="$OWNER_CONTROL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "launched=$(succeed_calls --walled-pane) owner=$(owner_notices overseer-walled)" 'launched=1 owner=0' \
+  "must-fail: a wall notice kept off the owner channel leaves the owner untold" "$ERR"
 # A last successful row must not hide a login banner on the next turn.
 auth_case stale_rows
 rows="$CASE_REPO_ROOT/tmp/lane-mail/overseer/session-7000-9.jsonl"
@@ -56,14 +89,28 @@ mutate_file "$ROWS_CONTROL/lib/session-rows.sh" '&& lane_auth_failure "" "${auth
 auth_case rows_control authentication_failed
 WATCH_BIN="$ROWS_CONTROL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" 'rc=0 launched=0' "must-fail: ignoring authentication_failed leaves the overseer unrecovered" "$ERR"
-for shape in pane authentication_failed; do
+# No account with room: one keyed owner alert, which a later pass on the same
+# wall does not send again.
+for shape in pane authentication_failed oauth_org_not_allowed; do
   error="$shape"; [[ "$shape" != pane ]] || error=""
   auth_case "blocked_$shape" "$error"
   printf '3\n' > "$STUB_DIR/succeed.rc"
   run TMUX_PANE="$PANE" -- --max-loops 1
   assert_contains "$(cat -- "$ERR")" 'overseer-recovery-blocked pane=%9 account=unknown resets=none' "blocked $shape login recovery has no measured usage reset" "$ERR"
   assert_eq "$(succeed_calls --check-marks)" 0 "blocked $shape recovery does not wait for an account probe" "$ERR"
+  run TMUX_PANE="$PANE" -- --max-loops 1
+  assert_eq "launched=$(succeed_calls --walled-pane) owner=$(owner_notices overseer-recovery-blocked)" 'launched=1 owner=1' \
+    "blocked $shape recovery alerts the owner once across passes" "$ERR"
 done
+BLOCKED_CONTROL="$(mutant_scripts auth-blocked/orch oversee-watch)"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/auth-blocked/github"
+mutate_file "$BLOCKED_CONTROL/oversee-watch" '  overseer_owner_notice "$notice" "$errf" || true
+  ow_message overseer-recovery-blocked' '  ow_message overseer-recovery-blocked'
+auth_case blocked_control oauth_org_not_allowed
+printf '3\n' > "$STUB_DIR/succeed.rc"
+WATCH_BIN="$BLOCKED_CONTROL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "owner=$(owner_notices overseer-recovery-blocked)" 'owner=0' \
+  "must-fail: a blocked recovery kept off the owner channel leaves the owner untold" "$ERR"
 new_case auth_lane
 printf '%s\n' '❯ continue the issue' "$CLAUDE_AUTH" "$COMPOSER" > "$STUB_DIR/pane-gh-2.txt"
 OUT="$(run_watch -- --max-loops 1 gh-2 2>"$STUB_DIR/err")"

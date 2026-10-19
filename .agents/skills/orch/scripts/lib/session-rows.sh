@@ -151,7 +151,10 @@ session_rows_last() { # FILE [EVENT]
 #   ended        SessionEnd for any reason but `clear` and `resume`, the two a
 #                SessionStart follows in the same harness; Pi's carrier says
 #                its own reasons in these words
-#   walled       StopFailure with `rate_limit`, Claude Code's own word for a
+#   walled       Claude Code StopFailure whose `error` lib/lane-state.sh §
+#                lane_auth_failure reads as a wall on the account itself,
+#                with SESSION_ROWS_WALL_KIND `auth`; StopFailure with
+#                `rate_limit`, Claude Code's own word for a
 #                usage limit, or on Pi, which names no error kind, one whose
 #                `message` lib/lane-state.sh § lane_limit_banner reads as the
 #                account's limit, the judge a Pi lane's rows take; its

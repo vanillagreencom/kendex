@@ -103,7 +103,7 @@ assert_eq "$GAP_SEQ" "$GAP_HELD_WANT" \
 # The held alert read as any failed notice: the reopened gap's row turns red.
 HELD_SCRIPTS="$(mutant_scripts mutant-held/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-held/github"
-mutate_file "$HELD_SCRIPTS/oversee-watch" '      "lane-mail: owner-notice-repeated="*) ;;' '      "lane-mail: owner-notice-repeated="*) overseer_note overseer-notice-failed "channel=owner"; return 1 ;;'
+mutate_file "$HELD_SCRIPTS/oversee-watch" '    "lane-mail: owner-notice-repeated="*) return 0 ;;' '    "lane-mail: owner-notice-repeated="*) overseer_note overseer-notice-failed "channel=owner"; return 1 ;;'
 WATCH_BIN="$HELD_SCRIPTS/oversee-watch" gap_seq context_gap_held_mutant gap reading gap aged
 assert_eq "$([[ "$GAP_SEQ" != "$GAP_HELD_WANT" ]] && echo red)" "red" \
   "control: reading the held alert as a failure turns the reopened gap's row red" "$ERR"
