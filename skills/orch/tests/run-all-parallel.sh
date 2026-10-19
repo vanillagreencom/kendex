@@ -822,7 +822,7 @@ for rule in job-warning no-launch arguments partial; do
   case "$rule" in
     job-warning) mutate_file "$B/run-all.sh" 'budget_warning job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"' ': job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"' ;;
     no-launch) mutate_file "$B/run-all.sh" $'  exit 0\nfi\n\nSELECT=()' $'  shift\nfi\n\nSELECT=()' ;;
-    arguments) mutate_file "$B/run-all.sh" '[ "$#" -eq 1 ] || { echo' '[ "$#" -ge 1 ] || { echo'; args+=(=green); expected='rc=1 starts= evidence=' ;;
+    arguments) mutate_file "$B/run-all.sh" "[ \"\$#\" -eq 1 ] || { echo 'run-all.sh: job-report-arguments'" "[ \"\$#\" -ge 1 ] || { echo 'run-all.sh: job-report-arguments'"; args+=(=green); expected='rc=1 starts= evidence=' ;;
     partial) mutate_file "$B/run-all.sh" $'if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then\n' $'if [[ ${#FAIL_FILES[@]} -eq 0 ]]; then\n  now="$(date +%s)"\n  budget_warning job "$((now - RUN_ALL_JOB_STARTED_EPOCH))" "$RUN_ALL_JOB_SECS"\n'; args=(); expected='rc=0 starts=green evidence=' ;;
   esac
   run_battery "$B" 1 JOB_TEST_EPOCH=1721 REPORT_SUITE_TRACE="$TRACE" \
