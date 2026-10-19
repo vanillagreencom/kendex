@@ -2,7 +2,7 @@
 
 A parent with children is a **container**: never orchestrated directly, never its own PR, and it carries no deliverable of its own. Each child ships as its own PR, and the container closes when its last child is Done or Canceled. When to file one is SKILL.md § Disposition.
 
-Work that ships in one PR is a leaf work item with an internal checklist, never a parent; a title marks nothing. The one exception is the review audit's in-PR bundle, whose children the reviewed issue's own PR works; its root carries the Filing record line `**In-PR bundle**: yes` (orch skill-rules § Coordination).
+Work that ships in one PR is a leaf work item with an internal checklist, never a parent; a title marks nothing. The one exception is the review audit's in-PR bundle, whose children the reviewed issue's own PR works (orch skill-rules § Coordination).
 
 ## Template
 

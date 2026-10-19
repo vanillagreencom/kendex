@@ -69,8 +69,8 @@ Verifying → stop development preparation. Its post-merge readings belong to th
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) from this live read, including any further reads the gate requires.
 
-- **Container** → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; never select a deeper descendant directly), pick one, and re-run this section for it.
-- **Single-PR work item** (a leaf whose description carries an internal checklist; a parent with children is a container whatever its title) → it IS the work item.
+- **Container** (this read reports `in_pr_bundle` false) → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; never select a deeper descendant directly), pick one, and re-run this section for it.
+- **Single-PR work item** (a leaf whose description carries an internal checklist, or an in-PR bundle root, whose read reports `in_pr_bundle`) → it IS the work item; dev-start delegates a root with its children.
 - **Child of a container** → the child is the PR unit. Apply the Ancestor gate to it. Blocked or terminal → stop and name the live blockers.
 
 **GitHub**:

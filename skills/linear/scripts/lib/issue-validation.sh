@@ -5,7 +5,7 @@ set -euo pipefail
 # Expected completion state(s) for an issue, keyed by its ROLE in the validation.
 #
 #   bundle-child  A sub-issue processed under its parent session as part of
-#                 the review audit's in-PR bundle (`Audit Bundle: yes`). A
+#                 the review audit's in-PR bundle (`in_pr_bundle`). A
 #                 started state passes when the shared
 #                 parser proves its branch boxes and their evidence.
 #   container-child  A separate PR unit. It must finish Done before its
