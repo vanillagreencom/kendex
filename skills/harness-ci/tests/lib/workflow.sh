@@ -133,19 +133,21 @@ ci_runs() { # WORKFLOW EVENT RESULT
 }
 
 # A copy of SRC with FROM replaced by TO, where FROM occurs once in the file,
-# or once inside the job JOB when one is named; any other count, or an edit
+# or once inside the job JOB when one is named, or inside the step named STEP
+# of that job when JOB is given as JOB/STEP; any other count, or an edit
 # that changes nothing, stops the calling suite. MATCH=line requires the
 # entire line, so a job condition cannot match a nested step condition.
-plant() { # SRC FROM TO OUT [JOB] [MATCH=substring|line]
+plant() { # SRC FROM TO OUT [JOB[/STEP]] [MATCH=substring|line]
   local src="$1" from="$2" to="$3" out="$4" job="${5:-}" match="${6:-substring}"
   case "$match" in
     substring|line) ;;
     *) echo "plant: unknown match mode: $match" >&2; exit 1 ;;
   esac
   FROM="$from" TO="$to" JOB="$job" MATCH="$match" awk '
-    /^  [A-Za-z0-9_-]+:/ { k = $1; sub(/:$/, "", k) }
+    /^  [A-Za-z0-9_-]+:/ { k = $1; sub(/:$/, "", k); s = "" }
+    /^      - / { s = index($0, "      - name: ") == 1 ? substr($0, 15) : "" }
     {
-      i = (ENVIRON["JOB"] == "" || k == ENVIRON["JOB"]) &&
+      i = (ENVIRON["JOB"] == "" || k == ENVIRON["JOB"] || (k "/" s) == ENVIRON["JOB"]) &&
           (ENVIRON["MATCH"] != "line" || $0 == ENVIRON["FROM"]) ? index($0, ENVIRON["FROM"]) : 0
     }
     i > 0 { n++; $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])) }

@@ -368,30 +368,34 @@ assert_eq "the template's steps name the shipped script paths" \
 assert_eq "those paths are shipped scripts" "yes yes yes yes yes" \
   "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
 
-# The CI job scans every pull request, with its installer in the same step.
+# The CI job scans every pull request, with its installer in the same step,
+# and fetches the tree it scans with full history under the scan's condition.
 secrets_contract() { # TEMPLATE
   awk -v condition="always() && github.event_name == 'pull_request'" '
-    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "ci:") }
+    function close_step() { if (checkout && path == "subject") { depth = d; gated = (cond == condition) } }
+    /^  [A-Za-z0-9_-]+:/ { if (in_job) close_step(); checkout = 0; in_job = ($1 == "ci:") }
     !in_job { next }
-    /^      - / { checkout = 0; installed = 0; cond = "" }
+    /^      - / { close_step(); checkout = 0; installed = 0; cond = ""; path = ""; d = "" }
     /uses: actions\/checkout@/ { checkout = 1 }
-    checkout && /^          fetch-depth:/ { depth = $2 }
+    checkout && /^          fetch-depth:/ { d = $2 }
+    checkout && /^          path:/ { path = $2 }
     /^        if:/ { cond = $0; sub(/^        if: /, "", cond) }
     $1 ~ /commit-guards\/scripts\/install-gitleaks"?$/ && $2 == "\"$RUNNER_TEMP/gitleaks\"" { installed = 1 }
     $2 ~ /commit-guards\/scripts\/secrets"?$/ && $3 == "--against" && $4 == "HEAD^1" {
       scans++; if (installed && cond == condition && $1 == "PATH=\"$RUNNER_TEMP/gitleaks:$PATH\"") ready++
     }
-    END { printf "depth=%s scans=%d ready=%d", depth, scans, ready }
+    END { close_step(); printf "depth=%s gated=%d scans=%d ready=%d", depth, gated, scans, ready }
   ' "$1"
 }
-assert_eq "CI scans pull requests with an installer and full history" "depth=0 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
-while IFS='|' read -r from to expected; do
-  plant "$TEMPLATE" "$from" "$to" "$SANDBOX/secrets-mutant.yml" ci
-  assert_eq "must-fail: secrets contract with $to" "$expected" "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
+assert_eq "CI scans pull requests with an installer and full history" "depth=0 gated=1 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
+while IFS='|' read -r scope from to expected; do
+  plant "$TEMPLATE" "$from" "$to" "$SANDBOX/secrets-mutant.yml" "$scope"
+  assert_eq "must-fail: secrets contract with ${to:-no $from} in $scope" "$expected" "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
 done <<'ROWS'
-if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=0 scans=1 ready=0
-fetch-depth: 0|fetch-depth: 1|depth=1 scans=1 ready=1
-"$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|: # "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|depth=0 scans=1 ready=0
+ci/secrets (credential scan of the pull request diff)|if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=0 gated=1 scans=1 ready=0
+ci/the tree under judgement|if: always() && github.event_name == 'pull_request'||depth=0 gated=0 scans=1 ready=1
+ci|fetch-depth: 0|fetch-depth: 2|depth=2 gated=1 scans=1 ready=1
+ci|"$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|: # "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|depth=0 gated=1 scans=1 ready=0
 ROWS
 
 # Read the CI job's checkout inputs and the secrets step from the template.

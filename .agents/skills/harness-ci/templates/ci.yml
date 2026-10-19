@@ -198,7 +198,10 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           path: guards
           persist-credentials: false
+      # The credential scan is this checkout's only reader: fetch it under
+      # the scan's condition, with the full history the scan's range walks.
       - name: the tree under judgement
+        if: always() && github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
