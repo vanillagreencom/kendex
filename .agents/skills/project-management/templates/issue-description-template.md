@@ -24,6 +24,7 @@
 **Regressed-by**: [REGRESSED_BY]
 **Research**: [RESEARCH_REF]
 **Decision [DXXX]**: [DECISION_PATH]
+**In-PR bundle**: yes
 
 ## Context
 
@@ -49,6 +50,7 @@
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
 | `--project` (create flag, not body text) | `project.recommended` in the audit output, or the caller | Under a declared project map, the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included, or none: the item is `project_needed` and is not created |
+| `**In-PR bundle**` | Never at filing: orch's review-pr.md § 8 writes it on the issue whose own PR works the `make_child` items its review audit filed | linear's safe reads report it as `in_pr_bundle`, which keeps that parent a work item for every container reader; drop the line otherwise |
 | `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Filing record; omit the line when absent. Decision references use decider's `schemas/decision-format.md` § Cross-references |
 
 ## Rules

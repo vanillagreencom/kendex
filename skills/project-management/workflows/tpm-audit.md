@@ -287,9 +287,12 @@ Items outside `child_indexes` — `origin: "discovered"` refactors, for instance
 
 `parent_issue` and `blocked_issues` are hints the analysis may override; `hierarchy_contract` is binding per § 7.0. A research issue never appears in `parent_issue`.
 
-Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate under [SKILL.md § Disposition](../SKILL.md#disposition)'s rework-parent rule: 3 or more items sharing one outcome or one mechanism, or a large issue with implicit sub-tasks. Group on outcome or mechanism, not size.
+Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate under [SKILL.md § Disposition](../SKILL.md#disposition)'s rework-parent rule. Group on outcome or mechanism, not size.
 
-This run is itself an audit. When it proposes more than one create, it files one rework parent for its subject first: a `create` with `create_fields.is_bundle_parent: true` built from [parent-issue-template.md](../templates/parent-issue-template.md), and every other create a `make_child` whose `parent` is that row's `#N`. When the input's `parent_issue` names the rework parent already, every create is a `make_child` with `parent: null` instead.
+This run is itself an audit. When it proposes more than one create, it files one rework parent for its subject first: a `create` with `create_fields.is_bundle_parent: true` built from [parent-issue-template.md](../templates/parent-issue-template.md), and every other create a `make_child` whose `parent` is that row's `#N`. The rework parent attaches as a `make_child` with `parent: null` under the input's `parent_issue`, except with `source: "review"`, where it stands alone with a `related` relation to it. When the input's `parent_issue` names the rework parent already, every create is a `make_child` with `parent: null` instead. Two exceptions:
+
+- **The review audit's in-PR bundle.** With `source: "review"`, each child candidate of the input's `parent_issue`, the issue being worked, is a `make_child` with `parent: null`: orch's review-pr works it in that issue's own PR. These children count toward no rework parent; only the remaining creates do.
+- **A hierarchy contract.** With `hierarchy_contract`, its parent is the run's rework parent: each `child_indexes` item is its child per § 7.0, and the run files no second rework parent.
 
 Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says which.
 
@@ -305,7 +308,7 @@ Lean sub-issue for tests of the feature being implemented, hardening for the com
 
 For each parent with children: implementation scope left in the parent (`## Requirements` rather than `## Sub-Issues`) is an `analysis[]` note; a `## Sub-Issues` list that disagrees with the actual children is a `hierarchy[]` entry with action `update_parent_desc`; children spanning 2+ agent domains under a parent lacking the project's multi-agent label is an `agent_mismatch[]` entry, recorded only after validating the replacement label exists.
 
-Read each parent's actual direct children with `issues children [PARENT_ISSUE_ID] --format=safe`, without `--pending`. Count its Done and Canceled children from that read. Neither the § 1.5 active set nor an input item's closed search results establishes a parent's full child set. Closed children remain historical evidence and take no disposition (§ 1.1). A parent with an open child is kept. A non-terminal parent whose children are all Done or Canceled is a `hierarchy[]` `close_parent` entry.
+Read each parent's actual direct children with `issues children [PARENT_ISSUE_ID] --format=safe`, without `--pending`. Count its Done and Canceled children from that read. Neither the § 1.5 active set nor an input item's closed search results establishes a parent's full child set. Closed children remain historical evidence and take no disposition (§ 1.1). A parent with an open child is kept. A non-terminal parent whose children are all Done or Canceled is a `hierarchy[]` `close_parent` entry, unless its `issues get --format=safe` read reports `in_pr_bundle`: the review audit's in-PR bundle root is a work item its own PR completes.
 
 Record findings as `findings.hierarchy[]` in project mode — `make_parent` (`issue`, `children[]`), `make_child` (`issue`, `parent`), `bundle` (`issues[]`, `new_parent_title`), `update_parent_desc` (`issue`), `close_parent` (`issue`) — or as each issue's `hierarchy` field in issues mode per [audit-output.md](../schemas/audit-output.md). Include the coherence reasoning in `reason`.
 
@@ -404,7 +407,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
-- [ ] More than one create files the rework parent first and makes every other create its child (§ 7.1); no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry (§ 6.2, § 7.3)
+- [ ] More than one create files the rework parent first and makes every other create its child, less the in-PR bundle children of a review audit and the children of a hierarchy contract, whose parent is the rework parent (§ 7.1); no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
 
 ---
 

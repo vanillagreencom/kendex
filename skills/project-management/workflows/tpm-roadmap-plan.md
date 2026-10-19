@@ -113,7 +113,7 @@ Record uncovered components in `architecture_gaps[]`: `include` when the gap blo
 
 1. **Dependencies.** Map `depends_on_proposed` title references to concrete issues, identify chains, and error on a cycle.
 
-2. **Bundles.** Group items into a parent under [SKILL.md § Disposition](../SKILL.md#disposition)'s rework-parent rule: 3 or more sharing one outcome or one mechanism. Give each bundle a parent titled for the subject, built from [parent-issue-template.md](../templates/parent-issue-template.md). Work that would naturally be one PR/CI run is one leaf item with an internal checklist, not a parent. The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
+2. **Bundles.** Group items into a parent under [SKILL.md § Disposition](../SKILL.md#disposition)'s rework-parent rule. Give each bundle a parent titled for the subject, built from [parent-issue-template.md](../templates/parent-issue-template.md). Work that would naturally be one PR/CI run is one leaf item with an internal checklist, not a parent. The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
 
 3. **Relation level.** Keep each valid relation under linear SKILL.md § Blocked Label vs Issue Relations. Repair only a relation that rule refuses; see [dependencies.md](../references/dependencies.md).
 

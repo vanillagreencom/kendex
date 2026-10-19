@@ -35,6 +35,12 @@ def issue_related_rows($relations; $inverse):
         (($inverse // [])[] | select(.type == "related") | issue_related_row(.issue))
     ) as $row ([]; if any(.[]; .relation_id == $row.relation_id) then . else . + [$row] end);
 def issue_related_ids($relations; $inverse): issue_related_rows($relations; $inverse) | map(.id);
+# The in-PR bundle root of a review audit: an issue whose own PR works the
+# make_child items its review audit filed under it, recorded by the Filing
+# record line `**In-PR bundle**: yes` that orch review-pr.md writes. Every
+# other issue with children is a container; safe reads report this as
+# in_pr_bundle so each container reader consumes one answer.
+def issue_in_pr_bundle($description): ($description // "") | test("(^|\\n)[ \\t]*[*_]*in-pr bundle[*_]*[ \\t]*:[ \\t]*yes[ \\t]*(\\n|$)"; "i");
 '
 
 # One rule decides which project a name means, for every spelling of the
@@ -78,6 +84,7 @@ format_issues_list() {
         uuid: .id,
         title: (.title // ""),
         description: (.description // ""),
+        in_pr_bundle: issue_in_pr_bundle(.description),
         state: (.state.name // ""),
         state_type: (.state.type // ""),
         agent: ((([(.labels.nodes // [])[].name | select(startswith("agent:"))] | first) // "") | sub("^agent:"; "")),
@@ -118,6 +125,7 @@ format_issue_single() {
         uuid: .issue.id,
         title: (.issue.title // ""),
         description: (.issue.description // ""),
+        in_pr_bundle: issue_in_pr_bundle(.issue.description),
         state: (.issue.state.name // ""),
         state_type: (.issue.state.type // ""),
         agent: ((([(.issue.labels.nodes // [])[].name | select(startswith("agent:"))] | first) // "") | sub("^agent:"; "")),
@@ -185,6 +193,7 @@ format_issue_with_bundle() {
             uuid: .issue.id,
             title: (.issue.title // ""),
             description: (.issue.description // ""),
+            in_pr_bundle: issue_in_pr_bundle(.issue.description),
             state: (.issue.state.name // ""),
             state_type: (.issue.state.type // ""),
             agent: ((([(.issue.labels.nodes // [])[].name | select(startswith("agent:"))] | first) // "") | sub("^agent:"; "")),

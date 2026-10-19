@@ -73,6 +73,10 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   issue "T-20" "review no own pr"        "In Review"   "started"   "$now"
   issue "T-21" "all-canceled container"  "Todo"        "unstarted" "$now"
   issue "T-22" "canceled only child"     "Canceled"    "canceled"  "$now" "T-21"
+  issue "T-23" "in-PR root in review"    "In Review"   "started"   "$now" "" $'**In-PR bundle**: yes\n\n## Done when\n- [ ] branch work'
+  issue "T-24" "canceled audit child"    "Canceled"    "canceled"  "$now" "T-23"
+  issue "T-25" "in-PR root verifying"    "Verifying"   "started"   "$now" "" $'**In-PR bundle**: yes\n\n## Done when\n- [x] branch work\n  Evidence: branch read\n- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Deadline: 2026-10-04T00:00:00Z'
+  issue "T-26" "done audit child"        "Done"        "completed" "$now" "T-25"
 } | jq -s 'map(if .identifier == "T-15" then .trashed = true else . end)' >"$R/.tracker-fixture/issues.json"
 
 cat >"$TMP/gh-stub" <<'STUB'
@@ -98,7 +102,7 @@ case "${RECONCILE_FIXTURE_PROBE:-}" in
 esac
 merged='{"state":"MERGED","mergedAt":"2026-10-08T02:28:00Z","isCrossRepository":false}'
 case "$head" in
-  t-10 | t-18) echo "[$merged]" ;;
+  t-10 | t-18 | t-25) echo "[$merged]" ;;
   t-12) echo '[{"state":"OPEN","mergedAt":null,"isCrossRepository":false}]' ;;
   t-19) echo "[$merged,{\"state\":\"OPEN\",\"mergedAt\":null,\"isCrossRepository\":false}]" ;;
   # A fork's merged PR from a same-named branch links nothing to this item.
@@ -151,8 +155,12 @@ empty|## Done when|reconcile-work-items: verifying-empty issue=T-1
 proved|## Done when\n- [x] Read shared outcome\n  Evidence: holder read passed|reconcile-work-items: verifying-empty issue=T-1
 ROWS
 
-# A "(one PR)" title marks one work item, never a parked container.
-assert_not_contains "$OUT" "container-parked issue=T-16" "a (One PR) bundle root is not container-parked (case-insensitive marker)"
+# Only the in-PR bundle line exempts a parent; a title marks nothing.
+assert_contains "$OUT" "container-parked issue=T-16" "a legacy (One PR) parent with children is a container"
+assert_not_contains "$OUT" "container-parked issue=T-23" "an In Review in-PR bundle root with only canceled children is not container-parked"
+assert_not_contains "$OUT" "container-parked issue=T-25" "a Verifying in-PR bundle root with Done children is not container-parked"
+assert_contains "$OUT" 'verifying T-25 box=2 trigger="merge"' "a Verifying in-PR bundle root keeps its post-merge route"
+assert_not_contains "$OUT" 'verifying T-25 box=2 trigger="outcome"' "a Verifying in-PR bundle root is no container outcome"
 assert_not_contains "$OUT" "container-parked issue=T-5" "a container with a pending child stays quiet"
 assert_not_contains "$OUT" "T-8" "a closed container stays quiet"
 case "$OUT" in *"started-stale issue=T-10"*"pr=merged"*) pass "the stale started item with a merged PR is reported" ;; *) fail "stale merged" "$OUT" ;; esac

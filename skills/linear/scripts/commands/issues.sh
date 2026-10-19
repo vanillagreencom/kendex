@@ -307,8 +307,9 @@ Validate-Completion:
   same issue, and errors (exit 1) when the bundle has no non-canceled
   children — a leaf cannot validate as a container. A child of a container
   validates alone as its own session root. Use it only for containers;
-  the review audit's in-PR bundle uses the default bundle-child contract above.
-  A container with no Done-when checklist can complete.
+  the review audit's in-PR bundle uses the default bundle-child contract above,
+  and --container refuses its root, whose safe read reports `in_pr_bundle`
+  true. A container with no Done-when checklist can complete.
 
 Examples:
   # Basic operations
@@ -355,7 +356,7 @@ Examples:
   issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
   issues.sh complete PROJ-42 --done-when-met all --evidence-file proof.txt
   issues.sh complete PROJ-42 --done-when-met 1,3 --evidence-file proof.txt
-  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Single-PR bundle validation
+  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # In-PR bundle validation
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # May the container close?
 
   # Bundle operations (single API call)
@@ -569,7 +570,7 @@ list_issues() {
         return
     elif [[ "$selection" == owed ]]; then
         jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {id: .identifier, title, description,
-          priority, state: .state.name, state_type: .state.type, parent_id: (.parent.identifier // ""),
+          in_pr_bundle: issue_in_pr_bundle(.description), priority, state: .state.name, state_type: .state.type, parent_id: (.parent.identifier // ""),
           created_at: .createdAt, blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes)}]' <<<"$result"
         return
     fi
@@ -3699,18 +3700,14 @@ validate_completion() {
             echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
             return 1
         fi
-        # Container fail-closed, part 1b: a (one PR) title marks one work
-        # item, the OPPOSITE contract — the marker always wins, and
-        # validating it under the permissive container role would skip the
-        # session root's pre-merge state and summary checks. Reject the
-        # marker instead of silently reclassifying.
-        if [ "$container_mode" = "true" ]; then
-            local bundle_title
-            bundle_title=$(echo "$bundle" | jq -r '.title // ""')
-            if printf '%s' "$bundle_title" | grep -qi '(one PR)'; then
-                echo "{\"error\": \"--container fail-closed: $include_children_of carries the (one PR) marker — a single-PR work item validates with plain validate-completion, never as a container\"}" >&2
-                return 1
-            fi
+        # Container fail-closed, part 1b: the review audit's in-PR bundle
+        # root is one work item, the OPPOSITE contract — validating it under
+        # the permissive container role would skip the session root's
+        # pre-merge state and summary checks. Reject it instead of silently
+        # reclassifying.
+        if [ "$container_mode" = "true" ] && [ "$(jq -r '.in_pr_bundle == true' <<<"$bundle")" = true ]; then
+            echo "{\"error\": \"--container fail-closed: $include_children_of is an in-PR bundle root (in_pr_bundle) — it validates with plain validate-completion, never as a container\"}" >&2
+            return 1
         fi
         local child_ids
         child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)

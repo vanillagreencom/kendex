@@ -387,33 +387,35 @@ ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
 mutate_file "$MUTANT_WATCH" 'containers="$(verifying_containers "$out")"' 'containers=""'
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
 assert_not_contains "$(verification_lines)" 'verifying KEN-P box=1' "control loses the outcome when the caller omits its container" "$ERR"
-# Expected delta distinguishes the parent's own branch work from outcome reads.
-while IFS='|' read -r state delta outcome owed_line; do
-  world "verifying_parent_${state// /_}_$outcome"
-  jq --arg state "$state" --arg delta "$delta" '. +
-    [{id:"KEN-P", title:"Parent work", state:$state,
+# The in-PR bundle root is the one parent that is a work item: its safe read
+# reports in_pr_bundle, and its boxes stay branch work. A title marks nothing.
+while IFS='|' read -r state title in_pr outcome owed_line; do
+  world "verifying_parent_${state// /_}_${in_pr}_$outcome"
+  jq --arg state "$state" --arg title "$title" --argjson in_pr "$in_pr" '. +
+    [{id:"KEN-P", title:$title, state:$state, in_pr_bundle:$in_pr,
       state_type:(if $state == "In Progress" then "started" else "backlog" end), parent_id:"",
-      description: ($delta + "\n## Done when\n- [ ] Build attention\n- [ ] Build choice\n- [ ] Wire commands\n- [ ] Test behavior")}]
+      description: "## Done when\n- [ ] Build attention\n- [ ] Build choice\n- [ ] Wire commands\n- [ ] Test behavior"}]
     + [range(1;5) | {id:("KEN-C" + tostring), state:"Done", state_type:"completed", parent_id:"KEN-P"}]' \
     "$STUB_DIR/tracker.out" >"$STUB_DIR/parent.json"
   mv -- "$STUB_DIR/parent.json" "$STUB_DIR/tracker.out"
   watch_pass -- --state "$STUB_DIR/state.json"
-  assert_eq "rc=$RC $(verification_lines | grep -c '^verifying KEN-P .*trigger="outcome"' || true)" "rc=0 $outcome" "$state declared delta [$delta] selects outcome reads" "$ERR"
-  assert_eq "$(owed KEN-P)" "$owed_line" "$state declared delta [$delta] selects owed development" "$ERR"
+  assert_eq "rc=$RC $(verification_lines | grep -c '^verifying KEN-P .*trigger="outcome"' || true)" "rc=0 $outcome" "$state [$title] in_pr_bundle=$in_pr selects outcome reads" "$ERR"
+  assert_eq "$(owed KEN-P)" "$owed_line" "$state [$title] in_pr_bundle=$in_pr selects owed development" "$ERR"
 done <<'ROWS'
-Backlog||4|-
-Backlog|**Expected delta**: 0 lines|4|-
-Backlog|**Expected delta**: 300 lines, 200 test lines|0|-
-In Progress|**Expected delta**: 300 lines, 200 test lines|0|owed KEN-P state=in-progress priority=- lane=none verdict=queue
+Backlog|Parent work|false|4|-
+Backlog|Bundle (one PR)|false|4|-
+Backlog|Parent work|true|0|-
+In Progress|Parent work|true|0|owed KEN-P state=in-progress priority=- lane=none verdict=queue
 ROWS
-MUTANT_DIR="$TMP_ROOT/parent-production"
-MUTANT_WATCH="$(mutant_scripts parent-production/orch oversee-watch)/oversee-watch" || exit 1
+MUTANT_DIR="$TMP_ROOT/parent-in-pr"
+MUTANT_WATCH="$(mutant_scripts parent-in-pr/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
 ln -s "$REPO_ROOT/skills/linear" "$MUTANT_DIR/linear"
-mutate_verifying "$MUTANT_WATCH" '[[ -z "$EXPECTED_DELTA_PRODUCTION" || "$EXPECTED_DELTA_PRODUCTION" == 0 ]] || continue' ':'
+mutate_verifying "$MUTANT_WATCH" '    | select(.in_pr_bundle != true)' ''
+mutate_file "$MUTANT_WATCH" "select(.in_pr_bundle != true) | .id" ".id"
 WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-assert_contains "$(verification_lines)" 'verifying KEN-P box=1 trigger="outcome"' "control misreads unbuilt branch work as an outcome" "$ERR"
-assert_eq "$(owed KEN-P)" '-' "control loses the parent's owed development" "$ERR"
+assert_contains "$(verification_lines)" 'verifying KEN-P box=1 trigger="outcome"' "control misreads the in-PR bundle root's branch work as an outcome" "$ERR"
+assert_eq "$(owed KEN-P)" '-' "control loses the in-PR bundle root's owed development" "$ERR"
 world verifying_container
 jq '. + [{id:"KEN-P", title:"Shared outcome", state:"Triage", state_type:"triage", parent_id:"", description:"## Done when\n- [ ] Read shared outcome at source"},
          {id:"KEN-C", title:"Done child", state:"Done", state_type:"completed", parent_id:"KEN-P"}]' "$STUB_DIR/tracker.out" >"$STUB_DIR/container.json"
@@ -489,7 +491,7 @@ while IFS='|' read -r child_type due; do
     {id:"KEN-P",title:"Shared outcome",state:"Backlog",state_type:"backlog",
       description:"## Done when\n- [ ] Read shared outcome at source"},
     {id:"KEN-A",title:"Queued work",state:"In Progress",state_type:"started"},
-    {id:"KEN-Q",title:"Bundle (ONE PR)",state:"Todo",state_type:"unstarted"},
+    {id:"KEN-Q",title:"In-PR bundle root",state:"Todo",state_type:"unstarted",in_pr_bundle:true},
     {id:"KEN-C",title:"Closed child",state:"Done",state_type:"completed",parent_id:"KEN-P"},
     {id:"KEN-D",title:"Other child",state:"Custom",state_type:$type,parent_id:"KEN-P"}
   ]' >"$STUB_DIR/tracker.out"
@@ -527,7 +529,7 @@ while IFS='|' read -r name reply; do
   assert_not_contains "$(cat "$STUB_DIR/tracker.args.all")" 'issues bulk-get ' "$name candidate set makes no bulk request" "$ERR"
 done <<'ROWS'
 empty|[]
-bundle|[{"id":"KEN-Q","title":"Bundle (one PR)","state":"Backlog","state_type":"backlog"}]
+bundle|[{"id":"KEN-Q","title":"In-PR bundle root","state":"Backlog","state_type":"backlog","in_pr_bundle":true}]
 ROWS
 
 # Restore the outcome case after the separate API refusal cases.

@@ -76,6 +76,14 @@ container_close_message() {
       printf 'container-close: parent-response parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: parent response is invalid for $PARENT_ID"
       ;;
+    in-pr-bundle)
+      printf 'container-close: in-pr-bundle parent-id=%s\n' "$PARENT_ID"
+      printf '%s\n' "container-close: $PARENT_ID is an in-PR bundle root, a work item its own PR completes, not a container"
+      ;;
+    canceled)
+      printf 'container-close: canceled parent-id=%s\n' "$PARENT_ID"
+      printf '%s\n' "container-close: every child of $PARENT_ID was canceled, so it is set Canceled"
+      ;;
     pending-unreadable)
       printf 'container-close: pending-unreadable parent-id=%s\n' "$PARENT_ID"
       printf '%s\n' "container-close: cannot read pending children for $PARENT_ID"
@@ -174,8 +182,12 @@ or Canceled, the run ticks the parent's "Every child Done or cancelled" box
 with an Evidence line naming each child's state, in the update that sets
 Done; any other open box refuses (`completion-refused`) until it moves into
 its own child. A parent whose every child was canceled delivered nothing: it
-is set Canceled, with no summary, and prints `closed <PARENT_ID>`. The run
-supplies no merge time. The run owns the
+is set Canceled, with no summary and its box left open, and prints `closed
+<PARENT_ID>` after the stderr line `container-close: canceled
+parent-id=<PARENT_ID>`. A parent another route already set Done takes the same
+child validation and tick, with no summary. An in-PR bundle root, whose safe
+read reports `in_pr_bundle`, is a work item: it refuses (`in-pr-bundle`) before
+any read of its children. The run supplies no merge time. The run owns the
 completion gate and the bundle summary: a retry carrying validated summary
 evidence completes without the summary flags, so the bundle comment is never
 posted twice. With `gh` absent a child's PR reference is recorded as `lookup
@@ -282,10 +294,14 @@ print_closed() {
 }
 
 PARENT="$(parent_json)" || { container_close_message parent-unreadable "$@" >&2; exit 1; }
-PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
+PARENT_TYPE="$(jq -r 'if (.state_type | type) == "string" and (.in_pr_bundle | type) == "boolean"
+  then "\(.state_type)\t\(.in_pr_bundle)" else error("parent-fields") end' <<<"$PARENT")" \
   || { container_close_message parent-response "$@" >&2; exit 1; }
+IN_PR_BUNDLE="${PARENT_TYPE#*$'\t'}"
+PARENT_TYPE="${PARENT_TYPE%%$'\t'*}"
+[[ "$IN_PR_BUNDLE" == false ]] || { container_close_message in-pr-bundle "$@" >&2; exit 1; }
 MUTATION=(issues complete "$PARENT_ID")
-if [[ "$PARENT_TYPE" != "completed" ]]; then
+CANCEL_PARENT=false
 
 PENDING="$("$LINEAR" issues children "$PARENT_ID" --recursive --pending --format=ids)" \
   || { container_close_message pending-unreadable "$@" >&2; exit 1; }
@@ -300,8 +316,12 @@ TERMINAL_CHILDREN="$CHILDREN"
 CHILDREN="$(jq '[.[] | select(.state_type != "canceled")]' <<<"$CHILDREN")" \
   || { container_close_message children-response "$@" >&2; exit 1; }
 # Every child canceled: nothing was delivered, so the parent closes Canceled.
+# A parent another route already completed keeps its completed state.
 if jq -e 'length == 0' <<<"$CHILDREN" >/dev/null && jq -e 'length > 0' <<<"$TERMINAL_CHILDREN" >/dev/null; then
-  MUTATION=(issues update "$PARENT_ID" --state Canceled)
+  if [[ "$PARENT_TYPE" != "completed" ]]; then
+    MUTATION=(issues update "$PARENT_ID" --state Canceled)
+    CANCEL_PARENT=true
+  fi
 else
 
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
@@ -351,7 +371,6 @@ if [[ -n "$CHILD_BOX" ]]; then
   MUTATION+=(--done-when-met "$CHILD_BOX" --evidence-file "$EVIDENCE")
 fi
 fi
-fi
 
 COMPLETE_RC=0
 "$LINEAR" "${MUTATION[@]}" >/dev/null 2>"$COMPLETE_ERR" || COMPLETE_RC=$?
@@ -383,4 +402,5 @@ if [[ $COMPLETE_RC -ne 0 ]]; then
   container_close_message completion-failed "$@" >&2
   exit 1
 fi
+[[ "$CANCEL_PARENT" == false ]] || container_close_message canceled "$@" >&2
 print_closed "$@"

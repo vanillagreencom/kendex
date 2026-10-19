@@ -94,9 +94,12 @@ bundle_child() {
 # comma-joined children.nodes array body. State defaults to the single-PR
 # bundle's pre-merge In Review; container scenarios pass Todo/unstarted.
 bundle_parent() {
-  local id="$1" children="$2" sname="${3:-In Review}" stype="${4:-started}" branch
+  local id="$1" children="$2" sname="${3:-In Review}" stype="${4:-started}" branch description=null
   branch="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"inverseRelations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"children\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$children]}}}}"
+  if [[ "$id" == CC-930 && -n "${CONTAINER_CHECKLIST_FILE:-}" ]]; then
+    description="$(jq -Rs . "$CONTAINER_CHECKLIST_FILE")"
+  fi
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":$description,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"inverseRelations\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[]},\"children\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$children]}}}}"
 }
 
 comments_with_summary() {
@@ -280,10 +283,19 @@ empty|## Done when|true|null|[]
 child-open|## Done when\n- [ ] Every child Done or cancelled|true|1|[]
 child-proved|## Done when\n- [x] every child done or canceled.\n  Evidence: container-close read every child Done|true|1|[]
 post-only|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: deployment; Deadline: 2026-10-04T00:00:00Z\n  Evidence: holder read passed|true|null|[]
+child-open-is|## Done when\n- [ ] Every child is Done or cancelled.|true|1|[]
+child-words-continue|## Done when\n- [ ] Every child Done or cancelled and docs published|false|null|[1]
 open|## Done when\n- [ ] Every child Done or cancelled\n- [ ] Shared outcome at source|false|1|[2]
 missing-evidence|## Done when\n- [x] Shared outcome at source|false|null|[1]
 proved|## Done when\n- [x] Shared outcome at source\n  Evidence: holder read passed|true|null|[]
 ROWS
+
+# The review audit's in-PR bundle root is one work item: --container refuses
+# it from the safe read's in_pr_bundle, which its Filing record line sets.
+printf '%b' '**In-PR bundle**: yes\n\n## Done when\n- [ ] Every child Done or cancelled' >"$CONTAINER_CHECKLIST_FILE"
+run_status rcF4 run_validate CC-930 --include-children-of CC-930 --container >/dev/null 2>"$TMP_ROOT/in-pr.err"
+assert_ne "F: --container on an in-PR bundle root exits nonzero" "$rcF4" 0
+assert_jq "F: the in-PR refusal is the container fail-closed error" "$(cat "$TMP_ROOT/in-pr.err")" '.error | startswith("--container fail-closed:")'
 
 # A template-produced child can finish its branch work before its shared PR
 # merges. The parent accepts only qualified started children at that phase.

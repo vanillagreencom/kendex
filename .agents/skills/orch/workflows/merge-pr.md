@@ -397,7 +397,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Complete the in-PR bundle's children.** This step alone selects each child's proved boxes and completes it at merge. Read `issues children [ISSUE] --recursive --format=safe` without `--pending`. The flat rows carry each child's `.id` and `.state_type`. Include children the GitHub integration already set Done. For each non-canceled child listed in this PR's child `Closes` lines, repeat this step's live read and `issues complete` command with that child's ID, its own box selections and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent. Keep post-merge boxes on each child. This post-merge call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer. A child read or completion failure is a tracker-completion failure. Unchanged reconciliation can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box; report this limitation with the child handoff.
 
-   **The container closes when its last child closes.** Read `.parent_id` from the live issue. If it is empty, continue to step 3. Fetch the parent with its bundle; children or an `agent:multi` label make it a container ([skill-rules.md § Coordination](../references/skill-rules.md#coordination)). Not a container → step 3. An unreadable parent is a tracker failure. Close the container through the serialized helper, which keeps it open while a child is open:
+   **The container closes when its last child closes.** Read `.parent_id` from the live issue. If it is empty, continue to step 3. Fetch the parent with its bundle; children or an `agent:multi` label make it a container unless its read reports `in_pr_bundle` true ([skill-rules.md § Coordination](../references/skill-rules.md#coordination)). Not a container → step 3. An unreadable parent is a tracker failure. Close the container through the serialized helper, which keeps it open while a child is open:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
@@ -405,9 +405,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Preserve the helper's stderr diagnostics in § 6. Route its output:
 
-   - `closed [PARENT_ID]` → record the closure in § 6. If this container has a container parent, repeat this step for that parent.
+   - `closed [PARENT_ID]` → record `[PARENT_ID] → Canceled` in § 6 when the helper's stderr carries `container-close: canceled parent-id=[PARENT_ID]`, else `[PARENT_ID] → Done`. If this container has a container parent, repeat this step for that parent.
    - `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6. When `[ISSUE]` is among them and reads Verifying, the overseer closes the container after verification sets it Done. A bare `deferred` means the lock wait expired; report it.
-   - `held [PARENT_ID] [REQUESTS_RESET]` → hold the command under the linear skill's `patterns/workflow-actions.md` § Quota Holds, and climb no further.
+   - `held [PARENT_ID] [HOLD_RESET]` → hold the command under the linear skill's `patterns/workflow-actions.md` § Quota Holds, and climb no further.
    - A nonzero exit keeps the container open; carry its diagnostic into § 6, climb no further, and report `container [PARENT_ID] stays open; rerun container-close once [CAUSE] is fixed`. A `completion-refused` names an open box beside the child box: an outcome that moves into its own child item, per project-management's parent template.
 
 3. **Sync the main repo** — always runs after a merge.

@@ -5307,7 +5307,7 @@ owed_read() {
     # Read child state facts only for live candidates. Historical descriptions
     # are not needed to decide whether a container is due for container-close.
     local containers candidates children
-    candidates="$(jq -r '.[] | select((.title // "") | test("\\(one PR\\)"; "i") | not) | .id' <<<"$out")" \
+    candidates="$(jq -r '.[] | select(.in_pr_bundle != true) | .id' <<<"$out")" \
       || die tracker-list-invalid "" "team=$LINEAR_TEAM"
     printf '%s\n' "$out" >"$WORK_DIR/container-facts.jsonl"
     if [[ -n "$candidates" ]]; then

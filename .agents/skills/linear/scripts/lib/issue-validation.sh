@@ -396,7 +396,7 @@ done_when_parse() {
                        or (.trigger_kind != "release" and $merged != "" and ($merge_epoch == null or (.trigger_kind == "time" and .trigger_epoch < $merge_epoch)))
                     then {box: .number, rule: "post-merge-window"}
                   else empty end]}
-        | .child_box = ([.boxes[] | select(.text | test("^every child done or cancell?ed\\.?\\s*$"; "i")) | .number] | first)
+        | .child_box = ([.boxes[] | select(.text | test("^every child (is )?done or cancell?ed\\.?\\s*$"; "i")) | .number] | first)
         | .missing_evidence_boxes as $missing | .child_box as $child
         | .container_open_boxes = [.boxes[] | select(.number != $child)
             | select((.checked | not) or (.number as $n | $missing | index($n)) != null) | .number]

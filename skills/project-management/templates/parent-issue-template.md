@@ -2,7 +2,7 @@
 
 A parent with children is a **container**: never orchestrated directly, never its own PR, and it carries no deliverable of its own. Each child ships as its own PR, and the container closes when its last child is Done or Canceled. When to file one is SKILL.md § Disposition.
 
-Work that ships in one PR is a leaf work item with an internal checklist, never a parent. A `(one PR)` title marks such a work item; it has no sub-issues. The one exception is the review audit's in-PR bundle, whose children the reviewed issue's own PR works.
+Work that ships in one PR is a leaf work item with an internal checklist, never a parent; a title marks nothing. The one exception is the review audit's in-PR bundle, whose children the reviewed issue's own PR works; its root carries the Filing record line `**In-PR bundle**: yes` (orch skill-rules § Coordination).
 
 ## Template
 
@@ -34,7 +34,7 @@ Done when every child is Done or cancelled.
 
 ## Rules
 
-The one Done-when box is the parent's whole checklist. When the last child is Done or Canceled, orch's `container-close` ticks it with each child's state as its `Evidence:` line and sets the parent Done, or Canceled when every child was canceled. A goal measure or other outcome the children together produce is its own child: a leaf blocked by the siblings it measures, carrying that box and its holder's read, completed by that holder with `issues complete [CHILD_ID] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
+The one Done-when box is the parent's whole checklist. When the last child is Done or Canceled, orch's `container-close` ticks it with each child's state as its `Evidence:` line in the update that sets the parent Done. A parent whose every child was canceled is set Canceled with its box left open. A goal measure or other outcome the children together produce is its own child: a leaf blocked by the siblings it measures, carrying that box and its holder's read, completed by that holder with `issues complete [CHILD_ID] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
 
 1. `## Sub-Issues`, never `## Requirements`. No implementation detail lives here.
 2. All children share the parent's project. See [dependencies.md](../references/dependencies.md).

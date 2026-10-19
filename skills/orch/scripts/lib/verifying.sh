@@ -1,8 +1,6 @@
 # Shared judgement for the watch and the read-only reconciliation pass.
 # Each caller supplies merge evidence from its existing pull request read.
 set -euo pipefail
-# shellcheck source=branch-growth.sh
-source "$(dirname "${BASH_SOURCE[0]}")/branch-growth.sh"
 
 verifying_error() { # KEY [FIELDS...]
   printf '%s' "$1" >&2
@@ -13,24 +11,18 @@ verifying_error() { # KEY [FIELDS...]
 
 # Callers supply live parents and their direct child state facts.
 # A container whose every child is Done or Canceled is due for container-close.
+# A parent is a container unless linear's safe read reports in_pr_bundle, the
+# one tracker answer every container reader consumes.
 verifying_containers() { # SAFE_ITEMS
-  local candidates row description
-  candidates="$(jq -c '
+  jq -c '
     . as $live
     | map(select(.parent_id != null and .parent_id != "")) | group_by(.parent_id)[]
     | .[0].parent_id as $pid
     | select(all(.[]; .state_type == "completed" or .state_type == "canceled"))
     | ($live[] | select(.id == $pid))
     | select(.state_type != "completed" and .state_type != "canceled")
-    | select((.title // "") | test("\\(one PR\\)"; "i") | not)
-    | . + {container: true}' <<<"$1")" || return 1
-  while IFS= read -r row; do
-    [[ -n "$row" ]] || continue
-    description="$(jq -r '.description // ""' <<<"$row")" || return 1
-    expected_delta_read "$description" || EXPECTED_DELTA_PRODUCTION=""
-    [[ -z "$EXPECTED_DELTA_PRODUCTION" || "$EXPECTED_DELTA_PRODUCTION" == 0 ]] || continue
-    printf '%s\n' "$row"
-  done <<<"$candidates"
+    | select(.in_pr_bundle != true)
+    | . + {container: true}' <<<"$1"
 }
 
 verifying_parse() { # SAFE_ROW

@@ -35,7 +35,7 @@ if [[ -n "${SELECTION_CASE:-}" ]]; then
       elif .variables.after == "next" then
         {data:{issues:conn([{identifier:"KEN-2",createdAt:"2026-08-15T09:01:00Z"}];false;null)}}
       else
-        {data:{issues:conn([({id:"uuid-1",identifier:"KEN-1",title:"container",description:"outcome",priority:2,
+        {data:{issues:conn([({id:"uuid-1",identifier:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",priority:2,
           state:{name:"Verifying",type:"started"},parent:{identifier:"KEN-parent"},createdAt:"2026-08-15T09:00:00Z"}
           + if (.query | contains("inverseRelations")) then {inverseRelations:conn([];true;"blocker")} else {} end)];true;"next")}}
       end' <<<"$payload"
@@ -115,7 +115,7 @@ for selection in triage owed; do
                 assert_jq 'owed: unused fields omitted upstream' "$(cat "$TMP_ROOT/calls")" \
                     'select(.query | contains("ListIssues")) | .query | test("assignee|labels|project|estimate|sortOrder|updatedAt|archivedAt|trashed|url|relatedIssue") | not'
                 assert_jq 'owed: verification and container facts survive every blocker page' "$out" \
-                    '.[0] == {id:"KEN-1",title:"container",description:"outcome",priority:2,state:"Verifying",state_type:"started",parent_id:"KEN-parent",created_at:"2026-08-15T09:00:00Z",blocked_by_open:["KEN-open"]}'
+                    '.[0] == {id:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",in_pr_bundle:true,priority:2,state:"Verifying",state_type:"started",parent_id:"KEN-parent",created_at:"2026-08-15T09:00:00Z",blocked_by_open:["KEN-open"]}'
             fi
         else
             assert_ne "$selection $mode: refuses incomplete discovery" "$rc" 0

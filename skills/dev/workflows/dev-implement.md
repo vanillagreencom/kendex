@@ -13,7 +13,7 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 | Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
 | Bundled | `Parent: [ISSUE_ID]` + `Sub-Issues: [...]` | § 1 → § 2 → [§ 4-10]×N → § 11 |
 
-**A bundle needs `Audit Bundle: yes`.** A parent with children is a CONTAINER unless the delegation carries `Audit Bundle: yes`, the review audit's in-PR bundle. A leaf issue carrying an internal checklist is one work item, delegated single. A `(one PR)` title marks a work item with no sub-issues, never a bundle parent. Without the marker, stop and report the mis-delegation.
+**A bundle needs `Audit Bundle: yes`.** A parent with children is a CONTAINER, whatever its title, unless the delegation carries `Audit Bundle: yes`, the review audit's in-PR bundle. A leaf issue carrying an internal checklist is one work item, delegated single. Without `Audit Bundle: yes`, stop and report the mis-delegation.
 
 In the sub-issue tree, implement blockers before the issues they block. The delegation's group list marks earlier groups' implemented children `(completed)` regardless of tracker state; these entries are context only and are skipped in the § 4 loop.
 

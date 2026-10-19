@@ -271,7 +271,7 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `priority_misalignment` | `issues update [ID] --priority [P]` + reason comment |
 | `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
 | `add_relations`, `remove_relations` | § Hierarchy and Relations |
-| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild). `close_parent` closes through the verifier's route instead: `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [ID]`, which keeps a parent with an open child and reports its own result |
+| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild). `close_parent` closes through the verifier's route instead: `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/container-close . [ID]` from the checkout root, which derives the shared main repository itself and keeps a parent with an open child and reports its own result |
 | `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
 | `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
 | `project_needed`, `map_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |

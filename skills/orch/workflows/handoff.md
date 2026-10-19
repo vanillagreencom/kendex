@@ -23,7 +23,7 @@ An explicit user choice wins. Otherwise, with several items and `codex_app.creat
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) per item. A container drops off the launch list and is replaced by its unblocked DIRECT children (`depth == 0`), each of which reruns this preflight. A blocked item drops off with its live blockers named.
 
-- **Deduplicate, then collapse ancestry.** Keep one entry per issue id, marking it EXPLICIT whenever any duplicate was user-supplied. Then, when one final item is an ancestor bundle of another, keep only the bundle. Apply the Ancestor gate to each final launch item.
+- **Deduplicate.** Keep one entry per issue id. Apply the Ancestor gate to each final launch item.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
