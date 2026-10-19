@@ -352,7 +352,7 @@ while IFS='|' read -r name harness account account_harness model local_room loca
     CTX_POOL="$H/.sourcecopilot=97/100" CTX_CONFIG_DIR="$account" CTX_TMUX_PANE=%41 CTX_WINDOW_NAME=source-local \
     CTX_AMBIENT_HOST="$ambient" CTX_PROVIDER_ACCOUNTS="$provider_rows" CTX_SECOND_ACCOUNTS="$SECOND_ROWS" \
     ORCH_LANES_USAGE_TTL=0 run_ctx --json)"
-  lanes_table "$SOURCE_CALLER" "$name caller that is a local worker keeps its model and source|source-local|caller=true headroom_pct=$local_room"
+  lanes_table "$SOURCE_CALLER" "$name caller that is a local worker keeps its model and source|source-local|caller=true headroom_pct=$local_room handoff_required=$local_due"
   if [[ "$name" == mixed-claude ]]; then
     lanes_table "$(CTX_FLEET="$SOURCE_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
       CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" CTX_LANES="$SOURCE_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
