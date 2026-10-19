@@ -64,13 +64,42 @@ pub(super) struct Planned {
     /// nobody wrote read as agreement, and a warning that names one names
     /// a commit kendex made up.
     chosen_rev: Option<String>,
-    /// The derivation that created this entry, and so supplied the `decl`
-    /// every later one is weighed against — the reason that owns this
-    /// item's revision. `None` for a declaration the person wrote.
+    /// The first installation reason, independently of revision authority.
+    /// `None` for a declaration the person wrote.
     derived_from: Option<Reason>,
     /// The synthetic declaration that supplied this reading, inherited
     /// by dependencies when their parent owns the revision.
     held_by: Option<(super::Held, SelectorBasis)>,
+    authority: Authority,
+}
+
+/// Reading a recorded commit does not grant an assignment authority over
+/// the revisions of its hard descendants.
+#[derive(Clone, Copy)]
+enum Authority {
+    Independent,
+    Assignment,
+}
+
+#[derive(Clone)]
+enum Demand {
+    Revision {
+        decl: ItemDecl,
+        held_by: Option<(super::Held, SelectorBasis)>,
+        chosen: bool,
+    },
+    Neutral,
+}
+
+/// The same selected read and revision claim serve lookup and insertion.
+#[derive(Clone)]
+pub(super) struct Dependency {
+    pub(super) decl: ItemDecl,
+    chosen_rev: Option<String>,
+    held_by: Option<(super::Held, SelectorBasis)>,
+    authority: Authority,
+    demand: Demand,
+    enabled: bool,
 }
 
 impl Planned {
@@ -99,6 +128,7 @@ pub(super) struct Expansion {
     /// loser is reported, never silently absorbed.
     rev_disagreements: Vec<Disagreement>,
     held_owners: BTreeMap<(String, super::Held), (String, Option<crate::lock::DeclaredSelector>)>,
+    reservations: BTreeMap<(String, ItemKind, String), (String, SelectorBasis)>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -182,12 +212,27 @@ impl Expansion {
             .map(|planned| planned.decl.clone())
     }
 
-    /// The derivation that owns this item's revision, per [`Planned`].
+    /// The derivation that first made this item reachable, per [`Planned`].
     pub(super) fn derived_from(&self, kind: ItemKind, name: &str) -> Option<&Reason> {
         self.items
             .get(&(kind, name.to_owned()))?
             .derived_from
             .as_ref()
+    }
+
+    pub(super) fn independent_requirer(
+        &self,
+        kind: ItemKind,
+        name: &str,
+    ) -> Option<&crate::lock::InstallRef> {
+        let planned = self.items.get(&(kind, name.to_owned()))?;
+        match planned.authority {
+            Authority::Assignment => None,
+            Authority::Independent => match &planned.derived_from {
+                Some(Reason::RequiredBy { by }) => Some(by),
+                Some(Reason::Requested | Reason::MemberOf { .. }) | None => None,
+            },
+        }
     }
 
     pub(super) fn harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
@@ -221,6 +266,7 @@ impl Expansion {
                 harnesses,
                 chosen_rev,
                 derived_from: None,
+                authority: Authority::Independent,
                 held_by: self.held_owner(
                     &decl.source,
                     super::Held::Item {
@@ -314,7 +360,6 @@ impl Expansion {
                 },
                 decl.rev.as_deref(),
             ),
-            Reason::RequiredBy { by } if by.kind == ItemKind::Agent => None,
             Reason::RequiredBy { by } => {
                 let Some(parent) = self.items.get(&(by.kind, by.name.clone())) else {
                     unreachable!("a dependency's parent is already expanded");
@@ -322,12 +367,115 @@ impl Expansion {
                 parent.held_by.clone()
             }
         };
+        let mut selected = Dependency {
+            decl: decl.clone(),
+            chosen_rev: decl.rev.clone(),
+            held_by: held_by.clone(),
+            authority: Authority::Independent,
+            demand: Demand::Revision {
+                decl: decl.clone(),
+                held_by,
+                chosen: matches!(reason, Reason::MemberOf { .. }),
+            },
+            enabled: decl.enabled,
+        };
+        self.select_read(kind, name, &mut selected);
+        self.add_dependency(kind, name, &selected, harness, reason)
+    }
+
+    pub(super) fn dependency(
+        &self,
+        parent_kind: ItemKind,
+        parent: &str,
+        kind: ItemKind,
+        name: &str,
+    ) -> Dependency {
+        let parent = &self.items[&(parent_kind, parent.to_owned())];
+        let authority = if parent_kind == ItemKind::Agent {
+            Authority::Assignment
+        } else {
+            parent.authority
+        };
+        let (rev, held_by, demand) = match authority {
+            Authority::Assignment => (None, None, Demand::Neutral),
+            Authority::Independent => (
+                parent.decl.rev.clone(),
+                parent.held_by.clone(),
+                Demand::Revision {
+                    decl: parent.decl.clone(),
+                    held_by: parent.held_by.clone(),
+                    chosen: false,
+                },
+            ),
+        };
+        let decl = ItemDecl {
+            source: parent.decl.source.clone(),
+            rev,
+            enabled: parent.decl.enabled,
+            harnesses: None,
+            method: None,
+            env: None,
+        };
+        let mut selected = Dependency {
+            chosen_rev: decl.rev.clone(),
+            enabled: parent.decl.enabled,
+            decl,
+            held_by,
+            authority,
+            demand,
+        };
+        self.select_read(kind, name, &mut selected);
+        selected
+    }
+
+    fn select_read(&self, kind: ItemKind, name: &str, selected: &mut Dependency) {
+        if let Some(planned) = self.items.get(&(kind, name.to_owned())) {
+            selected.decl = planned.decl.clone();
+            selected.chosen_rev = planned.chosen_rev.clone();
+            selected.held_by = planned.held_by.clone();
+            selected.authority = planned.authority;
+        } else if let Some((commit, basis)) =
+            self.reservations
+                .get(&(selected.decl.source.clone(), kind, name.to_owned()))
+        {
+            selected.decl.rev = Some(commit.clone());
+            selected.chosen_rev = None;
+            selected.held_by = Some((
+                super::Held::Item {
+                    kind,
+                    name: name.to_owned(),
+                },
+                basis.clone(),
+            ));
+        }
+        // A reservation preserves installed bytes, not a revision the
+        // person chose. A set must weigh its actual reading against it.
+        if self
+            .reservations
+            .contains_key(&(selected.decl.source.clone(), kind, name.to_owned()))
+            && let Demand::Revision { chosen, .. } = &mut selected.demand
+        {
+            *chosen = false;
+        }
+    }
+
+    pub(super) fn add_dependency(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        selected: &Dependency,
+        harness: HarnessId,
+        reason: Reason,
+    ) -> bool {
         // A set weighs its revision against the one the person chose for
         // the item; every other derivation weighs it against the revision
         // the item actually reads.
         // A dependency uses its parent's commit, including a pin synthesized
         // for the plan.
-        let carried_by_a_set = matches!(reason, Reason::MemberOf { .. });
+        let carried_by_a_set = match &selected.demand {
+            Demand::Revision { chosen, .. } => *chosen,
+            Demand::Neutral => false,
+        };
         let reason_owning = reason.clone();
         let fresh = self
             .reasons
@@ -338,13 +486,14 @@ impl Expansion {
             .items
             .entry((kind, name.to_owned()))
             .or_insert_with(|| Planned {
-                decl: decl.clone(),
+                decl: selected.decl.clone(),
                 harnesses: Vec::new(),
-                chosen_rev: decl.rev.clone(),
+                chosen_rev: selected.chosen_rev.clone(),
                 derived_from: Some(reason_owning.clone()),
-                held_by: held_by.clone(),
+                held_by: selected.held_by.clone(),
+                authority: selected.authority,
             });
-        let turned_on = decl.enabled && planned.turn_on();
+        let turned_on = selected.enabled && planned.turn_on();
         let wanted_at = match carried_by_a_set {
             true => &planned.chosen_rev,
             false => &planned.decl.rev,
@@ -353,7 +502,10 @@ impl Expansion {
         // both be honored — one filesystem identity exists. The kept one is
         // whichever got here first (deterministic: parents walk in map
         // order); the refused one is recorded so the plan can say so.
-        if planned.decl.source == decl.source && *wanted_at != decl.rev {
+        if let Demand::Revision { decl, held_by, .. } = &selected.demand
+            && planned.decl.source == decl.source
+            && *wanted_at != decl.rev
+        {
             self.rev_disagreements.push(Disagreement {
                 kind,
                 name: name.to_owned(),
@@ -539,7 +691,93 @@ pub(super) struct Catalogs<'a> {
     /// Keyed by (source, rev): a pinned declaration derives its members and
     /// dependencies from the pinned commit's catalog, not from wherever the
     /// source has moved since.
-    open: BTreeMap<CatalogKey, Option<OpenCatalog>>,
+    open: BTreeMap<CatalogKey, CatalogRead>,
+}
+
+struct CatalogRead {
+    open: Option<OpenCatalog>,
+    resolution: Option<SourceState>,
+    unreadable: bool,
+    incomplete: bool,
+    notes: Vec<String>,
+    refusal: Option<Compatibility>,
+}
+
+enum Compatibility {
+    NeedsEngine {
+        min: String,
+        engine: &'static str,
+    },
+    Invalid {
+        min: String,
+        engine: &'static str,
+        reason: crate::source::CatalogMinReason,
+    },
+}
+
+impl Compatibility {
+    fn of(error: crate::error::CoreError) -> Self {
+        if let crate::error::CoreError::CatalogNeedsEngine { min, engine } = error {
+            Self::NeedsEngine { min, engine }
+        } else if let crate::error::CoreError::CatalogMinInvalid {
+            min,
+            engine,
+            reason,
+        } = error
+        {
+            Self::Invalid {
+                min,
+                engine,
+                reason,
+            }
+        } else {
+            unreachable!("only catalog compatibility refusals are cached here")
+        }
+    }
+
+    fn error(&self) -> crate::error::CoreError {
+        match self {
+            Self::NeedsEngine { min, engine } => crate::error::CoreError::CatalogNeedsEngine {
+                min: min.clone(),
+                engine,
+            },
+            Self::Invalid {
+                min,
+                engine,
+                reason,
+            } => crate::error::CoreError::CatalogMinInvalid {
+                min: min.clone(),
+                engine,
+                reason: *reason,
+            },
+        }
+    }
+}
+
+impl CatalogRead {
+    fn hydrate(&self, key: &CatalogKey, state: &mut DesiredState) {
+        if let Some(resolution) = &self.resolution {
+            match &key.1 {
+                Some(rev) => {
+                    state
+                        .pinned
+                        .insert((key.0.clone(), rev.clone()), resolution.clone());
+                }
+                None => {
+                    state.sources.insert(key.0.clone(), resolution.clone());
+                }
+            }
+        }
+        if self.unreadable && state.unreadable_catalogs.insert(key.0.clone()) {
+            state.notes.extend(self.notes.clone());
+        }
+        if self.incomplete {
+            state.mark_incomplete();
+        }
+        if let Some(refusal) = &self.refusal {
+            state.catalog_refusal.get_or_insert_with(|| refusal.error());
+        }
+    }
 }
 
 impl Catalogs<'_> {
@@ -551,10 +789,31 @@ impl Catalogs<'_> {
     ) -> Option<&OpenCatalog> {
         let key: CatalogKey = (source.to_owned(), rev.map(str::to_owned));
         if !self.open.contains_key(&key) {
-            let opened = self.read(source, rev, state);
-            self.open.insert(key.clone(), opened);
+            let mut evidence = DesiredState {
+                sources: state.sources.clone(),
+                pinned: state.pinned.clone(),
+                ..DesiredState::default()
+            };
+            let open = self.read(source, rev, &mut evidence);
+            let resolution = match rev {
+                Some(rev) => evidence.pinned.remove(&(source.to_owned(), rev.to_owned())),
+                None => evidence.sources.remove(source),
+            };
+            self.open.insert(
+                key.clone(),
+                CatalogRead {
+                    open,
+                    resolution,
+                    unreadable: evidence.unreadable_catalogs.contains(source),
+                    incomplete: evidence.declaration_status == super::DeclarationStatus::Incomplete,
+                    notes: evidence.notes,
+                    refusal: evidence.catalog_refusal.map(Compatibility::of),
+                },
+            );
         }
-        self.open.get(&key).and_then(Option::as_ref)
+        let read = self.open.get(&key)?;
+        read.hydrate(&key, state);
+        read.open.as_ref()
     }
 
     /// What the catalog under `key`, opened ahead by [`Catalogs::get`],
@@ -563,7 +822,7 @@ impl Catalogs<'_> {
     /// since it borrows nothing mutably and two answers can be read side
     /// by side.
     pub(super) fn offer(&self, key: &CatalogKey, kind: ItemKind, name: &str) -> Offer<'_> {
-        let Some(catalog) = self.open.get(key).and_then(Option::as_ref) else {
+        let Some(catalog) = self.open.get(key).and_then(|read| read.open.as_ref()) else {
             return Offer::Silent;
         };
         catalog.offer(kind, name)
@@ -626,6 +885,16 @@ impl Catalogs<'_> {
                 },
             }
         };
+        match rev {
+            Some(rev) => {
+                state
+                    .pinned
+                    .insert((source.to_owned(), rev.to_owned()), resolution.clone());
+            }
+            None => {
+                state.sources.insert(source.to_owned(), resolution.clone());
+            }
+        }
         let SourceState::Ready(ready) = resolution else {
             return None;
         };
@@ -700,8 +969,8 @@ pub(super) fn expand_installed(
     lock: &crate::lock::Lock,
     state: &mut DesiredState,
 ) -> Expansion {
-    let installed = super::desired::hold::installed_manifest(manifest, lock);
-    expand_read(env, scope, &installed, None, state, Some(lock))
+    let (installed, held) = super::desired::hold::installed_manifest(manifest, lock);
+    expand_read(env, scope, &installed, Some(&held), state, Some(lock))
 }
 
 fn expand_read<'a>(
@@ -721,6 +990,23 @@ fn expand_read<'a>(
                         let owner = (pin.source.clone(), pin.held.clone());
                         let selector = pins.selectors()[&owner].clone();
                         (owner, (pin.commit.clone(), selector))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        reservations: held
+            .map(|pins| {
+                pins.reservations()
+                    .iter()
+                    .filter_map(|pin| {
+                        let super::Held::Item { kind, name } = &pin.held else {
+                            unreachable!("only items have read reservations")
+                        };
+                        let key = (pin.source.clone(), *kind, name.clone());
+                        let basis = SelectorBasis::Held(
+                            pins.selectors()[&(pin.source.clone(), pin.held.clone())].clone(),
+                        );
+                        Some((key, (pin.commit.clone(), basis)))
                     })
                     .collect()
             })
@@ -765,6 +1051,62 @@ fn expand_read<'a>(
 #[cfg(test)]
 mod tests {
     use super::{ItemKind, plans_per_package};
+
+    /// Hook replay consumes a shared cache with independent DesiredStates.
+    /// A cache hit must carry the same resolution and failure category as
+    /// the first read, rather than treating cached unavailability as absence.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn cached_catalog_reads_preserve_evidence_for_every_consumer() {
+        use super::{Catalogs, DesiredState};
+        use crate::env::{Env, FakeOs};
+        use crate::manifest::{Manifest, SourceDecl};
+        use crate::model::Scope;
+        use std::collections::BTreeMap;
+        for (content, unreadable, refusal) in [
+            (b"is_source_catalog = true\n".as_slice(), false, false),
+            (b"\xff".as_slice(), true, false),
+            (b"min_kendex = '999.0.0'\n".as_slice(), false, true),
+            (b"min_kendex = 'invalid'\n".as_slice(), false, true),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = crate::test_util::rooted(&tmp);
+            let root = home.join("catalog");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("kendex.toml"), content).unwrap();
+            let env = Env::fake(&home, FakeOs::Linux);
+            let scope = Scope::Global;
+            let mut manifest = Manifest::default();
+            manifest.sources.insert(
+                "cat".into(),
+                SourceDecl {
+                    repo: None,
+                    path: Some(root.to_string_lossy().into_owned()),
+                    rev: None,
+                    enabled: true,
+                },
+            );
+            let mut catalogs = Catalogs {
+                env: &env,
+                scope: &scope,
+                manifest: &manifest,
+                installed: None,
+                open: BTreeMap::new(),
+            };
+            let mut first = DesiredState::default();
+            let first_open = catalogs.get("cat", None, &mut first).is_some();
+            let mut second = DesiredState::default();
+            let second_open = catalogs.get("cat", None, &mut second).is_some();
+            assert_eq!(first_open, !unreadable && !refusal);
+            assert_eq!(second_open, first_open);
+            assert!(first.sources.contains_key("cat"));
+            assert_eq!(second.sources, first.sources);
+            for state in [&mut first, &mut second] {
+                assert_eq!(state.unreadable_catalogs.contains("cat"), unreadable);
+                assert_eq!(state.refuse_catalog().is_err(), refusal);
+            }
+        }
+    }
 
     /// The rule stated as a fact about the product, not as a copy of the
     /// list behind it. The match below is exhaustive over `ItemKind`, so

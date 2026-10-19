@@ -52,7 +52,7 @@ fn required_by(expanded: &expansion::Expansion, kind: ItemKind, name: &str) -> V
 }
 
 /// Where a hold on this item is released, when the reader can be sent
-/// somewhere. The derivation that created the entry owns the revision, but
+/// somewhere. Only an independent hard requirer can own the revision, and
 /// only a package the person declared has a declaration they can edit: a
 /// bundle holding `dev`, which requires `gh`, holds `gh` through a `dev`
 /// that is itself derived, and naming `dev` sends the reader to a
@@ -64,7 +64,7 @@ fn held_by_requirer(
     kind: ItemKind,
     name: &str,
 ) -> Option<String> {
-    let Some(crate::lock::Reason::RequiredBy { by }) = expanded.derived_from(kind, name) else {
+    let Some(by) = expanded.independent_requirer(kind, name) else {
         return None;
     };
     manifest

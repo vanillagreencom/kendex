@@ -106,6 +106,15 @@ fn owners_of(
                 });
             }
             Reason::MemberOf { .. } => {}
+            Reason::RequiredBy { by }
+                if entry.kind == ItemKind::Skill && by.kind == ItemKind::Agent =>
+            {
+                owners.insert(Owner::Item {
+                    kind: entry.kind,
+                    name: entry.name.clone(),
+                    source: entry.source.clone(),
+                });
+            }
             Reason::RequiredBy { by } => {
                 // A copy of the guard per parent, not one shared between
                 // them. One item is one entry per tool and those entries
@@ -130,6 +139,7 @@ fn owners_of(
 #[derive(Default)]
 pub(crate) struct HeldPins {
     pins: Vec<HeldPin>,
+    reservations: Vec<HeldPin>,
     selectors: BTreeMap<(String, Held), Option<crate::lock::DeclaredSelector>>,
 }
 
@@ -174,6 +184,14 @@ impl HeldPins {
         &self.pins
     }
 
+    pub(crate) fn reservations(&self) -> &[HeldPin] {
+        &self.reservations
+    }
+
+    fn all(&self) -> impl Iterator<Item = &HeldPin> {
+        self.pins.iter().chain(&self.reservations)
+    }
+
     /// Remove the synthetic pins from a manifest the plan is about to
     /// write. Every pinned declaration had no `rev` before the hold, so
     /// clearing it restores the declaration exactly.
@@ -192,17 +210,27 @@ impl HeldPins {
     fn release_where(&mut self, manifest: &mut Manifest, release: impl Fn(&HeldPin) -> bool) {
         let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pins)
             .into_iter()
-            .partition(release);
+            .partition(&release);
         for pin in &gone {
             self.selectors
                 .remove(&(pin.source.clone(), pin.held.clone()));
         }
         HeldPins {
             pins: gone,
+            reservations: Vec::new(),
             selectors: BTreeMap::new(),
         }
         .unpin(manifest);
         self.pins = kept;
+        self.reservations.retain(|pin| {
+            if release(pin) {
+                self.selectors
+                    .remove(&(pin.source.clone(), pin.held.clone()));
+                false
+            } else {
+                true
+            }
+        });
     }
 }
 
@@ -250,7 +278,7 @@ pub(crate) fn held_planning<'a>(
             .update_only
             .as_ref()
             .is_some_and(|targets| targets.reach == Reach::Carriers);
-        if options.keep_source_records && reconciles && !pins.pins.is_empty() {
+        if options.keep_source_records && reconciles && pins.all().next().is_some() {
             loop {
                 let mut state = super::DesiredState::default();
                 let expanded =
@@ -333,7 +361,7 @@ fn release(
 ) -> Result<()> {
     let mut served: BTreeMap<(String, String), bool> = BTreeMap::new();
     let mut fetching: BTreeMap<String, String> = BTreeMap::new();
-    for pin in &pins.pins {
+    for pin in pins.all() {
         if !held
             .sources
             .get(&pin.source)
@@ -495,7 +523,65 @@ fn held_manifest(
             selector,
         );
     }
+    reserve_readings(manifest, lock, &exempt, keeps_records, &mut pins);
     (held, pins)
+}
+
+/// Installed derived items have their own reads. Reservations grant no
+/// installation or user choice and are consulted only by a reached edge.
+fn reserve_readings(
+    manifest: &Manifest,
+    lock: &Lock,
+    exempt: &BTreeSet<Owner>,
+    keeps_records: bool,
+    pins: &mut HeldPins,
+) {
+    let mut seen = BTreeSet::new();
+    for entry in lock.entries.values() {
+        if !PLANNED_KINDS.contains(&entry.kind)
+            || manifest.declared(entry.kind).contains_key(&entry.name)
+            || !seen.insert((entry.kind, entry.name.clone(), entry.source.clone()))
+        {
+            continue;
+        }
+        let own = Owner::Item {
+            kind: entry.kind,
+            name: entry.name.clone(),
+            source: entry.source.clone(),
+        };
+        let carriers = owners_of(lock, entry, &mut BTreeSet::new(), true);
+        if exempt.contains(&own) || !carriers.is_disjoint(exempt) {
+            continue;
+        }
+        let Some(repo) = held_repo(manifest, lock, &entry.source, keeps_records) else {
+            continue;
+        };
+        let selector = crate::lock::DeclaredSelector::of(manifest, &entry.source, None);
+        if keeps_records
+            && lock.entries.values().any(|other| {
+                other.kind == entry.kind
+                    && other.name == entry.name
+                    && other.selector.as_ref().is_some_and(|old| old != &selector)
+            })
+        {
+            continue;
+        }
+        let Some(reading) = held_at(lock, entry.kind, &entry.name, &entry.source, repo) else {
+            continue;
+        };
+        let pin = HeldPin {
+            held: Held::Item {
+                kind: entry.kind,
+                name: entry.name.clone(),
+            },
+            source: entry.source.clone(),
+            repo: repo.to_owned(),
+            commit: reading.commit,
+        };
+        pins.selectors
+            .insert((pin.source.clone(), pin.held.clone()), reading.selector);
+        pins.reservations.push(pin);
+    }
 }
 
 /// The declarations one target leaves unpinned: its own, and, for an item
@@ -569,7 +655,7 @@ fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held, reach: Reach) ->
 
 /// Native callbacks read declarations at the agreed installed commit, including
 /// explicit tracking revisions. This is an in-memory reading copy, never a write.
-pub(crate) fn installed_manifest(manifest: &Manifest, lock: &Lock) -> Manifest {
+pub(crate) fn installed_manifest(manifest: &Manifest, lock: &Lock) -> (Manifest, HeldPins) {
     let mut installed = manifest.clone();
     for kind in PLANNED_KINDS {
         for (name, decl) in installed.declared_mut(kind) {
@@ -587,7 +673,9 @@ pub(crate) fn installed_manifest(manifest: &Manifest, lock: &Lock) -> Manifest {
             decl.rev = Some(reading.commit);
         }
     }
-    installed
+    let mut pins = HeldPins::default();
+    reserve_readings(manifest, lock, &BTreeSet::new(), false, &mut pins);
+    (installed, pins)
 }
 
 /// The repository a declared source reads from, or `None` when it has

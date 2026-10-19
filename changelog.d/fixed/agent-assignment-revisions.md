@@ -1,1 +1,1 @@
-- Required agents' assigned skills follow their source unless another declaration or requirement holds them, so overlapping assignments install the same skill revisions in either agent order.
+- Required agents' assigned skills keep independent dependency revisions, retain their own installed revisions during locked writes and recorded verification, and update without refreshing the assigning agent; fresh assignments install the same revisions in either agent order.
