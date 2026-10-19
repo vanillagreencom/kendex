@@ -172,7 +172,10 @@ class SessionContract(unittest.TestCase):
             # tmux can disappear between ownership reads during failed-start
             # cleanup. Unknown ownership is a refusal until the final write.
             transient_cleanup = reason != "record-unreadable" and (answer["state"], answer["reason"]) == ("blocked", "record-unreadable")
-            if answer["state"] in ("blocked", "failed") and not transient_cleanup:
+            # A launch expected to fail must never accept the brief. Running
+            # cannot become launch-failed without another Start request.
+            unexpected_running = state == "failed" and answer["state"] == "running"
+            if (answer["state"] in ("blocked", "failed") and not transient_cleanup) or unexpected_running:
                 self.fail(str(answer) + "\n" + self.record.read_text() + "\n" + self.session_log())
             time.sleep(0.05)
         target = (json.loads(self.record.read_text()).get("terminal") or {}).get("pane", "")
