@@ -47,6 +47,7 @@ CONTROLS = [
     ("stamped pane read", "jarvis/scripts/lib/session.py", 'observed = self.backend(', 'observed = "" if taken else self.backend(', "test_sign_in_wall_after_the_stamp"),
     ("current-turn authentication", "jarvis/scripts/lib/session-backend.sh", 'lane_state state listed "$cmd" "$pid" "$screen" || exit 1', 'if lane_auth_failure "$screen"; then printf \'auth\\n\'; exit; fi\n    lane_state state listed "$cmd" "$pid" "$screen" || exit 1', "test_sign_in_failure"),
     ("authentication wall", "jarvis/scripts/lib/session-backend.sh", 'if [[ "$LANE_WALL_KIND" == auth ]]; then', 'if false; then', "test_sign_in_failure"),
+    ("controller liveness socket", "jarvis/scripts/lib/session-backend.sh", '    home_pane_live "$1" "$2" "$3" "$4" || exit "$?"', '    export TMUX="$1,0,0"\n    tmux_pane_live "$2" "$3" "$4" || exit "$?"', "test_controller_server_gone_from_its_socket_is_gone"),
     ("name ownership", "jarvis/scripts/lib/session.py", 'if existing.returncode == 0:', 'if False:', "test_unrelated_session_conflicts"),
     ("record reasons", "jarvis/scripts/lib/session.py", 'if record.get("reason") not in STATE_REASONS.get(record.get("state"), set()):', 'if False:', "test_record_contract_refuses_corruption"),
     ("detail length", "jarvis/scripts/lib/session.py", 'if not clean(detail) or len(detail) > 200:', 'if not clean(detail):', "test_record_contract_refuses_corruption"),

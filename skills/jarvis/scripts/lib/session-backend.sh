@@ -27,11 +27,12 @@ source "$SCRIPT_DIR/lib/pane-write.sh"
 source "$SCRIPT_DIR/lib/copilot-session.sh"
 source "$SCRIPT_DIR/lib/lane-relaunch.sh"
 source "$SCRIPT_DIR/lib/tmux-server.sh"
-# task_window_live SOCKET SERVER START PANE: tmux_pane_live's answer for a
-# task window on the home's socket. The recorded server serves that socket
-# until it exits, so another server answering it proves the window gone (1),
-# whatever process now holds the recorded pid.
-task_window_live() {
+# home_pane_live SOCKET SERVER START PANE: orch's pane liveness answer for a
+# controller or task pane on the home's socket. The recorded server serves
+# that socket until it exits, so a socket no server serves, or another server
+# answering it, proves the pane gone (1), whatever process now holds the
+# recorded pid.
+home_pane_live() {
   local rc=0 serving
   export TMUX="$1,0,0"
   tmux_pane_live "$2" "$3" "$4" "$1" || rc=$?
@@ -103,12 +104,12 @@ case "$verb" in
       '{line:$line,harness:$harness,model:$model,account:$account,effort:$effort}' ;;
   task-live)
     rc=0
-    task_window_live "$1" "$2" "$3" "$4" || rc=$?
+    home_pane_live "$1" "$2" "$3" "$4" || rc=$?
     [[ "$rc" != 2 ]] || printf 'jarvis-task: terminal=unread\n%s\n' "$TMUX_PANE_DETAIL" >&2
     exit "$rc" ;;
   task-close)
     rc=0
-    task_window_live "$1" "$2" "$3" "$4" || rc=$?
+    home_pane_live "$1" "$2" "$3" "$4" || rc=$?
     [[ "$rc" != 1 ]] || exit 0
     [[ "$rc" == 0 ]] || { printf 'jarvis-task: terminal=unread\n%s\n' "$TMUX_PANE_DETAIL" >&2; exit 1; }
     actual="$(tmux display-message -p -t "$4" '#{@jarvis-task}')" || exit 1
@@ -117,8 +118,7 @@ case "$verb" in
     [[ "$7" != true ]] || binding="#{||:$binding,#{==:#{@jarvis-task},}}"
     tmux if-shell -F -t "$4" "#{&&:$binding,#{==:#{pid},$2}}" "kill-window -t $5" ;;
   live)
-    export TMUX="$1,0,0"
-    tmux_pane_live "$2" "$3" "$4" || exit "$?"
+    home_pane_live "$1" "$2" "$3" "$4" || exit "$?"
     actual="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
     # Staging ownership precedes the native generation mark.
     [[ "$actual" == "$5" || ( "$7" == staging && -z "$actual" ) ]] || exit 1

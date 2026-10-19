@@ -988,6 +988,28 @@ class SessionContract(unittest.TestCase):
                 finally:
                     self.record.write_text(saved)
 
+    def test_controller_server_gone_from_its_socket_is_gone(self):
+        # A tmux server this fixture started stands for a recorded server pid
+        # still running as tmux after it stopped serving the recorded socket.
+        subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, "new-session", "-d", "-s", "probe",
+                        os.environ["JARVIS_TEST_BASH"], "--noprofile", "--norc"], check=True, env=self.env)
+        server = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "#{pid}"],
+                                check=True, capture_output=True, text=True, env=self.env).stdout.strip()
+        socket = str(self.root / "unserved.sock")
+        record = {"terminal": {"server": socket, "pane": "%0", "window": "@0"},
+                  "server_pid": int(server), "server_started_at": "0", "generation": 1}
+        live = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "live",
+                               socket, server, "0", "%0", "1", "@0", "staging"],
+                              env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(live.returncode, 1, live.stderr)
+        with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+            runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+            try:
+                terminal = runtime["Session"](self.home).terminal(record)
+            except runtime["Refusal"] as refusal:
+                self.fail("refusal=" + refusal.reason)
+        self.assertIsNone(terminal)
+
     def test_bad_arguments_have_no_object(self):
         for arguments in ([], ["unknown"], ["status"], ["_worker", "start", str(self.home), "1"],
                           ["start", "--home", str(self.home), "--harness", "unknown"]):
