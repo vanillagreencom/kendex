@@ -30,7 +30,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Team mode reads as project mode.** Every rule, `Skip if`, and output field this workflow states for `project` applies unchanged to `team`, a rule added later included; only a rule naming `team` overrides one. The two differences are the input set above and `project: null` in the output ([audit-output.md](../schemas/audit-output.md)).
 
-**issues**: read the JSON file and extract `TRACKER` (plus `REPOSITORY` for github) from the delegation's `Tracker:` line or the file's `tracker` field, following [audit-issues-input.md § Tracker](../schemas/audit-issues-input.md#tracker) for required context and inference. Extract `WORKTREE`, `PARENT_ISSUE`, `SOURCE`, `INPUT_ITEMS` from `items[]`, and the optional research-complete fields `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and `hierarchy_contract` (binding — § 7.0).
+**issues**: read the JSON file and extract `TRACKER` (plus `REPOSITORY` for github) from the delegation's `Tracker:` line or the file's `tracker` field, following [audit-issues-input.md § Tracker](../schemas/audit-issues-input.md#tracker) for required context and inference. Extract `WORKTREE`, `PARENT_ISSUE`, `SOURCE`, `INPUT_ITEMS` from `items[]`, the optional `in_pr_bundle` (§ 7.1), and the optional research-complete fields `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and `hierarchy_contract` (binding — § 7.0).
 
 **Verifying issues retain live checks on the same merged item.** Keep them out of development candidate sets. Read them in the comparison inventory for relation and duplicate analysis.
 
@@ -291,8 +291,10 @@ Look for: an input item whose scope is a strict subset of a tracked effort (chil
 
 This run is itself an audit. When it proposes more than one create, it files one rework parent for its subject first: a `create` with `create_fields.is_bundle_parent: true` built from [parent-issue-template.md](../templates/parent-issue-template.md), and every other create a `make_child` whose `parent` is that row's `#N`. The rework parent is `hierarchy.action: none`, with a `related` relation to the input's `parent_issue` when one exists. When the input's `parent_issue` names the rework parent already, every create is a `make_child` with `parent: null` instead. Two exceptions:
 
-- **The review audit's in-PR bundle.** With `source: "review"`, each child candidate of the input's `parent_issue`, the issue being worked, is a `make_child` with `parent: null`: orch's review-pr works it in that issue's own PR. These children count toward no rework parent; only the remaining creates do.
+- **The review audit's in-PR bundle.** With the input's `in_pr_bundle` true, each child candidate of its `parent_issue`, the issue being worked, is a `make_child` with `parent: null`: the caller marks that issue its in-PR bundle root and works the child in that issue's own PR. These children count toward no rework parent; only the remaining creates do.
 - **A hierarchy contract.** With `hierarchy_contract`, its parent is the run's rework parent: each `child_indexes` item is its child per § 7.0, and the run files no second rework parent.
+
+Outside these two exceptions and a `parent_issue` that names the rework parent already, no create is a `make_child` under the input's `parent_issue`, whatever the `source`: an issue being worked that gains a child becomes a container. A child candidate of it joins the run's rework parent, or as the run's one create is `hierarchy.action: none` with a `related` relation to it.
 
 Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says which.
 
@@ -407,7 +409,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
-- [ ] More than one create follows § 7.1's rework-parent rule: its placement, its children and its two exceptions; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
+- [ ] More than one create follows § 7.1's rework-parent rule: its placement, its children and its two exceptions; no create is a `make_child` under the input's `parent_issue` outside § 7.1's cases; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
 
 ---
 
