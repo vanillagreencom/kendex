@@ -704,7 +704,7 @@ woken_under() {
     STUB_CALL_LOG="$TMP_ROOT/$name.calls" STUB_EXIT_DIR="$TMP_ROOT/exit-none" \
     STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
     LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \
-    TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc \
+    TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_VERIFY_SECS=abc \
     "$script" --wake --harness codex --lane "$WAKE_LANE_DIR" \
     --launch-flags "-m gpt-6-astra -c model_reasoning_effort=high" CC-1 2>&1)
   rc=$?
@@ -755,7 +755,7 @@ wake_account_under() { # SCRIPT NAME
     STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
     LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \
     CODEX_INVENTORY="$(jq -nc --arg d "$SESSION_HOME/.selected-codex" '[{config_dir:$d}]')" \
-    TMUX=stub,1,0 "$script" --wake --harness codex CC-1 2>&1)
+    TMUX=stub,1,0 TMUX_PANE= "$script" --wake --harness codex CC-1 2>&1)
   rc=$?
   set -e
   home="$(cat "$TMP_ROOT/$name.cmd.home" 2>/dev/null || true)"

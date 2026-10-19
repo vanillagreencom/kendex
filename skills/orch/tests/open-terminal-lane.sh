@@ -191,7 +191,7 @@ lane_launch() {
   [[ "$late" != gated ]] || gate="$runs/gate"
   "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" "$TMP_ROOT/$harness" & tree=$!
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-    TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
+    TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
     OT_LAUNCHED_GATE="$gate" STUB_CLOCK="$clock_file" \
     OT_WT_LOG="$runs/worktree.log" OT_WT_FIXED="$fixed_wt" OVERSEE_WATCH_STATE_DIR="$runs/state" \

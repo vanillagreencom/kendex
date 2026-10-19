@@ -95,8 +95,10 @@ printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$TMP_ROOT/provider$REMOTE_L
 # --- harness -----------------------------------------------------------------
 
 # run_ot OT ENV ARGS... — one launch of OT with the stubs and a fresh log set
-# under $RUN. ENV is a semicolon-separated list of `env` arguments. OUT is
-# stdout and stderr together, the way a caller sees a launch.
+# under $RUN. ENV is a semicolon-separated list of `env` arguments. TMUX_PANE
+# is cleared ahead of ENV: the launch write refuses the caller's own pane,
+# whose id the stub can reuse for the window it opens. OUT is stdout and
+# stderr together, the way a caller sees a launch.
 RUN_SEQ=0
 run_ot() {
   local ot="$1" env_list="$2" env_args=() items item
@@ -115,7 +117,7 @@ run_ot() {
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ORCH_LANE_MAX_PCT=95 \
     OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" OT_CAPTURE="$RUN/gui" \
     OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree-path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" \
-    PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+    PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" TMUX_PANE= \
     ${env_args[@]+"${env_args[@]}"} "$ot" "$@" 2>&1)
   RC=$?
 }

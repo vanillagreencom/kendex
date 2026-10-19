@@ -751,7 +751,7 @@ git -C "$CALLERREPO" init -q
 git -C "$CALLERREPO" config gc.auto 0
 git -C "$CALLERREPO" config maintenance.auto false
 ( cd "$CALLERREPO" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
+  TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
   --cmd "true --model opus --effort high $QUESTION_OFF_ALL" KEN-20 ) >/dev/null 2>&1
@@ -767,7 +767,7 @@ git -C "$SCRIPTREPO" remote add origin git@github.com:script-owner/script-repo.g
 git -C "$CALLERREPO" remote add origin git@github.com:caller-owner/caller-repo.git
 REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
 ( cd "$CALLERREPO" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
+  TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
   OT_CHECKOUT_REPO= OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
   --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" KEN-21 ) >/dev/null 2>&1
@@ -798,7 +798,7 @@ run_bad_repo() {
   git -C "$caller" config gc.auto 0
   git -C "$caller" config maintenance.auto false
   ( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-    GH_REPO="$BAD_REPO" TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
+    GH_REPO="$BAD_REPO" TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$script" --harness claude --lane auto \
@@ -853,7 +853,7 @@ CHILD
   git -C "$caller" config gc.auto 0
   git -C "$caller" config maintenance.auto false
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
     "$script" --harness claude --cmd "$harness $QUESTION_OFF_ALL" ${option[@]+"${option[@]}"} KEN-40 2>&1 )" || rc=$?
   wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"

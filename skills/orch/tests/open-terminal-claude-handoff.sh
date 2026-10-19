@@ -295,7 +295,9 @@ run() {
   # the account LANES_HOME points at. Pinned to the fixture before a row's own
   # pairs are appended, so nothing derives that account from the developer's
   # HOME and writes a private launch home into their live codex account.
-  envs+=(LANES_HOME="$FLEET_HOME" ORCH_TMUX_SESSION=stub)
+  # TMUX_PANE is cleared ahead of the row's pairs: the launch write refuses
+  # the caller's own pane, whose id the stub can reuse for the window it opens.
+  envs+=(LANES_HOME="$FLEET_HOME" ORCH_TMUX_SESSION=stub TMUX_PANE=)
   if [[ "$envspec" != - ]]; then
     IFS=',' read -ra pairs <<<"$envspec"
     for pair in "${pairs[@]}"; do envs+=("$pair"); done
@@ -607,7 +609,7 @@ assert_eq "$(observe 'rc stderr~open-terminal:+composer-stuck') $(( $(cat "$STUB
   "control: a thirty-second verify bound is reached on the virtual clock with less than that in wall time" "$ERR"
 set +e
 STUB_CLOCK='' "$(command -v timeout || command -v gtimeout)" 2 \
-  env TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=30 LANES_HOME="$FLEET_HOME" ORCH_TMUX_SESSION=stub \
+  env TMUX=stub,1,0 TMUX_PANE= ORCH_TMUX_VERIFY_SECS=30 LANES_HOME="$FLEET_HOME" ORCH_TMUX_SESSION=stub \
   OT_CAPTURE="$TMP_ROOT/ceiling-capture" ORCH_STATE_DIR="$TMP_ROOT/ceiling-state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" \
   "$OT" --tmux --harness claude cc-737 >/dev/null 2>&1
 ceiling_rc=$?

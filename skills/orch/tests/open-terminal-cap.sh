@@ -153,7 +153,7 @@ launch() {
   shift 2
   [[ -z "$STATE" ]] || fleet=(--state-dir "$STATE")
   (cd "$REPO" && PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$CLAIMS" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 TMUX_PANE= GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
     STUB_MARK="$ROW/reached" \
     STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty ORCH_TMUX_SESSION=fleet \
     ORCH_OVERSEER_LANES="$fleet_cap" \
@@ -775,7 +775,7 @@ for spec in \
   # shellcheck disable=SC2086
   if [[ "$mode" == no-fleet ]]; then
     rc=0
-    err="$(cd "$REPO" && PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" TMUX=stub,1,0 \
+    err="$(cd "$REPO" && PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" TMUX=stub,1,0 TMUX_PANE= \
       "$OT" --tmux --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" $words CC-1 2>&1 >/dev/null)" || rc=$?
   else
     launch opt 1 $words CC-1
