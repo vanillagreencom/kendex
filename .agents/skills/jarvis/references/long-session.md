@@ -31,14 +31,14 @@ The current handoff is `state/handoff.md` in the [home layout](home-layout.md). 
 | State | The session: where it runs, its holds, its wake registrations and its next report. The user's open questions as ids. Each task and awaited item as a tracker id with one unresolved next action. The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log. |
 | Sub-agents | Each running lane or attached agent: its identity, task source and result destination. For an attached agent, identify its launch prompt and harness reply by the available agent or message ids. For a lane, record its task file and result file paths. Keep unfinished ids, available output locations and unknown state or locations under the emergency rule above. |
 | Instructions in force | Each temporary instruction from the user, its source and the event that ends it. Link the home of a standing rule. |
-| Progress log | One decision record per action at the time it occurs, under the record contract below. Use [verification.md:Sources](verification.md#sources) to record the clock time. |
+| Progress log | One decision record per action at the time it occurs, under the record contract below. |
 
 - Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold. Change only the affected lines and append the state-change record in the same write. Advance the checkpoint's covered log range with the update.
 - At the scheduled report, refresh changed lines. Commit changed state at each scheduled report unless the user's standing instructions set another commit trigger. Never recompose the whole state for a report.
 - Before succession transfers control, reconcile the checkpoint and later log records against live tracker items, the mailbox and relevant memory notes under [Homes](#homes). Record each correction as a state change and advance the checkpoint's covered log range.
 - Rebuild state from the checkpoint and replay later state-change records in their recorded order. Compare the checkpoint time with the clock and the user's staleness bound. If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records. Do not refuse recovery solely because the state is stale. Keep an unread source as an unresolved next action.
 
-- At each wake, list the user's messages since the last such check that no reply, thread reply or progress log entry covers. Answer each one older than a short wait, or log what was done about it in the progress log.
+- At each wake, run `.agents/skills/jarvis/scripts/owner-unanswered --since [LAST_CHECK]` from the home. It lists the user's messages that no reply, closed question or progress record covers. Answer each one older than a short wait, or record what was done about it in the progress log.
 - Keep a line only if its absence would cause the successor to act wrongly or repeat work.
 - Remove a tracker id from State when its item closes. Keep the completion evidence on the item.
 - Keep standing rules in one home. Link that home rather than repeating its text in the handoff.
@@ -56,6 +56,9 @@ Use named fields for each record. Record values rather than a prose account that
 | Observed result and source | The checked outcome and its source reference. Mark unread evidence as unread. |
 | Decision | The chosen action and its reason. Link any recorded disposition under [Lane results](#lane-results). |
 | State change | Set or remove, the handoff section and durable item id, and the changed field names and values. Use none when the action changes no session state. |
+
+- Write each record with `.agents/skills/jarvis/scripts/progress-log --operation TEXT --result TEXT --decision TEXT --state-change TEXT`. It stamps the id and the clock time. The [README](../README.md#control-host-events) states the id form. The State checkpoint's log range uses these ids.
+- A record about a user's message names the message id, or the part of it before the first `-`, in Operation or Decision. When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
 
 ### Lane results
 

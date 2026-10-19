@@ -68,6 +68,16 @@ Set the keys shown in [kendex.settings.toml.example](kendex.settings.toml.exampl
 - `JARVIS_WAKE_SETTLE_SECS` defaults to 15 seconds. Zero sends immediately.
 - `SLACK_JARVIS_SESSION_FILE` reuses the Slack relay's hold. Set it in each local or host root whose relay the session must hold. An empty value creates no hold.
 
+Three scripts in `.agents/skills/jarvis/scripts/` serve the session. Each reads the home from its working directory.
+
+| Script | Use |
+|---|---|
+| `owner-unanswered` | Lists your messages that no reply, closed question or progress record covers, one JSON line each. `--since TIME` and `--older MINUTES` narrow the list. |
+| `progress-log` | Adds one progress record to `state/handoff.md`. The clock supplies its id and time. An id is `P-` and the UTC time as `YYYYMMDDTHHMMSSZ`, with `-2`, `-3` added for later records in the same second. |
+| `owner-note` | Sends a note file as your directive to a repository's agent, on the control host first, then on this machine. The note ends with a request to check its facts and approach. |
+
+The loop adds `EVENT owner-unread` once when a message from you stays unread in the home inbox for 10 minutes. Key a page on that event. Every 5 minutes the loop also adds `EVENT owner-unanswered` once for each message `owner-unanswered` lists after 10 minutes. That event reminds the session; it never means the message is unread.
+
 Claude Code runs the loop through Monitor and receives a pointer for each batch. Pi uses its installed mailbox wake. Copilot receives mail through its installed hooks; idle delivery depends on its native extension.
 
 Consumer checks can append complete events under the [log contract](references/control-host-events.md#input-log). That reference also defines recovery and session-bound presence.

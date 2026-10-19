@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Usage: owner-unanswered [--root DIR] [--since YYYY-MM-DDTHH:MM:SSZ] [--older MIN]
+# One JSON line per owner message in the Jarvis home inbox that nothing answers.
+set -euo pipefail
+SCRIPT_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+exec python3 -B "$SCRIPT_ROOT/lib/owner_unanswered.py" --bash "$BASH" "$@"

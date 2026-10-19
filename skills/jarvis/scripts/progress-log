@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Append one progress record to the home handoff's Progress log section.
+
+Usage: progress-log --operation TEXT --result TEXT --decision TEXT --state-change TEXT
+
+The record takes the field form of references/long-session.md § Progress
+records. Its id and time come from `date -u` at this call. Run it anywhere in
+the Jarvis home; it writes that home's state/handoff.md. A refusal prints
+`progress-log: KEY=VALUE fix=PATH#progress-records` on stderr, exits 2 and
+writes nothing. Keys: field-empty, time-typed, clock-unreadable,
+handoff-missing, handoff-unwritable, handoff-unreadable, section-missing,
+section-ambiguous. Success prints `progress-log: recorded id=ID at=TIME`.
+"""
+import argparse
+import fcntl
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+PACKAGE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PACKAGE / "scripts/lib"))
+from progress import FIELDS, format_record, ids, record_id  # noqa: E402
+from sections import section  # noqa: E402
+from watch import home_root  # noqa: E402
+
+FIX = "fix=" + str(PACKAGE / "references/long-session.md") + "#progress-records"
+# The clock stamps every record; a value that opens with a time was typed.
+TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
+
+
+class Refusal(Exception):
+    pass
+
+
+def clock():
+    try:
+        result = subprocess.run(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise Refusal("clock-unreadable", "date") from error
+    stamp = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp):
+        raise Refusal("clock-unreadable", "date")
+    return stamp
+
+
+def append(handoff, values):
+    stamp = clock()
+    try:
+        out = handoff.open("r+b")
+    except FileNotFoundError as error:
+        raise Refusal("handoff-missing", handoff) from error
+    except OSError as error:
+        raise Refusal("handoff-unwritable", handoff) from error
+    with out:
+        try:
+            fcntl.flock(out, fcntl.LOCK_EX)
+            text = out.read().decode("utf-8")
+        except (OSError, UnicodeError) as error:
+            raise Refusal("handoff-unreadable", handoff) from error
+        lines = text.splitlines(keepends=True)
+        try:
+            start, end = section(lines, "Progress log")
+        except LookupError as error:
+            raise Refusal("section-missing" if error.args[0] == "unknown-heading" else "section-ambiguous",
+                          "Progress log") from error
+        last = next((index for index in range(end - 1, start, -1) if lines[index].strip()), start)
+        prefix = "".join(lines[:last + 1])
+        identity = record_id(stamp, ids(text))
+        # An unterminated last line gets its newline before the record.
+        lead = "" if prefix.endswith("\n") else "\n"
+        if last == start:
+            lead += "\n"
+        tail = lead + format_record(identity, stamp, values) + "".join(lines[last + 1:])
+        try:
+            out.seek(len(prefix.encode("utf-8")))
+            out.write(tail.encode("utf-8"))
+            out.truncate()
+            out.flush()
+            os.fsync(out.fileno())
+        except OSError as error:
+            raise Refusal("handoff-unwritable", handoff) from error
+    return identity, stamp
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    for option, field in zip(("--operation", "--result", "--decision", "--state-change"), FIELDS):
+        parser.add_argument(option, required=True, help=field)
+    args = parser.parse_args()
+    values = dict(zip(FIELDS, (args.operation, args.result, args.decision, args.state_change)))
+    try:
+        for option, field in (("operation", "Operation"), ("decision", "Decision")):
+            if not values[field].strip():
+                raise Refusal("field-empty", option)
+        for field, value in values.items():
+            if TYPED_TIME.match(value):
+                raise Refusal("time-typed", field.lower().replace(" ", "-"))
+        identity, stamp = append(home_root(Path.cwd()) / "state/handoff.md", values)
+    except Refusal as refusal:
+        print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX), file=sys.stderr)
+        return 2
+    print("progress-log: recorded id=%s at=%s" % (identity, stamp))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

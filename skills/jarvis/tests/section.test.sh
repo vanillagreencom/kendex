@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 3.2
 # Surface: heading-selected rule and memory section reads.
-# Inputs: skills/jarvis/scripts/jarvis-section, skills/jarvis/tests/section_test.py,
+# Inputs: skills/jarvis/scripts/jarvis-section, skills/jarvis/scripts/lib/sections.py,
+# skills/jarvis/tests/section_test.py,
 # skills/jarvis/tests/desktop_world.py.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"

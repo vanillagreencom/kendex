@@ -13,8 +13,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
+from mail_world import make_project
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "skills/jarvis/scripts"
@@ -56,23 +58,7 @@ class Producer(unittest.TestCase):
         self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_LOG_DIR=str(self.root / "log"), JARVIS_WAKE_SETTLE_SECS="15")
 
     def project(self, name):
-        root = self.root / name
-        root.mkdir(parents=True)
-        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True,
-                       env={k:v for k,v in os.environ.items() if not k.startswith("GIT_")})
-        for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
-            subprocess.run(["git", "-C", str(root), "config", key, value], check=True,
-                           env={k:v for k,v in os.environ.items() if not k.startswith("GIT_")})
-        for name in ("mailbox", "orch"):
-            target = root / ".agents/skills" / name
-            target.mkdir(parents=True)
-            target.joinpath("scripts").symlink_to(REPO / "skills" / name / "scripts", target_is_directory=True)
-        clean = {k:v for k,v in os.environ.items() if not k.startswith(("GIT_", "ORCH_", "KENDEX_"))}
-        state = REPO / "skills/orch/scripts/workflow-state"
-        subprocess.run([str(state), "init", "oversee"], cwd=root, env=clean, check=True, capture_output=True)
-        subprocess.run([str(state), "set", "oversee", "overseer", json.dumps({"pane":"%1", "server":str(os.getpid())})],
-                       cwd=root, env=clean, check=True, capture_output=True)
-        return root
+        return make_project(self.root / name)
 
     def executable(self, name, text):
         path = self.bin / name
@@ -206,6 +192,68 @@ class Producer(unittest.TestCase):
         self.assertIn("EVENT overseer-unread repo=peer unread=1", output)
         output, _ = self.read_pass(cursor)
         self.assertNotIn("EVENT overseer-unread", output)
+
+    def clock(self, offset):
+        """Epoch reads see now plus offset; every other date call is real."""
+        self.executable("date", '#!/bin/sh\ncase "$*" in *+%%s*) echo %d;; *) exec %s "$@";; esac\n'
+                        % (int(time.time()) + offset, shutil.which("date", path=os.environ["PATH"])))
+
+    def owner_note(self, text):
+        payload = self.root / "owner-message"
+        payload.write_text(text)
+        result = self.command([REPO / "skills/mailbox/scripts/lane-mail", "send", "--item", "overseer", "--directive",
+                               "--delivery-id", "C1:" + str(len(self.inbox())), "--file", payload], self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split("id=", 1)[1].split()[0]
+
+    def test_owner_unanswered_reminder(self):
+        owner = self.owner_note("owner asks")
+        self.clock(11 * 60)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+
+            def check(header):
+                before = watch.log.read_text().count(header) if watch.log.exists() else 0
+                watch.accept_unanswered(*watch.unanswered())
+                return watch.log.read_text().count(header) - before if watch.log.exists() else 0
+
+            self.assertEqual(check("EVENT owner-unanswered id=" + owner + " "), 1)
+            self.assertEqual(check("EVENT owner-unanswered "), 0)
+            data = watch.log.read_bytes()
+            spans, _ = self.module.complete_blocks(data, 0)
+            self.assertEqual(data[spans[0][0]:spans[0][1]].decode().split("\n")[1], "owner asks")
+            self.assertIn(["local", str(self.home)], [span[2] for span in watch.state["spans"] if len(span) == 3])
+            self.intercept_mail('[ "$1" != events ] || exit 1')
+            self.assertEqual(check("EVENT owner-unanswered-failed "), 1)
+            self.assertEqual(check("EVENT owner-unanswered-failed "), 0)
+            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+            self.assertEqual(check("EVENT owner-unanswered"), 0)
+            self.intercept_mail('[ "$1" != events ] || exit 1')
+            self.assertEqual(check("EVENT owner-unanswered-failed "), 1)
+
+    def test_owner_unread_is_the_inbox_receipt(self):
+        # The page keys on owner-unread; a read row only reminds the session.
+        read = self.owner_note("read and unanswered")
+        inbox = self.command([REPO / "skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], self.home)
+        self.assertEqual(inbox.returncode, 0, inbox.stderr)
+        unread = self.owner_note("still unread")
+        # No watch-loop runs for this home: the private watcher's process rule
+        # would page here, and the receipt does not.
+        alive = subprocess.run(["pgrep", "-f", "watch-loop --home " + str(self.home)], capture_output=True)
+        self.assertEqual(alive.returncode, 1)
+        output, cursor = self.read_pass()
+        self.assertNotIn("EVENT owner-unread", output, "young row")
+        self.clock(11 * 60)
+        output, cursor = self.read_pass(cursor)
+        self.assertEqual(re.findall(r"^EVENT owner-unread id=(\S+) ", output, re.M), [unread], "only the unread row pages")
+        again, cursor = self.read_pass(cursor)
+        self.assertNotIn("EVENT owner-unread", again, "second pass")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.accept_unanswered(*watch.unanswered())
+            log = watch.log.read_text()
+        self.assertIn("EVENT owner-unanswered id=" + read + " ", log)
+        self.assertIn("EVENT owner-unanswered id=" + unread + " ", log)
 
     def test_producer_helpers_keep_target_data(self):
         self.mail(self.home, "notice", "home target data", "--to", "owner")
@@ -853,6 +901,32 @@ class Producer(unittest.TestCase):
                 case.scripts.joinpath("lib/watch.py").write_text(mutant)
                 with self.assertRaises(AssertionError):
                     case.test_producer_helpers_keep_target_data()
+            finally:
+                case.doCleanups()
+        # The private watcher's rule, unanswered plus no watch-loop process,
+        # must fail the read row, which also has no process.
+        with tempfile.TemporaryDirectory() as folder:
+            source = (SCRIPTS / "lib/watch.py").read_text()
+            start, end = source.index("def owner_unread("), source.index("def mail_pass(")
+            mutant = source[:start] + (
+                "def owner_unread(bash, mail, root, unread, now, reported, events):\n"
+                "    listed = [json.loads(line) for line in checked([bash, LIB.parent / 'owner-unanswered', '--root',\n"
+                "              root, '--older', '10'], root).split('\\n') if line]\n"
+                "    alive = run(['pgrep', '-f', 'watch-loop --home ' + str(root)]).returncode == 0\n"
+                "    owned = [] if alive else listed\n"
+                "    events.extend(event('owner-unread', id=row['id'], at=row['at'])\n"
+                "                  for row in owned if row['id'] not in reported)\n"
+                "    return [row['id'] for row in owned]\n\n\n") + source[end:]
+            path = Path(folder) / "watch.py"
+            path.write_text(mutant)
+            case = Producer(methodName="test_owner_unread_is_the_inbox_receipt")
+            case.setUp()
+            try:
+                case.module = load(path)
+                case.module.LIB = case.scripts / "lib"
+                case.scripts.joinpath("lib/watch.py").write_text(mutant)
+                with self.assertRaisesRegex(AssertionError, "only the unread row pages"):
+                    case.test_owner_unread_is_the_inbox_receipt()
             finally:
                 case.doCleanups()
         with tempfile.TemporaryDirectory() as folder:

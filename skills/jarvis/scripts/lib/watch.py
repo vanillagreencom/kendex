@@ -19,6 +19,11 @@ import uuid
 
 LIB = Path(__file__).resolve().parent
 CAP = 60 * 1024
+# This loop's own batch directives carry this delivery-key prefix.
+BATCH_KEY = "jarvis-"
+# The owner's note fixes both numbers; no consumer has asked to tune them.
+OWNER_WAIT_SECS = 600
+UNANSWERED_EVERY_SECS = 300
 
 
 class Failure(RuntimeError):
@@ -75,6 +80,16 @@ def home_root(path):
     return Path(result.stdout.strip()).resolve() if result.returncode == 0 else path
 
 
+def owner_row(envelope):
+    """An owner message in the home inbox, read from lane-mail's events record.
+
+    The relay keys each owner send; this loop's own batches are not owner mail.
+    """
+    key = envelope.get("delivery_id")
+    return (envelope.get("from") == "owner" and envelope.get("mail_class") in ("owner-note", "resolution")
+            and isinstance(key, str) and bool(key) and not key.startswith(BATCH_KEY))
+
+
 def config(bash, root):
     return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root]))
 
@@ -103,8 +118,8 @@ def line_value(value, token=False, limit=None):
     return "".join(result)
 
 
-def event(kind, **fields):
-    return "EVENT " + kind + "".join(" %s=%s" % (key, line_value(value, True)) for key, value in fields.items()) + "\n"
+def event(header, **fields):
+    return "EVENT " + header + "".join(" %s=%s" % (key, line_value(value, True)) for key, value in fields.items()) + "\n"
 
 
 def atomic_json(path, value):
@@ -170,13 +185,17 @@ except Refusal as error:
     return "ok"
 
 
+def listed_roots(text):
+    """The folders `kendex project list` prints, skipping rows that carry a note."""
+    return [line.strip() for line in text.split("\n") if line.strip() and "(" not in line]
+
+
 def project_roots():
     try:
         roots = checked(["kendex", "project", "list"], operation="project-list")
     except Failure as error:
         raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
-    return [Path(line.strip()).expanduser().resolve() for line in roots.split("\n")
-            if line.strip() and "(" not in line]
+    return [Path(root).expanduser().resolve() for root in listed_roots(roots)]
 
 
 def presence_roots(permitted):
@@ -200,6 +219,27 @@ def pass_output(side, roots, events):
         size = end
     record = {"side": side, "roots": roots, "event_bytes": size, "origins": origins}
     return "".join(body) + "cursor: " + json.dumps(record, separators=(",", ":")) + "\n"
+
+
+def events_rows(output, operation):
+    lines = output.split("\n")
+    if not re.fullmatch(r"count=(\d+) first=.*", lines[0]):
+        raise Failure("mailbox-read", "protocol", "events-header-unread", operation)
+    return [json.loads(row) for row in lines[1:] if row]
+
+
+def owner_unread(bash, mail, root, unread, now, reported, events):
+    """Owner rows unread past the home cursor for OWNER_WAIT_SECS, each reported once."""
+    aged = {parts[1]: int(parts[0]) for parts in unread if now - int(parts[2]) >= OWNER_WAIT_SECS}
+    if not aged:
+        return []
+    rows = events_rows(checked([bash, mail, "events", "--item", "overseer", "--box", "to-lane",
+                                "--after", str(min(aged.values()) - 1)], root, operation="mailbox-events-owner"),
+                       "mailbox-events-owner")
+    owned = [row for row in rows if row.get("id") in aged and owner_row(row)]
+    events.extend(event("owner-unread", id=row["id"], at=row.get("at", ""))
+                  for row in owned if row["id"] not in reported)
+    return [row["id"] for row in owned]
 
 
 def mail_pass(bash, home, side, cursor):
@@ -264,6 +304,13 @@ def mail_pass(bash, home, side, cursor):
                 parts = row.split()
                 if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
                     unread.append(parts)
+            if side == "local" and root == home:
+                # Only the home inbox's receipts say whether owner mail was read.
+                owned = owner_unread(bash, mail, root, unread, now, prior.get("owner_unread", []), root_events)
+                if owned:
+                    next_root["owner_unread"] = owned
+                else:
+                    next_root.pop("owner_unread", None)
             if unread and now - int(unread[0][2]) >= 900:
                 oldest = unread[0][1]
                 if prior.get("unread") != oldest:
@@ -346,6 +393,8 @@ class Watch:
         self.save()
         self.next_presence = {}
         self.presence_pending = {}
+        self.next_unanswered = 0
+        self.unanswered_pending = None
 
     def save(self):
         if self.state != self._saved:
@@ -420,7 +469,7 @@ class Watch:
             if not selected:
                 raise RuntimeError("event-too-large limit=61440")
             identity = json.dumps([self.state["generation"], selected]).encode()
-            self.state["pending"] = {"key": "jarvis-" + hashlib.sha256(identity).hexdigest(),
+            self.state["pending"] = {"key": BATCH_KEY + hashlib.sha256(identity).hexdigest(),
                                      "body": body.decode(), "retained": retained, "end": end}
             # Selection is durable before the mailbox append. A retry uses
             # these bytes even if the event log gained complete new blocks.
@@ -577,7 +626,43 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         self.accept(outputs)
         self.batch(now)
 
+    def unanswered(self):
+        """One owner-unanswered check as (rows, None) or (None, failure record)."""
+        try:
+            output = checked([self.bash, LIB.parent / "owner-unanswered", "--root", self.home,
+                              "--older", str(OWNER_WAIT_SECS // 60)], self.home, operation="owner-unanswered")
+            return [json.loads(line) for line in output.split("\n") if line], None
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return None, failure("owner-unanswered", error).record
+
+    def accept_unanswered(self, rows, cause):
+        # A reminder for the session, never a page: owner-unread alone says mail is unread.
+        path = self.directory / "unanswered.json"
+        state = json.loads(path.read_text()) if path.exists() else {"reported": [], "failed": False}
+        blocks = []
+        if cause is not None:
+            if not state["failed"]:
+                blocks.append(event("owner-unanswered-failed", cause=cause["detail"]))
+            state["failed"] = True
+        else:
+            blocks.extend(event("owner-unanswered", id=row["id"], at=row["at"], kind=row["kind"]) +
+                          line_value(row.get("text", ""), limit=4000) + "\n"
+                          for row in rows if row["id"] not in state["reported"])
+            # Listed ids alone stay remembered; an answered row leaves the file.
+            state = {"reported": [row["id"] for row in rows], "failed": False}
+        if blocks:
+            self.append(pass_output("local", self.cursors.get("local", {}),
+                                    [(str(self.home), block) for block in blocks]))
+        atomic_json(path, state)
+
     def _poll(self, passes, pending, now):
+        work = self.unanswered_pending
+        if work is not None and work.done():
+            self.accept_unanswered(*work.result())
+            self.unanswered_pending = None
+        if self.unanswered_pending is None and now >= self.next_unanswered:
+            self.next_unanswered = now + UNANSWERED_EVERY_SECS
+            self.unanswered_pending = passes.submit(self.unanswered)
         for side in ("local", "host") if self.settings["JARVIS_CONTROL_HOST"] else ("local",):
             work = self.presence_pending.get(side)
             if work is not None and work.done():
@@ -655,7 +740,7 @@ def main():
             watch = Watch(home, args.bash, settings)
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
-            with ThreadPoolExecutor(max_workers=3) as passes:
+            with ThreadPoolExecutor(max_workers=4) as passes:
                 pending = passes.submit(watch.acquire, epoch())
                 while True:
                     pending = watch._poll(passes, pending, epoch())
