@@ -1056,6 +1056,24 @@ while IFS='~' read -r name mode setting want; do
   lead='Work continues.'
   case "$mode" in
     normal) ;;
+    tiered|emoji)
+      lead='*Overall:* The work helps people read their reports. They can find completed work, current problems and the choices that need their answer.'
+      rows=$'\n*What\x27s going well:* Reports reach the owner.\n\n*What\x27s not going well:* Some reports need clearer detail.\n\n----\n\n*Readings:*\n- Reports arrive on time.\n  - Today: all reports (<https://linear.app/vanillagreen/issue/KEN-42|KEN-42>).\n    - The morning report includes overnight work.\n  _Additional information: The owner can read every report._\n\n*Completed:*\n- Clearer reports (<https://linear.app/vanillagreen/issue/KEN-43|KEN-43>).\n\n*In-Progress:*\n- The next report is being written.\n\n*Blocked:*\n- One report needs its source.\n\n----\n\n*Waiting on you:*\n- Choose the report time.\n  _Additional information: The morning report needs this choice._\n\n*Headroom Remaining:*\nClaude: 40% (2 accounts)\nCodex: 27% (3 accounts)\n\n*Overseer Self-Analysis:*\n- Good: I read the reports before sending.\n- Bad: I sent one report late.\n  _I changed the reminder._\n\n----\n\n_Next report: 8 am_'
+      if [[ "$mode" == emoji ]]; then
+        rows="${rows//\*Readings:/\:book: *Readings:}"
+        rows="${rows//\*Completed:/\:large_green_square: *Completed:}"
+        rows="${rows//\*In-Progress:/\:large_yellow_square: *In-Progress:}"
+        rows="${rows//\*Blocked:/\:large_red_square: *Blocked:}"
+        rows="${rows//\*Waiting on you:/\:clock1: *Waiting on you:}"
+        rows="${rows//\*Headroom Remaining:/\:moneybag: *Headroom Remaining:}"
+        rows="${rows//\*Overseer Self-Analysis:/\:robot_face: *Overseer Self-Analysis:}"
+      fi ;;
+    sub-words|sub-id)
+      item='KEN-42'
+      if [[ "$mode" == sub-words ]]; then
+        item='one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone'
+      fi
+      rows+=$'\n  - '"$item" ;;
     bare-id) lead='KEN-42 is ready.' ;;
     bare-pr) lead='The change (#42) is ready.' ;;
     markdown-id) lead='[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.' ;;
@@ -1118,6 +1136,10 @@ github-link~github-link~~oversee-report: summary-shape=github-link line=1
 commit-link~commit-link~~oversee-report: summary-shape=github-link line=1
 waiting-on-you~missing~~oversee-report: summary-shape=waiting-on-you
 conforming~normal~~
+tiered-summary~tiered~~
+emoji-labels~emoji~~
+sub-bullet-words~sub-words~~oversee-report: summary-shape=layout line=14 words=21
+sub-bullet-id~sub-id~~oversee-report: summary-shape=bare-id line=14
 label-spacing~spacing~~
 words~words21~~oversee-report: summary-shape=layout line=4 words=21
 word-boundary~words20~~
@@ -1125,7 +1147,7 @@ two-links~links20~~
 line-cap~cap21~~oversee-report: summary-shape=layout item-lines=21 cap=20
 at-cap~cap20~~
 custom-cap~normal~ORCH_REPORT_SUMMARY_LINES=3~oversee-report: summary-shape=layout item-lines=4 cap=3
-figures~figures~ORCH_REPORT_SUMMARY_LINES=4~oversee-report: summary-shape=layout item-lines=6 cap=4
+figures~figures~ORCH_REPORT_SUMMARY_LINES=4~
 all-findings~all~ORCH_REPORT_SUMMARY_LINES=2~oversee-report: summary-shape=bare-id line=1;oversee-report: summary-shape=github-link line=1;oversee-report: summary-shape=layout line=4 words=21;oversee-report: summary-shape=layout line=5 words=21;oversee-report: summary-shape=bare-id line=6;oversee-report: summary-shape=github-link line=6;oversee-report: summary-shape=waiting-on-you;oversee-report: summary-shape=layout item-lines=3 cap=2
 ROWS
 for cap in '' 0 -1 text; do
