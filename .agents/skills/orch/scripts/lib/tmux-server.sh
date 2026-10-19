@@ -86,7 +86,10 @@ tmux_server_start() { # PANE SERVER
 # OL_JQ_DEFS (ol_unstarted), the rule's one owner, never an empty field read
 # here. SOCKET is the recorded socket used by overseer inspect. Only its
 # confirmed absence proves the recorded server ended; another socket's
-# absence cannot judge that server. TMUX_PANE_DETAIL holds a failed read's cause.
+# absence cannot judge that server. A server holding no session lists no pane,
+# so it is judged by its pid alone: SERVER in that state, such as a server
+# still exiting after its last session closed, reads as listing no PANE.
+# TMUX_PANE_DETAIL holds a failed read's cause.
 TMUX_PANE_DETAIL=""
 tmux_pane_live() { # SERVER START PANE [SOCKET]
   local comm panes table pid name err detail cleanup rc=0 read_rc=0 cleanup_rc=0 nl='
@@ -125,6 +128,14 @@ tmux_pane_live() { # SERVER START PANE [SOCKET]
     *) return 1 ;;
   esac
   panes="$(LC_ALL=C tmux list-panes -a -F '#{pid} #{start_time} #{pane_id}' 2>&1)" || rc=$?
+  # tmux refuses list-panes -a with exactly this message when the server holds
+  # no session (cmd-find.c, cmd_find_target). display-message needs no target
+  # there, so its #{pid} stands in for the list's server field below, and its
+  # own failure is read like the list's.
+  if [ "$rc" -ne 0 ] && [ "$panes" = "no current target" ]; then
+    rc=0
+    panes="$(LC_ALL=C tmux display-message -p '#{pid}' 2>&1)" || rc=$?
+  fi
   if [ "$rc" -ne 0 ]; then
     if [ -n "${4:-}" ]; then
       case "$panes" in

@@ -409,7 +409,8 @@ sys.exit(task.main())
     def session(self, verb, *args):
         result = subprocess.run([str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home), *args],
                                 env=self.env, capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        # A refusal answers on stdout alone: its state, reason and detail.
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def jarvis_live(self):
         return subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"],

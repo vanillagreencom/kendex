@@ -2,7 +2,8 @@
 # tmux_pane_live, lib/tmux-server.sh: whether a `<server pid> <pane id>` key,
 # bound to its server by that server's start time, names a pane that still
 # runs. A tmux stub on PATH answers `list-panes -a` from a file a row writes,
-# `<pid> <start> <pane>` rows, or fails where the row writes none, and
+# `<pid> <start> <pane>` rows, or fails where the row writes none or with the
+# refusal a row writes beside it, and
 # `display-message` the same way from its own file, for tmux_server_start: the
 # start a record binds its server by. A running
 # server is a copy of sleep named tmux, a pid reused by another program is
@@ -33,7 +34,7 @@ mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/tmux" <<STUB
 #!/bin/sh
 case "\$1" in
-  list-panes) out="$PANES" ;;
+  list-panes) [ ! -f "$PANES.refused" ] || { cat "$PANES.refused" >&2; exit 1; }; out="$PANES" ;;
   display-message) out="$DISPLAY_OUT" ;;
   *) exit 1 ;;
 esac
@@ -126,6 +127,24 @@ done <<EOF
 EOF
 assert_eq "$(live_rc "$LIB" "$LIVE" "$S" "%1" "$LIVE $S %11")" "1" "a pane id is matched whole, never as a prefix of another"
 
+# The answer where the server this shell reaches holds no session, so tmux
+# refuses the pane list with `no current target`, and display-message reads
+# that server's pid as ANSWER, `-` for no answer.
+sessionless_rc() { # LIB SERVER START ANSWER
+  printf 'no current target\n' > "$PANES.refused"
+  if [ "$4" = - ]; then rm -f -- "$DISPLAY_OUT"; else printf '%s\n' "$4" > "$DISPLAY_OUT"; fi
+  live_rc "$1" "$2" "$3" %9 - normal detail
+  rm -f -- "$PANES.refused"
+}
+while IFS='|' read -r want cause server start answer label; do
+  assert_eq "$(sessionless_rc "$LIB" "$server" "$start" "$answer")" "$want|$cause" "$label"
+done <<EOF
+1||$LIVE|$S|$LIVE|the recorded server holds no session, so it lists no pane
+1||$LIVE||$LIVE|with no start, the recorded server holds no session
+2||$LIVE|$S|4242|a server holding no session is not the recorded one
+2|pane-list-read|$LIVE|$S|-|a server holding no session whose pid cannot be read
+EOF
+
 # The start tmux_server_start prints for PANE on SERVER where the pane's
 # server answers ANSWER, `-` for no answer, and its status.
 start_of() { # LIB SERVER ANSWER
@@ -199,6 +218,10 @@ assert_eq "$(live_rc "$MUTANT_LIB" "$REUSED" "$S" "%9" "$OTHER")" "2" \
 mutant_lib other-reads-gone '  [ "${panes%% *}" = "$1" ] || return 2' '  :'
 assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "$S" "%9" "$OTHER")" "1" \
   "control: without the server test a pane on another server reads gone"
+
+mutant_lib sessionless-unread '[ "$panes" = "no current target" ]' 'false'
+assert_eq "$(sessionless_rc "$MUTANT_LIB" "$LIVE" "$S" "$LIVE")" "2|pane-list-read" \
+  "control: without the sessionless answer the recorded server holding no session reads unread"
 
 mutant_lib start-blind '    *"$nl$1 $2 $3$nl"*) return 0 ;;' '    *"$nl$1 "*" $3$nl"*) return 0 ;;'
 assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "$E" "%9" "$OWN")" "0" \
