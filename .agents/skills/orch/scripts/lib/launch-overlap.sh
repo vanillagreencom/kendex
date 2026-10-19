@@ -3,7 +3,10 @@
 # Owner: the file-overlap hold (../../workflows/oversee.md § 2). open-terminal
 # refuses a fleet launch on it and oversee-report names the held queue items
 # from it, so the report and the launch cannot disagree. Callers source
-# lib/lane-state.sh first: a lane record with no tracker takes its item key's.
+# lib/lane-state.sh first, whose lane_key_tracker names a lane record's
+# tracker where it records none and whose LANE_MERGED_JQ answers which pull
+# request is an item's own, and lib/lane-claims.sh, whose LANE_RUNNING_JQ
+# answers which lane records are in flight.
 #
 # Sourced, never run.
 
@@ -33,47 +36,75 @@ overlap_body() {
   esac
 }
 
-# overlap_prs REPO — OVERLAP_PRS: each open pull request's number, lowercased
-# head branch and changed files.
+# overlap_prs REPO — OVERLAP_PRS: each open same-repository pull request's
+# list row, with its changed files as `files`, a rename's previous path
+# included. A fork's pull request is someone else's work, never a holder. The
+# files come from the files endpoint, which carries no patch and serves up to
+# 3000 files; a list shorter than changedFiles is unread.
 overlap_prs() {
-  local list number head files prs="[]"
+  local list number pages
   [[ -z "$OVERLAP_PRS" ]] || return 0
   [[ -n "$1" ]] || { OVERLAP_UNREAD=repo; return 1; }
-  list="$(gh pr list --repo "$1" --state open --limit "$OVERLAP_PR_PAGE" --json number,headRefName \
-    | jq -r --argjson page "$OVERLAP_PR_PAGE" 'if length < $page then .[] | "\(.number)\t\(.headRefName)" else error("truncated") end')" \
+  list="$(gh pr list --repo "$1" --state open --limit "$OVERLAP_PR_PAGE" \
+      --json number,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,changedFiles,title,body \
+    | jq -c --argjson page "$OVERLAP_PR_PAGE" \
+      'if length < $page then [.[] | select(.isCrossRepository | not)] else error("truncated") end')" \
     || { OVERLAP_UNREAD="pr-list:$1"; return 1; }
-  while IFS=$'\t' read -r number head; do
-    [[ -n "$number" ]] || continue
-    files="$(gh pr diff "$number" --repo "$1" --name-only)" || { OVERLAP_UNREAD="pr:$number"; return 1; }
-    prs="$(jq -c --argjson n "$number" --arg head "$head" --arg files "$files" \
-      '. + [{number: $n, head: ($head | ascii_downcase), files: [$files | split("\n")[] | select(. != "")]}]' <<<"$prs")" \
+  for number in $(jq -r '.[].number' <<<"$list"); do
+    pages="$(gh api "repos/$1/pulls/$number/files?per_page=100" --paginate --slurp)" \
       || { OVERLAP_UNREAD="pr:$number"; return 1; }
-  done <<<"$list"
-  OVERLAP_PRS="$prs"
+    list="$(jq -c --argjson n "$number" --argjson pages "$pages" '
+      [$pages[][]] as $rows
+      | if all($rows[]; (.filename | type) == "string") then . else error("filename") end
+      | map(if .number != $n then .
+        elif ($rows | length) == .changedFiles then . + {files: [$rows[] | .filename, (.previous_filename // empty)]}
+        else error("partial") end)' <<<"$list")" \
+      || { OVERLAP_UNREAD="pr:$number"; return 1; }
+  done
+  OVERLAP_PRS="$list"
 }
 
 # overlap_touched DESCRIPTION DIR REPO — OVERLAP_SET: the touched set, as a
 # JSON array. Its Location paths, plus every file tracked in DIR's checkout
 # that names a path a body line deletes or renames, on the base and on each
-# open pull request's head. changelog.d/ paths never count.
+# open pull request's head. A path is a backticked token, less a `:N` or
+# `:N-M` line suffix; a deleted or renamed token counts only where it is
+# tracked on the base, so a symbol beside it adds nothing. A Location line
+# naming no path is unread. changelog.d/ paths never count.
 overlap_touched() {
-  local paths moved path rev base out rc
+  local paths moved="" token path rev base out rc
   paths="$(jq -Rsc --arg loc "$LOCATION_LINE_ERE" '
-    def ticks: [scan("`([^`[:space:]]+)`")[0]];
+    def ticks: [scan("`([^`[:space:]]+)`")[0] | sub(":[0-9]+(-[0-9]+)?$"; "")];
     gsub("\r\n"; "\n") | split("\n")
-    | {location: [.[] | select(test($loc)) | ticks[]],
-       moved: [.[] | select(test("\\b(delet|renam)(e|es|ed|ing)\\b"; "i")) | ticks[]]}' <<<"$1")" \
+    | {located: any(.[]; test($loc)),
+       location: [.[] | select(test($loc)) | ticks[]],
+       moved: [.[] | select(test("\\b(delet|renam)(e|es|ed|ing)\\b"; "i")) | ticks[]] | unique}' <<<"$1")" \
     || { OVERLAP_UNREAD=body; return 1; }
-  moved="$(jq -r '.moved[]' <<<"$paths")" || { OVERLAP_UNREAD=body; return 1; }
-  if [[ -n "$moved" ]]; then
+  jq -e '.located and .location == [] | not' <<<"$paths" >/dev/null || { OVERLAP_UNREAD=location; return 1; }
+  if jq -e '.moved != []' <<<"$paths" >/dev/null; then
     base="$("$OVERLAP_SCRIPTS/resolve-base-branch" "$2")" || { OVERLAP_UNREAD=base; return 1; }
+    git -C "$2" cat-file -e "origin/$base^{commit}" 2>/dev/null || { OVERLAP_UNREAD=base; return 1; }
+    while IFS= read -r token; do
+      [[ -n "${token%/}" ]] && git -C "$2" cat-file -e "origin/$base:${token%/}" 2>/dev/null || continue
+      moved+="$token"$'\n'
+    done < <(jq -r '.moved[]' <<<"$paths")
+  fi
+  if [[ -n "$moved" ]]; then
     overlap_prs "$3" || return 1
-    for rev in "origin/$base" $(jq -r '.[].number' <<<"$OVERLAP_PRS"); do
+    for rev in "origin/$base" $(jq -r '.[] | "\(.number):\(.headRefOid)"' <<<"$OVERLAP_PRS"); do
+      # A pull request head is read by the oid the list named, never through
+      # FETCH_HEAD, which any concurrent fetch in this checkout rewrites; a
+      # head that moved since the list is unread.
       if [[ "$rev" != origin/* ]]; then
-        GIT_TERMINAL_PROMPT=0 git -C "$2" fetch -q origin "pull/$rev/head" || { OVERLAP_UNREAD="pull/$rev/head"; return 1; }
-        rev=FETCH_HEAD
+        if ! git -C "$2" cat-file -e "${rev#*:}^{commit}" 2>/dev/null; then
+          GIT_TERMINAL_PROMPT=0 git -C "$2" fetch -q --no-write-fetch-head origin "pull/${rev%%:*}/head" \
+            && git -C "$2" cat-file -e "${rev#*:}^{commit}" 2>/dev/null \
+            || { OVERLAP_UNREAD="pull/${rev%%:*}/head"; return 1; }
+        fi
+        rev="${rev#*:}"
       fi
       while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
         rc=0
         out="$(git -C "$2" grep -l -F -e "$path" "$rev" --)" || rc=$?
         [[ "$rc" -le 1 ]] || { OVERLAP_UNREAD="grep:$rev"; return 1; }
@@ -87,34 +118,39 @@ overlap_touched() {
     || { OVERLAP_UNREAD=body; return 1; }
 }
 
-# overlap_judge KEY TRACKER REPO DIR LINEAR_CLI LANES IN_SCOPE — judges item
-# KEY against each other held lane in LANES (the fleet state's lanes[]) and
-# each open pull request but KEY's own branch. A lane's touched set is the one
-# its record keeps, else its item's, read now. IN_SCOPE lists the files the
-# brief names in scope. Returns 0 with OVERLAP_TOUCHED, 1 with OVERLAP_FILE and
-# OVERLAP_HOLDER (a lane item or #N), 2 with OVERLAP_UNREAD.
+# overlap_judge KEY TRACKER REPO DIR LINEAR_CLI LANES IN_SCOPE NULL_REPO —
+# judges item KEY of repository REPO, checked out at DIR, against each other
+# in-flight lane of REPO in LANES (the fleet state's lanes[]) and each open
+# pull request but KEY's own. A lane record's repo names its repository;
+# one with none is NULL_REPO's, the overseer's own, which is empty for a
+# connected launch, since a connected lane records its repository. Touched
+# paths are relative to each lane's own repository, so a lane of another one
+# holds nothing here. A lane's touched set is the one its record keeps, else
+# its item's, read now. IN_SCOPE lists the files the brief names in scope.
+# Returns 0 with OVERLAP_TOUCHED, 1 with OVERLAP_FILE and OVERLAP_HOLDER (a
+# lane item or #N), 2 with OVERLAP_UNREAD.
 overlap_judge() {
-  local key="$1" tracker="$2" repo="$3" dir="$4" linear="$5" lanes="$6" scope="$7"
-  local body holders records item lane_tracker lane_repo files row
+  local key="$1" tracker="$2" repo="$3" dir="$4" linear="$5" lanes="$6" scope="$7" null_repo="$8"
+  local body holders records item lane_tracker files row
   OVERLAP_TOUCHED=null OVERLAP_FILE="" OVERLAP_HOLDER="" OVERLAP_UNREAD=""
   body="$(overlap_body "$tracker" "$key" "$repo" "$linear")" || { OVERLAP_UNREAD="item:$key"; return 2; }
   overlap_touched "$body" "$dir" "$repo" || return 2
   OVERLAP_TOUCHED="$OVERLAP_SET"
   [[ "$OVERLAP_TOUCHED" != "[]" ]] || return 0
   overlap_prs "$repo" || return 2
-  holders="$(jq -c --arg head "$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')" \
-    '[.[] | select(.head != $head) | {holder: "#\(.number)", files}]' <<<"$OVERLAP_PRS")" \
+  holders="$(jq -c --arg key "$key" --arg owner "${repo%%/*}" "$LANE_MERGED_JQ"'
+    [.[] | select([lane_own($key; $owner; null)] == []) | {holder: "#\(.number)", files}]' <<<"$OVERLAP_PRS")" \
     || { OVERLAP_UNREAD=pr-list; return 2; }
-  records="$(jq -r --arg key "$key" '.[] | select(.item != $key and (.status | IN("running", "preparing", "parked")))
-    | [.item, (.tracker // ""), (.repo // ""), (.touched // null | tojson)] | join("\u001f")' <<<"$lanes")" \
+  records="$(jq -r --arg key "$key" --arg repo "$repo" --arg null_repo "$null_repo" "$LANE_RUNNING_JQ"'
+    .[] | select(in_flight and .item != $key and ((.repo // $null_repo) | ascii_downcase) == ($repo | ascii_downcase))
+    | [.item, (.tracker // ""), (.touched // null | tojson)] | join("\u001f")' <<<"$lanes")" \
     || { OVERLAP_UNREAD=state; return 2; }
   # A unit separator, not a tab: IFS whitespace would fold an empty field.
-  while IFS=$'\x1f' read -r item lane_tracker lane_repo files; do
+  while IFS=$'\x1f' read -r item lane_tracker files; do
     [[ -n "$item" ]] || continue
     if [[ "$files" == null ]]; then
       [[ -n "$lane_tracker" ]] || lane_tracker="$(lane_key_tracker "$item")"
-      body="$(overlap_body "$lane_tracker" "$item" "${lane_repo:-$repo}" "$linear")" \
-        || { OVERLAP_UNREAD="lane:$item"; return 2; }
+      body="$(overlap_body "$lane_tracker" "$item" "$repo" "$linear")" || { OVERLAP_UNREAD="lane:$item"; return 2; }
       overlap_touched "$body" "$dir" "$repo" || return 2
       files="$OVERLAP_SET"
     fi
@@ -126,7 +162,7 @@ overlap_judge() {
       or (($b | endswith("/")) and ($a | startswith($b)));
     first($holders[] as $h | $touched[] as $a | ($h.files[] | select(startswith("changelog.d/") | not)) as $b
       | select(meets($a; $b)) | ([$a, $b] | max_by(length)) as $f
-      | select(any($scope[]; . == $f or (endswith("/") and ($f | startswith(.)))) | not)
+      | select(any($scope[]; . as $s | $s == $f or (($s | endswith("/")) and ($f | startswith($s)))) | not)
       | "\($h.holder)\t\($f)") // empty')" || { OVERLAP_UNREAD=compare; return 2; }
   [[ -n "$row" ]] || return 0
   IFS=$'\t' read -r OVERLAP_HOLDER OVERLAP_FILE <<<"$row"

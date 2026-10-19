@@ -3946,7 +3946,7 @@ launch_blockers_gate() { # ITEM
 # lane record keeps for later launches to compare with.
 LAUNCH_TOUCHED=null
 launch_overlap_gate() { # ITEM KEY
-  local lanes rc=0
+  local lanes rc=0 null_repo=""
   LAUNCH_TOUCHED=null
   [[ "$FLEET" == true ]] || return 0
   launch_recorded "$2" || rc=$?
@@ -3955,8 +3955,11 @@ launch_overlap_gate() { # ITEM KEY
     ot_message launch-overlap-unread "item=$1" read=state >&2
     return 1
   fi
+  # A lane record with no repo is the overseer's own repository's, which a
+  # connected launch's repository never is.
+  [[ "$OVERSEER_BIND" == connected ]] || null_repo="$repo"
   rc=0
-  overlap_judge "$2" "$TRACKER" "$repo" "$CLAIM_ROOT" "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$lanes" "$IN_SCOPE" || rc=$?
+  overlap_judge "$2" "$TRACKER" "$repo" "$CLAIM_ROOT" "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$lanes" "$IN_SCOPE" "$null_repo" || rc=$?
   case "$rc" in
     0) LAUNCH_TOUCHED="$OVERLAP_TOUCHED" ;;
     1) ot_message launch-overlap "item=$1" "file=$OVERLAP_FILE" "holder=$OVERLAP_HOLDER" \

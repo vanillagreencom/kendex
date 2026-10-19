@@ -31,7 +31,8 @@ exec "$REAL_DATE" "\$@"
 EOF
 # gh: `pr list --state merged` answers merged.json narrowed to --head and
 # capped at --limit, as gh narrows it; `pr list --state open` open.json, and
-# `issue view N` issue-N.json and `pr diff N` pr-N.txt, each from the case
+# `issue view N` issue-N.json and `api repos/R/pulls/N/files` pr-N.json, a
+# pull request's files endpoint pages, each from the case
 # directory; a `--search
 # merged:>=STAMP` keeps what merged at or after STAMP. A file named
 # <base>.<SLUG>.json answers that --repo alone, SLUG being the repo with `/`
@@ -69,8 +70,8 @@ case "$verb" in
     # A merged:>= search keeps what merged at or after its stamp, as GitHub's does.
     jq -c --arg head "$head" --argjson limit "$limit" --arg since "${search#merged:>=}" \
       '[.[] | select($head == "" or .headRefName == $head) | select($since == "" or .mergedAt >= $since)] | .[:$limit]' "$src" ;;
-  "pr diff")
-    cat "$CASE/pr-$number.txt" ;;
+  api\ repos/*/pulls/*/files\?per_page=100)
+    number="${verb%/files*}"; cat "$CASE/pr-${number##*/}.json" ;;
   "issue view")
     src="$(pick "issue-$number")"
     [[ -f "$src" ]] || { echo "no issue $number" >&2; exit 1; }
