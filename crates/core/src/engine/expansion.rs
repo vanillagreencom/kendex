@@ -314,6 +314,7 @@ impl Expansion {
                 },
                 decl.rev.as_deref(),
             ),
+            Reason::RequiredBy { by } if by.kind == ItemKind::Agent => None,
             Reason::RequiredBy { by } => {
                 let Some(parent) = self.items.get(&(by.kind, by.name.clone())) else {
                     unreachable!("a dependency's parent is already expanded");

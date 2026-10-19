@@ -549,6 +549,7 @@ fn declared_rev(w: &World, name: &str) -> Option<String> {
 }
 
 mod added;
+mod assigned;
 mod batched_update;
 mod hook_requires;
 mod sets;
@@ -576,15 +577,15 @@ fn removing_a_plugin_by_kind_does_not_panic() {
 }
 
 /// A skill held at a revision requires the agent `scout`, which loads
-/// `linear`. The agent comes from the held revision, and so does a skill
-/// its assignment alone brings; a skill the scope holds for any other
+/// `linear`. The agent comes from the held revision; a skill its assignment
+/// alone brings follows its source. A skill the scope holds for any other
 /// reason, however deep, keeps its own revision and follows its source,
 /// with the declarations complete and no reason from scout.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision() {
     let rows: [(&str, &str, &str, bool); 3] = [
-        ("brought by scout alone", "", "Linear one.", true),
+        ("brought by scout alone", "", "Linear two.", true),
         (
             "declared, following its source",
             "\n[skills.linear]\nsource = \"cat\"\n",

@@ -1,0 +1,1 @@
+- Required agents' assigned skills follow their source unless another declaration or requirement holds them, so overlapping assignments install the same skill revisions in either agent order.

@@ -134,7 +134,8 @@ pub(super) fn expand(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) {
-    let every_item = DECLARING_KINDS
+    let seed = expansion.clone();
+    let every_item: VecDeque<Node> = DECLARING_KINDS
         .into_iter()
         .flat_map(|kind| {
             expansion
@@ -143,9 +144,10 @@ pub(super) fn expand(
                 .map(move |(name, _)| (kind, name.clone()))
         })
         .collect();
-    let left_out = walk(manifest, expansion, catalogs, state, every_item);
+    let left_out = walk(manifest, expansion, catalogs, state, every_item.clone());
     for (hook, tools) in left_out {
-        let withheld = withheld_past_pin(manifest, expansion, catalogs, state, &hook, &tools);
+        let withheld =
+            withheld_past_pin(manifest, &seed, catalogs, state, &every_item, &hook, &tools);
         state.withheld_past_pin.extend(
             withheld
                 .into_iter()
@@ -167,11 +169,9 @@ fn walk(
     state: &mut DesiredState,
     mut queue: VecDeque<Node>,
 ) -> BTreeMap<String, Vec<HarnessId>> {
-    // A hook's withholding is read off the companions below it, so one the
-    // queue did not start with is walked the first time it is required,
-    // grown or not: the walk past a pin starts from an expansion the first
-    // walk already filled, so every item below the hook's direct companions
-    // learns no new reason, and would otherwise go unread.
+    // A hard requirement must walk its companion at least once, even if
+    // its declaration already exists and gains no new reason or switch.
+    // In particular, a declared no-auto-skills agent now brings its skills.
     let mut seen: BTreeSet<Node> = queue.iter().cloned().collect();
     // An item is walked again whenever it learns a reason (another
     // requirer on a tool, or its switch turned on), and what it came to —
@@ -180,10 +180,10 @@ fn walk(
     // item is what stops a pair of items that require each other from
     // reporting everything twice.
     let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
-    // An agent's assignment edge brings only skills nothing else holds
-    // ([`held_elsewhere`]), so every agent waits until no hard edge is
-    // left to walk: a skill some item requires is held by then, however
-    // deep, and keeps its own revision.
+    // Nondefault hard chains start at declared or set skill/hook seeds.
+    // Drain those before assignments, which start new skills at the source
+    // default. Hard chains below an assignment therefore also use that
+    // default, unless they meet a declaration the scope already holds.
     let mut agents: VecDeque<Node> = VecDeque::new();
     while let Some((kind, parent)) = queue.pop_front().or_else(|| agents.pop_front()) {
         // A declaration no tool here can hold installs nothing, so it needs
@@ -204,7 +204,7 @@ fn walk(
         ) else {
             continue;
         };
-        let decl = derived_decl(&parent_decl);
+        let decl = derived_decl(kind, &parent_decl);
         for Dep {
             kind: dep_kind,
             name: dep,
@@ -292,18 +292,18 @@ fn walk(
 
 /// Of `tools`, each one `hook`'s pin alone keeps it off, those the walk
 /// withholds the hook from once that pin is dropped and the hook switched
-/// on: the walk run again over what the first one settled (`walked`),
-/// that one declaration taken without its list, from the hook down
-/// through what it requires and no further, since a hook's withholding
-/// is read off its companions alone. A companion that would not run
-/// there is read as the walk reads it, at any depth, a revision
-/// disagreement included. What that walk derives and finds is dropped;
-/// only the hook's withholding is read off it.
+/// on. Replay from the declaration/set seed so the hypothetical hook's
+/// hard closure precedes assignments. A completed walk can already hold an
+/// assignment subtree from another revision, whose obsolete descendants
+/// and disagreements would then affect this answer. Only the hypothetical
+/// hook's withholding survives the replay.
+#[allow(clippy::too_many_arguments)]
 fn withheld_past_pin(
     manifest: &Manifest,
-    walked: &Expansion,
+    seed: &Expansion,
     catalogs: &mut Catalogs,
     state: &DesiredState,
+    every_item: &VecDeque<Node>,
     hook: &str,
     tools: &[HarnessId],
 ) -> Vec<HarnessId> {
@@ -315,7 +315,7 @@ fn withheld_past_pin(
     decl.enabled = true;
     let decl = decl.clone();
     let asked = super::desired::target_harnesses(&decl, &unpinned, ItemKind::Hook, catalogs.scope);
-    let mut expansion = walked.clone();
+    let mut expansion = seed.clone();
     expansion.redeclare(ItemKind::Hook, hook, &decl, asked);
     // The resolutions already read are handed on, so the second walk
     // resolves no source the first one did. It judges no pin: only the
@@ -325,8 +325,13 @@ fn withheld_past_pin(
         pinned: state.pinned.clone(),
         ..DesiredState::default()
     };
-    let from_hook = VecDeque::from([(ItemKind::Hook, hook.to_owned())]);
-    walk(&unpinned, &mut expansion, catalogs, &mut scratch, from_hook);
+    walk(
+        &unpinned,
+        &mut expansion,
+        catalogs,
+        &mut scratch,
+        every_item.clone(),
+    );
     tools
         .iter()
         .copied()
@@ -343,18 +348,21 @@ fn withheld_past_pin(
 /// the walk to know which catalog the plan will write the companion from
 /// and by [`expand`] to add the derivation, so the two cannot read
 /// different catalogs.
-fn derived_decl(parent_decl: &ItemDecl) -> ItemDecl {
+fn derived_decl(parent_kind: ItemKind, parent_decl: &ItemDecl) -> ItemDecl {
     ItemDecl {
         source: parent_decl.source.clone(),
         harnesses: None,
         // A derived installation takes the scope's own default method:
         // its parent's is a choice about the parent.
         method: None,
-        // The revision is not: a pinned parent read its dependency list
-        // from the pinned catalog, and the dependency's bytes must come
-        // from the same place.
-        rev: parent_decl.rev.clone(),
-        // Nor is the switch: a companion that exists only because of its
+        // Assignments bring missing skills at the source default. Hard
+        // requirements read their bytes beside the parent's dependency list.
+        rev: if parent_kind == ItemKind::Agent {
+            None
+        } else {
+            parent_decl.rev.clone()
+        },
+        // A companion that exists only because of its
         // parent goes off with it, or switching a hook off would leave the
         // wrappers it brought in armed beside a judge that no longer runs.
         // `Expansion::add` turns it back on for any other requirer that is
@@ -990,7 +998,7 @@ fn wanted_by(
             };
             let planned = expansion
                 .decl_of(*dep_kind, &dep)
-                .unwrap_or_else(|| derived_decl(parent_decl));
+                .unwrap_or_else(|| derived_decl(kind, parent_decl));
             companions.push((*dep_kind, dep, (planned.source, planned.rev)));
         }
     }
@@ -1091,10 +1099,8 @@ fn agent_assignment(
 /// keeps its own declaration, revision and reasons, with no revision
 /// disagreement, finding or reason from this edge. Only its switch
 /// follows the agent: one brought in parked is switched on while the
-/// agent is on ([`walk`]), never one the person declared off. [`walk`]
-/// reads every agent after the hard edges, so which skills are held does
-/// not turn on walk order; [`wanted_by`] drops the findings on the skills
-/// this edge does bring.
+/// agent is on ([`walk`]), never one the person declared off.
+/// [`wanted_by`] drops the findings on the skills this edge does bring.
 fn held_elsewhere(expansion: &Expansion, agent: &str, skill: &str) -> bool {
     match expansion.derived_from(ItemKind::Skill, skill) {
         Some(Reason::RequiredBy { by }) => by.kind != ItemKind::Agent || by.name != agent,
