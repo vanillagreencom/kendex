@@ -1060,13 +1060,13 @@ while IFS='~' read -r name mode setting want; do
       lead='*Overall:* The work helps people read their reports. They can find completed work, current problems and the choices that need their answer.'
       rows=$'\n*What\x27s going well:* Reports reach the owner.\n\n*What\x27s not going well:* Some reports need clearer detail.\n\n----\n\n*Readings:*\n- Reports arrive on time.\n  - Today: all reports (<https://linear.app/vanillagreen/issue/KEN-42|KEN-42>).\n    - The morning report includes overnight work.\n  _Additional information: The owner can read every report._\n\n*Completed:*\n- Clearer reports (<https://linear.app/vanillagreen/issue/KEN-43|KEN-43>).\n\n*In-Progress:*\n- The next report is being written.\n\n*Blocked:*\n- One report needs its source.\n\n----\n\n*Waiting on you:*\n- Choose the report time.\n  _Additional information: The morning report needs this choice._\n\n*Headroom Remaining:*\nClaude: 40% (2 accounts)\nCodex: 27% (3 accounts)\n\n*Overseer Self-Analysis:*\n- Good: I read the reports before sending.\n- Bad: I sent one report late.\n  _I changed the reminder._\n\n----\n\n_Next report: 8 am_'
       if [[ "$mode" == emoji ]]; then
-        rows="${rows//\*Readings:/\:book: *Readings:}"
-        rows="${rows//\*Completed:/\:large_green_square: *Completed:}"
-        rows="${rows//\*In-Progress:/\:large_yellow_square: *In-Progress:}"
-        rows="${rows//\*Blocked:/\:large_red_square: *Blocked:}"
-        rows="${rows//\*Waiting on you:/\:clock1: *Waiting on you:}"
-        rows="${rows//\*Headroom Remaining:/\:moneybag: *Headroom Remaining:}"
-        rows="${rows//\*Overseer Self-Analysis:/\:robot_face: *Overseer Self-Analysis:}"
+        rows="${rows//\*Readings:/:book: *Readings:}"
+        rows="${rows//\*Completed:/:large_green_square: *Completed:}"
+        rows="${rows//\*In-Progress:/:large_yellow_square: *In-Progress:}"
+        rows="${rows//\*Blocked:/:large_red_square: *Blocked:}"
+        rows="${rows//\*Waiting on you:/:clock1: *Waiting on you:}"
+        rows="${rows//\*Headroom Remaining:/:moneybag: *Headroom Remaining:}"
+        rows="${rows//\*Overseer Self-Analysis:/:robot_face: *Overseer Self-Analysis:}"
       fi ;;
     sub-words|sub-id)
       item='KEN-42'
@@ -1106,6 +1106,19 @@ while IFS='~' read -r name mode setting want; do
   envs=()
   [[ -z "$setting" ]] || envs+=("$setting")
   summary_write shipped
+  if [[ "$name" == tiered-summary ]]; then
+    mutant="$(mutant_scripts shape-nested-cap/orch oversee-report)/oversee-report" || exit 1
+    ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/shape-nested-cap/github"
+    mutate_file "$mutant" 'if ($0 ~ /^[-*][[:space:]]+/) items++' 'if (1 || $0 ~ /^[-*][[:space:]]+/) items++'
+    if (FAIL=0; REPORT_UNDER_TEST="$mutant" summary_write nested-cap; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/shape-nested-cap.out"; then
+      fail "summary control nested-cap did not redden top-level cap coverage"
+    else
+      assert_file_contains "$TMP_ROOT/shape-nested-cap.out" '  FAIL  summary tiered-summary sends and prints each keyed finding' \
+        "summary coverage rejects counting nested bullets"
+      assert_file_contains "$TMP_ROOT/shape-nested-cap.out" 'oversee-report: summary-shape=layout item-lines=9 cap=7' \
+        "nested bullet control reaches the configured cap"
+    fi
+  fi
   if [[ "$name" == all-findings ]]; then
     # Restore refusal or truncate the finding list in private copies. The
     # same send-and-findings assertions must reject either regression.
@@ -1136,7 +1149,7 @@ github-link~github-link~~oversee-report: summary-shape=github-link line=1
 commit-link~commit-link~~oversee-report: summary-shape=github-link line=1
 waiting-on-you~missing~~oversee-report: summary-shape=waiting-on-you
 conforming~normal~~
-tiered-summary~tiered~~
+tiered-summary~tiered~ORCH_REPORT_SUMMARY_LINES=7~
 emoji-labels~emoji~~
 sub-bullet-words~sub-words~~oversee-report: summary-shape=layout line=14 words=21
 sub-bullet-id~sub-id~~oversee-report: summary-shape=bare-id line=14
