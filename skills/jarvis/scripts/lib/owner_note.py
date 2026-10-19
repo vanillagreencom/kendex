@@ -46,20 +46,16 @@ def listing(side, host):
 def send(bash, side, host, root, note):
     """The send's stdout; a timeout or a refusal of either side is a watch.Failure."""
     if side == "host":
-        result = watch.run(["ssh", host, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root)],
-                           data=note, operation="host-send")
-    else:
-        mail = Path(root) / LANE_MAIL
-        if not mail.is_file():
-            raise Refusal("mailbox-missing", root)
-        with tempfile.NamedTemporaryFile(mode="w", prefix="owner-note-", suffix=".md") as payload:
-            payload.write(note)
-            payload.flush()
-            result = watch.run([bash, mail, "send", "--item", "overseer", "--directive", "--file", payload.name],
-                               root, operation="local-send")
-    if result.returncode:
-        raise watch.child_failure(side + "-send", result)
-    return result.stdout
+        return watch.checked(["ssh", host, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root)],
+                             data=note, operation="host-send")
+    mail = Path(root) / LANE_MAIL
+    if not mail.is_file():
+        raise Refusal("mailbox-missing", root)
+    with tempfile.NamedTemporaryFile(mode="w", prefix="owner-note-", suffix=".md") as payload:
+        payload.write(note)
+        payload.flush()
+        return watch.checked([bash, mail, "send", "--item", "overseer", "--directive", "--file", payload.name],
+                             root, operation="local-send")
 
 
 def deliver(bash, repo, note, host):
@@ -87,8 +83,8 @@ def main():
         "when it is set, then on this machine."), epilog=(
         "A refusal prints `owner-note: KEY=VALUE` and its cause on stderr and exits 2. Keys: file-unreadable, "
         "settings-unreadable, project-list-failed (VALUE is the side), repo-ambiguous, mailbox-missing "
-        "(VALUE is the root), send-failed (VALUE is the side), no-overseer (neither side's lane-mail "
-        "has an overseer for REPO)."))
+        "(VALUE is the root), send-failed (VALUE is the side), no-overseer (no side lists a root named REPO whose "
+        "lane-mail has an overseer)."))
     parser.add_argument("--bash", required=True, help=argparse.SUPPRESS)
     parser.add_argument("repo")
     parser.add_argument("file", type=Path)

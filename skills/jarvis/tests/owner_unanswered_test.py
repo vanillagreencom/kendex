@@ -35,12 +35,15 @@ class OwnerUnanswered(MailWorld):
         self.clock.joinpath("date").write_text(
             '#!/bin/sh\ncase "$*" in *+%s*) echo "$CLOCK";; *) exec ' + real + ' "$@";; esac\n')
         self.clock.joinpath("date").chmod(0o755)
+        # One now for every send and check, so a row's age is its offset and
+        # the --older bounds hold however long the runner takes.
+        self.base = int(time.time())
 
     def owner(self, text, *options):
         return self.mail(self.home, "send", text, *options)
 
     def clocked(self, offset):
-        return dict(self.env, PATH=str(self.clock) + ":" + self.env["PATH"], CLOCK=str(int(time.time()) + offset))
+        return dict(self.env, PATH=str(self.clock) + ":" + self.env["PATH"], CLOCK=str(self.base + offset))
 
     def check(self, *args, offset=0):
         result = self.command([BASH, self.scripts / "owner-unanswered", *args], self.home, self.clocked(offset))
@@ -92,8 +95,9 @@ class OwnerUnanswered(MailWorld):
         self.owner("watch-loop batch", "--directive", "--delivery-id", "jarvis-0123abcd")
         at(-100)
         self.owner("unanswered", "--directive", "--delivery-id", next(key))
-        self.env = plain
+        at(0)
         request = self.owner("request handled without no reply", "--directive", "--delivery-id", next(key))
+        self.env = plain
         state = self.home / "state"
         (state / "archive/2026").mkdir(parents=True)
         (state / "handoff.md").write_text("## Progress log\n\n" + record("1", "Read " + logged, "apply it") +
@@ -105,8 +109,8 @@ class OwnerUnanswered(MailWorld):
 
     def test_table(self):
         expected = self.world()
-        past = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        past, future = (datetime.datetime.fromtimestamp(self.base + hours * 3600, datetime.timezone.utc)
+                        .strftime("%Y-%m-%dT%H:%M:%SZ") for hours in (-1, 1))
         runs = (("listed", ["--older", "10", "--since", past], 11 * 60, expected),
                 ("younger than --older", ["--older", "11"], 0, []),
                 ("older than --older", ["--older", "1"], 0, expected[:-1]),

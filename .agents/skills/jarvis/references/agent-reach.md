@@ -7,7 +7,7 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 - The repository mailbox is the one route to another repository's agent, with a fleet or without one. A repository is reachable when the [mailbox](../../mailbox/SKILL.md) package is installed there; [SKILL.md § Reachable repositories](../SKILL.md#reachable-repositories) judges which are.
 - `[LANE_MAIL]` below is the repository's own `.agents/skills/mailbox/scripts/lane-mail`, run with the repository's main checkout as the working directory. Do not use the Jarvis home's `lane-mail` or its `peer send`: a peer send reaches the agent as another repository's note, not as the user's.
 - Take repositories only from `kendex project list`. Each line is a folder, then optional notes in parentheses: `(folder not found)`, `(not a folder)`, `(folder could not be read)` or `(worktree of [MAIN])`. A worktree line stands for `[MAIN]`, where its mailbox sits.
-- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one.
+- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one. The one exception is a directive to a repository on the control host through `.agents/skills/jarvis/scripts/owner-note REPO FILE`, which makes the send below on that host; `owner-note --help` lists its refusal keys.
 - `lane-mail --help` defines every verb, envelope, receipt and refusal key used here.
 
 ## Read
@@ -26,7 +26,7 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 
 1. Write the text to a file. Text crosses a file, never a command argument.
 2. End the text with the reply form: `lane-mail notice --item overseer --to owner --ref [DIRECTIVE_ID] --file [PATH]`, `[DIRECTIVE_ID]` being the id of the directive the agent receives.
-3. The directive carries the user's authority, so [decisions.md § Authority](decisions.md#authority) applies: show the user the exact text and the repository, and send only after the user agrees.
+3. The directive carries the user's authority, so [decisions.md § Authority](decisions.md#authority) applies: show the user the exact text and the repository, and send only after the user agrees. Through `owner-note`, the sent text is FILE, a blank line, then the verify footer: show the user that full text, and end FILE, not the sent text, with step 2's reply form.
 4. Run `[LANE_MAIL] send --item overseer --directive --file [PATH]`.
 5. The send is made only when stdout printed `lane-mail: sent item=overseer id=[DIRECTIVE_ID]`. Without that receipt nothing was sent. The receipt says the directive landed, not that the agent read it; the agent's notice with `ref` `[DIRECTIVE_ID]` is its answer.
 
@@ -40,7 +40,7 @@ Report each refusal in plain words. Do not retry it or work around it.
 
 | Key | Meaning | Next step |
 |---|---|---|
-| `overseer-absent` | No session is registered to read that repository's mail; nothing was sent. A second line saying orch is not installed means the repository has mailbox alone. | Without orch, offer the [directive install](#install). With orch, say that the agent's session must run orch's `oversee register` in its own tmux pane. |
+| `overseer-absent`, `no-overseer` | No session is registered to read that repository's mail; nothing was sent. `owner-note` refuses `no-overseer` when no machine it tried lists that repository with one. A second line saying orch is not installed means the repository has mailbox alone. | Without orch, offer the [directive install](#install). With orch, say that the agent's session must run orch's `oversee register` in its own tmux pane. |
 | `overseer-unreadable` | The repository's fleet record could not be read; nothing was sent. | Report the cause `lane-mail` printed. |
 | `command-missing`, `file-unreadable` | A command `lane-mail` needs is absent, or the message file is unreadable. | Name the command or file. |
 

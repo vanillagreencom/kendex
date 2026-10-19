@@ -62,9 +62,9 @@ def run(args, cwd=None, data=None, operation=None):
         raise failure(operation or Path(args[0]).name, error) from error
 
 
-def checked(args, cwd=None, operation=None):
+def checked(args, cwd=None, data=None, operation=None):
     operation = operation or Path(args[0]).name
-    result = run(args, cwd, operation=operation)
+    result = run(args, cwd, data, operation)
     if result.returncode:
         raise child_failure(operation, result)
     return result.stdout
