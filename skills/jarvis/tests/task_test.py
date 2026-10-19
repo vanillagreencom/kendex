@@ -15,7 +15,7 @@ from fixtures.harness import native_launcher
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
-REAL_KENDEX = shutil.which("kendex")
+REAL_KENDEX = os.environ.get("JARVIS_TEST_REAL_KENDEX", shutil.which("kendex"))
 
 
 class TaskContract(unittest.TestCase):
@@ -61,7 +61,8 @@ class TaskContract(unittest.TestCase):
                         XDG_STATE_HOME=str(self.root / "state"), CLAUDECODE="parent",
                         CLAUDE_CODE_SESSION_ID="parent", CODEX_THREAD_ID="parent",
                         PI_SUBAGENT_PARENT_SESSION_ID="parent", JARVIS_RECORD="parent",
-                        JARVIS_GENERATION="999", JARVIS_BROWSER_PROFILE="/parent/browser")
+                        JARVIS_GENERATION="999", JARVIS_BROWSER_PROFILE="/parent/browser",
+                        JARVIS_TEST_REAL_KENDEX=REAL_KENDEX or "")
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record_path = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
         self.label = "jarvis-" + key[:32]
@@ -102,13 +103,15 @@ class TaskContract(unittest.TestCase):
     def saved_tasks(self):
         return [json.loads(path.read_text()) for path in self.record_path.parent.joinpath("tasks").glob("*.json")]
 
-    def acknowledgement(self, record):
+    def acknowledgement(self, record, stage=None):
         path = self.home / ("ack-" + record["id"] + ".json")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if path.exists():
                 try:
-                    return json.loads(path.read_text())
+                    observed = json.loads(path.read_text())
+                    if stage is None or observed.get("stage") == stage:
+                        return observed
                 except json.JSONDecodeError:
                     pass
             time.sleep(0.02)
@@ -343,6 +346,104 @@ sys.exit(task.main())
         observed = self.acknowledgement(record)
         self.assertEqual(observed["argv"][observed["argv"].index("--model") + 1], "haiku")
 
+    def test_terminal_interrupt_preserves_native_lifetime(self):
+        native = self.bin / "pi"
+        native.write_text("#!" + sys.executable + "\n" + '''import json,os,signal,sys,termios,tty
+from pathlib import Path
+path=Path('ack-'+os.environ['JARVIS_TASK_ID']+'.json')
+def ack(stage):
+    path.write_text(json.dumps({'stage':stage,'ignored':signal.getsignal(signal.SIGINT)==signal.SIG_IGN}))
+ack('started')
+if Path('suspend-native').exists():
+    saved=termios.tcgetattr(0)
+    tty.setraw(0)
+    ack('raw')
+    assert os.read(0,1)==b'\\x1a'
+    signal.signal(signal.SIGINT,lambda *_: ack('interrupt'))
+    signal.signal(signal.SIGQUIT,lambda *_: ack('quit'))
+    termios.tcsetattr(0,termios.TCSANOW,saved)
+    ack('cooked')
+    assert sys.stdin.readline().strip()=='finish'
+    sys.exit(23)
+while True: signal.pause()
+''')
+        native.chmod(0o755)
+        for suspended in (False, True):
+            with self.subTest(suspended=suspended):
+                if suspended:
+                    self.home.joinpath("suspend-native").touch()
+                record = self.launch("pi", str(suspended))
+                observed = self.acknowledgement(record, "raw" if suspended else "started")
+                self.assertFalse(observed["ignored"])
+                pane = record["terminal"]["pane"]
+                if suspended:
+                    self.tmux("send-keys", "-t", pane, "C-z")
+                    self.acknowledgement(record, "cooked")
+                self.tmux("send-keys", "-t", pane, "C-c")
+                if suspended:
+                    self.acknowledgement(record, "interrupt")
+                    self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip(), "0")
+                    self.tmux("send-keys", "-t", pane, "C-\\")
+                    self.acknowledgement(record, "quit")
+                    self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip(), "0")
+                    self.tmux("send-keys", "-t", pane, "finish", "Enter")
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    dead = self.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip()
+                    if dead == "1":
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(dead, "1")
+                if suspended:
+                    self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_dead_status}").stdout.strip(), "23")
+
+    def test_controller_teardown_refusals(self):
+        original = json.loads(self.record_path.read_text())
+        self.tmux("new-session", "-d", "-s", "unrelated", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
+        for verb, live in (("stop", False), ("start", False), ("stop", True)):
+            with self.subTest(verb=verb, live=live):
+                saved = dict(original, terminal=self.terminal, pending={"generation": 1})
+                self.record_path.write_text(json.dumps(saved))
+                task = self.launch("codex", verb + str(live), model="gpt-5")
+                self.acknowledgement(task)
+                if not live:
+                    self.tmux("kill-window", "-t", self.terminal["window"])
+                wrapper = self.bin / "tmux"
+                wrapper.write_text("#!" + sys.executable + "\nimport os,sys\n"
+                    + "if '#{@jarvis-task}' in sys.argv: sys.exit(2)\n"
+                    + "os.execv(" + repr(shutil.which("tmux")) + ", ['tmux',*sys.argv[1:]])\n")
+                wrapper.chmod(0o755)
+                args = [str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home)]
+                if verb == "start":
+                    args += ["--harness", "claude", "--account", str(self.account), "--mode", "new", "--origin", "manual"]
+                result = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0 if live else 1, result.stderr)
+                self.assertTrue(result.stdout, result.stderr)
+                answer = json.loads(result.stdout)
+                self.assertEqual((answer["state"], answer["reason"]),
+                                 ("stopping", "stop-requested") if live else ("failed", "launch-failed"))
+                if live:
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        repaired = json.loads(self.record_path.read_text())
+                        if "worker" not in repaired:
+                            break
+                        time.sleep(0.02)
+                    self.assertNotIn("worker", repaired)
+                    self.assertEqual(repaired["state"], "running")
+                    self.tmux("has-session", "-t", "=jarvis")
+                wrapper.unlink()
+                ended = self.call("status", "--id", task["id"])
+                self.assertEqual(ended["completion"]["outcome"], "failed")
+                self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
+                self.tmux("has-session", "-t", "=unrelated")
+                if not live:
+                    created = self.tmux("new-session", "-d", "-s", "jarvis", "-P", "-F", "#{window_id}\t#{pane_id}",
+                                        self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
+                    window, pane = created.stdout.strip().split("\t")
+                    self.terminal = dict(self.terminal, window=window, pane=pane)
+                    self.tmux("set-option", "-p", "-t", pane, "@jarvis-generation", "1")
+
     def test_browser_profile_control(self):
         path = self.skills / "jarvis/scripts/lib/task.py"
         source = path.read_text()
@@ -375,9 +476,17 @@ sys.exit(task.main())
             ("controller", "session.py", (("if not record or not record.get(\"terminal\"):\n            return\n        paths =",
                 "if True or not record or not record.get(\"terminal\"):\n            return\n        paths ="),),
              "test_controller_exit_recovers_task_windows"),
+            ("refusal", "session.py", (("sys.exit(session.main())", "sys.exit(main())"),),
+             "test_controller_teardown_refusals"),
+            ("interrupt", "task.py", ((
+                "if signal.getsignal(signum) != signal.SIG_IGN:",
+                "if False and signal.getsignal(signum) != signal.SIG_IGN:"),),
+             "test_terminal_interrupt_preserves_native_lifetime"),
         )
         for name, filename, edits, case in rows:
             with self.subTest(control=name):
+                if name == "picker" and not REAL_KENDEX:
+                    self.skipTest("picker: kendex executable unavailable")
                 with tempfile.TemporaryDirectory() as allocation:
                     root = Path(allocation).resolve()
                     for package in ("jarvis", "orch", "mailbox"):
@@ -385,6 +494,12 @@ sys.exit(task.main())
                     path = root / "jarvis/scripts/lib" / filename
                     self.assertFalse(path.is_symlink())
                     source = path.read_text()
+                    env = dict(self.env, JARVIS_TEST_SKILLS=str(root))
+                    if name == "picker":
+                        clean = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()),
+                            "TaskContract." + case], env=env, capture_output=True, text=True, timeout=120)
+                        self.assertEqual(clean.returncode, 0, clean.stderr)
+                        self.assertNotIn("skipped", clean.stderr)
                     for old, replacement in edits:
                         self.assertEqual(source.count(old), 1)
                         changed = source.replace(old, replacement)
@@ -392,7 +507,7 @@ sys.exit(task.main())
                         source = changed
                     path.write_text(source)
                     result = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()),
-                        "TaskContract." + case], env=dict(self.env, JARVIS_TEST_SKILLS=str(root)),
+                        "TaskContract." + case], env=env,
                         capture_output=True, text=True, timeout=120)
                     self.assertNotEqual(result.returncode, 0, name)
                     self.assertIn("FAIL: " + case, result.stderr)

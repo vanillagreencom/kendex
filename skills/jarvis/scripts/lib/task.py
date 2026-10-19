@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,11 @@ from session import BASH, CALL_SECONDS, Refusal, Session
 
 def native(line, receipt):
     """Observe early termination of the shared command before acknowledging it."""
+    # The foreground CLI owns terminal interrupts. Caught handlers reset on
+    # exec, unlike SIG_IGN, so the child keeps its native dispositions.
+    for signum in (signal.SIGINT, signal.SIGQUIT):
+        if signal.getsignal(signum) != signal.SIG_IGN:
+            signal.signal(signum, lambda _signum, _frame: None)
     child = subprocess.Popen([BASH, "--noprofile", "--norc", "-c", line])
     try:
         code = child.wait(timeout=0.5)
@@ -133,8 +139,8 @@ class Task(Session):
                               cleanup={"state": "pending"})
                 if startup and startup["state"] == "exited":
                     record["failure"]["exit"] = startup["exit"]
-                # Rollback gets the call's remaining headroom, independent of
-                # the exhausted launch budget. Unknown ownership keeps scratch.
+                # Rollback owns a separate cleanup budget. Unknown ownership
+                # keeps scratch.
                 self.deadline = time.monotonic() + 3
                 try:
                     if recorded:

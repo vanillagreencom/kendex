@@ -75,21 +75,21 @@ class Session:
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
-        self.operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
+        operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
         result = subprocess.run(argv, input=input, text=True, capture_output=True,
                                 cwd=self.home, env=env or self.env, timeout=remaining)
         if check and result.returncode:
-            print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
+            print("jarvis-session: operation=" + operation + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, file=sys.stderr)
             raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
         return result
 
     def failure_log(self, key, failure):
         frame = next(frame for frame in reversed(traceback.extract_tb(failure.__traceback__)) if frame.filename == __file__)
-        operation = self.operation if frame.name == "run" else frame.line or frame.name
+        operation = frame.line or frame.name
         print(f"jarvis-session: {key} operation={json.dumps(operation)} cause={type(failure).__name__}"
               + (f" errno={errno.errorcode.get(failure.errno, failure.errno)}" if isinstance(failure, OSError) else "")
               + " message=" + json.dumps(str(failure)), file=sys.stderr)
@@ -234,7 +234,7 @@ class Session:
         log = self.path.parent / "session.log"
         with log.open("a") as stream:
             child = subprocess.Popen([sys.executable, "-B", "-c",
-                                      "import runpy, sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
+                                      "import sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); from session import Session; Session(sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                      env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
@@ -598,7 +598,7 @@ class Session:
                         raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
-                runner = [sys.executable, "-B", "-c", "import runpy,sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                runner = [sys.executable, "-B", "-c", "import sys; from pathlib import Path; sys.path.insert(0,str(Path(sys.argv[1]).parent)); from session import Session; sys.exit(Session(sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
                 created = self.tmux(*creation, "-c", self.home,
                                     "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *runner)
                 socket, server, started, window, pane = created.stdout.strip().split("\t")
@@ -802,4 +802,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Task imports this owner by name; public calls use that same instance.
+    import session
+    sys.exit(session.main())
