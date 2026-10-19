@@ -521,7 +521,8 @@ report_path() {
 report_path --succession
 SUCCESSION_GLOB="$REPORT_GLOB"
 report_path
-REPORT_DIR="${REPORT_PATH%/*}"
+# lane-mail records attachments with their physically resolved parent.
+REPORT_DIR="$(cd -- "${REPORT_PATH%/*}" && pwd -P)" || refuse report-path plain
 MARKER=""
 # lane-mail events is the existing record of notices actually sent. Match
 # report attachments, not other owner notices, and use the file's list-read

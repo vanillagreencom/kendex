@@ -982,17 +982,24 @@ RECEIPT_MUTANT="$(mutant_scripts receipt/orch oversee-report)/oversee-report" ||
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/receipt/github"
 mutate_file "$RECEIPT_MUTANT" 'message report-written "$TARGET notice-id=${NOTICE_ID%% *}"' \
   'message report-written "$TARGET"'
-for mode in live unguarded missing-id; do
-  new_case "notice_retry_$mode"
+PATH_MUTANT="$(mutant_scripts report-path/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/report-path/github"
+mutate_file "$PATH_MUTANT" 'REPORT_DIR="$(cd -- "${REPORT_PATH%/*}" && pwd -P)"' \
+  'REPORT_DIR="${REPORT_PATH%/*}"'
+while IFS='|' read -r mode directory; do
+  new_case "notice_retry_${mode}_${directory//\//_}"
   git -C "$CASE" init -q
   git -C "$CASE" config gc.auto 0
   git -C "$CASE" config maintenance.auto false
+  mkdir -p "$CASE/progress-reports" "$CASE/reports"
+  ln -s progress-reports "$CASE/report-link"
   fleet ''
   printf 'Work continues.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
   MAIL_UNDER_TEST="$TEST_DIR/../../mailbox/scripts/lane-mail"; REPORT_UNDER_TEST="$REPORT_BIN"
   [[ "$mode" != unguarded ]] || MAIL_UNDER_TEST="$NOTICE_MUTANT"
   [[ "$mode" != missing-id ]] || REPORT_UNDER_TEST="$RECEIPT_MUTANT"
-  run OVERSEE_REPORT_LANE_MAIL="$MAIL_UNDER_TEST" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  [[ "$mode" != unnormalized ]] || REPORT_UNDER_TEST="$PATH_MUTANT"
+  run ORCH_PROGRESS_REPORT_DIR="$directory" OVERSEE_REPORT_LANE_MAIL="$MAIL_UNDER_TEST" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
   MAILBOX="$CASE/tmp/lane-mail/overseer/to-overseer.jsonl"
   ID="$(jq -r '.id' < "$MAILBOX")" || exit 1
   FILE="$(jq -r '.attach' < "$MAILBOX")" || exit 1
@@ -1004,13 +1011,33 @@ for mode in live unguarded missing-id; do
   CONTROL_RC=0
   CONTROL_OUT="$(
     FAIL=0
-    assert_eq "$WRITE_RESULT" "0|oversee-report: report-written=$FILE notice-id=$ID|$(cat "$FILE")" "write names its sent notice"
+    assert_eq "$WRITE_RESULT" "0|oversee-report: report-written=$CASE/$directory/${FILE##*/} notice-id=$ID|$(cat "$FILE")" "write names its sent notice"
     assert_eq "$RC|$(first_err)|$(jq -rs 'length' < "$MAILBOX")" "2|lane-mail: duplicate id=$ID|1" "retry refuses before appending"
+    # workflow-state emits the configured spelling; the real notice above
+    # records its physical attachment. Both fleet and session readers use it.
+    for caller in fleet session; do
+      session_args=(--state "$CASE/state.json" --repo owner/repo)
+      [[ "$caller" != session ]] || session_args=(--session-start "$((NOW - 86400))")
+      echo "$NOW" > "$CASE/now"
+      run ORCH_PROGRESS_REPORT_DIR="$directory" OVERSEE_REPORT_LANE_MAIL="$MAIL_UNDER_TEST" -- due ${session_args[@]+"${session_args[@]}"}
+      assert_eq "$RC|$OUT" '0|' "$caller: the sent attachment advances cadence for $directory"
+      echo "$((NOW + 7200))" > "$CASE/now"
+      run ORCH_PROGRESS_REPORT_DIR="$directory" OVERSEE_REPORT_LANE_MAIL="$MAIL_UNDER_TEST" -- due ${session_args[@]+"${session_args[@]}"}
+      assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$(at 0)" "$caller: the next checkpoint retains the collection cutoff for $directory"
+    done
     [[ "$FAIL" -eq 0 ]]
   )" || CONTROL_RC=$?
   WANT=1; [[ "$mode" != live ]] || WANT=0
   assert_eq "$CONTROL_RC" "$WANT" "$mode: the same receipt fixture passes live and turns red with the planted defect" "$CASE/err"
-done
+done <<'ROWS'
+live|progress-reports
+live|./progress-reports
+live|reports/../progress-reports
+live|report-link
+unguarded|progress-reports
+missing-id|progress-reports
+unnormalized|./progress-reports
+ROWS
 REPORT_UNDER_TEST="$REPORT_BIN"
 
 echo "=== write: a summary the owner already holds ==="
