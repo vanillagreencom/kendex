@@ -19,11 +19,18 @@
 #   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #   bash skills/orch/tests/run-all.sh --local --suite FILE # guard's direct run
+#   bash skills/orch/tests/run-all.sh --checkout-kendex < PATHS # release leg's suites
 #
 # --local gives each suite its CI leg's kendex environment. CI installs the
 # checkout build only on selected Linux legs; a local login PATH can contain
 # an unrelated installed kendex. Local suites retain other tools, but receive
 # only the checkout build or no kendex, as tools/ci-job-set reports.
+#
+# --checkout-kendex reads suite paths, relative to the repository root, on
+# stdin and prints those tools/ci-job-set gives a checkout kendex on Linux,
+# orch's owning shard included. It runs no suite. tools/guard's
+# --released-packages leg runs only these against a released kendex: a suite
+# no CI leg gives a kendex cannot depend on one.
 #
 # RUN_ALL_NATIVE_CONTRACTS, when set, names the repository's eligibility
 # command. It reads discovered suite paths and returns the native subset.
@@ -230,6 +237,12 @@ if [ "${1-}" = --local ]; then
     shift 2
   fi
 fi
+CHECKOUT_KENDEX_QUERY=0
+if [ "${1-}" = --checkout-kendex ]; then
+  [ "$#" -eq 1 ] || { echo 'run-all.sh: checkout-kendex-arguments' >&2; exit 1; }
+  CHECKOUT_KENDEX_QUERY=1
+  shift
+fi
 
 # CI supplies its review policy. Local batteries have no timing policy.
 REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
@@ -322,10 +335,19 @@ trap 'rm -rf -- "$OUT_DIR"' EXIT
 SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd -P)" || exit 1
 CLEAN_PATH=""
 CHECKOUT_PATH=""
+# The kendex tools/ci-job-set gives the suite at PATH, relative to SUITE_ROOT,
+# on OS: checkout or none. An orch suite's shard is shard_of's.
+suite_kendex_policy() { # OS PATH
+  local entry shard=""
+  case "$2" in
+    skills/orch/tests/*) entry=${2##*/}; shard_of "${entry%.sh}"; shard=$OWNING_SHARD ;;
+  esac
+  "$SUITE_ROOT/tools/ci-job-set" --suite-kendex "$1" "$2" "$shard"
+}
 suite_environment() { # FILE: set SUITE_PATH before either launch route
   SUITE_PATH=$PATH
   [ "$LOCAL_SUITES" -eq 1 ] || return 0
-  local dir entry mirror policy os shard="" file=$1
+  local dir entry mirror policy os file=$1
   if [ -z "$CLEAN_PATH" ]; then
     local dirs=()
     IFS=: read -r -a dirs <<<"$PATH:__end__"
@@ -349,13 +371,10 @@ suite_environment() { # FILE: set SUITE_PATH before either launch route
   fi
   dir="$(cd -- "$(dirname -- "$file")" && pwd -P)" || return 1
   file="$dir/${file##*/}"
-  case "$file" in
-    "$SUITE_ROOT/skills/orch/tests/"*) entry=${file##*/}; shard_of "${entry%.sh}"; shard=$OWNING_SHARD ;;
-  esac
   os=${RUNNER_OS:-}
   if [ -z "$os" ]; then os="$(uname -s)" || return 1; fi
   [ "$os" != Darwin ] || os=macOS
-  policy="$("$SUITE_ROOT/tools/ci-job-set" --suite-kendex "$os" "${file#"$SUITE_ROOT/"}" "$shard")" || return 1
+  policy="$(suite_kendex_policy "$os" "${file#"$SUITE_ROOT/"}")" || return 1
   case "$policy" in
     checkout)
       if [ -z "$CHECKOUT_PATH" ]; then
@@ -373,6 +392,20 @@ suite_environment() { # FILE: set SUITE_PATH before either launch route
     *) echo "run-all.sh: suite-kendex=$policy" >&2; return 1 ;;
   esac
 }
+
+if [ "$CHECKOUT_KENDEX_QUERY" -eq 1 ]; then
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    # shard_of reads RUNNER_OS; the Linux shards are the ones asked about.
+    policy="$(RUNNER_OS=Linux suite_kendex_policy Linux "$file")" || exit 1
+    case "$policy" in
+      checkout) printf '%s\n' "$file" ;;
+      none) ;;
+      *) echo "run-all.sh: suite-kendex=$policy" >&2; exit 1 ;;
+    esac
+  done
+  exit 0
+fi
 
 if [ -n "$DIRECT_SUITE" ]; then
   suite_environment "$DIRECT_SUITE" || exit 1

@@ -173,6 +173,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       case "$2" in
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
+        *" reason=kendex-unread "*) echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex, so every shell suite of the package ran; its cause is above." ;;
         *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
@@ -277,6 +278,10 @@ range_base=""
 selection_only=0
 scoped_only=0
 release_version=""
+# The release leg's share of its suites: every Nth from the Kth, as --part K/N.
+release_part=1
+release_parts=1
+release_index=0
 if [ "${1:-}" = --released-packages ]; then
   [ "$#" -ge 2 ] || refuse argument "$1"
   release_binary=$2
@@ -291,6 +296,17 @@ if [ "${1:-}" = --released-packages ]; then
   source "$TOOLS_DIR/../skills/commit-guards/scripts/lib/command-position.sh" || exit 1
   selection_only=1
   shift 2
+  if [ "${1:-}" = --part ]; then
+    [ "$#" -ge 2 ] || refuse argument "$1"
+    case "$2" in */*) ;; *) refuse argument "--part=$2" ;; esac
+    release_part=${2%/*}
+    release_parts=${2#*/}
+    for part_number in "$release_part" "$release_parts"; do
+      case "$part_number" in "" | 0* | *[!0-9]*) refuse argument "--part=$2" ;; esac
+    done
+    [ "$release_part" -le "$release_parts" ] || refuse argument "--part=$2"
+    shift 2
+  fi
 fi
 if [ "${1:-}" = --selection ]; then
   selection_only=1
@@ -335,8 +351,10 @@ case "${1:-}" in
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
       '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
-      '--released-packages BINARY --range BASE: run every suite of each changed' \
-      '        shell package calling kendex with BINARY first on PATH, without scans or builds.' \
+      '--released-packages BINARY [--part K/N] --range BASE: in each changed shell package' \
+      '        calling kendex, run the suites a Linux CI leg gives a kendex' \
+      '        (run-all.sh --checkout-kendex) with BINARY first on PATH, without scans or' \
+      '        builds. --part K/N runs every Nth of those suites from the Kth.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
       '        the same suite mapper, leaving the full record to merge-group CI.'
@@ -2031,6 +2049,21 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         esac
       done <<<"$release_inputs"
       [ "$calls_kendex" -eq 1 ] || continue
+      # A suite no CI leg gives a kendex cannot depend on one. run-all.sh
+      # holds orch's shards and asks tools/ci-job-set for each suite.
+      if release_kendex=$(bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --checkout-kendex <<<"$release_suites"); then
+        release_suites=$release_kendex
+      else
+        note suites "all reason=kendex-unread tree=$d"
+      fi
+      release_share=""
+      while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        [ $((release_index % release_parts + 1)) -ne "$release_part" ] || release_share+="$t"$'\n'
+        release_index=$((release_index + 1))
+      done <<<"$release_suites"
+      release_suites=$release_share
+      [ -n "$release_suites" ] || continue
     fi
     case "$d" in
       pi-extensions/*)

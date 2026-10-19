@@ -2111,28 +2111,37 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
     permissions:
       contents: read
+    # The package-suites leg runs the suites a Linux shard gives a kendex.
+    # For orch those are the orch-terminal and orch-rest shards, 800s and 436s
+    # of suites in merge-group run 39197875058, together past that run's
+    # slowest other job, 1204s. A merge group splits them over two jobs, each
+    # rendering the catalog again; other events run one.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(github.event_name == 'merge_group' && '["1/2", "2/2"]' || '["1/1"]') }}
     uses: ./.github/workflows/catalog-check.yml
     with:
       path: .
       strict: true
-      # Full orch suites span shards: their macOS jobs in run 39115305420
-      # totalled 3448s. Leave room for that package and catalog rendering.
+      # A package whose kendex suites tools/guard cannot read runs whole: the
+      # whole orch battery took 4152s in merge-group run 39197875058.
       timeout-minutes: 90
       # Exercise this branch's CI scripts, never a binary built from it.
       ref: ${{ github.sha }}
       suite-command: >-
-        ${{ github.event_name == 'merge_group' && '
+        ${{ github.event_name == 'merge_group' && format('
         orch_paths=$(git diff --name-only "$CATALOG_BASE" -- skills/orch .agents/skills/orch);
         if [ -n "$orch_paths" ]; then
-          missing=();
-          for tool in tmux fish; do command -v "$tool" >/dev/null || missing+=("$tool"); done;
-          if [ "${#missing[@]}" -gt 0 ]; then sudo apt-get update; sudo apt-get install -y "${missing[@]}"; fi;
+          missing="";
+          for tool in tmux fish; do command -v "$tool" >/dev/null || missing="$missing $tool"; done;
+          if [ -n "$missing" ]; then sudo apt-get update; sudo apt-get install -y $missing; fi;
           if ! command -v claude >/dev/null; then
             npm install --prefix "$RUNNER_TEMP/release-suite-tools" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code;
             export PATH="$RUNNER_TEMP/release-suite-tools/node_modules/.bin:$PATH";
           fi;
         fi;
-        tools/guard --released-packages "$HOME/.local/bin/kendex" --range "$CATALOG_BASE"' || '' }}
+        tools/guard --released-packages "$HOME/.local/bin/kendex" --part {0} --range "$CATALOG_BASE"', matrix.part) || '' }}
 
   # Each installed harness CLI reads the sample catalog emitted by this
   # checkout's renderers. The reusable workflow uses the released engine

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Inputs: tools/guard, skills/orch/*, skills/commit-guards/*,
+# Inputs: tools/guard, tools/ci-job-set, tools/macos-test-contracts, tools/macos-test-contracts.json,
+# skills/orch/*, skills/commit-guards/*,
 # skills/github/*, skills/deep-research/*, skills/slack/*, skills/bot-instructions/*,
 # skills/jarvis/scripts/lib/watch.py, skills/harness-ci/tests/change-class.test.sh
 # Package selection and PATH are exercised through the production guard and
@@ -12,6 +13,9 @@ git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 
 mkdir -p "$TMP/released" "$TMP/main" "$R/skills/quiet/tests" "$R/skills/nonconsumer/tests"
+# The leg asks the real CI owner which suites a Linux shard gives a kendex;
+# guard-world's neutral stub answers none for every suite.
+cp "$REPO/tools/ci-job-set" "$REPO/tools/macos-test-contracts" "$REPO/tools/macos-test-contracts.json" "$R/tools/"
 for package in deep-research github commit-guards slack bot-instructions; do
   cp -R "$REPO/skills/$package" "$R/skills/$package"
 done
@@ -61,11 +65,11 @@ BASE="$(git -C "$R" rev-parse HEAD)"
 export SUITE_LOG="$TMP/suite-log"
 export ENGINE_LOG="$TMP/engine-log"
 
-run_release() { # BINARY [GUARD]
+run_release() { # BINARY [GUARD [PART]]
   : > "$SUITE_LOG"
   : > "$ENGINE_LOG"
   RC=0
-  OUT="$(cd "$R" && PATH="$TMP/main:$PATH" "${2:-$GUARD}" --released-packages "$1" --range "$BASE" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && PATH="$TMP/main:$PATH" "${2:-$GUARD}" --released-packages "$1" ${3:+--part "$3"} --range "$BASE" 2>&1)" || RC=$?
   RAN="$(sort "$SUITE_LOG" | tr '\n' ' ')"
   ENGINE_CALLS="$(cat "$ENGINE_LOG")"
 }
@@ -196,6 +200,9 @@ ln -s "$REPO/skills/orch/scripts" "$TMP/native/skills/orch/scripts"
 ln -s "$REPO/skills/orch/scripts" "$R/skills/orch/scripts"
 ln -s "$REPO/skills/github" "$TMP/native/skills/github"
 ln -s "$REPO/skills/commit-guards" "$TMP/native/skills/commit-guards"
+for tool in ci-job-set macos-test-contracts macos-test-contracts.json; do
+  ln -s "$REPO/tools/$tool" "$TMP/native/tools/$tool"
+done
 printf '#!/bin/sh\necho 1\n' > "$TMP/one-worker/nproc"
 chmod +x "$TMP/one-worker/nproc"
 for name in "$alone_name" zzz-pooled; do
@@ -224,6 +231,74 @@ PY
 PATH="$TMP/one-worker:$PATH" run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
 order="$(tr '\n' ' ' < "$SUITE_LOG")"
 [ "$RC:$order" = "0:$alone_name zzz-pooled " ] && ok 'control: battery dispatch drops orch isolation order' || bad 'control: battery dispatch drops orch isolation order' "$RC $order $OUT"
+
+# A caller suite in a shard CI gives a kendex (orch-rest) runs; a suite in
+# one CI gives none (orch-oversee) cannot depend on one and does not.
+cp "$GUARD" "$TMP/native/tools/guard"
+rm "$R/skills/orch/tests/$alone_name.sh" "$R/skills/orch/tests/zzz-pooled.sh"
+for name in zzz-caller zzz-second; do
+  cat > "$R/skills/orch/tests/$name.sh" <<SH
+#!/bin/sh
+printf '%s\n' '$name' >> "\$SUITE_LOG"
+[ '$name' != zzz-caller ] || kendex future-command || exit 1
+printf 'pass: 1 fail: 0\n'
+SH
+done
+printf '#!/bin/sh\nprintf "oversee_zzz\\n" >> "$SUITE_LOG"\nexit 97\n' > "$R/skills/orch/tests/oversee_zzz.sh"
+run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
+[ "$RC" -ne 0 ] && [ "$RAN" = 'zzz-caller zzz-second ' ] && [[ "$OUT" == *'suite=zzz-caller '*'fail=1'* ]] \
+  && [[ "$OUT" == *'remedy=release-engine'* ]] && [[ "$OUT" == *'selected-suite=skills/orch/tests/zzz-caller.sh'* ]] \
+  && [[ "$OUT" != *'selected-suite=skills/orch/tests/oversee_zzz.sh'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
+  && ok 'kendex suites only: the caller fails under the release engine' \
+  || bad 'kendex suites only: the caller fails under the release engine' "$RC $RAN $OUT"
+run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
+[ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'kendex suites only: the next engine passes' || bad 'kendex suites only: the next engine passes' "$RC $RAN $OUT"
+
+# Each part runs its share of the selected suites, and the parts cover them.
+while IFS='|' read -r part expected; do
+  run_release "$TMP/main/kendex" "$TMP/native/tools/guard" "$part"
+  [ "$RC:$RAN" = "$expected" ] && ok "part $part" || bad "part $part" "$RC $RAN $OUT"
+done <<'ROWS'
+1/2|0:zzz-caller 
+2/2|0:zzz-second 
+1/1|0:zzz-caller zzz-second 
+ROWS
+for part in 0/2 3/2 2 1/x 1/2/3 /2; do
+  run_release "$TMP/main/kendex" "$TMP/native/tools/guard" "$part"
+  [ "$RC:$RAN" = 2: ] && [[ "$OUT" == "guard: argument=--part=$part"* ]] && ok "part refused: $part" || bad "part refused: $part" "$RC $RAN $OUT"
+done
+
+# Must-fail: the whole package, as before this selection, runs the suite
+# no CI shard gives a kendex, and with it the parts' split.
+for edit in 'release_suites=$release_kendex@@:' '[ $((release_index % release_parts + 1)) -ne "$release_part" ] || @@'; do
+  python3 - "$GUARD" "$TMP/native/tools/guard" "$edit" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+needle, replacement = sys.argv[3].split('@@')
+assert source.count(needle) == 1
+mutant = source.replace(needle, replacement)
+assert mutant != source
+Path(sys.argv[2]).write_text(mutant)
+PY
+  case "$edit" in
+    release_suites=*)
+      run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
+      [ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && ok 'control: the whole package runs the suite no shard gives a kendex' \
+        || bad 'control: the whole package runs the suite no shard gives a kendex' "$RC $RAN $OUT" ;;
+    *)
+      run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 1/2
+      [ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'control: an unsplit part runs the other part too' \
+        || bad 'control: an unsplit part runs the other part too' "$RC $RAN $OUT" ;;
+  esac
+done
+# Unreadable selection evidence runs the whole package, under a note.
+cp "$GUARD" "$TMP/native/tools/guard"
+rm "$TMP/native/tools/ci-job-set"
+run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
+[ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && [[ "$OUT" == *'guard-note: suites=all reason=kendex-unread tree=skills/orch'* ]] \
+  && ok 'an unread kendex selection runs the whole package' || bad 'an unread kendex selection runs the whole package' "$RC $RAN $OUT"
+ln -s "$REPO/tools/ci-job-set" "$TMP/native/tools/ci-job-set"
 git -C "$R" reset -q --hard "$BASE"
 git -C "$R" clean -qfd
 
