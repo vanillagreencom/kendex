@@ -82,13 +82,6 @@ pub(super) struct Expansion {
     /// loser is reported, never silently absorbed.
     rev_disagreements: Vec<Disagreement>,
     held_owners: BTreeMap<(String, super::Held), (String, Option<crate::lock::DeclaredSelector>)>,
-    /// For each agent a requirement reached, the assigned skills its
-    /// assignment brings (`deps::select_assignments`): those no item the
-    /// requirements alone hold, that no requirement wants at another
-    /// revision, and that would take no held item to another revision.
-    /// `None` until that selection is made, and until then an agent's
-    /// assignment brings nothing (`deps::agent_assignment`).
-    brings: Option<BTreeMap<String, BTreeSet<String>>>,
 }
 
 /// One derivation asking for an item at a revision other than the one the
@@ -178,55 +171,6 @@ impl Expansion {
             .get(&(kind, name.to_owned()))?
             .derived_from
             .as_ref()
-    }
-
-    /// Whether `agent`'s assignment brings `skill`, per
-    /// [`Expansion::brings`](Expansion).
-    pub(super) fn brings(&self, agent: &str, skill: &str) -> bool {
-        self.brings
-            .as_ref()
-            .and_then(|brings| brings.get(agent))
-            .is_some_and(|skills| skills.contains(skill))
-    }
-
-    /// Whether the assigned skills each agent brings are selected yet.
-    pub(super) fn selected(&self) -> bool {
-        self.brings.is_some()
-    }
-
-    pub(super) fn select(&mut self, brings: BTreeMap<String, BTreeSet<String>>) {
-        self.brings = Some(brings);
-    }
-
-    /// The commit `source` read at `rev` resolved to this pass, if it
-    /// resolved.
-    pub(super) fn commit_of(
-        state: &DesiredState,
-        source: &str,
-        rev: Option<&str>,
-    ) -> Option<String> {
-        let resolved = match rev {
-            None => state.sources.get(source),
-            Some(rev) => state.pinned.get(&(source.to_owned(), rev.to_owned())),
-        };
-        match resolved {
-            Some(SourceState::Ready(ready)) => ready.commit.clone(),
-            _ => None,
-        }
-    }
-
-    /// Whether `source` read at `one` and at `other` asks for different
-    /// bytes: the revisions differ, and this pass holds no one commit both
-    /// resolved to. The rule [`Expansion::report_rev_disagreements`]
-    /// reports a derivation's disagreement by.
-    pub(super) fn revisions_differ(
-        state: &DesiredState,
-        source: &str,
-        one: Option<&str>,
-        other: Option<&str>,
-    ) -> bool {
-        let kept = Self::commit_of(state, source, one);
-        one != other && (kept.is_none() || kept != Self::commit_of(state, source, other))
     }
 
     pub(super) fn harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
@@ -461,15 +405,20 @@ impl Expansion {
     pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
+        let commit_of = |source: &str, rev: &Option<String>| {
+            let resolved = match rev {
+                None => state.sources.get(source),
+                Some(rev) => state.pinned.get(&(source.to_owned(), rev.clone())),
+            };
+            match resolved {
+                Some(SourceState::Ready(ready)) => ready.commit.clone(),
+                _ => None,
+            }
+        };
         self.rev_disagreements.retain(|one| {
+            let kept = commit_of(&one.source, &one.kept);
             let chosen = one.by_a_set && one.kept_owner.is_none() && one.refused_owner.is_none();
-            chosen
-                || Self::revisions_differ(
-                    state,
-                    &one.source,
-                    one.kept.as_deref(),
-                    one.refused.as_deref(),
-                )
+            chosen || kept.is_none() || kept != commit_of(&one.source, &one.refused)
         });
         for Disagreement {
             kind,
@@ -480,9 +429,12 @@ impl Expansion {
             ..
         } in &self.rev_disagreements
         {
-            let show = |rev: &Option<String>| shown_rev(rev.as_deref());
+            let show = |rev: &Option<String>| match rev {
+                Some(rev) => format!("revision {}", rev.chars().take(7).collect::<String>()),
+                None => "the source's own revision".to_owned(),
+            };
             let resolved = |rev: &Option<String>| {
-                Self::commit_of(state, source, rev.as_deref())
+                commit_of(source, rev)
                     .or_else(|| rev.clone())
                     .unwrap_or_else(|| "the source's own revision".to_owned())
             };
@@ -504,15 +456,6 @@ impl Expansion {
                 detail: None,
             });
         }
-    }
-}
-
-/// A revision as a warning names it: its first seven characters, or the
-/// source's own where none is held.
-pub(super) fn shown_rev(rev: Option<&str>) -> String {
-    match rev {
-        Some(rev) => format!("revision {}", rev.chars().take(7).collect::<String>()),
-        None => "the source's own revision".to_owned(),
     }
 }
 
