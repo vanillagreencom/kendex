@@ -378,33 +378,64 @@ FORGED_CLASSIFIER
 done
 git -C "$review_subject" add .
 git -C "$review_subject" -c core.hooksPath=/dev/null commit -qm forged-classifier
+# A few production lines the real classifier measures micro: the diff a micro
+# lane escaping on Copilot no-files hands its small run.
+review_micro_subject="$TMP_ROOT/review-micro-subject"
+git -C "$review_base" worktree add -q -b micro-subject "$review_micro_subject" main
+mkdir -p "$review_micro_subject/src"
+printf 'def tool():\n    return 1\n' >"$review_micro_subject/src/tool.py"
+git -C "$review_micro_subject" add .
+git -C "$review_micro_subject" -c core.hooksPath=/dev/null commit -qm micro-change
+review_diagnostic="$TMP_ROOT/review-classifier.err"
 
-review_classification_requires_review() { # workflow
-  local command answer diagnostic="$TMP_ROOT/review-classifier.err"
-  : >"$diagnostic"
+# Runs review-pr § 1's one fenced review-depth command over SUBJECT with
+# [REVIEW_FLOOR] bound to FLOOR; stdout is the command's record.
+review_depth_run() { # workflow subject floor
+  local command
+  : >"$review_diagnostic"
   command="$(awk '/^```/ { fenced = !fenced; next }
     fenced && /scripts\/review-depth"? --base/ { print }' "$1")" || return 1
   [[ -n "$command" && "$command" != *$'\n'* ]] || return 1
   command="${command//\[REVIEW_BASE_CHECKOUT\]/$review_base}"
-  command="${command//\[WORKTREE_PATH\]/$review_subject}"
+  command="${command//\[WORKTREE_PATH\]/$2}"
   command="${command//\[BASE_BRANCH\]/main}"
-  # The review workflow consumes these machine-read fields to select § 9.
-  answer="$(cd "$review_subject" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" \
-    bash --noprofile --norc -c "$command" 2>"$diagnostic")" || return 1
+  command="${command//\[REVIEW_FLOOR\]/$3}"
+  (cd "$2" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" \
+    bash --noprofile --norc -c "$command" 2>"$review_diagnostic")
+}
+
+# The review workflow consumes these machine-read fields to select § 9.
+review_classification_requires_review() { # workflow
+  local answer
+  answer="$(review_depth_run "$1" "$review_subject" micro)" || return 1
   [[ "$answer" == 'change_class=standard review_depth=full native_approval=unchanged' ]] &&
-    grep -Eq '^class: class=standard measured=true( |$)' "$diagnostic"
+    grep -Eq '^class: class=standard measured=true( |$)' "$review_diagnostic"
+}
+
+review_floor_reviews_micro_diff() { # workflow
+  local answer
+  answer="$(review_depth_run "$1" "$review_micro_subject" small)" || return 1
+  [[ "$answer" == 'change_class=micro review_depth=bot native_approval=unchanged' ]]
 }
 
 review_workflow="$SKILL_DIR/workflows/review-pr.md"
 if review_classification_requires_review "$review_workflow"; then
   pass "review-pr requires review when the subject classifier forges a trivial verdict"
 else
-  fail "review-pr must classify with the trusted base checkout" "$(cat "$TMP_ROOT/review-classifier.err")"
+  fail "review-pr must classify with the trusted base checkout" "$(cat "$review_diagnostic")"
 fi
 assert_doc_mutant_fails review_classification_requires_review "$review_workflow" \
   '"[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base' \
   '.agents/skills/reviewer/scripts/review-depth --base' \
   "trusting the malicious subject classifier for the review skip"
+if review_floor_reviews_micro_diff "$review_workflow"; then
+  pass "review-pr passes the recorded review floor, so a micro diff escaped to small gets a bot review"
+else
+  fail "review-pr must pass [REVIEW_FLOOR] to review-depth" "$(cat "$review_diagnostic")"
+fi
+assert_doc_mutant_fails review_floor_reviews_micro_diff "$review_workflow" \
+  ' --floor "[REVIEW_FLOOR]"' '' \
+  "dropping the review floor from the review-depth command"
 
 # The lane's terminal condition is the removal, so § 5 reads [WORKTREE_PATH]
 # back before § 6 writes the summary. The anchor is that read, not the

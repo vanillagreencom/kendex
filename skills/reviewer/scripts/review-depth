@@ -4,18 +4,27 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: review-depth --base REF [--head REF] [--repo DIR]
+Usage: review-depth --base REF [--head REF] [--repo DIR] [--floor CLASS]
 
 Reads the range through orch's change_class_read and harness-ci's change-class.
-No argument accepts a class. Run the trusted base checkout's copy.
+No argument replaces the measured class. Run the trusted base checkout's copy.
 
 The measured class selects package review depth:
   render, trivial, micro: none
   small:                  bot
   standard:               full
 
+--floor CLASS (micro, small or standard) is a class the run already holds,
+as item-tier --floor gives it: the class above the one a run escaped from.
+Depth follows the wider of the measured class and the floor, in the order
+render < trivial < micro < small < standard. The floor only raises: it never
+lowers the measured class, and a failed or unmeasured classifier keeps its
+exit. stderr names the floor when it decided the depth.
+
 stdout is one record:
   change_class=CLASS review_depth=none|bot|full native_approval=unchanged
+
+change_class is always the measured class.
 
 none skips package review; bot requires automatic review; full selects the
 normal specialist review. Orch owns the panel, execution and round counters.
@@ -34,15 +43,17 @@ fail() {
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
-BASE="" HEAD=HEAD REPO=.
+BASE="" HEAD=HEAD REPO=. FLOOR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --base|--head|--repo)
+    --base|--head|--repo|--floor)
       [ "$#" -ge 2 ] && [ -n "$2" ] || fail arguments "$1"
       case "$1" in
         --base) BASE="$2" ;;
         --head) HEAD="$2" ;;
         --repo) REPO="$2" ;;
+        --floor)
+          case "$2" in micro|small|standard) FLOOR="$2" ;; *) fail arguments "$1=$2" ;; esac ;;
       esac
       shift 2 ;;
     *) fail arguments "$1" ;;
@@ -70,10 +81,29 @@ case "$CHANGE_CLASS_MEASURED" in
     exit 3 ;;
   *) fail classifier-unreadable "$CHANGE_CLASS_MEASURED" ;;
 esac
-case "$CHANGE_CLASS" in
+class_rank() { # CLASS; sets RANK
+  case "$1" in
+    render) RANK=0 ;;
+    trivial) RANK=1 ;;
+    micro) RANK=2 ;;
+    small) RANK=3 ;;
+    standard) RANK=4 ;;
+    *) return 1 ;;
+  esac
+}
+class_rank "$CHANGE_CLASS" || fail classifier-unreadable "$CHANGE_CLASS"
+DEPTH_CLASS="$CHANGE_CLASS"
+if [ -n "$FLOOR" ]; then
+  MEASURED_RANK="$RANK"
+  class_rank "$FLOOR"
+  if [ "$RANK" -gt "$MEASURED_RANK" ]; then
+    DEPTH_CLASS="$FLOOR"
+    printf 'review-depth: floor=%s change_class=%s\n' "$FLOOR" "$CHANGE_CLASS" >&2
+  fi
+fi
+case "$DEPTH_CLASS" in
   render|trivial|micro) DEPTH=none ;;
   small) DEPTH=bot ;;
   standard) DEPTH=full ;;
-  *) fail classifier-unreadable "$CHANGE_CLASS" ;;
 esac
 printf 'change_class=%s review_depth=%s native_approval=unchanged\n' "$CHANGE_CLASS" "$DEPTH"

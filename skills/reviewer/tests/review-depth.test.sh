@@ -61,6 +61,34 @@ depth_table "$DEPTH" || :
 expected_args="$(printf '%s\n' --event pull_request --base base-ref --head head-ref --repo "$TMP_ROOT/judged tree" --output /dev/null)"
 assert_eq "$(cat "$DEPTH_FIXTURE_ARGS")" "$expected_args" 'the real reader forwards the range and path as arguments'
 
+# A floor is the class a route promised: the class above the one a run escaped
+# from. It raises the depth and never lowers it; the record keeps the measured
+# class. The micro/small row is FLT-1391's escape from micro on Copilot
+# no-files, whose small run measured the same micro diff.
+floor_table() {
+  local command="$1" class measured floor depth expected_status status output before
+  before="$FAIL"
+  while read -r class measured floor depth expected_status; do
+    status=0
+    output="$(DEPTH_FIXTURE_CLASS="$class" DEPTH_FIXTURE_MEASURED="$measured" \
+      "$command" --base base-ref --floor "$floor" 2>"$TMP_ROOT/stderr")" || status=$?
+    assert_eq "$status" "$expected_status" "$class/floor=$floor status" "$TMP_ROOT/stderr"
+    if [ "$expected_status" = 0 ]; then
+      assert_eq "$output" "change_class=$class review_depth=$depth native_approval=unchanged" "$class/floor=$floor depth"
+    else
+      assert_eq "$output" '' "$class/floor=$floor publishes no depth"
+    fi
+  done <<'ROWS'
+micro true small bot 0
+standard true small full 0
+small true micro bot 0
+standard false small absent 3
+micro true trivial absent 2
+ROWS
+  [ "$FAIL" -eq "$before" ]
+}
+floor_table "$DEPTH" || :
+
 while read -r name marker classifier_exit expected_cause; do
   [ "$marker" != absent ] || marker=''
   status=0
@@ -89,23 +117,36 @@ for option in --class --event; do
   assert_eq "$output" '' "$option publishes no depth"
 done
 
-# The control changes a real depth decision in a disposable source copy.
-cp "$DEPTH" "$INSTALL/reviewer/scripts/review-depth-mutant"
-python3 - "$INSTALL/reviewer/scripts/review-depth-mutant" <<'PY'
+# Each control changes one real depth decision in a disposable source copy.
+mutant() { # NAME OLD NEW
+  cp "$DEPTH" "$INSTALL/reviewer/scripts/$1"
+  python3 - "$INSTALL/reviewer/scripts/$1" "$2" "$3" <<'PY'
 from pathlib import Path
 import sys
-p = Path(sys.argv[1])
+p, old, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 assert not p.is_symlink()
 before = p.read_text()
-old = 'small) DEPTH=bot ;;'
 assert before.count(old) == 1
-after = before.replace(old, 'small) DEPTH=full ;;')
+after = before.replace(old, new)
 assert after != before
 p.write_text(after)
 PY
+}
+mutant small-full 'small) DEPTH=bot ;;' 'small) DEPTH=full ;;'
 status=0
-(depth_table "$INSTALL/reviewer/scripts/review-depth-mutant") >"$TMP_ROOT/control.log" 2>&1 || status=$?
+(depth_table "$INSTALL/reviewer/scripts/small-full") >"$TMP_ROOT/control.log" 2>&1 || status=$?
 assert_eq "$status" 1 'must-fail control rejects the changed small depth'
+
+# The suite's own FAIL lines name the row each control must redden.
+mutant floor-ignored 'if [ -n "$FLOOR" ]; then' 'if false; then'
+(floor_table "$INSTALL/reviewer/scripts/floor-ignored") >"$TMP_ROOT/control.log" 2>&1 || :
+assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  micro/floor=small depth' \
+  'must-fail control: an ignored floor fails the micro escape row'
+
+mutant floor-as-class 'DEPTH_CLASS="$CHANGE_CLASS"' 'DEPTH_CLASS="${FLOOR:-$CHANGE_CLASS}"'
+(floor_table "$INSTALL/reviewer/scripts/floor-as-class") >"$TMP_ROOT/control.log" 2>&1 || :
+assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  standard/floor=small depth' \
+  'must-fail control: a floor taken as the class fails the standard row'
 
 printf '\nreview-depth: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

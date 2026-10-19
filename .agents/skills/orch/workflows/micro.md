@@ -239,7 +239,13 @@ The § 1 control-host refusal also ends the run, before any condition above can 
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 
-At condition 9, set `[BRIEF]` to `small` and relaunch as `/orch small [ISSUE_ID]`: run one internal review round, then take the fallback approval in [copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval) without another Copilot request. For every other condition, the item relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state; `[BRIEF]` is that assignment's `brief=` word. Use the route the checkout leaves it on:
+At condition 9, record the promised round as the review floor [review-pr.md](review-pr.md) § 1 passes to `review-depth`, so a micro-class diff still gets a reviewed depth:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_floor small
+```
+
+Then set `[BRIEF]` to `small` and relaunch as `/orch small [ISSUE_ID]`: run one internal review round, then take the fallback approval in [copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval) without another Copilot request. For every other condition, the item relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state; `[BRIEF]` is that assignment's `brief=` word. Use the route the checkout leaves it on:
 
 - **In a lane**, run `/orch [BRIEF] [ISSUE_ID]`. `small` runs [small.md](small.md), and `start` routes a worktree cwd to [start-worktree.md](start-worktree.md) ([start.md](start.md) § 1 step 3). Either session's § 1 resolves the item from the existing branch, and its § 2 implements against it.
 - **From the main checkout at condition 1**, no branch was cut: the item takes plain `/orch [BRIEF] [ISSUE_ID]`.

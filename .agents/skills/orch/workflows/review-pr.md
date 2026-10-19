@@ -24,13 +24,19 @@ A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: r
 
 **Review line.** In a lane whose brief names a status file, a review that starts with workflow state `pr_order` reading `open-first` or `push-first` writes `Review: pending PR #[PR_NUMBER]` to that file before any reviewer starts, `[PR_NUMBER]` from `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state`; a read that gives no number writes no line. [submit-pr.md](submit-pr.md) § 2 step 1 replaces the line once the push carrying this review's fix round lands.
 
-**Review depth.** Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Use that checkout's reviewer command against `[WORKTREE_PATH]`:
+**Review depth.** Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Bind `[REVIEW_FLOOR]` to the class a route promised this run, which [micro.md § Escape](micro.md#escape) records:
 
 ```bash
-"[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_floor // "micro"'
 ```
 
-The command's `--help` owns the class-to-depth mapping. A successful `review_depth=none` goes straight to § 9 with verdict `pass`. `bot` or `full` runs the review below, under [small.md § 3](small.md#3-review) when that workflow is the caller. A nonzero exit also runs the full review. This selects package review only: every depth keeps the native approval and thread requirements checked during publication.
+An unset field or a run with no state reads `micro`, which raises no class to a reviewed depth. Use that checkout's reviewer command against `[WORKTREE_PATH]`:
+
+```bash
+"[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH] --floor "[REVIEW_FLOOR]"
+```
+
+The command's `--help` owns the class-to-depth mapping and the floor. A successful `review_depth=none` goes straight to § 9 with verdict `pass`. `bot` or `full` runs the review below, under [small.md § 3](small.md#3-review) when that workflow is the caller. A nonzero exit also runs the full review. This selects package review only: every depth keeps the native approval and thread requirements checked during publication.
 
 ### 1.1 Decision Context
 
