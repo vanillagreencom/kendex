@@ -118,6 +118,8 @@ HOSTED_DIR="$TMP_ROOT/hosted"
 cat > "$BIN/provider" <<'PROVIDER'
 #!/usr/bin/env bash
 case "${1:-}" in
+  capabilities) exec "$LANE_HOST_CAPABILITIES_FIXTURE" capabilities ;;
+  accounts) [[ -n "${LANE_HOST_STUB_ACCOUNTS:-}" ]] || exit 2; cat -- "$LANE_HOST_STUB_ACCOUNTS" ;;
   cat) [[ -z "${HOST_DOWN:-}" ]] || exit 2; f="$HOSTED_DIR$4"; [[ -f "$f" ]] || exit 2; cat -- "$f" ;;
   touch) [[ -z "${HOST_DOWN:-}" ]] ;;
   *) exit 1 ;;
@@ -129,6 +131,8 @@ chmod +x "$BIN/provider"
 cat > "$BIN/other-provider" <<'PROVIDER'
 #!/usr/bin/env bash
 case "${1:-}" in
+  capabilities) exec "$LANE_HOST_CAPABILITIES_FIXTURE" capabilities ;;
+  accounts) [[ -n "${SECOND_PROVIDER_ACCOUNTS:-}" ]] || exit 2; cat -- "$SECOND_PROVIDER_ACCOUNTS" ;;
   cat) printf '%s\n' '{"harness":"codex","tokens":42,"window":258400,"model":"wrong-host"}' ;;
   touch) exit 0 ;;
   *) exit 1 ;;
@@ -157,6 +161,8 @@ run_ctx() { # [args...]
     ORCH_LANES_FETCH_CMD="$FETCHER" \
     HOSTED_DIR="$HOSTED_DIR" HOST_DOWN="${CTX_HOST_DOWN:-}" TMUX_LOG="$TMUX_LOG" \
     LANE_HOST_STUB_ACCOUNTS="${CTX_PROVIDER_ACCOUNTS:-}" LANE_HOST_STUB_LOG="$TMP_ROOT/provider.log" \
+    SECOND_PROVIDER_ACCOUNTS="${CTX_SECOND_ACCOUNTS:-}" \
+    LANE_HOST_CAPABILITIES_FIXTURE="$TEST_DIR/fixtures/lane-host" \
     ORCH_LANE_DIRS="${CTX_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_LANE_COPILOT_POOL="${CTX_POOL:-}" \
     TMUX_PANES_FILE="$PANES" \
     TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
@@ -285,51 +291,90 @@ SOURCE_FLEET="$TMP_ROOT/source-fleet"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$SOURCE_FLEET" init oversee >/dev/null
 SOURCE_STATE="$("$SCRIPTS_DIR/workflow-state" --state-dir "$SOURCE_FLEET" path oversee)"
 SOURCE_ROWS="$TMP_ROOT/source-rows"
+SECOND_ROWS="$TMP_ROOT/second-rows"
 mkdir -p "$H/.sourcecopilot/session-state"
 printf '%s\n' '{}' > "$H/.sourcecopilot/config.json"
+make_lane "$H" modelclaude
+claude_usage 10 10 97 Opus > "$FIXTURE_DIR/.modelclaude.json"
 SOURCE_CTRL="$(mutant_scripts mutant-context-source lanes)" || exit 1
-# shellcheck disable=SC2016
 mutate_file "$SOURCE_CTRL/lanes" \
-  'map(select((.measured_through == "host") == ($through == "host")))' 'map(select(.measured_through == "host"))'
-while IFS='|' read -r harness account account_harness model local_room local_due caller_room hosted; do
+  'local ORCH_LANE_HOST="$provider" NORMALIZED_AT=-1 NORMALIZED_TARGET=""' \
+  'local ORCH_LANE_HOST="${ORCH_LANE_HOST:-local}" NORMALIZED_AT=-1 NORMALIZED_TARGET=""'
+MODEL_CTRL="$(mutant_scripts mutant-context-model lanes)" || exit 1
+mutate_file "$MODEL_CTRL/lanes" \
+  'lane_judge "$record" "$model" "$binding_floor"' 'lane_judge "$record" "" "$binding_floor"'
+# case|harness|account|account harness|model|local room|local due|overseer room|hosted|ambient|host used|model used|host room|host due|second provider
+while IFS='|' read -r name harness account account_harness model local_room local_due caller_room hosted ambient used model_used host_room host_due second; do
+  case "$ambient" in
+    local) ambient=local ;;
+    different) ambient="$BIN/other-provider" ;;
+    *) ambient="$TEST_DIR/fixtures/lane-host" ;;
+  esac
   "$SCRIPTS_DIR/workflow-state" --state-dir "$SOURCE_FLEET" set oversee lanes "$(jq -nc \
-    --arg h "$harness" --arg a "$account" --arg model "$model" --arg p "$BIN/provider" \
-    --arg root "$TMP_ROOT/source-local" --arg remote "$HOSTED_ROOT/source" --arg hosted "$hosted" '[
+    --arg h "$harness" --arg a "$account" --arg model "$model" --arg p "$BIN/provider" --arg p2 "$BIN/other-provider" \
+    --arg root "$TMP_ROOT/source-local" --arg remote "$HOSTED_ROOT/source" --arg hosted "$hosted" --arg second "$second" '[
     {item:"SOURCE-LOCAL",window:"fleet:source-local",harness:$h,model:$model,account:$a,host:null,mail_root:$root,status:"running"},
     (if $hosted == "yes" then
       {item:"SOURCE-HOST",window:"fleet:source-host",harness:$h,model:$model,account:$a,host:$p,mail_root:$remote,status:"running"}
+     else empty end),
+    (if $second == "yes" then
+      {item:"SOURCE-OTHER",window:"fleet:source-other",harness:$h,model:$model,account:$a,host:$p2,mail_root:$remote,status:"running"}
      else empty end)]')" >/dev/null
   write_claim source-local "%41" "$account" source-local "$SOURCE_STATE"
   if [[ "$hosted" == yes ]]; then write_claim source-host "%42" "$account" source-host "$SOURCE_STATE"; fi
+  if [[ "$second" == yes ]]; then write_claim source-other "%43" "$account" source-other "$SOURCE_STATE"; fi
   record_reading "$TMP_ROOT/source-local/tmp/lane-mail/SOURCE-LOCAL" "$harness" 1000 1000000 "$model"
   record_reading "$HOSTED_DIR$HOSTED_ROOT/source/tmp/lane-mail/SOURCE-HOST" "$harness" 1000 1000000 "$model"
-  printf 'account=%s\tharness=%s\tweekly-pct=10\n' "$account" "$account_harness" > "$SOURCE_ROWS"
-  SOURCE_OUT="$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.claude:$H/.codex:$H/.sourcecopilot" \
+  if [[ "$name" == sonnet ]]; then
+    # A stale mailbox model cannot replace open-terminal's launch binding.
+    record_reading "$HOSTED_DIR$HOSTED_ROOT/source/tmp/lane-mail/SOURCE-HOST" "$harness" 1000 1000000 claude-opus-5-5
+  fi
+  printf 'account=%s\tharness=%s\tweekly-pct=%s' "$account" "$account_harness" "$used" > "$SOURCE_ROWS"
+  if [[ -n "$model_used" ]]; then printf '\tmodel-label=Opus\tmodel-pct=%s' "$model_used" >> "$SOURCE_ROWS"; fi
+  printf '\n' >> "$SOURCE_ROWS"
+  printf 'account=%s\tharness=%s\tweekly-pct=98\tmodel-label=Opus\tmodel-pct=98\n' "$account" "$account_harness" > "$SECOND_ROWS"
+  provider_rows="$SOURCE_ROWS"
+  [[ "$name" != absent-accounts ]] || provider_rows=""
+  SOURCE_OUT="$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.claude:$H/.codex:$H/.sourcecopilot:$H/.modelclaude" \
     CTX_POOL="$H/.sourcecopilot=97/100" CTX_CONFIG_DIR="$account" CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer \
-    CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" \
+    CTX_AMBIENT_HOST="$ambient" CTX_PROVIDER_ACCOUNTS="$provider_rows" CTX_SECOND_ACCOUNTS="$SECOND_ROWS" \
     ORCH_LANES_USAGE_TTL=0 run_ctx --json)"
   lanes_table "$SOURCE_OUT" \
-    "$harness local worker retains its own account reading|source-local|headroom_pct=$local_room context_handoff_due=false handoff_required=$local_due" \
-    "$harness overseer follows its account's caller policy|overseer|caller=true headroom_pct=$caller_room"
+    "$name local worker retains its account and model|source-local|headroom_pct=$local_room context_handoff_due=false handoff_required=$local_due" \
+    "$name overseer follows its account-wide caller policy|overseer|caller=true headroom_pct=$caller_room"
   if [[ "$hosted" == yes ]]; then
-    lanes_table "$SOURCE_OUT" "$harness hosted worker retains the provider reading|source-host|headroom_pct=90 context_handoff_due=false handoff_required=false"
+    lanes_table "$SOURCE_OUT" "$name hosted worker retains its provider and model|source-host|headroom_pct=$host_room context_handoff_due=false handoff_required=$host_due"
   fi
-  SOURCE_CALLER="$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.claude:$H/.codex:$H/.sourcecopilot" \
+  if [[ "$second" == yes ]]; then
+    lanes_table "$SOURCE_OUT" "$name distinct provider at the same account path|source-other|headroom_pct=2 handoff_required=true"
+  fi
+  SOURCE_CALLER="$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.claude:$H/.codex:$H/.sourcecopilot:$H/.modelclaude" \
     CTX_POOL="$H/.sourcecopilot=97/100" CTX_CONFIG_DIR="$account" CTX_TMUX_PANE=%41 CTX_WINDOW_NAME=source-local \
-    CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" \
+    CTX_AMBIENT_HOST="$ambient" CTX_PROVIDER_ACCOUNTS="$provider_rows" CTX_SECOND_ACCOUNTS="$SECOND_ROWS" \
     ORCH_LANES_USAGE_TTL=0 run_ctx --json)"
-  lanes_table "$SOURCE_CALLER" "$harness caller that is a local worker keeps local usage|source-local|caller=true headroom_pct=$local_room"
-  if [[ "$harness" == claude ]]; then
+  lanes_table "$SOURCE_CALLER" "$name caller that is a local worker keeps its model and source|source-local|caller=true headroom_pct=$local_room"
+  if [[ "$name" == mixed-claude ]]; then
     lanes_table "$(CTX_FLEET="$SOURCE_FLEET" CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" \
       CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" CTX_LANES="$SOURCE_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
       "control: selecting only provider readings suppresses the local account mark|source-local|headroom_pct=90 context_handoff_due=false handoff_required=false"
+  elif [[ "$name" == sonnet ]]; then
+    lanes_table "$(CTX_FLEET="$SOURCE_FLEET" CTX_DIRS="$H/.modelclaude" CTX_TMUX_PANE=%42 CTX_WINDOW_NAME=source-host \
+      CTX_AMBIENT_HOST=local CTX_PROVIDER_ACCOUNTS="$SOURCE_ROWS" CTX_LANES="$MODEL_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+      "control: dropping the worker model uses the Opus wall|source-host|caller=true headroom_pct=3 context_handoff_due=false handoff_required=true"
   fi
-  rm -f -- "$STATE/claims/source-local.claim" "$STATE/claims/source-host.claim"
+  rm -f -- "${STATE:?}/claims/source-local.claim" "${STATE:?}/claims/source-host.claim" "${STATE:?}/claims/source-other.claim"
 done <<EOF
-claude|$H/.claude|claude|claude-opus-5-5|3|true|90|yes
-codex|$H/.codex|codex|gpt-6-astra|20|false|20|yes
-pi|$H/.claude|claude|anthropic/claude-opus-5-5|3|true|90|yes
-copilot|$H/.sourcecopilot|copilot|gpt-5|3|true|3|no
+mixed-claude|claude|$H/.claude|claude|claude-opus-5-5|3|true|90|yes|provider|10|10|90|false|no
+mixed-codex|codex|$H/.codex|codex|gpt-6-astra|20|false|20|yes|provider|10||90|false|no
+mixed-pi|pi|$H/.claude|claude|pi-claude/claude-opus-5-5|3|true|90|yes|provider|10|10|90|false|no
+stated-copilot|copilot|$H/.sourcecopilot|copilot|gpt-5|3|true|3|no|provider|10||90|false|no
+explicit-local-ambient|claude|$H/.claude|claude|claude-opus-5-5|3|true|3|yes|local|98|10|2|true|no
+explicit-other-ambient|claude|$H/.claude|claude|claude-opus-5-5|3|true|2|yes|different|10|10|90|false|no
+same-account-providers|claude|$H/.claude|claude|claude-opus-5-5|3|true|3|yes|local|10|10|90|false|yes
+absent-accounts|claude|$H/.claude|claude|claude-opus-5-5|3|true|3|yes|local|10||3|true|no
+sonnet|claude|$H/.modelclaude|claude|claude-sonnet-4-5|3|false|3|yes|provider|10|97|3|false|no
+opus|claude|$H/.modelclaude|claude|claude-opus-5-5|3|true|3|yes|provider|10|97|3|true|no
+unknown-model|claude|$H/.modelclaude|claude||3|true|3|yes|provider|10|97|3|true|no
 EOF
 
 echo "=== only this fleet owns context rows; accounts keep global claims ==="
@@ -530,7 +575,9 @@ assert_eq "$(grep -oE '[0-9.]+k cr +- ' <<<"$CREDIT_ROW" | tr -s ' ')" "62.3k cr
   "the table shows the credits row's balance as its HEADROOM and leaves it unmarked"
 CREDIT_CTRL="$(mutant_scripts mutant-context-credits lanes)" || exit 1
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-mutate_file "$CREDIT_CTRL/lanes" 'with_lane_seat_verdict(.wall; $max; $credit_floor;' 'with_lane_seat_verdict(.wall; $max; 1e18;'
+mutate_file "$CREDIT_CTRL/lanes" \
+  'lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor"' \
+  'lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" 1e18'
 lanes_table "$(CTX_LANES="$CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: judged with no credit room the lane on credits is marked|ken-102|handoff_required=true"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg a "$H/.codex" '{account:$a}')" >/dev/null
@@ -577,7 +624,9 @@ lanes_table "$(CTX_LANES="$SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --jso
   "control: without the reserve the seat lane is not marked|ken-104|headroom_pct=50 handoff_required=false"
 CALLER_SEAT_CTRL="$(mutant_scripts mutant-context-caller-seat lanes)" || exit 1
 # shellcheck disable=SC2016
-mutate_file "$CALLER_SEAT_CTRL/lanes" '(if $x.caller == true then [] else $seats end)' '$seats'
+mutate_file "$CALLER_SEAT_CTRL/lanes" \
+  '[[ "$role" != overseer && "$role" != context-overseer && "$caller" != true ]] || for_overseer=true' \
+  '[[ "$role" != overseer && "$role" != context-overseer && "$caller" != true ]] || for_overseer=false'
 lanes_table "$(CTX_LANES="$CALLER_SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
   "control: without the caller exemption its row is marked|overseer|caller=true handoff_required=true"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null

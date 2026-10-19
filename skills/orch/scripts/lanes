@@ -2817,10 +2817,9 @@ account_claims() { # DIR [HARNESS [BUCKETS [SILENT]]]
 # row passes the same exclusion test. Each row is matched on the `_id`
 # host_lane_rows stamped on it; a host row discovery reaches is emitted from the
 # local loop, in the local dir's place, and the tail carries only the rows
-# naming a dir discovery does not reach. Context keeps the local row too:
-# a local worker and a hosted worker can spend different copies of one account.
+# naming a dir discovery does not reach.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" keep_local="${5:-false}" excluded="" held="" reached="" id d h row x held_records i
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x held_records i
 	local held_ids=() held_rows=()
 	while IFS= read -r x; do
 		[[ -n "$x" ]] || continue
@@ -2850,7 +2849,6 @@ collect_lanes() {
 					case $'\n'"$held"$'\n' in
 						*$'\n'"$id"$'\n'*)
 							reached+="$id"$'\n'
-							if [[ "$keep_local" == true ]]; then measure_lane "$h" "$d" || return 1; fi
 							# A helper failure must not restore shared host room
 							# when the requested model was never measured. This
 							# pipeline reports it as an unread candidate.
@@ -3526,11 +3524,40 @@ copilot_pool_records_fix() { # RECORDS
 	done < <(jq -r '.[] | [.harness, .measured_through, .config_dir, .status, .detail // ""] | join("\u001f")' <<<"$1")
 }
 
-cmd_pick_lane() {
-	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9" for_overseer="${10}"
-	local target found="" d record="" wall bucket verdict hosted projected credits refusal cause retry seat_harness=""
-	local pick_pool
+# Both pick --lane and context judge one complete session identity here. The
+# provider is scoped to this invocation, including normalized-cache discovery;
+# equal account paths on different providers never share a measurement batch.
+named_account_judgment() { # IDENTITY MAX MODEL_FLOOR BURN PROJECTED CREDIT_FLOOR
+	local identity="$1" max_pct="$2" binding_floor="$3" burn="$4" projected_verdict="$5" credit_floor="$6"
+	local dir harness model role caller provider fields
+	fields="$(jq -r '[.account, .harness, .model, .role, (.caller | tostring), .provider] | join("\u001f")' <<<"$identity")" || return 1
+	IFS=$'\x1f' read -r dir harness model role caller provider <<<"$fields"
+	[[ -n "$dir" ]] || return 4
+	local ORCH_LANE_HOST="$provider" NORMALIZED_AT=-1 NORMALIZED_TARGET=""
+	local for_overseer=false
+	[[ "$role" != overseer && "$role" != context-overseer && "$caller" != true ]] || for_overseer=true
+	local target found="" d record="" hosted seat_harness="" h pick_pool
+	lane_canon "$dir" || return 1; dir="$LANE_CANON"; target="$dir"
+	[[ -z "$harness" ]] || harness="$(lane_pick_harness "$harness" "$model")" || return 1
 	pick_pool="$(lane_pick_pool "$harness" "$model")" || return 1
+	# Older fleet records and sessions with no context reading name only an
+	# account. Use the same discovery as a named pick to recover its harness.
+	if [[ "$pick_pool" != api-credit ]]; then
+		for h in claude codex copilot pi; do
+			[[ "$h" == "$harness" || ( -z "$harness" && "$h" != pi ) ]] || continue
+			lane_dirs "$h" '' silent || return 1
+			for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
+				lane_canon "$d" || return 1
+				[[ "$LANE_CANON" != "$target" ]] || { harness="$h"; found="$d"; break; }
+			done
+			[[ -z "$found" ]] || break
+		done
+	fi
+	[[ -n "$harness" ]] || return 4
+	# Context's overseer policy is account-wide; only Claude uses the provider.
+	if [[ "$role" == context-overseer && "$harness" != claude ]]; then
+		ORCH_LANE_HOST=local
+	fi
 	# A malformed override refuses this form as it refuses the chooser, before a
 	# provider row could stand in for an entry nobody can parse.
 	if [[ "$harness" == pi && "$pick_pool" != api-credit ]]; then copilot_pool_entries >/dev/null || return 1; fi
@@ -3574,18 +3601,9 @@ cmd_pick_lane() {
 	else
 		pick_host_rows "$harness" "$model" || return 1
 	fi
-	lane_canon "$dir" || return 1; target="$LANE_CANON"
-	# Both sides through the one normaliser, so a dir given with a trailing
-	# slash or through a symlink reaches the record discovered for it.
-	if [[ "$pick_pool" != api-credit ]]; then
-	lane_dirs "$harness" '' silent || return 1
-	for d in ${LANE_DIRS_FOUND[@]+"${LANE_DIRS_FOUND[@]}"}; do
-		[[ -n "$d" ]] || continue
-		lane_canon "$d" || return 1
-		[[ "$LANE_CANON" == "$target" ]] || continue
-		found="$d"
-		break
-	done
+	if [[ "$for_overseer" != true ]]; then
+		# Context also reserves the fleet's declared seats across providers.
+		SEATS+=$'\n'"$(jq -r '.seats // ""' <<<"$identity")" || return 1
 	fi
 	# The chooser's rule for one account, host_row_or_local, with its
 	# `lanes: pick-local-reading` line. A dir the provider holds and discovery
@@ -3621,6 +3639,19 @@ cmd_pick_lane() {
 	# the launch question, the chooser's own wall.
 	lane_tier_inputs "[$record]" "$harness" "$model" || return 1
 	record="$(lane_judge "$record" "$model" "$binding_floor" "$burn" "$max_pct" "$projected_verdict" "$credit_floor" "$SEATS" "$SEAT_RESERVE")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
+	NAMED_ACCOUNT_RESULT=("$found" "$record")
+}
+
+cmd_pick_lane() {
+	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9" for_overseer="${10}"
+	local identity role=worker record found verdict wall bucket projected credits refusal cause retry
+	[[ "$for_overseer" != true ]] || role=overseer
+	identity="$(jq -nc --arg account "$dir" --arg harness "$harness" --arg model "$model" \
+		--arg provider "${ORCH_LANE_HOST:-local}" --arg role "$role" \
+		'{account:$account,harness:$harness,model:$model,provider:$provider,role:$role,caller:false}')" || return 1
+	named_account_judgment "$identity" "$max_pct" "$binding_floor" "$burn" "$projected_verdict" "$credit_floor" || return $?
+	found="${NAMED_ACCOUNT_RESULT[0]}" record="${NAMED_ACCOUNT_RESULT[1]}"
+
 	local judged cache_path="" cache_at="" at
 	usage_cache_file "$harness" "$found" silent
 	# The record is served while its own sample time is within the serve age,
@@ -4692,34 +4723,33 @@ case "$SUB" in
 		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
 		pick_host_rows all || exit 1
-		usage="$(collect_lanes all "" "$HOSTED_ROWS" "" true)" || exit 1
-		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
-		while (( usage_i < usage_count )); do
-			usage_dir="$(jq -r --argjson i "$usage_i" '.[$i].config_dir' <<<"$usage")"
-			usage_key="$(lane_claims_canon "$usage_dir")"
-			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
-			usage_i=$((usage_i + 1))
-		done
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
-		# A local worker spends this machine's credential even in a hosted fleet.
-		# Only an overseer without a worker record keeps the Claude provider policy.
-		# Stated Copilot pools belong to the non-provider account reading too.
-		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson max "$((100 - 10#$HANDOFF_HEADROOM_PCT))" \
-			--argjson records "$CONTEXT_LANES" \
-			--argjson credit_floor "$CREDIT_FLOOR" --arg seats "$SEATS" --argjson reserve "$SEAT_RESERVE" "$LANE_MODEL_JQ"'
-          ($seats | split("\n") | map(select(. != ""))) as $seats
-          | $c | map(. as $x
-            | ($records | map(select(((.window // "") | sub("^.*:"; "")) == $x.lane)) | first) as $record
-            | ($u | map(select(.config_dir == $x.config_dir))) as $readings
-            | (if (($record.host // "local") | . != "local" and . != "")
-                  or ($record == null and $x.caller == true and any($readings[]; .harness == "claude"))
-               then "host" else "local" end) as $through
-            | ((($readings | map(select((.measured_through == "host") == ($through == "host"))) | first)
-                // ($readings | map(select(.measured_through != "host")) | first) // {})
-            | with_lane_seat_verdict(.wall; $max; $credit_floor; (if $x.caller == true then [] else $seats end); $reserve)) as $l
-            | . + {headroom_pct: ($l.headroom_pct // null), binding_bucket: ($l.binding_bucket // null),
-                   binding_resets_at: ($l.binding_resets_at // null), credits: ($l.credits // null),
-                   handoff_required: ($l.verdict == "walled" or $l.verdict == "seat-reserve" or $x.context_handoff_due == true)})')"
+		context_seats="$SEATS"
+		identities="$(jq -c --argjson records "$CONTEXT_LANES" --arg provider "${ORCH_LANE_HOST:-local}" --arg seats "$context_seats" '
+		  .[] | . as $x
+		  | ($records | map(select(((.window // "") | sub("^.*:"; "")) == $x.lane)) | first) as $r
+		  | (if $r == null and $x.caller then "context-overseer" else "worker" end) as $role
+		  | {account: ($r.account // $x.config_dir // ""), harness: (($r.harness | select(. != "")) // $x.harness // ""),
+		     model: (if $role == "context-overseer" then "" else (($r.model | select(. != "")) // $x.model // "") end), role:$role, caller:$x.caller, seats:$seats,
+		     provider: (if $role == "context-overseer" then $provider else ($r.host // "local" | if . == "" then "local" else . end) end)}' <<<"$out")" || exit 1
+		judgments='[]'
+		while IFS= read -r identity; do
+			[[ -n "$identity" ]] || continue
+			judgment_rc=0
+			named_account_judgment "$identity" "$((100 - 10#$HANDOFF_HEADROOM_PCT))" false "$BURN_PCT" false "$CREDIT_FLOOR" || judgment_rc=$?
+			case "$judgment_rc" in
+				0) judgment="${NAMED_ACCOUNT_RESULT[1]}" ;;
+				4) judgment='{}' ;; # An unlisted account has no account reading.
+				*) exit "$judgment_rc" ;;
+			esac
+			judgments="$(jq -c --argjson l "$judgment" '. + [$l]' <<<"$judgments")" || exit 1
+		done <<<"$identities"
+		out="$(jq -nc --argjson c "$out" --argjson judgments "$judgments" '
+		  $c | to_entries | map(.value as $x | $judgments[.key] as $l
+		    | $x + {headroom_pct: ($l.headroom_pct // null), binding_bucket: ($l.binding_bucket // null),
+		            binding_resets_at: ($l.binding_resets_at // null), credits: ($l.credits // null),
+		            handoff_required: ($l.verdict == "walled" or $l.verdict == "seat-reserve" or $x.context_handoff_due == true)})')"
+
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;
