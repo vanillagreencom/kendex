@@ -1224,7 +1224,7 @@ jobs:
           # second-opinion packages started. One pool removes package barriers.
           bash skills/orch/tests/run-all.sh "${batteries[@]}"
 
-      # ---- shard: node — every node and bun suite here but the bridge's,
+      # ---- shard: node — every node and bun suite here but pi-claude-bridge's,
       # which the shard below runs -----------------------------------------
       # setup-node also serves the `pi-claude-bridge` shard's two steps below.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1405,9 +1405,27 @@ jobs:
         working-directory: pi-extensions/pi-task-panel
         run: npm test
 
+      # Like pi-claude-bridge below, the package's CI entry point is `test:ci`:
+      # its `test` script also runs the live smoke against a real Codex login,
+      # which a runner does not have. `test:ci` runs the login-free suites.
+      # `npm ci` keeps the bundle check below tied to the lockfile.
+      - name: pi-codex-bridge suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-codex-bridge
+        run: |
+          npm ci --no-audit --no-fund
+          npm run test:ci
+
+      # bundle/index.js is the artifact Pi loads and npm publishes. A clean
+      # lockfile build must reproduce the committed bytes exactly.
+      - name: pi-codex-bridge bundle matches a clean lockfile build
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-codex-bridge
+        run: git diff --exit-code -- bundle/
+
       # ---- shard: pi-claude-bridge — the node shard's hottest step, split
       # off so its build-plus-suite overlaps the rest instead of extending it.
-      # The one package whose CI entry point is `test:ci` rather than `test`:
+      # Its CI entry point is `test:ci` rather than `test`:
       # its `test` script also runs integration suites that need API keys and
       # a live provider, which a runner has neither of. `test:ci` is the
       # subset CI can prove, and declaring it in the package is what keeps

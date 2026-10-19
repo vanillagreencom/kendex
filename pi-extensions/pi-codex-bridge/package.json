@@ -1,0 +1,92 @@
+{
+  "name": "@vanillagreen/pi-codex-bridge",
+  "version": "1.0.0",
+  "description": "Pi provider bridge that runs Codex models through the Codex CLI and its existing login.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "codex"
+  ],
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./bundle/index.js"
+    ]
+  },
+  "kendex": {
+    "extensionManager": {
+      "displayName": "Pi Codex",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable Pi Codex provider",
+          "description": "Register pi-codex models that run Pi turns through the Codex CLI app server and its existing login.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        }
+      ]
+    }
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.86.0",
+    "@earendil-works/pi-coding-agent": ">=0.86.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@types/node": "^24.3.0",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --preserve-symlinks --platform=node --format=esm --target=node22 --outfile=bundle/index.js --external:@earendil-works/pi-ai --external:@earendil-works/pi-coding-agent",
+    "prepack": "npm run build",
+    "test:unit": "node --import tsx --test tests/unit-*.mjs",
+    "test:ci": "npm run build && npm run typecheck && npm run test:unit",
+    "test": "set -a && [ -f .env.test ] && . ./.env.test; set +a && npm run test:ci && tests/int-smoke.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "bundle/",
+    "src/",
+    "LICENSE",
+    "README.md",
+    "DEVELOPMENT.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/kendex.git",
+    "directory": "pi-extensions/pi-codex-bridge"
+  },
+  "homepage": "https://github.com/vanillagreencom/kendex/tree/main/pi-extensions/pi-codex-bridge",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/kendex/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": {
+    ".": "./bundle/index.js"
+  }
+}
