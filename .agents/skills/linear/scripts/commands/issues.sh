@@ -154,9 +154,13 @@ Create Options:
   token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
   Under the same key, create, update --description/--description-file,
   and bulk-update --description
-  refuse a body whose first non-empty line is a header (a line-start
-  `**Key**:` or `Reached by:`), and one with a header line over 500
-  characters; each refusal names the line number and its length.
+  refuse a body whose first non-empty line, after an optional owner action
+  line (`**Name, what you do:** ...`), is a header (a line-start `**Key**:` or
+  `Reached by:`), and one with a header line over 500 characters; each
+  refusal names the line number and its length. Update judges the body after
+  it reads the issue: a body equal to the stored one apart from a leading
+  owner action line, which it places, replaces or removes, is judged on that
+  line's length alone, so an owner ask writes over a body filed header-first.
 
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
@@ -1971,9 +1975,6 @@ update_issue() {
         read_description_file "$description_file"
         description_set="true"
     fi
-    if [[ "$description_set" == "true" ]]; then
-        require_issue_header_shape "$description" || return 1
-    fi
 
     # --attach: refuse unreadable paths before any API call.
     if [ ${#attach_paths[@]} -gt 0 ]; then
@@ -1993,6 +1994,14 @@ update_issue() {
     # Get issue to find its team for state and label lookup - use raw format
     local issue_result
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+    # The header shape is judged against the stored body, which an owner
+    # action line may be placed on, replaced on or removed from. The sentinel
+    # keeps the stored body's trailing newlines through the capture.
+    if [[ "$description_set" == "true" ]]; then
+        local stored_description
+        stored_description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
+        require_issue_header_shape "$description" "${stored_description%.}" || return 1
+    fi
     local team_name team_id
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
     # The issue names its own team by id: a state resolves under that id, never

@@ -258,23 +258,38 @@ require_issue_reach() {
 	return 0
 }
 
-# require_issue_header_shape DESCRIPTION — 0 to proceed, 1 + a JSON error on
-# stderr naming the line and its length. The issue template puts the outcome
-# first, after an optional owner action line, and keeps each header to one short
-# sentence; any other header opening, or a header over
+# require_issue_header_shape DESCRIPTION [STORED] — 0 to proceed, 1 + a JSON
+# error on stderr naming the line and its length. The issue template puts the
+# outcome first, after an optional owner action line, and keeps each header to
+# one short sentence; any other header opening, or a header over
 # ISSUE_HEADER_MAX characters, is refused. It is held by the reach guard's
 # setting so one key turns the filing bar on or off.
+#
+# STORED is the issue's current description, which `issues update` passes. A
+# body equal to it apart from a leading owner action line only places,
+# replaces or removes that line, as the mailbox owner ask, its rollback and
+# close and the oversee-watch repair do; it is judged on that line's length
+# alone, so an ask on a body filed in the older header-first form is written.
+# Every other body, and every body with no STORED, takes the full check.
 ISSUE_HEADER_MAX=500
 require_issue_header_shape() {
 	[[ -n ${LINEAR_REQUIRE_REACH-1} ]] || return 0
 
-	local refusal parsed
+	local refusal parsed has_stored=false
+	[[ $# -lt 2 ]] || has_stored=true
 	parsed=$(done_when_parse "$1" '[]') || return 1
-	refusal=$(jq -cn --arg desc "$1" --argjson max "$ISSUE_HEADER_MAX" --argjson parsed "$parsed" '
+	refusal=$(jq -cn --arg desc "$1" --arg stored "${2-}" --argjson has_stored "$has_stored" \
+		--argjson max "$ISSUE_HEADER_MAX" --argjson parsed "$parsed" '
 		def header: test("^(\\*\\*[^*]+(\\*\\*:|:\\*\\*)|[Rr]eached [Bb]y:)");
 		def owner_action: test("^\\*\\*[^*\\s]+, what you do:\\*\\* [^\\r\\n]*$");
+		def without_owner_action: gsub("\r\n"; "\n") | split("\n")
+			| if (.[0] // "" | owner_action) then .[1:] | if .[0] == "" then .[1:] else . end else . end
+			| join("\n");
+		def long_header($max): {error: "issue-header-length line=\(.line) length=\(.length) max=\($max)\nRefusing an issue body with a header line over \($max) characters. Keep each header to one short sentence and move the detail under a section.",
+			rule: "issue-header-length", line: .line, length: .length};
 		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
 			| {line: (.key + 1), length: (.value | length), text: .value}] as $lines
+		| ($has_stored and ($desc | without_owner_action) == ($stored | without_owner_action)) as $moves_action
 		| [$lines[] | select(.text | test("\\S"))] as $content
 		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first
 		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long
@@ -284,12 +299,12 @@ require_issue_header_shape() {
 			  elif .deadline_rule != null then
 				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh with N from 1 through 72, or after a merge or time trigger a real UTC time in YYYY-MM-DDTHH:MM:SSZ form at most 72 hours after it."}
 			  else empty end] | first) as $post
-		| if $first != null and ($first.text | header) then
+		| if $moves_action then
+			([$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)] | first // empty)
+		  elif $first != null and ($first.text | header) then
 			{error: "issue-header-opening line=\($first.line) length=\($first.length)\nRefusing an issue body that opens with a header line. Open with the outcome sentence; the **Key**: and Reached by: headers follow it.",
 			 rule: "issue-header-opening", line: $first.line, length: $first.length}
-		  elif $long != null then
-			{error: "issue-header-length line=\($long.line) length=\($long.length) max=\($max)\nRefusing an issue body with a header line over \($max) characters. Keep each header to one short sentence and move the detail under a section.",
-			 rule: "issue-header-length", line: $long.line, length: $long.length}
+		  elif $long != null then $long | long_header($max)
 		  elif $post != null then $post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)}
 		  else empty end') || return 1
 	if [ -n "$refusal" ]; then

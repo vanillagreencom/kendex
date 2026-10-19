@@ -2,12 +2,15 @@
 # bash-runtime: 4
 # Tests for the header-shape guard. Under the reach guard's key, `issues
 # create`, `issues update --description` / `--description-file`, and `issues
-# bulk-update --description` refuse,
-# before any API call, an opening header other than an owner action, a
-# header after the owner action instead of an outcome, and a `**Key**:` or
-# `Reached by:` header, and one with a header line over 500 characters; each
-# refusal names the line and its length. `issues complete` ticking boxes in an
-# already filed body is not new authored text and still writes.
+# bulk-update --description` refuse an opening header other than an owner
+# action, a header after the owner action instead of an outcome, and a
+# `**Key**:` or `Reached by:` header, and one with a header line over 500
+# characters; each refusal names the line and its length. Create and
+# bulk-update refuse before any API call; update reads the stored body first
+# and refuses before any write, and a body that only places, replaces or
+# removes an owner action line on the stored body is judged on that line's
+# length alone. `issues complete` ticking boxes in an already filed body is
+# not new authored text and still writes.
 
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -55,6 +58,7 @@ FILED="$TMP_ROOT/filed.md"
 # run unless REACH names its value; REACH=unset leaves it unset.
 REACH=1
 run_linear() {
+  LAST_COMMAND="$1 $2"
   : >"$CURL_LOG"
   RC=0
   local -a reach=(LINEAR_REQUIRE_REACH="$REACH")
@@ -71,10 +75,17 @@ assert_written() { # DESC OPERATION
   assert_eq "$1 exits zero" "$RC" 0
   assert "$1 reaches $2" sent "$2"
 }
+assert_unwritten() { # DESC
+  if [ "$LAST_COMMAND" = "issues update" ]; then
+    assert_not "$1 refuses before any write" sent issueUpdate
+  else
+    assert_eq "$1 refuses before any API call" "$(api_calls)" "0"
+  fi
+}
 assert_refused() { # DESC RULE LINE LENGTH
   assert_ne "$1 is refused" "$RC" 0
   assert_eq "$1 emits no stdout" "$OUT" ""
-  assert_eq "$1 refuses before any API call" "$(api_calls)" "0"
+  assert_unwritten "$1"
   assert_jq "$1 names the rule, the line and its length" "$ERR" \
     ".rule == \"$2\" and .line == $3 and .length == $4"
 }
@@ -97,7 +108,7 @@ assert_refused "a create whose first non-empty line is Reached by:" issue-header
 
 echo "=== owner action: the next non-empty line opens the body ==="
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-source "$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh"
+source "$REPO_ROOT/skills/mailbox/scripts/lib/mailbox-append.sh"
 ACTION_LINE='**Brad, what you do:** Run the check. Comment the result.'
 OWNER_BODY="$(jq -nr --arg body "$OUTCOME" "$OWNER_ACTION_JQ"'
   $body | owner_action_line("Brad Owner"; "Run the check. Comment the result.")')"
@@ -123,6 +134,43 @@ for length in 500 501; do
   if [ "$length" -eq 500 ]; then assert_written "a 500-character owner action" issueUpdate
   else assert_refused "a 501-character owner action" issue-header-length 1 501; fi
 done
+
+echo "=== owner action: placed on and removed from a stored header-first body ==="
+# owner_ask_over STORED_FILE ACTION — the description the mailbox owner ask
+# writes over the stored body, with a trailing sentinel the caller strips.
+owner_ask_over() {
+  jq -nr --rawfile body "$1" --arg action "$2" "$OWNER_ACTION_JQ"'
+    ($body | owner_action_line("Brad Owner"; $action)) + "."'
+}
+printf '%s\n' '**Source**: x' "$REACH_LINE" '' "$OUTCOME" >"$FILED"
+STORED="$(cat "$FILED"; printf .)"; STORED="${STORED%.}"
+ASK="$(owner_ask_over "$FILED" 'Run the check.')"; ASK="${ASK%.}"
+assert_eq "the owner ask puts its action line over the stored body" "$ASK" "**Brad, what you do:** Run the check."$'\n\n'"$STORED"
+run_linear issues update CC-1 --description "$ASK"
+assert_written "an owner ask over a stored body opening with **Source**:" issueUpdate
+assert "the owner ask writes its exact description" \
+  jq -s -e --arg desc "$ASK" \
+  'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
+printf '%s' "$ASK" >"$FILED"
+run_linear issues update CC-1 --description "$STORED"
+assert_written "the rollback or close writing the stored body back without the action line" issueUpdate
+assert "the rollback writes the stored body exactly" \
+  jq -s -e --arg desc "$STORED" \
+  'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
+
+printf '%s' "$STORED" >"$FILED"
+OTHER_SOURCE='**Source**: y'
+run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n%s' "$ACTION_LINE" "$OTHER_SOURCE" "$OUTCOME")"
+assert_refused "an owner action over a header-first body other than the stored one" \
+  issue-header-opening 3 "${#OTHER_SOURCE}"
+run_linear issues update CC-1 --description "$(printf '%s\n%s' "$OTHER_SOURCE" "$OUTCOME")"
+assert_refused "a header-first body other than the stored one" issue-header-opening 1 "${#OTHER_SOURCE}"
+LONG_ACTION_LINE="$(pad '**Brad, what you do:** ' 501)"
+LONG_ASK="$(owner_ask_over "$FILED" "${LONG_ACTION_LINE#'**Brad, what you do:** '}")"
+LONG_ASK="${LONG_ASK%.}"
+run_linear issues update CC-1 --description "$LONG_ASK"
+assert_refused "a 501-character owner action over the unchanged stored body" issue-header-length 1 501
+: >"$FILED"
 
 echo "=== create: the header length ==="
 LONG="$(pad '**Symptom**: ' 501)"
@@ -225,7 +273,7 @@ for operation in create update bulk-update; do
       assert_written "$operation accepts $trigger with $deadline" "$mutation"
     else
       assert_ne "$operation refuses $trigger with $deadline" "$RC" 0
-      assert_eq "$operation refuses $trigger with $deadline before any API call" "$(api_calls)" 0
+      assert_unwritten "$operation refusing $trigger with $deadline"
       assert_jq "$operation names $rule and a fix" "$ERR" ".rule == \"$rule\" and .box == 1 and (.fix | length) > 0"
     fi
   done <<'ROWS'
