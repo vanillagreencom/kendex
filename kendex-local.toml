@@ -41,7 +41,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Validation routing
 
-- In submit-pr § 1.1, reuse a passing local range result for the current commit before the first push. A failed local result blocks publication. Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run is never answered by merge-pr § 5's rerun-in-place: the lane re-arms only a new head. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
+- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run is never answered by merge-pr § 5's rerun-in-place: the lane re-arms only a new head. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
 
 ### Owner messages
 

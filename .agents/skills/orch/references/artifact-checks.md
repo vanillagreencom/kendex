@@ -15,7 +15,7 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 
 | Item | Contract |
 |------|----------|
-| Exit status | `DEV_VALIDATE_CMD` and `DEV_VALIDATE_RANGE_CMD` reserve exit 3 for unavailable host checks. Report the host cause in the log. Return 0 for pass and another nonzero status for a code defect. Wrap a test runner that exits with its failure count. `dev-validate-run --help` owns the sentinel and scoped-suite route. A host result cannot supply the timeout-only reuse proof. |
+| Exit status | `DEV_VALIDATE_CMD` and `DEV_VALIDATE_RANGE_CMD` reserve exit 3 for unavailable host checks. Report the host cause in the log. Return 0 for pass and another nonzero status for a code defect. Wrap a test runner that exits with its failure count. `dev-validate-run --help` owns the sentinel; `dev-implement.md` § 5 owns the `no-verdict` route. A host result cannot supply the timeout-only reuse proof. |
 | Line | `validate: lanes=<comma-separated names> selection=all\|subset\|battery` |
 | Names | Non-empty ASCII names using letters, digits, `.`, `_` or `-`; no empty comma-separated element |
 | `selection` | Eligible lanes follow the command's invocation mode and applicability rules, including change class and changed paths. `all` means every eligible lane; `subset` means the command chose fewer eligible lanes; `battery` means every lane the command has, none stood down for the change class or changed paths |

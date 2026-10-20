@@ -116,6 +116,6 @@ One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, a
 | N | Applied/Skipped/Blocked | [EXPLANATION — cite DXXX or rule if Skipped] |
 
 Commits: [SHAS or "none"]
-Validate: [pass, "no-verdict: suite1, suite2", or "FAILING: check1, check2"]
+Validate: [pass, "no-verdict: [CAUSE]", or "FAILING: check1, check2"]
 Proposed rule: [proposal or "none"]
 </output_format>

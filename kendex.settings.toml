@@ -311,10 +311,9 @@ DEV_VALIDATE_CI_CONTEXT = "CI"
 # no-verdict run's tree to restack-skip. Neither supplies a passing verdict.
 DEV_VALIDATE_FINDING_PREFIX = "guard: "
 
-# The bound on either run, in whole seconds. `tools/guard --full` takes well
-# under an hour on the supported hosts; past this the run is signalled, killed
-# outright ten seconds later, and the round records a failed validation. The
-# dev agent's wait is derived from it.
+# The bound on either run, in whole seconds. Past it the run is signalled,
+# killed outright ten seconds later, and records no-verdict: neither a pass nor
+# a failure. The dev agent's wait is derived from it.
 DEV_VALIDATE_TIMEOUT_SECS = "3600"
 
 # Whether `tools/guard --full` runs the macOS and Windows cross-target checks
