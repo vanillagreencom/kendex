@@ -1369,6 +1369,28 @@ for PI_RECOVERY in unchanged current; do
   ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
 done
 
+# Run only the startup regression in the disposable control. Its own fixture
+# root keeps the control's real EXIT cleanup separate from this suite's root.
+STARTUP_CONTROL="$TMP_ROOT/startup-output-control.sh"
+awk '
+  /^echo "=== oversee launch --predecessor: the fleet watch ==="$/ { setup = 1 }
+  /^# A hand-started child can exit after its started event but before its claim\.$/ { regression = 1 }
+  !setup || regression { print }
+  END { if (!setup || !regression) exit 1 }
+' "${BASH_SOURCE[0]}" > "$STARTUP_CONTROL"
+for STARTUP_HELPER in git-env.sh lanes-fixture.sh growth-state.sh assertions.sh; do
+  mutate_file "$STARTUP_CONTROL" 'source "$(dirname "${BASH_SOURCE[0]}")/lib/'"$STARTUP_HELPER"'"' \
+    "source $(printf '%q' "$TEST_DIR/lib/$STARTUP_HELPER")"
+done
+mutate_file "$STARTUP_CONTROL" $'\nTEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+  "$(printf '\nTEST_DIR=%q' "$TEST_DIR")"
+mutate_file "$STARTUP_CONTROL" $'    cat "$capture/output" || printf \'child-output=unread\\n\'' \
+  $'    : # cat "$capture/output" || printf \'child-output=unread\\n\''
+STARTUP_CONTROL_RC=0
+"$BASH" "$STARTUP_CONTROL" > "$TMP_ROOT/startup-output-control.out" 2>&1 || STARTUP_CONTROL_RC=$?
+assert_eq "$STARTUP_CONTROL_RC" 1 \
+  "control: removing captured output fails the startup regression" "$TMP_ROOT/startup-output-control.out"
+
 # A hand-started child can exit after its started event but before its claim.
 # Run this last: its real EXIT cleanup removes the evidence, leaving only
 # what new_predecessor printed. The planted defect stays in this private copy.
