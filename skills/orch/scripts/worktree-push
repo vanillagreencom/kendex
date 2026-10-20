@@ -114,7 +114,9 @@
 # validates that exact prepared head locally and uses --to-base with its base OID.
 # Transport never rebases after proof. A bare direct push refuses.
 # The micro tier uses the normal commit hooks and final item-tier check;
-# other tiers run DEV_VALIDATE_CMD locally. A failed preparation, validation
+# other tiers request native range validation from the prepared base, reusing
+# covered native proof or falling back to the configured full command when
+# no range command exists. A failed preparation, validation
 # or base-race refusal publishes nothing and requires the restack route.
 # Success emits delivery: mode=push-base base=BRANCH commit=SHA at=UTC.
 # The caller completes the tracker with that timestamp and reports that SHA.
@@ -624,7 +626,7 @@ if [[ "$publication_phase" == publish ]]; then
 			|| fail delivery-tier "issue=$issue"
 		[[ "$tier_line" == tier=micro* ]] || fail delivery-tier "issue=$issue" "result=$tier_line"
 	else
-		"$SCRIPT_DIR/dev-validate-run" --worktree "$worktree_abs" || fail delivery-validate "commit=$prepared_head"
+		"$SCRIPT_DIR/dev-validate-run" --worktree "$worktree_abs" --validate-mode range --base "$prepared_before" --attached || fail delivery-validate "commit=$prepared_head"
 	fi
 	current_head="$(git -C "$worktree_abs" rev-parse HEAD)" || fail delivery-validate "commit=$prepared_head"
 	[[ "$current_head" == "$prepared_head" ]] || fail delivery-validate "commit=$prepared_head" "head=$current_head"

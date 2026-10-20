@@ -62,7 +62,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
 unset ORCH_DELIVERY ORCH_PR_ORDER DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_CI_CONTEXT DEV_VALIDATE_SELECTION_CMD WORKTREE_DEFAULT_BRANCH KENDEX_ENV_FILE
 
-new_fixture() { # NAME DELIVERY [micro]
+new_fixture() { # NAME DELIVERY [micro|range]
   root="$TMP_ROOT/$1"
   main="$root/main"
   mkdir -p "$main"
@@ -82,6 +82,13 @@ ORCH_PR_ORDER = "review-first"
 DEV_VALIDATE_CMD = "if test -f AGENTS.md; then cmp AGENTS.md tmp/reloaded-rule || exit; fi; git rev-parse HEAD HEAD^{tree} > tmp/validated"
 DEV_VALIDATE_TIMEOUT_SECS = "30"
 TOML
+  if [[ "${3:-}" == range ]]; then
+    cat >> "$main/kendex.settings.toml" <<'TOML'
+DEV_VALIDATE_RANGE_CMD = "printf r >> tmp/range-count; echo $DEV_VALIDATE_BASE > tmp/range-base; git rev-parse HEAD HEAD^{tree} > tmp/validated; test ! -e tmp/fail"
+TOML
+    sed '/^DEV_VALIDATE_CMD =/s/git rev-parse HEAD HEAD\^{tree} > tmp\/validated/printf f >> tmp\/full-count; git rev-parse HEAD HEAD^{tree} > tmp\/validated/' "$main/kendex.settings.toml" > "$main/settings.new"
+    mv -- "$main/settings.new" "$main/kendex.settings.toml"
+  fi
   [[ "$2" == unset ]] || printf 'ORCH_DELIVERY = "%s"\n' "$2" >> "$main/kendex.settings.toml"
   if [[ "${3:-}" == micro ]]; then
     sed '/^DEV_VALIDATE_CMD =/d' "$main/kendex.settings.toml" > "$main/settings.new"
@@ -295,6 +302,104 @@ for mode in push-base unset pr; do
     assert_eq "$([[ -s "$root/pr-call" ]] && echo called || echo absent)" called "delivery=$mode keeps PR publication"
   fi
 done
+
+# The native runner produces every candidate. Preparation changes commit
+# metadata, so reuse must cover the tree and prepared base across that fold.
+# Missing evidence is removed from real runs, never replaced with a pass.
+publication_validation_case() { # NAME PUSH_SCRIPT VARIANT
+  local name="$1" script="$2" variant="$3" first='' run='' native_output native_rc direct_cmd reused=false count='' full=false
+  if [[ "$variant" == full-fallback ]]; then
+    new_fixture "$name" push-base
+  else
+    new_fixture "$name" push-base range
+  fi
+  git -C "$wt" commit -q --allow-empty -m 'fix(KEN-1): finish review'
+  item_head="$(git -C "$wt" rev-parse HEAD)"
+  case "$variant" in
+    no-native|full-fallback) ;;
+    unrecorded)
+      direct_cmd="$(cd "$wt" && "$REPO_ROOT/skills/orch/scripts/orch-env" DEV_VALIDATE_RANGE_CMD "")" || return 1
+      (cd "$wt" && DEV_VALIDATE_BASE="$before" "$BASH" -c "$direct_cmd")
+      ;;
+    *)
+      [[ "$variant" != failed ]] || : > "$wt/tmp/fail"
+      native_rc=0
+      native_output="$("$REPO_ROOT/skills/orch/scripts/dev-validate-run" --worktree "$wt" --validate-mode range --base "$before" --attached --poll 1)" || native_rc=$?
+      first="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' <<<"$native_output")"
+      [[ -n "$first" ]] || { printf '%s\n' "$native_output" >&2; return 1; }
+      if [[ "$variant" == failed ]]; then
+        [[ "$native_rc" != 0 ]] || return 1
+      else
+        [[ "$native_rc" == 0 ]] || return 1
+      fi
+      case "$variant" in
+        missing-cmd|missing-paths|missing-start) rm -- "$first/${variant#missing-}" ;;
+        changed-tree)
+          printf 'fix\n' > "$wt/fix"
+          git -C "$wt" add fix
+          git -C "$wt" commit -qm 'fix(KEN-1): change validated tree'
+          ;;
+        changed-base)
+          git -C "$main" commit -q --allow-empty -m 'docs: advance base'
+          git -C "$main" push -q origin release
+          ;;
+      esac
+      ;;
+  esac
+  prepare_step "$script"
+  [[ "$rc" == 0 ]] || return 1
+  if [[ "$variant" == reuse ]]; then
+    assert_eq "$(git -C "$wt" rev-parse 'HEAD^{tree}')" "$(sed -n 's/^tree=//p' "$first/start")" 'preparation retains the natively tested tree'
+    assert_eq "$([[ "$prepared_head" != "$item_head" ]] && echo changed || echo same)" changed 'preparation rewrites the tested head'
+  fi
+  transport_step "$script"
+  run="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' <<<"$output")"
+  [[ -n "$run" ]] || { printf '%s\n' "$output" >&2; return 1; }
+  if [[ -n "$first" && -f "$run/start" ]] && grep -Fxq "pass-run=$first" "$run/start"; then reused=true; fi
+  [[ ! -f "$wt/tmp/range-count" ]] || count="$(cat "$wt/tmp/range-count")"
+  [[ ! -f "$wt/tmp/full-count" ]] || full=true
+  publication_observed="$rc|$count|$reused|$full|$([[ "$(git --git-dir="$root/origin.git" rev-parse release)" == "$prepared_head" ]] && echo true || echo false)"
+  if [[ "$variant" != full-fallback ]]; then
+    assert_eq "$(cat "$wt/tmp/range-base")" "$prepared_base" "$variant uses the prepared base"
+  fi
+  if [[ "$reused" == false ]]; then
+    assert_contains "$(cat "$run/runner")" 'runner=attached' "$variant keeps native validation attached"
+  fi
+  if [[ "$variant" == classification-fallback ]]; then
+    assert_contains "$output" 'class-fallback=classifier-absent' 'unavailable classification cannot reuse native proof'
+  fi
+}
+
+# This installation lacks harness-ci, a supported conservative native route.
+FALLBACK_SCRIPTS="$(mutant_scripts publication-unavailable-classifier)"
+orch_fixture_shared_libs "${FALLBACK_SCRIPTS%/scripts}"
+# variant|exit|range command launches|native reuse|full command ran|published
+PUBLICATION_VALIDATION_CASES='reuse|0|r|true|false|true
+no-native|0|r|false|false|true
+unrecorded|0|rr|false|false|true
+changed-tree|0|rr|false|false|true
+changed-base|0|rr|false|false|true
+missing-cmd|0|rr|false|false|true
+missing-paths|0|rr|false|false|true
+missing-start|0|rr|false|false|true
+classification-fallback|0|rr|false|false|true
+failed|1|rr|false|false|false
+full-fallback|0||false|false|true'
+while IFS='|' read -r variant want; do
+  validation_script="$LIVE"
+  [[ "$variant" != classification-fallback ]] || validation_script="$FALLBACK_SCRIPTS/worktree-push"
+  publication_validation_case "validation-$variant" "$validation_script" "$variant"
+  assert_eq "$publication_observed" "$want" "$variant preserves native publication validation" "$root/publish.err"
+done <<<"$PUBLICATION_VALIDATION_CASES"
+
+# Restore the unwanted full request only on a disposable copy. The native
+# reuse row must detect the extra full command, not merely a successful push.
+VALIDATION_CONTROL="$(mutant_scripts publication-full-request worktree-push)"
+orch_fixture_shared_libs "${VALIDATION_CONTROL%/scripts}"
+mutate_file "$VALIDATION_CONTROL/worktree-push" \
+  '--validate-mode range --base "$prepared_before" --attached' '--attached'
+publication_validation_case validation-full-control "$VALIDATION_CONTROL/worktree-push" reuse
+assert_eq "$publication_observed" '0|r|false|true|true' 'control: default-full publication loses native range reuse'
 
 # Separate tool shells can use only the visible common-root output. The
 # silent row reproduces the previous shipped command as a must-fail control.
