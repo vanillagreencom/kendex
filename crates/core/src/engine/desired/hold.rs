@@ -103,16 +103,16 @@ impl Owner {
 /// and always names its sets — it carries their revision onto what it
 /// requires, so a set that owns a parent has to read fresh whatever the
 /// target's own declaration says.
-fn owners_of(
-    lock: &Lock,
+fn owners_of<'a>(
+    reasons: &Reasons<'a>,
     kind: ItemKind,
-    name: &str,
-    source: &str,
+    name: &'a str,
+    source: &'a str,
     carriers: bool,
 ) -> BTreeSet<Owner> {
     let mut owners = BTreeSet::new();
     walk_owners(
-        lock,
+        reasons,
         (kind, name, source),
         carriers,
         &mut BTreeSet::new(),
@@ -128,7 +128,7 @@ fn owners_of(
 /// set, and the agent arm decides per item. Only the root reads the
 /// caller's `carriers`, and a cycle back to it stops there.
 fn walk_owners<'a>(
-    lock: &'a Lock,
+    reasons: &Reasons<'a>,
     item: (ItemKind, &'a str, &'a str),
     carriers: bool,
     visited: &mut BTreeSet<(ItemKind, &'a str, &'a str)>,
@@ -143,12 +143,7 @@ fn walk_owners<'a>(
         name: name.to_owned(),
         source: source.to_owned(),
     };
-    let reasons = lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == kind && entry.name == name && entry.source == source)
-        .flat_map(|entry| &entry.reasons);
-    for reason in reasons {
+    for &reason in reasons.get(&item).into_iter().flatten() {
         match reason {
             Reason::Requested => {
                 owners.insert(own());
@@ -163,11 +158,32 @@ fn walk_owners<'a>(
             Reason::RequiredBy { by } if kind == ItemKind::Skill && by.kind == ItemKind::Agent => {
                 owners.insert(own());
             }
-            Reason::RequiredBy { by } => {
-                walk_owners(lock, (by.kind, &by.name, &by.source), true, visited, owners)
-            }
+            Reason::RequiredBy { by } => walk_owners(
+                reasons,
+                (by.kind, &by.name, &by.source),
+                true,
+                visited,
+                owners,
+            ),
         }
     }
+}
+
+/// Every reason `lock` records for each item, keyed by its
+/// `(kind, name, source)` and unioned across its harness copies: what
+/// [`walk_owners`] reads at each item it visits. A caller builds it once
+/// for all its walks, so no walk rescans the lock at every ancestor.
+type Reasons<'a> = BTreeMap<(ItemKind, &'a str, &'a str), Vec<&'a Reason>>;
+
+fn reasons_by_item(lock: &Lock) -> Reasons<'_> {
+    let mut reasons: Reasons<'_> = BTreeMap::new();
+    for entry in lock.entries.values() {
+        reasons
+            .entry((entry.kind, &entry.name, &entry.source))
+            .or_default()
+            .extend(&entry.reasons);
+    }
+    reasons
 }
 
 /// The synthetic pins one held plan wrote — exactly these and nothing else
@@ -681,6 +697,7 @@ fn reserve_readings(
     keeps_records: bool,
     pins: &mut HeldPins,
 ) {
+    let reasons = reasons_by_item(lock);
     let mut seen = BTreeSet::new();
     for entry in lock.entries.values() {
         if !PLANNED_KINDS.contains(&entry.kind)
@@ -695,7 +712,7 @@ fn reserve_readings(
             source: entry.source.clone(),
         };
         if exempt.contains(&own)
-            || owners_of(lock, entry.kind, &entry.name, &entry.source, true)
+            || owners_of(&reasons, entry.kind, &entry.name, &entry.source, true)
                 .iter()
                 .any(|owner| exempt.contains(owner) || owner.declared_in(manifest))
         {
@@ -797,9 +814,10 @@ fn exempted_by(manifest: &Manifest, lock: &Lock, target: &Held, reach: Reach) ->
         })
         .map(|entry| entry.source.as_str())
         .collect();
+    let reasons = reasons_by_item(lock);
     for source in sources {
         exempt.extend(owners_of(
-            lock,
+            &reasons,
             target.0,
             &target.1,
             source,
