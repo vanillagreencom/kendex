@@ -1114,7 +1114,9 @@ summary_write() { # CASE_SUFFIX
   assert_eq "$(wc -l < "$CASE/events.jsonl" | tr -d ' ')" 1 "summary $name check-only sends no second notice"
 
 }
-while IFS='~' read -r name mode setting want; do
+# Keep link payloads in the table: Bash 3.2 retains slash escapes written
+# directly in a parameter substitution's replacement.
+while IFS='~' read -r name mode setting want replacement; do
   rows="$OWNER_ROWS"
   lead='Work continues.'
   case "$mode" in
@@ -1201,8 +1203,7 @@ REPORT
       section_gap=$'\n\n```'
       section_start=$'\n```'
       rows="${rows//$section_gap/$section_start}" ;;
-    key-last) rows="${rows/- Nothing/- Outcome (*<https:\/\/linear.app\/vanillagreen\/issue\/KEN-42|[KEN-42]>*)}" ;;
-    two-keys) rows="${rows/- Nothing/- *<https:\/\/linear.app\/vanillagreen\/issue\/KEN-42|[KEN-42]>* waits on *<https:\/\/linear.app\/vanillagreen\/issue\/KEN-43|[KEN-43]>*}" ;;
+    item-line) rows="${rows/- Nothing/$replacement}" ;;
     header) rows="${rows/Completed/Finished}" ;;
     inline-header)
       completed_header=$'```\nCompleted\n```'
@@ -1298,8 +1299,8 @@ github-link~github-link~~oversee-report: summary-shape=github-link line=1
 commit-link~commit-link~~oversee-report: summary-shape=github-link line=1
 waiting-on-you~missing~~oversee-report: summary-shape=waiting-on-you
 conforming~normal~~
-key-last~key-last~~oversee-report: summary-shape=item-line line=6
-two-keys~two-keys~~oversee-report: summary-shape=item-line line=6
+key-last~item-line~~oversee-report: summary-shape=item-line line=6~- Outcome (*<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]>*)
+two-keys~item-line~~oversee-report: summary-shape=item-line line=6~- *<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]>* waits on *<https://linear.app/vanillagreen/issue/KEN-43|[KEN-43]>*
 header~header~~oversee-report: summary-shape=label line=4
 inline-header~inline-header~~oversee-report: summary-shape=label line=3
 unclosed-header~unclosed-header~~oversee-report: summary-shape=label line=22
